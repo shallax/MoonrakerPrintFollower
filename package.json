@@ -2,7 +2,7 @@
     "package_id": "Moonraker_Print_Follower",
     "package_type": "plugin",
     "display_name": "Moonraker Print Follower",
-    "package_version": "1.0.0",
+    "package_version": "1.0.1",
     "sdk_version": "8.0.0",
     "sdk_version_semver": "8.0.0",
     "website": "https://moonraker.readthedocs.io/",

@@ -28,3 +28,7 @@ Open **Preview** and click **Load current print**. Choosing **Yes** replaces wha
 Whole-layer following uses `print_stats.info.current_layer`. Within-layer following maps Moonraker's `virtual_sdcard.file_position` against motion-command offsets in the active G-code. The motion index uses the same G-code marker/motion matching behaviour as the known-good v0.9.8 implementation.
 
 Klipper may process G-code slightly ahead of physical motion, so very short layers can still show a small visual lead.
+
+## v1.0.1
+
+Manual movement of either Cura Preview layer slider or within-layer path slider automatically pauses following. Plugin-driven movements are ignored, and Resume following catches back up to the live Moonraker position.

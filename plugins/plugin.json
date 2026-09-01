@@ -1,7 +1,7 @@
 {
     "name": "Moonraker Print Follower",
-    "author": "Moonraker Print Follower contributors",
-    "version": "1.0.0",
+    "author": "shallax",
+    "version": "1.0.1",
     "description": "Follows a Klipper/Moonraker print in Cura Preview, including within-layer progress, explicit remote G-code loading, adaptive Preview-only controls, and pause/resume.",
     "api": 8,
     "supported_sdk_versions": [
