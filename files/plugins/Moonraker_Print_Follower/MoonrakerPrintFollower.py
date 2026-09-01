@@ -10,9 +10,9 @@ used instead of QtWebSockets so the plugin works in stock packaged Cura builds.
 
 from __future__ import annotations
 
-import io
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -39,58 +39,17 @@ from PyQt6.QtWidgets import (
 )
 
 from UM.Extension import Extension
-from UM.Job import Job
 from UM.Logger import Logger
 
-
-class _FastGCodeReadJob(Job):
-    """One-pass wrapper around Cura's own GCodeReader.
-
-    Cura's normal ReadFileJob calls GCodeReader.preRead(), which reads the full
-    file, and then calls GCodeReader._read(), which reads it again.  For a remote
-    file we already cached locally, that extra full read and allocation is wasted.
-    This job still uses GCodeReader.readFromStream() for the actual Cura parser;
-    it merely supplies the stream more efficiently.
-    """
-
-    def __init__(self, filename: str, reader) -> None:
-        super().__init__()
-        self._filename = filename
-        self._reader = reader
-
-    def getFileName(self) -> str:
-        return self._filename
-
-    def run(self) -> None:
-        try:
-            with open(self._filename, "r", encoding="utf-8") as handle:
-                stream = handle.read()
-
-            # Cura places ;FLAVOR near the beginning of its G-code. Passing only
-            # the header avoids GCodeReader.preReadFromStream() splitting a huge
-            # full-file string merely to choose Marlin vs RepRap parsing. If no
-            # marker is present in the header, Cura's reader selects its normal
-            # default flavour.
-            self._reader.preReadFromStream(stream[:131072])
-            node = self._reader.readFromStream(stream, self._filename)
-            self.setResult([node] if node is not None else [])
-        except Exception as error:
-            Logger.logException(
-                "e",
-                "Moonraker Print Follower fast Cura G-code parse failed for %s: %s",
-                self._filename,
-                error,
-            )
-            self.setResult(None)
 
 
 class MoonrakerPrintFollower(QObject, Extension):
     """Synchronise Cura's SimulationView layer with a Moonraker print."""
 
-    _remoteIndexReady = pyqtSignal(int, str, object, object)
+    _remoteIndexReady = pyqtSignal(int, str, object, object, object)
 
     PLUGIN_ID = "Moonraker_Print_Follower"
-    PREF_ROOT = "moonraker_layer_follower"
+    PREF_ROOT = "moonraker_print_follower"
 
     PREF_ENABLED = f"{PREF_ROOT}/enabled"
     PREF_URL = f"{PREF_ROOT}/url"
@@ -163,7 +122,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         # the call to readLocalFile(). TemporaryDirectory cleans it up when
         # Cura exits.
         self._temp_gcode_dir = tempfile.TemporaryDirectory(
-            prefix="cura-moonraker-layer-follower-"
+            prefix="cura-moonraker-print-follower-"
         )
         self._cached_gcode_filename: Optional[str] = None
         self._cached_gcode_path: Optional[str] = None
@@ -174,12 +133,12 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._remote_index_filename: Optional[str] = None
         self._remote_layer_ranges: List[Tuple[int, int]] = []
         self._remote_motion_offsets: List[array] = []
+        self._remote_current_layer_map: Dict[int, int] = {}
         self._remote_index_build_filename: Optional[str] = None
         self._remote_index_generation = 0
         self._remote_index_cancel_event: Optional[threading.Event] = None
         self._cura_load_in_progress = False
         self._cura_load_started_at: Optional[float] = None
-        self._fast_gcode_job: Optional[_FastGCodeReadJob] = None
         self._remoteIndexReady.connect(self._on_remote_index_ready)
 
         file_completed = getattr(self._application, "fileCompleted", None)
@@ -270,7 +229,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         behaviour_form = QFormLayout(behaviour_group)
 
         self._one_based_checkbox = QCheckBox(
-            "Moonraker current_layer is 1-based (recommended for Cura Klipper macros)"
+            "Fallback when G-code mapping is unavailable: Moonraker current_layer is 1-based"
         )
         self._one_based_checkbox.setChecked(self._pref_bool(self.PREF_ONE_BASED))
         behaviour_form.addRow(self._one_based_checkbox)
@@ -797,11 +756,8 @@ class MoonrakerPrintFollower(QObject, Extension):
 
         path = self._cached_gcode_path
 
-        # Cura's GCodeReader and our motion-indexer are both Python-heavy. Running
-        # them concurrently makes Cura's import much slower because they contend
-        # for the GIL. Give Cura exclusive parsing priority while an explicit
-        # remote load is in progress; the path index is restarted after
-        # fileCompleted.
+        # Keep our Python-heavy path indexer out of Cura's way while Cura parses
+        # the G-code. The index is rebuilt after Cura emits fileCompleted.
         self._cancel_remote_index_build()
         self._cura_load_in_progress = True
         self._cura_load_started_at = time.perf_counter()
@@ -812,16 +768,14 @@ class MoonrakerPrintFollower(QObject, Extension):
                 "Moonraker Print Follower forcibly replacing Cura contents with remote G-code: %s",
                 filename,
             )
-            if not self._start_fast_cura_gcode_load(path):
-                # Compatibility fallback: use Cura's public loader if its 5.13
-                # GCodeReader/_readMeshFinished integration is unavailable.
-                self._application.readLocalFile(
-                    QUrl.fromLocalFile(path),
-                    add_to_recent_files=False,
-                )
-                self._set_status(f"{filename}: loading into Cura Preview…")
-            else:
-                self._set_status(f"{filename}: fast-loading into Cura Preview…")
+            # Use Cura's public, supported loader exactly as the last known-good
+            # v0.9.8 implementation did. Do not bypass CuraApplication's normal
+            # ReadFileJob / GCodeReader lifecycle with private APIs.
+            self._application.readLocalFile(
+                QUrl.fromLocalFile(path),
+                add_to_recent_files=False,
+            )
+            self._set_status(f"{filename}: loading into Cura Preview…")
         except Exception as error:
             self._cura_load_in_progress = False
             self._cura_load_started_at = None
@@ -833,106 +787,6 @@ class MoonrakerPrintFollower(QObject, Extension):
                 error,
             )
             self._set_status(f"Could not load current print into Cura: {error}")
-
-    def _start_fast_cura_gcode_load(self, path: str) -> bool:
-        """Use Cura's GCodeReader in one pass, with safe fallback capability."""
-
-        try:
-            mesh_handler = self._application.getMeshFileHandler()
-            reader = mesh_handler.getReaderForFile(path) if mesh_handler is not None else None
-            finish_handler = getattr(self._application, "_readMeshFinished", None)
-            loading_files = getattr(self._application, "_currently_loading_files", None)
-
-            if (
-                reader is None
-                or not callable(getattr(reader, "preReadFromStream", None))
-                or not callable(getattr(reader, "readFromStream", None))
-                or not callable(finish_handler)
-                or not isinstance(loading_files, list)
-            ):
-                return False
-
-            # Mirror the small amount of CuraApplication.readLocalFile state that
-            # _readMeshFinished expects, while deliberately skipping ReadFileJob's
-            # full-file preRead() pass.
-            if path in loading_files:
-                return False
-            loading_files.append(path)
-            setattr(self._application, "_read_operation_is_project_file", False)
-
-            # G-code is non-sliceable and Cura's public loader clears the complete
-            # scene before parsing it. The manual confirmation has already made
-            # this destructive action explicit.
-            self._application.deleteAll(only_selectable=False)
-
-            job = _FastGCodeReadJob(path, reader)
-            self._fast_gcode_job = job
-            job.finished.connect(self._on_fast_gcode_job_finished)
-            job.start()
-            Logger.log(
-                "i",
-                "Moonraker Print Follower started one-pass Cura G-code parser for %s",
-                path,
-            )
-            return True
-        except Exception as error:
-            Logger.logException(
-                "w",
-                "Moonraker Print Follower could not start fast Cura G-code loader; falling back: %s",
-                error,
-            )
-            try:
-                loading_files = getattr(self._application, "_currently_loading_files", None)
-                if isinstance(loading_files, list) and path in loading_files:
-                    loading_files.remove(path)
-            except Exception:
-                pass
-            self._fast_gcode_job = None
-            return False
-
-    def _on_fast_gcode_job_finished(self, job: _FastGCodeReadJob) -> None:
-        """Hand the one-pass parser result to Cura's normal scene finaliser."""
-
-        self._fast_gcode_job = None
-        path = job.getFileName()
-        result = job.getResult()
-
-        if result is None:
-            try:
-                loading_files = getattr(self._application, "_currently_loading_files", None)
-                if isinstance(loading_files, list) and path in loading_files:
-                    loading_files.remove(path)
-            except Exception:
-                pass
-            self._cura_load_in_progress = False
-            self._cura_load_started_at = None
-            self._force_load_requested = False
-            self._force_load_pending_filename = None
-            self._set_status("Cura could not parse the current G-code")
-            return
-
-        try:
-            # This performs Cura's ordinary non-sliceable-node decoration, scene
-            # insertion, Preview-stage switch, and fileCompleted emission. Keeping
-            # this step native avoids maintaining our own copy of Cura scene logic.
-            self._application._readMeshFinished(job)
-        except Exception as error:
-            Logger.logException(
-                "e",
-                "Moonraker Print Follower could not finalise fast G-code load: %s",
-                error,
-            )
-            try:
-                loading_files = getattr(self._application, "_currently_loading_files", None)
-                if isinstance(loading_files, list) and path in loading_files:
-                    loading_files.remove(path)
-            except Exception:
-                pass
-            self._cura_load_in_progress = False
-            self._cura_load_started_at = None
-            self._force_load_requested = False
-            self._force_load_pending_filename = None
-            self._set_status(f"Could not finish loading current print into Cura: {error}")
 
     # ------------------------------------------------------------------
     # Moonraker HTTP
@@ -967,7 +821,13 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     def _issue_status_request(self, base_url: str, api_key: str, purpose: str) -> None:
         if self._reply is not None and self._reply.isRunning():
-            if purpose == "test":
+            if purpose == "force_load":
+                # A normal poll queries the same print_stats object we need here.
+                # Promote the in-flight reply instead of dropping the explicit
+                # user action or creating a second request path.
+                self._reply_purpose = "force_load"
+                self._set_status("Finding the current Moonraker print…")
+            elif purpose == "test":
                 self._set_status("A Moonraker request is already in progress")
             return
 
@@ -1022,6 +882,11 @@ class MoonrakerPrintFollower(QObject, Extension):
                         f"Moonraker is {state or 'not printing'}; there is no active print to load"
                     )
                     return
+                if not filename:
+                    self._force_load_requested = False
+                    self._force_load_pending_filename = None
+                    self._set_status("Moonraker did not report a current G-code filename")
+                    return
                 self._last_remote_filename = filename
                 self._last_remote_state = state
                 self._start_forced_gcode_download(filename)
@@ -1033,7 +898,7 @@ class MoonrakerPrintFollower(QObject, Extension):
             self._set_status(f"Invalid Moonraker response: {error}")
         except Exception as error:  # Keep an extension failure from destabilising Cura.
             Logger.logException("e", "Moonraker Print Follower status handling failed: %s", error)
-            self._set_status(f"Layer follower error: {error}")
+            self._set_status(f"Print follower error: {error}")
         finally:
             reply.deleteLater()
 
@@ -1116,10 +981,22 @@ class MoonrakerPrintFollower(QObject, Extension):
 
         if remote_layer is not None:
             try:
-                target_layer = int(remote_layer)
-                if self._pref_bool(self.PREF_ONE_BASED):
-                    target_layer -= 1
-                source = "Moonraker current_layer"
+                raw_remote_layer = int(remote_layer)
+                if (
+                    self._remote_index_filename == filename
+                    and raw_remote_layer in self._remote_current_layer_map
+                ):
+                    # Prefer the CURRENT_LAYER values embedded in the actual G-code.
+                    # This makes layer numbering self-describing and avoids an
+                    # off-by-one mismatch if the preference namespace was reset or
+                    # a slicer/macro reports zero-based layers instead of one-based.
+                    target_layer = self._remote_current_layer_map[raw_remote_layer]
+                    source = "Moonraker current_layer (G-code mapped)"
+                else:
+                    target_layer = raw_remote_layer
+                    if self._pref_bool(self.PREF_ONE_BASED):
+                        target_layer -= 1
+                    source = "Moonraker current_layer"
             except (TypeError, ValueError):
                 target_layer = None
 
@@ -1281,6 +1158,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._remote_index_filename = None
         self._remote_layer_ranges = []
         self._remote_motion_offsets = []
+        self._remote_current_layer_map = {}
         self._cached_gcode_filename = None
         self._cached_gcode_path = None
 
@@ -1381,7 +1259,7 @@ class MoonrakerPrintFollower(QObject, Extension):
 
         def worker() -> None:
             try:
-                ranges, motions = self._build_remote_gcode_index(data, cancel_event)
+                ranges, motions, layer_map = self._build_remote_gcode_index(data, cancel_event)
             except Exception as error:
                 Logger.logException(
                     "w",
@@ -1389,8 +1267,8 @@ class MoonrakerPrintFollower(QObject, Extension):
                     filename,
                     error,
                 )
-                ranges, motions = [], []
-            self._remoteIndexReady.emit(generation, filename, ranges, motions)
+                ranges, motions, layer_map = [], [], {}
+            self._remoteIndexReady.emit(generation, filename, ranges, motions, layer_map)
 
         threading.Thread(
             target=worker,
@@ -1410,7 +1288,7 @@ class MoonrakerPrintFollower(QObject, Extension):
             try:
                 with open(path, "rb") as handle:
                     data = handle.read()
-                ranges, motions = self._build_remote_gcode_index(data, cancel_event)
+                ranges, motions, layer_map = self._build_remote_gcode_index(data, cancel_event)
             except Exception as error:
                 Logger.logException(
                     "w",
@@ -1418,8 +1296,8 @@ class MoonrakerPrintFollower(QObject, Extension):
                     filename,
                     error,
                 )
-                ranges, motions = [], []
-            self._remoteIndexReady.emit(generation, filename, ranges, motions)
+                ranges, motions, layer_map = [], [], {}
+            self._remoteIndexReady.emit(generation, filename, ranges, motions, layer_map)
 
         threading.Thread(
             target=worker,
@@ -1427,8 +1305,8 @@ class MoonrakerPrintFollower(QObject, Extension):
             daemon=True,
         ).start()
 
-    @pyqtSlot(int, str, object, object)
-    def _on_remote_index_ready(self, generation: int, filename: str, ranges, motions) -> None:
+    @pyqtSlot(int, str, object, object, object)
+    def _on_remote_index_ready(self, generation: int, filename: str, ranges, motions, layer_map) -> None:
         if generation != self._remote_index_generation:
             return
         if filename != self._last_remote_filename:
@@ -1439,6 +1317,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         if ranges:
             self._remote_layer_ranges = ranges
             self._remote_motion_offsets = motions
+            self._remote_current_layer_map = dict(layer_map or {})
             self._remote_index_filename = filename
             Logger.log(
                 "i",
@@ -1604,60 +1483,57 @@ class MoonrakerPrintFollower(QObject, Extension):
     @staticmethod
     def _build_remote_gcode_index(
         data: bytes, cancel_event: Optional[threading.Event] = None
-    ) -> Tuple[List[Tuple[int, int]], List[array]]:
-        """Return per-layer ranges and motion offsets with a low-overhead scan.
+    ) -> Tuple[List[Tuple[int, int]], List[array], Dict[int, int]]:
+        """Return per-layer byte ranges and motion-command byte offsets.
 
-        This intentionally avoids three regular-expression searches per G-code
-        line.  More importantly, it is cooperatively cancellable so an explicit
-        Cura G-code import can take CPU priority instead of contending for the
-        Python GIL.
+        Motion matching remains compatible with v0.9.8. In addition to the
+        byte ranges, the index records the literal SET_PRINT_STATS_INFO
+        CURRENT_LAYER values so Moonraker layer numbering can be mapped to Cura
+        without relying on a manually configured 0/1-based assumption.
         """
 
-        def is_motion(line: bytes) -> bool:
-            # Accept the same common forms as the previous regex: optional N-line
-            # number followed by G0/G1/G2/G3 and whitespace/end-of-line.
-            token = line.lstrip()
-            if token[:1] in (b"N", b"n"):
-                space = token.find(b" ")
-                tab = token.find(b"\t")
-                cuts = [p for p in (space, tab) if p >= 0]
-                if not cuts:
-                    return False
-                token = token[min(cuts) + 1 :].lstrip()
-            if len(token) < 2 or token[:1] not in (b"G", b"g") or token[1:2] not in (b"0", b"1", b"2", b"3"):
-                return False
-            return len(token) == 2 or token[2:3] in (b" ", b"\t", b"\r", b"\n", b";")
+        layer_comment = re.compile(rb"^\s*;LAYER:\s*-?\d+\s*$", re.IGNORECASE)
+        stats_marker = re.compile(
+            rb"^\s*SET_PRINT_STATS_INFO\b.*\bCURRENT_LAYER\s*=\s*(-?\d+)",
+            re.IGNORECASE,
+        )
+        motion = re.compile(rb"^\s*(?:N\d+\s+)?G(?:0|1|2|3)(?:\s|$)", re.IGNORECASE)
+        elapsed = re.compile(rb"^\s*;TIME_ELAPSED:", re.IGNORECASE)
+        stats_values: List[int] = []
 
-        def parse(use_layer_comments: bool) -> Tuple[List[Tuple[int, int]], List[array]]:
+        def parse(marker, collect_stats: bool = False) -> Tuple[List[Tuple[int, int]], List[array]]:
             blocks: List[Dict[str, Any]] = []
             current: Optional[Dict[str, Any]] = None
             offset = 0
 
-            # Iterate over a BytesIO view instead of splitlines(), which avoids
-            # allocating a second giant list containing one Python object per
-            # G-code line.
-            for line_number, line in enumerate(io.BytesIO(data)):
-                if cancel_event is not None and (line_number & 0x7FF) == 0 and cancel_event.is_set():
+            for line_number, line in enumerate(data.splitlines(keepends=True)):
+                if (
+                    cancel_event is not None
+                    and (line_number & 0x7FF) == 0
+                    and cancel_event.is_set()
+                ):
                     return [], []
 
-                stripped = line.lstrip().rstrip(b"\r\n")
-                upper = stripped.upper()
-                if use_layer_comments:
-                    marker = upper.startswith(b";LAYER:")
-                else:
-                    marker = upper.startswith(b"SET_PRINT_STATS_INFO") and b"CURRENT_LAYER" in upper
-
-                if marker:
+                stripped = line.rstrip(b"\r\n")
+                if collect_stats:
+                    stats_match = stats_marker.search(stripped)
+                    if stats_match is not None:
+                        try:
+                            value = int(stats_match.group(1))
+                            if not stats_values or stats_values[-1] != value:
+                                stats_values.append(value)
+                        except (TypeError, ValueError):
+                            pass
+                if marker.search(stripped):
                     if current is not None and current["end"] is None:
                         current["end"] = offset
                     current = {"start": offset, "end": None, "motions": array("Q")}
                     blocks.append(current)
                 elif current is not None:
-                    if current["end"] is None and upper.startswith(b";TIME_ELAPSED:"):
+                    if current["end"] is None and elapsed.search(stripped):
                         current["end"] = offset
-                    if current["end"] is None and is_motion(stripped):
+                    if current["end"] is None and motion.search(stripped):
                         current["motions"].append(offset)
-
                 offset += len(line)
 
             if cancel_event is not None and cancel_event.is_set():
@@ -1675,10 +1551,35 @@ class MoonrakerPrintFollower(QObject, Extension):
                 motions.append(block["motions"])
             return ranges, motions
 
-        ranges, motions = parse(True)
-        if ranges or (cancel_event is not None and cancel_event.is_set()):
-            return ranges, motions
-        return parse(False)
+        ranges, motions = parse(layer_comment, collect_stats=True)
+        if not ranges and not (cancel_event is not None and cancel_event.is_set()):
+            ranges, motions = parse(stats_marker)
+
+        if cancel_event is not None and cancel_event.is_set():
+            return [], [], {}
+
+        # SET_PRINT_STATS_INFO is the authoritative source of Moonraker's
+        # current_layer value. When the file contains one CURRENT_LAYER marker
+        # per indexed layer, map those literal values straight to Cura's
+        # zero-based layer indices. This supports both 0-based and 1-based
+        # macros (and any other constant starting value) without guessing.
+        layer_map: Dict[int, int] = {}
+        if ranges and len(stats_values) == len(ranges):
+            for index, value in enumerate(stats_values):
+                if value in layer_map:
+                    layer_map = {}
+                    break
+                layer_map[value] = index
+        elif ranges and len(stats_values) >= 2:
+            # Some files omit a marker at one end. If the observed values form
+            # a clean +1 sequence, the first value still defines the numbering
+            # base well enough to map values that fall inside the indexed range.
+            if all(stats_values[i] == stats_values[0] + i for i in range(len(stats_values))):
+                base = stats_values[0]
+                for index in range(len(ranges)):
+                    layer_map[base + index] = index
+
+        return ranges, motions, layer_map
 
     def _simulation_view(self):
         try:
