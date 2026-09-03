@@ -2,6 +2,17 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 1.0.2
+
+Version 1.0.2 focuses on making following behave predictably while Cura is loading, slicing or changing scenes.
+
+### Highlights
+- Safer handling of Cura scene changes and slicing, reducing stale or out-of-order Preview updates.
+- More reliable manual-override detection when Cura rebuilds its Preview components.
+- Improved cleanup and cancellation of downloads, network requests and background indexing.
+- Better protection against reusing stale data when the same G-code filename is printed again.
+- Lower memory overhead while indexing large G-code files.
+
 ## 1.0.1
 
 This release makes it much easier to inspect a print without fighting the follower.
@@ -25,6 +36,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-03: Update to v1.0.2.
 - 2026-09-01: Update to v1.0.1.
 - 2026-09-01: Fixups
 - 2026-09-01: Initial release
