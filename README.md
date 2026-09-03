@@ -30,7 +30,7 @@ A Cura 5.13 extension that keeps Cura Preview synchronised with a print running 
 - `SceneNode.childrenChanged` is used for structural scene lifecycle changes instead of treating every Cura redraw/transform notification as a new scene.
 - Following is suspended while CuraEngine slices and resumes at `BackendState.Done`.
 - Delayed callbacks, HTTP work and index results are generation-guarded so stale work from a previous Cura scene or print run is discarded.
-- SimulationView signal connections are rebound if Cura replaces the view object. Cura's layer/path change signals are used for manual-override detection where available, with the 75 ms watcher retained only as a compatibility fallback.
+- SimulationView signal connections are rebound if Cura replaces the view object. Cura's layer/path change signals pause following immediately on manual interaction, while the lightweight 75 ms watcher remains active as a backstop if a connection is lost or a view is rebuilt. Both upper/current and lower/minimum layer/path handles are tracked, and only an explicitly armed follower position is used as the override baseline so the first manual adjustment cannot be silently absorbed.
 - Remote operations use an explicit resolving/downloading/Cura-loading/indexing/ready/error state model which also drives the compact Preview status text.
 - Remote print identity combines per-run reset detection with Moonraker metadata so repeatedly printing or overwriting the same filename cannot silently reuse a stale index.
 - Large-file worker cancellation and network reply cleanup are explicit during model changes, slicing, plugin shutdown and superseding jobs.

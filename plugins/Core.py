@@ -95,3 +95,54 @@ class OperationContext:
     @property
     def is_indexing(self) -> bool:
         return self.phase == OperationPhase.INDEXING
+
+
+def preview_override_kind(
+    *,
+    expected_layer: Optional[int],
+    current_layer: int,
+    expected_minimum_layer: Optional[int] = None,
+    current_minimum_layer: Optional[int] = None,
+    expected_path: Optional[float] = None,
+    current_path: Optional[float] = None,
+    expected_minimum_path: Optional[int] = None,
+    current_minimum_path: Optional[int] = None,
+    path_tolerance: float = 0.75,
+) -> Optional[str]:
+    """Classify a user-visible Preview deviation from the follower position.
+
+    Cura has *two* independently movable handles for both layers and paths.
+    The upper/current and lower/minimum handles emit the same change signals,
+    so checking only ``getCurrentLayer()`` / ``getCurrentPath()`` misses manual
+    movement of the lower handles.  ``expected_layer is None`` means the
+    follower has not yet armed a position and therefore cannot safely infer
+    user intent.
+    """
+    if expected_layer is None:
+        return None
+
+    if current_layer != expected_layer:
+        return "layer"
+
+    if (
+        expected_minimum_layer is not None
+        and current_minimum_layer is not None
+        and current_minimum_layer != expected_minimum_layer
+    ):
+        return "layer"
+
+    if (
+        expected_path is not None
+        and current_path is not None
+        and abs(current_path - expected_path) >= path_tolerance
+    ):
+        return "path"
+
+    if (
+        expected_minimum_path is not None
+        and current_minimum_path is not None
+        and current_minimum_path != expected_minimum_path
+    ):
+        return "path"
+
+    return None

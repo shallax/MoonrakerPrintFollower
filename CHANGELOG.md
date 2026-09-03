@@ -2,6 +2,17 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 1.0.3
+
+Version 1.0.3 is a performance and accuracy release aimed particularly at larger G-code files and long-running prints.
+
+### Highlights
+- Streams G-code downloads and indexing instead of holding the complete file in memory.
+- Adds persistent, validated path indexes so repeated loads can be much faster.
+- Uses Moonraker motion data when available to better match Cura's nozzle position to the physical printer.
+- Improves layer mapping using information embedded in the G-code itself.
+- Strengthens manual Preview override detection and stale-work protection.
+
 ## 1.0.2
 
 Version 1.0.2 focuses on making following behave predictably while Cura is loading, slicing or changing scenes.
@@ -36,6 +47,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-03: Fix v1.0.3.
 - 2026-09-03: Update to v1.0.3.
 - 2026-09-03: Update to v1.0.2.
 - 2026-09-01: Update to v1.0.1.

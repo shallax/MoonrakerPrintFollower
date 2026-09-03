@@ -6,7 +6,7 @@ PLUGIN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plug
 if PLUGIN_DIR not in sys.path:
     sys.path.insert(0, PLUGIN_DIR)
 
-from Core import OperationContext, OperationPhase, RemoteFileIdentity
+from Core import OperationContext, OperationPhase, RemoteFileIdentity, preview_override_kind
 
 
 class CoreTests(unittest.TestCase):
@@ -71,6 +71,71 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(identity.matches_job("a.gcode", 0))
         self.assertFalse(identity.matches_job("a.gcode", 101))
         self.assertFalse(identity.matches_job("b.gcode", 100))
+
+    def test_preview_override_detects_upper_layer_change(self):
+        self.assertEqual(
+            preview_override_kind(expected_layer=10, current_layer=11),
+            "layer",
+        )
+
+    def test_preview_override_detects_lower_layer_handle_change(self):
+        self.assertEqual(
+            preview_override_kind(
+                expected_layer=10,
+                current_layer=10,
+                expected_minimum_layer=0,
+                current_minimum_layer=4,
+            ),
+            "layer",
+        )
+
+    def test_preview_override_detects_current_and_minimum_path_changes(self):
+        self.assertEqual(
+            preview_override_kind(
+                expected_layer=10,
+                current_layer=10,
+                expected_path=20.0,
+                current_path=21.0,
+            ),
+            "path",
+        )
+        self.assertEqual(
+            preview_override_kind(
+                expected_layer=10,
+                current_layer=10,
+                expected_path=20.0,
+                current_path=20.0,
+                expected_minimum_path=0,
+                current_minimum_path=3,
+            ),
+            "path",
+        )
+
+    def test_preview_override_does_not_adopt_or_guess_unarmed_position(self):
+        self.assertIsNone(
+            preview_override_kind(
+                expected_layer=None,
+                current_layer=99,
+                expected_minimum_layer=None,
+                current_minimum_layer=50,
+                expected_path=None,
+                current_path=100.0,
+            )
+        )
+
+    def test_preview_override_ignores_small_fractional_path_noise(self):
+        self.assertIsNone(
+            preview_override_kind(
+                expected_layer=10,
+                current_layer=10,
+                expected_minimum_layer=0,
+                current_minimum_layer=0,
+                expected_path=20.0,
+                current_path=20.5,
+                expected_minimum_path=0,
+                current_minimum_path=0,
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -43,6 +43,24 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(PLUGIN.count("self._application.readLocalFile"), 1)
         self.assertIn("def _load_cached_remote_gcode_forced", PLUGIN)
 
+    def test_manual_preview_override_cannot_be_masked_by_fast_polling(self):
+        # Manual slider changes must not be hidden behind a rolling time-based
+        # suppression window. Plugin-originated writes are identified explicitly
+        # by _applying_follow_update, while the watcher remains active even when
+        # Cura's layer/path signals are connected.
+        self.assertNotIn("_manual_view_ignore_until", PLUGIN)
+        self.assertIn("if self._applying_follow_update:", PLUGIN)
+        self.assertIn("self._manual_view_watch_timer.start()", PLUGIN)
+        self.assertNotIn("and not self._manual_view_signals_connected", PLUGIN)
+        self.assertIn("currentLayerNumChanged", PLUGIN)
+        self.assertIn("currentPathNumChanged", PLUGIN)
+        self.assertIn("getMinimumLayer", PLUGIN)
+        self.assertIn("getMinimumPath", PLUGIN)
+        self.assertIn("preview_override_kind", PLUGIN)
+        # Never absorb an arbitrary user position as a new baseline. Only the
+        # follower write/resume path may arm the expected Preview position.
+        self.assertNotIn("self._expected_follow_layer = current_layer", PLUGIN)
+
     def test_preview_only_controls(self):
         self.assertIn("previewStageActive", QML_ACTION)
         self.assertIn("previewStageActive", QML_EMPTY)

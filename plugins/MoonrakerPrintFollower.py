@@ -41,7 +41,7 @@ from UM.Extension import Extension
 from UM.Logger import Logger
 from UM.Resources import Resources
 
-from .Core import OperationContext, OperationPhase, RemoteFileIdentity
+from .Core import OperationContext, OperationPhase, RemoteFileIdentity, preview_override_kind
 from .DownloadStream import DownloadTarget
 from .GCodeIndex import LayerMotionIndex, PersistentIndexCache, build_index_from_file
 from .MoonrakerProtocol import (
@@ -205,8 +205,9 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._manual_view_signals_connected = False
         self._applying_follow_update = 0
         self._expected_follow_layer: Optional[int] = None
+        self._expected_follow_minimum_layer: Optional[int] = None
         self._expected_follow_path: Optional[float] = None
-        self._manual_view_ignore_until = 0.0
+        self._expected_follow_minimum_path: Optional[int] = None
 
         self._preview_overlay = None
         self._action_panel_controls = None
@@ -512,8 +513,7 @@ class MoonrakerPrintFollower(QObject, Extension):
             self._set_status("Following enabled; waiting for Moonraker")
             self._poll()
         else:
-            self._expected_follow_layer = None
-            self._expected_follow_path = None
+            self._clear_expected_preview_position()
             self._set_status("Following disabled")
 
     def _toggle_following_pause(self) -> None:
@@ -525,9 +525,11 @@ class MoonrakerPrintFollower(QObject, Extension):
         if self._following_paused:
             self._set_status("Following paused; Moonraker polling continues")
         else:
-            self._expected_follow_layer = None
-            self._expected_follow_path = None
-            self._manual_view_ignore_until = time.monotonic() + 0.25
+            view = self._simulation_view()
+            if view is not None:
+                self._remember_plugin_preview_position(view)
+            else:
+                self._clear_expected_preview_position()
             self._set_status("Following resumed; catching up to the current print")
             self._poll(force=True)
 
@@ -551,12 +553,14 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._check_for_manual_preview_change()
 
     def _check_for_manual_preview_change(self) -> None:
-        """Pause following when Cura's Preview position changes outside our write.
+        """Pause following when Cura Preview moves outside our own write.
 
-        Cura 5.13 exposes ``currentLayerNumChanged`` and
-        ``currentPathNumChanged``. Those signals are preferred because they react
-        immediately to a user drag. A 75 ms value watcher remains only as a
-        compatibility fallback for builds that do not expose both signals.
+        Cura emits the same layer/path change signals for both the upper
+        (current) and lower (minimum) slider handles.  Track all four values so
+        a user adjustment cannot be missed merely because the current layer or
+        path stayed unchanged.  Crucially, an unarmed follower never adopts an
+        arbitrary Preview position as its baseline; only a follower write (or
+        an explicit Resume) arms the expected position.
         """
         if not self._pref_bool(self.PREF_ENABLED) or self._following_paused:
             return
@@ -564,15 +568,16 @@ class MoonrakerPrintFollower(QObject, Extension):
             return
         if self._slicing_in_progress or time.monotonic() < self._scene_settle_until:
             return
-        if not self._is_preview_stage_active() or not self._cura_has_toolpath():
-            self._expected_follow_layer = None
-            self._expected_follow_path = None
-            return
-        if time.monotonic() < self._manual_view_ignore_until:
-            return
 
         view = self._simulation_view()
         if view is None:
+            return
+
+        # If no follower-originated position has been recorded yet there is no
+        # trustworthy reference point.  Do *not* baseline from the current view
+        # here: doing so can swallow the very first manual change after a Cura
+        # lifecycle event.
+        if self._expected_follow_layer is None:
             return
 
         try:
@@ -581,63 +586,96 @@ class MoonrakerPrintFollower(QObject, Extension):
             return
 
         try:
+            current_minimum_layer = (
+                int(view.getMinimumLayer()) if hasattr(view, "getMinimumLayer") else None
+            )
+        except Exception:
+            current_minimum_layer = None
+
+        try:
             current_path = float(view.getCurrentPath()) if hasattr(view, "getCurrentPath") else None
         except Exception:
             current_path = None
 
-        # Establish a baseline after loading, stage changes or resume. Do not
-        # interpret Cura's own initialisation as user interaction.
-        if self._expected_follow_layer is None:
-            self._expected_follow_layer = current_layer
-            self._expected_follow_path = current_path
-            return
+        try:
+            current_minimum_path = (
+                int(view.getMinimumPath()) if hasattr(view, "getMinimumPath") else None
+            )
+        except Exception:
+            current_minimum_path = None
 
-        layer_changed = current_layer != self._expected_follow_layer
-        path_changed = (
-            self._expected_follow_path is not None
-            and current_path is not None
-            and abs(current_path - self._expected_follow_path) >= 0.75
+        override_kind = preview_override_kind(
+            expected_layer=self._expected_follow_layer,
+            current_layer=current_layer,
+            expected_minimum_layer=self._expected_follow_minimum_layer,
+            current_minimum_layer=current_minimum_layer,
+            expected_path=self._expected_follow_path,
+            current_path=current_path,
+            expected_minimum_path=self._expected_follow_minimum_path,
+            current_minimum_path=current_minimum_path,
         )
-
-        if not layer_changed and not path_changed:
+        if override_kind is None:
             return
 
         self._following_paused = True
-        self._expected_follow_layer = current_layer
-        self._expected_follow_path = current_path
+        # Retain the user's position for diagnostics/UI state.  Resume will
+        # explicitly re-arm from this position before requesting a catch-up.
+        self._remember_plugin_preview_position(view)
         self._sync_preview_button_state()
-        if layer_changed:
-            self._set_status("Following paused because the Preview layer was changed manually")
+        if override_kind == "layer":
+            self._set_status("Following paused because the Preview layer range was changed manually")
         else:
             self._set_status("Following paused because the Preview path position was changed manually")
 
     def _update_manual_view_watch_mode(self) -> None:
-        """Use SimulationView signals when available, timer polling otherwise."""
+        """Keep a lightweight watcher running as a backstop for Cura signals.
+
+        Cura 5.13 exposes currentLayerNumChanged/currentPathNumChanged and those
+        signals provide the immediate manual-override response.  The 75 ms
+        watcher deliberately remains enabled as a fallback in case a view is
+        rebuilt or a signal connection is temporarily unavailable.  Plugin
+        writes are distinguished by _applying_follow_update, so no time-based
+        suppression window is required.
+        """
         should_run = (
             self._pref_bool(self.PREF_ENABLED)
             and self._valid_configured_url()
-            and not self._manual_view_signals_connected
         )
         if should_run:
             self._manual_view_watch_timer.start()
         else:
             self._manual_view_watch_timer.stop()
 
+    def _clear_expected_preview_position(self) -> None:
+        self._expected_follow_layer = None
+        self._expected_follow_minimum_layer = None
+        self._expected_follow_path = None
+        self._expected_follow_minimum_path = None
+
     def _remember_plugin_preview_position(self, view) -> None:
-        """Record Cura's settled position after a plugin-driven follow update."""
+        """Record Cura's settled position after a follower-controlled update."""
         try:
             self._expected_follow_layer = int(view.getCurrentLayer())
         except Exception:
             self._expected_follow_layer = None
+        try:
+            self._expected_follow_minimum_layer = (
+                int(view.getMinimumLayer()) if hasattr(view, "getMinimumLayer") else None
+            )
+        except Exception:
+            self._expected_follow_minimum_layer = None
         try:
             self._expected_follow_path = (
                 float(view.getCurrentPath()) if hasattr(view, "getCurrentPath") else None
             )
         except Exception:
             self._expected_follow_path = None
-        # setLayer() can reset the path slider internally before/after setPath().
-        # Ignore that brief Cura-internal transition, then resume watching.
-        self._manual_view_ignore_until = time.monotonic() + 0.20
+        try:
+            self._expected_follow_minimum_path = (
+                int(view.getMinimumPath()) if hasattr(view, "getMinimumPath") else None
+            )
+        except Exception:
+            self._expected_follow_minimum_path = None
 
     def _queue_lifecycle_callback(self, callback, delay_ms: int = 0) -> None:
         generation = self._lifecycle_generation
@@ -841,9 +879,7 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     def _invalidate_lifecycle(self, reason: str, abort_network: bool = True) -> None:
         self._lifecycle_generation += 1
-        self._expected_follow_layer = None
-        self._expected_follow_path = None
-        self._manual_view_ignore_until = time.monotonic() + 0.35
+        self._clear_expected_preview_position()
         self._cancel_remote_index_build()
 
         if abort_network:
@@ -1122,9 +1158,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         """Refresh controls and catch up as soon as Cura finishes loading layer data."""
 
         self._sync_preview_button_state()
-        self._expected_follow_layer = None
-        self._expected_follow_path = None
-        self._manual_view_ignore_until = time.monotonic() + 0.25
+        self._clear_expected_preview_position()
         if (
             self._cura_has_toolpath()
             and self._pref_bool(self.PREF_ENABLED)
@@ -1226,8 +1260,7 @@ class MoonrakerPrintFollower(QObject, Extension):
             else:
                 self._timer.stop()
                 self._manual_view_watch_timer.stop()
-                self._expected_follow_layer = None
-                self._expected_follow_path = None
+                self._clear_expected_preview_position()
         except (OverflowError, TypeError, ValueError) as error:
             self._timer.stop()
             self._manual_view_watch_timer.stop()
