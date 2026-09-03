@@ -1,0 +1,204 @@
+import os
+import random
+import re
+import sys
+import tempfile
+import threading
+import unittest
+from bisect import bisect_right
+
+PLUGIN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plugins"))
+if PLUGIN_DIR not in sys.path:
+    sys.path.insert(0, PLUGIN_DIR)
+
+from Core import RemoteFileIdentity
+from GCodeIndex import LayerMotionIndex, PersistentIndexCache, build_index_from_bytes, build_index_from_file
+
+_LAYER = re.compile(rb"^\s*;LAYER:\s*-?\d+\s*$", re.I)
+_MOVE = re.compile(rb"^\s*(?:N\d+\s+)?G(?:0|1|2|3)(?:\s|$)", re.I)
+_ELAPSED = re.compile(rb"^\s*;TIME_ELAPSED:", re.I)
+
+
+def legacy_reference(data: bytes):
+    """Small reference for the established layer/motion byte-offset semantics."""
+    ranges = []
+    motions = []
+    current_start = None
+    current_end = None
+    current_moves = None
+    offset = 0
+    for line in data.splitlines(keepends=True):
+        stripped = line.rstrip(b"\r\n")
+        if _LAYER.search(stripped):
+            if current_start is not None:
+                end = current_end if current_end is not None else offset
+                ranges.append((current_start, max(current_start + 1, end)))
+                motions.append(current_moves)
+            current_start = offset
+            current_end = None
+            current_moves = []
+        elif current_start is not None and current_end is None and _ELAPSED.search(stripped):
+            current_end = offset
+        if current_start is not None and current_end is None and _MOVE.search(stripped):
+            current_moves.append(offset)
+        offset += len(line)
+    if current_start is not None:
+        end = current_end if current_end is not None else len(data)
+        ranges.append((current_start, max(current_start + 1, end)))
+        motions.append(current_moves)
+    return ranges, motions
+
+
+class IndexTests(unittest.TestCase):
+    def test_zero_based_current_layer_mapping(self):
+        data = b""";LAYER:0\nSET_PRINT_STATS_INFO CURRENT_LAYER=0\nG1 X1 Y1\n;TIME_ELAPSED:1\n;LAYER:1\nSET_PRINT_STATS_INFO CURRENT_LAYER=1\nG1 X2 Y2\n"""
+        index = build_index_from_bytes(data)
+        self.assertEqual(index.current_layer_map, {0: 0, 1: 1})
+
+    def test_one_based_current_layer_mapping(self):
+        data = b""";LAYER:0\nSET_PRINT_STATS_INFO CURRENT_LAYER=1\nG1 X1\n;LAYER:1\nSET_PRINT_STATS_INFO CURRENT_LAYER=2\nG1 X2\n"""
+        index = build_index_from_bytes(data)
+        self.assertEqual(index.current_layer_map, {1: 0, 2: 1})
+
+    def test_stats_markers_can_be_layer_fallback(self):
+        data = b"""SET_PRINT_STATS_INFO CURRENT_LAYER=1\nG1 X1\nSET_PRINT_STATS_INFO CURRENT_LAYER=2\nG1 X2\n"""
+        index = build_index_from_bytes(data)
+        self.assertEqual(index.layer_count(), 2)
+        self.assertEqual(index.current_layer_map, {1: 0, 2: 1})
+
+    def test_time_elapsed_ends_layer_before_following_travel(self):
+        data = b"""G90\n;LAYER:0\nG1 X10 Y10 Z0.2\n;TIME_ELAPSED:1\nG1 X20 Y20 Z0.4\n;LAYER:1\nG1 X30 Y30 Z0.4\n"""
+        index = build_index_from_bytes(data)
+        self.assertEqual(index.motion_count(0), 1)
+        self.assertEqual(index.layer_start_positions[1], (20.0, 20.0, 0.4))
+
+    def test_relative_and_g92_coordinates(self):
+        data = b"""G90\nG1 X10 Y10 Z1\nG92 X0 Y0\nG91\n;LAYER:0\nG1 X2 Y3 Z0.5\n"""
+        index = build_index_from_bytes(data)
+        self.assertEqual(index.layer_start_positions[0], (0.0, 0.0, 1.0))
+        self.assertAlmostEqual(index.motion_x[0][0], 2.0)
+        self.assertAlmostEqual(index.motion_y[0][0], 3.0)
+        self.assertAlmostEqual(index.motion_z[0][0], 1.5)
+
+    def test_compact_gcode_and_inches(self):
+        data = b"G20\nG90\n;LAYER:0\nN12G1X1Y2Z0.1\n"
+        index = build_index_from_bytes(data)
+        self.assertEqual(index.motion_count(0), 1)
+        self.assertAlmostEqual(index.motion_x[0][0], 25.4, places=3)
+        self.assertAlmostEqual(index.motion_y[0][0], 50.8, places=3)
+        self.assertAlmostEqual(index.motion_z[0][0], 2.54, places=3)
+
+    def test_file_fraction_counts_motion_commands(self):
+        data = b";LAYER:0\nG1 X1\nG1 X2\nG1 X3\n"
+        index = build_index_from_bytes(data)
+        second = int(index.motion_offsets[0][1])
+        fraction, method = index.file_fraction(0, second)
+        self.assertEqual(method, "motion index")
+        self.assertAlmostEqual(fraction, 2 / 3)
+
+    def test_live_position_refines_behind_parser(self):
+        lines = [b"G90\n", b";LAYER:0\n"]
+        for x in range(1, 21):
+            lines.append(f"G1 X{x} Y0 Z0.2\n".encode())
+        index = build_index_from_bytes(b"".join(lines))
+        coarse_pos = int(index.motion_offsets[0][17])
+        coarse, _ = index.file_fraction(0, coarse_pos)
+        refined, method = index.refined_fraction(0, coarse_pos, (10.2, 0.0, 0.2), lag_window=20)
+        self.assertEqual(method, "live position")
+        self.assertLess(refined, coarse)
+        self.assertAlmostEqual(refined, 10.2 / 20.0, delta=0.06)
+
+    def test_implausible_live_position_falls_back(self):
+        data = b";LAYER:0\nG1 X1 Y0 Z0.2\nG1 X2 Y0 Z0.2\n"
+        index = build_index_from_bytes(data)
+        pos = int(index.motion_offsets[0][0])
+        expected, expected_method = index.file_fraction(0, pos)
+        actual, method = index.refined_fraction(0, pos, (1000, 1000, 1000))
+        self.assertEqual(actual, expected)
+        self.assertEqual(method, expected_method)
+
+    def test_lf_and_crlf_have_same_motion_counts_and_mapping(self):
+        lf = b";LAYER:0\nSET_PRINT_STATS_INFO CURRENT_LAYER=1\nG1 X1\n;LAYER:1\nSET_PRINT_STATS_INFO CURRENT_LAYER=2\nG1 X2\n"
+        crlf = lf.replace(b"\n", b"\r\n")
+        a = build_index_from_bytes(lf)
+        b = build_index_from_bytes(crlf)
+        self.assertEqual([len(x) for x in a.motion_offsets], [len(x) for x in b.motion_offsets])
+        self.assertEqual(a.current_layer_map, b.current_layer_map)
+
+    def test_cancelled_build_returns_empty_index(self):
+        event = threading.Event()
+        event.set()
+        index = build_index_from_bytes(b";LAYER:0\nG1 X1\n", event)
+        self.assertFalse(index)
+
+    def test_randomized_legacy_offset_semantics(self):
+        rng = random.Random(4815162342)
+        for _ in range(250):
+            lines = [b";HEADER\n"]
+            layer_count = rng.randint(1, 8)
+            for layer in range(layer_count):
+                lines.append(f";LAYER:{layer}\n".encode())
+                for _move in range(rng.randint(1, 30)):
+                    if rng.random() < 0.2:
+                        lines.append(b"; comment\n")
+                    lines.append(
+                        f"G1 X{rng.random()*200:.4f} Y{rng.random()*200:.4f} Z{(layer+1)*0.2:.3f}\n".encode()
+                    )
+                if rng.random() < 0.8:
+                    lines.append(f";TIME_ELAPSED:{layer+1}\n".encode())
+                    if rng.random() < 0.5:
+                        lines.append(b"G1 X0 Y0\n")
+            data = b"".join(lines)
+            expected_ranges, expected_moves = legacy_reference(data)
+            actual = build_index_from_bytes(data)
+            self.assertEqual(actual.ranges, expected_ranges)
+            self.assertEqual([list(a) for a in actual.motion_offsets], expected_moves)
+
+    def test_persistent_cache_round_trip(self):
+        data = b";LAYER:0\nSET_PRINT_STATS_INFO CURRENT_LAYER=1\nG1 X1 Y2 Z0.2\nG1 X2 Y3 Z0.2\n"
+        index = build_index_from_bytes(data)
+        identity = RemoteFileIdentity("a.gcode", len(data), 100.0, "uuid-1")
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory, max_bytes=8 * 1024 * 1024, max_entries=4)
+            cache.save(identity, index)
+            loaded = cache.load(identity)
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded.ranges, index.ranges)
+            self.assertEqual(loaded.current_layer_map, index.current_layer_map)
+            self.assertEqual([list(v) for v in loaded.motion_offsets], [list(v) for v in index.motion_offsets])
+            self.assertEqual([list(v) for v in loaded.motion_x], [list(v) for v in index.motion_x])
+
+    def test_persistent_cache_rejects_wrong_identity(self):
+        data = b";LAYER:0\nG1 X1\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory)
+            cache.save(RemoteFileIdentity("a", len(data), 1, "u1"), index)
+            self.assertIsNone(cache.load(RemoteFileIdentity("a", len(data), 1, "u2")))
+
+    def test_persistent_cache_rejects_truncation(self):
+        data = b";LAYER:0\nG1 X1\nG1 X2\n"
+        index = build_index_from_bytes(data)
+        identity = RemoteFileIdentity("a", len(data), 1, "u1")
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory)
+            cache.save(identity, index)
+            path = cache._path(identity)
+            with open(path, "rb") as handle:
+                raw = handle.read()
+            with open(path, "wb") as handle:
+                handle.write(raw[: max(1, len(raw)//2)])
+            self.assertIsNone(cache.load(identity))
+
+    def test_cache_prunes_entry_count(self):
+        data = b";LAYER:0\nG1 X1\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory, max_entries=2)
+            for i in range(4):
+                cache.save(RemoteFileIdentity(f"{i}.gcode", len(data), float(i), f"u{i}"), index)
+            self.assertLessEqual(len([n for n in os.listdir(directory) if n.endswith('.mpfi.gz')]), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -2,16 +2,16 @@
     "package_id": "Moonraker_Print_Follower",
     "package_type": "plugin",
     "display_name": "Moonraker Print Follower",
-    "package_version": "1.0.2",
-    "sdk_version": "8.0.0",
-    "sdk_version_semver": "8.0.0",
+    "package_version": "1.0.3",
+    "sdk_version": "8.12.0",
+    "sdk_version_semver": "8.12.0",
     "website": "https://github.com/shallax/MoonrakerPrintFollower",
     "author": {
         "author_id": "shallax",
         "display_name": "shallax",
         "email": "moonrakerprintfollower@maintain.contact"
     },
-    "description": "Synchronises Cura Preview with a live Klipper/Moonraker print, with explicit remote G-code loading, adaptive Preview-only controls, and pause/resume.",
+    "description": "Synchronises Cura Preview with a live Klipper/Moonraker print, including physical-position refinement, explicit remote G-code loading, adaptive Preview-only controls, and pause/resume.",
     "tags": [
         "Klipper",
         "Moonraker",

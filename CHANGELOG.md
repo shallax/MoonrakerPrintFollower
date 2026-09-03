@@ -36,6 +36,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-03: Update to v1.0.3.
 - 2026-09-03: Update to v1.0.2.
 - 2026-09-01: Update to v1.0.1.
 - 2026-09-01: Fixups

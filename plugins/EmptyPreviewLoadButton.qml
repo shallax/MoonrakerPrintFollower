@@ -6,10 +6,6 @@ Item
 {
     id: base
     objectName: "moonrakerEmptyPreviewLoadControl"
-
-    // This placement exists only for an otherwise empty Preview. Cura hides its
-    // entire ActionPanelWidget when platformActivity is false, so the official
-    // saveButton extension row is unavailable in that state.
     anchors.fill: parent
     z: 10000
     visible: previewStageActive && !CuraApplication.platformActivity
@@ -18,20 +14,37 @@ Item
     property bool followingPaused: false
     property bool followingEnabled: false
     property bool hasToolpath: false
+    property string statusText: ""
 
     signal loadClicked()
 
-    Cura.SecondaryButton
+    Column
     {
-        id: loadButton
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.rightMargin: UM.Theme.getSize("thick_margin").width * 2
         anchors.bottomMargin: UM.Theme.getSize("thick_margin").height * 2
-        height: UM.Theme.getSize("action_button").height
-        text: "Load current print"
-        tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
-        fixedWidthMode: false
-        onClicked: base.loadClicked()
+        spacing: UM.Theme.getSize("default_margin").height
+
+        UM.Label
+        {
+            anchors.right: parent.right
+            visible: base.statusText.length > 0
+            text: base.statusText
+            elide: Text.ElideRight
+            width: visible ? Math.min(240 * screenScaleFactor, implicitWidth) : 0
+            horizontalAlignment: Text.AlignRight
+        }
+
+        Cura.SecondaryButton
+        {
+            id: loadButton
+            anchors.right: parent.right
+            height: UM.Theme.getSize("action_button").height
+            text: "Load current print"
+            tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
+            fixedWidthMode: false
+            onClicked: base.loadClicked()
+        }
     }
 }

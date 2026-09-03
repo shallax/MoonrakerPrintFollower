@@ -12,15 +12,12 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import tempfile
 import threading
 import time
-from array import array
-from bisect import bisect_right
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import quote
+
 
 from PyQt6.QtCore import QObject, QTimer, QUrl, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
@@ -39,16 +36,28 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from UM.Backend.Backend import BackendState
 from UM.Extension import Extension
 from UM.Logger import Logger
-from UM.Scene.Iterator.DepthFirstIterator import DepthFirstIterator
+from UM.Resources import Resources
+
+from .Core import OperationContext, OperationPhase, RemoteFileIdentity
+from .DownloadStream import DownloadTarget
+from .GCodeIndex import LayerMotionIndex, PersistentIndexCache, build_index_from_file
+from .MoonrakerProtocol import (
+    download_endpoint,
+    live_position_in_gcode_space,
+    metadata_endpoint,
+    parse_file_identity,
+    status_endpoint,
+)
 
 
 
 class MoonrakerPrintFollower(QObject, Extension):
     """Synchronise Cura's SimulationView layer with a Moonraker print."""
 
-    _remoteIndexReady = pyqtSignal(int, str, object, object, object, int, int)
+    _remoteIndexReady = pyqtSignal(int, str, object, int, int)
 
     PLUGIN_ID = "Moonraker_Print_Follower"
     PREF_ROOT = "moonraker_print_follower"
@@ -65,12 +74,65 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     ACTIVE_STATES = {"printing", "paused"}
 
+    @property
+    def _force_load_requested(self) -> bool:
+        return bool(self._operation.force_load)
+
+    @_force_load_requested.setter
+    def _force_load_requested(self, value: bool) -> None:
+        self._operation.force_load = bool(value)
+        if value and self._operation.phase == OperationPhase.IDLE:
+            self._operation.phase = OperationPhase.RESOLVING
+
+    @property
+    def _force_load_pending_filename(self) -> Optional[str]:
+        return self._operation.filename if self._operation.force_load else None
+
+    @_force_load_pending_filename.setter
+    def _force_load_pending_filename(self, value: Optional[str]) -> None:
+        if value is not None:
+            self._operation.filename = value
+            self._operation.force_load = True
+        elif self._operation.phase != OperationPhase.CURA_LOADING:
+            self._operation.filename = None
+
+    @property
+    def _cura_load_in_progress(self) -> bool:
+        return self._operation.phase == OperationPhase.CURA_LOADING
+
+    @_cura_load_in_progress.setter
+    def _cura_load_in_progress(self, value: bool) -> None:
+        if value:
+            self._operation.phase = OperationPhase.CURA_LOADING
+        elif self._operation.phase == OperationPhase.CURA_LOADING:
+            self._operation.phase = OperationPhase.READY
+
+    @property
+    def _cura_load_started_at(self) -> Optional[float]:
+        return self._operation.started_at
+
+    @_cura_load_started_at.setter
+    def _cura_load_started_at(self, value: Optional[float]) -> None:
+        self._operation.started_at = value
+
+    def _set_operation_phase(
+        self, phase: OperationPhase, *, filename: Optional[str] = None, message: str = ""
+    ) -> None:
+        self._operation.transition(
+            phase,
+            filename=filename,
+            job_key=self._remote_job_key if hasattr(self, "_remote_job_key") else None,
+            message=message,
+        )
+        self._sync_preview_button_state()
+
     def __init__(self, application) -> None:
         QObject.__init__(self)
         Extension.__init__(self)
         self._application = application
         self._preferences = application.getPreferences()
         self._controller = application.getController()
+        self._operation = OperationContext()
 
         self.setMenuName("Moonraker Print Follower")
         self.addMenuItem("Configure…", self._show_configuration_dialog)
@@ -91,6 +153,19 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._file_reply_filename: Optional[str] = None
         self._file_reply_generation = 0
         self._file_reply_job_key: Optional[Tuple[str, int, int]] = None
+        self._file_download_target: Optional[DownloadTarget] = None
+
+        self._metadata_network = QNetworkAccessManager()
+        self._metadata_reply: Optional[QNetworkReply] = None
+        self._metadata_filename: Optional[str] = None
+        self._metadata_job_key: Optional[Tuple[str, int, int]] = None
+        self._metadata_reply_generation = 0
+        self._metadata_reply_job_key: Optional[Tuple[str, int, int]] = None
+        self._remote_file_identity: Optional[RemoteFileIdentity] = None
+
+        cache_dir = os.path.join(Resources.getCacheStoragePath(), self.PLUGIN_ID, "indexes")
+        self._persistent_index_cache = PersistentIndexCache(cache_dir)
+        self._cache_save_threads: set[threading.Thread] = set()
 
         self._timer = QTimer()
         self._timer.setSingleShot(False)
@@ -137,7 +212,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._action_panel_controls = None
         self._connected_simulation_view = None
         self._scene = None
-        self._scene_structure_signature: Tuple[int, ...] = ()
+        self._scene_root = None
         self._lifecycle_generation = 0
         self._destroyed = False
         self._slicing_in_progress = False
@@ -176,8 +251,9 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._remote_index_filename: Optional[str] = None
         self._remote_index_job_key: Optional[Tuple[str, int, int]] = None
         self._remote_layer_ranges: List[Tuple[int, int]] = []
-        self._remote_motion_offsets: List[array] = []
+        self._remote_motion_offsets: List[Any] = []
         self._remote_current_layer_map: Dict[int, int] = {}
+        self._remote_index_data: Optional[LayerMotionIndex] = None
         self._remote_index_build_filename: Optional[str] = None
         self._remote_index_build_job_key: Optional[Tuple[str, int, int]] = None
         self._remote_index_generation = 0
@@ -201,22 +277,15 @@ class MoonrakerPrintFollower(QObject, Extension):
             except Exception:
                 pass
 
-        # Cura can rebuild view/scene objects while loading models. sceneChanged
-        # also fires for harmless transforms/settings changes, so only structural
-        # changes (nodes added/removed/replaced) invalidate follower work.
-        try:
-            self._scene = self._controller.getScene()
-            self._scene_structure_signature = self._get_scene_structure_signature()
-            scene_changed = getattr(self._scene, "sceneChanged", None)
-            if scene_changed is not None:
-                scene_changed.connect(self._on_scene_changed)
-        except Exception:
-            self._scene = None
-            self._scene_structure_signature = ()
+        # SceneNode.childrenChanged propagates descendant additions/removals to
+        # the root. It is the structural signal we actually need, unlike Cura's
+        # broad sceneChanged notification which also fires for transforms/redraws.
+        self._scene = None
+        self._scene_root = None
+        self._bind_scene_structure_signal()
 
-        # Slicing has explicit lifecycle signals. Suspend Preview writes while
-        # CuraEngine is replacing layer data instead of treating every ordinary
-        # sceneChanged notification as a destructive transition.
+        # Suspend Preview writes while CuraEngine is replacing layer data.
+        # BackendState.Done is the authoritative completion point in Cura 5.13.
         try:
             backend = self._application.getBackend()
         except Exception:
@@ -225,8 +294,8 @@ class MoonrakerPrintFollower(QObject, Extension):
         if backend is not None:
             for signal_name, handler in (
                 ("slicingStarted", self._on_slicing_started),
-                ("slicingCancelled", self._on_slicing_finished),
-                ("printDurationMessage", self._on_slicing_finished),
+                ("slicingCancelled", self._on_slicing_cancelled),
+                ("backendStateChange", self._on_backend_state_changed),
             ):
                 signal = getattr(backend, signal_name, None)
                 if signal is not None:
@@ -585,20 +654,20 @@ class MoonrakerPrintFollower(QObject, Extension):
                 )
         QTimer.singleShot(delay_ms, run)
 
-    def _get_scene_structure_signature(self) -> Tuple[int, ...]:
-        """Return a stable signature that changes only when scene nodes change.
-
-        ``Scene.sceneChanged`` is deliberately broad in Cura and fires for
-        transforms, settings and redraw-related updates. Using object identity of
-        the actual node tree lets us distinguish those harmless notifications
-        from model/G-code additions, removals and replacements.
-        """
+    def _bind_scene_structure_signal(self) -> None:
+        old_root = getattr(self, "_scene_root", None)
+        if old_root is not None:
+            try:
+                old_root.childrenChanged.disconnect(self._on_scene_children_changed)
+            except Exception:
+                pass
         try:
-            scene = self._controller.getScene()
-            root = scene.getRoot()
-            return tuple(sorted(id(node) for node in DepthFirstIterator(root)))
+            self._scene = self._controller.getScene()
+            self._scene_root = self._scene.getRoot()
+            self._scene_root.childrenChanged.connect(self._on_scene_children_changed)
         except Exception:
-            return ()
+            self._scene = None
+            self._scene_root = None
 
     def _abort_status_reply(self) -> None:
         reply = self._reply
@@ -620,11 +689,11 @@ class MoonrakerPrintFollower(QObject, Extension):
         except Exception:
             pass
 
-    def _abort_file_reply(self) -> None:
-        reply = self._file_reply
-        self._file_reply = None
-        self._file_reply_filename = None
-        self._file_reply_job_key = None
+    def _abort_metadata_reply(self) -> None:
+        reply = self._metadata_reply
+        self._metadata_reply = None
+        self._metadata_filename = None
+        self._metadata_reply_job_key = None
         if reply is None:
             return
         try:
@@ -641,6 +710,135 @@ class MoonrakerPrintFollower(QObject, Extension):
         except Exception:
             pass
 
+    def _ensure_remote_metadata(self, filename: str, fallback_size: int = 0) -> None:
+        if not filename:
+            return
+        identity = self._remote_file_identity
+        if (
+            identity is not None
+            and identity.matches_job(filename, fallback_size)
+            and self._metadata_job_key == self._remote_job_key
+        ):
+            return
+        if self._metadata_reply is not None and self._metadata_reply.isRunning():
+            if self._metadata_filename == filename:
+                return
+            self._abort_metadata_reply()
+
+        base_url = self._normalise_base_url(self._pref_str(self.PREF_URL))
+        if not self._url_is_usable(base_url):
+            return
+        request = QNetworkRequest(QUrl(metadata_endpoint(base_url, filename)))
+        request.setRawHeader(b"Accept", b"application/json")
+        if hasattr(request, "setTransferTimeout"):
+            request.setTransferTimeout(5000)
+        api_key = self._pref_str(self.PREF_API_KEY)
+        if api_key:
+            request.setRawHeader(b"X-Api-Key", api_key.encode("utf-8"))
+        self._metadata_filename = filename
+        self._metadata_reply_generation = self._lifecycle_generation
+        self._metadata_reply_job_key = self._remote_job_key
+        reply = self._metadata_network.get(request)
+        self._metadata_reply = reply
+        generation = self._metadata_reply_generation
+        job_key = self._metadata_reply_job_key
+        reply.finished.connect(
+            lambda r=reply, f=filename, sz=int(fallback_size or 0), g=generation, j=job_key: self._handle_metadata_reply(r, f, sz, g, j)
+        )
+
+    def _handle_metadata_reply(
+        self,
+        reply: QNetworkReply,
+        filename: str,
+        fallback_size: int,
+        reply_generation: int,
+        reply_job_key: Optional[Tuple[str, int, int]],
+    ) -> None:
+        if reply is not self._metadata_reply:
+            try:
+                reply.deleteLater()
+            except Exception:
+                pass
+            return
+        self._metadata_reply = None
+        self._metadata_filename = None
+        self._metadata_reply_job_key = None
+        try:
+            if (
+                reply_generation != self._lifecycle_generation
+                or reply_job_key != self._remote_job_key
+            ):
+                return
+            if reply.error() != QNetworkReply.NetworkError.NoError:
+                # Older/minimal Moonraker installations may not expose metadata.
+                # Mark this job resolved with a non-persistable fallback identity
+                # so live following can still build an in-memory index.
+                self._remote_file_identity = RemoteFileIdentity(filename, int(fallback_size or 0))
+                self._metadata_job_key = self._remote_job_key
+                if self._pref_bool(self.PREF_PATH_FOLLOW) and self._cura_has_toolpath():
+                    self._ensure_remote_gcode_index(filename)
+                return
+            payload = json.loads(bytes(reply.readAll()).decode("utf-8", errors="replace"))
+            identity = parse_file_identity(filename, payload, fallback_size)
+            if self._last_remote_filename != filename:
+                return
+            if self._remote_job_key is not None and not identity.matches_job(
+                self._remote_job_key[0], self._remote_job_key[1]
+            ):
+                return
+            self._remote_file_identity = identity
+            self._metadata_job_key = self._remote_job_key
+            if (
+                self._remote_index_data is not None
+                and self._remote_index_filename == filename
+                and (identity.uuid or identity.modified > 0)
+            ):
+                self._persist_index_async(identity, self._remote_index_data)
+            elif self._pref_bool(self.PREF_PATH_FOLLOW) and self._cura_has_toolpath():
+                if self._try_load_persistent_index(filename):
+                    if self._pref_bool(self.PREF_ENABLED) and not self._following_paused:
+                        self._queue_lifecycle_callback(lambda: self._poll(force=True))
+                else:
+                    self._ensure_remote_gcode_index(filename)
+        except Exception as error:
+            Logger.log("w", "Moonraker Print Follower metadata lookup failed for %s: %s", filename, error)
+        finally:
+            try:
+                reply.deleteLater()
+            except Exception:
+                pass
+
+    def _abort_file_reply(self) -> None:
+        reply = self._file_reply
+        self._file_reply = None
+        self._file_reply_filename = None
+        self._file_reply_job_key = None
+        target = self._file_download_target
+        self._file_download_target = None
+        if reply is not None:
+            try:
+                reply.readyRead.disconnect()
+            except Exception:
+                pass
+            try:
+                reply.finished.disconnect()
+            except Exception:
+                pass
+            try:
+                if reply.isRunning():
+                    reply.abort()
+            except Exception:
+                pass
+            try:
+                reply.deleteLater()
+            except Exception:
+                pass
+        if target is not None:
+            target.abort(remove=True)
+            self._cleanup_cached_job_dir(target.path)
+        if self._operation.phase == OperationPhase.DOWNLOADING:
+            self._set_operation_phase(OperationPhase.IDLE)
+
     def _invalidate_lifecycle(self, reason: str, abort_network: bool = True) -> None:
         self._lifecycle_generation += 1
         self._expected_follow_layer = None
@@ -650,6 +848,7 @@ class MoonrakerPrintFollower(QObject, Extension):
 
         if abort_network:
             self._abort_status_reply()
+            self._abort_metadata_reply()
             self._abort_file_reply()
             self._file_reply_generation = self._lifecycle_generation
 
@@ -666,50 +865,24 @@ class MoonrakerPrintFollower(QObject, Extension):
             self._cleanup_deferred_cache_dirs()
         self._force_load_requested = False
         self._force_load_pending_filename = None
+        self._operation.reset(OperationPhase.IDLE)
         Logger.log("d", "Moonraker Print Follower invalidated scene lifecycle: %s", reason)
 
-    def _on_scene_changed(self, source=None) -> None:
-        # Do not invalidate while our own remote G-code reader is constructing its
-        # scene. Those scene changes are expected and belong to the current load.
-        if self._cura_load_in_progress:
-            self._scene_structure_signature = self._get_scene_structure_signature()
+    def _on_scene_children_changed(self, source=None) -> None:
+        # Cura's own remote G-code reader and CuraEngine both restructure the
+        # scene as part of expected work. Their dedicated lifecycle handlers own
+        # those transitions, so do not recursively invalidate them here.
+        if self._cura_load_in_progress or self._slicing_in_progress:
             return
-        if self._slicing_in_progress or time.monotonic() < self._scene_settle_until:
-            self._scene_structure_signature = self._get_scene_structure_signature()
-            return
-
-        try:
-            current_scene = self._controller.getScene()
-        except Exception:
-            current_scene = None
-
-        if current_scene is not self._scene:
-            try:
-                old_signal = getattr(self._scene, "sceneChanged", None)
-                if old_signal is not None:
-                    old_signal.disconnect(self._on_scene_changed)
-            except Exception:
-                pass
-            self._scene = current_scene
-            if self._scene is not None:
-                try:
-                    self._scene.sceneChanged.connect(self._on_scene_changed)
-                except Exception:
-                    pass
-
-        signature = self._get_scene_structure_signature()
-        if signature == self._scene_structure_signature:
+        if time.monotonic() < self._scene_settle_until:
             return
 
-        self._scene_structure_signature = signature
         self._scene_settle_until = time.monotonic() + 0.35
         self._invalidate_lifecycle("Cura scene structure changed")
-        # A direct delete/add operation may not have a fileCompleted signal. Give
-        # Cura one event-loop beat, then rediscover its current view and resume.
         self._queue_lifecycle_callback(self._finish_scene_settle, 100)
 
     def _finish_scene_settle(self) -> None:
-        self._scene_structure_signature = self._get_scene_structure_signature()
+        self._bind_scene_structure_signal()
         self._refresh_simulation_view_connection()
         self._sync_preview_button_state()
         if self._pref_bool(self.PREF_ENABLED) and not self._following_paused:
@@ -722,14 +895,26 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._scene_settle_until = time.monotonic() + 0.5
         self._invalidate_lifecycle("Cura slicing started")
 
-    def _on_slicing_finished(self, *_args) -> None:
+    def _on_slicing_cancelled(self, *_args) -> None:
+        self._finish_slicing_lifecycle("Cura slicing cancelled")
+
+    def _on_backend_state_changed(self, state, *_args) -> None:
+        try:
+            done = state == BackendState.Done
+        except Exception:
+            done = str(state).lower().endswith("done")
+        if done:
+            self._finish_slicing_lifecycle("Cura slicing finished")
+
+    def _finish_slicing_lifecycle(self, reason: str) -> None:
         if not self._slicing_in_progress:
             return
         self._slicing_in_progress = False
         self._scene_settle_until = time.monotonic() + 0.35
-        self._scene_structure_signature = self._get_scene_structure_signature()
+        self._bind_scene_structure_signal()
         self._refresh_simulation_view_connection()
         self._sync_preview_button_state()
+        Logger.log("d", "Moonraker Print Follower: %s", reason)
         if self._pref_bool(self.PREF_ENABLED) and not self._following_paused:
             self._queue_lifecycle_callback(lambda: self._poll(force=True), 100)
 
@@ -739,7 +924,9 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._sync_preview_controls_visibility()
 
     def _on_main_window_changed(self, *_args) -> None:
-        self._invalidate_lifecycle("Cura main window changed")
+        # A main-window/QML rebuild does not imply a new model or remote job.
+        # Rebind UI objects without cancelling network/index work.
+        self._refresh_simulation_view_connection()
         # Do not append another saveButton component on every mainWindowChanged.
         # Cura keeps additional components at application scope, so the existing
         # action control can be reparented by the new ActionPanel. Only the empty
@@ -889,8 +1076,35 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._update_manual_view_watch_mode()
         return view
 
+    def _compact_preview_status(self, has_toolpath: Optional[bool] = None) -> str:
+        phase = self._operation.phase
+        if phase == OperationPhase.RESOLVING:
+            return "Moonraker: resolving…"
+        if phase == OperationPhase.DOWNLOADING:
+            return "Moonraker: downloading…"
+        if phase == OperationPhase.CURA_LOADING:
+            return "Cura: loading G-code…"
+        if phase == OperationPhase.INDEXING:
+            return "Follower: indexing…"
+        if phase == OperationPhase.ERROR:
+            return "Follower: error"
+        if self._following_paused:
+            return "Follower paused"
+        if has_toolpath is None:
+            has_toolpath = self._cura_has_toolpath()
+        if (
+            has_toolpath
+            and self._pref_bool(self.PREF_ENABLED)
+            and self._last_remote_state in self.ACTIVE_STATES
+        ):
+            return "Following live print"
+        if self._last_remote_state in self.ACTIVE_STATES:
+            return "Moonraker connected"
+        return ""
+
     def _sync_preview_button_state(self, *_args) -> None:
         has_toolpath = self._cura_has_toolpath()
+        compact_status = self._compact_preview_status(has_toolpath)
         for controls in (self._preview_overlay, self._action_panel_controls):
             if controls is None:
                 continue
@@ -900,6 +1114,7 @@ class MoonrakerPrintFollower(QObject, Extension):
                     "followingEnabled", self._pref_bool(self.PREF_ENABLED)
                 )
                 controls.setProperty("hasToolpath", has_toolpath)
+                controls.setProperty("statusText", compact_status)
             except Exception:
                 pass
 
@@ -1229,6 +1444,7 @@ class MoonrakerPrintFollower(QObject, Extension):
             self._set_status("Set a Moonraker URL before loading the current print")
             return
 
+        self._operation.reset(OperationPhase.RESOLVING)
         self._force_load_requested = True
         self._force_load_pending_filename = None
         self._set_status("Finding the current Moonraker print…")
@@ -1276,28 +1492,13 @@ class MoonrakerPrintFollower(QObject, Extension):
         if self._file_reply is not None:
             self._abort_file_reply()
 
-        base_url = self._normalise_base_url(self._pref_str(self.PREF_URL))
-        encoded_name = quote(filename, safe="/")
-        endpoint = f"{base_url}/server/files/gcodes/{encoded_name}"
-        request = QNetworkRequest(QUrl(endpoint))
-        request.setRawHeader(b"Accept", b"application/octet-stream")
-        if hasattr(request, "setTransferTimeout"):
-            request.setTransferTimeout(30000)
-        api_key = self._pref_str(self.PREF_API_KEY)
-        if api_key:
-            request.setRawHeader(b"X-Api-Key", api_key.encode("utf-8"))
-
-        self._file_reply_filename = filename
-        self._file_reply_generation = self._lifecycle_generation
-        self._file_reply_job_key = self._remote_job_key
-        reply = self._file_network.get(request)
-        self._file_reply = reply
-        reply_generation = self._file_reply_generation
-        reply_job_key = self._file_reply_job_key
-        reply.finished.connect(
-            lambda r=reply, f=filename, g=reply_generation, j=reply_job_key: self._handle_gcode_reply(r, f, g, j)
-        )
-        self._set_status(f"{filename}: downloading current print…")
+        if self._begin_gcode_download(filename):
+            self._set_status(f"{filename}: downloading current print…")
+        else:
+            self._force_load_requested = False
+            self._force_load_pending_filename = None
+            self._set_operation_phase(OperationPhase.ERROR, filename=filename)
+            self._set_status(f"Could not start download of current print: {filename}")
 
     def _load_cached_remote_gcode_forced(self, filename: str) -> None:
         if (
@@ -1395,7 +1596,7 @@ class MoonrakerPrintFollower(QObject, Extension):
                 self._set_status("A Moonraker request is already in progress")
             return
 
-        endpoint = f"{base_url}/printer/objects/query?print_stats&gcode_move&virtual_sdcard"
+        endpoint = status_endpoint(base_url)
         request = QNetworkRequest(QUrl(endpoint))
         request.setRawHeader(b"Accept", b"application/json")
         if hasattr(request, "setTransferTimeout"):
@@ -1435,6 +1636,7 @@ class MoonrakerPrintFollower(QObject, Extension):
             print_stats = status.get("print_stats") or {}
             gcode_move = status.get("gcode_move") or {}
             virtual_sdcard = status.get("virtual_sdcard") or {}
+            motion_report = status.get("motion_report") or {}
 
             if purpose == "test":
                 state = str(print_stats.get("state") or "unknown")
@@ -1461,10 +1663,15 @@ class MoonrakerPrintFollower(QObject, Extension):
                 self._update_remote_job_identity(print_stats, virtual_sdcard)
                 self._last_remote_filename = filename
                 self._last_remote_state = state
+                try:
+                    reported_size = int(virtual_sdcard.get("file_size") or 0)
+                except (TypeError, ValueError):
+                    reported_size = 0
+                self._ensure_remote_metadata(filename, reported_size)
                 self._start_forced_gcode_download(filename)
                 return
 
-            self._apply_remote_status(print_stats, gcode_move, virtual_sdcard)
+            self._apply_remote_status(print_stats, gcode_move, virtual_sdcard, motion_report)
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
             Logger.logException("w", "Moonraker Print Follower could not parse Moonraker status: %s", error)
             self._set_status(f"Invalid Moonraker response: {error}")
@@ -1535,6 +1742,11 @@ class MoonrakerPrintFollower(QObject, Extension):
                 self._remote_job_serial += 1
                 self._clear_remote_gcode_index()
                 self._remote_job_key = (filename, file_size, self._remote_job_serial)
+                if (
+                    self._remote_file_identity is not None
+                    and not self._remote_file_identity.matches_job(filename, file_size)
+                ):
+                    self._remote_file_identity = None
                 Logger.log(
                     "i",
                     "Moonraker Print Follower detected new print run #%d: %s (%d bytes)",
@@ -1556,12 +1768,19 @@ class MoonrakerPrintFollower(QObject, Extension):
         print_stats: Dict[str, Any],
         gcode_move: Dict[str, Any],
         virtual_sdcard: Dict[str, Any],
+        motion_report: Optional[Dict[str, Any]] = None,
     ) -> None:
         state = str(print_stats.get("state") or "")
         filename = str(print_stats.get("filename") or "")
 
         previous_filename = self._last_remote_filename
         self._update_remote_job_identity(print_stats, virtual_sdcard)
+        try:
+            reported_size = int(virtual_sdcard.get("file_size") or 0)
+        except (TypeError, ValueError):
+            reported_size = 0
+        if filename and state in self.ACTIVE_STATES:
+            self._ensure_remote_metadata(filename, reported_size)
 
         if filename != previous_filename:
             self._last_extruder_position = None
@@ -1698,7 +1917,9 @@ class MoonrakerPrintFollower(QObject, Extension):
                 view.setLayer(target_layer)
 
             if self._pref_bool(self.PREF_PATH_FOLLOW):
-                path_detail = self._apply_path_progress(view, target_layer, virtual_sdcard)
+                path_detail = self._apply_path_progress(
+                    view, target_layer, virtual_sdcard, motion_report or {}, gcode_move
+                )
         finally:
             self._applying_follow_update = max(0, self._applying_follow_update - 1)
 
@@ -1723,6 +1944,8 @@ class MoonrakerPrintFollower(QObject, Extension):
         view,
         target_layer: int,
         virtual_sdcard: Dict[str, Any],
+        motion_report: Optional[Dict[str, Any]] = None,
+        gcode_move: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Drive Cura's horizontal path slider using Moonraker file position.
 
@@ -1770,21 +1993,20 @@ class MoonrakerPrintFollower(QObject, Extension):
         if max_paths <= 0:
             return "layer has no toolpaths"
 
-        layer_start, layer_end = self._remote_layer_ranges[target_layer]
-        if layer_end <= layer_start:
-            return "invalid remote layer range"
+        index = self._remote_index_data
+        if index is None:
+            return "remote path index unavailable"
 
-        position = max(layer_start, min(file_position, layer_end))
-        motions = self._remote_motion_offsets[target_layer]
+        live_position = live_position_in_gcode_space(
+            motion_report or {},
+            gcode_move or {},
+        )
 
-        if len(motions) > 0:
-            completed = bisect_right(motions, position)
-            fraction = completed / len(motions)
-            method = "motion index"
-        else:
-            fraction = (position - layer_start) / (layer_end - layer_start)
-            method = "byte position"
-
+        fraction, method = index.refined_fraction(
+            target_layer,
+            file_position,
+            live_position,
+        )
         fraction = max(0.0, min(1.0, float(fraction)))
         target_path = fraction * max_paths
 
@@ -1831,6 +2053,13 @@ class MoonrakerPrintFollower(QObject, Extension):
                 )
         if thread is not None and not thread.is_alive():
             self._remote_index_thread = None
+        if self._operation.phase == OperationPhase.INDEXING:
+            next_phase = (
+                OperationPhase.READY
+                if self._remote_index_data is not None
+                else OperationPhase.IDLE
+            )
+            self._set_operation_phase(next_phase)
 
     def _cleanup_cached_job_dir(self, path: Optional[str]) -> None:
         """Remove a per-job cache directory when Cura no longer needs it."""
@@ -1883,9 +2112,87 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._remote_layer_ranges = []
         self._remote_motion_offsets = []
         self._remote_current_layer_map = {}
+        self._remote_index_data = None
         self._discard_cached_gcode()
 
         self._abort_file_reply()
+
+    def _install_remote_index(
+        self, filename: str, index: LayerMotionIndex, job_key=None, *, source: str = "built"
+    ) -> bool:
+        if not index:
+            return False
+        if filename != self._last_remote_filename:
+            return False
+        if job_key is not None and self._remote_job_key is not None and job_key != self._remote_job_key:
+            return False
+        self._remote_index_data = index
+        self._remote_layer_ranges = list(index.ranges)
+        self._remote_motion_offsets = list(index.motion_offsets)
+        self._remote_current_layer_map = dict(index.current_layer_map)
+        self._remote_index_filename = filename
+        self._remote_index_job_key = self._remote_job_key
+        self._set_operation_phase(OperationPhase.READY, filename=filename)
+        Logger.log(
+            "i",
+            "Moonraker Print Follower %s %d-layer path index for %s",
+            source,
+            len(index.ranges),
+            filename,
+        )
+        return True
+
+    def _persist_index_async(
+        self, identity: Optional[RemoteFileIdentity], index: Optional[LayerMotionIndex]
+    ) -> None:
+        """Persist a completed index without gzip work on Cura's GUI thread."""
+        if identity is None or index is None or not index:
+            return
+        if not identity.uuid and identity.modified <= 0:
+            return
+
+        # Reap references to completed writers before starting another one.
+        self._cache_save_threads = {t for t in self._cache_save_threads if t.is_alive()}
+
+        def worker() -> None:
+            try:
+                self._persistent_index_cache.save(identity, index)
+            except Exception as error:
+                Logger.log(
+                    "w",
+                    "Moonraker Print Follower could not persist path index: %s",
+                    error,
+                )
+
+        thread = threading.Thread(
+            target=worker,
+            name="MoonrakerPrintFollowerCache",
+            daemon=True,
+        )
+        self._cache_save_threads.add(thread)
+        thread.start()
+
+    def _try_load_persistent_index(self, filename: str) -> bool:
+        if not filename or self._remote_file_identity is None:
+            return False
+        if self._metadata_job_key != self._remote_job_key:
+            return False
+        if not self._remote_file_identity.uuid and self._remote_file_identity.modified <= 0:
+            return False
+        if not self._remote_file_identity.matches_job(
+            filename, self._remote_job_key[1] if self._remote_job_key else 0
+        ):
+            return False
+        if (
+            self._remote_index_filename == filename
+            and self._remote_index_job_key == self._remote_job_key
+            and self._remote_index_data is not None
+        ):
+            return True
+        index = self._persistent_index_cache.load(self._remote_file_identity)
+        if index is None:
+            return False
+        return self._install_remote_index(filename, index, self._remote_job_key, source="restored cached")
 
     def _ensure_remote_gcode_cached(self, filename: str) -> None:
         """Download the active job once without starting a path-index build."""
@@ -1907,33 +2214,20 @@ class MoonrakerPrintFollower(QObject, Extension):
                 return
             self._abort_file_reply()
 
-        base_url = self._normalise_base_url(self._pref_str(self.PREF_URL))
-        if not self._url_is_usable(base_url):
-            return
-
-        encoded_name = quote(filename, safe="/")
-        endpoint = f"{base_url}/server/files/gcodes/{encoded_name}"
-        request = QNetworkRequest(QUrl(endpoint))
-        request.setRawHeader(b"Accept", b"application/octet-stream")
-        if hasattr(request, "setTransferTimeout"):
-            request.setTransferTimeout(30000)
-        api_key = self._pref_str(self.PREF_API_KEY)
-        if api_key:
-            request.setRawHeader(b"X-Api-Key", api_key.encode("utf-8"))
-
-        self._file_reply_filename = filename
-        self._file_reply_generation = self._lifecycle_generation
-        self._file_reply_job_key = self._remote_job_key
-        reply = self._file_network.get(request)
-        self._file_reply = reply
-        reply_generation = self._file_reply_generation
-        reply_job_key = self._file_reply_job_key
-        reply.finished.connect(
-            lambda r=reply, f=filename, g=reply_generation, j=reply_job_key: self._handle_gcode_reply(r, f, g, j)
-        )
+        self._begin_gcode_download(filename)
 
     def _ensure_remote_gcode_index(self, filename: str) -> None:
         if not filename or self._cura_load_in_progress or self._slicing_in_progress:
+            return
+        if (
+            self._metadata_job_key != self._remote_job_key
+            and self._metadata_reply is not None
+            and self._metadata_reply.isRunning()
+            and self._metadata_filename == filename
+        ):
+            return
+
+        if self._try_load_persistent_index(filename):
             return
 
         if (
@@ -1968,13 +2262,32 @@ class MoonrakerPrintFollower(QObject, Extension):
                 return
             self._abort_file_reply()
 
-        base_url = self._normalise_base_url(self._pref_str(self.PREF_URL))
-        if not self._url_is_usable(base_url):
-            return
+        self._begin_gcode_download(filename)
 
-        encoded_name = quote(filename, safe="/")
-        endpoint = f"{base_url}/server/files/gcodes/{encoded_name}"
-        request = QNetworkRequest(QUrl(endpoint))
+    def _begin_gcode_download(self, filename: str) -> bool:
+        base_url = self._normalise_base_url(self._pref_str(self.PREF_URL))
+        if not self._url_is_usable(base_url) or not filename:
+            return False
+
+        if self._file_reply is not None and self._file_reply.isRunning():
+            if (
+                self._file_reply_filename == filename
+                and self._file_reply_job_key == self._remote_job_key
+            ):
+                return True
+            self._abort_file_reply()
+
+        try:
+            job_dir = tempfile.mkdtemp(prefix="job-", dir=self._temp_gcode_dir.name)
+            base_name = os.path.basename(filename.replace("\\", "/")) or "moonraker.gcode"
+            if os.path.splitext(base_name)[1].lower() not in (".g", ".gcode"):
+                base_name += ".gcode"
+            target = DownloadTarget.open(os.path.join(job_dir, base_name))
+        except Exception as error:
+            Logger.logException("w", "Moonraker Print Follower could not create download target: %s", error)
+            return False
+
+        request = QNetworkRequest(QUrl(download_endpoint(base_url, filename)))
         request.setRawHeader(b"Accept", b"application/octet-stream")
         if hasattr(request, "setTransferTimeout"):
             request.setTransferTimeout(30000)
@@ -1985,78 +2298,57 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._file_reply_filename = filename
         self._file_reply_generation = self._lifecycle_generation
         self._file_reply_job_key = self._remote_job_key
+        self._file_download_target = target
+        self._set_operation_phase(OperationPhase.DOWNLOADING, filename=filename)
         reply = self._file_network.get(request)
+        try:
+            reply.setReadBufferSize(4 * 1024 * 1024)
+        except Exception:
+            pass
         self._file_reply = reply
         reply_generation = self._file_reply_generation
         reply_job_key = self._file_reply_job_key
+        reply.readyRead.connect(lambda r=reply: self._drain_gcode_reply(r))
         reply.finished.connect(
             lambda r=reply, f=filename, g=reply_generation, j=reply_job_key: self._handle_gcode_reply(r, f, g, j)
         )
+        return True
 
-    def _start_remote_gcode_index_build(self, filename: str, data: bytes) -> None:
-        """Build the motion-offset index off Cura's GUI thread."""
+    def _drain_gcode_reply(self, reply: QNetworkReply) -> None:
+        if reply is not self._file_reply:
+            return
+        target = self._file_download_target
+        if target is None:
+            return
+        try:
+            chunk = reply.readAll()
+            if chunk:
+                target.write(chunk)
+        except Exception as error:
+            filename = self._file_reply_filename or self._force_load_pending_filename or "current print"
+            forced = bool(
+                self._force_load_requested
+                and self._force_load_pending_filename == self._file_reply_filename
+            )
+            Logger.log("w", "Moonraker Print Follower streaming download write failed: %s", error)
+            self._abort_file_reply()
+            if forced:
+                self._force_load_requested = False
+                self._force_load_pending_filename = None
+                self._set_operation_phase(OperationPhase.ERROR, filename=str(filename))
+                self._set_status(f"Could not write downloaded G-code: {error}")
 
-        if not filename:
+    def _start_remote_gcode_index_build_from_file(self, filename: str, path: str) -> None:
+        if not filename or not path or not os.path.isfile(path):
             return
         job_key = self._remote_job_key
         if self._remote_index_filename == filename and self._remote_index_job_key == job_key:
             return
         if self._remote_index_build_filename == filename and self._remote_index_build_job_key == job_key:
             return
-
-        if self._remote_index_thread is not None and self._remote_index_thread.is_alive():
-            self._cancel_remote_index_build(wait=True, timeout=0.5)
-            if self._remote_index_thread is not None and self._remote_index_thread.is_alive():
-                self._queue_lifecycle_callback(
-                    lambda f=filename, d=data: self._start_remote_gcode_index_build(f, d),
-                    100,
-                )
-                return
-
-        generation = self._remote_index_generation
-        lifecycle_generation = self._lifecycle_generation
-        job_serial = job_key[2] if job_key is not None else 0
-        cancel_event = threading.Event()
-        self._remote_index_cancel_event = cancel_event
-        self._remote_index_build_filename = filename
-        self._remote_index_build_job_key = job_key
-
-        def worker() -> None:
-            try:
-                ranges, motions, layer_map = self._build_remote_gcode_index(data, cancel_event)
-            except Exception as error:
-                Logger.logException(
-                    "w",
-                    "Moonraker Print Follower failed to index remote G-code %s: %s",
-                    filename,
-                    error,
-                )
-                ranges, motions, layer_map = [], [], {}
-            if not self._destroyed:
-                self._remoteIndexReady.emit(
-                    generation,
-                    filename,
-                    ranges,
-                    motions,
-                    layer_map,
-                    lifecycle_generation,
-                    job_serial,
-                )
-
-        thread = threading.Thread(
-            target=worker,
-            name="MoonrakerPrintFollowerIndex",
-            daemon=True,
-        )
-        self._remote_index_thread = thread
-        thread.start()
-
-    def _start_remote_gcode_index_build_from_file(self, filename: str, path: str) -> None:
-        if not filename:
+        if self._try_load_persistent_index(filename):
             return
-        job_key = self._remote_job_key
-        if self._remote_index_build_filename == filename and self._remote_index_build_job_key == job_key:
-            return
+
         if self._remote_index_thread is not None and self._remote_index_thread.is_alive():
             self._cancel_remote_index_build(wait=True, timeout=0.5)
             if self._remote_index_thread is not None and self._remote_index_thread.is_alive():
@@ -2065,6 +2357,7 @@ class MoonrakerPrintFollower(QObject, Extension):
                     100,
                 )
                 return
+
         generation = self._remote_index_generation
         lifecycle_generation = self._lifecycle_generation
         job_serial = job_key[2] if job_key is not None else 0
@@ -2072,25 +2365,11 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._remote_index_cancel_event = cancel_event
         self._remote_index_build_filename = filename
         self._remote_index_build_job_key = job_key
+        self._set_operation_phase(OperationPhase.INDEXING, filename=filename)
 
         def worker() -> None:
             try:
-                # Read in bounded chunks so cancellation/shutdown does not have to
-                # wait for one uninterruptible whole-file read on very large jobs.
-                data_buffer = bytearray()
-                with open(path, "rb") as handle:
-                    while True:
-                        if cancel_event.is_set():
-                            return
-                        chunk = handle.read(4 * 1024 * 1024)
-                        if not chunk:
-                            break
-                        data_buffer.extend(chunk)
-                if cancel_event.is_set():
-                    return
-                ranges, motions, layer_map = self._build_remote_gcode_index(
-                    data_buffer, cancel_event
-                )
+                index = build_index_from_file(path, cancel_event)
             except Exception as error:
                 Logger.logException(
                     "w",
@@ -2098,14 +2377,12 @@ class MoonrakerPrintFollower(QObject, Extension):
                     filename,
                     error,
                 )
-                ranges, motions, layer_map = [], [], {}
-            if not self._destroyed:
+                index = LayerMotionIndex()
+            if not self._destroyed and not cancel_event.is_set():
                 self._remoteIndexReady.emit(
                     generation,
                     filename,
-                    ranges,
-                    motions,
-                    layer_map,
+                    index,
                     lifecycle_generation,
                     job_serial,
                 )
@@ -2118,14 +2395,12 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._remote_index_thread = thread
         thread.start()
 
-    @pyqtSlot(int, str, object, object, object, int, int)
+    @pyqtSlot(int, str, object, int, int)
     def _on_remote_index_ready(
         self,
         generation: int,
         filename: str,
-        ranges,
-        motions,
-        layer_map,
+        index,
         lifecycle_generation: int,
         job_serial: int,
     ) -> None:
@@ -2142,21 +2417,18 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._remote_index_build_job_key = None
         self._remote_index_cancel_event = None
         self._remote_index_thread = None
-        if ranges:
-            self._remote_layer_ranges = ranges
-            self._remote_motion_offsets = motions
-            self._remote_current_layer_map = dict(layer_map or {})
-            self._remote_index_filename = filename
-            self._remote_index_job_key = self._remote_job_key
-            Logger.log(
-                "i",
-                "Moonraker Print Follower indexed %d layers from remote G-code %s",
-                len(ranges),
-                filename,
-            )
+        if isinstance(index, LayerMotionIndex) and self._install_remote_index(
+            filename, index, self._remote_job_key, source="built"
+        ):
+            if (
+                self._remote_file_identity is not None
+                and (self._remote_file_identity.uuid or self._remote_file_identity.modified > 0)
+            ):
+                self._persist_index_async(self._remote_file_identity, index)
             if self._pref_bool(self.PREF_ENABLED) and not self._following_paused:
                 self._queue_lifecycle_callback(lambda: self._poll(force=True))
         else:
+            self._set_operation_phase(OperationPhase.READY, filename=filename)
             Logger.log(
                 "w",
                 "Moonraker Print Follower found no layer markers in remote G-code %s",
@@ -2177,28 +2449,27 @@ class MoonrakerPrintFollower(QObject, Extension):
                 pass
             return
 
+        # Drain the final bytes before detaching the reply. readyRead is not
+        # guaranteed to fire once more immediately before finished.
+        self._drain_gcode_reply(reply)
+        target = self._file_download_target
         self._file_reply = None
         self._file_reply_filename = None
         self._file_reply_job_key = None
-
-        if not filename:
-            reply.deleteLater()
-            return
-        if reply_generation != self._lifecycle_generation:
-            try:
-                reply.deleteLater()
-            except Exception:
-                pass
-            return
-        if reply_job_key != self._remote_job_key:
-            try:
-                reply.deleteLater()
-            except Exception:
-                pass
-            return
+        self._file_download_target = None
 
         try:
+            if not filename or target is None:
+                if target is not None:
+                    target.abort(remove=True)
+                return
+            if reply_generation != self._lifecycle_generation or reply_job_key != self._remote_job_key:
+                target.abort(remove=True)
+                self._cleanup_cached_job_dir(target.path)
+                return
             if reply.error() != QNetworkReply.NetworkError.NoError:
+                target.abort(remove=True)
+                self._cleanup_cached_job_dir(target.path)
                 Logger.log(
                     "w",
                     "Moonraker Print Follower could not download %s: %s",
@@ -2206,20 +2477,37 @@ class MoonrakerPrintFollower(QObject, Extension):
                     reply.errorString(),
                 )
                 if self._force_load_pending_filename == filename:
-                    self._force_load_requested = False
-                    self._force_load_pending_filename = None
+                    self._set_operation_phase(OperationPhase.ERROR, filename=filename)
                     self._set_status(
                         f"Could not download current print from Moonraker: {reply.errorString()}"
                     )
+                    self._force_load_requested = False
+                    self._force_load_pending_filename = None
                 return
 
-            data = bytes(reply.readAll())
-            self._cache_remote_gcode(filename, data, reply_job_key)
+            target.flush_close()
+            self._adopt_cached_gcode_path(filename, target.path, reply_job_key)
+            identity = self._remote_file_identity
+            if identity is not None and identity.size > 0 and target.bytes_written != identity.size:
+                Logger.log(
+                    "w",
+                    "Moonraker Print Follower downloaded %d bytes for %s; metadata reported %d",
+                    target.bytes_written,
+                    filename,
+                    identity.size,
+                )
+                bad_path = target.path
+                self._discard_cached_gcode()
+                self._cleanup_cached_job_dir(bad_path)
+                if self._force_load_pending_filename == filename:
+                    self._force_load_requested = False
+                    self._force_load_pending_filename = None
+                    self._set_operation_phase(OperationPhase.ERROR, filename=filename)
+                    self._set_status(
+                        f"Downloaded G-code size mismatch for {filename}; refusing to load a partial file"
+                    )
+                return
 
-            # Start Cura's own asynchronous G-code loader as soon as the bytes are
-            # cached. While Cura is parsing, deliberately do NOT start our own
-            # Python indexer: both are CPU-heavy Python loops and would contend
-            # for the GIL.
             forced_load = self._force_load_pending_filename == filename
             if forced_load:
                 self._load_cached_remote_gcode_forced(filename)
@@ -2228,7 +2516,9 @@ class MoonrakerPrintFollower(QObject, Extension):
                 and self._cura_has_toolpath()
                 and not self._cura_load_in_progress
             ):
-                self._start_remote_gcode_index_build(filename, data)
+                self._start_remote_gcode_index_build_from_file(filename, target.path)
+            else:
+                self._set_operation_phase(OperationPhase.READY, filename=filename)
         except Exception as error:
             Logger.logException(
                 "w",
@@ -2236,50 +2526,32 @@ class MoonrakerPrintFollower(QObject, Extension):
                 filename,
                 error,
             )
+            if target is not None:
+                target.abort(remove=True)
         finally:
-            reply.deleteLater()
+            try:
+                reply.deleteLater()
+            except Exception:
+                pass
 
-    def _cache_remote_gcode(
+    def _adopt_cached_gcode_path(
         self,
         filename: str,
-        data: bytes,
+        path: str,
         job_key: Optional[Tuple[str, int, int]] = None,
     ) -> None:
-        """Persist one downloaded Moonraker file for Cura's async G-code reader."""
-
-        try:
-            # A session may see many jobs with the same filename. Keep only the
-            # current reusable cache instead of accumulating one directory per run.
-            if self._cached_gcode_path:
-                self._discard_cached_gcode()
-            job_dir = tempfile.mkdtemp(prefix="job-", dir=self._temp_gcode_dir.name)
-            base_name = os.path.basename(filename.replace("\\", "/")) or "moonraker.gcode"
-            extension = os.path.splitext(base_name)[1].lower()
-            if extension not in (".g", ".gcode"):
-                base_name += ".gcode"
-            path = os.path.join(job_dir, base_name)
-            with open(path, "wb") as handle:
-                handle.write(data)
-
-            self._cached_gcode_filename = filename
-            self._cached_gcode_path = path
-            self._cached_gcode_job_key = job_key if job_key is not None else self._remote_job_key
-            Logger.log(
-                "i",
-                "Moonraker Print Follower cached remote G-code %s at %s",
-                filename,
-                path,
-            )
-        except Exception as error:
-            Logger.logException(
-                "w",
-                "Moonraker Print Follower could not cache remote G-code %s: %s",
-                filename,
-                error,
-            )
-            self._cached_gcode_filename = None
-            self._cached_gcode_path = None
-            self._cached_gcode_job_key = None
+        old_path = self._cached_gcode_path
+        self._cached_gcode_filename = filename
+        self._cached_gcode_path = path
+        self._cached_gcode_job_key = job_key if job_key is not None else self._remote_job_key
+        if old_path and os.path.abspath(old_path) != os.path.abspath(path):
+            self._cleanup_cached_job_dir(old_path)
+        Logger.log(
+            "i",
+            "Moonraker Print Follower streamed remote G-code %s to %s",
+            filename,
+            path,
+        )
 
     def _on_cura_file_completed(self, file_name: str) -> None:
         """Finish an explicit remote load without altering Cura's Prepare stage."""
@@ -2297,7 +2569,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         if not is_remote_file:
             if self._cura_load_in_progress:
                 self._invalidate_lifecycle("another Cura file completed during remote load")
-            self._scene_structure_signature = self._get_scene_structure_signature()
+            self._bind_scene_structure_signal()
             self._scene_settle_until = time.monotonic() + 0.25
             self._refresh_simulation_view_connection()
             self._sync_preview_button_state()
@@ -2325,7 +2597,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._force_load_requested = False
         self._force_load_pending_filename = None
         self._preview_switched_for_job = True  # Cura's G-code loader switches to Preview itself.
-        self._scene_structure_signature = self._get_scene_structure_signature()
+        self._bind_scene_structure_signal()
         self._scene_settle_until = time.monotonic() + 0.25
         self._refresh_simulation_view_connection()
 
@@ -2361,113 +2633,6 @@ class MoonrakerPrintFollower(QObject, Extension):
                 if self._pref_bool(self.PREF_ENABLED) and not self._following_paused:
                     self._queue_lifecycle_callback(lambda: self._poll(force=True))
                     self._queue_lifecycle_callback(lambda: self._poll(force=True), 250)
-
-    @staticmethod
-    def _build_remote_gcode_index(
-        data: bytes, cancel_event: Optional[threading.Event] = None
-    ) -> Tuple[List[Tuple[int, int]], List[array], Dict[int, int]]:
-        """Return per-layer byte ranges and motion-command byte offsets.
-
-        Motion matching remains compatible with v0.9.8. In addition to the
-        byte ranges, the index records the literal SET_PRINT_STATS_INFO
-        CURRENT_LAYER values so Moonraker layer numbering can be mapped to Cura
-        without relying on a manually configured 0/1-based assumption.
-        """
-
-        layer_comment = re.compile(rb"^\s*;LAYER:\s*-?\d+\s*$", re.IGNORECASE)
-        stats_marker = re.compile(
-            rb"^\s*SET_PRINT_STATS_INFO\b.*\bCURRENT_LAYER\s*=\s*(-?\d+)",
-            re.IGNORECASE,
-        )
-        motion = re.compile(rb"^\s*(?:N\d+\s+)?G(?:0|1|2|3)(?:\s|$)", re.IGNORECASE)
-        elapsed = re.compile(rb"^\s*;TIME_ELAPSED:", re.IGNORECASE)
-        stats_values: List[int] = []
-
-        def parse(marker, collect_stats: bool = False) -> Tuple[List[Tuple[int, int]], List[array]]:
-            blocks: List[Dict[str, Any]] = []
-            current: Optional[Dict[str, Any]] = None
-            offset = 0
-
-            line_number = 0
-            data_length = len(data)
-            while offset < data_length:
-                if (
-                    cancel_event is not None
-                    and (line_number & 0x7FF) == 0
-                    and cancel_event.is_set()
-                ):
-                    return [], []
-
-                newline = data.find(b"\n", offset)
-                line_end = data_length if newline < 0 else newline + 1
-                line = data[offset:line_end]
-                stripped = line.rstrip(b"\r\n")
-                if collect_stats:
-                    stats_match = stats_marker.search(stripped)
-                    if stats_match is not None:
-                        try:
-                            value = int(stats_match.group(1))
-                            if not stats_values or stats_values[-1] != value:
-                                stats_values.append(value)
-                        except (TypeError, ValueError):
-                            pass
-                if marker.search(stripped):
-                    if current is not None and current["end"] is None:
-                        current["end"] = offset
-                    current = {"start": offset, "end": None, "motions": array("Q")}
-                    blocks.append(current)
-                elif current is not None:
-                    if current["end"] is None and elapsed.search(stripped):
-                        current["end"] = offset
-                    if current["end"] is None and motion.search(stripped):
-                        current["motions"].append(offset)
-                offset = line_end
-                line_number += 1
-
-            if cancel_event is not None and cancel_event.is_set():
-                return [], []
-
-            if current is not None and current["end"] is None:
-                current["end"] = len(data)
-
-            ranges: List[Tuple[int, int]] = []
-            motions: List[array] = []
-            for block in blocks:
-                start = int(block["start"])
-                end = int(block["end"] if block["end"] is not None else len(data))
-                ranges.append((start, max(start + 1, end)))
-                motions.append(block["motions"])
-            return ranges, motions
-
-        ranges, motions = parse(layer_comment, collect_stats=True)
-        if not ranges and not (cancel_event is not None and cancel_event.is_set()):
-            ranges, motions = parse(stats_marker)
-
-        if cancel_event is not None and cancel_event.is_set():
-            return [], [], {}
-
-        # SET_PRINT_STATS_INFO is the authoritative source of Moonraker's
-        # current_layer value. When the file contains one CURRENT_LAYER marker
-        # per indexed layer, map those literal values straight to Cura's
-        # zero-based layer indices. This supports both 0-based and 1-based
-        # macros (and any other constant starting value) without guessing.
-        layer_map: Dict[int, int] = {}
-        if ranges and len(stats_values) == len(ranges):
-            for index, value in enumerate(stats_values):
-                if value in layer_map:
-                    layer_map = {}
-                    break
-                layer_map[value] = index
-        elif ranges and len(stats_values) >= 2:
-            # Some files omit a marker at one end. If the observed values form
-            # a clean +1 sequence, the first value still defines the numbering
-            # base well enough to map values that fall inside the indexed range.
-            if all(stats_values[i] == stats_values[0] + i for i in range(len(stats_values))):
-                base = stats_values[0]
-                for index in range(len(ranges)):
-                    layer_map[base + index] = index
-
-        return ranges, motions, layer_map
 
     def _simulation_view(self):
         return self._refresh_simulation_view_connection()
@@ -2548,15 +2713,23 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._manual_view_watch_timer.stop()
         self._invalidate_lifecycle("plugin shutdown")
         self._cancel_remote_index_build(wait=True, timeout=2.0)
+        deadline = time.monotonic() + 1.5
+        for thread in tuple(self._cache_save_threads):
+            remaining = max(0.0, deadline - time.monotonic())
+            if remaining <= 0:
+                break
+            if thread.is_alive() and thread is not threading.current_thread():
+                thread.join(timeout=remaining)
+        self._cache_save_threads.clear()
         self._disconnect_simulation_view_connection()
+        self._abort_metadata_reply()
 
         try:
-            if self._scene is not None:
-                scene_changed = getattr(self._scene, "sceneChanged", None)
-                if scene_changed is not None:
-                    scene_changed.disconnect(self._on_scene_changed)
+            if self._scene_root is not None:
+                self._scene_root.childrenChanged.disconnect(self._on_scene_children_changed)
         except Exception:
             pass
+        self._scene_root = None
 
         try:
             file_completed = getattr(self._application, "fileCompleted", None)
@@ -2587,8 +2760,8 @@ class MoonrakerPrintFollower(QObject, Extension):
         if backend is not None:
             for signal_name, handler in (
                 ("slicingStarted", self._on_slicing_started),
-                ("slicingCancelled", self._on_slicing_finished),
-                ("printDurationMessage", self._on_slicing_finished),
+                ("slicingCancelled", self._on_slicing_cancelled),
+                ("backendStateChange", self._on_backend_state_changed),
             ):
                 try:
                     signal = getattr(backend, signal_name, None)
@@ -2668,6 +2841,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._last_status_text = text
         if self._status_label is not None:
             self._status_label.setText(text)
+        self._sync_preview_button_state()
 
     def _valid_configured_url(self) -> bool:
         return self._url_is_usable(self._normalise_base_url(self._pref_str(self.PREF_URL)))

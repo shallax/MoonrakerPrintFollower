@@ -7,14 +7,11 @@ Item
     id: base
     objectName: "moonrakerPreviewActionPanelControls"
 
-    // Cura reparents this component into ActionPanelWidget's official
-    // additionalComponentsRow. That row is anchored immediately to the left of
-    // Slice/Save/Upload and also contains controls from other plugins, so Cura
-    // handles spacing and prevents collisions for us.
     property bool previewStageActive: false
     property bool followingPaused: false
     property bool followingEnabled: false
     property bool hasToolpath: false
+    property string statusText: ""
 
     signal loadClicked()
     signal pauseClicked()
@@ -28,6 +25,17 @@ Item
         id: controls
         height: UM.Theme.getSize("action_button").height
         spacing: UM.Theme.getSize("default_margin").width
+
+        UM.Label
+        {
+            id: followerStatus
+            visible: base.statusText.length > 0
+            height: parent.height
+            verticalAlignment: Text.AlignVCenter
+            text: base.statusText
+            elide: Text.ElideRight
+            width: visible ? Math.min(180 * screenScaleFactor, implicitWidth) : 0
+        }
 
         Cura.SecondaryButton
         {
