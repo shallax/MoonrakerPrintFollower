@@ -10,7 +10,9 @@ from MoonrakerProtocol import (
     download_endpoint,
     live_position_in_gcode_space,
     metadata_endpoint,
+    objects_list_endpoint,
     parse_file_identity,
+    server_info_endpoint,
     status_endpoint,
 )
 
@@ -22,6 +24,10 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("gcode_move", url)
         self.assertIn("virtual_sdcard", url)
         self.assertIn("motion_report", url)
+
+    def test_capability_probe_endpoints(self):
+        self.assertEqual(server_info_endpoint("http://printer:7125/"), "http://printer:7125/server/info")
+        self.assertEqual(objects_list_endpoint("http://printer:7125/"), "http://printer:7125/printer/objects/list")
 
     def test_filename_paths_are_url_encoded_but_keep_directories(self):
         metadata = metadata_endpoint("http://p", "folder/My part #1.gcode")

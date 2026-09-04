@@ -9,6 +9,7 @@ import re
 import struct
 import sys
 import tempfile
+import threading
 import time
 from array import array
 from bisect import bisect_right
@@ -22,6 +23,10 @@ except ImportError:  # test/import convenience
 
 
 _LAYER_COMMENT = re.compile(rb"^\s*;LAYER:\s*-?\d+\s*$", re.IGNORECASE)
+_CURA_LAYER_VALUE = re.compile(rb"^\s*;LAYER:\s*(-?\d+)\s*$", re.IGNORECASE)
+_ORCA_LAYER = re.compile(rb"^\s*;\s*layer\s+num/total_layer_count:\s*\d+\s*/\s*\d+\s*$", re.IGNORECASE)
+_ORCA_LAYER_VALUE = re.compile(rb"^\s*;\s*layer\s+num/total_layer_count:\s*(\d+)\s*/\s*\d+\s*$", re.IGNORECASE)
+_PRUSA_LAYER_CHANGE = re.compile(rb"^\s*;LAYER_CHANGE\s*$", re.IGNORECASE)
 _STATS_MARKER = re.compile(
     rb"^\s*SET_PRINT_STATS_INFO\b.*\bCURRENT_LAYER\s*=\s*(-?\d+)",
     re.IGNORECASE,
@@ -31,8 +36,9 @@ _ELAPSED = re.compile(rb"^\s*;TIME_ELAPSED:", re.IGNORECASE)
 _COMMAND = re.compile(rb"^\s*(?:N\d+\s*)?([GMT]\d+)(?!\d)", re.IGNORECASE)
 _AXIS = re.compile(rb"([XYZ])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
 
-_CACHE_MAGIC = b"MPFI103\0"
-_CACHE_VERSION = 1
+_CACHE_MAGIC = b"MPFI110\0"
+_CACHE_VERSION = 2
+_LARGE_FILE_COMPACT_THRESHOLD = 128 * 1024 * 1024
 
 
 @dataclass
@@ -43,7 +49,12 @@ class LayerMotionIndex:
     motion_y: List[array] = field(default_factory=list)
     motion_z: List[array] = field(default_factory=list)
     layer_start_positions: List[Tuple[float, float, float]] = field(default_factory=list)
+    layer_start_absolute: List[bool] = field(default_factory=list)
+    layer_start_units: List[float] = field(default_factory=list)
     current_layer_map: Dict[int, int] = field(default_factory=dict)
+    compact: bool = False
+    hydrated_layers: set[int] = field(default_factory=set, repr=False)
+    cache_lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def __bool__(self) -> bool:
         return bool(self.ranges)
@@ -163,8 +174,12 @@ def _build_pass(
     marker: re.Pattern[bytes],
     *,
     collect_stats: bool,
+    collect_motions: bool = True,
     cancel_event=None,
-) -> Tuple[List[Tuple[int, int]], List[array], List[array], List[array], List[array], List[Tuple[float, float, float]], List[int]]:
+) -> Tuple[
+    List[Tuple[int, int]], List[array], List[array], List[array], List[array],
+    List[Tuple[float, float, float]], List[bool], List[float], List[int],
+]:
     blocks: List[dict] = []
     current: Optional[dict] = None
     stats_values: List[int] = []
@@ -176,7 +191,7 @@ def _build_pass(
     handle.seek(0)
     while True:
         if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
-            return [], [], [], [], [], [], []
+            return [], [], [], [], [], [], [], [], []
         offset = handle.tell()
         line = handle.readline()
         if not line:
@@ -204,6 +219,8 @@ def _build_pass(
                 "y": array("f"),
                 "z": array("f"),
                 "start_position": (x, y, z),
+                "start_absolute": absolute_xyz,
+                "start_units": units_scale,
             }
             blocks.append(current)
         elif current is not None and current["end"] is None and _ELAPSED.search(stripped):
@@ -242,7 +259,7 @@ def _build_pass(
             if "Z" in axes:
                 nz = axes["Z"] if absolute_xyz else z + axes["Z"]
             x, y, z = nx, ny, nz
-            if current is not None and current["end"] is None:
+            if collect_motions and current is not None and current["end"] is None:
                 current["motions"].append(offset)
                 current["x"].append(x)
                 current["y"].append(y)
@@ -251,7 +268,7 @@ def _build_pass(
         line_number += 1
 
     if cancel_event is not None and cancel_event.is_set():
-        return [], [], [], [], [], [], []
+        return [], [], [], [], [], [], [], [], []
 
     file_end = handle.tell()
     if current is not None and current["end"] is None:
@@ -263,6 +280,8 @@ def _build_pass(
     motion_y: List[array] = []
     motion_z: List[array] = []
     starts: List[Tuple[float, float, float]] = []
+    start_absolute: List[bool] = []
+    start_units: List[float] = []
     for block in blocks:
         start = int(block["start"])
         end = int(block["end"] if block["end"] is not None else file_end)
@@ -272,23 +291,71 @@ def _build_pass(
         motion_y.append(block["y"])
         motion_z.append(block["z"])
         starts.append(tuple(float(v) for v in block["start_position"]))
-    return ranges, motions, motion_x, motion_y, motion_z, starts, stats_values
+        start_absolute.append(bool(block["start_absolute"]))
+        start_units.append(float(block["start_units"]))
+    return ranges, motions, motion_x, motion_y, motion_z, starts, start_absolute, start_units, stats_values
 
 
-def build_index_from_file(path: str, cancel_event=None) -> LayerMotionIndex:
+def _collect_marker_values(handle: BinaryIO, capture: Optional[re.Pattern[bytes]], cancel_event=None) -> List[int]:
+    if capture is None:
+        return []
+    values: List[int] = []
+    handle.seek(0)
+    line_number = 0
+    while True:
+        if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
+            return []
+        line = handle.readline()
+        if not line:
+            break
+        match = capture.search(line.rstrip(b"\r\n"))
+        if match is not None:
+            try:
+                values.append(int(match.group(1)))
+            except (TypeError, ValueError):
+                pass
+        line_number += 1
+    return values
+
+
+def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] = None) -> LayerMotionIndex:
+    if compact is None:
+        try:
+            compact = os.path.getsize(path) >= _LARGE_FILE_COMPACT_THRESHOLD
+        except OSError:
+            compact = False
+
+    markers = (
+        (_LAYER_COMMENT, _CURA_LAYER_VALUE),
+        (_ORCA_LAYER, _ORCA_LAYER_VALUE),
+        (_PRUSA_LAYER_CHANGE, None),
+        (_STATS_MARKER, _STATS_MARKER),
+    )
+    ranges = motions = xs = ys = zs = starts = start_absolute = start_units = stats_values = None
+    marker_values: List[int] = []
     with open(path, "rb") as handle:
-        ranges, motions, xs, ys, zs, starts, stats_values = _build_pass(
-            handle, _LAYER_COMMENT, collect_stats=True, cancel_event=cancel_event
-        )
-        if not ranges and not (cancel_event is not None and cancel_event.is_set()):
-            ranges, motions, xs, ys, zs, starts, fallback_stats = _build_pass(
-                handle, _STATS_MARKER, collect_stats=True, cancel_event=cancel_event
+        for marker, capture in markers:
+            result = _build_pass(
+                handle, marker, collect_stats=True, collect_motions=not compact, cancel_event=cancel_event
             )
-            if fallback_stats:
-                stats_values = fallback_stats
+            ranges, motions, xs, ys, zs, starts, start_absolute, start_units, stats_values = result
+            if ranges:
+                marker_values = _collect_marker_values(handle, capture, cancel_event)
+                break
+            if cancel_event is not None and cancel_event.is_set():
+                break
 
     if cancel_event is not None and cancel_event.is_set():
         return LayerMotionIndex()
+    ranges = ranges or []
+    motions = motions or []
+    xs = xs or []
+    ys = ys or []
+    zs = zs or []
+    starts = starts or []
+    start_absolute = start_absolute or []
+    start_units = start_units or []
+    stats_values = stats_values or []
 
     layer_map: Dict[int, int] = {}
     if ranges and len(stats_values) == len(ranges):
@@ -302,7 +369,17 @@ def build_index_from_file(path: str, cancel_event=None) -> LayerMotionIndex:
             base = stats_values[0]
             for index in range(len(ranges)):
                 layer_map[base + index] = index
+    elif ranges and len(marker_values) == len(ranges):
+        # Cura and Orca numeric layer markers provide a useful mapping even when
+        # SET_PRINT_STATS_INFO is absent. The exact values are preserved instead
+        # of assuming zero/one-based numbering.
+        for index, value in enumerate(marker_values):
+            if value in layer_map:
+                layer_map = {}
+                break
+            layer_map[value] = index
 
+    hydrated = set(range(len(ranges))) if not compact else set()
     return LayerMotionIndex(
         ranges=ranges,
         motion_offsets=motions,
@@ -310,8 +387,74 @@ def build_index_from_file(path: str, cancel_event=None) -> LayerMotionIndex:
         motion_y=ys,
         motion_z=zs,
         layer_start_positions=starts,
+        layer_start_absolute=start_absolute,
+        layer_start_units=start_units,
         current_layer_map=layer_map,
+        compact=bool(compact),
+        hydrated_layers=hydrated,
     )
+
+
+def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int) -> bool:
+    """Populate motion data for one layer of a compact large-file index.
+
+    Boundary indexing keeps RAM bounded for huge files. Motion commands are then
+    loaded only for layers actually viewed during the live print. Byte-position
+    following remains available while hydration is pending.
+    """
+    if not index.compact or layer in index.hydrated_layers:
+        return True
+    if layer < 0 or layer >= len(index.ranges):
+        return False
+    start, end = index.ranges[layer]
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(start)
+            x, y, z = index.layer_start_positions[layer] if layer < len(index.layer_start_positions) else (0.0, 0.0, 0.0)
+            absolute_xyz = index.layer_start_absolute[layer] if layer < len(index.layer_start_absolute) else True
+            units_scale = index.layer_start_units[layer] if layer < len(index.layer_start_units) else 1.0
+            offsets = array("Q")
+            xs = array("f")
+            ys = array("f")
+            zs = array("f")
+            while handle.tell() < end:
+                offset = handle.tell()
+                line = handle.readline()
+                if not line:
+                    break
+                stripped = line.rstrip(b"\r\n")
+                code = stripped.split(b";", 1)[0]
+                command_match = _COMMAND.search(code)
+                command = command_match.group(1).upper() if command_match else b""
+                axes = _parse_axes(code)
+                if units_scale != 1.0 and axes:
+                    axes = {axis: value * units_scale for axis, value in axes.items()}
+                if command == b"G20":
+                    units_scale = 25.4
+                elif command == b"G21":
+                    units_scale = 1.0
+                elif command == b"G90":
+                    absolute_xyz = True
+                elif command == b"G91":
+                    absolute_xyz = False
+                elif command == b"G92":
+                    x = axes.get("X", x); y = axes.get("Y", y); z = axes.get("Z", z)
+                elif _MOTION.search(stripped):
+                    if "X" in axes: x = axes["X"] if absolute_xyz else x + axes["X"]
+                    if "Y" in axes: y = axes["Y"] if absolute_xyz else y + axes["Y"]
+                    if "Z" in axes: z = axes["Z"] if absolute_xyz else z + axes["Z"]
+                    offsets.append(offset); xs.append(x); ys.append(y); zs.append(z)
+        with index.cache_lock:
+            while len(index.motion_offsets) < len(index.ranges):
+                index.motion_offsets.append(array("Q")); index.motion_x.append(array("f")); index.motion_y.append(array("f")); index.motion_z.append(array("f"))
+            index.motion_offsets[layer] = offsets
+            index.motion_x[layer] = xs
+            index.motion_y[layer] = ys
+            index.motion_z[layer] = zs
+            index.hydrated_layers.add(layer)
+        return True
+    except OSError:
+        return False
 
 
 def build_index_from_bytes(data: bytes, cancel_event=None) -> LayerMotionIndex:
@@ -319,7 +462,7 @@ def build_index_from_bytes(data: bytes, cancel_event=None) -> LayerMotionIndex:
         path = handle.name
         handle.write(data)
     try:
-        return build_index_from_file(path, cancel_event)
+        return build_index_from_file(path, cancel_event, compact=False)
     finally:
         try:
             os.remove(path)
@@ -380,9 +523,15 @@ class PersistentIndexCache:
                     return None
                 ranges = [(int(a), int(b)) for a, b in header.get("ranges", [])]
                 starts = [tuple(float(v) for v in xyz[:3]) for xyz in header.get("starts", [])]
+                start_absolute = [bool(v) for v in header.get("start_absolute", [True] * len(ranges))]
+                start_units = [float(v) for v in header.get("start_units", [1.0] * len(ranges))]
                 layer_map = {int(k): int(v) for k, v in (header.get("layer_map") or {}).items()}
+                compact = bool(header.get("compact", False))
                 counts = [int(v) for v in header.get("counts", [])]
-                if len(ranges) != len(counts) or len(starts) != len(ranges):
+                if not (
+                    len(ranges) == len(counts) == len(starts)
+                    == len(start_absolute) == len(start_units)
+                ):
                     return None
 
                 offsets: List[array] = []
@@ -410,55 +559,79 @@ class PersistentIndexCache:
                 os.utime(path, None)
             except OSError:
                 pass
-            return LayerMotionIndex(ranges, offsets, xs, ys, zs, starts, layer_map)
+            hydrated_raw = header.get("hydrated")
+            if isinstance(hydrated_raw, list):
+                hydrated = {int(i) for i in hydrated_raw if 0 <= int(i) < len(ranges)}
+            else:
+                hydrated = {i for i, values in enumerate(offsets) if len(values) > 0}
+            return LayerMotionIndex(
+                ranges=ranges,
+                motion_offsets=offsets,
+                motion_x=xs,
+                motion_y=ys,
+                motion_z=zs,
+                layer_start_positions=starts,
+                layer_start_absolute=start_absolute,
+                layer_start_units=start_units,
+                current_layer_map=layer_map,
+                compact=compact,
+                hydrated_layers=hydrated,
+            )
         except (OSError, ValueError, json.JSONDecodeError, EOFError, struct.error):
             return None
 
     def save(self, identity: Optional[RemoteFileIdentity], index: LayerMotionIndex) -> None:
         if identity is None or not index:
             return
-        layer_count = len(index.ranges)
-        if not (
-            len(index.motion_offsets) == layer_count
-            and len(index.motion_x) == layer_count
-            and len(index.motion_y) == layer_count
-            and len(index.motion_z) == layer_count
-            and len(index.layer_start_positions) == layer_count
-        ):
-            return
-        for i in range(layer_count):
-            count = len(index.motion_offsets[i])
-            if not (len(index.motion_x[i]) == len(index.motion_y[i]) == len(index.motion_z[i]) == count):
+        with index.cache_lock:
+            layer_count = len(index.ranges)
+            if not (
+                len(index.motion_offsets) == layer_count
+                and len(index.motion_x) == layer_count
+                and len(index.motion_y) == layer_count
+                and len(index.motion_z) == layer_count
+                and len(index.layer_start_positions) == layer_count
+                and len(index.layer_start_absolute) == layer_count
+                and len(index.layer_start_units) == layer_count
+            ):
                 return
-        path = self._path(identity)
-        temp_path = f"{path}.tmp-{os.getpid()}-{int(time.time() * 1000)}"
-        header = {
-            "version": _CACHE_VERSION,
-            "identity": identity.stable_key(),
-            "byteorder": sys.byteorder,
-            "ranges": index.ranges,
-            "starts": index.layer_start_positions,
-            "layer_map": {str(k): int(v) for k, v in index.current_layer_map.items()},
-            "counts": [len(v) for v in index.motion_offsets],
-        }
-        raw_header = json.dumps(header, separators=(",", ":")).encode("utf-8")
-        try:
-            with gzip.open(temp_path, "wb", compresslevel=3) as handle:
-                handle.write(_CACHE_MAGIC)
-                handle.write(struct.pack("<I", len(raw_header)))
-                handle.write(raw_header)
-                for i, offsets in enumerate(index.motion_offsets):
-                    handle.write(offsets.tobytes())
-                    handle.write(index.motion_x[i].tobytes())
-                    handle.write(index.motion_y[i].tobytes())
-                    handle.write(index.motion_z[i].tobytes())
-            os.replace(temp_path, path)
-            self.prune()
-        except OSError:
+            for i in range(layer_count):
+                count = len(index.motion_offsets[i])
+                if not (len(index.motion_x[i]) == len(index.motion_y[i]) == len(index.motion_z[i]) == count):
+                    return
+            path = self._path(identity)
+            temp_path = f"{path}.tmp-{os.getpid()}-{int(time.time() * 1000)}"
+            header = {
+                "version": _CACHE_VERSION,
+                "identity": identity.stable_key(),
+                "byteorder": sys.byteorder,
+                "ranges": index.ranges,
+                "starts": index.layer_start_positions,
+                "start_absolute": index.layer_start_absolute,
+                "start_units": index.layer_start_units,
+                "layer_map": {str(k): int(v) for k, v in index.current_layer_map.items()},
+                "compact": bool(index.compact),
+                "hydrated": sorted(index.hydrated_layers),
+                "counts": [len(v) for v in index.motion_offsets],
+            }
+            raw_header = json.dumps(header, separators=(",", ":")).encode("utf-8")
             try:
-                os.remove(temp_path)
+                with gzip.open(temp_path, "wb", compresslevel=3) as handle:
+                    handle.write(_CACHE_MAGIC)
+                    handle.write(struct.pack("<I", len(raw_header)))
+                    handle.write(raw_header)
+                    for i, offsets in enumerate(index.motion_offsets):
+                        handle.write(offsets.tobytes())
+                        handle.write(index.motion_x[i].tobytes())
+                        handle.write(index.motion_y[i].tobytes())
+                        handle.write(index.motion_z[i].tobytes())
+                os.replace(temp_path, path)
+                self.prune()
             except OSError:
-                pass
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
 
     def prune(self) -> None:
         try:

@@ -24,6 +24,14 @@ def download_endpoint(base_url: str, filename: str) -> str:
     return f"{base_url}/server/files/gcodes/{quote(filename, safe='/')}"
 
 
+def server_info_endpoint(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}/server/info"
+
+
+def objects_list_endpoint(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}/printer/objects/list"
+
+
 def parse_file_identity(filename: str, payload: Dict[str, Any], fallback_size: int = 0) -> RemoteFileIdentity:
     result = payload.get("result") if isinstance(payload, dict) else None
     data = result if isinstance(result, dict) else payload
