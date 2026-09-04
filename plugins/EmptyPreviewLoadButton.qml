@@ -32,7 +32,6 @@ Item
         property real horizontalPadding: UM.Theme.getSize("thick_margin").width
         property real verticalPadding: UM.Theme.getSize("thick_margin").height
         property real rowSpacing: UM.Theme.getSize("thin_margin").height
-        property real loadButtonWidth: 120 * screenScaleFactor
         property real contentWidth: 260 * screenScaleFactor
 
         width: contentWidth + 2 * horizontalPadding
@@ -73,7 +72,7 @@ Item
             Cura.SecondaryButton
             {
                 id: loadButton
-                width: followerPanel.loadButtonWidth
+                width: parent.width
                 height: UM.Theme.getSize("action_button").height
                 text: "Load print"
                 tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."

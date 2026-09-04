@@ -25,9 +25,7 @@ Item
     property real verticalPadding: UM.Theme.getSize("thick_margin").height
     property real rowSpacing: UM.Theme.getSize("thin_margin").height
     property real buttonSpacing: UM.Theme.getSize("default_margin").width
-    property real followButtonWidth: 92 * screenScaleFactor
-    property real loadButtonWidth: 120 * screenScaleFactor
-    property real contentWidth: Math.max(260 * screenScaleFactor, followButtonWidth + buttonSpacing + loadButtonWidth)
+    property real contentWidth: 260 * screenScaleFactor
 
     signal loadClicked()
     signal pauseClicked()
@@ -96,7 +94,7 @@ Item
                 {
                     id: followButton
                     visible: base.hasToolpath && (base.followingEnabled || base.followingPaused)
-                    width: base.followButtonWidth
+                    width: (buttons.width - base.buttonSpacing) / 2
                     height: UM.Theme.getSize("action_button").height
                     text: base.followingPaused ? "Resume" : "Pause"
                     tooltip: base.followingPaused
@@ -110,7 +108,7 @@ Item
                 Cura.SecondaryButton
                 {
                     id: loadButton
-                    width: base.loadButtonWidth
+                    width: followButton.visible ? (buttons.width - base.buttonSpacing) / 2 : buttons.width
                     height: UM.Theme.getSize("action_button").height
                     text: "Load print"
                     tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."

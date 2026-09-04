@@ -84,13 +84,14 @@ class SourceContractTests(unittest.TestCase):
         package = json.loads((ROOT / "package.json").read_text())
         plugin = json.loads((ROOT / "plugins" / "plugin.json").read_text())
         self.assertEqual(package["package_version"], "2.0.0")
-        self.assertEqual(package["sdk_version"], "8.12.0")
+        self.assertEqual(package["sdk_version"], "8.0.0")
+        self.assertEqual(package["sdk_version_semver"], "8.0.0")
         self.assertEqual(package["website"], "https://github.com/shallax/MoonrakerPrintFollower")
         self.assertEqual(package["author"]["display_name"], "shallax")
         self.assertEqual(package["author"]["email"], "moonrakerprintfollower@maintain.contact")
         self.assertEqual(plugin["version"], "2.0.0")
         self.assertEqual(plugin["author"], "shallax")
-        self.assertEqual(plugin["supported_sdk_versions"], ["8.12.0"])
+        self.assertEqual(plugin["supported_sdk_versions"], [f"8.{minor}.0" for minor in range(13)])
 
     def test_2_0_configuration_is_a_native_qml_machine_action(self):
         self.assertIn('class MoonrakerFollowerMachineAction(MachineAction)', MACHINE_ACTION)
@@ -153,8 +154,8 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn('return "Following"', PLUGIN)
         self.assertIn('return "Paused"', PLUGIN)
         self.assertIn('property real contentWidth:', QML_ACTION)
-        self.assertIn('property real followButtonWidth:', QML_ACTION)
-        self.assertIn('property real loadButtonWidth:', QML_ACTION)
+        self.assertNotIn('followButtonWidth', QML_ACTION)
+        self.assertNotIn('loadButtonWidth', QML_ACTION)
         self.assertIn('Column\n        {\n            id: contentColumn', QML_ACTION)
         self.assertIn('id: followerTitle', QML_ACTION)
         self.assertIn('id: followerStatus', QML_ACTION)
@@ -174,8 +175,13 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn('controls.setProperty("statusIconName", status_icon_name)', PLUGIN)
 
     def test_1_1_preview_card_has_title_headroom(self):
-        self.assertIn("Math.max(260 * screenScaleFactor", QML_ACTION)
+        self.assertIn("property real contentWidth: 260 * screenScaleFactor", QML_ACTION)
         self.assertIn("property real contentWidth: 260 * screenScaleFactor", QML_EMPTY)
+
+    def test_2_0_preview_action_buttons_fill_card_evenly(self):
+        self.assertIn('width: (buttons.width - base.buttonSpacing) / 2', QML_ACTION)
+        self.assertIn('width: followButton.visible ? (buttons.width - base.buttonSpacing) / 2 : buttons.width', QML_ACTION)
+        self.assertIn('width: parent.width', QML_EMPTY)
 
     def test_1_1_preview_card_has_explicit_left_gutter(self):
         self.assertIn('property real externalGap: UM.Theme.getSize("default_margin").width', QML_ACTION)
@@ -197,7 +203,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("Rectangle\n    {\n        id: followerPanel", QML_ACTION)
 
     def test_1_1_startup_does_not_force_lazy_machine_manager(self):
-        # Cura 5.13 creates MachineManager lazily. Extension construction happens
+        # Cura 5.x creates MachineManager lazily. Extension construction happens
         # before Cura initializes its i18n catalog, so getMachineManager() from a
         # plugin constructor can schedule active-machine restoration too early and
         # crash Cura in setGlobalContainerStack(). Printer identity must therefore

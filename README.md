@@ -6,7 +6,17 @@ Moonraker Print Follower keeps Cura Preview synchronised with a print running th
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
 - **Release:** 2.0.0
-- **Target:** Cura 5.13 / SDK 8.12
+- **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
+
+## Cura / SDK compatibility
+
+Version 2.0.0 targets the complete Cura 5.x SDK 8 line from **Cura 5.0 / SDK 8.0** through **Cura 5.13 / SDK 8.12**. The Cura package declares SDK 8.0 as its minimum package SDK, while `plugin.json` explicitly records SDK 8.0 through 8.12 support. Cura SDK 8 minor versions are backwards-compatible with an SDK 8.0 package floor.
+
+The implementation deliberately stays on APIs already present in Cura 5.0 where practical: the Machine Action framework, `globalContainerStackChanged`, public `readLocalFile()`, additional `saveButton` components, SimulationView layer/path controls and Cura's native `NozzleNode` interface. Optional Qt conveniences such as request transfer timeouts remain capability-checked before use. The settings QML avoids Machine Action properties and UM QML controls introduced after SDK 8.0.
+
+Cura 4.x / SDK 7.x is not supported: Cura 5.0 is the Qt 6 / PyQt6 boundary and this plugin intentionally targets that runtime.
+
+The automated suite verifies the SDK floor and guards against accidental dependencies on selected post-8.0 APIs. Actual rendering and interaction should still be smoke-tested on representative Cura releases when publishing a compatibility claim.
 
 ## What changed in 2.0.0
 

@@ -9,7 +9,7 @@ def active_machine_identity(application) -> Tuple[str, str]:
         stack = application.getGlobalContainerStack()
     except Exception:
         pass
-    # Do not fall back to the lazy MachineManager getter here. Cura 5.13
+    # Do not fall back to the lazy MachineManager getter here. Cura 5.x
     # creates MachineManager lazily, and Extension constructors run while
     # startSplashWindowPhase() is still loading plugins -- before Cura creates
     # its i18n catalog. Forcing MachineManager into existence at that point

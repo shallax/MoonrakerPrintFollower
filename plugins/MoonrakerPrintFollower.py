@@ -279,7 +279,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._bind_scene_structure_signal()
 
         # Suspend Preview writes while CuraEngine is replacing layer data.
-        # BackendState.Done is the authoritative completion point in Cura 5.13.
+        # BackendState.Done is the authoritative slicing-completion point across Cura 5.x.
         try:
             backend = self._application.getBackend()
         except Exception:
@@ -607,7 +607,7 @@ class MoonrakerPrintFollower(QObject, Extension):
     def _update_manual_view_watch_mode(self) -> None:
         """Keep a lightweight watcher running as a backstop for Cura signals.
 
-        Cura 5.13 exposes currentLayerNumChanged/currentPathNumChanged and those
+        Cura 5.x exposes currentLayerNumChanged/currentPathNumChanged and those
         signals provide the immediate manual-override response.  The 75 ms
         watcher deliberately remains enabled as a fallback in case a view is
         rebuilt or a signal connection is temporarily unavailable.  Plugin
@@ -989,7 +989,7 @@ class MoonrakerPrintFollower(QObject, Extension):
     def _remove_additional_component_reference(self, component) -> None:
         """Best-effort cleanup for Cura's add-only additional-component API.
 
-        Cura 5.13 exposes ``addAdditionalComponent`` but no corresponding public
+        Cura 5.x exposes ``addAdditionalComponent`` but no corresponding public
         remove call. On normal main-window rebuilds we reuse the same component,
         so this is only needed when the component is actually destroyed or the
         plugin shuts down. The private-map fallback is capability-checked and
