@@ -32,6 +32,7 @@ class MoonrakerClient(QObject):
         self._enabled = False
         self._connected = False
         self._retry_index = 0
+        self._generation = 0
 
         self._network = QNetworkAccessManager(self)
         self._http_reply: Optional[QNetworkReply] = None
@@ -77,6 +78,7 @@ class MoonrakerClient(QObject):
     def start(self) -> None:
         if self._enabled:
             return
+        self._generation += 1
         self._enabled = True
         self._retry_index = 0
         self._status.clear()
@@ -93,6 +95,10 @@ class MoonrakerClient(QObject):
         self.force_refresh()
 
     def stop(self) -> None:
+        # Invalidate any completion already queued for the previous session.
+        # This matters when Cura switches printers: a late HTTP completion from
+        # the old target must never publish status into the new printer session.
+        self._generation += 1
         self._enabled = False
         self._poll_timer.stop()
         self._retry_index = 0
@@ -127,10 +133,11 @@ class MoonrakerClient(QObject):
 
         reply = self._network.get(request)
         self._http_reply = reply
-        reply.finished.connect(lambda r=reply: self._handle_http_status(r))
+        generation = self._generation
+        reply.finished.connect(lambda r=reply, g=generation: self._handle_http_status(r, g))
 
-    def _handle_http_status(self, reply: QNetworkReply) -> None:
-        if reply is not self._http_reply:
+    def _handle_http_status(self, reply: QNetworkReply, generation: int) -> None:
+        if generation != self._generation or reply is not self._http_reply:
             try:
                 reply.deleteLater()
             except Exception:

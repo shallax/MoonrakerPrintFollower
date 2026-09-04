@@ -1,4 +1,5 @@
 from .MoonrakerPrintFollower import MoonrakerPrintFollower
+from .MoonrakerFollowerMachineAction import MoonrakerFollowerMachineAction
 
 
 def getMetaData():
@@ -6,4 +7,8 @@ def getMetaData():
 
 
 def register(app):
-    return {"extension": MoonrakerPrintFollower(app)}
+    follower = MoonrakerPrintFollower(app)
+    return {
+        "extension": follower,
+        "machine_action": MoonrakerFollowerMachineAction(app, follower),
+    }

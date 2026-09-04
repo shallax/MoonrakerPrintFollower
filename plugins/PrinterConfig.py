@@ -16,6 +16,7 @@ class PrinterConfig:
     z_fallback: bool = True
     z_tolerance: float = 0.04
     path_follow: bool = True
+    show_toolhead_indicator: bool = True
     follow_mode: str = "exact"
 
     @classmethod
@@ -38,7 +39,7 @@ class PrinterConfig:
         data["follow_mode"] = str(data.get("follow_mode") or defaults.follow_mode)
         for key in (
             "enabled", "moonraker_layer_is_one_based", "auto_preview",
-            "z_fallback", "path_follow",
+            "z_fallback", "path_follow", "show_toolhead_indicator",
         ):
             value = data[key]
             if not isinstance(value, bool):

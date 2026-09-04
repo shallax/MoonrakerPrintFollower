@@ -8,12 +8,14 @@ Item
     objectName: "moonrakerEmptyPreviewLoadControl"
     anchors.fill: parent
     z: 10000
-    visible: previewStageActive && !CuraApplication.platformActivity
+    visible: previewStageActive && configuredForFollowing && !CuraApplication.platformActivity
 
     property bool previewStageActive: false
     property bool followingPaused: false
     property bool followingEnabled: false
+    property bool configuredForFollowing: false
     property bool hasToolpath: false
+    property string activePrinterName: ""
     property string statusText: ""
     property string statusIconName: "Information"
 
@@ -63,7 +65,7 @@ Item
             Cura.IconWithText
             {
                 width: parent.width
-                text: base.statusText
+                text: base.activePrinterName + (base.statusText.length > 0 ? " — " + base.statusText : "")
                 source: UM.Theme.getIcon(base.statusIconName)
                 font: UM.Theme.getFont("default")
             }

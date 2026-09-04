@@ -1,110 +1,139 @@
 # Moonraker Print Follower
 
-A Cura 5.13 extension that keeps Cura Preview synchronised with a print running through Klipper/Moonraker.
+Moonraker Print Follower keeps Cura Preview synchronised with a print running through Klipper/Moonraker.
 
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 1.1.0
+- **Release:** 2.0.0
 - **Target:** Cura 5.13 / SDK 8.12
 
-## 1.1.0
+## What changed in 2.0.0
 
-The 1.0.x line is frozen. 1.1.0 is the first architectural release and keeps the proven 1.0.3 follower/load behavior while moving connection, machine configuration and follower policy behind explicit components.
+Version 2.0.0 makes configuration fully printer-scoped in Cura.
 
-### Per-printer configuration
+There is no **Extensions → Moonraker Print Follower** menu. Runtime controls remain in Cura Preview, while configuration lives with the printer it belongs to:
 
-Moonraker settings are stored against Cura's active machine instead of globally. Each Cura printer can have its own:
+1. Open **Settings → Printer → Manage Printers**.
+2. Select the Cura printer you want to configure.
+3. Click **Configure Moonraker Follower**.
+4. Edit the settings in Cura's native Machine Action page.
+5. Click **Save**.
 
-- enable/disable state
-- Moonraker URL and optional API key
+The configuration UI is implemented as a Cura Machine Action QML page, so Cura owns the dialog and its modal lifecycle. It does not open a separate Qt Widgets settings window.
+
+## Per-printer settings
+
+Each Cura printer has its own follower configuration. Only Cura's **currently active printer** can own the live follower session; changing the active Cura printer tears down the old printer's polling/download/index work before the new printer can connect. Multiple printers are never followed concurrently.
+
+
+- enable or disable automatic following
+- Moonraker URL
+- optional API key
 - HTTP polling interval
-- layer-number fallback convention
 - follow mode
 - within-layer path following
-- automatic Preview switching
+- plugin-owned live printhead indicator
+- fallback layer-number convention
+- automatic switching to Preview
 - Z-height fallback and tolerance
 
-On first 1.1.0 launch the legacy 1.0.x global settings are migrated once to the currently active Cura printer. Switching Cura machines stops the old Moonraker session, clears print-specific state and reconnects using the newly active machine's configuration.
+A connection test is available on the **Connection** tab. The API key field is optional and is not populated with an example value.
 
-Startup is deliberately passive: the plugin never forces Cura's lazily-created `MachineManager` into existence while plugins are loading. If Cura has not established a global machine stack yet, per-printer migration and connection setup wait for `globalContainerStackChanged`. This avoids interfering with Cura's own active-machine restoration sequence.
+For documentation or testing, use a deliberately non-routable example such as `http://printer.example.invalid:7125`. Do not commit real printer addresses or credentials to the source tree.
 
-### Moonraker HTTP client
+## Follow modes
 
-`MoonrakerClient` polls Moonraker's object-query API for `print_stats`, `gcode_move`, `virtual_sdcard` and `motion_report`. HTTP is the only live-status transport in this release.
+- **Exact current layer** — follows the layer currently being printed.
+- **Last completed layer** — shows the previous completed layer.
+- **Look ahead one layer** — shows the layer after the current printer layer.
+- **Window around current layer (±2)** — shows a five-layer window around the live layer where Cura supports it.
 
-- normal polling uses the per-printer configured interval
-- failed requests back off automatically through 1s → 2s → 5s → 10s → 30s
-- a successful response immediately restores the configured polling interval
-- runtime capabilities are inferred from the objects Moonraker actually returns
-- the Preview UI shows only compact follower state; transport/debug detail stays out of the action bar
+Manual movement of either Cura layer handle or either within-layer path handle pauses following. **Resume** in the Preview card catches the view back up without stopping Moonraker polling.
 
-### Follow modes
+## Preview controls
 
-- **Exact current layer** — follows the currently printing layer and, when enabled, the within-layer toolpath position.
-- **Last completed layer** — displays the previous completed layer.
-- **Look ahead one layer** — displays the layer immediately after the current printer layer.
-- **Window around current layer (±2)** — sets Cura's lower/upper layer handles to show a five-layer window around the live layer where possible.
+The follower controls live in their own Cura-styled action-panel card in Preview. The card contains:
 
-Manual movement of either Cura layer handle or either within-layer path handle pauses following. **Resume** explicitly catches Preview back up without stopping Moonraker polling. Klipper pause/resume and Cura slicing suspension are represented as explicit follower states.
+- Cura's native nozzle icon and a bold **Moonraker Print Follower** title
+- a state icon plus **the active Cura printer name and live follower status**
+- **Pause/Resume** and **Load print** actions
 
-### Connection testing
+The panel uses a fixed layout so status changes do not resize it, and it reserves Cura's normal action-panel spacing from neighbouring plugin controls. If the currently active Cura printer is not enabled and configured with a usable Moonraker URL, the entire follower card is hidden because none of its runtime controls apply. A configured printer that is temporarily offline still shows the card with its disconnected state.
 
-**Test connection** checks `/server/info` and `/printer/objects/list`, reporting Moonraker/Klippy state, required print objects, and optional `motion_report`. Printer discovery is deliberately not attempted; each Cura printer uses the Moonraker URL configured for it.
+When exact within-layer following is active, the plugin can also draw a plugin-owned fallback printhead using **the same nozzle mesh and `layerview_nozzle` theme colour as Cura's native SimulationView nozzle**. The mesh is copied directly from Cura's current native NozzleNode where possible, with Cura's own `SimulationView/resources/nozzle.stl` as a fallback. It therefore remains available when Cura suppresses its normal nozzle during layer transitions without introducing a different marker design. The fallback can be enabled or disabled per printer on the **Following** tab.
 
-### Compact Preview controls
+## Moonraker transport
 
-The Preview controls are grouped in their own Cura-styled action-panel card, using the same theme background, border, radius and padding primitives as Cura's native Slice/Upload panel. This keeps Moonraker Print Follower visually separate from neighbouring `saveButton` extensions such as Post Processing.
+Live status uses HTTP polling only.
 
-- a native Cura **Nozzle** icon and bold **Moonraker Print Follower** title identify the card
-- compact status (`Following`, `Paused`, `Printer paused`, `Connecting…`) occupies its own row with a native state icon
-- status icons change with state (healthy/following, busy/connecting, disconnected/error, informational/paused)
-- buttons are **Pause/Resume** and **Load print** on a fixed-width bottom row, so status changes do not resize the card
-- an explicit Cura `default_margin` gutter separates the follower card from neighbouring `saveButton` extensions such as Post Processing
-- connection/protocol diagnostics remain in the configuration dialog instead of the bottom action bar
-- the empty-Preview overlay uses the same titled, fixed-width bordered-card treatment
+- the configured interval is used while the connection is healthy
+- failed requests back off through 1 s → 2 s → 5 s → 10 s → 30 s
+- the normal interval resumes immediately after a successful response
+- capabilities are inferred from the objects Moonraker actually exposes
 
-### Large G-code and persistent indexes
+There is no WebSocket transport and no automatic printer discovery.
 
-The 1.0.3 streaming/cancellable indexer remains. 1.1.0 adds compact indexing for very large G-code files (128 MiB and above by default):
+## Large G-code handling
 
-- the initial index stores layer byte ranges and layer-start positions without retaining every motion command
-- byte-position following works immediately from the compact index
-- motion/live-position data is hydrated lazily only for the layer being viewed
-- hydrated data can be persisted back into the bounded on-disk index cache
-- persistent indexes remain keyed and validated against Moonraker file identity metadata
+Large G-code files are streamed and indexed without loading the complete file into Python memory. Very large files use a compact layer index and hydrate detailed motion information only for layers that need it. Persistent indexes are validated against remote file identity before reuse.
 
-Layer markers are recognised for Cura (`;LAYER:n`), PrusaSlicer/SuperSlicer (`;LAYER_CHANGE`), OrcaSlicer (`; layer num/total_layer_count: ...`) and `SET_PRINT_STATS_INFO CURRENT_LAYER=...` as a fallback/self-describing mapping.
+Layer markers are recognised for Cura, PrusaSlicer, SuperSlicer and OrcaSlicer, with `SET_PRINT_STATS_INFO CURRENT_LAYER=...` available as a self-describing fallback.
 
-### Internal boundaries
+## Installation
+
+### Recommended: install the Cura package
+
+The release source archive contains a ready-to-install file named:
+
+`MoonrakerPrintFollower-v2.0.0.curapackage`
+
+To install it:
+
+1. Extract the source archive if you downloaded the source ZIP.
+2. Start Cura.
+3. Drag `MoonrakerPrintFollower-v2.0.0.curapackage` onto the Cura window.
+4. Accept the installation prompt.
+5. Quit Cura completely and start it again.
+6. Open **Settings → Printer → Manage Printers**.
+7. Select a printer and click **Configure Moonraker Follower**.
+
+When replacing another build with the same version number during development, uninstall the existing plugin and restart Cura before installing the replacement package so Cura cannot retain stale plugin files.
+
+### Manual installation from source
+
+If you specifically want to install the source tree rather than the bundled Cura package:
+
+1. Open **Help → Show Configuration Folder** in Cura.
+2. Open that configuration folder's `plugins` directory.
+3. Create a `MoonrakerPrintFollower` directory there if necessary.
+4. Copy the contents of the source archive's `plugins` directory into that `MoonrakerPrintFollower` directory.
+5. Restart Cura.
+
+The `.curapackage` route is recommended because it lets Cura perform the package installation itself.
+
+## Upgrade compatibility
+
+The 1.0.x and 1.1.x settings migration remains supported. Existing legacy global settings are migrated once to the active Cura printer after Cura has established its global machine stack. The plugin deliberately does not force Cura's lazy `MachineManager` into existence during plugin loading.
+
+## Internal structure
 
 High-risk logic is separated into focused modules:
 
-- `PrinterConfig.py` — per-Cura-machine persisted settings and 1.0.x migration
+- `PrinterConfig.py` — per-Cura-machine persisted settings and legacy migration
+- `MoonrakerFollowerMachineAction.py` — native Manage Printers configuration surface
+- `MoonrakerFollowerConfiguration.qml` — Cura-owned settings UI
 - `MoonrakerClient.py` — resilient HTTP polling, retry backoff and capability detection
 - `FollowController.py` — follower state machine and follow-mode decisions
-- `CuraAdapter.py` — Cura machine identity and Preview writes
+- `CuraAdapter.py` — Cura machine identity, Preview writes and toolpath-head position mapping
+- `ToolheadIndicator.py` — plugin-owned fallback renderer using Cura's native nozzle mesh
 - `GCodeIndex.py` — streaming/compact parsing, lazy layer hydration and persistent index cache
 - `MoonrakerProtocol.py` — endpoint construction and coordinate conversion
 - `DownloadStream.py` — bounded streaming G-code downloads
-- `Core.py` — shared operation/identity/manual-override primitives
+- `Core.py` — shared operation, identity and manual-override primitives
 
-## Preserved behavior from 1.0.3
+## Development and release checks
 
-- explicit **Load current print** with native confirmation; nothing auto-loads merely because Preview is empty
-- public Cura `readLocalFile()` load path
-- manual upper/lower layer and path changes immediately suspend following
-- generation guards prevent stale HTTP, download, index and lifecycle callbacks changing a later scene/job
-- remote print identity distinguishes repeated or overwritten prints with the same filename
-- streaming downloads avoid accumulating large G-code files in RAM
-- live-position refinement uses `motion_report.live_position` when plausible, with `virtual_sdcard.file_position` as the coarse authoritative position
+The source archive includes a standard-library `unittest` suite under `tests/`. It covers the established follower behaviour, single-active-printer ownership, per-printer settings, HTTP status handling, follow modes, startup safety, manual Preview override detection, multiple slicer layer markers, compact/lazy indexes, persistent-cache round trips and Cura integration contracts.
 
-## Install
-
-Drag `MoonrakerPrintFollower-v1.1.0.curapackage` onto Cura, accept the installation, and restart Cura. Configure it under **Extensions → Moonraker Print Follower → Configure…**.
-
-If upgrading from 1.0.3, 1.1.0 performs the one-time per-printer settings migration automatically.
-
-## Development checks
-
-The source archive includes a standard-library `unittest` suite under `tests/`. It covers the frozen 1.0.3 behavior plus per-printer settings, follower state transitions/modes, HTTP/probe endpoint construction, Cura/Prusa/SuperSlicer/Orca layer-marker parsing, compact/lazy indexes, persistent-cache round trips, manual override semantics, streaming loading and static integration contracts.
+Release auditing also checks that the source contains no hard-coded real printer names, real printer/network addresses, or literal sample API keys. Example network values must use reserved non-routable domains.

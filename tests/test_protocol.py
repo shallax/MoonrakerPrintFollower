@@ -19,19 +19,19 @@ from MoonrakerProtocol import (
 
 class ProtocolTests(unittest.TestCase):
     def test_status_query_requests_motion_report(self):
-        url = status_endpoint("http://printer:7125")
+        url = status_endpoint("http://printer.example.invalid:7125")
         self.assertIn("print_stats", url)
         self.assertIn("gcode_move", url)
         self.assertIn("virtual_sdcard", url)
         self.assertIn("motion_report", url)
 
     def test_capability_probe_endpoints(self):
-        self.assertEqual(server_info_endpoint("http://printer:7125/"), "http://printer:7125/server/info")
-        self.assertEqual(objects_list_endpoint("http://printer:7125/"), "http://printer:7125/printer/objects/list")
+        self.assertEqual(server_info_endpoint("http://printer.example.invalid:7125/"), "http://printer.example.invalid:7125/server/info")
+        self.assertEqual(objects_list_endpoint("http://printer.example.invalid:7125/"), "http://printer.example.invalid:7125/printer/objects/list")
 
     def test_filename_paths_are_url_encoded_but_keep_directories(self):
-        metadata = metadata_endpoint("http://p", "folder/My part #1.gcode")
-        download = download_endpoint("http://p", "folder/My part #1.gcode")
+        metadata = metadata_endpoint("http://printer.example.invalid", "folder/My part #1.gcode")
+        download = download_endpoint("http://printer.example.invalid", "folder/My part #1.gcode")
         self.assertIn("folder/My%20part%20%231.gcode", metadata)
         self.assertIn("folder/My%20part%20%231.gcode", download)
 

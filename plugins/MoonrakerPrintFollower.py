@@ -16,23 +16,9 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 
-from PyQt6.QtCore import QObject, QTimer, QUrl, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
-from PyQt6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDialog,
-    QDialogButtonBox,
-    QDoubleSpinBox,
-    QFormLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMessageBox,
-    QPushButton,
-    QVBoxLayout,
-)
+from PyQt6.QtWidgets import QMessageBox
 
 from UM.Backend.Backend import BackendState
 from UM.Extension import Extension
@@ -40,10 +26,11 @@ from UM.Logger import Logger
 from UM.Resources import Resources
 
 from .Core import OperationContext, OperationPhase, RemoteFileIdentity, preview_override_kind
-from .CuraAdapter import active_machine_identity, apply_preview_decision
+from .CuraAdapter import active_machine_identity, apply_preview_decision, preview_head_position
 from .FollowController import FollowController, FollowMode, FollowState, decide_layers
 from .MoonrakerClient import MoonrakerClient
 from .PrinterConfig import PrinterConfig, PrinterConfigStore
+from .ToolheadIndicator import ToolheadIndicatorNode
 from .DownloadStream import DownloadTarget
 from .GCodeIndex import (
     LayerMotionIndex,
@@ -55,9 +42,7 @@ from .MoonrakerProtocol import (
     download_endpoint,
     live_position_in_gcode_space,
     metadata_endpoint,
-    objects_list_endpoint,
     parse_file_identity,
-    server_info_endpoint,
     status_endpoint,
 )
 
@@ -144,18 +129,12 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._controller = application.getController()
         self._operation = OperationContext()
 
-        self.setMenuName("Moonraker Print Follower")
-        self.addMenuItem("Configure…", self._show_configuration_dialog)
-        self.addMenuItem("Toggle following", self._toggle_following)
-        self.addMenuItem("Poll now", self._poll_now)
-        self.addMenuItem("Load current print…", self._confirm_force_load_current_print)
-
         self._register_preferences()
         self._config_store = PrinterConfigStore(
             self._preferences, lambda: active_machine_identity(self._application)
         )
         self._config_store.migrate_legacy_to_current_machine()
-        self._active_machine_id = self._config_store.identity()[0]
+        self._active_machine_id, self._active_machine_name = self._config_store.identity()
         self._follow_controller = FollowController()
         self._follow_controller.set_enabled(self._config_store.get().enabled)
         self._last_capabilities: Dict[str, Any] = {}
@@ -167,11 +146,6 @@ class MoonrakerPrintFollower(QObject, Extension):
 
         self._network = QNetworkAccessManager()
         self._reply: Optional[QNetworkReply] = None
-        self._probe_network = QNetworkAccessManager()
-        self._probe_reply: Optional[QNetworkReply] = None
-        self._probe_base_url = ""
-        self._probe_api_key = ""
-        self._probe_server_info: Dict[str, Any] = {}
         self._reply_purpose: Optional[str] = None
 
         # A separate network manager is used for the one-time G-code download so
@@ -195,19 +169,6 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._persistent_index_cache = PersistentIndexCache(cache_dir)
         self._cache_save_threads: set[threading.Thread] = set()
 
-        self._dialog: Optional[QDialog] = None
-        self._enabled_checkbox: Optional[QCheckBox] = None
-        self._url_edit: Optional[QLineEdit] = None
-        self._api_key_edit: Optional[QLineEdit] = None
-        self._interval_edit: Optional[QLineEdit] = None
-        self._one_based_checkbox: Optional[QCheckBox] = None
-        self._auto_preview_checkbox: Optional[QCheckBox] = None
-        self._z_fallback_checkbox: Optional[QCheckBox] = None
-        self._z_tolerance_spin: Optional[QDoubleSpinBox] = None
-        self._path_follow_checkbox: Optional[QCheckBox] = None
-        self._follow_mode_combo: Optional[QComboBox] = None
-        self._machine_label: Optional[QLabel] = None
-        self._status_label: Optional[QLabel] = None
 
         self._last_status_text = "Not connected"
         self._last_remote_filename: Optional[str] = None
@@ -239,6 +200,8 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._preview_overlay = None
         self._action_panel_controls = None
         self._connected_simulation_view = None
+        self._toolhead_indicator = ToolheadIndicatorNode()
+        self._toolhead_path_valid = False
         self._scene = None
         self._scene_root = None
         self._lifecycle_generation = 0
@@ -380,164 +343,16 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._preferences.addPreference(self.PREF_Z_TOLERANCE, 0.04)
         self._preferences.addPreference(self.PREF_PATH_FOLLOW, True)
 
-    def _show_configuration_dialog(self) -> None:
-        config = self._config_store.get()
-        machine_id, machine_name = self._config_store.identity()
+    def current_printer_config(self) -> PrinterConfig:
+        """Return the active Cura printer's follower configuration."""
+        return self._config_store.get()
 
-        dialog = QDialog()
-        dialog.setWindowTitle("Moonraker Print Follower")
-        dialog.setMinimumWidth(610)
-        self._dialog = dialog
+    def current_printer_identity(self) -> Tuple[str, str]:
+        """Return the active Cura machine id and human-readable name."""
+        return self._config_store.identity()
 
-        root = QVBoxLayout(dialog)
-        intro = QLabel(
-            "Each Cura printer has its own Moonraker connection and follower settings. "
-            "Live status is polled directly from Moonraker and reconnects automatically after failures."
-        )
-        intro.setWordWrap(True)
-        root.addWidget(intro)
-
-        self._machine_label = QLabel(f"Cura printer: <b>{machine_name}</b>  <small>({machine_id})</small>")
-        self._machine_label.setWordWrap(True)
-        root.addWidget(self._machine_label)
-
-        connection_group = QGroupBox("Moonraker for this Cura printer")
-        connection_form = QFormLayout(connection_group)
-
-        self._enabled_checkbox = QCheckBox("Enable automatic following for this printer")
-        self._enabled_checkbox.setChecked(config.enabled)
-        connection_form.addRow(self._enabled_checkbox)
-
-        self._url_edit = QLineEdit(config.url)
-        self._url_edit.setPlaceholderText("http://voron.local:7125")
-        connection_form.addRow("URL", self._url_edit)
-
-        self._api_key_edit = QLineEdit(config.api_key)
-        self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._api_key_edit.setPlaceholderText("Optional; use when Moonraker or your proxy requires it")
-        connection_form.addRow("API key", self._api_key_edit)
-
-        self._interval_edit = QLineEdit(str(config.poll_interval_ms))
-        self._interval_edit.setPlaceholderText("Positive integer milliseconds, e.g. 750")
-        connection_form.addRow("Polling interval (ms)", self._interval_edit)
-        root.addWidget(connection_group)
-
-        behaviour_group = QGroupBox("Layer synchronisation")
-        behaviour_form = QFormLayout(behaviour_group)
-
-        self._follow_mode_combo = QComboBox()
-        self._follow_mode_combo.addItem("Exact current layer", FollowMode.EXACT.value)
-        self._follow_mode_combo.addItem("Last completed layer", FollowMode.COMPLETED.value)
-        self._follow_mode_combo.addItem("Look ahead one layer", FollowMode.LOOKAHEAD.value)
-        self._follow_mode_combo.addItem("Window around current layer (±2)", FollowMode.WINDOW.value)
-        mode_index = self._follow_mode_combo.findData(config.follow_mode)
-        self._follow_mode_combo.setCurrentIndex(max(0, mode_index))
-        behaviour_form.addRow("Follow mode", self._follow_mode_combo)
-
-        self._one_based_checkbox = QCheckBox(
-            "Fallback when G-code mapping is unavailable: Moonraker current_layer is 1-based"
-        )
-        self._one_based_checkbox.setChecked(config.moonraker_layer_is_one_based)
-        behaviour_form.addRow(self._one_based_checkbox)
-
-        self._path_follow_checkbox = QCheckBox(
-            "Follow progress through each layer (horizontal toolpath slider)"
-        )
-        self._path_follow_checkbox.setChecked(config.path_follow)
-        behaviour_form.addRow(self._path_follow_checkbox)
-
-        self._auto_preview_checkbox = QCheckBox("Switch to Preview once when a print starts")
-        self._auto_preview_checkbox.setChecked(config.auto_preview)
-        behaviour_form.addRow(self._auto_preview_checkbox)
-
-        self._z_fallback_checkbox = QCheckBox(
-            "Use Z-height fallback when Moonraker has no current_layer"
-        )
-        self._z_fallback_checkbox.setChecked(config.z_fallback)
-        behaviour_form.addRow(self._z_fallback_checkbox)
-
-        self._z_tolerance_spin = QDoubleSpinBox()
-        self._z_tolerance_spin.setRange(0.005, 0.250)
-        self._z_tolerance_spin.setDecimals(3)
-        self._z_tolerance_spin.setSingleStep(0.005)
-        self._z_tolerance_spin.setSuffix(" mm")
-        self._z_tolerance_spin.setValue(config.z_tolerance)
-        behaviour_form.addRow("Z match tolerance", self._z_tolerance_spin)
-        root.addWidget(behaviour_group)
-
-        status_row = QHBoxLayout()
-        status_row.addWidget(QLabel("Status:"))
-        self._status_label = QLabel(self._configuration_status_text())
-        self._status_label.setWordWrap(True)
-        status_row.addWidget(self._status_label, 1)
-        test_button = QPushButton("Test connection")
-        test_button.clicked.connect(self._test_connection_from_dialog)
-        status_row.addWidget(test_button)
-        root.addLayout(status_row)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._save_dialog_and_close)
-        buttons.rejected.connect(dialog.reject)
-        root.addWidget(buttons)
-
-        dialog.finished.connect(self._dialog_finished)
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
-
-    def _dialog_finished(self, _result: int) -> None:
-        self._dialog = None
-        self._enabled_checkbox = None
-        self._url_edit = None
-        self._api_key_edit = None
-        self._interval_edit = None
-        self._one_based_checkbox = None
-        self._auto_preview_checkbox = None
-        self._z_fallback_checkbox = None
-        self._z_tolerance_spin = None
-        self._path_follow_checkbox = None
-        self._follow_mode_combo = None
-        self._machine_label = None
-        self._status_label = None
-
-    def _save_dialog_and_close(self) -> None:
-        if self._dialog and self._save_dialog_settings():
-            self._dialog.accept()
-
-    def _save_dialog_settings(self) -> bool:
-        if not all((
-            self._enabled_checkbox, self._url_edit, self._api_key_edit, self._interval_edit,
-            self._one_based_checkbox, self._auto_preview_checkbox, self._z_fallback_checkbox,
-            self._z_tolerance_spin, self._path_follow_checkbox, self._follow_mode_combo,
-        )):
-            return False
-
-        interval_text = self._interval_edit.text().strip()
-        try:
-            interval = int(interval_text)
-        except (TypeError, ValueError):
-            self._set_status("Polling interval must be a positive whole number of milliseconds")
-            self._interval_edit.setFocus(); self._interval_edit.selectAll()
-            return False
-        if interval <= 0:
-            self._set_status("Polling interval must be greater than 0 ms")
-            self._interval_edit.setFocus(); self._interval_edit.selectAll()
-            return False
-
-        config = PrinterConfig(
-            enabled=self._enabled_checkbox.isChecked(),
-            url=self._normalise_base_url(self._url_edit.text()),
-            api_key=self._api_key_edit.text().strip(),
-            poll_interval_ms=interval,
-            moonraker_layer_is_one_based=self._one_based_checkbox.isChecked(),
-            auto_preview=self._auto_preview_checkbox.isChecked(),
-            z_fallback=self._z_fallback_checkbox.isChecked(),
-            z_tolerance=self._z_tolerance_spin.value(),
-            path_follow=self._path_follow_checkbox.isChecked(),
-            follow_mode=str(self._follow_mode_combo.currentData() or FollowMode.EXACT.value),
-        )
+    def apply_printer_config(self, config: PrinterConfig) -> None:
+        """Persist and immediately apply configuration from the Machine Action QML."""
         self._config_store.set(config)
         self._follow_controller.set_enabled(config.enabled)
         if not config.enabled:
@@ -546,22 +361,9 @@ class MoonrakerPrintFollower(QObject, Extension):
             self._clear_expected_preview_position()
         self._apply_timer_state()
         self._sync_preview_button_state()
-        return True
-
-    def _toggle_following(self) -> None:
-        enabled = not self._pref_bool(self.PREF_ENABLED)
-        self._config_store.update(enabled=enabled)
-        self._follow_controller.set_enabled(enabled)
-        self._apply_timer_state()
-        self._sync_preview_button_state()
-        if enabled:
-            self._set_status("Following enabled; connecting to Moonraker")
+        self._update_toolhead_indicator()
+        if config.enabled and self._url_is_usable(self._normalise_base_url(config.url)):
             self._client.force_refresh()
-        else:
-            self._following_paused = False
-            self._follow_controller.resume()
-            self._clear_expected_preview_position()
-            self._set_status("Following disabled for this Cura printer")
 
     def _toggle_following_pause(self) -> None:
         """Pause or resume Preview movement without changing saved preferences."""
@@ -573,6 +375,8 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._sync_preview_button_state()
 
         if self._following_paused:
+            self._toolhead_path_valid = False
+            self._hide_toolhead_indicator()
             self._set_status("Following paused; Moonraker connection remains active")
         else:
             view = self._simulation_view()
@@ -582,18 +386,6 @@ class MoonrakerPrintFollower(QObject, Extension):
                 self._clear_expected_preview_position()
             self._set_status("Following resumed; catching up to the current print")
             self._client.force_refresh()
-
-    def _configuration_status_text(self) -> str:
-        caps = self._last_capabilities or {}
-        state = self._follow_controller.state.value.replace("_", " ")
-        details = [f"follower {state}"]
-        if caps.get("current_layer"):
-            details.append("current_layer")
-        if caps.get("file_position"):
-            details.append("file_position")
-        if caps.get("motion_report"):
-            details.append("live position")
-        return f"{self._last_status_text}  [{'; '.join(details)}]"
 
     def _on_client_status(self, status) -> None:
         if not isinstance(status, dict):
@@ -607,44 +399,65 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     def _on_client_connection_changed(self, connected: bool, detail: str) -> None:
         self._follow_controller.set_connection(bool(connected), connecting=not connected and self._pref_bool(self.PREF_ENABLED))
+        if not connected:
+            self._toolhead_path_valid = False
+            self._hide_toolhead_indicator()
         if not connected and self._last_remote_state not in self.ACTIVE_STATES:
             self._set_status(detail)
-        elif self._status_label is not None:
-            self._status_label.setText(self._configuration_status_text())
         self._sync_preview_button_state()
 
     def _on_client_capabilities_changed(self, capabilities) -> None:
         self._last_capabilities = dict(capabilities or {})
-        if self._status_label is not None:
-            self._status_label.setText(self._configuration_status_text())
 
     def _on_active_machine_changed(self, *_args) -> None:
-        """Switch Moonraker target atomically when Cura switches printers."""
+        """Transfer the single follower session to Cura's newly active printer.
+
+        There is intentionally only one MoonrakerClient in the plugin. A printer
+        switch first stops that client and invalidates every in-flight operation
+        owned by the old machine. Only after that teardown is complete do we bind
+        the configuration for the new active Cura printer and optionally restart
+        polling. Two printers can therefore never drive Preview concurrently.
+        """
         machine_id, machine_name = self._config_store.identity()
         if machine_id == self._active_machine_id:
             # Cura may emit global-container notifications more than once while
             # a printer switch settles. Treat the machine id as the transaction
             # key so we reconnect only once.
+            self._active_machine_name = machine_name
+            self._sync_preview_button_state()
             return
+
+        # Tear down the old printer *before* changing the owner identity. This
+        # aborts its status request, metadata/download work and index workers, so
+        # a late result cannot move Preview after another printer becomes active.
+        self._client.stop()
+        self._invalidate_lifecycle("active Cura printer changed")
+
         self._active_machine_id = machine_id
-        if self._dialog is not None:
-            # Never let a dialog opened for printer A save into printer B.
-            try:
-                self._dialog.reject()
-            except Exception:
-                pass
+        self._active_machine_name = machine_name
         self._following_paused = False
         self._follow_controller.resume()
-        self._clear_expected_preview_position()
         self._last_remote_filename = None
         self._last_remote_state = None
+        self._last_extruder_position = None
+        self._last_capabilities = {}
         self._remote_job_key = None
         self._remote_file_identity = None
         self._discard_cached_gcode()
         self._clear_remote_gcode_index()
         self._config_store.migrate_legacy_to_current_machine()
         self._apply_timer_state()
-        self._set_status(f"Switched Cura printer to {machine_name}; Moonraker configuration updated")
+        self._sync_preview_controls_visibility()
+
+    def _active_printer_is_configured_for_following(self) -> bool:
+        """Return True only when the active Cura printer owns a usable session."""
+        if self._active_machine_id == "unknown":
+            return False
+        config = self._config_store.get()
+        return bool(
+            config.enabled
+            and self._url_is_usable(self._normalise_base_url(config.url))
+        )
 
     def _is_preview_stage_active(self) -> bool:
         try:
@@ -656,6 +469,54 @@ class MoonrakerPrintFollower(QObject, Extension):
             return stage_id == "PreviewStage"
         except Exception:
             return False
+
+    def _hide_toolhead_indicator(self) -> None:
+        indicator = getattr(self, "_toolhead_indicator", None)
+        if indicator is None:
+            return
+        try:
+            indicator.setVisible(False)
+        except Exception:
+            pass
+
+    def _update_toolhead_indicator(self, view=None) -> None:
+        """Keep the plugin-owned printhead marker aligned with Cura Preview."""
+        indicator = getattr(self, "_toolhead_indicator", None)
+        config = self._config_store.get()
+        if (
+            indicator is None
+            or not config.show_toolhead_indicator
+            or not config.enabled
+            or self._following_paused
+            or self._last_remote_state not in self.ACTIVE_STATES
+            or not self._toolhead_path_valid
+            or not config.path_follow
+            or config.follow_mode != FollowMode.EXACT.value
+            or self._slicing_in_progress
+            or not self._is_preview_stage_active()
+        ):
+            self._hide_toolhead_indicator()
+            return
+
+        if view is None:
+            view = self._simulation_view()
+        if view is None:
+            self._hide_toolhead_indicator()
+            return
+
+        position = preview_head_position(self._controller, view)
+        if position is None:
+            self._hide_toolhead_indicator()
+            return
+        try:
+            if not indicator.ensureNativeNozzleMesh(view):
+                self._hide_toolhead_indicator()
+                return
+            indicator.setIndicatorPosition(position)
+            indicator.setVisible(True)
+        except Exception as error:
+            self._hide_toolhead_indicator()
+            Logger.log("w", "Moonraker Print Follower could not update printhead indicator: %s", error)
 
     def _watch_for_manual_preview_change(self) -> None:
         """Fallback watcher for Cura builds without layer/path change signals."""
@@ -731,6 +592,8 @@ class MoonrakerPrintFollower(QObject, Extension):
             return
 
         self._following_paused = True
+        self._toolhead_path_valid = False
+        self._hide_toolhead_indicator()
         self._follow_controller.pause_by_user(f"manual {override_kind} change")
         # Retain the user's position for diagnostics/UI state.  Resume will
         # explicitly re-arm from this position before requesting a catch-up.
@@ -813,9 +676,19 @@ class MoonrakerPrintFollower(QObject, Extension):
                 old_root.childrenChanged.disconnect(self._on_scene_children_changed)
             except Exception:
                 pass
+        indicator = getattr(self, "_toolhead_indicator", None)
+        if indicator is not None:
+            try:
+                indicator.setParent(None)
+            except Exception:
+                pass
         try:
             self._scene = self._controller.getScene()
             self._scene_root = self._scene.getRoot()
+            # Parent our marker before listening for structural changes so adding
+            # the plugin-owned node cannot recursively invalidate the lifecycle.
+            if indicator is not None:
+                indicator.setParent(self._scene_root)
             self._scene_root.childrenChanged.connect(self._on_scene_children_changed)
         except Exception:
             self._scene = None
@@ -993,6 +866,8 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     def _invalidate_lifecycle(self, reason: str, abort_network: bool = True) -> None:
         self._lifecycle_generation += 1
+        self._toolhead_path_valid = False
+        self._hide_toolhead_indicator()
         self._clear_expected_preview_position()
         self._cancel_remote_index_build()
 
@@ -1286,6 +1161,11 @@ class MoonrakerPrintFollower(QObject, Extension):
         has_toolpath = self._cura_has_toolpath()
         compact_status = self._compact_preview_status(has_toolpath)
         status_icon_name = self._compact_preview_status_icon(compact_status)
+        configured = self._active_printer_is_configured_for_following()
+        machine_id, machine_name = self._config_store.identity()
+        if machine_id == self._active_machine_id:
+            self._active_machine_name = machine_name
+        active_printer_name = self._active_machine_name or machine_name
         for controls in (self._preview_overlay, self._action_panel_controls):
             if controls is None:
                 continue
@@ -1294,6 +1174,8 @@ class MoonrakerPrintFollower(QObject, Extension):
                 controls.setProperty(
                     "followingEnabled", self._pref_bool(self.PREF_ENABLED)
                 )
+                controls.setProperty("configuredForFollowing", configured)
+                controls.setProperty("activePrinterName", active_printer_name)
                 controls.setProperty("hasToolpath", has_toolpath)
                 controls.setProperty("statusText", compact_status)
                 controls.setProperty("statusIconName", status_icon_name)
@@ -1350,6 +1232,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         """
 
         if self._preview_overlay is None and self._action_panel_controls is None:
+            self._update_toolhead_indicator()
             return
 
         is_preview = False
@@ -1382,14 +1265,12 @@ class MoonrakerPrintFollower(QObject, Extension):
                     error,
                 )
         self._sync_preview_button_state()
-
-    def _poll_now(self) -> None:
-        self._poll(force=True)
+        self._update_toolhead_indicator()
 
     def _apply_timer_state(self) -> None:
         """Configure the per-printer Moonraker client.
 
-        1.1.0 keeps polling isolated in MoonrakerClient so per-printer
+        2.0.0 keeps polling isolated in MoonrakerClient so per-printer
         connection state and retry backoff do not leak into Cura lifecycle code.
         """
         config = self._config_store.get()
@@ -1545,14 +1426,13 @@ class MoonrakerPrintFollower(QObject, Extension):
         """Ask for confirmation using Cura's own reliable Qt Widgets path.
 
         Cura itself uses ``QMessageBox.question(None, ...)`` for destructive
-        confirmations. Using that exact synchronous API avoids the event and
-        signal-delivery problems we hit with both QML dialogs and a hand-built
-        modeless QDialog.
+        confirmations. Using that exact synchronous API keeps destructive load
+        confirmation in Cura's established UI path.
         """
 
         try:
-            # Keep the manual action Preview-oriented. The Extensions-menu entry
-            # can be invoked from Prepare, so switch stages before asking.
+            # Keep the manual action Preview-oriented. Runtime load requests can
+            # originate outside Preview, so switch stages before asking.
             stage = self._controller.getActiveStage()
             stage_id = None
             if stage is not None:
@@ -1735,84 +1615,6 @@ class MoonrakerPrintFollower(QObject, Extension):
             self._set_status("Set a Moonraker URL for this Cura printer")
             return
         self._client.force_refresh()
-
-    def _test_connection_from_dialog(self) -> None:
-        if not self._url_edit or not self._api_key_edit:
-            return
-        base_url = self._normalise_base_url(self._url_edit.text())
-        if not self._url_is_usable(base_url):
-            self._set_status("Enter a Moonraker URL, e.g. http://voron.local:7125")
-            return
-        if self._probe_reply is not None:
-            try:
-                if self._probe_reply.isRunning():
-                    self._set_status("A connection test is already in progress")
-                    return
-            except Exception:
-                pass
-        self._probe_base_url = base_url
-        self._probe_api_key = self._api_key_edit.text().strip()
-        self._probe_server_info = {}
-        self._set_status("Testing Moonraker server and Klipper capabilities…")
-        self._start_probe_request(server_info_endpoint(base_url), self._handle_probe_server_info)
-
-    def _start_probe_request(self, endpoint: str, handler) -> None:
-        request = QNetworkRequest(QUrl(endpoint))
-        request.setRawHeader(b"Accept", b"application/json")
-        if hasattr(request, "setTransferTimeout"):
-            request.setTransferTimeout(5000)
-        if self._probe_api_key:
-            request.setRawHeader(b"X-Api-Key", self._probe_api_key.encode("utf-8"))
-        reply = self._probe_network.get(request)
-        self._probe_reply = reply
-        reply.finished.connect(lambda r=reply: handler(r))
-
-    def _handle_probe_server_info(self, reply: QNetworkReply) -> None:
-        if reply is not self._probe_reply:
-            reply.deleteLater(); return
-        self._probe_reply = None
-        try:
-            if reply.error() != QNetworkReply.NetworkError.NoError:
-                self._set_status(f"Connection test failed: {reply.errorString()}")
-                return
-            payload = json.loads(bytes(reply.readAll()).decode("utf-8", errors="replace"))
-            self._probe_server_info = payload.get("result") or {}
-        except Exception as error:
-            self._set_status(f"Invalid /server/info response: {error}")
-            return
-        finally:
-            reply.deleteLater()
-        self._start_probe_request(objects_list_endpoint(self._probe_base_url), self._handle_probe_objects)
-
-    def _handle_probe_objects(self, reply: QNetworkReply) -> None:
-        if reply is not self._probe_reply:
-            reply.deleteLater(); return
-        self._probe_reply = None
-        try:
-            if reply.error() != QNetworkReply.NetworkError.NoError:
-                self._set_status(f"Moonraker connected, but printer-object test failed: {reply.errorString()}")
-                return
-            payload = json.loads(bytes(reply.readAll()).decode("utf-8", errors="replace"))
-            objects = set(str(v) for v in ((payload.get("result") or {}).get("objects") or []))
-            required = {"print_stats", "virtual_sdcard", "gcode_move"}
-            missing = sorted(required - objects)
-            info = self._probe_server_info
-            version = str(info.get("moonraker_version") or info.get("software_version") or "unknown")
-            klippy = str(info.get("klippy_state") or "unknown")
-            optional = []
-            if "motion_report" in objects:
-                optional.append("motion_report")
-            if missing:
-                detail = f"missing required Klipper objects: {', '.join(missing)}"
-            else:
-                detail = "required print objects available"
-            if optional:
-                detail += f"; optional: {', '.join(optional)}"
-            self._set_status(f"Connected — Moonraker {version}; Klippy {klippy}; {detail}")
-        except Exception as error:
-            self._set_status(f"Invalid printer-object response: {error}")
-        finally:
-            reply.deleteLater()
 
     def _issue_status_request(self, base_url: str, api_key: str, purpose: str) -> None:
         if self._reply is not None and self._reply.isRunning():
@@ -2015,6 +1817,8 @@ class MoonrakerPrintFollower(QObject, Extension):
             self._ensure_remote_metadata(filename, reported_size)
 
         if filename != previous_filename:
+            self._toolhead_path_valid = False
+            self._hide_toolhead_indicator()
             self._last_extruder_position = None
             self._preview_switched_for_job = False
             self._last_source = None
@@ -2027,12 +1831,16 @@ class MoonrakerPrintFollower(QObject, Extension):
             self._last_remote_state = state
 
         if state not in self.ACTIVE_STATES:
+            self._toolhead_path_valid = False
+            self._hide_toolhead_indicator()
             label = state or "unknown"
             suffix = f" — {filename}" if filename else ""
             self._set_status(f"Moonraker connected; printer is {label}{suffix}")
             return
 
         if self._following_paused:
+            self._toolhead_path_valid = False
+            self._hide_toolhead_indicator()
             self._set_status(
                 self._active_status_text(
                     filename,
@@ -2054,6 +1862,8 @@ class MoonrakerPrintFollower(QObject, Extension):
                 self._ensure_remote_gcode_cached(filename)
 
         if self._slicing_in_progress or time.monotonic() < self._scene_settle_until:
+            self._toolhead_path_valid = False
+            self._hide_toolhead_indicator()
             self._set_status(
                 self._active_status_text(
                     filename,
@@ -2066,6 +1876,8 @@ class MoonrakerPrintFollower(QObject, Extension):
 
         view = self._simulation_view()
         if view is None or not hasattr(view, "setLayer"):
+            self._toolhead_path_valid = False
+            self._hide_toolhead_indicator()
             self._set_status("Connected, but Cura's SimulationView is unavailable")
             return
 
@@ -2105,6 +1917,8 @@ class MoonrakerPrintFollower(QObject, Extension):
                 source = "Z-height fallback"
 
         if target_layer is None:
+            self._toolhead_path_valid = False
+            self._hide_toolhead_indicator()
             self._set_status(
                 self._active_status_text(
                     filename,
@@ -2153,6 +1967,7 @@ class MoonrakerPrintFollower(QObject, Extension):
             current_minimum = None
 
         path_detail = ""
+        self._toolhead_path_valid = False
         self._applying_follow_update += 1
         try:
             if current != target_layer or (minimum_layer is not None and current_minimum != minimum_layer):
@@ -2162,10 +1977,12 @@ class MoonrakerPrintFollower(QObject, Extension):
                 path_detail = self._apply_path_progress(
                     view, remote_target_layer, virtual_sdcard, motion_report or {}, gcode_move
                 )
+                self._toolhead_path_valid = path_detail.startswith("path ")
         finally:
             self._applying_follow_update = max(0, self._applying_follow_update - 1)
 
         self._remember_plugin_preview_position(view)
+        self._update_toolhead_indicator(view)
 
         self._last_source = source
         mode = self._config_store.get().follow_mode
@@ -3079,6 +2896,12 @@ class MoonrakerPrintFollower(QObject, Extension):
                 self._scene_root.childrenChanged.disconnect(self._on_scene_children_changed)
         except Exception:
             pass
+        self._hide_toolhead_indicator()
+        try:
+            if self._toolhead_indicator is not None:
+                self._toolhead_indicator.setParent(None)
+        except Exception:
+            pass
         self._scene_root = None
 
         try:
@@ -3195,8 +3018,6 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     def _set_status(self, text: str) -> None:
         self._last_status_text = text
-        if self._status_label is not None:
-            self._status_label.setText(text)
         self._sync_preview_button_state()
 
     def _valid_configured_url(self) -> bool:

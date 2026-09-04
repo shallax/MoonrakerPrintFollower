@@ -1,8 +1,8 @@
 {
     "name": "Moonraker Print Follower",
     "author": "shallax",
-    "version": "1.1.0",
-    "description": "Per-printer Klipper/Moonraker live Preview following with resilient HTTP polling, follow modes, and scalable path indexing.",
+    "version": "2.0.0",
+    "description": "Per-printer Klipper/Moonraker live Preview following, configured natively from Cura Manage Printers.",
     "api": 8,
     "supported_sdk_versions": [
         "8.12.0"
