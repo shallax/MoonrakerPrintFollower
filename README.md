@@ -43,7 +43,7 @@ Each Cura printer has its own follower configuration. Only Cura's **currently ac
 - HTTP polling interval
 - follow mode
 - within-layer path following
-- plugin-owned live printhead indicator
+- native Cura live printhead fallback
 - fallback layer-number convention
 - automatic switching to Preview
 - Z-height fallback and tolerance
@@ -71,7 +71,7 @@ The follower controls live in their own Cura-styled action-panel card in Preview
 
 The panel uses a fixed layout so status changes do not resize it, and it reserves Cura's normal action-panel spacing from neighbouring plugin controls. If the currently active Cura printer is not enabled and configured with a usable Moonraker URL, the entire follower card is hidden because none of its runtime controls apply. A configured printer that is temporarily offline still shows the card with its disconnected state.
 
-When exact within-layer following is active, the plugin can also draw a plugin-owned fallback printhead using **the same nozzle mesh and `layerview_nozzle` theme colour as Cura's native SimulationView nozzle**. The mesh is copied directly from Cura's current native NozzleNode where possible, with Cura's own `SimulationView/resources/nozzle.stl` as a fallback. It therefore remains available when Cura suppresses its normal nozzle during layer transitions without introducing a different marker design. The fallback can be enabled or disabled per printer on the **Following** tab.
+When exact within-layer following is active, the plugin can keep **Cura's own native SimulationView nozzle** visible even when Cura's Preview lifecycle would otherwise leave the nozzle uninitialised or suppress it during a live layer change. If a live file is loaded while Preview is already open, the follower ensures Cura's own NozzleNode is created and attached to the current scene before allowing SimulationPass to render it. The plugin still does not draw a second nozzle model, so Cura's normal mesh, visibility, depth and transparency behaviour are preserved. The fallback can be enabled or disabled per printer on the **Following** tab.
 
 ## Moonraker transport
 
@@ -136,7 +136,7 @@ High-risk logic is separated into focused modules:
 - `MoonrakerClient.py` — resilient HTTP polling, retry backoff and capability detection
 - `FollowController.py` — follower state machine and follow-mode decisions
 - `CuraAdapter.py` — Cura machine identity, Preview writes and toolpath-head position mapping
-- `ToolheadIndicator.py` — plugin-owned fallback renderer using Cura's native nozzle mesh
+- `NativeNozzleFallback.py` — repairs Cura's native SimulationView nozzle lifecycle during exact live following, including when a live file is loaded while Preview is already open
 - `GCodeIndex.py` — streaming/compact parsing, lazy layer hydration and persistent index cache
 - `MoonrakerProtocol.py` — endpoint construction and coordinate conversion
 - `DownloadStream.py` — bounded streaming G-code downloads

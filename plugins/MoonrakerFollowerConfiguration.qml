@@ -300,7 +300,7 @@ Cura.MachineAction
                         }
                         UM.Label
                         {
-                            text: "Draws a plugin-owned marker at the followed path so the printhead remains visible when Cura's built-in nozzle marker is unavailable."
+                            text: "Keeps Cura's native nozzle visible at the followed path when Cura would otherwise suppress it during live layer changes."
                             wrapMode: Text.WordWrap
                             width: parent.width
                             color: UM.Theme.getColor("text_inactive")

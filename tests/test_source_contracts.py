@@ -11,7 +11,7 @@ INDEX = (ROOT / "plugins" / "GCodeIndex.py").read_text()
 QML_ACTION = (ROOT / "plugins" / "PreviewActionPanelControls.qml").read_text()
 QML_EMPTY = (ROOT / "plugins" / "EmptyPreviewLoadButton.qml").read_text()
 CURA_ADAPTER = (ROOT / "plugins" / "CuraAdapter.py").read_text()
-TOOLHEAD = (ROOT / "plugins" / "ToolheadIndicator.py").read_text()
+NOZZLE_FALLBACK = (ROOT / "plugins" / "NativeNozzleFallback.py").read_text()
 MACHINE_ACTION = (ROOT / "plugins" / "MoonrakerFollowerMachineAction.py").read_text()
 QML_CONFIG = (ROOT / "plugins" / "MoonrakerFollowerConfiguration.qml").read_text()
 PRINTER_CONFIG = (ROOT / "plugins" / "PrinterConfig.py").read_text()
@@ -272,14 +272,19 @@ class SourceContractTests(unittest.TestCase):
             names = set(archive.namelist())
         self.assertIn("files/plugins/Moonraker_Print_Follower/MoonrakerFollowerConfiguration.qml", names)
         self.assertIn("files/plugins/Moonraker_Print_Follower/MoonrakerFollowerMachineAction.py", names)
-        self.assertIn("files/plugins/Moonraker_Print_Follower/ToolheadIndicator.py", names)
+        self.assertIn("files/plugins/Moonraker_Print_Follower/NativeNozzleFallback.py", names)
 
-    def test_2_0_has_plugin_owned_printhead_fallback(self):
-        self.assertTrue((ROOT / "plugins" / "ToolheadIndicator.py").is_file())
-        self.assertIn("class ToolheadIndicatorNode(SceneNode)", TOOLHEAD)
-        self.assertNotIn("self.setPosition(", TOOLHEAD)
-        self.assertIn("preview_head_position", CURA_ADAPTER)
-        self.assertIn("ToolheadIndicatorNode", PLUGIN)
+    def test_2_0_uses_cura_native_printhead_fallback(self):
+        self.assertTrue((ROOT / "plugins" / "NativeNozzleFallback.py").is_file())
+        self.assertIn("keep_native_nozzle_visible", NOZZLE_FALLBACK)
+        self.assertIn('getattr(simulation_view, "getSimulationPass", None)', NOZZLE_FALLBACK)
+        self.assertIn('getattr(simulation_view, "getNozzleNode", None)', NOZZLE_FALLBACK)
+        self.assertIn('getattr(simulation_view, "getController", None)', NOZZLE_FALLBACK)
+        self.assertIn('set_parent(root)', NOZZLE_FALLBACK)
+        self.assertIn('set_enabled(True)', NOZZLE_FALLBACK)
+        self.assertIn('simulation_pass._switching_layers = False', NOZZLE_FALLBACK)
+        self.assertIn('simulation_pass._old_current_layer = int(get_layer())', NOZZLE_FALLBACK)
+        self.assertIn("keep_native_nozzle_visible", PLUGIN)
         self.assertIn("_update_toolhead_indicator", PLUGIN)
         self.assertIn('text: "Show live printhead indicator"', QML_CONFIG)
         self.assertIn("settingsToolheadIndicator", MACHINE_ACTION)
@@ -312,17 +317,20 @@ class SourceContractTests(unittest.TestCase):
             self.assertIn("configuredForFollowing", qml.split("visible:", 1)[1].split("\n", 1)[0])
             self.assertIn('base.activePrinterName + (base.statusText.length > 0 ? " — " + base.statusText : "")', qml)
 
-    def test_2_0_printhead_fallback_reuses_cura_native_nozzle_model(self):
-        # Do not ship a substitute halo/pin design. Reuse Cura's actual nozzle
-        # mesh and theme colour, with the same nozzle.stl as a fallback source.
-        self.assertIn('getattr(simulation_view, "getNozzleNode", None)', TOOLHEAD)
-        self.assertIn('getPluginPath("SimulationView")', TOOLHEAD)
-        self.assertIn('"resources", "nozzle.stl"', TOOLHEAD)
-        self.assertIn('getColor("layerview_nozzle")', TOOLHEAD)
-        self.assertNotIn("MeshBuilder", TOOLHEAD)
-        self.assertNotIn("addDonut", TOOLHEAD)
-        self.assertNotIn("addCube", TOOLHEAD)
-        self.assertIn("indicator.ensureNativeNozzleMesh(view)", PLUGIN)
+    def test_2_0_printhead_fallback_uses_cura_simulation_render_pass(self):
+        # The fallback must not queue a second SceneNode into Cura's default
+        # render layer. Cura's SimulationView is composited after that layer,
+        # which would wash the marker out behind the G-code preview. Instead,
+        # preserve Cura's native nozzle and its normal SimulationPass rendering.
+        self.assertNotIn("ToolheadIndicatorNode", PLUGIN)
+        self.assertNotIn("renderer.queueNode", NOZZLE_FALLBACK)
+        self.assertNotIn("RenderBatch", NOZZLE_FALLBACK)
+        self.assertIn("SimulationPass", NOZZLE_FALLBACK)
+        self.assertIn("getNozzleNode", NOZZLE_FALLBACK)
+        self.assertIn("setParent", NOZZLE_FALLBACK)
+        self.assertIn("_switching_layers", NOZZLE_FALLBACK)
+        self.assertIn("_old_current_layer", NOZZLE_FALLBACK)
+        self.assertIn("keep_native_nozzle_visible(view)", PLUGIN)
 
     def test_source_tree_has_no_license_file(self):
         self.assertFalse(any(p.name.lower().startswith("license") for p in ROOT.rglob("*") if p.is_file()))

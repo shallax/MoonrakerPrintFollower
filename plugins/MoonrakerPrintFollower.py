@@ -26,11 +26,11 @@ from UM.Logger import Logger
 from UM.Resources import Resources
 
 from .Core import OperationContext, OperationPhase, RemoteFileIdentity, preview_override_kind
-from .CuraAdapter import active_machine_identity, apply_preview_decision, preview_head_position
+from .CuraAdapter import active_machine_identity, apply_preview_decision
 from .FollowController import FollowController, FollowMode, FollowState, decide_layers
 from .MoonrakerClient import MoonrakerClient
 from .PrinterConfig import PrinterConfig, PrinterConfigStore
-from .ToolheadIndicator import ToolheadIndicatorNode
+from .NativeNozzleFallback import keep_native_nozzle_visible
 from .DownloadStream import DownloadTarget
 from .GCodeIndex import (
     LayerMotionIndex,
@@ -200,7 +200,6 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._preview_overlay = None
         self._action_panel_controls = None
         self._connected_simulation_view = None
-        self._toolhead_indicator = ToolheadIndicatorNode()
         self._toolhead_path_valid = False
         self._scene = None
         self._scene_root = None
@@ -471,21 +470,21 @@ class MoonrakerPrintFollower(QObject, Extension):
             return False
 
     def _hide_toolhead_indicator(self) -> None:
-        indicator = getattr(self, "_toolhead_indicator", None)
-        if indicator is None:
-            return
-        try:
-            indicator.setVisible(False)
-        except Exception:
-            pass
+        # The fallback no longer owns a scene node. Cura remains responsible
+        # for hiding/showing its native nozzle when the follower is inactive.
+        return
 
     def _update_toolhead_indicator(self, view=None) -> None:
-        """Keep the plugin-owned printhead marker aligned with Cura Preview."""
-        indicator = getattr(self, "_toolhead_indicator", None)
+        """Keep Cura's native SimulationView nozzle visible while following.
+
+        The follower does not draw its own nozzle. Once an exact within-layer
+        path is known, it lets Cura's SimulationPass render the standard nozzle
+        in the same pass as the G-code paths, preserving Cura's normal depth and
+        transparency behaviour.
+        """
         config = self._config_store.get()
         if (
-            indicator is None
-            or not config.show_toolhead_indicator
+            not config.show_toolhead_indicator
             or not config.enabled
             or self._following_paused
             or self._last_remote_state not in self.ACTIVE_STATES
@@ -495,27 +494,17 @@ class MoonrakerPrintFollower(QObject, Extension):
             or self._slicing_in_progress
             or not self._is_preview_stage_active()
         ):
-            self._hide_toolhead_indicator()
             return
 
         if view is None:
             view = self._simulation_view()
         if view is None:
-            self._hide_toolhead_indicator()
             return
 
-        position = preview_head_position(self._controller, view)
-        if position is None:
-            self._hide_toolhead_indicator()
-            return
         try:
-            if not indicator.ensureNativeNozzleMesh(view):
-                self._hide_toolhead_indicator()
-                return
-            indicator.setIndicatorPosition(position)
-            indicator.setVisible(True)
+            if not keep_native_nozzle_visible(view):
+                Logger.log("d", "Moonraker Print Follower could not enable Cura's native nozzle fallback")
         except Exception as error:
-            self._hide_toolhead_indicator()
             Logger.log("w", "Moonraker Print Follower could not update printhead indicator: %s", error)
 
     def _watch_for_manual_preview_change(self) -> None:
@@ -676,19 +665,9 @@ class MoonrakerPrintFollower(QObject, Extension):
                 old_root.childrenChanged.disconnect(self._on_scene_children_changed)
             except Exception:
                 pass
-        indicator = getattr(self, "_toolhead_indicator", None)
-        if indicator is not None:
-            try:
-                indicator.setParent(None)
-            except Exception:
-                pass
         try:
             self._scene = self._controller.getScene()
             self._scene_root = self._scene.getRoot()
-            # Parent our marker before listening for structural changes so adding
-            # the plugin-owned node cannot recursively invalidate the lifecycle.
-            if indicator is not None:
-                indicator.setParent(self._scene_root)
             self._scene_root.childrenChanged.connect(self._on_scene_children_changed)
         except Exception:
             self._scene = None
@@ -2897,11 +2876,6 @@ class MoonrakerPrintFollower(QObject, Extension):
         except Exception:
             pass
         self._hide_toolhead_indicator()
-        try:
-            if self._toolhead_indicator is not None:
-                self._toolhead_indicator.setParent(None)
-        except Exception:
-            pass
         self._scene_root = None
 
         try:
