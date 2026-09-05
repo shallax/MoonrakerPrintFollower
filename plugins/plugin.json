@@ -2,7 +2,7 @@
     "name": "Moonraker Print Follower",
     "author": "shallax",
     "version": "3.0.0",
-    "description": "Unified per-printer Klipper/Moonraker upload, print output and live Cura Preview following, configured from Manage Printers.",
+    "description": "Unified per-printer Klipper/Moonraker upload, live Cura Preview following, webcams and printer monitoring, configured from Manage Printers.",
     "api": 8,
     "supported_sdk_versions": [
         "8.0.0",
