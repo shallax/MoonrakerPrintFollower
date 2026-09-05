@@ -12,7 +12,7 @@ MONITOR_RUNTIME = (PLUGINS / "MoonrakerMonitorRuntime.py").read_text()
 MONITOR_CONTROLS = (PLUGINS / "MoonrakerMonitorControls.py").read_text()
 MONITOR_TYPED_CONTROLS = (PLUGINS / "MoonrakerMonitorTypedControls.py").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
-ENHANCED_QML = (PLUGINS / "MoonrakerMonitorEnhanced.qml").read_text()
+DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 UPLOAD_QML = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
 OUTPUT_LIFECYCLE = (PLUGINS / "MoonrakerOutputDeviceLifecycle.py").read_text()
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
@@ -91,12 +91,12 @@ class MonitorUploadRegressionTests(unittest.TestCase):
             self.assertIn(token, MONITOR_MODEL + MONITOR_QML)
 
     def test_enhanced_monitor_is_packaged_and_selected(self):
-        self.assertIn('"MoonrakerMonitorEnhanced.qml"', OUTPUT_PLUGIN)
+        self.assertIn('"MoonrakerMonitorDashboard.qml"', OUTPUT_PLUGIN)
         self.assertIn('"MoonrakerMonitor.qml"', OUTPUT_PLUGIN)
         self.assertIn("MoonrakerMonitorTypedControls", OUTPUT_PLUGIN)
         self.assertIn("MoonrakerMonitorControls", MONITOR_TYPED_CONTROLS)
-        self.assertIn("MoonrakerMonitor", ENHANCED_QML)
-        self.assertIn("Printer controls", ENHANCED_QML)
+        self.assertIn("MoonrakerMonitor", DASHBOARD_QML)
+        self.assertIn("Printer controls", DASHBOARD_QML)
 
     def test_enhanced_monitor_exposes_requested_setup_and_macro_controls(self):
         combined_controls = MONITOR_CONTROLS + MONITOR_TYPED_CONTROLS
@@ -106,7 +106,7 @@ class MonitorUploadRegressionTests(unittest.TestCase):
             "hasBedMesh", "server/database/item?namespace=mainsail&key=presets",
             "macroParameterDefinitions", "temperaturePresetItems",
         ):
-            self.assertIn(token, combined_controls + ENHANCED_QML)
+            self.assertIn(token, combined_controls + DASHBOARD_QML)
         self.assertIn('"G28"', MONITOR_CONTROLS)
         self.assertIn('"QUAD_GANTRY_LEVEL"', MONITOR_CONTROLS)
         self.assertIn('"BED_MESH_CALIBRATE"', MONITOR_CONTROLS)
@@ -117,7 +117,7 @@ class MonitorUploadRegressionTests(unittest.TestCase):
             "setFanSpeed", "setLedBrightness", "speedFactorPercent", "flowFactorPercent",
             "fanControlItems", "ledItems", "zOffsetText",
         ):
-            self.assertIn(token, MONITOR_CONTROLS + ENHANCED_QML)
+            self.assertIn(token, MONITOR_CONTROLS + DASHBOARD_QML)
         self.assertIn("SET_GCODE_OFFSET Z_ADJUST", MONITOR_CONTROLS)
         self.assertIn("M220 S", MONITOR_CONTROLS)
         self.assertIn("M221 S", MONITOR_CONTROLS)
@@ -130,7 +130,7 @@ class MonitorUploadRegressionTests(unittest.TestCase):
         self.assertIn("saveConfigPending", MONITOR_CONTROLS)
         self.assertIn("canSaveConfig", MONITOR_CONTROLS)
         self.assertIn('"SAVE_CONFIG"', MONITOR_CONTROLS)
-        self.assertIn("Save configuration", ENHANCED_QML)
+        self.assertIn("Save configuration", DASHBOARD_QML)
 
     def test_emergency_stop_requires_three_rapid_clicks_and_has_fill_progress(self):
         self.assertIn("time.monotonic()", MONITOR_CONTROLS)
@@ -138,13 +138,13 @@ class MonitorUploadRegressionTests(unittest.TestCase):
         self.assertIn("self._estop_clicks >= 3", MONITOR_CONTROLS)
         self.assertIn('"printer/emergency_stop"', MONITOR_CONTROLS)
         self.assertIn("emergencyStopClicks", MONITOR_CONTROLS)
-        self.assertIn("emergencyButton.clicks / 3.0", ENHANCED_QML)
-        self.assertIn("EMERGENCY STOP", ENHANCED_QML)
-        self.assertNotIn("Emergency stop?", ENHANCED_QML)
+        self.assertIn("emergencyButton.clicks / 3.0", DASHBOARD_QML)
+        self.assertIn("EMERGENCY STOP", DASHBOARD_QML)
+        self.assertNotIn("Emergency stop?", DASHBOARD_QML)
 
     def test_power_lock_is_explained_in_enhanced_monitor(self):
-        self.assertIn("locked && !printer.powerDevices[i].can_toggle", ENHANCED_QML)
-        self.assertIn("Power control is locked by Moonraker while this print is active.", ENHANCED_QML)
+        self.assertIn("locked && !printer.powerDevices[i].can_toggle", DASHBOARD_QML)
+        self.assertIn("Power control is locked by Moonraker while this print is active.", DASHBOARD_QML)
 
     def test_monitor_controls_class_definition_smoke(self):
         class DummySignal:

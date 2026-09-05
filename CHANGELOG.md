@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Align Monitor regression tests with dashboard view
 - 2026-09-06: Update contracts for 3.0.1 hotfix
 - 2026-09-06: Document Monitor dashboard composition
 - 2026-09-06: Keep plugin version at 3.0.0
