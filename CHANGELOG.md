@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: Monitor: align dialogs and scrolling with Cura QML patterns
 - 2026-09-05: Update contracts for Upload naming and current Monitor implementation
 - 2026-09-05: Remove release-number wording from Upload settings
 - 2026-09-05: Remove release-number wording from upload device code

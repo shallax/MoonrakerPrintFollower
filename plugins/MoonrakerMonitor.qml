@@ -16,13 +16,13 @@ Component
         property var printer: OutputDevice != null ? OutputDevice.activePrinter : null
         property bool cameraConfigured: printer != null && printer.cameraUrl != null && printer.cameraUrl.toString().length > 0
 
-        Dialog
+        Cura.MessageDialog
         {
             id: cancelPrintDialog
-            modal: true
             title: "Cancel print?"
+            text: "This will cancel the current print on the printer."
             standardButtons: Dialog.Yes | Dialog.No
-            anchors.centerIn: parent
+            anchors.centerIn: Overlay.overlay
             onAccepted:
             {
                 if (root.printer != null)
@@ -30,34 +30,22 @@ Component
                     root.printer.cancelPrint()
                 }
             }
-
-            Label
-            {
-                text: "This will cancel the current print on the printer."
-                wrapMode: Text.WordWrap
-            }
         }
 
-        Dialog
+        Cura.MessageDialog
         {
             id: powerOffDialog
             property string deviceName: ""
-            modal: true
             title: "Turn off power device?"
+            text: "A print is active. Turning this device off may stop the printer immediately."
             standardButtons: Dialog.Yes | Dialog.No
-            anchors.centerIn: parent
+            anchors.centerIn: Overlay.overlay
             onAccepted:
             {
                 if (root.printer != null && deviceName.length > 0)
                 {
                     root.printer.setPowerDevice(deviceName, false)
                 }
-            }
-
-            Label
-            {
-                text: "A print is active. Turning this device off may stop the printer immediately."
-                wrapMode: Text.WordWrap
             }
         }
 
@@ -224,12 +212,12 @@ Component
                     contentWidth: width
                     contentHeight: statusContent.implicitHeight
                     boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: ScrollBar { }
+                    ScrollBar.vertical: UM.ScrollBar { id: statusScrollbar }
 
                     ColumnLayout
                     {
                         id: statusContent
-                        width: statusFlick.width - (statusFlick.ScrollBar.vertical.visible ? 12 * screenScaleFactor : 0)
+                        width: statusFlick.width - statusScrollbar.width - UM.Theme.getSize("default_margin").width
                         spacing: UM.Theme.getSize("default_margin").height
 
                         UM.Label
