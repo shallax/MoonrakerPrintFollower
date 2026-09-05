@@ -4,21 +4,25 @@ import json
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
 
-from PyQt6.QtCore import QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from UM.Logger import Logger
 
+from .MoonrakerProtocol import status_endpoint
+
 
 class MoonrakerMonitorModel(PrinterOutputModel):
-    """Live Cura Monitor model backed by the follower's existing status stream.
+    """Live Cura Monitor model for the unified Moonraker integration.
 
-    Print state is reused from MoonrakerPrintFollower's normal polling client, so
-    opening Cura's Monitor stage does not introduce a second status-polling loop.
-    Webcam configuration is discovered independently through Moonraker's webcam
-    API because it changes rarely and is not a Klipper printer object.
+    When Preview following is enabled, Monitor consumes the follower's existing
+    Moonraker status signal and adds no second status request stream. When
+    automatic following is disabled, Monitor owns a lightweight 1-second polling
+    fallback so upload/Monitor remain connected independently of Preview-follow
+    preference state. Webcam configuration is discovered through Moonraker's
+    webcam API because it changes rarely and is not a Klipper printer object.
     """
 
     monitorChanged = pyqtSignal()
@@ -29,9 +33,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         super().__init__(output_controller, number_of_extruders)
         self._follower = follower
         self._network = QNetworkAccessManager(self)
+        self._status_network = QNetworkAccessManager(self)
         self._webcam_reply: Optional[QNetworkReply] = None
+        self._status_reply: Optional[QNetworkReply] = None
         self._webcams: List[Dict[str, Any]] = []
         self._active_webcam_index = -1
+
+        self._status_timer = QTimer(self)
+        self._status_timer.setInterval(1000)
+        self._status_timer.timeout.connect(self._poll_status_fallback)
 
         self._camera_name = ""
         self._camera_rotation = 0
@@ -55,11 +65,99 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             except Exception as exc:
                 Logger.log("w", "Moonraker Print Follower: could not bind Monitor status: %s", exc)
 
+        self.refreshTransport()
         self.refreshWebcams()
 
     # ------------------------------------------------------------------
-    # Print status from the follower's existing polling stream
+    # Print status
     # ------------------------------------------------------------------
+
+    @pyqtSlot()
+    def refreshTransport(self) -> None:
+        """Use exactly one status stream for the active printer.
+
+        The follower already polls when automatic following is enabled. If the
+        user disables following, Monitor takes over status polling so the unified
+        connection remains useful without causing duplicate Moonraker traffic.
+        """
+        config = self._follower.current_printer_config()
+        if bool(config.enabled):
+            self._status_timer.stop()
+            self._abort_status_reply()
+            return
+
+        base_url = str(config.url or "").strip().rstrip("/")
+        parsed = QUrl(base_url)
+        if not parsed.isValid() or parsed.scheme() not in ("http", "https") or not parsed.host():
+            self._status_timer.stop()
+            self._abort_status_reply()
+            return
+
+        if not self._status_timer.isActive():
+            self._status_timer.start()
+        self._poll_status_fallback()
+
+    def _abort_status_reply(self) -> None:
+        reply = self._status_reply
+        self._status_reply = None
+        if reply is None:
+            return
+        try:
+            if reply.isRunning():
+                reply.abort()
+        except Exception:
+            pass
+        try:
+            reply.deleteLater()
+        except Exception:
+            pass
+
+    def _poll_status_fallback(self) -> None:
+        config = self._follower.current_printer_config()
+        if bool(config.enabled):
+            self.refreshTransport()
+            return
+        if self._status_reply is not None:
+            try:
+                if self._status_reply.isRunning():
+                    return
+            except Exception:
+                pass
+
+        base_url = str(config.url or "").strip().rstrip("/")
+        parsed = QUrl(base_url)
+        if not parsed.isValid() or parsed.scheme() not in ("http", "https") or not parsed.host():
+            return
+
+        request = QNetworkRequest(QUrl(status_endpoint(base_url)))
+        request.setRawHeader(b"Accept", b"application/json")
+        if config.api_key:
+            request.setRawHeader(b"X-Api-Key", str(config.api_key).encode("utf-8"))
+        if hasattr(request, "setTransferTimeout"):
+            request.setTransferTimeout(5000)
+        reply = self._status_network.get(request)
+        self._status_reply = reply
+        reply.finished.connect(lambda r=reply: self._on_status_fallback_finished(r))
+
+    def _on_status_fallback_finished(self, reply: QNetworkReply) -> None:
+        if reply is not self._status_reply:
+            reply.deleteLater()
+            return
+        self._status_reply = None
+        try:
+            if reply.error() != QNetworkReply.NetworkError.NoError:
+                self._monitor_state = "Disconnected"
+                self.monitorChanged.emit()
+                return
+            payload = json.loads(bytes(reply.readAll()).decode("utf-8", errors="replace"))
+            result = payload.get("result") or {}
+            status = result.get("status") if isinstance(result, dict) else None
+            if isinstance(status, dict):
+                self.updateMoonrakerStatus(status)
+        except Exception as exc:
+            Logger.log("w", "Moonraker Print Follower: Monitor status polling failed: %s", exc)
+        finally:
+            reply.deleteLater()
 
     @pyqtSlot(object)
     def updateMoonrakerStatus(self, status: Any) -> None:
@@ -172,6 +270,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot()
     def refreshWebcams(self) -> None:
+        self.refreshTransport()
         config = self._follower.current_printer_config()
         base_url = str(config.url or "").strip().rstrip("/")
         parsed = QUrl(base_url)
