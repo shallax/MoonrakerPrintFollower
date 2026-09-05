@@ -7,7 +7,8 @@ from PyQt6.QtCore import QUrl
 from UM.Logger import Logger
 from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
-from .MoonrakerMonitorRuntime import MoonrakerMonitorModel
+# MoonrakerMonitorRuntime remains the proven layer-following base implementation.
+from .MoonrakerMonitorControls import MoonrakerMonitorModel
 from .MoonrakerOutputDevice import MoonrakerOutputController
 from .MoonrakerOutputDeviceLifecycle import MoonrakerOutputDevice
 
@@ -63,7 +64,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             device._printers = [monitor]
 
         device._monitor_view_qml_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitor.qml"
+            os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitorEnhanced.qml"
         )
         try:
             monitor.refreshAll()
