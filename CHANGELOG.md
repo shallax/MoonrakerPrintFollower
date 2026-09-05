@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: Remove release-number wording from configuration code
 - 2026-09-05: CI: cover Monitor and upload regressions in package build
 - 2026-09-05: Add Monitor and upload lifecycle regression contracts
 - 2026-09-05: Monitor: use follower-resolved layer model

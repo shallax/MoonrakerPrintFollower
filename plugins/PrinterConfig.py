@@ -20,7 +20,7 @@ class PrinterConfig:
     show_toolhead_indicator: bool = True
     follow_mode: str = "exact"
 
-    # Integrated Moonraker output settings (v3.0.0).
+    # Integrated Moonraker upload settings.
     frontend_url: str = ""
     output_format: str = "gcode"
     upload_dialog: bool = True
@@ -114,8 +114,8 @@ class PrinterConfigStore:
     MIGRATED_KEY = "moonraker_print_follower/printer_configs_migrated_v1"
 
     # The separate Moonraker Connection plugin stores its per-printer settings
-    # here. v3 imports those values once so uninstalling the old plugin does not
-    # make users re-enter their connection/output configuration.
+    # here. Import those values once so uninstalling the old plugin does not make
+    # users re-enter their connection and upload configuration.
     MOONRAKER_CONNECTION_PREF_KEY = "moonraker/instances"
     MOONRAKER_CONNECTION_MIGRATED_KEY = (
         "moonraker_print_follower/moonraker_connection_migrated_v1"
@@ -201,8 +201,8 @@ class PrinterConfigStore:
     def migrate_moonraker_connection(self) -> int:
         """Import settings from the old standalone Moonraker Connection plugin.
 
-        Existing follower URL/API-key values win when already configured; output
-        specific values are imported because v2 had no equivalent fields.
+        Existing follower URL/API-key values win when already configured; upload
+        specific values are imported because the follower had no equivalent fields.
         """
         if self._truthy(
             self._preferences.getValue(self.MOONRAKER_CONNECTION_MIGRATED_KEY)
