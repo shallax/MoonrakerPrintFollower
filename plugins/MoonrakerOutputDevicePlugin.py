@@ -7,7 +7,7 @@ from PyQt6.QtCore import QUrl
 from UM.Logger import Logger
 from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
-from .MoonrakerMonitorModel import MoonrakerMonitorModel
+from .MoonrakerMonitorRuntime import MoonrakerMonitorModel
 from .MoonrakerOutputDevice import MoonrakerOutputController
 from .MoonrakerOutputDeviceLifecycle import MoonrakerOutputDevice
 

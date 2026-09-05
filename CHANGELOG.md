@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: Monitor: use follower-resolved layer model
 - 2026-09-05: Monitor: use follower layer resolution for live layer display
 - 2026-09-05: v3: rename Output settings tab to Upload
 - 2026-09-05: v3: use fixed upload lifecycle and refresh expanded Monitor
