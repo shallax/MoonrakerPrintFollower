@@ -8,8 +8,11 @@ PACKAGE = json.loads((ROOT / "package.json").read_text())
 PLUGIN_META = json.loads((ROOT / "plugins" / "plugin.json").read_text())
 PLUGIN = (ROOT / "plugins" / "MoonrakerPrintFollower.py").read_text()
 CLIENT = (ROOT / "plugins" / "MoonrakerClient.py").read_text()
+MONITOR_MODEL = (ROOT / "plugins" / "MoonrakerMonitorModel.py").read_text()
 MACHINE_ACTION = (ROOT / "plugins" / "MoonrakerFollowerMachineAction.py").read_text()
 CONFIG_QML = (ROOT / "plugins" / "MoonrakerFollowerConfiguration.qml").read_text()
+MONITOR_QML = (ROOT / "plugins" / "MoonrakerMonitor.qml").read_text()
+UPLOAD_QML = (ROOT / "plugins" / "MoonrakerUploadDialog.qml").read_text()
 ACTION_QML = (ROOT / "plugins" / "PreviewActionPanelControls.qml").read_text()
 EMPTY_QML = (ROOT / "plugins" / "EmptyPreviewLoadButton.qml").read_text()
 NOZZLE_FALLBACK = (ROOT / "plugins" / "NativeNozzleFallback.py").read_text()
@@ -67,23 +70,32 @@ class SdkCompatibilityTests(unittest.TestCase):
         self.assertIn('getattr(simulation_view, "getNozzleNode", None)', NOZZLE_FALLBACK)
 
     def test_optional_qt_timeout_api_is_capability_guarded(self):
-        for source in (PLUGIN, CLIENT, MACHINE_ACTION):
+        for source in (PLUGIN, CLIENT, MACHINE_ACTION, MONITOR_MODEL):
             occurrences = [m.start() for m in re.finditer(r"\.setTransferTimeout\(", source)]
             for pos in occurrences:
                 preceding = source[max(0, pos - 180):pos]
                 self.assertIn('hasattr(request, "setTransferTimeout")', preceding)
 
     def test_no_qt5_or_websocket_dependency_is_reintroduced(self):
-        combined = "\n".join((PLUGIN, CLIENT, MACHINE_ACTION, CONFIG_QML, ACTION_QML, EMPTY_QML))
+        combined = "\n".join((
+            PLUGIN, CLIENT, MONITOR_MODEL, MACHINE_ACTION,
+            CONFIG_QML, MONITOR_QML, UPLOAD_QML, ACTION_QML, EMPTY_QML,
+        ))
         self.assertNotIn("PyQt5", combined)
         self.assertNotIn("QtWebSockets", combined)
         self.assertNotIn("QWebSocket", combined)
 
     def test_qml_imports_are_qt6_2_compatible(self):
         # Cura 5.0 shipped Qt 6.2 and its own QML uses QtQuick 2.15.
-        for qml in (CONFIG_QML, ACTION_QML, EMPTY_QML):
+        for qml in (CONFIG_QML, MONITOR_QML, UPLOAD_QML, ACTION_QML, EMPTY_QML):
             self.assertRegex(qml, r"^import QtQuick 2\.15", qml[:80])
-        self.assertIn("import QtQuick.Controls 2.15", CONFIG_QML)
+        for qml in (CONFIG_QML, MONITOR_QML, UPLOAD_QML):
+            self.assertIn("import QtQuick.Controls 2.15", qml)
+
+    def test_monitor_uses_cura_network_mjpeg_component(self):
+        self.assertIn("Cura.NetworkMJPGImage", MONITOR_QML)
+        self.assertNotIn("WebEngine", MONITOR_QML)
+        self.assertNotIn("VideoOutput", MONITOR_QML)
 
 
 if __name__ == "__main__":
