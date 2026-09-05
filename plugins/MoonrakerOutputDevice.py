@@ -34,9 +34,9 @@ class MoonrakerOutputController(PrinterOutputController):
 
     def __init__(self, output_device: PrinterOutputDevice) -> None:
         super().__init__(output_device)
-        # The v3 integration currently owns upload/start-print. These flags are
-        # deliberately conservative: Cura must not display controls that are not
-        # wired to a Moonraker command yet.
+        # Upload/start-print is implemented here. These flags are deliberately
+        # conservative: Cura must not display controls that are not wired to a
+        # Moonraker command yet.
         self.can_pause = False
         self.can_abort = False
         self.can_pre_heat_bed = False
