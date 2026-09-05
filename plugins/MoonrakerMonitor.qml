@@ -16,6 +16,51 @@ Component
         property var printer: OutputDevice != null ? OutputDevice.activePrinter : null
         property bool cameraConfigured: printer != null && printer.cameraUrl != null && printer.cameraUrl.toString().length > 0
 
+        Dialog
+        {
+            id: cancelPrintDialog
+            modal: true
+            title: "Cancel print?"
+            standardButtons: Dialog.Yes | Dialog.No
+            anchors.centerIn: parent
+            onAccepted:
+            {
+                if (root.printer != null)
+                {
+                    root.printer.cancelPrint()
+                }
+            }
+
+            Label
+            {
+                text: "This will cancel the current print on the printer."
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        Dialog
+        {
+            id: powerOffDialog
+            property string deviceName: ""
+            modal: true
+            title: "Turn off power device?"
+            standardButtons: Dialog.Yes | Dialog.No
+            anchors.centerIn: parent
+            onAccepted:
+            {
+                if (root.printer != null && deviceName.length > 0)
+                {
+                    root.printer.setPowerDevice(deviceName, false)
+                }
+            }
+
+            Label
+            {
+                text: "A print is active. Turning this device off may stop the printer immediately."
+                wrapMode: Text.WordWrap
+            }
+        }
+
         RowLayout
         {
             anchors.fill: parent
@@ -27,7 +72,7 @@ Component
                 id: cameraPanel
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumWidth: 420 * screenScaleFactor
+                Layout.minimumWidth: 400 * screenScaleFactor
                 border.color: UM.Theme.getColor("lining")
                 border.width: UM.Theme.getSize("default_lining").width
                 color: UM.Theme.getColor("main_background")
@@ -74,7 +119,7 @@ Component
                             {
                                 if (root.printer != null)
                                 {
-                                    root.printer.refreshWebcams()
+                                    root.printer.refreshAll()
                                 }
                             }
                         }
@@ -162,104 +207,374 @@ Component
             Cura.RoundedRectangle
             {
                 id: statusPanel
-                Layout.preferredWidth: 330 * screenScaleFactor
-                Layout.minimumWidth: 280 * screenScaleFactor
+                Layout.preferredWidth: 410 * screenScaleFactor
+                Layout.minimumWidth: 330 * screenScaleFactor
                 Layout.fillHeight: true
                 border.color: UM.Theme.getColor("lining")
                 border.width: UM.Theme.getSize("default_lining").width
                 color: UM.Theme.getColor("main_background")
                 radius: UM.Theme.getSize("default_radius").width
 
-                ColumnLayout
+                Flickable
                 {
+                    id: statusFlick
                     anchors.fill: parent
                     anchors.margins: UM.Theme.getSize("default_margin").width
-                    spacing: UM.Theme.getSize("default_margin").height
+                    clip: true
+                    contentWidth: width
+                    contentHeight: statusContent.implicitHeight
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { }
 
-                    UM.Label
+                    ColumnLayout
                     {
-                        text: root.printer != null ? root.printer.name : "Moonraker"
-                        font: UM.Theme.getFont("large_bold")
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
-                    }
+                        id: statusContent
+                        width: statusFlick.width - (statusFlick.ScrollBar.vertical.visible ? 12 * screenScaleFactor : 0)
+                        spacing: UM.Theme.getSize("default_margin").height
 
-                    UM.Label
-                    {
-                        text: root.printer != null ? root.printer.monitorState : "Not connected"
-                        font: UM.Theme.getFont("medium_bold")
-                        Layout.fillWidth: true
-                    }
-
-                    UM.Label
-                    {
-                        text: root.printer != null && root.printer.monitorFilename.length > 0 ? root.printer.monitorFilename : "No active file"
-                        color: UM.Theme.getColor("text_inactive")
-                        Layout.fillWidth: true
-                        elide: Text.ElideMiddle
-                    }
-
-                    ProgressBar
-                    {
-                        Layout.fillWidth: true
-                        from: 0
-                        to: 100
-                        value: root.printer != null ? root.printer.monitorProgress : 0
-                    }
-
-                    UM.Label
-                    {
-                        text: root.printer != null ? root.printer.monitorProgress + "%" : "0%"
-                        font: UM.Theme.getFont("medium_bold")
-                        Layout.alignment: Qt.AlignHCenter
-                    }
-
-                    Rectangle
-                    {
-                        Layout.fillWidth: true
-                        height: UM.Theme.getSize("default_lining").height
-                        color: UM.Theme.getColor("lining")
-                    }
-
-                    GridLayout
-                    {
-                        columns: 2
-                        columnSpacing: UM.Theme.getSize("default_margin").width
-                        rowSpacing: UM.Theme.getSize("default_margin").height / 2
-                        Layout.fillWidth: true
-
-                        UM.Label { text: "Layer"; color: UM.Theme.getColor("text_inactive") }
-                        UM.Label { text: root.printer != null ? root.printer.monitorLayer : "—"; Layout.fillWidth: true }
-
-                        UM.Label { text: "Elapsed"; color: UM.Theme.getColor("text_inactive") }
-                        UM.Label { text: root.printer != null ? root.printer.monitorElapsed : "00:00:00"; Layout.fillWidth: true }
-
-                        UM.Label { text: "Speed"; color: UM.Theme.getColor("text_inactive") }
-                        UM.Label { text: root.printer != null ? root.printer.monitorSpeed : "100%"; Layout.fillWidth: true }
-
-                        UM.Label { text: "Flow"; color: UM.Theme.getColor("text_inactive") }
-                        UM.Label { text: root.printer != null ? root.printer.monitorFlow : "100%"; Layout.fillWidth: true }
-
-                        UM.Label { text: "Position"; color: UM.Theme.getColor("text_inactive") }
                         UM.Label
                         {
-                            text: root.printer != null ? root.printer.monitorPosition : "—"
+                            text: root.printer != null ? root.printer.name : "Moonraker"
+                            font: UM.Theme.getFont("large_bold")
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+
+                        UM.Label
+                        {
+                            text: root.printer != null ? root.printer.monitorState : "Not connected"
+                            font: UM.Theme.getFont("medium_bold")
+                            Layout.fillWidth: true
+                        }
+
+                        UM.Label
+                        {
+                            text: root.printer != null && root.printer.monitorFilename.length > 0 ? root.printer.monitorFilename : "No active file"
+                            color: UM.Theme.getColor("text_inactive")
+                            Layout.fillWidth: true
+                            elide: Text.ElideMiddle
+                        }
+
+                        UM.Label
+                        {
+                            visible: root.printer != null && root.printer.monitorMessage.length > 0
+                            text: root.printer != null ? root.printer.monitorMessage : ""
+                            color: UM.Theme.getColor("text_inactive")
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                         }
-                    }
 
-                    Item { Layout.fillHeight: true }
-
-                    Cura.SecondaryButton
-                    {
-                        Layout.fillWidth: true
-                        text: "Open Moonraker frontend"
-                        onClicked:
+                        ProgressBar
                         {
-                            if (root.printer != null)
+                            Layout.fillWidth: true
+                            from: 0
+                            to: 100
+                            value: root.printer != null ? root.printer.monitorProgress : 0
+                        }
+
+                        UM.Label
+                        {
+                            text: root.printer != null ? root.printer.monitorProgress + "%" : "0%"
+                            font: UM.Theme.getFont("medium_bold")
+                            Layout.alignment: Qt.AlignHCenter
+                        }
+
+                        RowLayout
+                        {
+                            visible: root.printer != null && (root.printer.canPausePrint || root.printer.canResumePrint || root.printer.canCancelPrint)
+                            Layout.fillWidth: true
+                            spacing: UM.Theme.getSize("default_margin").width / 2
+
+                            Cura.SecondaryButton
                             {
-                                root.printer.openFrontend()
+                                Layout.fillWidth: true
+                                visible: root.printer != null && root.printer.canPausePrint
+                                text: "Pause"
+                                onClicked: root.printer.pausePrint()
+                            }
+
+                            Cura.PrimaryButton
+                            {
+                                Layout.fillWidth: true
+                                visible: root.printer != null && root.printer.canResumePrint
+                                text: "Resume"
+                                onClicked: root.printer.resumePrint()
+                            }
+
+                            Cura.SecondaryButton
+                            {
+                                Layout.fillWidth: true
+                                visible: root.printer != null && root.printer.canCancelPrint
+                                text: "Cancel"
+                                onClicked: cancelPrintDialog.open()
+                            }
+                        }
+
+                        UM.Label
+                        {
+                            visible: root.printer != null && root.printer.actionStatus.length > 0
+                            text: root.printer != null ? root.printer.actionStatus : ""
+                            color: UM.Theme.getColor("text_inactive")
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Rectangle
+                        {
+                            Layout.fillWidth: true
+                            height: UM.Theme.getSize("default_lining").height
+                            color: UM.Theme.getColor("lining")
+                        }
+
+                        GridLayout
+                        {
+                            columns: 2
+                            columnSpacing: UM.Theme.getSize("default_margin").width
+                            rowSpacing: UM.Theme.getSize("default_margin").height / 2
+                            Layout.fillWidth: true
+
+                            UM.Label { text: "Layer"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label { text: root.printer != null ? root.printer.monitorLayer : "—"; Layout.fillWidth: true }
+
+                            UM.Label { text: "Elapsed"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label { text: root.printer != null ? root.printer.monitorElapsed : "00:00:00"; Layout.fillWidth: true }
+
+                            UM.Label { text: "Remaining"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label { text: root.printer != null ? root.printer.monitorEta : "—"; Layout.fillWidth: true }
+
+                            UM.Label { text: "Finish"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label { text: root.printer != null ? root.printer.monitorFinish : "—"; Layout.fillWidth: true }
+
+                            UM.Label { text: "Speed"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label { text: root.printer != null ? root.printer.monitorSpeed : "100%"; Layout.fillWidth: true }
+
+                            UM.Label { text: "Flow"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label { text: root.printer != null ? root.printer.monitorFlow : "100%"; Layout.fillWidth: true }
+
+                            UM.Label { text: "Position"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label
+                            {
+                                text: root.printer != null ? root.printer.monitorPosition : "—"
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        ColumnLayout
+                        {
+                            visible: root.printer != null && root.printer.temperatureItems.length > 0
+                            Layout.fillWidth: true
+                            spacing: UM.Theme.getSize("default_margin").height / 2
+
+                            UM.Label { text: "Temperatures"; font: UM.Theme.getFont("medium_bold") }
+
+                            Repeater
+                            {
+                                model: root.printer != null ? root.printer.temperatureItems : []
+                                RowLayout
+                                {
+                                    Layout.fillWidth: true
+                                    UM.Label
+                                    {
+                                        text: modelData.name
+                                        color: UM.Theme.getColor("text_inactive")
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                    }
+                                    UM.Label { text: modelData.detail }
+                                }
+                            }
+                        }
+
+                        ColumnLayout
+                        {
+                            visible: root.printer != null && root.printer.fanItems.length > 0
+                            Layout.fillWidth: true
+                            spacing: UM.Theme.getSize("default_margin").height / 2
+
+                            UM.Label { text: "Fans"; font: UM.Theme.getFont("medium_bold") }
+
+                            Repeater
+                            {
+                                model: root.printer != null ? root.printer.fanItems : []
+                                RowLayout
+                                {
+                                    Layout.fillWidth: true
+                                    UM.Label
+                                    {
+                                        text: modelData.name
+                                        color: UM.Theme.getColor("text_inactive")
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                    }
+                                    UM.Label { text: modelData.detail }
+                                }
+                            }
+                        }
+
+                        ColumnLayout
+                        {
+                            visible: root.printer != null && root.printer.filamentSensorItems.length > 0
+                            Layout.fillWidth: true
+                            spacing: UM.Theme.getSize("default_margin").height / 2
+
+                            UM.Label { text: "Filament sensors"; font: UM.Theme.getFont("medium_bold") }
+
+                            Repeater
+                            {
+                                model: root.printer != null ? root.printer.filamentSensorItems : []
+                                RowLayout
+                                {
+                                    Layout.fillWidth: true
+                                    UM.Label
+                                    {
+                                        text: modelData.name
+                                        color: UM.Theme.getColor("text_inactive")
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                    }
+                                    UM.Label { text: modelData.state }
+                                }
+                            }
+                        }
+
+                        ColumnLayout
+                        {
+                            visible: root.printer != null && root.printer.excludeObjectItems.length > 0
+                            Layout.fillWidth: true
+                            spacing: UM.Theme.getSize("default_margin").height / 2
+
+                            UM.Label { text: "Objects"; font: UM.Theme.getFont("medium_bold") }
+
+                            Repeater
+                            {
+                                model: root.printer != null ? root.printer.excludeObjectItems : []
+                                RowLayout
+                                {
+                                    Layout.fillWidth: true
+                                    UM.Label
+                                    {
+                                        text: modelData.name + (modelData.current ? "  · current" : "") + (modelData.excluded ? "  · excluded" : "")
+                                        color: modelData.excluded ? UM.Theme.getColor("text_inactive") : UM.Theme.getColor("text")
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                    }
+                                    Cura.SecondaryButton
+                                    {
+                                        visible: root.printer != null && root.printer.printActive && !modelData.excluded
+                                        enabled: root.printer != null && !root.printer.actionBusy
+                                        text: "Exclude"
+                                        onClicked: root.printer.excludeObject(modelData.name)
+                                    }
+                                }
+                            }
+                        }
+
+                        ColumnLayout
+                        {
+                            visible: root.printer != null && root.printer.powerDevices.length > 0
+                            Layout.fillWidth: true
+                            spacing: UM.Theme.getSize("default_margin").height / 2
+
+                            UM.Label { text: "Power"; font: UM.Theme.getFont("medium_bold") }
+
+                            Repeater
+                            {
+                                model: root.printer != null ? root.printer.powerDevices : []
+                                RowLayout
+                                {
+                                    Layout.fillWidth: true
+                                    UM.Label
+                                    {
+                                        text: modelData.name + "  · " + modelData.status
+                                        color: UM.Theme.getColor("text_inactive")
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                    }
+                                    Cura.SecondaryButton
+                                    {
+                                        enabled: root.printer != null && modelData.can_toggle && !root.printer.actionBusy
+                                        text: modelData.status === "on" ? "Turn off" : "Turn on"
+                                        onClicked:
+                                        {
+                                            if (modelData.status === "on" && root.printer.printActive)
+                                            {
+                                                powerOffDialog.deviceName = modelData.name
+                                                powerOffDialog.open()
+                                            }
+                                            else
+                                            {
+                                                root.printer.setPowerDevice(modelData.name, modelData.status !== "on")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle
+                        {
+                            Layout.fillWidth: true
+                            height: UM.Theme.getSize("default_lining").height
+                            color: UM.Theme.getColor("lining")
+                        }
+
+                        UM.Label { text: "System"; font: UM.Theme.getFont("medium_bold") }
+
+                        GridLayout
+                        {
+                            columns: 2
+                            columnSpacing: UM.Theme.getSize("default_margin").width
+                            rowSpacing: UM.Theme.getSize("default_margin").height / 2
+                            Layout.fillWidth: true
+
+                            UM.Label { text: "Klippy"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label { text: root.printer != null ? root.printer.klippyState : "—"; Layout.fillWidth: true }
+
+                            UM.Label { text: "Host load"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label { text: root.printer != null ? root.printer.hostLoad : "—"; Layout.fillWidth: true }
+
+                            UM.Label { text: "Memory free"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label { text: root.printer != null ? root.printer.memoryAvailable : "—"; Layout.fillWidth: true }
+
+                            UM.Label { text: "CPU temp"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label { text: root.printer != null ? root.printer.cpuTemperature : "—"; Layout.fillWidth: true }
+
+                            UM.Label { text: "Klipper"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label
+                            {
+                                text: root.printer != null ? root.printer.klipperVersion : "—"
+                                Layout.fillWidth: true
+                                elide: Text.ElideMiddle
+                            }
+
+                            UM.Label { text: "Moonraker"; color: UM.Theme.getColor("text_inactive") }
+                            UM.Label
+                            {
+                                text: root.printer != null ? root.printer.moonrakerVersion : "—"
+                                Layout.fillWidth: true
+                                elide: Text.ElideMiddle
+                            }
+                        }
+
+                        UM.Label
+                        {
+                            text: root.printer != null ? "MCU  " + root.printer.mcuSummary : "MCU  —"
+                            color: UM.Theme.getColor("text_inactive")
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Cura.SecondaryButton
+                        {
+                            Layout.fillWidth: true
+                            text: "Open Moonraker frontend"
+                            onClicked:
+                            {
+                                if (root.printer != null)
+                                {
+                                    root.printer.openFrontend()
+                                }
                             }
                         }
                     }
