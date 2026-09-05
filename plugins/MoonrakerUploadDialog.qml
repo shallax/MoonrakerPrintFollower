@@ -12,6 +12,9 @@ UM.Dialog
     minimumWidth: 520 * screenScaleFactor
     minimumHeight: 280 * screenScaleFactor
 
+    // Cura.ComboBox expects a catalog in the creation context.  Supplying it here
+    // avoids the undefined-catalog QML error seen in Cura 5.13's upload dialog.
+    property variant catalog: UM.I18nCatalog { name: "cura" }
     property string forbiddenCharacters: ":*?\"<>|"
 
     function validFilename(value)
@@ -62,6 +65,15 @@ UM.Dialog
                 if (index >= 0) currentIndex = index
                 editText = manager.initialUploadPath
             }
+        }
+
+        UM.Label
+        {
+            text: "Folders are read from Moonraker's gcodes directory; you can also type a folder path."
+            color: UM.Theme.getColor("text_inactive")
+            font: UM.Theme.getFont("default_italic")
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
         }
 
         UM.Label
