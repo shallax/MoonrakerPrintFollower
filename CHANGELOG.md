@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: v3: add integrated Moonraker output settings tab
 - 2026-09-05: v3: unify follower and Moonraker output settings
 - 2026-09-05: v3: add integrated Moonraker upload dialog
 - 2026-09-05: v3: register integrated Moonraker output device
