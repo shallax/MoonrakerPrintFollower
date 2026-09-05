@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: Monitor: add advanced control surface
 - 2026-09-05: Monitor: add advanced Klipper controls
 - 2026-09-05: Describe integrated Monitor in plugin metadata
 - 2026-09-05: Describe integrated Monitor in package metadata
