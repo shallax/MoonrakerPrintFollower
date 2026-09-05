@@ -27,6 +27,7 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
 
         print_stats = status.get("print_stats") or {}
         gcode_move = status.get("gcode_move") or {}
+        virtual_sdcard = status.get("virtual_sdcard") or {}
         info = print_stats.get("info") or {}
         if not isinstance(info, dict):
             info = {}
@@ -49,6 +50,26 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
                     if bool(config.moonraker_layer_is_one_based):
                         target_layer -= 1
             except (TypeError, ValueError, AttributeError):
+                target_layer = None
+
+        # Many Klipper configurations never populate print_stats.info.current_layer.
+        # Once the follower has indexed the active G-code, file_position is enough
+        # to determine which layer byte range Klipper is currently consuming. This
+        # also handles variable layer heights without estimating from Z.
+        if target_layer is None:
+            try:
+                indexed_filename = getattr(self._follower, "_remote_index_filename", None)
+                ranges = list(getattr(self._follower, "_remote_layer_ranges", []) or [])
+                if indexed_filename == filename and ranges:
+                    if total_layer is None:
+                        total_layer = len(ranges)
+                    try:
+                        file_position = int(virtual_sdcard.get("file_position"))
+                    except (TypeError, ValueError):
+                        file_position = None
+                    if file_position is not None:
+                        target_layer = self._layer_from_file_position(ranges, file_position)
+            except Exception:
                 target_layer = None
 
         if target_layer is None:
@@ -76,6 +97,40 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             pass
 
         return target_layer + 1, total_layer
+
+    @staticmethod
+    def _layer_from_file_position(ranges: Any, file_position: int) -> Optional[int]:
+        if not ranges:
+            return None
+        try:
+            position = int(file_position)
+        except (TypeError, ValueError):
+            return None
+
+        low = 0
+        high = len(ranges) - 1
+        while low <= high:
+            middle = (low + high) // 2
+            try:
+                start, end = ranges[middle]
+                start = int(start)
+                end = int(end)
+            except (TypeError, ValueError, IndexError):
+                return None
+
+            if position < start:
+                high = middle - 1
+            elif position >= end:
+                low = middle + 1
+            else:
+                return middle
+
+        # file_position may land in slicer header/trailer bytes between indexed
+        # ranges. Attribute a gap to the most recently started layer, but leave
+        # pre-first-layer positions unresolved so the Z fallback can handle them.
+        if low > 0:
+            return min(low - 1, len(ranges) - 1)
+        return None
 
     @staticmethod
     def _as_positive_int(value: Any) -> Optional[int]:
