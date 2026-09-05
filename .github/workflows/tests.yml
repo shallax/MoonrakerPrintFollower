@@ -20,7 +20,7 @@ jobs:
           python-version: "3.11"
 
       - name: Compile plugin sources
-        run: python -m py_compile plugins/*.py
+        run: python -m py_compile plugins/*.py tools/*.py
 
       - name: Run standard-library unit and contract tests
         run: >-
@@ -32,3 +32,48 @@ jobs:
           tests.test_printer_config
           tests.test_source_contracts
           tests.test_sdk_compatibility
+
+      - name: Read package version
+        id: package_meta
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          package = json.load(open("package.json", encoding="utf-8"))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={package['package_version']}\n")
+          PY
+
+      - name: Build Cura package
+        run: python tools/build_curapackage.py
+
+      - name: Verify Cura package contents
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import zipfile
+          package = json.load(open("package.json", encoding="utf-8"))
+          package_id = package["package_id"]
+          version = package["package_version"]
+          path = pathlib.Path("dist") / f"MoonrakerPrintFollower-v{version}.curapackage"
+          assert path.is_file(), path
+          with zipfile.ZipFile(path) as archive:
+              names = set(archive.namelist())
+              assert "package.json" in names
+              assert f"files/plugins/{package_id}/plugin.json" in names
+              assert f"files/plugins/{package_id}/MoonrakerMonitor.qml" in names
+              assert f"files/plugins/{package_id}/MoonrakerOutputDevice.py" in names
+              embedded = json.loads(archive.read("package.json"))
+              assert embedded["package_version"] == version
+              assert embedded["package_id"] == package_id
+          print(f"Verified {path}")
+          PY
+
+      - name: Upload Cura package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}-curapackage
+          path: dist/MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}.curapackage
+          if-no-files-found: error
+          retention-days: 30
