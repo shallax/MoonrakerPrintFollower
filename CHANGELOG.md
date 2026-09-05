@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: Infer macro argument types and temperature preset state
 - 2026-09-05: Fix upload dialog QML context
 - 2026-09-05: Fix upload dialog lifecycle and discover Moonraker folders
 - 2026-09-05: Restore upload device before hotfix
