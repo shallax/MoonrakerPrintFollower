@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Verify typed Monitor and upload dialog in package
 - 2026-09-06: Test upload lifecycle and Moonraker folder discovery
 - 2026-09-06: Set plugin version to 3.0.1
 - 2026-09-06: Bump hotfix package to 3.0.1
