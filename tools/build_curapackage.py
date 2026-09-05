@@ -40,8 +40,13 @@ def build(output: pathlib.Path | None = None) -> pathlib.Path:
             f"files/plugins/{package_id}/__init__.py",
             f"files/plugins/{package_id}/MoonrakerPrintFollower.py",
             f"files/plugins/{package_id}/MoonrakerOutputDevice.py",
+            f"files/plugins/{package_id}/MoonrakerOutputDeviceLifecycle.py",
+            f"files/plugins/{package_id}/MoonrakerOutputDevicePlugin.py",
             f"files/plugins/{package_id}/MoonrakerMonitor.qml",
             f"files/plugins/{package_id}/MoonrakerMonitorModel.py",
+            f"files/plugins/{package_id}/MoonrakerMonitorRuntime.py",
+            f"files/plugins/{package_id}/MoonrakerMonitorControls.py",
+            f"files/plugins/{package_id}/MoonrakerMonitorEnhanced.qml",
         }
         missing = sorted(required - names)
         if missing:
