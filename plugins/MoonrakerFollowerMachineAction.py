@@ -1,7 +1,8 @@
-"""Native Cura Machine Action for per-printer Moonraker follower settings."""
+"""Native Cura Machine Action for unified per-printer Moonraker settings."""
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
@@ -17,19 +18,20 @@ from .PrinterConfig import PrinterConfig
 
 
 class MoonrakerFollowerMachineAction(MachineAction):
-    """Expose follower configuration through Cura's Manage Printers UI."""
+    """Configure both live following and Cura-to-Moonraker output."""
 
     KEY = "MoonrakerPrintFollowerConfigureAction"
-    LABEL = "Configure Moonraker Follower"
+    LABEL = "Configure Moonraker"
 
     settingsChanged = pyqtSignal()
     testStatusChanged = pyqtSignal()
     testBusyChanged = pyqtSignal()
 
-    def __init__(self, application: Any, follower: Any) -> None:
+    def __init__(self, application: Any, follower: Any, output_plugin: Any = None) -> None:
         super().__init__(self.KEY, self.LABEL)
         self._application = application
         self._follower = follower
+        self._output_plugin = output_plugin
         self._qml_url = "MoonrakerFollowerConfiguration.qml"
 
         self._probe_network = QNetworkAccessManager(self)
@@ -52,7 +54,6 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 pass
 
     def _on_container_added(self, container: Any) -> None:
-        """Advertise the action for every local Cura machine definition."""
         try:
             if not isinstance(container, DefinitionContainer):
                 return
@@ -82,6 +83,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtProperty(str, notify=settingsChanged)
     def machineName(self) -> str:
         return self._follower.current_printer_identity()[1]
+
+    # ------------------------------------------------------------------
+    # Connection / following settings
+    # ------------------------------------------------------------------
 
     @pyqtProperty(bool, notify=settingsChanged)
     def settingsEnabled(self) -> bool:
@@ -127,6 +132,62 @@ class MoonrakerFollowerMachineAction(MachineAction):
     def settingsZTolerance(self) -> str:
         return f"{self._config().z_tolerance:.3f}"
 
+    # ------------------------------------------------------------------
+    # Integrated Moonraker output settings
+    # ------------------------------------------------------------------
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsFrontendUrl(self) -> str:
+        return self._config().frontend_url
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsOutputFormat(self) -> str:
+        return self._config().output_format
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsUploadDialog(self) -> bool:
+        return self._config().upload_dialog
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsUploadPath(self) -> str:
+        return self._config().upload_path
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsUploadStartPrint(self) -> bool:
+        return self._config().upload_start_print
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsUploadRememberState(self) -> bool:
+        return self._config().upload_remember_state
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsUploadAutohideMessage(self) -> bool:
+        return self._config().upload_autohide_message
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsPowerDevices(self) -> str:
+        return self._config().power_devices
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsReadyRetryInterval(self) -> str:
+        return f"{self._config().ready_retry_interval_s:g}"
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsTranslateInput(self) -> str:
+        return self._config().filename_translate_input
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsTranslateOutput(self) -> str:
+        return self._config().filename_translate_output
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsTranslateRemove(self) -> str:
+        return self._config().filename_translate_remove
+
+    # ------------------------------------------------------------------
+    # Validation / save
+    # ------------------------------------------------------------------
+
     @pyqtProperty(str, notify=testStatusChanged)
     def testStatus(self) -> str:
         return self._test_status
@@ -168,44 +229,89 @@ class MoonrakerFollowerMachineAction(MachineAction):
             return False
         return 0.005 <= number <= 0.250
 
+    @pyqtSlot(str, result=bool)
+    def validRetryInterval(self, value: str) -> bool:
+        try:
+            number = float(str(value).strip())
+        except (TypeError, ValueError):
+            return False
+        return 0.1 <= number <= 60.0
+
+    @pyqtSlot(str, str, result=bool)
+    def validTranslation(self, source: str, target: str) -> bool:
+        return len(str(source or "")) == len(str(target or ""))
+
     @pyqtSlot(QVariant, result=bool)
     def saveConfig(self, params: QVariant) -> bool:
         try:
             raw = params.toVariant() if hasattr(params, "toVariant") else params
             if not isinstance(raw, dict):
                 return False
+
             interval = int(str(raw.get("poll_interval_ms", "")).strip())
             tolerance = float(str(raw.get("z_tolerance", "")).strip())
+            retry_interval = float(str(raw.get("ready_retry_interval_s", "")).strip())
             url = self._normalise_base_url(str(raw.get("url", "")))
             enabled = bool(raw.get("enabled", False))
             if interval <= 0 or not (0.005 <= tolerance <= 0.250):
                 return False
+            if not (0.1 <= retry_interval <= 60.0):
+                return False
             if enabled and not self._url_is_usable(url):
+                return False
+
+            trans_input = str(raw.get("filename_translate_input") or "")
+            trans_output = str(raw.get("filename_translate_output") or "")
+            if len(trans_input) != len(trans_output):
                 return False
 
             mode = str(raw.get("follow_mode") or FollowMode.EXACT.value)
             if mode not in {item.value for item in FollowMode}:
                 mode = FollowMode.EXACT.value
 
-            config = PrinterConfig(
-                enabled=enabled,
-                url=url,
-                api_key=str(raw.get("api_key") or "").strip(),
-                poll_interval_ms=interval,
-                moonraker_layer_is_one_based=bool(raw.get("moonraker_layer_is_one_based", True)),
-                auto_preview=bool(raw.get("auto_preview", False)),
-                z_fallback=bool(raw.get("z_fallback", True)),
-                z_tolerance=tolerance,
-                path_follow=bool(raw.get("path_follow", True)),
-                show_toolhead_indicator=bool(raw.get("show_toolhead_indicator", True)),
-                follow_mode=mode,
-            )
+            current = self._config()
+            data = asdict(current)
+            data.update({
+                "enabled": enabled,
+                "url": url,
+                "api_key": str(raw.get("api_key") or "").strip(),
+                "poll_interval_ms": interval,
+                "moonraker_layer_is_one_based": bool(raw.get("moonraker_layer_is_one_based", True)),
+                "auto_preview": bool(raw.get("auto_preview", False)),
+                "z_fallback": bool(raw.get("z_fallback", True)),
+                "z_tolerance": tolerance,
+                "path_follow": bool(raw.get("path_follow", True)),
+                "show_toolhead_indicator": bool(raw.get("show_toolhead_indicator", True)),
+                "follow_mode": mode,
+                "frontend_url": str(raw.get("frontend_url") or "").strip(),
+                "output_format": str(raw.get("output_format") or "gcode").lower(),
+                "upload_dialog": bool(raw.get("upload_dialog", True)),
+                "upload_path": str(raw.get("upload_path") or "").strip().strip("/"),
+                "upload_start_print": bool(raw.get("upload_start_print", False)),
+                "upload_remember_state": bool(raw.get("upload_remember_state", False)),
+                "upload_autohide_message": bool(raw.get("upload_autohide_message", False)),
+                "power_devices": str(raw.get("power_devices") or "").strip(),
+                "ready_retry_interval_s": retry_interval,
+                "filename_translate_input": trans_input,
+                "filename_translate_output": trans_output,
+                "filename_translate_remove": str(raw.get("filename_translate_remove") or ""),
+            })
+            config = PrinterConfig.from_dict(data)
             self._follower.apply_printer_config(config)
+            if self._output_plugin is not None:
+                try:
+                    self._output_plugin.refresh()
+                except Exception as exc:
+                    Logger.log("w", "Moonraker Print Follower: output refresh after save failed: %s", exc)
             self.settingsChanged.emit()
             return True
         except Exception as exc:
             Logger.log("e", "Moonraker Print Follower: unable to save machine settings: %s", exc)
             return False
+
+    # ------------------------------------------------------------------
+    # Connection test
+    # ------------------------------------------------------------------
 
     def _set_test_state(self, status: str, *, busy: Optional[bool] = None) -> None:
         if status != self._test_status:
@@ -281,10 +387,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
             info = self._probe_server_info
             version = str(info.get("moonraker_version") or info.get("software_version") or "unknown")
             klippy = str(info.get("klippy_state") or "unknown")
-            if missing:
-                detail = f"missing: {', '.join(missing)}"
-            else:
-                detail = "required print objects available"
+            detail = f"missing: {', '.join(missing)}" if missing else "required print objects available"
             if "motion_report" in objects:
                 detail += "; live-position refinement available"
             self._set_test_state(
