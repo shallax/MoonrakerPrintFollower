@@ -62,13 +62,20 @@ jobs:
           with zipfile.ZipFile(path) as archive:
               names = set(archive.namelist())
               root = f"files/plugins/{package_id}/"
-              assert "package.json" in names
-              assert root + "plugin.json" in names
-              assert root + "MoonrakerMonitor.qml" in names
-              assert root + "MoonrakerMonitorModel.py" in names
-              assert root + "MoonrakerMonitorRuntime.py" in names
-              assert root + "MoonrakerOutputDevice.py" in names
-              assert root + "MoonrakerOutputDeviceLifecycle.py" in names
+              required = {
+                  "package.json",
+                  root + "plugin.json",
+                  root + "MoonrakerMonitor.qml",
+                  root + "MoonrakerMonitorModel.py",
+                  root + "MoonrakerMonitorRuntime.py",
+                  root + "MoonrakerMonitorControls.py",
+                  root + "MoonrakerMonitorEnhanced.qml",
+                  root + "MoonrakerOutputDevice.py",
+                  root + "MoonrakerOutputDeviceLifecycle.py",
+                  root + "MoonrakerOutputDevicePlugin.py",
+              }
+              missing = sorted(required - names)
+              assert not missing, missing
               embedded = json.loads(archive.read("package.json"))
               assert embedded["package_version"] == version
               assert embedded["package_id"] == package_id

@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: CI: verify enhanced Monitor package contents
 - 2026-09-05: Build: require enhanced Monitor files in Cura package
 - 2026-09-05: Test enhanced Monitor controls and safety contracts
 - 2026-09-05: Monitor: retain base view contract for enhanced dashboard
