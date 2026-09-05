@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Activate typed Monitor dashboard
 - 2026-09-06: Add typed Monitor dashboard controls
 - 2026-09-05: Use typed Monitor controls
 - 2026-09-05: Infer macro argument types and temperature preset state
