@@ -32,6 +32,7 @@ jobs:
           tests.test_printer_config
           tests.test_source_contracts
           tests.test_sdk_compatibility
+          tests.test_monitor_upload_regressions
 
       - name: Read package version
         id: package_meta
@@ -60,10 +61,14 @@ jobs:
           assert path.is_file(), path
           with zipfile.ZipFile(path) as archive:
               names = set(archive.namelist())
+              root = f"files/plugins/{package_id}/"
               assert "package.json" in names
-              assert f"files/plugins/{package_id}/plugin.json" in names
-              assert f"files/plugins/{package_id}/MoonrakerMonitor.qml" in names
-              assert f"files/plugins/{package_id}/MoonrakerOutputDevice.py" in names
+              assert root + "plugin.json" in names
+              assert root + "MoonrakerMonitor.qml" in names
+              assert root + "MoonrakerMonitorModel.py" in names
+              assert root + "MoonrakerMonitorRuntime.py" in names
+              assert root + "MoonrakerOutputDevice.py" in names
+              assert root + "MoonrakerOutputDeviceLifecycle.py" in names
               embedded = json.loads(archive.read("package.json"))
               assert embedded["package_version"] == version
               assert embedded["package_id"] == package_id
