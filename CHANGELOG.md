@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: Monitor: retain base view contract for enhanced dashboard
 - 2026-09-05: Monitor: activate enhanced control surface
 - 2026-09-05: Monitor: add advanced control surface
 - 2026-09-05: Monitor: add advanced Klipper controls
