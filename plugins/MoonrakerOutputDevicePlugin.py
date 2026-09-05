@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import QUrl
 from UM.Logger import Logger
 from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
-from .MoonrakerOutputDevice import MoonrakerOutputDevice
+from .MoonrakerMonitorModel import MoonrakerMonitorModel
+from .MoonrakerOutputDevice import MoonrakerOutputController, MoonrakerOutputDevice
 
 
 class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
@@ -39,6 +41,34 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         url = QUrl(str(value or ""))
         return url.isValid() and url.scheme() in ("http", "https") and bool(url.host())
 
+    def _install_monitor(self, device: MoonrakerOutputDevice, stack: Any) -> None:
+        """Attach the unified Moonraker model and Cura Monitor QML to a device."""
+        monitor = getattr(device, "activePrinter", None)
+        if not isinstance(monitor, MoonrakerMonitorModel):
+            try:
+                extruders = int(stack.getProperty("machine_extruder_count", "value") or 1)
+            except Exception:
+                extruders = 1
+            monitor = MoonrakerMonitorModel(
+                MoonrakerOutputController(device), extruders, self._follower
+            )
+            try:
+                monitor.updateName(stack.getName())
+                monitor.updateUniqueName(stack.getId())
+                monitor.updateBuildplate(stack.getProperty("machine_buildplate_type", "value"))
+            except Exception:
+                pass
+            # PrinterOutputDevice exposes activePrinter from this model list.
+            device._printers = [monitor]
+
+        device._monitor_view_qml_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitor.qml"
+        )
+        try:
+            monitor.refreshWebcams()
+        except Exception as exc:
+            Logger.log("w", "Moonraker Print Follower: webcam refresh failed: %s", exc)
+
     def refresh(self, *_args: Any) -> None:
         try:
             stack = self._application.getGlobalContainerStack()
@@ -61,9 +91,11 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             device = self._devices.get(machine_id)
             if device is None:
                 device = MoonrakerOutputDevice(self._application, self._follower, machine_id)
+                self._install_monitor(device, stack)
                 self._devices[machine_id] = device
             else:
                 device.updateConfig(config)
+                self._install_monitor(device, stack)
 
             if self._current is not device:
                 if self._current is not None:

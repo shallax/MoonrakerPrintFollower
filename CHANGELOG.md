@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: v3: wire unified webcam Monitor into Cura output device
 - 2026-09-05: v3: add webcam and live status Monitor tab
 - 2026-09-05: v3: add unified Moonraker Monitor model and webcam discovery
 - 2026-09-05: v3: migrate legacy webcam settings for unified Monitor
