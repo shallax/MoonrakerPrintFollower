@@ -8,6 +8,8 @@ from UM.Logger import Logger
 from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
 # MoonrakerMonitorRuntime remains the proven layer-following base implementation.
+# MoonrakerMonitorControls remains the tested control base beneath the typed layer.
+# MoonrakerMonitorEnhanced.qml is retained in the package as the previous dashboard.
 from .MoonrakerMonitorTypedControls import MoonrakerMonitorModel
 from .MoonrakerOutputDevice import MoonrakerOutputController
 from .MoonrakerOutputDeviceLifecycle import MoonrakerOutputDevice
