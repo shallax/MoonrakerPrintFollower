@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Run hotfix regression suite in CI
 - 2026-09-06: Add upload and Monitor hotfix regression tests
 - 2026-09-06: Retain Monitor compatibility contract markers
 - 2026-09-06: Align Monitor regression tests with dashboard view
