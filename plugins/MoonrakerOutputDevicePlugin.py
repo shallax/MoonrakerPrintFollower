@@ -8,7 +8,8 @@ from UM.Logger import Logger
 from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
 from .MoonrakerMonitorModel import MoonrakerMonitorModel
-from .MoonrakerOutputDevice import MoonrakerOutputController, MoonrakerOutputDevice
+from .MoonrakerOutputDevice import MoonrakerOutputController
+from .MoonrakerOutputDeviceLifecycle import MoonrakerOutputDevice
 
 
 class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
@@ -65,9 +66,9 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitor.qml"
         )
         try:
-            monitor.refreshWebcams()
+            monitor.refreshAll()
         except Exception as exc:
-            Logger.log("w", "Moonraker Print Follower: webcam refresh failed: %s", exc)
+            Logger.log("w", "Moonraker Print Follower: Monitor refresh failed: %s", exc)
 
     def refresh(self, *_args: Any) -> None:
         try:
