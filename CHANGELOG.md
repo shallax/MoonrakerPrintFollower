@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: Restore upload device before hotfix
 - 2026-09-05: Fix upload dialog lifecycle and discover folders
 - 2026-09-05: Test Monitor controls class definition
 - 2026-09-05: Fix Monitor controls class import
