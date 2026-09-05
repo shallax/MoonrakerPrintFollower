@@ -10,8 +10,10 @@ PLUGINS = ROOT / "plugins"
 MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
 MONITOR_RUNTIME = (PLUGINS / "MoonrakerMonitorRuntime.py").read_text()
 MONITOR_CONTROLS = (PLUGINS / "MoonrakerMonitorControls.py").read_text()
+MONITOR_TYPED_CONTROLS = (PLUGINS / "MoonrakerMonitorTypedControls.py").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 ENHANCED_QML = (PLUGINS / "MoonrakerMonitorEnhanced.qml").read_text()
+UPLOAD_QML = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
 OUTPUT_LIFECYCLE = (PLUGINS / "MoonrakerOutputDeviceLifecycle.py").read_text()
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
 CONFIG_QML = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
@@ -27,10 +29,35 @@ class MonitorUploadRegressionTests(unittest.TestCase):
         start = OUTPUT_LIFECYCLE.index("def cancelUpload")
         end = OUTPUT_LIFECYCLE.index("def _show_upload_dialog", start) if "def _show_upload_dialog" in OUTPUT_LIFECYCLE[start:] else OUTPUT_LIFECYCLE.index("def _fail", start)
         block = OUTPUT_LIFECYCLE[start:end]
+        self.assertIn("QTimer.singleShot(0, self._finish_cancel_upload)", block)
         self.assertIn("self._cleanup()", block)
         self.assertIn("self._emit_write_finished_once()", block)
         self.assertNotIn("writeError.emit", block)
         self.assertIn("writeFinished.emit(self)", OUTPUT_LIFECYCLE)
+
+    def test_upload_accept_is_deferred_until_qml_handler_returns(self):
+        start = OUTPUT_LIFECYCLE.index("def acceptUpload")
+        end = OUTPUT_LIFECYCLE.index("def cancelUpload", start)
+        block = OUTPUT_LIFECYCLE[start:end]
+        self.assertIn("QTimer.singleShot(0, self._finish_accept_upload)", block)
+        self.assertIn("self._release_dialog()", block)
+        self.assertIn("self._begin_upload()", block)
+
+    def test_upload_dialog_has_cura_combobox_i18n_context(self):
+        self.assertIn('property variant catalog: UM.I18nCatalog { name: "cura" }', UPLOAD_QML)
+        self.assertIn("Cura.ComboBox", UPLOAD_QML)
+        self.assertIn("manager.uploadPathOptions", UPLOAD_QML)
+
+    def test_folder_dropdown_discovers_moonraker_gcodes_directories(self):
+        for token in (
+            "uploadPathsChanged",
+            'self._folder_scan_queue = ["gcodes"]',
+            '"server/files/directory?"',
+            'result.get("dirs")',
+            'item.get("dirname")',
+            "self._folder_scan_discovered.add(relative)",
+        ):
+            self.assertIn(token, OUTPUT_LIFECYCLE)
 
     def test_all_started_upload_outcomes_finish_cura_write_lifecycle(self):
         self.assertIn("had_started_write = bool(self._busy)", OUTPUT_LIFECYCLE)
@@ -66,17 +93,20 @@ class MonitorUploadRegressionTests(unittest.TestCase):
     def test_enhanced_monitor_is_packaged_and_selected(self):
         self.assertIn('"MoonrakerMonitorEnhanced.qml"', OUTPUT_PLUGIN)
         self.assertIn('"MoonrakerMonitor.qml"', OUTPUT_PLUGIN)
-        self.assertIn("MoonrakerMonitorControls", OUTPUT_PLUGIN)
+        self.assertIn("MoonrakerMonitorTypedControls", OUTPUT_PLUGIN)
+        self.assertIn("MoonrakerMonitorControls", MONITOR_TYPED_CONTROLS)
         self.assertIn("MoonrakerMonitor", ENHANCED_QML)
         self.assertIn("Printer controls", ENHANCED_QML)
 
     def test_enhanced_monitor_exposes_requested_setup_and_macro_controls(self):
+        combined_controls = MONITOR_CONTROLS + MONITOR_TYPED_CONTROLS
         for token in (
             "macroNames", "runMacro", "temperaturePresetNames", "applyTemperaturePreset",
             "homeAll", "runQuadGantryLevel", "calibrateBedMesh", "hasQuadGantryLevel",
             "hasBedMesh", "server/database/item?namespace=mainsail&key=presets",
+            "macroParameterDefinitions", "temperaturePresetItems",
         ):
-            self.assertIn(token, MONITOR_CONTROLS + ENHANCED_QML)
+            self.assertIn(token, combined_controls + ENHANCED_QML)
         self.assertIn('"G28"', MONITOR_CONTROLS)
         self.assertIn('"QUAD_GANTRY_LEVEL"', MONITOR_CONTROLS)
         self.assertIn('"BED_MESH_CALIBRATE"', MONITOR_CONTROLS)
