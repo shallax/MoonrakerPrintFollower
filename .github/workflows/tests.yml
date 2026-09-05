@@ -71,6 +71,7 @@ jobs:
                   root + "MoonrakerMonitorControls.py",
                   root + "MoonrakerMonitorTypedControls.py",
                   root + "MoonrakerMonitorEnhanced.qml",
+                  root + "MoonrakerMonitorDashboard.qml",
                   root + "MoonrakerUploadDialog.qml",
                   root + "MoonrakerOutputDevice.py",
                   root + "MoonrakerOutputDeviceLifecycle.py",
