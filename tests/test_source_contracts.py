@@ -20,6 +20,8 @@ PRINTER_CONFIG = (PLUGINS / "PrinterConfig.py").read_text()
 PLUGIN_INIT = (PLUGINS / "__init__.py").read_text()
 OUTPUT_DEVICE = (PLUGINS / "MoonrakerOutputDevice.py").read_text()
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
+MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
+QML_MONITOR = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 QML_UPLOAD = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
 README = (ROOT / "README.md").read_text()
 
@@ -207,18 +209,32 @@ class SourceContractTests(unittest.TestCase):
             "frontend_url", "output_format", "upload_dialog", "upload_path",
             "upload_pathes", "upload_start_print_job", "upload_remember_state",
             "upload_autohide_messagebox", "power_device", "retry_interval",
-            "trans_input", "trans_output", "trans_remove",
+            "trans_input", "trans_output", "trans_remove", "camera_url",
+            "camera_image_rotation", "camera_image_mirror",
         ):
             self.assertIn(legacy_key, PRINTER_CONFIG)
         self.assertIn("migrate_moonraker_connection()", PLUGIN_INIT)
 
-    def test_webcam_panel_is_not_reintroduced(self):
-        # v3 deliberately absorbs the useful connection/output functionality
-        # without bringing the old standalone plugin's webcam panel into Cura.
-        combined = OUTPUT_DEVICE + OUTPUT_PLUGIN + QML_CONFIG + QML_UPLOAD
-        self.assertNotIn("NetworkMJPGImage", combined)
-        self.assertNotIn("camera_image_rotation", PRINTER_CONFIG)
-        self.assertNotIn("camera_image_mirror", PRINTER_CONFIG)
+    def test_monitor_reuses_follower_status_and_discovers_moonraker_webcams(self):
+        self.assertIn("class MoonrakerMonitorModel(PrinterOutputModel)", MONITOR_MODEL)
+        self.assertIn('getattr(follower, "_client", None)', MONITOR_MODEL)
+        self.assertIn("status_signal.connect(self.updateMoonrakerStatus)", MONITOR_MODEL)
+        self.assertIn('"/server/webcams/list"', MONITOR_MODEL)
+        self.assertIn("camera_rotation", PRINTER_CONFIG)
+        self.assertIn("camera_mirror", PRINTER_CONFIG)
+        self.assertIn("MoonrakerMonitorModel", OUTPUT_PLUGIN)
+        self.assertIn("_monitor_view_qml_path", OUTPUT_PLUGIN)
+        self.assertIn('"MoonrakerMonitor.qml"', OUTPUT_PLUGIN)
+        self.assertIn("Cura.NetworkMJPGImage", QML_MONITOR)
+        self.assertIn("webcamNames", QML_MONITOR)
+        self.assertIn("selectWebcam", QML_MONITOR)
+        self.assertIn("monitorProgress", QML_MONITOR)
+        self.assertIn("monitorLayer", QML_MONITOR)
+        self.assertIn("monitorElapsed", QML_MONITOR)
+        self.assertIn("monitorSpeed", QML_MONITOR)
+        self.assertIn("monitorFlow", QML_MONITOR)
+        self.assertIn("monitorPosition", QML_MONITOR)
+        self.assertIn("openFrontend", QML_MONITOR)
 
     def test_output_controller_does_not_advertise_unimplemented_controls(self):
         for flag in (
@@ -237,6 +253,7 @@ class SourceContractTests(unittest.TestCase):
             "PrinterConfig.py", "MoonrakerClient.py", "FollowController.py",
             "CuraAdapter.py", "MoonrakerFollowerMachineAction.py",
             "MoonrakerOutputDevice.py", "MoonrakerOutputDevicePlugin.py",
+            "MoonrakerMonitorModel.py", "MoonrakerMonitor.qml",
         ):
             self.assertTrue((PLUGINS / name).is_file(), name)
 
