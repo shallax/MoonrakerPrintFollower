@@ -91,7 +91,7 @@ Cura.MachineAction
 
         UM.TabRowButton { checked: true; text: "Connection" }
         UM.TabRowButton { text: "Following" }
-        UM.TabRowButton { text: "Output" }
+        UM.TabRowButton { text: "Upload" }
     }
 
     Cura.RoundedRectangle
@@ -282,7 +282,7 @@ Cura.MachineAction
 
                         UM.Label
                         {
-                            text: "A valid Moonraker URL automatically adds an Upload to printer destination to Cura's output menu."
+                            text: "A valid Moonraker URL automatically adds an Upload to printer destination to Cura's save/upload menu."
                             wrapMode: Text.WordWrap
                             width: parent.width
                             color: UM.Theme.getColor("text_inactive")
@@ -291,7 +291,7 @@ Cura.MachineAction
                         UM.Label { text: "Frontend URL for Open Browser (optional)" }
                         Cura.TextField { id: frontendUrlField; width: parent.width; text: manager.settingsFrontendUrl; maximumLength: 1024 }
 
-                        UM.Label { text: "Output format" }
+                        UM.Label { text: "Upload format" }
                         Cura.ComboBox
                         {
                             id: outputFormatBox
@@ -313,7 +313,7 @@ Cura.MachineAction
                         Cura.TextField { id: powerDevicesField; width: parent.width; text: manager.settingsPowerDevices; maximumLength: 1024 }
                         UM.Label
                         {
-                            text: "When starting a print, v3 can power these devices on first and wait for Klippy to report ready."
+                            text: "When starting a print, v3 can power these devices on first and wait for Klippy to report ready. These devices also appear in Monitor."
                             wrapMode: Text.WordWrap
                             width: parent.width
                             color: UM.Theme.getColor("text_inactive")
