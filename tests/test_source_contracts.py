@@ -28,7 +28,7 @@ README = (ROOT / "README.md").read_text()
 
 class SourceContractTests(unittest.TestCase):
     # ------------------------------------------------------------------
-    # Existing follower behaviour that v3 must not regress.
+    # Established follower behaviour that must not regress.
     # ------------------------------------------------------------------
 
     def test_known_good_confirmation_and_public_cura_loader_are_retained(self):
@@ -123,10 +123,10 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("layer\\s+num/total_layer_count", INDEX)
 
     # ------------------------------------------------------------------
-    # v3 unified configuration / output integration.
+    # Unified configuration and Moonraker integration.
     # ------------------------------------------------------------------
 
-    def test_metadata_and_version_are_v3(self):
+    def test_metadata_and_release_version_are_current(self):
         package = json.loads((ROOT / "package.json").read_text())
         plugin = json.loads((PLUGINS / "plugin.json").read_text())
         self.assertEqual(package["package_version"], "3.0.0")
@@ -152,7 +152,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn('Cura.MachineAction', QML_CONFIG)
         self.assertIn('text: "Connection"', QML_CONFIG)
         self.assertIn('text: "Following"', QML_CONFIG)
-        self.assertIn('text: "Output"', QML_CONFIG)
+        self.assertIn('text: "Upload"', QML_CONFIG)
         self.assertIn('manager.saveConfig', QML_CONFIG)
         self.assertIn('manager.testConnection', QML_CONFIG)
         self.assertIn('settingsPowerDevices', MACHINE_ACTION)
@@ -219,7 +219,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("class MoonrakerMonitorModel(PrinterOutputModel)", MONITOR_MODEL)
         self.assertIn('getattr(follower, "_client", None)', MONITOR_MODEL)
         self.assertIn("status_signal.connect(self.updateMoonrakerStatus)", MONITOR_MODEL)
-        self.assertIn('"/server/webcams/list"', MONITOR_MODEL)
+        self.assertIn('"server/webcams/list"', MONITOR_MODEL)
         self.assertIn("camera_rotation", PRINTER_CONFIG)
         self.assertIn("camera_mirror", PRINTER_CONFIG)
         self.assertIn("MoonrakerMonitorModel", OUTPUT_PLUGIN)
@@ -252,8 +252,9 @@ class SourceContractTests(unittest.TestCase):
             "Core.py", "DownloadStream.py", "GCodeIndex.py", "MoonrakerProtocol.py",
             "PrinterConfig.py", "MoonrakerClient.py", "FollowController.py",
             "CuraAdapter.py", "MoonrakerFollowerMachineAction.py",
-            "MoonrakerOutputDevice.py", "MoonrakerOutputDevicePlugin.py",
-            "MoonrakerMonitorModel.py", "MoonrakerMonitor.qml",
+            "MoonrakerOutputDevice.py", "MoonrakerOutputDeviceLifecycle.py",
+            "MoonrakerOutputDevicePlugin.py", "MoonrakerMonitorModel.py",
+            "MoonrakerMonitorRuntime.py", "MoonrakerMonitor.qml",
         ):
             self.assertTrue((PLUGINS / name).is_file(), name)
 
