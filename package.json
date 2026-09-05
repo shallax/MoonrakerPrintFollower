@@ -2,7 +2,7 @@
     "package_id": "Moonraker_Print_Follower",
     "package_type": "plugin",
     "display_name": "Moonraker Print Follower",
-    "package_version": "2.0.0",
+    "package_version": "3.0.0",
     "sdk_version": "8.0.0",
     "sdk_version_semver": "8.0.0",
     "website": "https://github.com/shallax/MoonrakerPrintFollower",
@@ -11,10 +11,12 @@
         "display_name": "shallax",
         "email": "moonrakerprintfollower@maintain.contact"
     },
-    "description": "Per-printer Cura Preview synchronisation for Klipper/Moonraker, with configuration integrated into Cura Manage Printers.",
+    "description": "Unified Cura integration for Klipper/Moonraker: per-printer upload and print output plus live Preview synchronisation.",
     "tags": [
         "Klipper",
         "Moonraker",
+        "Upload",
+        "Print",
         "Preview",
         "Layer",
         "Progress"
