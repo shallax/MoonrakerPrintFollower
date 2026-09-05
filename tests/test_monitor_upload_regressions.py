@@ -1,5 +1,7 @@
 import pathlib
 import re
+import sys
+import types
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -113,6 +115,61 @@ class MonitorUploadRegressionTests(unittest.TestCase):
     def test_power_lock_is_explained_in_enhanced_monitor(self):
         self.assertIn("locked && !printer.powerDevices[i].can_toggle", ENHANCED_QML)
         self.assertIn("Power control is locked by Moonraker while this print is active.", ENHANCED_QML)
+
+    def test_monitor_controls_class_definition_smoke(self):
+        class DummySignal:
+            def emit(self, *_args, **_kwargs):
+                pass
+
+        def pyqt_signal(*_args, **_kwargs):
+            return DummySignal()
+
+        def pyqt_property(*_args, **_kwargs):
+            def decorate(function):
+                return property(function)
+            return decorate
+
+        def pyqt_slot(*_args, **_kwargs):
+            def decorate(function):
+                return function
+            return decorate
+
+        class QVariant:
+            def __init__(self, value=None):
+                self.value = value
+
+        class QTimer:
+            pass
+
+        pyqt6 = types.ModuleType("PyQt6")
+        qtcore = types.ModuleType("PyQt6.QtCore")
+        qtcore.QTimer = QTimer
+        qtcore.QVariant = QVariant
+        qtcore.pyqtProperty = pyqt_property
+        qtcore.pyqtSignal = pyqt_signal
+        qtcore.pyqtSlot = pyqt_slot
+
+        package = types.ModuleType("plugins")
+        package.__path__ = []
+        runtime = types.ModuleType("plugins.MoonrakerMonitorRuntime")
+        runtime.MoonrakerMonitorModel = type("BaseMoonrakerMonitorModel", (), {})
+
+        names = ["PyQt6", "PyQt6.QtCore", "plugins", "plugins.MoonrakerMonitorRuntime"]
+        old = {name: sys.modules.get(name) for name in names}
+        try:
+            sys.modules["PyQt6"] = pyqt6
+            sys.modules["PyQt6.QtCore"] = qtcore
+            sys.modules["plugins"] = package
+            sys.modules["plugins.MoonrakerMonitorRuntime"] = runtime
+            namespace = {"__name__": "plugins.MoonrakerMonitorControls", "__package__": "plugins"}
+            exec(compile(MONITOR_CONTROLS, "MoonrakerMonitorControls.py", "exec"), namespace)
+            self.assertIn("MoonrakerMonitorModel", namespace)
+        finally:
+            for name, value in old.items():
+                if value is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = value
 
     def test_runtime_sources_do_not_contain_release_nicknames(self):
         offenders = []
