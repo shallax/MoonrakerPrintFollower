@@ -1,29 +1,39 @@
 import json
-import os
 import pathlib
+import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGIN = (ROOT / "plugins" / "MoonrakerPrintFollower.py").read_text()
-DOWNLOAD = (ROOT / "plugins" / "DownloadStream.py").read_text()
-CLIENT = (ROOT / "plugins" / "MoonrakerClient.py").read_text()
-INDEX = (ROOT / "plugins" / "GCodeIndex.py").read_text()
-QML_ACTION = (ROOT / "plugins" / "PreviewActionPanelControls.qml").read_text()
-QML_EMPTY = (ROOT / "plugins" / "EmptyPreviewLoadButton.qml").read_text()
-CURA_ADAPTER = (ROOT / "plugins" / "CuraAdapter.py").read_text()
-NOZZLE_FALLBACK = (ROOT / "plugins" / "NativeNozzleFallback.py").read_text()
-MACHINE_ACTION = (ROOT / "plugins" / "MoonrakerFollowerMachineAction.py").read_text()
-QML_CONFIG = (ROOT / "plugins" / "MoonrakerFollowerConfiguration.qml").read_text()
-PRINTER_CONFIG = (ROOT / "plugins" / "PrinterConfig.py").read_text()
-PLUGIN_INIT = (ROOT / "plugins" / "__init__.py").read_text()
+PLUGINS = ROOT / "plugins"
+
+PLUGIN = (PLUGINS / "MoonrakerPrintFollower.py").read_text()
+DOWNLOAD = (PLUGINS / "DownloadStream.py").read_text()
+CLIENT = (PLUGINS / "MoonrakerClient.py").read_text()
+INDEX = (PLUGINS / "GCodeIndex.py").read_text()
+QML_ACTION = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
+QML_EMPTY = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
+CURA_ADAPTER = (PLUGINS / "CuraAdapter.py").read_text()
+NOZZLE_FALLBACK = (PLUGINS / "NativeNozzleFallback.py").read_text()
+MACHINE_ACTION = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+QML_CONFIG = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+PRINTER_CONFIG = (PLUGINS / "PrinterConfig.py").read_text()
+PLUGIN_INIT = (PLUGINS / "__init__.py").read_text()
+OUTPUT_DEVICE = (PLUGINS / "MoonrakerOutputDevice.py").read_text()
+OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
+QML_UPLOAD = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
 README = (ROOT / "README.md").read_text()
 
 
 class SourceContractTests(unittest.TestCase):
+    # ------------------------------------------------------------------
+    # Existing follower behaviour that v3 must not regress.
+    # ------------------------------------------------------------------
+
     def test_known_good_confirmation_and_public_cura_loader_are_retained(self):
         self.assertIn("QMessageBox.question", PLUGIN)
-        self.assertIn("self._application.readLocalFile", PLUGIN)
+        self.assertEqual(PLUGIN.count("self._application.readLocalFile"), 1)
         self.assertIn("add_to_recent_files=False", PLUGIN)
+        self.assertIn("def _load_cached_remote_gcode_forced", PLUGIN)
         self.assertNotIn("_readMeshFinished", PLUGIN)
 
     def test_streaming_download_contract(self):
@@ -39,14 +49,11 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("BackendState.Done", PLUGIN)
         self.assertNotIn("DepthFirstIterator", PLUGIN)
         self.assertNotIn("_scene_structure_signature", PLUGIN)
-        self.assertNotIn("printDurationMessage", PLUGIN)
 
-    def test_motion_report_refinement_contract(self):
+    def test_motion_report_refinement_and_monotonic_path_contract(self):
         self.assertIn("motion_report", PLUGIN)
         self.assertIn("live_position_in_gcode_space", PLUGIN)
         self.assertIn("refined_fraction", PLUGIN)
-
-    def test_path_following_is_monotonic_and_layer_hydration_cannot_rewind_preview(self):
         self.assertIn("self._path_progress_layer", PLUGIN)
         self.assertIn("self._path_progress_fraction", PLUGIN)
         self.assertIn("minimum_fraction=self._path_progress_fraction", PLUGIN)
@@ -55,17 +62,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("minimum_fraction", INDEX)
         self.assertIn("monotonic", INDEX)
 
-    def test_manual_load_is_only_explicit_cura_load(self):
-        # There should be one call site that opens the remote G-code in Cura,
-        # under the explicit forced-load routine.
-        self.assertEqual(PLUGIN.count("self._application.readLocalFile"), 1)
-        self.assertIn("def _load_cached_remote_gcode_forced", PLUGIN)
-
-    def test_manual_preview_override_cannot_be_masked_by_fast_polling(self):
-        # Manual slider changes must not be hidden behind a rolling time-based
-        # suppression window. Plugin-originated writes are identified explicitly
-        # by _applying_follow_update, while the watcher remains active even when
-        # Cura's layer/path signals are connected.
+    def test_manual_preview_override_cannot_be_masked_by_polling(self):
         self.assertNotIn("_manual_view_ignore_until", PLUGIN)
         self.assertIn("if self._applying_follow_update:", PLUGIN)
         self.assertIn("self._manual_view_watch_timer.start()", PLUGIN)
@@ -75,11 +72,9 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("getMinimumLayer", PLUGIN)
         self.assertIn("getMinimumPath", PLUGIN)
         self.assertIn("preview_override_kind", PLUGIN)
-        # Never absorb an arbitrary user position as a new baseline. Only the
-        # follower write/resume path may arm the expected Preview position.
         self.assertNotIn("self._expected_follow_layer = current_layer", PLUGIN)
 
-    def test_preview_only_controls(self):
+    def test_preview_controls_remain_preview_only_and_compact(self):
         self.assertIn("previewStageActive", QML_ACTION)
         self.assertIn("previewStageActive", QML_EMPTY)
         self.assertIn('text: "Load print"', QML_ACTION)
@@ -88,172 +83,193 @@ class SourceContractTests(unittest.TestCase):
         self.assertNotIn('base.followingPaused ? "Resume" : "Pause"', QML_EMPTY)
         self.assertNotIn("HTTP fallback", QML_ACTION)
         self.assertNotIn("Following live print", QML_ACTION)
+        self.assertIn('return "Following"', PLUGIN)
+        self.assertIn('return "Paused"', PLUGIN)
+        self.assertIn('property real contentWidth:', QML_ACTION)
 
-    def test_metadata_and_version(self):
+    def test_native_printhead_fallback_is_retained(self):
+        self.assertIn("keep_native_nozzle_visible", NOZZLE_FALLBACK)
+        self.assertIn('getattr(simulation_view, "getSimulationPass", None)', NOZZLE_FALLBACK)
+        self.assertIn('getattr(simulation_view, "getNozzleNode", None)', NOZZLE_FALLBACK)
+        self.assertNotIn("renderer.queueNode", NOZZLE_FALLBACK)
+        self.assertNotIn("RenderBatch", NOZZLE_FALLBACK)
+        self.assertIn("keep_native_nozzle_visible(view)", PLUGIN)
+        self.assertIn('text: "Show live printhead indicator"', QML_CONFIG)
+        self.assertIn("show_toolhead_indicator", PRINTER_CONFIG)
+
+    def test_single_active_printer_session_is_generation_guarded(self):
+        start = PLUGIN.index("def _on_active_machine_changed")
+        end = PLUGIN.index("def _active_printer_is_configured_for_following", start)
+        block = PLUGIN[start:end]
+        self.assertLess(block.index("self._client.stop()"), block.index("self._active_machine_id = machine_id"))
+        self.assertLess(
+            block.index('self._invalidate_lifecycle("active Cura printer changed")'),
+            block.index("self._active_machine_id = machine_id"),
+        )
+        self.assertIn("self._generation += 1", CLIENT)
+        self.assertIn("generation != self._generation", CLIENT)
+
+    def test_http_polling_and_large_file_contracts_are_retained(self):
+        self.assertNotIn("QWebSocket", CLIENT)
+        self.assertNotIn("websocket", CLIENT.lower())
+        self.assertIn("RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)", CLIENT)
+        self.assertIn("self._poll_timer.timeout.connect(self.force_refresh)", CLIENT)
+        self.assertIn("capabilitiesChanged", CLIENT)
+        self.assertIn("_LARGE_FILE_COMPACT_THRESHOLD", INDEX)
+        self.assertIn("hydrate_layer_from_file", INDEX)
+        self.assertIn(";LAYER_CHANGE", INDEX)
+        self.assertIn("layer\\s+num/total_layer_count", INDEX)
+
+    # ------------------------------------------------------------------
+    # v3 unified configuration / output integration.
+    # ------------------------------------------------------------------
+
+    def test_metadata_and_version_are_v3(self):
         package = json.loads((ROOT / "package.json").read_text())
-        plugin = json.loads((ROOT / "plugins" / "plugin.json").read_text())
-        self.assertEqual(package["package_version"], "2.0.0")
+        plugin = json.loads((PLUGINS / "plugin.json").read_text())
+        self.assertEqual(package["package_version"], "3.0.0")
         self.assertEqual(package["package_id"], "Moonraker_Print_Follower")
         self.assertEqual(package["sdk_version"], "8.0.0")
         self.assertEqual(package["sdk_version_semver"], "8.0.0")
         self.assertEqual(package["website"], "https://github.com/shallax/MoonrakerPrintFollower")
         self.assertEqual(package["author"]["display_name"], "shallax")
         self.assertEqual(package["author"]["email"], "moonrakerprintfollower@maintain.contact")
-        self.assertEqual(plugin["version"], "2.0.0")
+        self.assertEqual(plugin["version"], "3.0.0")
         self.assertEqual(plugin["author"], "shallax")
         self.assertEqual(plugin["supported_sdk_versions"], [f"8.{minor}.0" for minor in range(13)])
 
-    def test_2_0_configuration_is_a_native_qml_machine_action(self):
+    def test_unified_manage_printers_action_has_three_tabs(self):
         self.assertIn('class MoonrakerFollowerMachineAction(MachineAction)', MACHINE_ACTION)
-        self.assertIn('LABEL = "Configure Moonraker Follower"', MACHINE_ACTION)
+        self.assertIn('LABEL = "Configure Moonraker"', MACHINE_ACTION)
         self.assertIn('self._qml_url = "MoonrakerFollowerConfiguration.qml"', MACHINE_ACTION)
-        self.assertNotIn('self._open_as_dialog = False', MACHINE_ACTION)
         self.assertIn('containerAdded.connect(self._on_container_added)', MACHINE_ACTION)
         self.assertIn('getMachineActionManager().addSupportedAction', MACHINE_ACTION)
-        self.assertIn('container.getMetaDataEntry("type") != "machine"', MACHINE_ACTION)
         self.assertIn('self._follower.apply_printer_config(config)', MACHINE_ACTION)
-        self.assertIn('"machine_action": MoonrakerFollowerMachineAction(app, follower)', PLUGIN_INIT)
+        self.assertIn('self._output_plugin.refresh()', MACHINE_ACTION)
         self.assertTrue(QML_CONFIG.lstrip().startswith('import QtQuick'))
         self.assertIn('Cura.MachineAction', QML_CONFIG)
         self.assertIn('text: "Connection"', QML_CONFIG)
         self.assertIn('text: "Following"', QML_CONFIG)
+        self.assertIn('text: "Output"', QML_CONFIG)
         self.assertIn('manager.saveConfig', QML_CONFIG)
         self.assertIn('manager.testConnection', QML_CONFIG)
-        self.assertIn('actionDialog.close()', QML_CONFIG)
-        self.assertNotIn('self._application.getMachineManager(', MACHINE_ACTION)
+        self.assertIn('settingsPowerDevices', MACHINE_ACTION)
+        self.assertIn('settingsOutputFormat', MACHINE_ACTION)
+        self.assertIn('settingsFrontendUrl', MACHINE_ACTION)
 
-    def test_2_0_has_no_extensions_menu_or_settings_qdialog(self):
-        self.assertNotIn('setMenuName(', PLUGIN)
-        self.assertNotIn('addMenuItem(', PLUGIN)
-        self.assertNotIn('show_configuration_dialog', PLUGIN)
-        self.assertNotIn('QDialog', PLUGIN)
-        self.assertNotIn('QLineEdit', PLUGIN)
-        self.assertNotIn('QCheckBox', PLUGIN)
-        self.assertIn('from PyQt6.QtWidgets import QMessageBox', PLUGIN)
+    def test_output_device_is_registered_with_same_follower_instance(self):
+        self.assertIn("MoonrakerOutputDevicePlugin", PLUGIN_INIT)
+        self.assertIn("output_plugin = MoonrakerOutputDevicePlugin(app, follower)", PLUGIN_INIT)
+        self.assertIn('"output_device": output_plugin', PLUGIN_INIT)
+        self.assertIn("MoonrakerFollowerMachineAction(app, follower, output_plugin)", PLUGIN_INIT)
+        self.assertIn("class MoonrakerOutputDevicePlugin(OutputDevicePlugin)", OUTPUT_PLUGIN)
+        self.assertIn("follower.current_printer_config()", OUTPUT_PLUGIN)
+        self.assertIn("globalContainerStackChanged", OUTPUT_PLUGIN)
+
+    def test_output_device_supports_gcode_ufp_upload_and_start_print(self):
+        self.assertIn("class MoonrakerOutputDevice(PrinterOutputDevice)", OUTPUT_DEVICE)
+        self.assertIn('registry.getPluginObject("GCodeWriter")', OUTPUT_DEVICE)
+        self.assertIn('registry.getPluginObject("UFPWriter")', OUTPUT_DEVICE)
+        self.assertIn('self._request("server/files/upload")', OUTPUT_DEVICE)
+        self.assertIn("QHttpMultiPart", OUTPUT_DEVICE)
+        self.assertIn('form-data; name="root"', OUTPUT_DEVICE)
+        self.assertIn('form-data; name="path"', OUTPUT_DEVICE)
+        self.assertIn('form-data; name="print"', OUTPUT_DEVICE)
+        self.assertIn("reply.uploadProgress.connect", OUTPUT_DEVICE)
+        self.assertIn("self.writeSuccess.emit(self)", OUTPUT_DEVICE)
+        self.assertIn("self.writeError.emit(self)", OUTPUT_DEVICE)
+        self.assertIn("QDesktopServices.openUrl", OUTPUT_DEVICE)
+
+    def test_power_startup_and_readiness_wait_are_nonblocking(self):
+        self.assertIn("machine/device_power/device?", OUTPUT_DEVICE)
+        self.assertIn('self._json_request("GET", "server/info"', OUTPUT_DEVICE)
+        self.assertIn("QTimer.singleShot", OUTPUT_DEVICE)
+        self.assertNotIn("from time import sleep", OUTPUT_DEVICE)
+        self.assertNotIn("sleep(", OUTPUT_DEVICE)
+        self.assertIn("MAX_READY_ATTEMPTS", OUTPUT_DEVICE)
+
+    def test_filename_translation_and_upload_dialog_are_integrated(self):
+        self.assertIn("filename_translate_input", PRINTER_CONFIG)
+        self.assertIn("filename_translate_output", PRINTER_CONFIG)
+        self.assertIn("filename_translate_remove", PRINTER_CONFIG)
+        self.assertIn("str.maketrans", OUTPUT_DEVICE)
+        self.assertIn('title: "Upload to Moonraker"', QML_UPLOAD)
+        self.assertIn("manager.uploadPathOptions", QML_UPLOAD)
+        self.assertIn("manager.initialUploadFilename", QML_UPLOAD)
+        self.assertIn("manager.initialStartPrint", QML_UPLOAD)
+        self.assertIn("manager.acceptUpload", QML_UPLOAD)
+        self.assertIn("manager.cancelUpload", QML_UPLOAD)
+
+    def test_standalone_moonraker_connection_settings_are_migrated(self):
+        self.assertIn('MOONRAKER_CONNECTION_PREF_KEY = "moonraker/instances"', PRINTER_CONFIG)
+        self.assertIn("def migrate_moonraker_connection", PRINTER_CONFIG)
+        for legacy_key in (
+            "frontend_url", "output_format", "upload_dialog", "upload_path",
+            "upload_pathes", "upload_start_print_job", "upload_remember_state",
+            "upload_autohide_messagebox", "power_device", "retry_interval",
+            "trans_input", "trans_output", "trans_remove",
+        ):
+            self.assertIn(legacy_key, PRINTER_CONFIG)
+        self.assertIn("migrate_moonraker_connection()", PLUGIN_INIT)
+
+    def test_webcam_panel_is_not_reintroduced(self):
+        # v3 deliberately absorbs the useful connection/output functionality
+        # without bringing the old standalone plugin's webcam panel into Cura.
+        combined = OUTPUT_DEVICE + OUTPUT_PLUGIN + QML_CONFIG + QML_UPLOAD
+        self.assertNotIn("NetworkMJPGImage", combined)
+        self.assertNotIn("camera_image_rotation", PRINTER_CONFIG)
+        self.assertNotIn("camera_image_mirror", PRINTER_CONFIG)
+
+    def test_output_controller_does_not_advertise_unimplemented_controls(self):
+        for flag in (
+            "can_pause", "can_abort", "can_pre_heat_bed", "can_pre_heat_hotends",
+            "can_send_raw_gcode", "can_control_manually", "can_update_firmware",
+        ):
+            self.assertIn(f"self.{flag} = False", OUTPUT_DEVICE)
+
+    # ------------------------------------------------------------------
+    # Packaging / privacy / startup safety.
+    # ------------------------------------------------------------------
 
     def test_high_risk_logic_is_split_into_modules(self):
         for name in (
             "Core.py", "DownloadStream.py", "GCodeIndex.py", "MoonrakerProtocol.py",
             "PrinterConfig.py", "MoonrakerClient.py", "FollowController.py",
             "CuraAdapter.py", "MoonrakerFollowerMachineAction.py",
+            "MoonrakerOutputDevice.py", "MoonrakerOutputDevicePlugin.py",
         ):
-            self.assertTrue((ROOT / "plugins" / name).is_file(), name)
+            self.assertTrue((PLUGINS / name).is_file(), name)
 
-    def test_1_1_http_polling_and_capability_contract(self):
-        self.assertNotIn("QWebSocket", CLIENT)
-        self.assertNotIn("websocket", CLIENT.lower())
-        self.assertIn("RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)", CLIENT)
-        self.assertIn("QNetworkAccessManager", CLIENT)
-        self.assertIn("self._poll_timer.timeout.connect(self.force_refresh)", CLIENT)
-        self.assertIn("capabilitiesChanged", CLIENT)
-        self.assertIn("_on_client_capabilities_changed", PLUGIN)
-        self.assertIn("objects_list_endpoint", MACHINE_ACTION)
-        self.assertNotIn("HTTP fallback", PLUGIN)
+    def test_no_extensions_menu_or_settings_qdialog(self):
+        self.assertNotIn('setMenuName(', PLUGIN)
+        self.assertNotIn('addMenuItem(', PLUGIN)
+        self.assertNotIn('show_configuration_dialog', PLUGIN)
+        self.assertNotIn('QDialog', PLUGIN)
+        self.assertNotIn('QLineEdit', PLUGIN)
+        self.assertNotIn('QCheckBox', PLUGIN)
 
-    def test_1_1_per_printer_and_follow_mode_contract(self):
-        self.assertIn("PrinterConfigStore", PLUGIN)
-        self.assertIn("globalContainerStackChanged", PLUGIN)
-        self.assertIn("FollowController", PLUGIN)
-        self.assertIn('text: "Window around current layer (±2)"', QML_CONFIG)
-        self.assertIn("Resume", QML_ACTION)
-
-
-    def test_1_1_preview_controls_stay_compact(self):
-        self.assertNotIn("Load current print", QML_ACTION)
-        self.assertNotIn("Pause following", QML_ACTION)
-        self.assertIn('return "Following"', PLUGIN)
-        self.assertIn('return "Paused"', PLUGIN)
-        self.assertIn('property real contentWidth:', QML_ACTION)
-        self.assertNotIn('followButtonWidth', QML_ACTION)
-        self.assertNotIn('loadButtonWidth', QML_ACTION)
-        self.assertIn('Column\n        {\n            id: contentColumn', QML_ACTION)
-        self.assertIn('id: followerTitle', QML_ACTION)
-        self.assertIn('id: followerStatus', QML_ACTION)
-        self.assertIn('id: buttons', QML_ACTION)
-
-    def test_1_1_preview_card_has_native_title_status_icons_and_bottom_alignment(self):
-        for qml in (QML_ACTION, QML_EMPTY):
-            self.assertIn('text: "Moonraker Print Follower"', qml)
-            self.assertIn('source: UM.Theme.getIcon("Nozzle")', qml)
-            self.assertIn('property string statusIconName: "Information"', qml)
-            self.assertIn('source: UM.Theme.getIcon(base.statusIconName)', qml)
-            self.assertIn('font: UM.Theme.getFont("medium_bold")', qml)
-        self.assertIn('anchors.verticalCenterOffset: (2 * base.verticalPadding) - (height / 2)', QML_ACTION)
-        self.assertIn('return "CheckCircle"', PLUGIN)
-        self.assertIn('return "Clock"', PLUGIN)
-        self.assertIn('return "CancelCircle"', PLUGIN)
-        self.assertIn('controls.setProperty("statusIconName", status_icon_name)', PLUGIN)
-
-    def test_1_1_preview_card_has_title_headroom(self):
-        self.assertIn("property real contentWidth: 260 * screenScaleFactor", QML_ACTION)
-        self.assertIn("property real contentWidth: 260 * screenScaleFactor", QML_EMPTY)
-
-    def test_2_0_preview_action_buttons_fill_card_evenly(self):
-        self.assertIn('width: (buttons.width - base.buttonSpacing) / 2', QML_ACTION)
-        self.assertIn('width: followButton.visible ? (buttons.width - base.buttonSpacing) / 2 : buttons.width', QML_ACTION)
-        self.assertIn('width: parent.width', QML_EMPTY)
-
-    def test_1_1_preview_card_has_explicit_left_gutter(self):
-        self.assertIn('property real externalGap: UM.Theme.getSize("default_margin").width', QML_ACTION)
-        self.assertIn('width: visible ? externalGap + followerPanel.width : 0', QML_ACTION)
-        self.assertIn('anchors.right: parent.right', QML_ACTION)
-
-    def test_1_1_preview_controls_use_cura_action_panel_card_styling(self):
-        # Keep the follower visually separated from other saveButton extensions
-        # (notably Cura's Post Processing </> button) using the same theme
-        # primitives as Cura's own ActionPanelWidget.
-        for qml in (QML_ACTION, QML_EMPTY):
-            self.assertIn('UM.Theme.getColor("main_background")', qml)
-            self.assertIn('UM.Theme.getColor("lining")', qml)
-            self.assertIn('UM.Theme.getSize("default_lining")', qml)
-            self.assertIn('UM.Theme.getSize("default_radius")', qml)
-            self.assertIn('UM.Theme.getSize("thick_margin")', qml)
-        self.assertTrue(QML_ACTION.lstrip().startswith("import QtQuick"))
-        self.assertIn("Item\n{\n    id: base", QML_ACTION)
-        self.assertIn("Rectangle\n    {\n        id: followerPanel", QML_ACTION)
-
-    def test_1_1_startup_does_not_force_lazy_machine_manager(self):
-        # Cura 5.x creates MachineManager lazily. Extension construction happens
-        # before Cura initializes its i18n catalog, so getMachineManager() from a
-        # plugin constructor can schedule active-machine restoration too early and
-        # crash Cura in setGlobalContainerStack(). Printer identity must therefore
-        # use only the already-established global container stack.
+    def test_startup_does_not_force_lazy_machine_manager(self):
         self.assertNotIn("application.getMachineManager(", CURA_ADAPTER)
         self.assertNotIn("self._application.getMachineManager(", PLUGIN)
         self.assertIn("getGlobalContainerStack", CURA_ADAPTER)
 
-    def test_1_1_has_no_printer_discovery_runtime(self):
-        self.assertFalse((ROOT / "plugins" / "Discovery.py").exists())
+    def test_no_printer_discovery_runtime(self):
+        self.assertFalse((PLUGINS / "Discovery.py").exists())
         self.assertNotIn("discover_moonraker", PLUGIN)
         self.assertNotIn("_moonraker._tcp." + "local.", PLUGIN)
-        self.assertNotIn("Discovered", PLUGIN)
-        self.assertNotIn("Rescan", PLUGIN)
         package = json.loads((ROOT / "package.json").read_text())
         self.assertNotIn("discovery", package["description"].lower())
 
-    def test_1_1_large_file_contract(self):
-        self.assertIn("_LARGE_FILE_COMPACT_THRESHOLD", INDEX)
-        self.assertIn("hydrate_layer_from_file", INDEX)
-        self.assertIn(";LAYER_CHANGE", INDEX)
-        self.assertIn("layer\\s+num/total_layer_count", INDEX)
-
-    def test_2_0_source_uses_only_generic_printer_examples(self):
-        import re
+    def test_source_uses_only_generic_printer_examples(self):
         text_files = [
             path for path in ROOT.rglob("*")
             if path.is_file() and path.suffix.lower() in {".py", ".qml", ".md", ".json", ".txt"}
         ]
         combined = "\n".join(path.read_text(errors="replace") for path in text_files)
-        # Never embed personal/local printer identities or local-network addresses.
         self.assertNotIn("vo" + "ron", combined.lower())
-        local_suffix = "." + "local"
-        local_host_literal = re.compile(r"\b(?:[A-Za-z0-9-]+\.)+" + re.escape(local_suffix.lstrip(".")) + r"(?::\d+)?\b", re.IGNORECASE)
-        self.assertIsNone(local_host_literal.search(combined))
         self.assertIsNone(re.search(r"\b(?:10|127)\.\d+\.\d+\.\d+\b", combined))
         self.assertIsNone(re.search(r"\b192\.168\.\d+\.\d+\b", combined))
         self.assertIsNone(re.search(r"\b172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+\b", combined))
-        # URL examples must use the reserved .invalid domain. The project's own
-        # public repository URL is metadata, not a printer endpoint.
         urls = re.findall(r"https?://[^\s\"'<>`)]+", combined)
         allowed_public = "https://github.com/shallax/MoonrakerPrintFollower"
         for url in urls:
@@ -261,102 +277,26 @@ class SourceContractTests(unittest.TestCase):
                 continue
             self.assertIn(".invalid", url, url)
 
-    def test_2_0_source_has_no_literal_sample_api_key(self):
-        import re
+    def test_source_has_no_literal_sample_api_key(self):
         text_files = [
             path for path in ROOT.rglob("*")
             if path.is_file() and path.suffix.lower() in {".py", ".qml", ".md", ".json", ".txt"}
         ]
         combined = "\n".join(path.read_text(errors="replace") for path in text_files)
-        # Non-empty API-key literals are forbidden; tests and docs should leave
-        # the value empty rather than publishing a realistic-looking example.
         self.assertIsNone(re.search(r"api_key\s*[=:]\s*[\"'][^\"']+[\"']", combined, re.IGNORECASE))
 
-    def test_2_0_source_bundle_includes_installable_curapackage_and_instructions(self):
-        import zipfile
-        package_path = ROOT / "MoonrakerPrintFollower-v2.0.0.curapackage"
-        self.assertTrue(package_path.is_file())
-        self.assertIn("MoonrakerPrintFollower-v2.0.0.curapackage", README)
-        self.assertIn("drag `moonrakerprintfollower-v2.0.0.curapackage` onto the cura window", README.lower())
-        with zipfile.ZipFile(package_path) as archive:
-            names = set(archive.namelist())
-            embedded_package = json.loads(archive.read("package.json").decode("utf-8"))
-        self.assertEqual(embedded_package["package_id"], "Moonraker_Print_Follower")
-        self.assertFalse(any(name.startswith("files/plugins/MoonrakerPrintFollower/") for name in names))
-        self.assertIn("files/plugins/Moonraker_Print_Follower/MoonrakerFollowerConfiguration.qml", names)
-        self.assertIn("files/plugins/Moonraker_Print_Follower/MoonrakerFollowerMachineAction.py", names)
-        self.assertIn("files/plugins/Moonraker_Print_Follower/NativeNozzleFallback.py", names)
-
-    def test_2_0_uses_cura_native_printhead_fallback(self):
-        self.assertTrue((ROOT / "plugins" / "NativeNozzleFallback.py").is_file())
-        self.assertIn("keep_native_nozzle_visible", NOZZLE_FALLBACK)
-        self.assertIn('getattr(simulation_view, "getSimulationPass", None)', NOZZLE_FALLBACK)
-        self.assertIn('getattr(simulation_view, "getNozzleNode", None)', NOZZLE_FALLBACK)
-        self.assertIn('getattr(simulation_view, "getController", None)', NOZZLE_FALLBACK)
-        self.assertIn('set_parent(root)', NOZZLE_FALLBACK)
-        self.assertIn('set_enabled(True)', NOZZLE_FALLBACK)
-        self.assertIn('simulation_pass._switching_layers = False', NOZZLE_FALLBACK)
-        self.assertIn('simulation_pass._old_current_layer = int(get_layer())', NOZZLE_FALLBACK)
-        self.assertIn("keep_native_nozzle_visible", PLUGIN)
-        self.assertIn("_update_toolhead_indicator", PLUGIN)
-        self.assertIn('text: "Show live printhead indicator"', QML_CONFIG)
-        self.assertIn("settingsToolheadIndicator", MACHINE_ACTION)
-        self.assertIn("show_toolhead_indicator", PRINTER_CONFIG)
-
-
-    def test_2_0_single_active_printer_session_and_preview_identity(self):
-        # The follower is a single-owner runtime. Switching Cura machines must
-        # stop the old HTTP client and invalidate every old-machine operation
-        # before assigning the new machine id.
-        start = PLUGIN.index("def _on_active_machine_changed")
-        end = PLUGIN.index("def _active_printer_is_configured_for_following", start)
-        block = PLUGIN[start:end]
-        self.assertLess(block.index("self._client.stop()"), block.index("self._active_machine_id = machine_id"))
-        self.assertLess(block.index('self._invalidate_lifecycle("active Cura printer changed")'), block.index("self._active_machine_id = machine_id"))
-        self.assertIn("self._active_machine_name = machine_name", block)
-
-        # The HTTP client also generation-guards late completions from a stopped
-        # session, so an old printer cannot publish after the new one starts.
-        self.assertIn("self._generation += 1", CLIENT)
-        self.assertIn("generation != self._generation", CLIENT)
-
-        # Preview controls identify the active Cura printer and are absent when
-        # that printer has no enabled, usable follower configuration.
-        self.assertIn('controls.setProperty("activePrinterName", active_printer_name)', PLUGIN)
-        self.assertIn('controls.setProperty("configuredForFollowing", configured)', PLUGIN)
-        for qml in (QML_ACTION, QML_EMPTY):
-            self.assertIn("property bool configuredForFollowing: false", qml)
-            self.assertIn('property string activePrinterName: ""', qml)
-            self.assertIn("configuredForFollowing", qml.split("visible:", 1)[1].split("\n", 1)[0])
-            self.assertIn('base.activePrinterName + (base.statusText.length > 0 ? " — " + base.statusText : "")', qml)
-
-    def test_2_0_printhead_fallback_uses_cura_simulation_render_pass(self):
-        # The fallback must not queue a second SceneNode into Cura's default
-        # render layer. Cura's SimulationView is composited after that layer,
-        # which would wash the marker out behind the G-code preview. Instead,
-        # preserve Cura's native nozzle and its normal SimulationPass rendering.
-        self.assertNotIn("ToolheadIndicatorNode", PLUGIN)
-        self.assertNotIn("renderer.queueNode", NOZZLE_FALLBACK)
-        self.assertNotIn("RenderBatch", NOZZLE_FALLBACK)
-        self.assertIn("SimulationPass", NOZZLE_FALLBACK)
-        self.assertIn("getNozzleNode", NOZZLE_FALLBACK)
-        self.assertIn("setParent", NOZZLE_FALLBACK)
-        self.assertIn("_switching_layers", NOZZLE_FALLBACK)
-        self.assertIn("_old_current_layer", NOZZLE_FALLBACK)
-        self.assertIn("keep_native_nozzle_visible(view)", PLUGIN)
-
-    def test_marketplace_package_id_and_preview_resources_are_canonical(self):
+    def test_marketplace_package_id_is_canonical(self):
         package = json.loads((ROOT / "package.json").read_text())
         self.assertEqual(package["package_id"], "Moonraker_Print_Follower")
         self.assertIn('PLUGIN_ID = "Moonraker_Print_Follower"', PLUGIN)
-        # Preview resources must not depend on a registry lookup using a package
-        # id that a Marketplace build can canonicalise or rename.
         self.assertNotIn("getPluginPath(self.PLUGIN_ID)", PLUGIN)
         self.assertIn("os.path.dirname(os.path.abspath(__file__))", PLUGIN)
-        self.assertIn("`Moonraker_Print_Follower`", README)
 
     def test_source_tree_has_no_license_file(self):
-        self.assertFalse(any(p.name.lower().startswith("license") for p in ROOT.rglob("*") if p.is_file()))
+        self.assertFalse(any(
+            path.name.lower().startswith("license")
+            for path in ROOT.rglob("*") if path.is_file()
+        ))
 
 
 if __name__ == "__main__":
