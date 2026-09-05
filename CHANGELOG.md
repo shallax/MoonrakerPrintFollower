@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: Test indexed file-position layer fallback in Monitor
 - 2026-09-05: Monitor: resolve current layer from indexed G-code position
 - 2026-09-05: Monitor: align dialogs and scrolling with Cura QML patterns
 - 2026-09-05: Update contracts for Upload naming and current Monitor implementation
