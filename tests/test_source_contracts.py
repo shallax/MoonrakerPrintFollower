@@ -129,14 +129,14 @@ class SourceContractTests(unittest.TestCase):
     def test_metadata_and_release_version_are_current(self):
         package = json.loads((ROOT / "package.json").read_text())
         plugin = json.loads((PLUGINS / "plugin.json").read_text())
-        self.assertEqual(package["package_version"], "3.0.0")
+        self.assertEqual(package["package_version"], "3.0.1")
         self.assertEqual(package["package_id"], "Moonraker_Print_Follower")
         self.assertEqual(package["sdk_version"], "8.0.0")
         self.assertEqual(package["sdk_version_semver"], "8.0.0")
         self.assertEqual(package["website"], "https://github.com/shallax/MoonrakerPrintFollower")
         self.assertEqual(package["author"]["display_name"], "shallax")
         self.assertEqual(package["author"]["email"], "moonrakerprintfollower@maintain.contact")
-        self.assertEqual(plugin["version"], "3.0.0")
+        self.assertEqual(plugin["version"], "3.0.1")
         self.assertEqual(plugin["author"], "shallax")
         self.assertEqual(plugin["supported_sdk_versions"], [f"8.{minor}.0" for minor in range(13)])
 
@@ -254,7 +254,9 @@ class SourceContractTests(unittest.TestCase):
             "CuraAdapter.py", "MoonrakerFollowerMachineAction.py",
             "MoonrakerOutputDevice.py", "MoonrakerOutputDeviceLifecycle.py",
             "MoonrakerOutputDevicePlugin.py", "MoonrakerMonitorModel.py",
-            "MoonrakerMonitorRuntime.py", "MoonrakerMonitor.qml",
+            "MoonrakerMonitorRuntime.py", "MoonrakerMonitorControls.py",
+            "MoonrakerMonitorTypedControls.py", "MoonrakerMonitor.qml",
+            "MoonrakerMonitorDashboard.qml",
         ):
             self.assertTrue((PLUGINS / name).is_file(), name)
 
