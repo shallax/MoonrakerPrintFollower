@@ -1,5 +1,6 @@
 from .MoonrakerPrintFollower import MoonrakerPrintFollower
 from .MoonrakerFollowerMachineAction import MoonrakerFollowerMachineAction
+from .MoonrakerOutputDevicePlugin import MoonrakerOutputDevicePlugin
 
 
 def getMetaData():
@@ -8,7 +9,9 @@ def getMetaData():
 
 def register(app):
     follower = MoonrakerPrintFollower(app)
+    output_plugin = MoonrakerOutputDevicePlugin(app, follower)
     return {
         "extension": follower,
-        "machine_action": MoonrakerFollowerMachineAction(app, follower),
+        "output_device": output_plugin,
+        "machine_action": MoonrakerFollowerMachineAction(app, follower, output_plugin),
     }
