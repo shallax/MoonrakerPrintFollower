@@ -7,7 +7,9 @@ PLUGINS = ROOT / "plugins"
 
 MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
 MONITOR_RUNTIME = (PLUGINS / "MoonrakerMonitorRuntime.py").read_text()
+MONITOR_CONTROLS = (PLUGINS / "MoonrakerMonitorControls.py").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
+ENHANCED_QML = (PLUGINS / "MoonrakerMonitorEnhanced.qml").read_text()
 OUTPUT_LIFECYCLE = (PLUGINS / "MoonrakerOutputDeviceLifecycle.py").read_text()
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
 CONFIG_QML = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
@@ -35,14 +37,18 @@ class MonitorUploadRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(OUTPUT_LIFECYCLE.count("_emit_write_finished_once()"), 3)
 
     def test_monitor_uses_follower_layer_interpretation(self):
-        self.assertIn("_resolve_live_layer(status)", MONITOR_RUNTIME)
-        self.assertIn("_remote_current_layer_map", MONITOR_RUNTIME)
-        self.assertIn("moonraker_layer_is_one_based", MONITOR_RUNTIME)
-        self.assertIn("_remote_layer_ranges", MONITOR_RUNTIME)
-        self.assertIn('virtual_sdcard.get("file_position")', MONITOR_RUNTIME)
-        self.assertIn("_layer_from_file_position", MONITOR_RUNTIME)
-        self.assertIn("_layer_from_z", MONITOR_RUNTIME)
-        self.assertIn("_remote_index_filename", MONITOR_RUNTIME)
+        combined = MONITOR_RUNTIME + MONITOR_CONTROLS
+        self.assertIn("_resolve_live_layer(status)", combined)
+        self.assertIn("_remote_current_layer_map", combined)
+        self.assertIn("moonraker_layer_is_one_based", combined)
+        self.assertIn("_remote_layer_ranges", combined)
+        self.assertIn('virtual_sdcard.get("file_position")', combined)
+        self.assertIn("_layer_from_file_position", combined)
+        self.assertIn("_layer_from_z", combined)
+        self.assertIn("_remote_index_filename", combined)
+        self.assertIn("_metadata_layer_count", MONITOR_CONTROLS)
+        self.assertIn("_layer_from_metadata_z", MONITOR_CONTROLS)
+        self.assertIn("monitorLayerHeight", MONITOR_CONTROLS)
         self.assertIn("MoonrakerMonitorRuntime", OUTPUT_PLUGIN)
 
     def test_monitor_dashboard_contains_live_controls_and_status_groups(self):
@@ -54,6 +60,59 @@ class MonitorUploadRegressionTests(unittest.TestCase):
             "klipperVersion", "moonrakerVersion", "mcuSummary",
         ):
             self.assertIn(token, MONITOR_MODEL + MONITOR_QML)
+
+    def test_enhanced_monitor_is_packaged_and_selected(self):
+        self.assertIn('"MoonrakerMonitorEnhanced.qml"', OUTPUT_PLUGIN)
+        self.assertIn('"MoonrakerMonitor.qml"', OUTPUT_PLUGIN)
+        self.assertIn("MoonrakerMonitorControls", OUTPUT_PLUGIN)
+        self.assertIn("MoonrakerMonitor", ENHANCED_QML)
+        self.assertIn("Printer controls", ENHANCED_QML)
+
+    def test_enhanced_monitor_exposes_requested_setup_and_macro_controls(self):
+        for token in (
+            "macroNames", "runMacro", "temperaturePresetNames", "applyTemperaturePreset",
+            "homeAll", "runQuadGantryLevel", "calibrateBedMesh", "hasQuadGantryLevel",
+            "hasBedMesh", "server/database/item?namespace=mainsail&key=presets",
+        ):
+            self.assertIn(token, MONITOR_CONTROLS + ENHANCED_QML)
+        self.assertIn('"G28"', MONITOR_CONTROLS)
+        self.assertIn('"QUAD_GANTRY_LEVEL"', MONITOR_CONTROLS)
+        self.assertIn('"BED_MESH_CALIBRATE"', MONITOR_CONTROLS)
+
+    def test_enhanced_monitor_exposes_live_tuning_controls(self):
+        for token in (
+            "setSpeedFactor", "setFlowFactor", "adjustZOffset", "clearZOffset",
+            "setFanSpeed", "setLedBrightness", "speedFactorPercent", "flowFactorPercent",
+            "fanControlItems", "ledItems", "zOffsetText",
+        ):
+            self.assertIn(token, MONITOR_CONTROLS + ENHANCED_QML)
+        self.assertIn("SET_GCODE_OFFSET Z_ADJUST", MONITOR_CONTROLS)
+        self.assertIn("M220 S", MONITOR_CONTROLS)
+        self.assertIn("M221 S", MONITOR_CONTROLS)
+        self.assertIn("SET_FAN_SPEED", MONITOR_CONTROLS)
+        self.assertIn("SET_LED", MONITOR_CONTROLS)
+
+    def test_save_config_only_appears_when_klipper_reports_pending_changes(self):
+        self.assertIn('lower in {"configfile", "toolhead", "quad_gantry_level", "bed_mesh"}', MONITOR_CONTROLS)
+        self.assertIn('configfile.get("save_config_pending", False)', MONITOR_CONTROLS)
+        self.assertIn("saveConfigPending", MONITOR_CONTROLS)
+        self.assertIn("canSaveConfig", MONITOR_CONTROLS)
+        self.assertIn('"SAVE_CONFIG"', MONITOR_CONTROLS)
+        self.assertIn("Save configuration", ENHANCED_QML)
+
+    def test_emergency_stop_requires_three_rapid_clicks_and_has_fill_progress(self):
+        self.assertIn("time.monotonic()", MONITOR_CONTROLS)
+        self.assertIn("now - self._estop_last_click > 1.0", MONITOR_CONTROLS)
+        self.assertIn("self._estop_clicks >= 3", MONITOR_CONTROLS)
+        self.assertIn('"printer/emergency_stop"', MONITOR_CONTROLS)
+        self.assertIn("emergencyStopClicks", MONITOR_CONTROLS)
+        self.assertIn("emergencyButton.clicks / 3.0", ENHANCED_QML)
+        self.assertIn("EMERGENCY STOP", ENHANCED_QML)
+        self.assertNotIn("Emergency stop?", ENHANCED_QML)
+
+    def test_power_lock_is_explained_in_enhanced_monitor(self):
+        self.assertIn("locked && !printer.powerDevices[i].can_toggle", ENHANCED_QML)
+        self.assertIn("Power control is locked by Moonraker while this print is active.", ENHANCED_QML)
 
     def test_runtime_sources_do_not_contain_release_nicknames(self):
         offenders = []
