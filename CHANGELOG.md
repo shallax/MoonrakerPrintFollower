@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: v3: register integrated Moonraker output device
 - 2026-09-05: v3: add integrated Moonraker upload and print output device
 - 2026-09-05: v3: extend per-printer config for integrated Moonraker output and migration
 - 2026-09-05: Fix jitter, still v2.0.0.

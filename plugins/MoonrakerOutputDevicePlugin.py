@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+from PyQt6.QtCore import QUrl
+from UM.Logger import Logger
+from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
+
+from .MoonrakerOutputDevice import MoonrakerOutputDevice
+
+
+class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
+    """Expose one Moonraker output device for the active Cura printer."""
+
+    def __init__(self, application: Any, follower: Any) -> None:
+        super().__init__()
+        self._application = application
+        self._follower = follower
+        self._devices: Dict[str, MoonrakerOutputDevice] = {}
+        self._current: Optional[MoonrakerOutputDevice] = None
+
+        changed = getattr(application, "globalContainerStackChanged", None)
+        if changed is not None:
+            changed.connect(self.refresh)
+
+    def start(self) -> None:
+        self.refresh()
+
+    def stop(self) -> None:
+        if self._current is not None:
+            try:
+                self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
+            except Exception:
+                pass
+        self._current = None
+
+    @staticmethod
+    def _usable_url(value: str) -> bool:
+        url = QUrl(str(value or ""))
+        return url.isValid() and url.scheme() in ("http", "https") and bool(url.host())
+
+    def refresh(self, *_args: Any) -> None:
+        try:
+            stack = self._application.getGlobalContainerStack()
+            if stack is None:
+                return
+            machine_id = str(stack.getId())
+            config = self._follower.current_printer_config()
+            usable = self._usable_url(str(config.url or "").strip())
+
+            if self._current is not None and self._current.getId() != MoonrakerOutputDevice.DEVICE_PREFIX + machine_id:
+                self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
+                self._current = None
+
+            if not usable:
+                if self._current is not None:
+                    self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
+                    self._current = None
+                return
+
+            device = self._devices.get(machine_id)
+            if device is None:
+                device = MoonrakerOutputDevice(self._application, self._follower, machine_id)
+                self._devices[machine_id] = device
+            else:
+                device.updateConfig(config)
+
+            if self._current is not device:
+                if self._current is not None:
+                    try:
+                        self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
+                    except Exception:
+                        pass
+                self._current = device
+                self.getOutputDeviceManager().addOutputDevice(device)
+            else:
+                device.updateConfig(config)
+        except Exception as exc:
+            Logger.log("e", "Moonraker Print Follower: output-device refresh failed: %s", exc)
