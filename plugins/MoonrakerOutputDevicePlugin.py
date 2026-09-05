@@ -8,7 +8,7 @@ from UM.Logger import Logger
 from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
 # MoonrakerMonitorRuntime remains the proven layer-following base implementation.
-from .MoonrakerMonitorControls import MoonrakerMonitorModel
+from .MoonrakerMonitorTypedControls import MoonrakerMonitorModel
 from .MoonrakerOutputDevice import MoonrakerOutputController
 from .MoonrakerOutputDeviceLifecycle import MoonrakerOutputDevice
 
