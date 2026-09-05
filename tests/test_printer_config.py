@@ -106,6 +106,9 @@ class PrinterConfigTests(unittest.TestCase):
                 "trans_input": " _",
                 "trans_output": "--",
                 "trans_remove": "[]",
+                "camera_url": "/webcam/?action=stream",
+                "camera_image_rotation": "270",
+                "camera_image_mirror": True,
             },
             "machine-b": {
                 "url": "http://old-b.example.invalid:7125/",
@@ -131,6 +134,9 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertEqual(cfg_a.filename_translate_input, " _")
         self.assertEqual(cfg_a.filename_translate_output, "--")
         self.assertEqual(cfg_a.filename_translate_remove, "[]")
+        self.assertEqual(cfg_a.camera_url, "/webcam/?action=stream")
+        self.assertEqual(cfg_a.camera_rotation, 270)
+        self.assertTrue(cfg_a.camera_mirror)
 
         cfg_b = store.get("machine-b")
         self.assertEqual(cfg_b.url, "http://old-b.example.invalid:7125")
@@ -174,6 +180,8 @@ class PrinterConfigTests(unittest.TestCase):
             "output_format": "stl",
             "upload_path": "/folder/sub/",
             "upload_paths": ["/one/", "", " two/"],
+            "camera_rotation": "45",
+            "camera_mirror": "yes",
         })
         self.assertEqual(cfg.poll_interval_ms, 750)
         self.assertEqual(cfg.z_tolerance, 0.04)
@@ -184,6 +192,8 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertEqual(cfg.output_format, "gcode")
         self.assertEqual(cfg.upload_path, "folder/sub")
         self.assertEqual(cfg.upload_paths, ["one", "two"])
+        self.assertEqual(cfg.camera_rotation, 0)
+        self.assertTrue(cfg.camera_mirror)
 
     def test_retry_interval_is_bounded(self):
         self.assertEqual(PrinterConfig.from_dict({"ready_retry_interval_s": 0}).ready_retry_interval_s, 0.1)
