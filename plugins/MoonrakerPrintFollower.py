@@ -1306,8 +1306,6 @@ class MoonrakerPrintFollower(QObject, Extension):
         if self._preview_overlay is not None and self._action_panel_controls is not None:
             return
         try:
-            from UM.PluginRegistry import PluginRegistry
-
             main_window = self._application.getMainWindow()
             if main_window is None or not hasattr(main_window, "contentItem"):
                 return
@@ -1315,9 +1313,11 @@ class MoonrakerPrintFollower(QObject, Extension):
             if window_content is None:
                 return
 
-            plugin_path = PluginRegistry.getInstance().getPluginPath(self.PLUGIN_ID)
-            if not plugin_path:
-                return
+            # Resolve our QML resources from the installed module directory rather
+            # than looking ourselves up by package id. Community Marketplace builds
+            # may canonicalise the package id/folder name, but __file__ always points
+            # at the resources shipped beside this module.
+            plugin_path = os.path.dirname(os.path.abspath(__file__))
 
             if self._preview_overlay is None:
                 overlay_path = os.path.join(plugin_path, "EmptyPreviewLoadButton.qml")

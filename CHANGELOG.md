@@ -60,6 +60,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: Fix package ID for v2.0.0.
 - 2026-09-04: Fix v2.0.0.
 - 2026-09-04: Fix v2.0.0.
 - 2026-09-04: Fix v2.0.0.

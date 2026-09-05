@@ -84,6 +84,7 @@ class SourceContractTests(unittest.TestCase):
         package = json.loads((ROOT / "package.json").read_text())
         plugin = json.loads((ROOT / "plugins" / "plugin.json").read_text())
         self.assertEqual(package["package_version"], "2.0.0")
+        self.assertEqual(package["package_id"], "Moonraker_Print_Follower")
         self.assertEqual(package["sdk_version"], "8.0.0")
         self.assertEqual(package["sdk_version_semver"], "8.0.0")
         self.assertEqual(package["website"], "https://github.com/shallax/MoonrakerPrintFollower")
@@ -270,6 +271,9 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("drag `moonrakerprintfollower-v2.0.0.curapackage` onto the cura window", README.lower())
         with zipfile.ZipFile(package_path) as archive:
             names = set(archive.namelist())
+            embedded_package = json.loads(archive.read("package.json").decode("utf-8"))
+        self.assertEqual(embedded_package["package_id"], "Moonraker_Print_Follower")
+        self.assertFalse(any(name.startswith("files/plugins/MoonrakerPrintFollower/") for name in names))
         self.assertIn("files/plugins/Moonraker_Print_Follower/MoonrakerFollowerConfiguration.qml", names)
         self.assertIn("files/plugins/Moonraker_Print_Follower/MoonrakerFollowerMachineAction.py", names)
         self.assertIn("files/plugins/Moonraker_Print_Follower/NativeNozzleFallback.py", names)
@@ -331,6 +335,16 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("_switching_layers", NOZZLE_FALLBACK)
         self.assertIn("_old_current_layer", NOZZLE_FALLBACK)
         self.assertIn("keep_native_nozzle_visible(view)", PLUGIN)
+
+    def test_marketplace_package_id_and_preview_resources_are_canonical(self):
+        package = json.loads((ROOT / "package.json").read_text())
+        self.assertEqual(package["package_id"], "Moonraker_Print_Follower")
+        self.assertIn('PLUGIN_ID = "Moonraker_Print_Follower"', PLUGIN)
+        # Preview resources must not depend on a registry lookup using a package
+        # id that a Marketplace build can canonicalise or rename.
+        self.assertNotIn("getPluginPath(self.PLUGIN_ID)", PLUGIN)
+        self.assertIn("os.path.dirname(os.path.abspath(__file__))", PLUGIN)
+        self.assertIn("`Moonraker_Print_Follower`", README)
 
     def test_source_tree_has_no_license_file(self):
         self.assertFalse(any(p.name.lower().startswith("license") for p in ROOT.rglob("*") if p.is_file()))

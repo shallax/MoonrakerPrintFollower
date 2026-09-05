@@ -98,6 +98,8 @@ The release source archive contains a ready-to-install file named:
 
 `MoonrakerPrintFollower-v2.0.0.curapackage`
 
+The canonical Cura/Marketplace package id is `Moonraker_Print_Follower`.
+
 To install it:
 
 1. Extract the source archive if you downloaded the source ZIP.
@@ -116,8 +118,8 @@ If you specifically want to install the source tree rather than the bundled Cura
 
 1. Open **Help → Show Configuration Folder** in Cura.
 2. Open that configuration folder's `plugins` directory.
-3. Create a `MoonrakerPrintFollower` directory there if necessary.
-4. Copy the contents of the source archive's `plugins` directory into that `MoonrakerPrintFollower` directory.
+3. Create a `Moonraker_Print_Follower` directory there if necessary.
+4. Copy the contents of the source archive's `plugins` directory into that `Moonraker_Print_Follower` directory.
 5. Restart Cura.
 
 The `.curapackage` route is recommended because it lets Cura perform the package installation itself.
