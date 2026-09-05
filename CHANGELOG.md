@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: v3: expand Monitor with controls, peripherals, ETA, power and health
 - 2026-09-05: v3: build and publish curapackage from CI
 - 2026-09-05: v3: add reproducible curapackage builder
 - 2026-09-05: v3: document unified Monitor and Moonraker webcam support
