@@ -35,6 +35,13 @@ class PrinterConfig:
     filename_translate_output: str = ""
     filename_translate_remove: str = ""
 
+    # Monitor/webcam settings. Modern Moonraker webcam entries are discovered
+    # automatically. These fields retain the old Moonraker Connection camera as
+    # a fallback for installations that do not expose /server/webcams/list.
+    camera_url: str = ""
+    camera_rotation: int = 0
+    camera_mirror: bool = False
+
     @classmethod
     def from_dict(cls, value: Any) -> "PrinterConfig":
         raw = value if isinstance(value, dict) else {}
@@ -57,11 +64,16 @@ class PrinterConfig:
             )
         except (TypeError, ValueError):
             data["ready_retry_interval_s"] = defaults.ready_retry_interval_s
+        try:
+            rotation = int(data["camera_rotation"])
+        except (TypeError, ValueError):
+            rotation = defaults.camera_rotation
+        data["camera_rotation"] = rotation if rotation in {0, 90, 180, 270} else 0
 
         for key in (
             "url", "api_key", "follow_mode", "frontend_url", "output_format",
             "upload_path", "power_devices", "filename_translate_input",
-            "filename_translate_output", "filename_translate_remove",
+            "filename_translate_output", "filename_translate_remove", "camera_url",
         ):
             data[key] = str(data.get(key) or getattr(defaults, key))
 
@@ -78,7 +90,7 @@ class PrinterConfig:
             "enabled", "moonraker_layer_is_one_based", "auto_preview",
             "z_fallback", "path_follow", "show_toolhead_indicator",
             "upload_dialog", "upload_start_print", "upload_remember_state",
-            "upload_autohide_message",
+            "upload_autohide_message", "camera_mirror",
         ):
             item = data[key]
             if not isinstance(item, bool):
@@ -233,6 +245,9 @@ class PrinterConfigStore:
                 "trans_input": "filename_translate_input",
                 "trans_output": "filename_translate_output",
                 "trans_remove": "filename_translate_remove",
+                "camera_url": "camera_url",
+                "camera_image_rotation": "camera_rotation",
+                "camera_image_mirror": "camera_mirror",
             }
             for old_key, new_key in mapping.items():
                 if old_key in legacy:
