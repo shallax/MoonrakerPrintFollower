@@ -245,7 +245,7 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             return None
         return result if result > 0 else None
 
-    @pyqtProperty(str, notify=monitorChanged)
+    @pyqtProperty(str, notify=controlsChanged)
     def monitorLayerHeight(self) -> str:
         return self._monitor_layer_height
 
