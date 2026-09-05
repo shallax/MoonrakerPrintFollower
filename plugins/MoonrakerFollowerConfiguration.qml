@@ -313,7 +313,7 @@ Cura.MachineAction
                         Cura.TextField { id: powerDevicesField; width: parent.width; text: manager.settingsPowerDevices; maximumLength: 1024 }
                         UM.Label
                         {
-                            text: "When starting a print, v3 can power these devices on first and wait for Klippy to report ready. These devices also appear in Monitor."
+                            text: "When starting a print, the plugin can power these devices on first and wait for Klippy to report ready. These devices also appear in Monitor."
                             wrapMode: Text.WordWrap
                             width: parent.width
                             color: UM.Theme.getColor("text_inactive")
