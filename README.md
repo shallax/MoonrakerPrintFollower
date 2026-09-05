@@ -1,6 +1,6 @@
 # Moonraker Print Follower
 
-Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. Version 3.0.0 keeps Cura Preview synchronised with a live print, provides Cura's Moonraker upload/print destination, and adds a live Cura Monitor view with Moonraker webcams, so the separate Moonraker Connection plugin is no longer required.
+Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. Version 3.0.0 keeps Cura Preview synchronised with a live print, provides Cura's Moonraker upload/print destination, and adds a full live Monitor view, so the separate Moonraker Connection plugin is no longer required.
 
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
@@ -10,13 +10,13 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. Ve
 
 ## What changed in 3.0.0
 
-Version 3.0.0 combines the follower and the Cura-to-Moonraker connection/output/monitor workflow into one plugin and one per-printer configuration.
+Version 3.0.0 combines Preview following, Cura-to-Moonraker upload/print support and live monitoring into one plugin and one per-printer configuration.
 
 For each Cura printer, the same Moonraker URL and optional API key now drive:
 
 - live Cura Preview following
-- Cura's **Upload to _printer_** output destination
-- G-code or UFP output
+- Cura's **Upload to _printer_** destination
+- G-code or UFP uploads
 - an optional upload filename/folder dialog
 - remembered remote folders
 - optional immediate printing after upload
@@ -26,18 +26,24 @@ For each Cura printer, the same Moonraker URL and optional API key now drive:
 - optional browser handoff to a configured frontend URL
 - filename character translation/removal
 - Cura's **Monitor** stage with Moonraker webcam discovery
-- multiple-camera selection, camera rotation and flips
-- live print state, file, progress, layer, elapsed time, speed/flow multipliers and XYZ position
+- multiple-camera selection, rotation and flips
+- live job state, progress and resolved current layer
+- temperatures, heaters, fans and filament sensors discovered from the printer
+- Pause, Resume and Cancel controls
+- Moonraker power-device controls
+- estimated remaining time and finish time
+- Exclude Object controls when Klipper exposes `exclude_object`
+- Klippy, host and MCU health information
 
-The output controller does not advertise pause, abort, preheat or manual-control buttons until those commands are actually implemented by this plugin.
+The generic Cura output controller remains conservative and does not advertise unrelated preheat/manual-control capabilities that are not implemented by this plugin. Print controls are provided by the dedicated Monitor view.
 
 ### Upgrading from Moonraker Connection
 
-On first v3 startup, Moonraker Print Follower looks for the standalone plugin's existing per-printer preference data under `moonraker/instances` and imports compatible settings once.
+On first 3.0.0 startup, Moonraker Print Follower looks for the standalone plugin's existing per-printer preference data under `moonraker/instances` and imports compatible settings once.
 
-Existing Moonraker Print Follower URL/API-key values take precedence when already configured. Output-specific settings such as upload format/path, start-print behaviour, power devices, retry interval, frontend URL and filename translation are imported from Moonraker Connection. Its legacy camera URL, rotation and mirror settings are also imported as a fallback for Moonraker installations that do not expose webcam configuration through the webcam API. The old preference data is left untouched so rollback remains possible.
+Existing Moonraker Print Follower URL/API-key values take precedence when already configured. Upload-specific settings such as format/path, start-print behaviour, power devices, retry interval, frontend URL and filename translation are imported from Moonraker Connection. Its legacy camera URL, rotation and mirror settings are also imported as a fallback for Moonraker installations that do not expose webcam configuration through the webcam API. The old preference data is left untouched so rollback remains possible.
 
-After verifying v3 with your printers, the separate Moonraker Connection plugin can be removed.
+After verifying the integrated plugin with your printers, the separate Moonraker Connection plugin can be removed.
 
 ## Cura / SDK compatibility
 
@@ -56,14 +62,14 @@ There is no **Extensions → Moonraker Print Follower** settings dialog. Configu
 1. Open **Settings → Printer → Manage Printers**.
 2. Select the Cura printer you want to configure.
 3. Click **Configure Moonraker**.
-4. Use the **Connection**, **Following** and **Output** tabs.
+4. Use the **Connection**, **Following** and **Upload** tabs.
 5. Click **Save**.
 
 The settings UI is implemented as a native Cura Machine Action QML page, so Cura owns the dialog and its modal lifecycle.
 
 ## Connection tab
 
-The Connection tab contains the settings shared by following, output and monitoring:
+The Connection tab contains the settings shared by following, uploading and monitoring:
 
 - Moonraker URL
 - optional API key
@@ -72,7 +78,7 @@ The Connection tab contains the settings shared by following, output and monitor
 
 For documentation or testing, use a deliberately non-routable example such as `http://printer.example.invalid:7125`. Do not commit real printer addresses or credentials to the source tree.
 
-A valid Moonraker URL makes a Moonraker output destination and Monitor view available for the currently active Cura printer even when automatic Preview following is disabled.
+A valid Moonraker URL makes the Moonraker upload destination and Monitor view available for the currently active Cura printer even when automatic Preview following is disabled.
 
 ## Following tab
 
@@ -97,42 +103,84 @@ Settings include:
 
 Manual movement of either Cura layer handle or either within-layer path handle pauses following. **Resume** in the Preview card catches the view back up without stopping Moonraker polling. Within a live layer, follower progress is monotonic so repeated or closed toolpaths cannot make Cura visibly rewind and retrace a section when Moonraker's live position is ambiguous.
 
-## Output tab
+## Upload tab
 
-The Output tab configures Cura-to-Moonraker uploads:
+The Upload tab configures Cura-to-Moonraker uploads:
 
 - **Frontend URL** — optional destination for the success message's Open Browser action; falls back to the Moonraker URL.
-- **Output format** — G-code or UFP. Pre-sliced jobs fall back to G-code.
+- **Upload format** — G-code or UFP. Pre-sliced jobs fall back to G-code.
 - **Show filename/path dialog** — lets you edit the remote folder, filename and start-print choice for each upload.
 - **Default remote folder** — path below Moonraker's `gcodes` root.
 - **Start printing after upload by default**.
 - **Remember upload choices** — remembers remote folders and, when enabled, the last folder/start-print choice.
 - **Auto-hide successful upload message**.
-- **Power devices** — comma-separated Moonraker power device names. When a print is requested and the first device is off, v3 powers the configured devices on before waiting for Klippy.
-- **Printer-ready retry interval** — v3 uses Qt timers rather than blocking sleeps, so Cura remains responsive while a powered-on printer starts.
+- **Power devices** — comma-separated Moonraker power device names. When a print is requested and the first device is off, the plugin powers the configured devices on before waiting for Klippy.
+- **Printer-ready retry interval** — Qt timers are used rather than blocking sleeps, so Cura remains responsive while a powered-on printer starts.
 - **Filename translation** — position-for-position replacement plus a set of characters to remove.
 
 Upload-only mode does not require Klippy to be ready; Moonraker's file service can still accept a G-code file while the printer MCU is unavailable. Immediate-print mode waits for `server/info` to report `klippy_state: ready` before sending the upload with `print=true`.
 
+Cancelling the upload dialog cleanly terminates Cura's write lifecycle without reporting a failed upload, so the Upload action remains immediately reusable.
+
 ## Monitor tab
 
-The unified output device supplies Cura's normal **Monitor** stage with a dedicated Moonraker view.
+The unified output device supplies Cura's normal **Monitor** stage with a dedicated Moonraker dashboard.
 
-The camera panel queries Moonraker's webcam API and automatically uses enabled webcams already configured for Mainsail/Fluidd/Moonraker. Relative stream URLs are resolved against the configured Moonraker host. If more than one webcam is available, Monitor displays a selector. Moonraker rotation plus horizontal/vertical flip settings are applied in Cura. A Refresh action re-reads Moonraker's webcam list without restarting Cura.
+### Webcam
 
-If Moonraker does not expose a webcam list, v3 falls back to camera URL/rotation/mirror settings imported from the standalone Moonraker Connection plugin.
+The camera panel queries Moonraker's webcam API and automatically uses enabled webcams already configured for Mainsail/Fluidd/Moonraker. Relative stream URLs are resolved against the configured Moonraker host. If more than one webcam is available, Monitor displays a selector. Moonraker rotation plus horizontal/vertical flip settings are applied in Cura. **Refresh** re-reads the current camera and printer capabilities without restarting Cura.
 
-Alongside the camera, Monitor currently shows:
+If Moonraker does not expose a webcam list, the plugin falls back to camera URL/rotation/mirror settings imported from the standalone Moonraker Connection plugin.
+
+### Print status and controls
+
+Monitor displays:
 
 - printer/job state and active filename
 - overall print progress
-- current/total layer where reported by Klipper
+- resolved current/total layer
 - elapsed print duration
+- estimated remaining time and estimated finish time
 - speed and extrusion multipliers
 - live X/Y/Z position when `motion_report` is available
-- **Open Moonraker frontend**
+- Pause, Resume and Cancel controls while a print is active
 
-When automatic Preview following is enabled, Monitor consumes the follower's existing status stream rather than creating a duplicate poller. When following is disabled, the Monitor model uses a lightweight one-second status fallback so upload/Monitor remain useful independently of Preview following.
+The Monitor layer resolver uses the same interpretation as the Preview follower. It prefers explicit `CURRENT_LAYER` values mapped from the active G-code, then uses the indexed G-code layer ranges with `virtual_sdcard.file_position`, and finally uses the configured Z-height fallback when necessary. This avoids requiring every Klipper setup to populate `print_stats.info.current_layer`.
+
+### Temperatures, fans and filament
+
+Monitor asks Klipper which printer objects actually exist instead of assuming a specific printer configuration. Where available it shows:
+
+- hotend and bed temperature/current target
+- generic heaters and temperature sensors
+- heater power percentage
+- part, generic, controller, heater and temperature-controlled fans
+- fan RPM when tachometer data is exposed
+- filament switch and filament motion sensor state
+
+Unsupported object types simply do not appear.
+
+### Exclude Object
+
+When Klipper exposes `exclude_object`, Monitor lists the known print objects, marks the current and already-excluded objects, and provides an **Exclude** action for remaining objects while the print is active.
+
+### Power
+
+Moonraker power devices appear in Monitor and can be toggled directly. Devices configured in the Upload settings are preferred when that list is present; otherwise Moonraker's reported devices are shown. Devices that Moonraker marks as locked while printing cannot be toggled during an active print. Turning off an otherwise-toggleable device during a print requires confirmation.
+
+### System health
+
+The System section can show:
+
+- Klippy state
+- Klipper version
+- Moonraker version
+- one-minute host load from Klipper `system_stats`
+- available host memory
+- CPU/host temperature when the printer exposes an appropriate temperature sensor
+- MCU firmware versions
+
+When automatic Preview following is enabled, Monitor consumes the follower's existing core status stream rather than creating a duplicate poller. When following is disabled, Monitor uses a lightweight one-second core-status fallback. Peripheral status is capability-driven and polled separately, while slower-changing power/system/capability data uses longer intervals.
 
 ## Preview controls
 
@@ -155,7 +203,7 @@ Follower live status uses HTTP polling only.
 - the normal interval resumes immediately after a successful response
 - capabilities are inferred from the objects Moonraker actually exposes
 
-Monitor reuses that stream while following is enabled and otherwise polls status once per second. Webcam configuration is discovered independently because it changes rarely. Uploads use Moonraker's HTTP file API with multipart form data. Power-device and printer-readiness requests also use Moonraker HTTP endpoints. There is no WebSocket transport and no automatic printer discovery.
+Monitor reuses that stream while following is enabled and otherwise polls core status once per second. Webcam configuration is discovered independently because it changes rarely. Uploads use Moonraker's HTTP file API with multipart form data. Power-device, print-control, printer-readiness and Monitor auxiliary requests also use Moonraker HTTP endpoints. There is no WebSocket transport and no automatic printer discovery.
 
 ## Large G-code handling
 
@@ -167,13 +215,13 @@ Persistent indexes are validated against remote file identity before reuse. Laye
 
 ### Cura package
 
-Release builds use the canonical Cura/Marketplace package id `Moonraker_Print_Follower`. A v3 `.curapackage` should be generated from the audited v3 source as part of the release build.
+Release builds use the canonical Cura/Marketplace package id `Moonraker_Print_Follower`. CI compiles and tests the plugin, builds the `.curapackage`, verifies its Marketplace layout and uploads the installable package as a workflow artifact.
 
-The repository may still contain an older v2 `.curapackage` for historical/testing purposes; do not treat that file as a v3 build.
+The repository may still contain an older 2.0.0 `.curapackage` for historical/testing purposes; do not treat that file as the current build.
 
 ### Manual installation from source
 
-For development/testing of v3:
+For development/testing:
 
 1. Open **Help → Show Configuration Folder** in Cura.
 2. Open that configuration folder's `plugins` directory.
@@ -188,7 +236,7 @@ When replacing another development build with the same version number, uninstall
 
 The 1.0.x and 1.1.x follower-settings migration remains supported. Existing legacy global follower settings are migrated once to the active Cura printer after Cura has established its global machine stack.
 
-Version 3 additionally migrates compatible output and fallback-camera settings from the standalone Moonraker Connection plugin. Neither migration forces Cura's lazy `MachineManager` into existence during early plugin loading.
+Version 3.0.0 additionally migrates compatible upload and fallback-camera settings from the standalone Moonraker Connection plugin. Neither migration forces Cura's lazy `MachineManager` into existence during early plugin loading.
 
 ## Internal structure
 
@@ -196,12 +244,14 @@ High-risk logic is separated into focused modules:
 
 - `PrinterConfig.py` — unified per-Cura-machine settings plus follower and Moonraker Connection migration
 - `MoonrakerFollowerMachineAction.py` — native Manage Printers configuration backend
-- `MoonrakerFollowerConfiguration.qml` — Connection / Following / Output settings UI
-- `MoonrakerOutputDevicePlugin.py` — exposes the Moonraker output destination and Monitor view for the active Cura printer
+- `MoonrakerFollowerConfiguration.qml` — Connection / Following / Upload settings UI
+- `MoonrakerOutputDevicePlugin.py` — exposes the Moonraker upload destination and Monitor view for the active Cura printer
 - `MoonrakerOutputDevice.py` — G-code/UFP writing, power/readiness orchestration, multipart upload, progress and browser handoff
+- `MoonrakerOutputDeviceLifecycle.py` — completes Cura's write lifecycle cleanly for success, failure and user cancellation
 - `MoonrakerUploadDialog.qml` — per-upload remote path/name/start-print dialog
-- `MoonrakerMonitorModel.py` — Monitor status model, fallback transport, webcam discovery and camera selection
-- `MoonrakerMonitor.qml` — Cura Monitor webcam/status presentation
+- `MoonrakerMonitorModel.py` — Monitor transport, status, capabilities, peripherals, controls, power, system health and webcam discovery
+- `MoonrakerMonitorRuntime.py` — follower-aware live-layer interpretation for Monitor
+- `MoonrakerMonitor.qml` — Cura Monitor dashboard presentation
 - `MoonrakerClient.py` — resilient live-status HTTP polling, retry backoff and capability detection
 - `FollowController.py` — follower state machine and follow-mode decisions
 - `CuraAdapter.py` — Cura machine identity, Preview writes and toolpath-head position mapping
@@ -213,6 +263,6 @@ High-risk logic is separated into focused modules:
 
 ## Development and release checks
 
-The standard-library `unittest` suite under `tests/` protects the established follower behaviour and v3's unified output/Monitor path. Contracts cover single-active-printer ownership, per-printer settings, standalone-plugin migration, HTTP status handling, follow modes, startup safety, manual Preview override detection, multiple slicer layer markers, compact/lazy indexes, G-code/UFP output, power-device startup, non-blocking readiness waits, multipart uploads, webcam migration/discovery, Monitor wiring and Cura SDK compatibility.
+The standard-library `unittest` suite under `tests/` protects established follower behaviour and the unified upload/Monitor path. Contracts cover single-active-printer ownership, per-printer settings, standalone-plugin migration, HTTP status handling, follow modes, startup safety, manual Preview override detection, multiple slicer layer markers, compact/lazy indexes, G-code/UFP upload, power-device startup, non-blocking readiness waits, upload cancellation, multipart uploads, webcam migration/discovery, Monitor layer resolution, Monitor controls and Cura SDK compatibility.
 
-Release auditing also checks that the source contains no hard-coded real printer names, real local-network addresses or literal sample API keys. Example network values must use reserved non-routable domains.
+Release auditing also checks that shipped plugin sources do not contain release nicknames in runtime comments/UI, and that the source contains no hard-coded real printer names, local-network addresses or literal sample API keys. Example network values must use reserved non-routable domains.
