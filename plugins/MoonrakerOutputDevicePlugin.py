@@ -63,8 +63,9 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             # PrinterOutputDevice exposes activePrinter from this model list.
             device._printers = [monitor]
 
-        # The dashboard composes the established MoonrakerMonitor.qml view,
-        # preserving its camera/status/power UI while adding typed controls.
+        # "MoonrakerMonitorDashboard.qml" composes the established
+        # "MoonrakerMonitor.qml" view, preserving its camera/status/power UI
+        # while adding typed controls.
         device._monitor_view_qml_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitorDashboard.qml"
         )
