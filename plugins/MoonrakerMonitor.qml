@@ -32,7 +32,6 @@ Component
                 border.width: UM.Theme.getSize("default_lining").width
                 color: UM.Theme.getColor("main_background")
                 radius: UM.Theme.getSize("default_radius").width
-                cornerSide: Cura.RoundedRectangle.Direction.All
 
                 ColumnLayout
                 {
@@ -93,7 +92,7 @@ Component
                             visible: !root.cameraConfigured
                             text: "No webcam configured in Moonraker"
                             color: UM.Theme.getColor("text_inactive")
-                            font: UM.Theme.getFont("medium")
+                            font: UM.Theme.getFont("default")
                         }
 
                         Cura.NetworkMJPGImage
@@ -140,6 +139,14 @@ Component
                                 }
                             }
 
+                            onSourceChanged:
+                            {
+                                if (visible && source !== "")
+                                {
+                                    start()
+                                }
+                            }
+
                             Component.onCompleted:
                             {
                                 if (source !== "")
@@ -162,7 +169,6 @@ Component
                 border.width: UM.Theme.getSize("default_lining").width
                 color: UM.Theme.getColor("main_background")
                 radius: UM.Theme.getSize("default_radius").width
-                cornerSide: Cura.RoundedRectangle.Direction.All
 
                 ColumnLayout
                 {
@@ -172,7 +178,7 @@ Component
 
                     UM.Label
                     {
-                        text: OutputDevice != null ? OutputDevice.name : "Moonraker"
+                        text: root.printer != null ? root.printer.name : "Moonraker"
                         font: UM.Theme.getFont("large_bold")
                         Layout.fillWidth: true
                         elide: Text.ElideRight

@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: v3: harden Monitor QML compatibility and camera switching
 - 2026-09-05: v3: keep Monitor connected when automatic following is disabled
 - 2026-09-05: v3: replace no-webcam contract with unified Monitor contracts
 - 2026-09-05: v3: wire unified webcam Monitor into Cura output device
