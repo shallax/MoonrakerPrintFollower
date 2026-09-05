@@ -59,7 +59,7 @@ For documentation or testing, use a deliberately non-routable example such as `h
 - **Look ahead one layer** — shows the layer after the current printer layer.
 - **Window around current layer (±2)** — shows a five-layer window around the live layer where Cura supports it.
 
-Manual movement of either Cura layer handle or either within-layer path handle pauses following. **Resume** in the Preview card catches the view back up without stopping Moonraker polling.
+Manual movement of either Cura layer handle or either within-layer path handle pauses following. **Resume** in the Preview card catches the view back up without stopping Moonraker polling. Within a live layer, follower progress is kept monotonic so repeated/closed toolpaths cannot make Cura visibly rewind and retrace a section when Moonraker's live position is ambiguous.
 
 ## Preview controls
 
@@ -86,7 +86,7 @@ There is no WebSocket transport and no automatic printer discovery.
 
 ## Large G-code handling
 
-Large G-code files are streamed and indexed without loading the complete file into Python memory. Very large files use a compact layer index and hydrate detailed motion information only for layers that need it. Persistent indexes are validated against remote file identity before reuse.
+Large G-code files are streamed and indexed without loading the complete file into Python memory. Very large files use a compact layer index and hydrate detailed motion information only for layers that need it. The next layer is prepared ahead of the transition; if its detailed index is not ready yet, Preview briefly holds at the start of that layer rather than showing a coarse estimate and then jumping backwards. Persistent indexes are validated against remote file identity before reuse.
 
 Layer markers are recognised for Cura, PrusaSlicer, SuperSlicer and OrcaSlicer, with `SET_PRINT_STATS_INFO CURRENT_LAYER=...` available as a self-describing fallback.
 

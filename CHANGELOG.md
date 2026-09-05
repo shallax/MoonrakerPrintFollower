@@ -2,6 +2,19 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 2.0.0
+
+Version 2.0.0 makes Moonraker Print Follower feel like part of Cura rather than a separate utility.
+
+### Highlights
+- Configuration moves into **Settings → Printer → Manage Printers → Configure Moonraker Follower**.
+- Full per-printer settings and single-active-printer behaviour.
+- Targets Cura 5.x / SDK 8.x.
+- Improved live nozzle handling in Preview using Cura's native nozzle model.
+- Smoother monotonic within-layer following, avoiding visible rewind/retrace behaviour around ambiguous motion and layer changes.
+- Retains multiple follow modes, resilient Moonraker polling and scalable large-G-code indexing.
+- Existing 1.x settings are migrated automatically.
+
 ## 1.1.0
 
 Version 1.1.0 moves Moonraker Print Follower from a single global setup to a proper per-printer Cura workflow.
@@ -60,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-05: Fix jitter, still v2.0.0.
 - 2026-09-05: Fix package ID for v2.0.0.
 - 2026-09-04: Fix v2.0.0.
 - 2026-09-04: Fix v2.0.0.

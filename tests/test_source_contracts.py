@@ -46,6 +46,15 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("live_position_in_gcode_space", PLUGIN)
         self.assertIn("refined_fraction", PLUGIN)
 
+    def test_path_following_is_monotonic_and_layer_hydration_cannot_rewind_preview(self):
+        self.assertIn("self._path_progress_layer", PLUGIN)
+        self.assertIn("self._path_progress_fraction", PLUGIN)
+        self.assertIn("minimum_fraction=self._path_progress_fraction", PLUGIN)
+        self.assertIn('return "hydrating layer path index"', PLUGIN)
+        self.assertIn("self._ensure_remote_layer_hydrated(target_layer + 1)", PLUGIN)
+        self.assertIn("minimum_fraction", INDEX)
+        self.assertIn("monotonic", INDEX)
+
     def test_manual_load_is_only_explicit_cura_load(self):
         # There should be one call site that opens the remote G-code in Cura,
         # under the explicit forced-load routine.

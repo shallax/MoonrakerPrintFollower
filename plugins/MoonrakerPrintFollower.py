@@ -201,6 +201,11 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._action_panel_controls = None
         self._connected_simulation_view = None
         self._toolhead_path_valid = False
+        # Within a running layer, displayed path progress is monotonic. Live XYZ
+        # refinement can otherwise snap to an earlier occurrence of the same XY
+        # on closed/repeated geometry and visibly rewind Cura's path slider.
+        self._path_progress_layer: Optional[int] = None
+        self._path_progress_fraction: Optional[float] = None
         self._scene = None
         self._scene_root = None
         self._lifecycle_generation = 0
@@ -2000,6 +2005,10 @@ class MoonrakerPrintFollower(QObject, Extension):
         if not hasattr(view, "setPath") or not hasattr(view, "getMaxPaths"):
             return "within-layer tracking unavailable in this Cura build"
 
+        if self._path_progress_layer != target_layer:
+            self._path_progress_layer = target_layer
+            self._path_progress_fraction = None
+
         if (
             self._remote_index_filename != self._last_remote_filename
             or self._remote_index_job_key != self._remote_job_key
@@ -2039,9 +2048,12 @@ class MoonrakerPrintFollower(QObject, Extension):
             return "remote path index unavailable"
 
         # Large G-code files use a compact persistent index containing only
-        # layer byte ranges.  Hydrate motion/live-position data for the layer
-        # currently being viewed on demand.  Byte-position following remains
-        # available immediately while the small layer-only scan runs.
+        # layer byte ranges. Hydrate the current layer before moving Cura's
+        # horizontal path slider. Falling back to raw byte position while that
+        # hydration runs can briefly race ahead of the physical nozzle; once the
+        # live-position data arrives Cura then appears to rewind and retrace the
+        # same wall. Holding the new layer at its start avoids that estimator
+        # hand-off. The next layer is pre-hydrated below to keep transitions fast.
         if getattr(index, "compact", False):
             if not (
                 self._cached_gcode_filename == self._last_remote_filename
@@ -2051,6 +2063,17 @@ class MoonrakerPrintFollower(QObject, Extension):
             ):
                 self._ensure_remote_gcode_cached(self._last_remote_filename or "")
             self._ensure_remote_layer_hydrated(target_layer)
+            if target_layer not in getattr(index, "hydrated_layers", set()):
+                self._path_progress_fraction = 0.0
+                try:
+                    if abs(float(view.getCurrentPath())) >= 0.5:
+                        view.setPath(0.0)
+                except Exception:
+                    try:
+                        view.setPath(0.0)
+                    except Exception:
+                        pass
+                return "hydrating layer path index"
 
         live_position = live_position_in_gcode_space(
             motion_report or {},
@@ -2061,9 +2084,19 @@ class MoonrakerPrintFollower(QObject, Extension):
             target_layer,
             file_position,
             live_position,
+            minimum_fraction=self._path_progress_fraction,
         )
         fraction = max(0.0, min(1.0, float(fraction)))
+        if self._path_progress_fraction is not None:
+            fraction = max(float(self._path_progress_fraction), fraction)
+        self._path_progress_fraction = fraction
         target_path = fraction * max_paths
+
+        # Compact indexes hydrate only the layers we need. Start preparing the
+        # next layer before the boundary so a normal transition usually has its
+        # motion index ready before Moonraker reports the new layer.
+        if getattr(index, "compact", False) and target_layer + 1 < len(index.ranges):
+            self._ensure_remote_layer_hydrated(target_layer + 1)
 
         # Exact path following owns the full horizontal slider range. Reset
         # Cura's lower path handle as well as the current path so a previous
@@ -2237,6 +2270,8 @@ class MoonrakerPrintFollower(QObject, Extension):
     def _clear_remote_gcode_index(self) -> None:
         self._cancel_remote_index_build()
         self._hydrating_layers.clear()
+        self._path_progress_layer = None
+        self._path_progress_fraction = None
         self._remote_index_filename = None
         self._remote_index_job_key = None
         self._remote_layer_ranges = []

@@ -88,6 +88,7 @@ class LayerMotionIndex:
         lag_window: int = 128,
         ahead_window: int = 8,
         max_distance_mm: float = 3.0,
+        minimum_fraction: Optional[float] = None,
     ) -> Tuple[float, str]:
         """Estimate physical progress using Moonraker's live tool position.
 
@@ -99,10 +100,22 @@ class LayerMotionIndex:
         """
 
         base_fraction, base_method = self.file_fraction(layer, file_position)
+        floor_fraction: Optional[float] = None
+        if minimum_fraction is not None:
+            try:
+                floor_fraction = max(0.0, min(1.0, float(minimum_fraction)))
+            except (TypeError, ValueError):
+                floor_fraction = None
+
+        def with_floor(fraction: float, method: str) -> Tuple[float, str]:
+            if floor_fraction is not None and fraction < floor_fraction:
+                return floor_fraction, f"{method} (monotonic)"
+            return fraction, method
+
         if live_position is None or len(live_position) < 3:
-            return base_fraction, base_method
+            return with_floor(base_fraction, base_method)
         if layer < 0 or layer >= len(self.motion_offsets):
-            return base_fraction, base_method
+            return with_floor(base_fraction, base_method)
 
         offsets = self.motion_offsets[layer]
         xs = self.motion_x[layer] if layer < len(self.motion_x) else array("f")
@@ -110,18 +123,24 @@ class LayerMotionIndex:
         zs = self.motion_z[layer] if layer < len(self.motion_z) else array("f")
         n = len(offsets)
         if n == 0 or len(xs) != n or len(ys) != n or len(zs) != n:
-            return base_fraction, base_method
+            return with_floor(base_fraction, base_method)
 
         try:
             px, py, pz = float(live_position[0]), float(live_position[1]), float(live_position[2])
         except (TypeError, ValueError):
-            return base_fraction, base_method
+            return with_floor(base_fraction, base_method)
 
         coarse_completed = bisect_right(offsets, int(file_position))
         lo = max(0, coarse_completed - max(1, int(lag_window)) - 1)
+        if floor_fraction is not None:
+            # Live XYZ can match more than one place on a closed/repeated toolpath.
+            # Once a layer has visibly progressed, never search behind that point;
+            # otherwise a later visit to the same XY can make Preview rewind.
+            floor_completed = max(0, min(n, int(math.floor(floor_fraction * n))))
+            lo = max(lo, max(0, floor_completed - 1))
         hi = min(n - 1, coarse_completed + max(0, int(ahead_window)))
         if hi < lo:
-            return base_fraction, base_method
+            return with_floor(base_fraction, base_method)
 
         layer_start = (
             self.layer_start_positions[layer]
@@ -153,10 +172,10 @@ class LayerMotionIndex:
                 best_completed = i + t
 
         if best_completed is None or math.sqrt(best_distance_sq) > max(0.1, max_distance_mm):
-            return base_fraction, base_method
+            return with_floor(base_fraction, base_method)
 
         refined = max(0.0, min(1.0, float(best_completed) / n))
-        return refined, "live position"
+        return with_floor(refined, "live position")
 
 
 def _parse_axes(code: bytes) -> Dict[str, float]:

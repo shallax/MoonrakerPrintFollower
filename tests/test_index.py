@@ -135,6 +135,47 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         self.assertEqual(method, expected_method)
 
+    def test_live_position_floor_prevents_closed_loop_rewind(self):
+        data = b"""G90
+G1 X0 Y0 Z0.2
+;LAYER:0
+G1 X10 Y0 Z0.2
+G1 X10 Y10 Z0.2
+G1 X0 Y10 Z0.2
+G1 X0 Y0 Z0.2
+G1 X5 Y0 Z0.2
+"""
+        index = build_index_from_bytes(data)
+        coarse_pos = int(index.motion_offsets[0][-1])
+
+        # At the loop closure, the live XYZ is also on the very first segment.
+        # A stateless nearest-segment search can therefore jump back to the
+        # beginning even though the parser is near the end of the layer.
+        unconstrained, _ = index.refined_fraction(
+            0, coarse_pos, (0.0, 0.0, 0.2), lag_window=20
+        )
+        self.assertLess(unconstrained, 0.2)
+
+        stable, method = index.refined_fraction(
+            0,
+            coarse_pos,
+            (0.0, 0.0, 0.2),
+            lag_window=20,
+            minimum_fraction=0.6,
+        )
+        self.assertGreaterEqual(stable, 0.6)
+        self.assertEqual(method, "live position")
+
+    def test_refined_fraction_never_drops_below_visible_progress_floor(self):
+        data = b";LAYER:0\nG1 X1 Y0 Z0.2\nG1 X2 Y0 Z0.2\nG1 X3 Y0 Z0.2\n"
+        index = build_index_from_bytes(data)
+        first = int(index.motion_offsets[0][0])
+        fraction, method = index.refined_fraction(
+            0, first, None, minimum_fraction=0.75
+        )
+        self.assertEqual(fraction, 0.75)
+        self.assertIn("monotonic", method)
+
     def test_lf_and_crlf_have_same_motion_counts_and_mapping(self):
         lf = b";LAYER:0\nSET_PRINT_STATS_INFO CURRENT_LAYER=1\nG1 X1\n;LAYER:1\nSET_PRINT_STATS_INFO CURRENT_LAYER=2\nG1 X2\n"
         crlf = lf.replace(b"\n", b"\r\n")
