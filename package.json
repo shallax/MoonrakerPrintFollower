@@ -11,13 +11,15 @@
         "display_name": "shallax",
         "email": "moonrakerprintfollower@maintain.contact"
     },
-    "description": "Unified Cura integration for Klipper/Moonraker: per-printer upload and print output plus live Preview synchronisation.",
+    "description": "Unified Cura integration for Klipper/Moonraker: upload and print, live Preview following, webcams and printer monitoring.",
     "tags": [
         "Klipper",
         "Moonraker",
         "Upload",
         "Print",
         "Preview",
+        "Monitor",
+        "Webcam",
         "Layer",
         "Progress"
     ]
