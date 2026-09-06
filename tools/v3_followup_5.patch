@@ -1,0 +1,202 @@
+     // extension components. Reserve one further default margin inside this
+@@ -133,6 +135,59 @@ Item
+                 fixedWidthMode: true
+                 onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
+             }
++
++            Column
++            {
++                visible: base.bedMeshAvailable && base.bedMeshVisible
++                width: parent.width
++                height: visible ? implicitHeight : 0
++                spacing: 2 * screenScaleFactor
++
++                Rectangle
++                {
++                    width: parent.width
++                    height: 8 * screenScaleFactor
++                    radius: 2 * screenScaleFactor
++                    gradient: Gradient
++                    {
++                        orientation: Gradient.Horizontal
++                        GradientStop { position: 0.00; color: "#1a47f2" }
++                        GradientStop { position: 0.25; color: "#00b8ff" }
++                        GradientStop { position: 0.50; color: "#33db61" }
++                        GradientStop { position: 0.75; color: "#ffd11f" }
++                        GradientStop { position: 1.00; color: "#eb291f" }
++                    }
++                }
++
++                Row
++                {
++                    width: parent.width
++                    UM.Label
++                    {
++                        width: parent.width / 2
++                        text: "Low " + base.bedMeshMinimumText
++                        color: UM.Theme.getColor("text_inactive")
++                        font: UM.Theme.getFont("default")
++                    }
++                    UM.Label
++                    {
++                        width: parent.width / 2
++                        text: "High " + base.bedMeshMaximumText
++                        horizontalAlignment: Text.AlignRight
++                        color: UM.Theme.getColor("text_inactive")
++                        font: UM.Theme.getFont("default")
++                    }
++                }
++
++                UM.Label
++                {
++                    width: parent.width
++                    text: "Faded edge = extrapolated outside probe bounds"
++                    color: UM.Theme.getColor("text_inactive")
++                    font: UM.Theme.getFont("default_italic")
++                    wrapMode: Text.WordWrap
++                }
++            }
+         }
+     }
+ }
+ diff --git a/plugins/PrinterConfig.py b/plugins/PrinterConfig.py
+index c617078..405b958 100644
+--- a/plugins/PrinterConfig.py
++++ b/plugins/PrinterConfig.py
+@@ -41,6 +41,7 @@ class PrinterConfig:
+     camera_url: str = ""
+     camera_rotation: int = 0
+     camera_mirror: bool = False
++    camera_selected: str = ""
+ 
+     @classmethod
+     def from_dict(cls, value: Any) -> "PrinterConfig":
+@@ -73,7 +74,7 @@ class PrinterConfig:
+         for key in (
+             "url", "api_key", "follow_mode", "frontend_url", "output_format",
+             "upload_path", "power_devices", "filename_translate_input",
+-            "filename_translate_output", "filename_translate_remove", "camera_url",
++            "filename_translate_output", "filename_translate_remove", "camera_url", "camera_selected",
+         ):
+             data[key] = str(data.get(key) or getattr(defaults, key))
+ 
+ diff --git a/tests/test_v3_followup_regressions.py b/tests/test_v3_followup_regressions.py
+new file mode 100644
+index 0000000..f98c508
+--- /dev/null
++++ b/tests/test_v3_followup_regressions.py
+@@ -0,0 +1,114 @@
++import pathlib
++import sys
++import unittest
++
++ROOT = pathlib.Path(__file__).resolve().parents[1]
++PLUGINS = ROOT / "plugins"
++if str(PLUGINS) not in sys.path:
++    sys.path.insert(0, str(PLUGINS))
++
++BED_MESH = (PLUGINS / "BedMeshSceneNode.py").read_text()
++TYPED = (PLUGINS / "MoonrakerMonitorTypedControls.py").read_text()
++CONTROLS = (PLUGINS / "MoonrakerMonitorControls.py").read_text()
++MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
++MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
++DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
++PREVIEW_QML = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
++EMPTY_PREVIEW_QML = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
++UPLOAD = (PLUGINS / "MoonrakerOutputDeviceLifecycle.py").read_text()
++UPLOAD_QML = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
++
++from PrinterConfig import PrinterConfig, PrinterConfigStore
++
++
++class V3FollowupRegressionTests(unittest.TestCase):
++    def test_bed_mesh_extends_to_bed_edges_without_disguising_extrapolation(self):
++        for token in (
++            "EXTRAPOLATED_ALPHA",
++            "_axis_with_bed_edges",
++            "_sample_matrix",
++            "bed_x_min, bed_x_max",
++            "bed_y_min, bed_y_max",
++            "extrapolated=extrapolated",
++        ):
++            self.assertIn(token, BED_MESH)
++        self.assertLess(
++            float(BED_MESH.split("EXTRAPOLATED_ALPHA =", 1)[1].splitlines()[0].strip()),
++            float(BED_MESH.split("SURFACE_ALPHA =", 1)[1].splitlines()[0].strip()),
++        )
++
++    def test_bed_mesh_visibility_forces_scene_redraw_and_rebuilds_after_file_load(self):
++        self.assertIn("scene.sceneChanged.emit(node)", TYPED)
++        self.assertIn("fileCompleted", TYPED)
++        self.assertIn("_on_cura_bed_mesh_scene_changed", TYPED)
++        self.assertIn("_ensure_bed_mesh_scene_node() if snapshot", TYPED)
++        for qml in (PREVIEW_QML, EMPTY_PREVIEW_QML):
++            self.assertIn("Faded edge = extrapolated outside probe bounds", qml)
++            self.assertIn("bedMeshMinimumText", qml)
++            self.assertIn("bedMeshMaximumText", qml)
++            self.assertIn("GradientStop", qml)
++
++    def test_upload_root_has_a_human_readable_label(self):
++        self.assertIn('ROOT_UPLOAD_LABEL = "<root>"', UPLOAD)
++        self.assertIn("if path == self.ROOT_UPLOAD_LABEL", UPLOAD)
++        self.assertIn('if (path === "<root>") return true', UPLOAD_QML)
++        self.assertIn("<root> is Moonraker's gcodes directory", UPLOAD_QML)
++
++    def test_camera_selection_round_trips_per_printer(self):
++        class Preferences:
++            def __init__(self):
++                self.values = {}
++            def addPreference(self, key, default):
++                self.values.setdefault(key, default)
++            def getValue(self, key):
++                return self.values.get(key)
++            def setValue(self, key, value):
++                self.values[key] = value
++
++        active = ["printer-a", "Printer A"]
++        store = PrinterConfigStore(Preferences(), lambda: tuple(active))
++        store.set(PrinterConfig(camera_selected="bed-camera"))
++        self.assertEqual(store.get().camera_selected, "bed-camera")
++        active[:] = ["printer-b", "Printer B"]
++        self.assertEqual(store.get().camera_selected, "")
++        self.assertIn("_webcam_identity", TYPED)
++        self.assertIn("camera_selected", TYPED)
++        self.assertIn("Layout.preferredWidth: 260 * screenScaleFactor", MONITOR_QML)
++
++    def test_monitor_layer_uses_followers_settled_preview_layer_when_available(self):
++        self.assertIn("authoritative result of the follower", CONTROLS)
++        self.assertIn("view.getCurrentLayer()", CONTROLS)
++        self.assertIn("view.getMaxLayers()", CONTROLS)
++        self.assertIn("_remote_layer_ranges", CONTROLS)
++
++    def test_mcu_stats_are_exposed_individually(self):
++        for token in (
++            "_parse_mcu_last_stats",
++            "mcu_awake",
++            "mcu_task_avg",
++            "bytes_retransmit",
++            "mcuItems",
++            '"Main MCU"',
++        ):
++            self.assertIn(token, TYPED)
++        self.assertIn("modelData.load", MONITOR_QML)
++        self.assertIn("modelData.frequency", MONITOR_QML)
++        self.assertIn("modelData.transport", MONITOR_QML)
++
++    def test_addressable_led_colour_is_controllable(self):
++        for token in (
++            "redPercent",
++            "greenPercent",
++            "bluePercent",
++            "whitePercent",
++            "hasWhite",
++            "setLedColor",
++            "SET_LED LED=",
++        ):
++            self.assertIn(token, CONTROLS)
++        self.assertIn('text: "Set colour"', DASHBOARD_QML)
++        self.assertIn("root.printer.setLedColor", DASHBOARD_QML)
++
++
++if __name__ == "__main__":
++    unittest.main()
