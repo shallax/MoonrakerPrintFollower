@@ -223,7 +223,7 @@ class CommandTracker:
 
 
 class MoonrakerSessionState:
-    """Shared, transport-agnostic state for one active Cura/Moonraker binding."""
+    """Pure state/policy core for one active Cura/Moonraker binding."""
 
     def __init__(self, poll_policy: Optional[PollPolicy] = None) -> None:
         self.poll_policy = poll_policy or PollPolicy()
@@ -267,3 +267,86 @@ class MoonrakerSessionState:
         status = self.snapshot.merge_status(patch, now=now)
         changed = self.commands.observe(self.snapshot.printer_state, now=now)
         return status, changed
+
+
+class MoonrakerSession:
+    """One active-printer Moonraker session: identity, transport, state and policy.
+
+    The pure state class above remains importable without Qt for deterministic
+    tests. The Qt transport is imported lazily only when a live session is built.
+    """
+
+    def __init__(self, parent=None, *, state: Optional[MoonrakerSessionState] = None, transport=None) -> None:
+        self._state = state or MoonrakerSessionState()
+        if transport is None:
+            from .MoonrakerTransport import MoonrakerHttpTransport
+            transport = MoonrakerHttpTransport(parent)
+        self.transport = transport
+        self._api_key = ""
+
+    @property
+    def state(self) -> MoonrakerSessionState:
+        return self._state
+
+    @property
+    def poll_policy(self) -> PollPolicy:
+        return self._state.poll_policy
+
+    @property
+    def coalescer(self) -> RequestCoalescer:
+        return self._state.coalescer
+
+    @property
+    def snapshot(self) -> SessionSnapshot:
+        return self._state.snapshot
+
+    @property
+    def commands(self) -> CommandTracker:
+        return self._state.commands
+
+    @property
+    def generation(self) -> int:
+        return self._state.generation
+
+    @property
+    def base_url(self) -> str:
+        return self._state.base_url
+
+    @property
+    def api_key(self) -> str:
+        return self._api_key
+
+    @property
+    def connected(self) -> bool:
+        return self._state.connected
+
+    @connected.setter
+    def connected(self, value: bool) -> None:
+        self._state.connected = bool(value)
+
+    @property
+    def pause_guard(self) -> bool:
+        return self._state.pause_guard
+
+    def configure(self, base_url: str, api_key: str) -> bool:
+        target_url = str(base_url or "").rstrip("/")
+        target_key = str(api_key or "")
+        changed = (target_url, target_key) != (self._state.base_url, self._api_key)
+        if not changed:
+            return False
+        # Transport configure cancels every owner before identity changes. Reset
+        # state in the same transaction so stale authenticated data cannot survive.
+        self.transport.configure(target_url, target_key)
+        self._state.reset()
+        self._state.base_url = target_url
+        self._api_key = target_key
+        return True
+
+    def reset(self) -> None:
+        self._state.reset()
+
+    def set_pause_guard(self, active: bool) -> bool:
+        return self._state.set_pause_guard(active)
+
+    def merge_status(self, patch: Dict[str, Any], *, now: Optional[float] = None):
+        return self._state.merge_status(patch, now=now)
