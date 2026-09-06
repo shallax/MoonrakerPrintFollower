@@ -5,9 +5,15 @@ import json
 import pathlib
 import zipfile
 
-from build_curapackage import LICENSE_FILE, PACKAGE_JSON, PLUGIN_ROOT, ROOT, iter_plugin_sources
-
-CHANGELOG_FILE = ROOT / "CHANGELOG.md"
+from build_curapackage import (
+    CHANGELOG_FILE,
+    LICENSE_FILE,
+    PACKAGE_JSON,
+    PLUGIN_ROOT,
+    ROOT,
+    iter_plugin_sources,
+    write_deterministic_file,
+)
 
 
 def archive_name(path: pathlib.Path, package_id: str) -> str:
@@ -31,11 +37,11 @@ def build(output: pathlib.Path | None = None) -> pathlib.Path:
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        archive.write(LICENSE_FILE, f"{package_id}/LICENSE")
-        archive.write(CHANGELOG_FILE, f"{package_id}/CHANGELOG.md")
+    with zipfile.ZipFile(output, "w") as archive:
+        write_deterministic_file(archive, LICENSE_FILE, f"{package_id}/LICENSE")
+        write_deterministic_file(archive, CHANGELOG_FILE, f"{package_id}/CHANGELOG.md")
         for path in iter_plugin_sources():
-            archive.write(path, archive_name(path, package_id))
+            write_deterministic_file(archive, path, archive_name(path, package_id))
 
     print(output)
     return output

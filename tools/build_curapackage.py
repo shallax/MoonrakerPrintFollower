@@ -15,6 +15,11 @@ CHANGELOG_FILE = ROOT / "CHANGELOG.md"
 FORBIDDEN_SUFFIXES = {".curapackage", ".pyc", ".pyo", ".orig", ".rej", ".swp", ".swo", ".tmp", ".bak"}
 FORBIDDEN_NAMES = {".DS_Store"}
 
+# Fixed ZIP metadata makes release archives byte-for-byte reproducible from the
+# same source tree. Stored entries also avoid depending on the host zlib build.
+DETERMINISTIC_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+DETERMINISTIC_FILE_MODE = 0o100644
+
 
 def is_packaged_source(path: pathlib.Path) -> bool:
     relative = path.relative_to(PLUGIN_ROOT)
@@ -46,6 +51,18 @@ def expected_archive_entries(package_id: str) -> set[str]:
     }
 
 
+def write_deterministic_bytes(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
+    info = zipfile.ZipInfo(name, date_time=DETERMINISTIC_ZIP_TIMESTAMP)
+    info.create_system = 3
+    info.external_attr = DETERMINISTIC_FILE_MODE << 16
+    info.compress_type = zipfile.ZIP_STORED
+    archive.writestr(info, data)
+
+
+def write_deterministic_file(archive: zipfile.ZipFile, source: pathlib.Path, name: str) -> None:
+    write_deterministic_bytes(archive, name, source.read_bytes())
+
+
 def build(output: pathlib.Path | None = None) -> pathlib.Path:
     package = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
     package_id = str(package["package_id"])
@@ -55,12 +72,12 @@ def build(output: pathlib.Path | None = None) -> pathlib.Path:
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        archive.write(PACKAGE_JSON, "package.json")
-        archive.write(LICENSE_FILE, "LICENSE")
-        archive.write(CHANGELOG_FILE, "CHANGELOG.md")
+    with zipfile.ZipFile(output, "w") as archive:
+        write_deterministic_file(archive, PACKAGE_JSON, "package.json")
+        write_deterministic_file(archive, LICENSE_FILE, "LICENSE")
+        write_deterministic_file(archive, CHANGELOG_FILE, "CHANGELOG.md")
         for path in iter_plugin_sources():
-            archive.write(path, archive_name(path, package_id))
+            write_deterministic_file(archive, path, archive_name(path, package_id))
 
     print(output)
     return output

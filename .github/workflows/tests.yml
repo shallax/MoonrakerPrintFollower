@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - v3-unified-moonraker
   pull_request:
 
 jobs:
@@ -68,6 +67,7 @@ jobs:
         run: python tools/verify_marketplace_source.py dist/MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}-source.zip
 
       - name: Upload release candidate artifacts
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}-release-candidates
