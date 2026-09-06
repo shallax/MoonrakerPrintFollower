@@ -26,12 +26,13 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
 
     uploadPathsChanged = pyqtSignal()
     MAX_DISCOVERED_UPLOAD_DIRS = 256
+    ROOT_UPLOAD_LABEL = "<root>"
 
     def __init__(self, application: Any, follower: Any, machine_id: str) -> None:
         self._write_terminal_emitted = False
         self._accept_pending = False
         self._cancel_pending = False
-        self._upload_path_options: List[str] = [""]
+        self._upload_path_options: List[str] = [self.ROOT_UPLOAD_LABEL]
         self._folder_scan_queue: List[str] = []
         self._folder_scan_seen: Set[str] = set()
         self._folder_scan_discovered: Set[str] = set()
@@ -53,17 +54,21 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
         normalised = str(path or "").replace("\\", "/").strip("/")
         return any(part.startswith(".") for part in normalised.split("/") if part)
 
+    # Legacy hidden-path contract was: return "" if self._is_hidden_remote_path(path) else path
+    # The UI now labels that same logical empty/root path as <root>.
     @pyqtProperty(str, notify=uploadPathsChanged)
     def initialUploadPath(self) -> str:
         path = self._normalise_remote_path(self._path_name)
-        return "" if self._is_hidden_remote_path(path) else path
+        if not path or self._is_hidden_remote_path(path):
+            return self.ROOT_UPLOAD_LABEL
+        return path
 
     @pyqtProperty(QVariant, notify=uploadPathsChanged)
     def uploadPathOptions(self) -> QVariant:
         return QVariant(list(self._upload_path_options))
 
     def _publish_upload_paths(self) -> None:
-        options = {""}
+        options = {self.ROOT_UPLOAD_LABEL}
         try:
             for path in self._config.upload_paths:
                 normalised = self._normalise_remote_path(path)
@@ -78,7 +83,10 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
             item for item in self._folder_scan_discovered
             if not self._is_hidden_remote_path(item)
         )
-        ordered = [""] + sorted((item for item in options if item), key=str.casefold)
+        ordered = [self.ROOT_UPLOAD_LABEL] + sorted(
+            (item for item in options if item and item != self.ROOT_UPLOAD_LABEL),
+            key=str.casefold,
+        )
         if ordered != self._upload_path_options:
             self._upload_path_options = ordered
             self.uploadPathsChanged.emit()
@@ -149,6 +157,9 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
     def acceptUpload(self, path: str, filename: str, start_print: bool) -> None:
         if not self._busy or self._accept_pending or self._cancel_pending:
             return
+        path = str(path or "").strip()
+        if path == self.ROOT_UPLOAD_LABEL:
+            path = ""
         path = self._normalise_remote_path(path)
         filename = self._normalise_filename(filename)
         if not filename:

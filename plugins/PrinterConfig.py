@@ -41,6 +41,7 @@ class PrinterConfig:
     camera_url: str = ""
     camera_rotation: int = 0
     camera_mirror: bool = False
+    camera_selected: str = ""
 
     @classmethod
     def from_dict(cls, value: Any) -> "PrinterConfig":
@@ -73,7 +74,7 @@ class PrinterConfig:
         for key in (
             "url", "api_key", "follow_mode", "frontend_url", "output_format",
             "upload_path", "power_devices", "filename_translate_input",
-            "filename_translate_output", "filename_translate_remove", "camera_url",
+            "filename_translate_output", "filename_translate_remove", "camera_url", "camera_selected",
         ):
             data[key] = str(data.get(key) or getattr(defaults, key))
 

@@ -429,18 +429,21 @@ Component
                         {
                             visible: root.printer != null && root.printer.ledItems.length > 0
                             Layout.fillWidth: true
-                            UM.Label { text: "LED brightness"; font: UM.Theme.getFont("medium_bold") }
+                            spacing: UM.Theme.getSize("thin_margin").height
+                            UM.Label { text: "LEDs"; font: UM.Theme.getFont("medium_bold") }
                             Repeater
                             {
                                 model: root.printer != null ? root.printer.ledItems : []
                                 ColumnLayout
                                 {
                                     Layout.fillWidth: true
+                                    spacing: UM.Theme.getSize("thin_margin").height
+
                                     RowLayout
                                     {
                                         Layout.fillWidth: true
                                         UM.Label { text: modelData.name; Layout.fillWidth: true; elide: Text.ElideRight }
-                                        UM.Label { text: Math.round(ledSlider.value) + "%" }
+                                        UM.Label { text: "Brightness " + Math.round(ledSlider.value) + "%" }
                                     }
                                     Slider
                                     {
@@ -449,6 +452,50 @@ Component
                                         from: 0; to: 100; stepSize: 1
                                         value: modelData.percent
                                         onPressedChanged: if (!pressed && root.printer != null) root.printer.setLedBrightness(modelData.object, Math.round(value))
+                                    }
+
+                                    GridLayout
+                                    {
+                                        columns: 3
+                                        Layout.fillWidth: true
+                                        columnSpacing: UM.Theme.getSize("thin_margin").width
+                                        rowSpacing: UM.Theme.getSize("thin_margin").height
+
+                                        UM.Label { text: "R"; color: UM.Theme.getColor("text_inactive") }
+                                        Slider { id: redSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.redPercent }
+                                        UM.Label { text: Math.round(redSlider.value) + "%" }
+
+                                        UM.Label { text: "G"; color: UM.Theme.getColor("text_inactive") }
+                                        Slider { id: greenSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.greenPercent }
+                                        UM.Label { text: Math.round(greenSlider.value) + "%" }
+
+                                        UM.Label { text: "B"; color: UM.Theme.getColor("text_inactive") }
+                                        Slider { id: blueSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.bluePercent }
+                                        UM.Label { text: Math.round(blueSlider.value) + "%" }
+
+                                        UM.Label { visible: modelData.hasWhite; text: "W"; color: UM.Theme.getColor("text_inactive") }
+                                        Slider { id: whiteSlider; visible: modelData.hasWhite; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.whitePercent }
+                                        UM.Label { visible: modelData.hasWhite; text: Math.round(whiteSlider.value) + "%" }
+                                    }
+
+                                    Cura.SecondaryButton
+                                    {
+                                        Layout.fillWidth: true
+                                        text: "Set colour"
+                                        onClicked:
+                                        {
+                                            if (root.printer != null)
+                                            {
+                                                root.printer.setLedColor(
+                                                    modelData.object,
+                                                    Math.round(redSlider.value),
+                                                    Math.round(greenSlider.value),
+                                                    Math.round(blueSlider.value),
+                                                    modelData.hasWhite ? Math.round(whiteSlider.value) : 0,
+                                                    Math.round(ledSlider.value)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }

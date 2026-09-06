@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Fix bed mesh lifecycle and expand Monitor controls
 - 2026-09-06: Apply v3 follow-up fixes
 - 2026-09-06: Stage v3 follow-up patch part 5
 - 2026-09-06: Stage v3 follow-up patch part 4

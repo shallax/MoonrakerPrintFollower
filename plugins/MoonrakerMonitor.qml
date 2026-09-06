@@ -88,6 +88,8 @@ Component
                         {
                             id: cameraSelector
                             visible: root.printer != null && root.printer.webcamNames.length > 1
+                            Layout.preferredWidth: 260 * screenScaleFactor
+                            Layout.minimumWidth: 220 * screenScaleFactor
                             enabled: visible
                             model: root.printer != null ? root.printer.webcamNames : []
                             currentIndex: root.printer != null ? root.printer.activeWebcamIndex : -1
@@ -545,12 +547,56 @@ Component
                             }
                         }
 
-                        UM.Label
+                        ColumnLayout
                         {
-                            text: root.printer != null ? "MCU  " + root.printer.mcuSummary : "MCU  —"
-                            color: UM.Theme.getColor("text_inactive")
+                            visible: root.printer != null && root.printer.mcuItems.length > 0
                             Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
+                            spacing: UM.Theme.getSize("thin_margin").height
+
+                            UM.Label { text: "MCUs"; font: UM.Theme.getFont("medium_bold") }
+
+                            Repeater
+                            {
+                                model: root.printer != null ? root.printer.mcuItems : []
+                                ColumnLayout
+                                {
+                                    Layout.fillWidth: true
+                                    spacing: 1 * screenScaleFactor
+                                    RowLayout
+                                    {
+                                        Layout.fillWidth: true
+                                        UM.Label
+                                        {
+                                            text: modelData.name
+                                            font: UM.Theme.getFont("medium_bold")
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                        }
+                                        UM.Label { text: "Load " + modelData.load; color: UM.Theme.getColor("text_inactive") }
+                                    }
+                                    UM.Label
+                                    {
+                                        Layout.fillWidth: true
+                                        text: "Task " + modelData.task + "   ·   Clock " + modelData.frequency
+                                        color: UM.Theme.getColor("text_inactive")
+                                        wrapMode: Text.WordWrap
+                                    }
+                                    UM.Label
+                                    {
+                                        Layout.fillWidth: true
+                                        text: "Memory " + modelData.memory + "   ·   " + modelData.transport
+                                        color: UM.Theme.getColor("text_inactive")
+                                        wrapMode: Text.WordWrap
+                                    }
+                                    UM.Label
+                                    {
+                                        Layout.fillWidth: true
+                                        text: modelData.version
+                                        color: UM.Theme.getColor("text_inactive")
+                                        elide: Text.ElideMiddle
+                                    }
+                                }
+                            }
                         }
 
                         Cura.SecondaryButton

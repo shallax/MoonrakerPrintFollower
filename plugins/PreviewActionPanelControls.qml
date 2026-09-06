@@ -18,6 +18,8 @@ Item
     property bool bedMeshAvailable: false
     property bool bedMeshVisible: true
     property string bedMeshRangeText: ""
+    property string bedMeshMinimumText: ""
+    property string bedMeshMaximumText: ""
 
     // ActionPanelWidget already inserts a default margin between saveButton
     // extension components. Reserve one further default margin inside this
@@ -132,6 +134,59 @@ Item
                     + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
                 fixedWidthMode: true
                 onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
+            }
+
+            Column
+            {
+                visible: base.bedMeshAvailable && base.bedMeshVisible
+                width: parent.width
+                height: visible ? implicitHeight : 0
+                spacing: 2 * screenScaleFactor
+
+                Rectangle
+                {
+                    width: parent.width
+                    height: 8 * screenScaleFactor
+                    radius: 2 * screenScaleFactor
+                    gradient: Gradient
+                    {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0.00; color: "#1a47f2" }
+                        GradientStop { position: 0.25; color: "#00b8ff" }
+                        GradientStop { position: 0.50; color: "#33db61" }
+                        GradientStop { position: 0.75; color: "#ffd11f" }
+                        GradientStop { position: 1.00; color: "#eb291f" }
+                    }
+                }
+
+                Row
+                {
+                    width: parent.width
+                    UM.Label
+                    {
+                        width: parent.width / 2
+                        text: "Low " + base.bedMeshMinimumText
+                        color: UM.Theme.getColor("text_inactive")
+                        font: UM.Theme.getFont("default")
+                    }
+                    UM.Label
+                    {
+                        width: parent.width / 2
+                        text: "High " + base.bedMeshMaximumText
+                        horizontalAlignment: Text.AlignRight
+                        color: UM.Theme.getColor("text_inactive")
+                        font: UM.Theme.getFont("default")
+                    }
+                }
+
+                UM.Label
+                {
+                    width: parent.width
+                    text: "Faded edge = extrapolated outside probe bounds"
+                    color: UM.Theme.getColor("text_inactive")
+                    font: UM.Theme.getFont("default_italic")
+                    wrapMode: Text.WordWrap
+                }
             }
         }
     }

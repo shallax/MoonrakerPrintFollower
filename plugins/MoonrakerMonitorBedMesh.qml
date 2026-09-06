@@ -188,7 +188,7 @@ Component
                 UM.Label
                 {
                     Layout.fillWidth: true
-                    text: "Preview uses 20× vertical exaggeration; the colours and values here are the actual Klipper mesh heights."
+                    text: "Preview uses 20× vertical exaggeration. The solid area is Klipper's mesh; the faded perimeter is extrapolated to Cura's bed edge. Values shown here are the actual Klipper mesh heights."
                     color: UM.Theme.getColor("text_inactive")
                     wrapMode: Text.WordWrap
                 }

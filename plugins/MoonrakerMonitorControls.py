@@ -131,6 +131,31 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
 
         indexed_filename = getattr(self._follower, "_remote_index_filename", None)
         same_index_file = self._same_print_file(indexed_filename, filename)
+        ranges = list(getattr(self._follower, "_remote_layer_ranges", []) or [])
+        if total_layer is None and same_index_file and ranges:
+            total_layer = len(ranges)
+
+        # When live Preview following is active, Cura's current layer is the
+        # authoritative result of the follower's CURRENT_LAYER mapping, one/zero
+        # based handling and Z fallback. Reusing that settled value keeps Monitor
+        # layer progress from independently choosing a different layer.
+        try:
+            config = self._follower.current_printer_config()
+            following_live = bool(config.enabled) and not bool(getattr(self._follower, "_following_paused", False))
+            if following_live and self._same_print_file(getattr(self._follower, "_last_remote_filename", ""), filename):
+                view = self._follower._simulation_view()
+                if view is not None and bool(getattr(self._follower, "_cura_has_toolpath")()):
+                    authoritative_layer = max(0, int(view.getCurrentLayer()))
+                    authoritative_total = total_layer
+                    if hasattr(view, "getMaxLayers"):
+                        local_total = max(1, int(view.getMaxLayers()) + 1)
+                        if authoritative_total is None:
+                            authoritative_total = local_total
+                    if authoritative_total is not None:
+                        authoritative_layer = min(authoritative_layer, authoritative_total - 1)
+                    return authoritative_layer + 1, authoritative_total
+        except Exception:
+            pass
 
         if raw_remote_layer is not None:
             try:
@@ -148,7 +173,6 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
 
         if target_layer is None:
             try:
-                ranges = list(getattr(self._follower, "_remote_layer_ranges", []) or [])
                 if same_index_file and ranges:
                     if total_layer is None:
                         total_layer = len(ranges)
@@ -316,6 +340,19 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             })
         return controls
 
+    def _led_supports_white(self, object_name: str) -> bool:
+        configfile = self._aux_status.get("configfile") or {}
+        raw_config = configfile.get("config") if isinstance(configfile, dict) else None
+        if not isinstance(raw_config, dict):
+            return False
+        wanted = str(object_name or "").casefold()
+        section = next((value for key, value in raw_config.items() if str(key).casefold() == wanted and isinstance(value, dict)), None)
+        if not isinstance(section, dict):
+            return False
+        if "white_pin" in section:
+            return True
+        return "W" in str(section.get("color_order") or "").upper()
+
     def _build_led_controls(self) -> List[Dict[str, Any]]:
         result: List[Dict[str, Any]] = []
         for object_name in sorted(self._aux_status.keys()):
@@ -344,10 +381,33 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             brightness = max((max(color) if color else 0.0) for color in colors)
             if brightness > 0.001:
                 self._led_last_nonzero[object_name] = [list(color) for color in colors]
+            representative = [0.0, 0.0, 0.0, 0.0]
+            for color in colors:
+                padded = list(color) + [0.0] * (4 - len(color))
+                for index in range(4):
+                    representative[index] += padded[index]
+            representative = [value / len(colors) for value in representative]
+            chroma_scale = max(representative)
+            if chroma_scale <= 0.001:
+                remembered = self._led_last_nonzero.get(object_name) or [[1.0, 1.0, 1.0, 0.0]]
+                representative = [0.0, 0.0, 0.0, 0.0]
+                for color in remembered:
+                    padded = list(color) + [0.0] * (4 - len(color))
+                    for index in range(4):
+                        representative[index] += padded[index]
+                representative = [value / len(remembered) for value in representative]
+                chroma_scale = max(representative)
+            if chroma_scale > 0.001:
+                representative = [value / chroma_scale for value in representative]
             result.append({
                 "object": object_name,
                 "name": self._friendly_led_name(object_name),
                 "percent": int(round(brightness * 100.0)),
+                "redPercent": int(round(representative[0] * 100.0)),
+                "greenPercent": int(round(representative[1] * 100.0)),
+                "bluePercent": int(round(representative[2] * 100.0)),
+                "whitePercent": int(round(representative[3] * 100.0)),
+                "hasWhite": self._led_supports_white(object_name),
             })
         return result
 
@@ -588,6 +648,42 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             )
         if commands:
             self._send_quick_gcode("led-" + object_name, "\n".join(commands))
+
+    @pyqtSlot(str, int, int, int, int, int)
+    def setLedColor(self, object_name: str, red: int, green: int, blue: int, white: int = 0, brightness_percent: int = -1) -> None:
+        object_name = str(object_name or "")
+        item = next((entry for entry in self._led_items if entry.get("object") == object_name), None)
+        if item is None:
+            return
+        try:
+            channels = [max(0.0, min(1.0, int(value) / 100.0)) for value in (red, green, blue, white)]
+        except (TypeError, ValueError):
+            return
+        if not bool(item.get("hasWhite")):
+            channels[3] = 0.0
+        peak = max(channels)
+        if peak <= 0.001:
+            channels = [0.0, 0.0, 0.0, 0.0]
+        else:
+            channels = [value / peak for value in channels]
+
+        try:
+            if int(brightness_percent) >= 0:
+                brightness = max(0.0, min(1.0, int(brightness_percent) / 100.0))
+            else:
+                brightness = max(0.0, min(1.0, float(item.get("percent") or 0.0) / 100.0))
+        except (TypeError, ValueError):
+            brightness = 0.0
+        if brightness <= 0.001:
+            remembered = self._led_last_nonzero.get(object_name) or []
+            brightness = max((max(color) if color else 0.0) for color in remembered) if remembered else 1.0
+        scaled = [value * brightness for value in channels]
+        led_name = object_name.split(" ", 1)[1] if " " in object_name else object_name
+        script = (
+            f"SET_LED LED={led_name} RED={scaled[0]:.4f} GREEN={scaled[1]:.4f} "
+            f"BLUE={scaled[2]:.4f} WHITE={scaled[3]:.4f} TRANSMIT=1"
+        )
+        self._send_quick_gcode("led-colour-" + object_name, script)
 
     @pyqtProperty(bool, notify=controlsChanged)
     def saveConfigPending(self) -> bool:

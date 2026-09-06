@@ -26,6 +26,8 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
     def __init__(self, output_controller: Any, number_of_extruders: int, follower: Any) -> None:
         self._macro_parameter_definitions: Dict[str, List[Dict[str, Any]]] = {}
         self._pwm_output_items: List[Dict[str, Any]] = []
+        self._mcu_items: List[Dict[str, Any]] = []
+        self._restoring_webcam = False
         self._bed_mesh_snapshot: Dict[str, Any] = {}
         self._bed_mesh_fingerprint: Optional[Tuple[Any, ...]] = None
         self._bound_preview_control_ids: set[int] = set()
@@ -60,6 +62,12 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
                 machine_changed.connect(self._on_bed_mesh_machine_changed)
             except Exception:
                 pass
+        file_completed = getattr(application, "fileCompleted", None) if application is not None else None
+        if file_completed is not None:
+            try:
+                file_completed.connect(self._on_cura_bed_mesh_scene_changed)
+            except Exception:
+                pass
         self._bind_preview_bed_mesh_controls()
 
     @staticmethod
@@ -73,6 +81,7 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         super()._rebuild_peripherals()
         self._rebuild_macro_parameter_definitions()
         self._pwm_output_items = self._build_pwm_output_items()
+        self._mcu_items = self._build_mcu_items()
         self._update_bed_mesh_snapshot(self._aux_status.get("bed_mesh"))
         self._bind_preview_bed_mesh_controls()
         self._sync_preview_bed_mesh_controls()
@@ -293,6 +302,17 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         snapshot = self._parse_bed_mesh_status(status)
         fingerprint = self._bed_mesh_snapshot_fingerprint(snapshot)
         self._bed_mesh_snapshot = snapshot
+        if snapshot:
+            minimum = float(snapshot.get("minimum") or 0.0)
+            maximum = float(snapshot.get("maximum") or 0.0)
+            range_value = float(snapshot.get("range") or 0.0)
+            setattr(self._follower, "_bed_mesh_range_text", f"{range_value:.3f} mm range")
+            setattr(self._follower, "_bed_mesh_minimum_text", f"{minimum:+.3f} mm")
+            setattr(self._follower, "_bed_mesh_maximum_text", f"{maximum:+.3f} mm")
+        else:
+            setattr(self._follower, "_bed_mesh_range_text", "")
+            setattr(self._follower, "_bed_mesh_minimum_text", "")
+            setattr(self._follower, "_bed_mesh_maximum_text", "")
         follower_fingerprint = getattr(self._follower, "_bed_mesh_fingerprint", None)
         if fingerprint != follower_fingerprint:
             setattr(self._follower, "_bed_mesh_snapshot", dict(snapshot))
@@ -302,19 +322,35 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             self._sync_bed_mesh_scene_visibility()
 
     def _sync_bed_mesh_scene_visibility(self, *_args: Any) -> None:
-        node = getattr(self._follower, "_bed_mesh_scene_node", None)
+        snapshot = dict(getattr(self._follower, "_bed_mesh_snapshot", {}) or {})
+        node = self._ensure_bed_mesh_scene_node() if snapshot else getattr(self._follower, "_bed_mesh_scene_node", None)
         if node is None:
+            self._sync_preview_bed_mesh_controls()
             return
         visible = bool(
             getattr(self._follower, "_bed_mesh_preview_visible", True)
-            and getattr(self._follower, "_bed_mesh_snapshot", {})
+            and snapshot
             and self._preview_stage_active()
         )
         try:
             node.setVisible(visible)
+            controller = getattr(self._follower, "_controller", None)
+            if controller is not None:
+                scene = controller.getScene()
+                scene.sceneChanged.emit(node)
         except Exception:
             pass
         self._sync_preview_bed_mesh_controls()
+
+    def _on_cura_bed_mesh_scene_changed(self, *_args: Any) -> None:
+        # Cura replaces/removes scene children while loading G-code or models.
+        # Reattach the non-sliceable overlay after that lifecycle has settled.
+        if getattr(self._follower, "_bed_mesh_snapshot", {}):
+            try:
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(100, self._rebuild_bed_mesh_scene)
+            except Exception:
+                self._rebuild_bed_mesh_scene()
 
     def _on_bed_mesh_machine_changed(self, *_args: Any) -> None:
         self._bed_mesh_snapshot = {}
@@ -360,6 +396,8 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
                 controls.setProperty("bedMeshAvailable", available)
                 controls.setProperty("bedMeshVisible", visible)
                 controls.setProperty("bedMeshRangeText", range_text)
+                controls.setProperty("bedMeshMinimumText", str(getattr(self._follower, "_bed_mesh_minimum_text", "")))
+                controls.setProperty("bedMeshMaximumText", str(getattr(self._follower, "_bed_mesh_maximum_text", "")))
             except Exception:
                 pass
 
@@ -425,14 +463,11 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
 
     @pyqtSlot(bool)
     def setBedMeshPreviewVisible(self, visible: bool) -> None:
-        visible = bool(visible)
-        setattr(self._follower, "_bed_mesh_preview_visible", visible)
-        preferences = getattr(self._follower, "_preferences", None)
-        if preferences is not None:
-            try:
-                preferences.setValue(self.BED_MESH_VISIBLE_PREF, visible)
-            except Exception:
-                pass
+        setter = getattr(self._follower, "setBedMeshPreviewVisible", None)
+        if callable(setter):
+            setter(bool(visible))
+        else:
+            setattr(self._follower, "_bed_mesh_preview_visible", bool(visible))
         self._sync_bed_mesh_scene_visibility()
         self._sync_preview_bed_mesh_controls()
         self.typedControlsChanged.emit()
@@ -521,6 +556,145 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             "pwm-output-" + object_name,
             f"SET_PIN PIN={pin_name} VALUE={target:g}",
         )
+
+    # ------------------------------------------------------------------
+    # Remembered webcam and per-MCU runtime statistics
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _webcam_identity(webcam: Dict[str, Any], index: int = 0) -> str:
+        return str(
+            webcam.get("uid")
+            or webcam.get("id")
+            or webcam.get("name")
+            or f"camera-{index}"
+        ).strip()
+
+    def _apply_webcam(self, index: int) -> None:
+        super()._apply_webcam(index)
+        if self._restoring_webcam or index < 0 or index >= len(self._webcams):
+            return
+        identity = self._webcam_identity(self._webcams[index], index)
+        if not identity:
+            return
+        try:
+            store = getattr(self._follower, "_config_store", None)
+            if store is not None:
+                store.update(camera_selected=identity)
+        except Exception:
+            pass
+
+    def _on_webcams_finished(
+        self,
+        payload: Optional[Dict[str, Any]],
+        error: Optional[str],
+    ) -> None:
+        remembered = str(getattr(self._follower.current_printer_config(), "camera_selected", "") or "").strip()
+        self._restoring_webcam = True
+        try:
+            super()._on_webcams_finished(payload, error)
+        finally:
+            self._restoring_webcam = False
+        if not remembered or not self._webcams:
+            return
+        index = next((
+            i for i, webcam in enumerate(self._webcams)
+            if self._webcam_identity(webcam, i) == remembered
+        ), -1)
+        if index >= 0 and index != self._active_webcam_index:
+            self._restoring_webcam = True
+            try:
+                super()._apply_webcam(index)
+            finally:
+                self._restoring_webcam = False
+
+    @staticmethod
+    def _parse_mcu_last_stats(value: Any) -> Dict[str, float]:
+        if isinstance(value, dict):
+            source = value
+        else:
+            source: Dict[str, Any] = {}
+            for token in str(value or "").replace(",", " ").split():
+                if "=" not in token:
+                    continue
+                key, raw = token.split("=", 1)
+                source[key.strip()] = raw.strip()
+        parsed: Dict[str, float] = {}
+        for key, raw in source.items():
+            try:
+                parsed[str(key)] = float(raw)
+            except (TypeError, ValueError):
+                continue
+        return parsed
+
+    @staticmethod
+    def _format_mcu_bytes(value: Optional[float]) -> str:
+        if value is None or value < 0:
+            return "—"
+        if value >= 1_000_000:
+            return f"{value / 1_000_000:.2f} MB"
+        if value >= 1000:
+            return f"{value / 1000:.1f} kB"
+        return f"{value:.0f} B"
+
+    def _build_mcu_items(self) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        for object_name in sorted(self._aux_status.keys(), key=str.casefold):
+            lower = str(object_name).lower()
+            if lower != "mcu" and not lower.startswith("mcu "):
+                continue
+            value = self._aux_status.get(object_name)
+            if not isinstance(value, dict):
+                continue
+            friendly = "Main MCU" if lower == "mcu" else self._friendly_object_name(object_name)
+            stats = self._parse_mcu_last_stats(value.get("last_stats"))
+            awake = stats.get("mcu_awake")
+            load = max(0.0, awake * 100.0) if awake is not None else None
+            task_avg = stats.get("mcu_task_avg")
+            task_stddev = stats.get("mcu_task_stddev")
+            frequency = stats.get("freq")
+            if frequency is None:
+                constants = value.get("mcu_constants")
+                if isinstance(constants, dict):
+                    try:
+                        frequency = float(constants.get("CLOCK_FREQ"))
+                    except (TypeError, ValueError):
+                        frequency = None
+            memory = "—"
+            for key in ("memory_free", "memavail", "free_memory", "memory"):
+                if value.get(key) is None:
+                    continue
+                try:
+                    memory = self._format_mcu_bytes(float(value.get(key)))
+                    break
+                except (TypeError, ValueError):
+                    continue
+            tasks: List[str] = []
+            if task_avg is not None:
+                tasks.append(f"avg {task_avg * 1_000_000:.1f} µs")
+            if task_stddev is not None:
+                tasks.append(f"σ {task_stddev * 1_000_000:.1f} µs")
+            transport: List[str] = []
+            if stats.get("bytes_write") is not None:
+                transport.append("TX " + self._format_mcu_bytes(stats.get("bytes_write")))
+            if stats.get("bytes_read") is not None:
+                transport.append("RX " + self._format_mcu_bytes(stats.get("bytes_read")))
+            if stats.get("bytes_retransmit") is not None:
+                transport.append("retry " + self._format_mcu_bytes(stats.get("bytes_retransmit")))
+            items.append({
+                "name": friendly,
+                "version": str(value.get("mcu_version") or "—"),
+                "load": f"{load:.1f}%" if load is not None else "—",
+                "task": " · ".join(tasks) if tasks else "—",
+                "frequency": f"{frequency / 1_000_000:.3f} MHz" if frequency else "—",
+                "memory": memory,
+                "transport": " · ".join(transport) if transport else "—",
+            })
+        return items
+
+    @pyqtProperty(QVariant, notify=typedControlsChanged)
+    def mcuItems(self) -> QVariant:
+        return QVariant(list(self._mcu_items))
 
     # ------------------------------------------------------------------
     # Macro argument discovery

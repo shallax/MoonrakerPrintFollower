@@ -31,6 +31,7 @@ UM.Dialog
     function validPath(value)
     {
         var path = value.trim()
+        if (path === "<root>") return true
         if (path === "." || path === "..") return false
         for (var i = 0; i < forbiddenCharacters.length; ++i)
         {
@@ -57,6 +58,7 @@ UM.Dialog
         {
             id: pathField
             Layout.fillWidth: true
+            Layout.minimumWidth: 360 * screenScaleFactor
             editable: true
             model: manager.uploadPathOptions
             Component.onCompleted:
@@ -69,7 +71,7 @@ UM.Dialog
 
         UM.Label
         {
-            text: "Folders are read from Moonraker's gcodes directory; you can also type a folder path."
+            text: "<root> is Moonraker's gcodes directory. Other folders are discovered from the printer, or you can type a path."
             color: UM.Theme.getColor("text_inactive")
             font: UM.Theme.getFont("default_italic")
             Layout.fillWidth: true
