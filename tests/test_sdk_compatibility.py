@@ -6,7 +6,11 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PACKAGE = json.loads((ROOT / "package.json").read_text())
 PLUGIN_META = json.loads((ROOT / "plugins" / "plugin.json").read_text())
-PLUGIN = (ROOT / "plugins" / "MoonrakerPrintFollower.py").read_text()
+PLUGIN = "\n".join([
+    (ROOT / "plugins" / "MoonrakerPrintFollower.py").read_text(),
+    (ROOT / "plugins" / "FollowerCoordinator.py").read_text(),
+    (ROOT / "plugins" / "FollowerRuntime.py").read_text(),
+])
 CLIENT = (ROOT / "plugins" / "MoonrakerClient.py").read_text()
 MONITOR_MODEL = (ROOT / "plugins" / "MoonrakerMonitorModel.py").read_text()
 MACHINE_ACTION = (ROOT / "plugins" / "MoonrakerFollowerMachineAction.py").read_text()
@@ -25,10 +29,7 @@ class SdkCompatibilityTests(unittest.TestCase):
         self.assertEqual(PACKAGE["sdk_version_semver"], "8.0.0")
 
     def test_plugin_declares_complete_cura_5_sdk_8_line(self):
-        self.assertEqual(
-            PLUGIN_META["supported_sdk_versions"],
-            [f"8.{minor}.0" for minor in range(13)],
-        )
+        self.assertEqual(PLUGIN_META["supported_sdk_versions"], [f"8.{minor}.0" for minor in range(13)])
         self.assertEqual(PLUGIN_META["api"], 8)
 
     def test_readme_states_cura_5_compatibility_boundary(self):
@@ -37,7 +38,6 @@ class SdkCompatibilityTests(unittest.TestCase):
         self.assertIn("Qt 6 / PyQt6 boundary", README)
 
     def test_does_not_depend_on_post_8_0_machine_action_properties(self):
-        # visible/shouldOpenAsDialog were added to MachineAction in SDK 8.3.
         self.assertNotIn("shouldOpenAsDialog", MACHINE_ACTION)
         self.assertNotIn("_open_as_dialog", MACHINE_ACTION)
         self.assertNotIn("visibilityChanged", MACHINE_ACTION)
@@ -45,8 +45,6 @@ class SdkCompatibilityTests(unittest.TestCase):
         self.assertIn("getMachineActionManager().addSupportedAction", MACHINE_ACTION)
 
     def test_settings_qml_avoids_um_controls_added_in_sdk_8_3(self):
-        # UM.TextField, UM.Switch and UM.Slider were added in Cura 5.3 / SDK 8.3.
-        # The plugin deliberately uses the Cura controls already available in 5.0.
         for newer_control in ("UM.TextField", "UM.Switch", "UM.Slider", "UM.ComponentWithIcon"):
             self.assertNotIn(newer_control, CONFIG_QML)
         self.assertIn("Cura.TextField", CONFIG_QML)
@@ -55,7 +53,6 @@ class SdkCompatibilityTests(unittest.TestCase):
         self.assertIn("Cura.MachineAction", CONFIG_QML)
 
     def test_cura_5_0_preview_contracts_are_used(self):
-        # These are the stable SDK-8.0-era interfaces used by the follower.
         for token in (
             "globalContainerStackChanged",
             "self._application.readLocalFile",
@@ -86,7 +83,6 @@ class SdkCompatibilityTests(unittest.TestCase):
         self.assertNotIn("QWebSocket", combined)
 
     def test_qml_imports_are_qt6_2_compatible(self):
-        # Cura 5.0 shipped Qt 6.2 and its own QML uses QtQuick 2.15.
         for qml in (CONFIG_QML, MONITOR_QML, UPLOAD_QML, ACTION_QML, EMPTY_QML):
             self.assertRegex(qml, r"^import QtQuick 2\.15", qml[:80])
         for qml in (CONFIG_QML, MONITOR_QML, UPLOAD_QML):
