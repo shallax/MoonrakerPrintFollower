@@ -49,6 +49,27 @@ Component
             }
         }
 
+        Cura.MessageDialog
+        {
+            id: excludeObjectDialog
+            property string targetName: ""
+            title: "Exclude object?"
+            text: targetName.length > 0
+                ? "Stop printing '" + targetName + "' for the rest of this job? This cannot be undone without restarting the print."
+                : "Stop printing this object for the rest of this job?"
+            standardButtons: Dialog.Yes | Dialog.No
+            anchors.centerIn: Overlay.overlay
+            onAccepted:
+            {
+                if (root.printer != null && targetName.length > 0)
+                {
+                    root.printer.excludeObject(targetName)
+                }
+                targetName = ""
+            }
+            onRejected: targetName = ""
+        }
+
         RowLayout
         {
             anchors.fill: parent
@@ -104,12 +125,13 @@ Component
 
                         Cura.SecondaryButton
                         {
-                            text: "Refresh"
+                            text: "Refresh camera"
+                            tooltip: "Refresh Moonraker's webcam list."
                             onClicked:
                             {
                                 if (root.printer != null)
                                 {
-                                    root.printer.refreshAll()
+                                    root.printer.refreshWebcams()
                                 }
                             }
                         }
@@ -454,7 +476,11 @@ Component
                                         visible: root.printer != null && root.printer.printActive && !modelData.excluded
                                         enabled: root.printer != null && !root.printer.actionBusy
                                         text: "Exclude"
-                                        onClicked: root.printer.excludeObject(modelData.name)
+                                        onClicked:
+                                        {
+                                            excludeObjectDialog.targetName = modelData.name
+                                            excludeObjectDialog.open()
+                                        }
                                     }
                                 }
                             }

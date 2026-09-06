@@ -21,6 +21,10 @@ from build_curapackage import build
 from verify_curapackage import verify
 
 MONITOR_SOURCE = (PLUGINS / "MoonrakerMonitorModel.py").read_text(encoding="utf-8")
+RUNTIME_SOURCE = (PLUGINS / "MoonrakerMonitorRuntime.py").read_text(encoding="utf-8")
+CONTROLS_SOURCE = (PLUGINS / "MoonrakerMonitorControls.py").read_text(encoding="utf-8")
+MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text(encoding="utf-8")
+CONFIG_QML = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
 OUTPUT_PLUGIN_SOURCE = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text(encoding="utf-8")
 TYPED_SOURCE = (PLUGINS / "MoonrakerMonitorTypedControls.py").read_text(encoding="utf-8")
 DASHBOARD_SOURCE = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text(encoding="utf-8")
@@ -294,6 +298,59 @@ class ReleaseHardeningTests(unittest.TestCase):
         for slider in ("speedSlider", "flowSlider", "fanSlider", "ledSlider", "redSlider", "greenSlider", "blueSlider", "whiteSlider", "pwmSlider"):
             self.assertIn(f"root.sliderSelection({slider})", DASHBOARD_SOURCE)
 
+
+def test_core_status_uses_one_subclass_hook_instead_of_reprocessing_three_times(self):
+    self.assertIn("self._after_core_status(status)", MONITOR_SOURCE)
+    self.assertIn("def _after_core_status", RUNTIME_SOURCE)
+    self.assertIn("def _after_core_status", CONTROLS_SOURCE)
+    self.assertNotIn("def updateMoonrakerStatus", RUNTIME_SOURCE)
+    self.assertNotIn("def updateMoonrakerStatus", CONTROLS_SOURCE)
+    self.assertIn("self._resolved_current_layer", RUNTIME_SOURCE)
+
+def test_full_klipper_config_is_not_polled_every_second(self):
+    self.assertIn('["save_config_pending", "save_config_pending_items"]', MONITOR_SOURCE)
+    self.assertIn('"config-static"', MONITOR_SOURCE)
+    self.assertIn('name: self._aux_query_fields(name)', MONITOR_SOURCE)
+    model = load_monitor_model()
+    merged = model._merge_aux_status(
+        {"configfile": {"config": {"gcode_macro TEST": {"gcode": "G28"}}, "save_config_pending": False}},
+        {"configfile": {"save_config_pending": True, "save_config_pending_items": {"bed_mesh": {}}}},
+    )
+    self.assertIn("config", merged["configfile"])
+    self.assertTrue(merged["configfile"]["save_config_pending"])
+
+def test_request_identity_change_aborts_old_replies(self):
+    model = load_monitor_model()
+    instance = model.__new__(model)
+    reply = DummyReply()
+    instance._requests = {"aux": reply}
+    instance._request_generation = 7
+    instance._request_identity = ("http://old.invalid", "old-key")
+    class Config:
+        url = "http://new.invalid"
+        api_key = str("new-key")
+    class Follower:
+        @staticmethod
+        def current_printer_config():
+            return Config()
+    instance._follower = Follower()
+    instance._ensure_request_session()
+    self.assertEqual(instance._request_generation, 8)
+    self.assertEqual(instance._request_identity, ("http://new.invalid", "new-key"))
+    self.assertTrue(reply.aborted)
+    self.assertTrue(reply.deleted)
+    self.assertEqual(instance._requests, {})
+
+def test_monitor_ux_release_polish_is_explicit(self):
+    self.assertIn("Drag to preview a value; the change is sent to Klipper when you release the slider.", DASHBOARD_SOURCE)
+    self.assertIn('text: "Refresh camera"', MONITOR_QML)
+    self.assertIn("root.printer.refreshWebcams()", MONITOR_QML)
+    self.assertIn('title: "Exclude object?"', MONITOR_QML)
+    self.assertIn("excludeObjectDialog.open()", MONITOR_QML)
+    self.assertIn('placeholderText: "<root>"', CONFIG_QML)
+    self.assertIn("Leave blank to use Moonraker's gcodes root.", CONFIG_QML)
+    self.assertIn("stack is None", OUTPUT_PLUGIN_SOURCE)
+    self.assertIn("self._set_monitor_active(self._current, False)", OUTPUT_PLUGIN_SOURCE)
 
 if __name__ == "__main__":
     unittest.main()

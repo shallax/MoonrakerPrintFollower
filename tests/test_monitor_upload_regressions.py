@@ -13,6 +13,7 @@ MONITOR_CONTROLS = (PLUGINS / "MoonrakerMonitorControls.py").read_text()
 MONITOR_TYPED_CONTROLS = (PLUGINS / "MoonrakerMonitorTypedControls.py").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
+BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 UPLOAD_QML = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
 OUTPUT_LIFECYCLE = (PLUGINS / "MoonrakerOutputDeviceLifecycle.py").read_text()
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
@@ -78,7 +79,7 @@ class MonitorUploadRegressionTests(unittest.TestCase):
         self.assertIn("_metadata_layer_count", MONITOR_CONTROLS)
         self.assertIn("_layer_from_metadata_z", MONITOR_CONTROLS)
         self.assertIn("monitorLayerHeight", MONITOR_CONTROLS)
-        self.assertIn("MoonrakerMonitorRuntime", OUTPUT_PLUGIN)
+        self.assertIn("MoonrakerMonitorRuntime", MONITOR_CONTROLS)
 
     def test_monitor_dashboard_contains_live_controls_and_status_groups(self):
         for token in (
@@ -91,10 +92,10 @@ class MonitorUploadRegressionTests(unittest.TestCase):
             self.assertIn(token, MONITOR_MODEL + MONITOR_QML)
 
     def test_active_monitor_chain_is_packaged_and_selected(self):
-        self.assertIn('"MoonrakerMonitorDashboard.qml"', OUTPUT_PLUGIN)
-        self.assertIn('"MoonrakerMonitor.qml"', OUTPUT_PLUGIN)
+        self.assertIn('"MoonrakerMonitorBedMesh.qml"', OUTPUT_PLUGIN)
         self.assertIn("MoonrakerMonitorTypedControls", OUTPUT_PLUGIN)
         self.assertIn("MoonrakerMonitorControls", MONITOR_TYPED_CONTROLS)
+        self.assertIn("MoonrakerMonitorDashboard", BED_MESH_QML)
         self.assertIn("MoonrakerMonitor", DASHBOARD_QML)
         self.assertIn("Printer controls", DASHBOARD_QML)
         self.assertFalse((PLUGINS / "MoonrakerMonitorEnhanced.qml").exists())

@@ -8,9 +8,16 @@ from .MoonrakerMonitorModel import MoonrakerMonitorModel as _BaseMoonrakerMonito
 class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
     """Monitor model additions that depend on follower layer interpretation."""
 
-    def updateMoonrakerStatus(self, status: Any) -> None:
-        super().updateMoonrakerStatus(status)
+    def __init__(self, output_controller: Any, number_of_extruders: int, follower: Any) -> None:
+        self._resolved_current_layer: Optional[int] = None
+        self._resolved_total_layer: Optional[int] = None
+        super().__init__(output_controller, number_of_extruders, follower)
+
+    def _after_core_status(self, status: Any) -> None:
+        super()._after_core_status(status)
         current_layer, total_layer = self._resolve_live_layer(status)
+        self._resolved_current_layer = current_layer
+        self._resolved_total_layer = total_layer
         if current_layer is not None and total_layer is not None:
             self._monitor_layer = f"{current_layer} / {total_layer}"
         elif current_layer is not None:
@@ -19,7 +26,6 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             self._monitor_layer = f"— / {total_layer}"
         else:
             self._monitor_layer = "—"
-        self.monitorChanged.emit()
 
     def _resolve_live_layer(self, status: Any) -> Tuple[Optional[int], Optional[int]]:
         if not isinstance(status, dict):

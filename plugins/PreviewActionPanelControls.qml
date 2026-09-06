@@ -117,7 +117,7 @@ Item
                     id: loadButton
                     width: followButton.visible ? (buttons.width - base.buttonSpacing) / 2 : buttons.width
                     height: UM.Theme.getSize("action_button").height
-                    text: "Load print"
+                    text: "Load current print"
                     tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
                     fixedWidthMode: true
                     onClicked: base.loadClicked()

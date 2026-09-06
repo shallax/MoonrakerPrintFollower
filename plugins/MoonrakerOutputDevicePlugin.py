@@ -7,10 +7,6 @@ from PyQt6.QtCore import QUrl
 from UM.Logger import Logger
 from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
-# MoonrakerMonitorRuntime remains the proven layer-following base implementation.
-# MoonrakerMonitorControls remains the tested control base beneath the typed layer.
-# Compatibility/source-contract markers: "MoonrakerMonitorDashboard.qml" still
-# composes "MoonrakerMonitor.qml" underneath the active bed-mesh wrapper.
 from .MoonrakerMonitorTypedControls import MoonrakerMonitorModel
 from .MoonrakerOutputDevice import MoonrakerOutputController
 from .MoonrakerOutputDeviceLifecycle import MoonrakerOutputDevice
@@ -94,6 +90,13 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         try:
             stack = self._application.getGlobalContainerStack()
             if stack is None:
+                if self._current is not None:
+                    self._set_monitor_active(self._current, False)
+                    try:
+                        self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
+                    except Exception:
+                        pass
+                    self._current = None
                 return
             machine_id = str(stack.getId())
             config = self._follower.current_printer_config()

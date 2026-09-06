@@ -314,6 +314,13 @@ Component
 
                         Rectangle { Layout.fillWidth: true; height: UM.Theme.getSize("default_lining").height; color: UM.Theme.getColor("lining") }
                         UM.Label { text: "Live tuning"; font: UM.Theme.getFont("medium_bold") }
+                        UM.Label
+                        {
+                            text: "Drag to preview a value; the change is sent to Klipper when you release the slider."
+                            color: UM.Theme.getColor("text_inactive")
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
 
                         ColumnLayout
                         {

@@ -462,10 +462,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 self._fetch_metadata(filename)
 
         self._update_eta()
+        self._after_core_status(status)
         self.monitorChanged.emit()
         self.actionChanged.emit()
         if self._power_devices_raw:
             self.powerDevicesChanged.emit()
+
+    def _after_core_status(self, _status: Any) -> None:
+        """Subclass hook run after core fields are coherent, before UI notification."""
 
     def _fetch_metadata(self, filename: str) -> None:
         encoded = quote(filename, safe="/")
@@ -727,6 +731,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return
         self._available_objects = sorted(str(item) for item in objects)
         self._aux_objects = [name for name in self._available_objects if self._want_aux_object(name)]
+        self._poll_config_snapshot()
         self._poll_aux_status()
 
     @staticmethod
@@ -755,10 +760,61 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         )
         return lower.startswith(prefixes)
 
+    @staticmethod
+    def _aux_query_fields(name: str):
+        # configfile.config/settings can be very large. Only the two volatile
+        # SAVE_CONFIG fields belong in the one-second poll; the full config is
+        # refreshed with capability discovery instead.
+        if str(name or "").lower() == "configfile":
+            return ["save_config_pending", "save_config_pending_items"]
+        return None
+
+    @staticmethod
+    def _merge_aux_status(current: Any, incoming: Any) -> Dict[str, Any]:
+        merged: Dict[str, Any] = dict(current) if isinstance(current, dict) else {}
+        if not isinstance(incoming, dict):
+            return merged
+        for name, value in incoming.items():
+            previous = merged.get(name)
+            if isinstance(previous, dict) and isinstance(value, dict):
+                combined = dict(previous)
+                combined.update(value)
+                merged[name] = combined
+            else:
+                merged[name] = value
+        return merged
+
+    def _poll_config_snapshot(self) -> None:
+        if not any(str(name).lower() == "configfile" for name in self._aux_objects):
+            return
+        body = {"objects": {"configfile": None}}
+        self._json_request(
+            "config-static",
+            "POST",
+            "printer/objects/query",
+            self._on_config_snapshot,
+            body=body,
+            replace=True,
+        )
+
+    def _on_config_snapshot(
+        self,
+        payload: Optional[Dict[str, Any]],
+        error: Optional[str],
+    ) -> None:
+        if error:
+            return
+        result = self._result(payload)
+        status = result.get("status") if isinstance(result, dict) else None
+        if not isinstance(status, dict):
+            return
+        self._aux_status = self._merge_aux_status(self._aux_status, status)
+        self._rebuild_peripherals()
+
     def _poll_aux_status(self) -> None:
         if not self._aux_objects:
             return
-        body = {"objects": {name: None for name in self._aux_objects}}
+        body = {"objects": {name: self._aux_query_fields(name) for name in self._aux_objects}}
         self._json_request("aux", "POST", "printer/objects/query", self._on_aux_status, body=body)
 
     def _on_aux_status(
@@ -772,7 +828,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         status = result.get("status") if isinstance(result, dict) else None
         if not isinstance(status, dict):
             return
-        self._aux_status = status
+        self._aux_status = self._merge_aux_status(self._aux_status, status)
         self._rebuild_peripherals()
 
     @staticmethod

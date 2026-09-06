@@ -303,7 +303,22 @@ Cura.MachineAction
                         UM.CheckBox { id: uploadDialogBox; text: "Show filename/path dialog before upload"; checked: manager.settingsUploadDialog }
 
                         UM.Label { text: "Default remote folder" }
-                        Cura.TextField { id: uploadPathField; width: parent.width; text: manager.settingsUploadPath; maximumLength: 1024 }
+                        Cura.TextField
+                        {
+                            id: uploadPathField
+                            width: parent.width
+                            text: manager.settingsUploadPath
+                            placeholderText: "<root>"
+                            maximumLength: 1024
+                        }
+                        UM.Label
+                        {
+                            text: "Leave blank to use Moonraker's gcodes root."
+                            width: parent.width
+                            wrapMode: Text.WordWrap
+                            color: UM.Theme.getColor("text_inactive")
+                            font: UM.Theme.getFont("default_italic")
+                        }
 
                         UM.CheckBox { id: uploadStartPrintBox; text: "Start printing after upload by default"; checked: manager.settingsUploadStartPrint }
                         UM.CheckBox { id: uploadRememberStateBox; text: "Remember folder and print checkbox choices from the upload dialog"; checked: manager.settingsUploadRememberState }

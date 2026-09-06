@@ -10,6 +10,7 @@ LIFECYCLE = (PLUGINS / "MoonrakerOutputDeviceLifecycle.py").read_text()
 UPLOAD_QML = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
 TYPED_CONTROLS = (PLUGINS / "MoonrakerMonitorTypedControls.py").read_text()
 DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
+BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
 
 
@@ -51,7 +52,8 @@ class HotfixRegressionTests(unittest.TestCase):
 
     def test_output_plugin_selects_typed_dashboard(self):
         self.assertIn("MoonrakerMonitorTypedControls", OUTPUT_PLUGIN)
-        self.assertIn('"MoonrakerMonitorDashboard.qml"', OUTPUT_PLUGIN)
+        self.assertIn('"MoonrakerMonitorBedMesh.qml"', OUTPUT_PLUGIN)
+        self.assertIn("MoonrakerMonitorDashboard", BED_MESH_QML)
 
     def _load_typed_model(self):
         class DummySignal:

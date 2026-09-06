@@ -54,8 +54,7 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             return True
         return os.path.basename(indexed) == os.path.basename(live)
 
-    @pyqtSlot(object)
-    def updateMoonrakerStatus(self, status: Any) -> None:
+    def _after_core_status(self, status: Any) -> None:
         if isinstance(status, dict):
             print_stats = self._status_object(status, "print_stats")
             filename = str(print_stats.get("filename") or "")
@@ -66,18 +65,10 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
                 self._metadata_first_layer_height = None
                 self._monitor_layer_height = "—"
 
-        super().updateMoonrakerStatus(status)
-
-        current_layer, total_layer = self._resolve_live_layer(status)
-        if current_layer is not None and total_layer is not None:
-            self._monitor_layer = f"{current_layer} / {total_layer}"
-        elif current_layer is not None:
-            self._monitor_layer = str(current_layer)
-        elif total_layer is not None:
-            self._monitor_layer = f"— / {total_layer}"
-        else:
-            self._monitor_layer = "—"
-
+        # Resolve the physical layer exactly once in the runtime layer, after any
+        # stale per-file metadata above has been cleared.
+        super()._after_core_status(status)
+        current_layer = self._resolved_current_layer
         self._monitor_layer_height = self._resolve_layer_height_text(current_layer)
 
         if isinstance(status, dict):
@@ -97,7 +88,6 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
                 except (TypeError, ValueError):
                     pass
 
-        self.monitorChanged.emit()
         self.controlsChanged.emit()
 
     def _on_metadata(self, filename: str, payload: Optional[Dict[str, Any]], error: Optional[str]) -> None:
