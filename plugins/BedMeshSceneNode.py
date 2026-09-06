@@ -19,9 +19,9 @@ class BedMeshSceneNode(SceneNode):
     remains exactly where Klipper says it is, while one additional outer ring is
     linearly extrapolated to the physical Cura bed edges. Extrapolated vertices
     are intentionally more transparent so the unprobed region is not presented
-    as measured data. A dark raised ribbon follows the exact Klipper mesh bounds
-    so the measured/interpolated area remains obvious even when the alpha change
-    at the extrapolated perimeter is visually subtle.
+    as measured data. A neon-orange raised ribbon follows the exact Klipper mesh
+    bounds so the measured/interpolated area remains obvious even when the alpha
+    change at the extrapolated perimeter is visually subtle.
     """
 
     DEFAULT_EXAGGERATION = 20.0
@@ -31,6 +31,7 @@ class BedMeshSceneNode(SceneNode):
     BOUNDARY_WIDTH = 1.4
     BOUNDARY_LIFT = 0.09
     BOUNDARY_ALPHA = 0.94
+    BOUNDARY_COLOUR = (1.0, 0.353, 0.0)  # #FF5A00 neon orange
 
     def __init__(self) -> None:
         super().__init__(name="Moonraker bed mesh", node_id="MoonrakerPrintFollowerBedMesh")
@@ -234,7 +235,7 @@ class BedMeshSceneNode(SceneNode):
                 face += 1
 
         # Make the transition from genuine Klipper mesh data to the extrapolated
-        # perimeter explicit.  This is a narrow ribbon rather than a GL line so
+        # perimeter explicit. This is a narrow ribbon rather than a GL line so
         # its apparent thickness remains dependable across Cura/OpenGL versions.
         boundary_vertices: List[Tuple[float, float, float]] = []
         boundary_colours: List[List[float]] = []
@@ -271,7 +272,7 @@ class BedMeshSceneNode(SceneNode):
                     self.SURFACE_LIFT + value * exaggeration + self.BOUNDARY_LIFT,
                     self._scene_z(printer_y, machine_depth, center_is_zero),
                 ))
-                boundary_colours.append([0.025, 0.025, 0.025, self.BOUNDARY_ALPHA])
+                boundary_colours.append([*self.BOUNDARY_COLOUR, self.BOUNDARY_ALPHA])
             boundary_indices.append((start, start + 1, start + 2))
             boundary_indices.append((start + 2, start + 1, start + 3))
 
