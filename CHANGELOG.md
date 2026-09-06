@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Remove final control-fix CI trigger
 - 2026-09-06: Trigger final control-fix package CI
 - 2026-09-06: Fix dynamic tuning and pin emergency controls
 - 2026-09-06: Run v3 control fix helper
