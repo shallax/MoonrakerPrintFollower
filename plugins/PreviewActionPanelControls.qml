@@ -21,6 +21,11 @@ Item
     property string bedMeshMinimumText: ""
     property string bedMeshMaximumText: ""
     property string selectedLayerEtaText: ""
+    property bool pauseAtLayerActive: false
+    property int pauseAtLayerCandidate: 0
+    property bool pauseAtLayerCanToggle: false
+    property bool pauseAtLayerScheduled: false
+    property string pauseAtLayerSummary: ""
 
     // ActionPanelWidget already inserts a default margin between saveButton
     // extension components. Reserve one further default margin inside this
@@ -36,6 +41,7 @@ Item
     signal loadClicked()
     signal pauseClicked()
     signal bedMeshVisibilityRequested(bool visible)
+    signal pauseAtLayerRequested(int layer)
 
     visible: previewStageActive && configuredForFollowing && CuraApplication.platformActivity
     width: visible ? externalGap + followerPanel.width : 0
@@ -146,6 +152,43 @@ Item
                 color: UM.Theme.getColor("text")
                 font: UM.Theme.getFont("default")
                 wrapMode: Text.WordWrap
+                verticalAlignment: Text.AlignVCenter
+                clip: true
+            }
+
+            Cura.SecondaryButton
+            {
+                id: pauseAtLayerButton
+                visible: base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive
+                width: parent.width
+                height: visible ? UM.Theme.getSize("action_button").height : 0
+                enabled: base.pauseAtLayerCanToggle
+                text: base.pauseAtLayerCandidate <= 0
+                    ? "Pause at selected layer"
+                    : (base.pauseAtLayerScheduled
+                        ? "Remove pause at layer " + base.pauseAtLayerCandidate
+                        : (base.pauseAtLayerCanToggle
+                            ? "Enable pause at layer " + base.pauseAtLayerCandidate
+                            : "Layer " + base.pauseAtLayerCandidate + " already reached"))
+                tooltip: base.pauseAtLayerCanToggle
+                    ? (base.pauseAtLayerScheduled
+                        ? "Remove the scheduled PAUSE for this future layer."
+                        : "Call the Klipper PAUSE macro when Moonraker reaches this future layer.")
+                    : "Scroll Cura Preview to a layer ahead of the current print layer to schedule PAUSE."
+                fixedWidthMode: true
+                onClicked: base.pauseAtLayerRequested(base.pauseAtLayerCandidate)
+            }
+
+            UM.Label
+            {
+                visible: base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive
+                width: parent.width
+                height: visible ? 20 * screenScaleFactor : 0
+                text: base.pauseAtLayerSummary.length > 0 ? base.pauseAtLayerSummary : " "
+                opacity: base.pauseAtLayerSummary.length > 0 ? 1.0 : 0.0
+                color: UM.Theme.getColor("text_inactive")
+                font: UM.Theme.getFont("default_italic")
+                elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
                 clip: true
             }

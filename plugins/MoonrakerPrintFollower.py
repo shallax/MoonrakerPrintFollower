@@ -41,6 +41,7 @@ from .GCodeIndex import (
 )
 from .MoonrakerProtocol import (
     download_endpoint,
+    gcode_script_endpoint,
     live_position_in_gcode_space,
     metadata_endpoint,
     parse_file_identity,
@@ -148,6 +149,16 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._network = QNetworkAccessManager()
         self._reply: Optional[QNetworkReply] = None
         self._reply_purpose: Optional[str] = None
+
+        # Preview-scheduled PAUSE commands are intentionally print-local.
+        # They are never persisted into PrinterConfig because carrying a layer
+        # number into a different G-code file would be unsafe and surprising.
+        self._pause_network = QNetworkAccessManager()
+        self._pause_reply: Optional[QNetworkReply] = None
+        self._pause_reply_generation = 0
+        self._pause_reply_job_key: Optional[Tuple[str, int, int]] = None
+        self._scheduled_pause_layers: set[int] = set()
+        self._last_observed_remote_layer: Optional[int] = None
 
         # A separate network manager is used for the one-time G-code download so
         # regular status polling can continue while a large file is being indexed.
@@ -452,6 +463,8 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._last_capabilities = {}
         self._remote_job_key = None
         self._remote_file_identity = None
+        self._last_observed_remote_layer = None
+        self._clear_scheduled_pauses(abort_request=True)
         self._discard_cached_gcode()
         self._clear_remote_gcode_index()
         self._config_store.migrate_legacy_to_current_machine()
@@ -1157,6 +1170,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         if machine_id == self._active_machine_id:
             self._active_machine_name = machine_name
         active_printer_name = self._active_machine_name or machine_name
+        pause_state = self._pause_at_layer_preview_state()
         for controls in (self._preview_overlay, self._action_panel_controls):
             if controls is None:
                 continue
@@ -1171,8 +1185,190 @@ class MoonrakerPrintFollower(QObject, Extension):
                 controls.setProperty("statusText", compact_status)
                 controls.setProperty("statusIconName", status_icon_name)
                 controls.setProperty("selectedLayerEtaText", self._selected_layer_eta_text)
+                controls.setProperty("pauseAtLayerActive", pause_state["active"])
+                controls.setProperty("pauseAtLayerCandidate", pause_state["candidate"])
+                controls.setProperty("pauseAtLayerCanToggle", pause_state["canToggle"])
+                controls.setProperty("pauseAtLayerScheduled", pause_state["scheduled"])
+                controls.setProperty("pauseAtLayerSummary", pause_state["summary"])
             except Exception:
                 pass
+
+    def _pause_at_layer_preview_state(self) -> Dict[str, Any]:
+        active = bool(
+            self._last_remote_state in self.ACTIVE_STATES
+            and self._remote_job_key is not None
+        )
+        candidate = 0
+        selected_layer: Optional[int] = None
+        view = self._simulation_view() if active else None
+        if view is not None:
+            try:
+                selected_layer = max(0, int(view.getCurrentLayer()))
+                candidate = selected_layer + 1
+            except Exception:
+                selected_layer = None
+
+        current = self._last_observed_remote_layer
+        can_toggle = bool(
+            active
+            and selected_layer is not None
+            and current is not None
+            and selected_layer > current
+        )
+        scheduled = bool(selected_layer is not None and selected_layer in self._scheduled_pause_layers)
+        layers = ", ".join(str(layer + 1) for layer in sorted(self._scheduled_pause_layers))
+        summary = f"Scheduled PAUSE layers: {layers}" if layers else ""
+        return {
+            "active": active,
+            "candidate": candidate,
+            "canToggle": can_toggle,
+            "scheduled": scheduled,
+            "summary": summary,
+        }
+
+    def _toggle_pause_at_selected_layer(self, human_layer: int) -> None:
+        try:
+            layer = int(human_layer) - 1
+        except (TypeError, ValueError):
+            return
+        current = self._last_observed_remote_layer
+        if (
+            self._last_remote_state not in self.ACTIVE_STATES
+            or self._remote_job_key is None
+            or current is None
+            or layer <= current
+        ):
+            self._sync_preview_button_state()
+            return
+
+        if layer in self._scheduled_pause_layers:
+            self._scheduled_pause_layers.remove(layer)
+            self._set_status(f"Removed scheduled PAUSE at layer {layer + 1}")
+        else:
+            self._scheduled_pause_layers.add(layer)
+            self._set_status(f"PAUSE scheduled for layer {layer + 1}")
+        self._sync_preview_button_state()
+
+    def _clear_scheduled_pauses(self, *, abort_request: bool = False) -> None:
+        self._scheduled_pause_layers.clear()
+        if abort_request:
+            self._abort_pause_reply()
+        self._sync_preview_button_state()
+
+    def _abort_pause_reply(self) -> None:
+        reply = self._pause_reply
+        self._pause_reply = None
+        self._pause_reply_job_key = None
+        self._pause_reply_generation += 1
+        if reply is not None:
+            try:
+                if reply.isRunning():
+                    reply.abort()
+            except Exception:
+                pass
+            try:
+                reply.deleteLater()
+            except Exception:
+                pass
+
+    def _maybe_trigger_scheduled_pause(self, current_layer: int) -> None:
+        if not self._scheduled_pause_layers or self._remote_job_key is None:
+            return
+        try:
+            current_layer = int(current_layer)
+        except (TypeError, ValueError):
+            return
+
+        due = sorted(layer for layer in self._scheduled_pause_layers if layer <= current_layer)
+        if not due:
+            return
+        # One PAUSE is sufficient if polling skipped across more than one scheduled
+        # very short layer. Consume every already-reached target, but keep later ones.
+        for layer in due:
+            self._scheduled_pause_layers.discard(layer)
+        target_layer = due[0]
+        self._sync_preview_button_state()
+        self._send_scheduled_pause(target_layer, current_layer)
+
+    def _send_scheduled_pause(self, target_layer: int, current_layer: int) -> None:
+        if self._pause_reply is not None:
+            try:
+                if self._pause_reply.isRunning():
+                    Logger.log(
+                        "w",
+                        "Moonraker Print Follower skipped overlapping PAUSE request for layer %d",
+                        target_layer + 1,
+                    )
+                    return
+            except Exception:
+                pass
+
+        config = self._config_store.get()
+        base_url = self._normalise_base_url(config.url)
+        if not self._url_is_usable(base_url):
+            self._set_status(f"Could not PAUSE at layer {target_layer + 1}: Moonraker URL unavailable")
+            return
+
+        request = QNetworkRequest(QUrl(gcode_script_endpoint(base_url)))
+        request.setRawHeader(b"Accept", b"application/json")
+        request.setRawHeader(b"Content-Type", b"application/json")
+        if hasattr(request, "setTransferTimeout"):
+            request.setTransferTimeout(5000)
+        if config.api_key:
+            request.setRawHeader(b"X-Api-Key", config.api_key.encode("utf-8"))
+
+        payload = json.dumps({"script": "PAUSE"}, separators=(",", ":")).encode("utf-8")
+        generation = self._lifecycle_generation
+        job_key = self._remote_job_key
+        self._pause_reply_generation += 1
+        request_generation = self._pause_reply_generation
+        self._pause_reply_job_key = job_key
+        reply = self._pause_network.post(request, payload)
+        self._pause_reply = reply
+        reply.finished.connect(
+            lambda r=reply, g=generation, rg=request_generation, j=job_key, t=target_layer, c=current_layer:
+                self._handle_scheduled_pause_reply(r, g, rg, j, t, c)
+        )
+        Logger.log(
+            "i",
+            "Moonraker Print Follower requesting PAUSE for scheduled layer %d (observed layer %d)",
+            target_layer + 1,
+            current_layer + 1,
+        )
+
+    def _handle_scheduled_pause_reply(
+        self,
+        reply: QNetworkReply,
+        lifecycle_generation: int,
+        request_generation: int,
+        job_key: Optional[Tuple[str, int, int]],
+        target_layer: int,
+        current_layer: int,
+    ) -> None:
+        if reply is not self._pause_reply or request_generation != self._pause_reply_generation:
+            try:
+                reply.deleteLater()
+            except Exception:
+                pass
+            return
+        self._pause_reply = None
+        self._pause_reply_job_key = None
+        try:
+            if lifecycle_generation != self._lifecycle_generation or job_key != self._remote_job_key:
+                return
+            if reply.error() != QNetworkReply.NetworkError.NoError:
+                self._set_status(
+                    f"PAUSE at layer {target_layer + 1} failed: {reply.errorString()}"
+                )
+                return
+            suffix = "" if current_layer == target_layer else f" (detected at layer {current_layer + 1})"
+            self._set_status(f"PAUSE requested at layer {target_layer + 1}{suffix}")
+        finally:
+            try:
+                reply.deleteLater()
+            except Exception:
+                pass
+            self._sync_preview_button_state()
 
     @staticmethod
     def _format_preview_duration(seconds: float) -> str:
@@ -1438,6 +1634,7 @@ class MoonrakerPrintFollower(QObject, Extension):
                     try:
                         action_controls.loadClicked.connect(self._confirm_force_load_current_print)
                         action_controls.pauseClicked.connect(self._toggle_following_pause)
+                        action_controls.pauseAtLayerRequested.connect(self._toggle_pause_at_selected_layer)
                     except Exception as error:
                         Logger.logException(
                             "e",
@@ -1834,6 +2031,8 @@ class MoonrakerPrintFollower(QObject, Extension):
             if new_job:
                 self._remote_job_serial += 1
                 self._clear_remote_gcode_index()
+                self._last_observed_remote_layer = None
+                self._clear_scheduled_pauses(abort_request=True)
                 self._remote_job_key = (filename, file_size, self._remote_job_serial)
                 if (
                     self._remote_file_identity is not None
@@ -1855,6 +2054,42 @@ class MoonrakerPrintFollower(QObject, Extension):
             self._last_remote_print_duration = None
 
         return self._remote_job_key
+
+    def _resolve_remote_layer_index(
+        self,
+        print_stats: Dict[str, Any],
+        gcode_move: Dict[str, Any],
+        filename: str,
+        view=None,
+    ) -> Tuple[Optional[int], str]:
+        info = print_stats.get("info") or {}
+        remote_layer = info.get("current_layer")
+        target_layer: Optional[int] = None
+        source = ""
+
+        if remote_layer is not None:
+            try:
+                raw_remote_layer = int(remote_layer)
+                if (
+                    self._remote_index_filename == filename
+                    and raw_remote_layer in self._remote_current_layer_map
+                ):
+                    target_layer = self._remote_current_layer_map[raw_remote_layer]
+                    source = "Moonraker current_layer (G-code mapped)"
+                else:
+                    target_layer = raw_remote_layer
+                    if self._pref_bool(self.PREF_ONE_BASED):
+                        target_layer -= 1
+                    source = "Moonraker current_layer"
+            except (TypeError, ValueError):
+                target_layer = None
+
+        if target_layer is None and self._pref_bool(self.PREF_Z_FALLBACK) and view is not None:
+            target_layer = self._layer_from_z(view, gcode_move)
+            if target_layer is not None:
+                source = "Z-height fallback"
+
+        return target_layer, source
 
     def _apply_remote_status(
         self,
@@ -1898,20 +2133,42 @@ class MoonrakerPrintFollower(QObject, Extension):
         if state not in self.ACTIVE_STATES:
             self._toolhead_path_valid = False
             self._last_resolved_remote_layer = None
+            self._last_observed_remote_layer = None
             self._selected_layer_eta_text = ""
+            if self._scheduled_pause_layers:
+                self._clear_scheduled_pauses(abort_request=True)
             self._hide_toolhead_indicator()
             label = state or "unknown"
             suffix = f" — {filename}" if filename else ""
             self._set_status(f"Moonraker connected; printer is {label}{suffix}")
             return
 
+        # Observe the physical layer even while Cura following is manually paused.
+        # That is what makes post-start pause scheduling possible: the user's Cura
+        # slider is free to inspect a future layer while Moonraker keeps advancing.
+        view = self._simulation_view()
+        observed_layer, observed_source = self._resolve_remote_layer_index(
+            print_stats, gcode_move, filename, view
+        )
+        if observed_layer is not None:
+            observed_layer = max(0, int(observed_layer))
+            self._last_observed_remote_layer = observed_layer
+            self._maybe_trigger_scheduled_pause(observed_layer)
+            if view is not None and hasattr(view, "getMaxLayers"):
+                try:
+                    observed_max = max(0, int(view.getMaxLayers()))
+                    self._last_resolved_remote_layer = min(observed_layer, observed_max)
+                except Exception:
+                    pass
+
         if self._following_paused:
             self._toolhead_path_valid = False
             self._hide_toolhead_indicator()
+            self._update_selected_layer_eta(view)
             self._set_status(
                 self._active_status_text(
                     filename,
-                    remote_layer=None,
+                    remote_layer=(self._last_observed_remote_layer + 1) if self._last_observed_remote_layer is not None else None,
                     total_layer=(print_stats.get("info") or {}).get("total_layer"),
                     detail="following paused; Moonraker polling continues",
                 )
@@ -1941,7 +2198,6 @@ class MoonrakerPrintFollower(QObject, Extension):
             )
             return
 
-        view = self._simulation_view()
         if view is None or not hasattr(view, "setLayer"):
             self._toolhead_path_valid = False
             self._hide_toolhead_indicator()
@@ -1951,37 +2207,9 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._maybe_switch_to_preview()
 
         info = print_stats.get("info") or {}
-        remote_layer = info.get("current_layer")
         total_layer = info.get("total_layer")
-
-        target_layer: Optional[int] = None
-        source = ""
-
-        if remote_layer is not None:
-            try:
-                raw_remote_layer = int(remote_layer)
-                if (
-                    self._remote_index_filename == filename
-                    and raw_remote_layer in self._remote_current_layer_map
-                ):
-                    # Prefer the CURRENT_LAYER values embedded in the actual G-code.
-                    # This makes layer numbering self-describing and avoids an
-                    # off-by-one mismatch if the preference namespace was reset or
-                    # a slicer/macro reports zero-based layers instead of one-based.
-                    target_layer = self._remote_current_layer_map[raw_remote_layer]
-                    source = "Moonraker current_layer (G-code mapped)"
-                else:
-                    target_layer = raw_remote_layer
-                    if self._pref_bool(self.PREF_ONE_BASED):
-                        target_layer -= 1
-                    source = "Moonraker current_layer"
-            except (TypeError, ValueError):
-                target_layer = None
-
-        if target_layer is None and self._pref_bool(self.PREF_Z_FALLBACK):
-            target_layer = self._layer_from_z(view, gcode_move)
-            if target_layer is not None:
-                source = "Z-height fallback"
+        target_layer = observed_layer
+        source = observed_source
 
         if target_layer is None:
             self._toolhead_path_valid = False

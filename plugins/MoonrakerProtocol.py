@@ -32,6 +32,10 @@ def objects_list_endpoint(base_url: str) -> str:
     return f"{base_url.rstrip('/')}/printer/objects/list"
 
 
+def gcode_script_endpoint(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}/printer/gcode/script"
+
+
 def parse_file_identity(filename: str, payload: Dict[str, Any], fallback_size: int = 0) -> RemoteFileIdentity:
     result = payload.get("result") if isinstance(payload, dict) else None
     data = result if isinstance(result, dict) else payload
