@@ -241,6 +241,14 @@ class FollowerCoordinator(_FollowerRuntime):
     def _scheduler(self) -> PauseScheduler:
         return self._pause_scheduler
 
+    def _update_pause_poll_guard(self, current_layer: Optional[int] = None) -> None:
+        if current_layer is None:
+            current_layer = self._last_observed_remote_layer
+        active = False
+        if current_layer is not None and self._remote_job_key is not None:
+            active = self._scheduler().is_imminent(current_layer, lookahead_layers=1)
+        self._client.set_pause_guard(active)
+
     def _toggle_pause_at_selected_layer(self, human_layer: int) -> None:
         try:
             layer = int(human_layer) - 1
@@ -249,6 +257,7 @@ class FollowerCoordinator(_FollowerRuntime):
         scheduler = self._scheduler()
         if layer in self._scheduled_pause_layers:
             scheduler.remove(layer)
+            self._update_pause_poll_guard()
             self._set_status(f"Removed end-of-layer PAUSE after layer {layer + 1}")
             self._sync_preview_button_state()
             return
@@ -257,6 +266,7 @@ class FollowerCoordinator(_FollowerRuntime):
             self._sync_preview_button_state()
             return
         scheduler.schedule(layer)
+        self._update_pause_poll_guard()
         self._set_status(f"PAUSE scheduled for end of layer {layer + 1}")
         self._sync_preview_button_state()
 
@@ -267,10 +277,12 @@ class FollowerCoordinator(_FollowerRuntime):
             return
         if self._scheduler().remove(layer):
             self._set_status(f"Removed end-of-layer PAUSE after layer {layer + 1}")
+        self._update_pause_poll_guard()
         self._sync_preview_button_state()
 
     def _clear_scheduled_pauses_from_preview(self) -> None:
         count = self._scheduler().clear()
+        self._client.set_pause_guard(False)
         if count:
             suffix = "pause" if count == 1 else "pauses"
             self._set_status(f"Cleared {count} scheduled end-of-layer {suffix}")
@@ -278,18 +290,22 @@ class FollowerCoordinator(_FollowerRuntime):
 
     def _clear_scheduled_pauses(self, *, abort_request: bool = False) -> None:
         self._scheduler().clear()
+        self._client.set_pause_guard(False)
         if abort_request:
             self._abort_pause_reply()
         self._sync_preview_button_state()
 
     def _maybe_trigger_scheduled_pause(self, current_layer: int) -> None:
         if not self._scheduled_pause_layers or self._remote_job_key is None:
+            self._client.set_pause_guard(False)
             return
         try:
             current_layer = int(current_layer)
         except (TypeError, ValueError):
+            self._client.set_pause_guard(False)
             return
         due = self._scheduler().consume_due(current_layer)
+        self._update_pause_poll_guard(current_layer)
         if not due:
             return
         self._sync_preview_button_state()
@@ -317,8 +333,10 @@ class FollowerCoordinator(_FollowerRuntime):
         if self._active_machine_id != before:
             self._print_tracker.reset()
             self._follower_session.set_job(None)
+            self._client.set_pause_guard(False)
         self._follower_session.bind_machine(self._active_machine_id, self._active_machine_name)
 
     def _invalidate_lifecycle(self, reason: str, abort_network: bool = True) -> None:
         super()._invalidate_lifecycle(reason, abort_network=abort_network)
+        self._client.set_pause_guard(False)
         self._follower_session.invalidate(reason, self._lifecycle_generation)
