@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Stage v3 follow-up patch part 3
 - 2026-09-06: Stage v3 follow-up patch part 2
 - 2026-09-06: Stage v3 follow-up patch part 1
 - 2026-09-06: Retain Monitor dashboard compatibility markers
