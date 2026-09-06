@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Iterable, MutableSet
 
-from .Core import due_end_of_layer_pauses
+try:
+    from .Core import due_end_of_layer_pauses
+except ImportError:  # test/import convenience
+    from Core import due_end_of_layer_pauses
 
 
 class PauseScheduler:
