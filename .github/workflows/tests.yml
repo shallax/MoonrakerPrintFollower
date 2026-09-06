@@ -3,7 +3,7 @@ name: Tests
 on:
   push:
     branches:
-      - main
+      - "**"
   pull_request:
 
 jobs:
@@ -43,8 +43,9 @@ jobs:
       - name: Run all discovered tests
         run: python -m unittest discover -s tests -p "test_*.py"
 
-      - name: Read package version
-        id: package_meta
+      - name: Read package and CI metadata
+        id: build_meta
+        shell: bash
         run: |
           python - <<'PY'
           import json
@@ -53,26 +54,31 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"version={package['package_version']}\n")
           PY
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          BRANCH="${BRANCH//\//-}"
+          BRANCH="$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')"
+          SHORT_SHA="${GITHUB_SHA:0:8}"
+          echo "artifact_name=MoonrakerPrintFollower-ci-${BRANCH}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Build Cura package
         run: python tools/build_curapackage.py
 
       - name: Verify exact Cura package contents
-        run: python tools/verify_curapackage.py dist/MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}.curapackage
+        run: python tools/verify_curapackage.py dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}.curapackage
 
       - name: Build Cura Marketplace source ZIP
         run: python tools/build_marketplace_source.py
 
       - name: Verify Cura Marketplace source ZIP
-        run: python tools/verify_marketplace_source.py dist/MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}-source.zip
+        run: python tools/verify_marketplace_source.py dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}-source.zip
 
-      - name: Upload release candidate artifacts
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Upload CI artifacts
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
-          name: MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}-release-candidates
+          name: ${{ steps.build_meta.outputs.artifact_name }}
           path: |
-            dist/MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}.curapackage
-            dist/MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}-source.zip
+            dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}.curapackage
+            dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}-source.zip
           if-no-files-found: error
           retention-days: 30
