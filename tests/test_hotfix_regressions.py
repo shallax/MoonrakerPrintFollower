@@ -45,7 +45,7 @@ class HotfixRegressionTests(unittest.TestCase):
         self.assertIn("MoonrakerMonitorTypedControls", OUTPUT_PLUGIN)
         self.assertIn('"MoonrakerMonitorDashboard.qml"', OUTPUT_PLUGIN)
 
-    def test_macro_parameter_inference_types_defaults(self):
+    def _load_typed_model(self):
         class DummySignal:
             def emit(self, *_args, **_kwargs):
                 pass
@@ -77,7 +77,11 @@ class HotfixRegressionTests(unittest.TestCase):
         package = types.ModuleType("plugins")
         package.__path__ = []
         base_module = types.ModuleType("plugins.MoonrakerMonitorControls")
-        base_module.MoonrakerMonitorModel = type("BaseMoonrakerMonitorModel", (), {})
+        base_module.MoonrakerMonitorModel = type(
+            "BaseMoonrakerMonitorModel",
+            (),
+            {"_want_aux_object": staticmethod(lambda _name: False)},
+        )
 
         names = ["PyQt6", "PyQt6.QtCore", "plugins", "plugins.MoonrakerMonitorControls"]
         old = {name: sys.modules.get(name) for name in names}
@@ -88,30 +92,64 @@ class HotfixRegressionTests(unittest.TestCase):
             sys.modules["plugins.MoonrakerMonitorControls"] = base_module
             namespace = {"__name__": "plugins.MoonrakerMonitorTypedControls", "__package__": "plugins"}
             exec(compile(TYPED_CONTROLS, "MoonrakerMonitorTypedControls.py", "exec"), namespace)
-            model = namespace["MoonrakerMonitorModel"]
-            definitions = model._infer_macro_parameters(
-                """
-                {% set enabled = params.ENABLED|default(True) %}
-                {% set count = params.COUNT|default(5)|int %}
-                {% set scale = params.SCALE|default(0.25)|float %}
-                {% set label = params.LABEL|default('test') %}
-                {% set required = params.REQUIRED|int %}
-                """
-            )
-            by_name = {item["name"]: item for item in definitions}
-            self.assertEqual(by_name["ENABLED"]["type"], "bool")
-            self.assertEqual(by_name["ENABLED"]["default"], "True")
-            self.assertEqual(by_name["COUNT"]["type"], "int")
-            self.assertEqual(by_name["COUNT"]["default"], "5")
-            self.assertEqual(by_name["SCALE"]["type"], "float")
-            self.assertEqual(by_name["LABEL"]["type"], "string")
-            self.assertTrue(by_name["REQUIRED"]["required"])
+            return namespace["MoonrakerMonitorModel"]
         finally:
             for name, value in old.items():
                 if value is None:
                     sys.modules.pop(name, None)
                 else:
                     sys.modules[name] = value
+
+    def test_macro_parameter_inference_types_defaults(self):
+        model = self._load_typed_model()
+        definitions = model._infer_macro_parameters(
+            """
+            {% set enabled = params.ENABLED|default(True) %}
+            {% set count = params.COUNT|default(5)|int %}
+            {% set scale = params.SCALE|default(0.25)|float %}
+            {% set label = params.LABEL|default('test') %}
+            {% set required = params.REQUIRED|int %}
+            """
+        )
+        by_name = {item["name"]: item for item in definitions}
+        self.assertEqual(by_name["ENABLED"]["type"], "bool")
+        self.assertEqual(by_name["ENABLED"]["default"], "True")
+        self.assertEqual(by_name["COUNT"]["type"], "int")
+        self.assertEqual(by_name["COUNT"]["default"], "5")
+        self.assertEqual(by_name["SCALE"]["type"], "float")
+        self.assertEqual(by_name["LABEL"]["type"], "string")
+        self.assertTrue(by_name["REQUIRED"]["required"])
+
+    def test_pwm_output_pin_discovery_and_scaled_set_pin(self):
+        self.assertIn('lower.startswith("output_pin ")', TYPED_CONTROLS)
+        self.assertIn('section.get("pwm")', TYPED_CONTROLS)
+        self.assertIn("pwmOutputItems", DASHBOARD_QML)
+        self.assertIn("setPwmOutput", DASHBOARD_QML)
+        self.assertIn('text: "PWM outputs"', DASHBOARD_QML)
+
+        model = self._load_typed_model()
+        instance = model.__new__(model)
+        instance._aux_status = {
+            "configfile": {
+                "config": {
+                    "output_pin case_light": {"pwm": "True", "scale": "2.0"},
+                    "output_pin relay": {"pwm": "False"},
+                }
+            },
+            "output_pin case_light": {"value": 1.0},
+            "output_pin relay": {"value": 1.0},
+        }
+        items = instance._build_pwm_output_items()
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["pin"], "case_light")
+        self.assertEqual(items[0]["percent"], 50)
+        self.assertEqual(items[0]["scale"], 2.0)
+
+        instance._pwm_output_items = items
+        sent = []
+        instance._send_quick_gcode = lambda channel, script: sent.append((channel, script))
+        instance.setPwmOutput("output_pin case_light", 75)
+        self.assertEqual(sent[-1][1], "SET_PIN PIN=case_light VALUE=1.5")
 
 
 if __name__ == "__main__":

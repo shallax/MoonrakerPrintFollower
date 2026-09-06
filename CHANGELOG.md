@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Cover PWM output-pin Monitor controls
 - 2026-09-06: Show PWM output sliders in Monitor
 - 2026-09-06: Add PWM output-pin controls to Monitor
 - 2026-09-06: Keep source contract at version 3.0.0
