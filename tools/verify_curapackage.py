@@ -5,7 +5,7 @@ import json
 import pathlib
 import zipfile
 
-from build_curapackage import PACKAGE_JSON, PLUGIN_ROOT, archive_name, expected_archive_entries, iter_plugin_sources
+from build_curapackage import LICENSE_FILE, PACKAGE_JSON, PLUGIN_ROOT, archive_name, expected_archive_entries, iter_plugin_sources
 
 
 def verify(path: pathlib.Path) -> None:
@@ -26,6 +26,8 @@ def verify(path: pathlib.Path) -> None:
         embedded_package = json.loads(archive.read("package.json").decode("utf-8"))
         if embedded_package != package:
             raise RuntimeError("embedded package.json differs from source")
+        if archive.read("LICENSE") != LICENSE_FILE.read_bytes():
+            raise RuntimeError("embedded LICENSE differs from source")
         plugin_meta_path = f"files/plugins/{package_id}/plugin.json"
         plugin_meta = json.loads(archive.read(plugin_meta_path).decode("utf-8"))
         if str(plugin_meta.get("version")) != version:
