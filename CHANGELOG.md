@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Remove failed control-fix workflow
 - 2026-09-06: Apply v3 control fixes
 - 2026-09-06: Remove final v3 polish CI trigger
 - 2026-09-06: Trigger final v3 polish package verification
