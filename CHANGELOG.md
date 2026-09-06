@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Fix slider polish workflow runner
 - 2026-09-06: Apply v3 tuning and LED slider polish
 - 2026-09-06: Describe neon orange mesh boundary in empty Preview
 - 2026-09-06: Describe neon orange mesh boundary in Preview
