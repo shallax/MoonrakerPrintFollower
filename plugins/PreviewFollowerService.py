@@ -16,13 +16,17 @@ class PreviewExpectation:
 
 
 class PreviewFollowerService:
-    """Authoritative owner of follower-originated Cura Preview position state."""
+    """Authoritative owner of Preview attachment and follower-written position."""
 
     def __init__(self) -> None:
         self.expected = PreviewExpectation()
+        self.following_paused = False
 
     def clear(self) -> None:
         self.expected = PreviewExpectation()
+
+    def set_paused(self, paused: bool) -> None:
+        self.following_paused = bool(paused)
 
     def remember(self, view) -> None:
         try:
