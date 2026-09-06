@@ -1,0 +1,44 @@
+name: Apply v3 release hardening v2
+
+on:
+  push:
+    branches:
+      - v3-unified-moonraker
+
+permissions:
+  contents: write
+
+jobs:
+  apply-release-hardening:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out v3 branch
+        uses: actions/checkout@v4
+        with:
+          ref: v3-unified-moonraker
+          fetch-depth: 0
+
+      - name: Apply release hardening
+        run: |
+          python tools/apply_v3_release_hardening.py
+          git add -A
+
+      - name: Compile and run release checks
+        run: |
+          python -m compileall -q plugins tools tests
+          python tools/check_qml.py plugins
+          python -m unittest discover -s tests -p 'test_*.py'
+          python tools/build_curapackage.py
+          python tools/verify_curapackage.py dist/MoonrakerPrintFollower-v3.0.0.curapackage
+
+      - name: Commit release hardening
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/apply-v3-release-hardening.yml .github/workflows/apply-v3-release-hardening-v2.yml tools/apply_v3_release_hardening.py
+          find . -type d -name __pycache__ -prune -exec rm -rf {} +
+          rm -rf dist
+          git add -A
+          git commit -m "Harden v3.0.0 release candidate"
+          git push origin HEAD:v3-unified-moonraker
