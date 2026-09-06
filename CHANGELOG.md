@@ -86,6 +86,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Remove obsolete v2.0.0 Cura package artifact
 - 2026-09-06: Finalize v3.0.0 release tree
 - 2026-09-06: Run final GitHub release publication
 - 2026-09-06: Add one-shot final release publisher
