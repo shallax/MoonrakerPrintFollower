@@ -140,12 +140,14 @@ Item
             UM.Label
             {
                 width: parent.width
-                height: Math.max(implicitHeight, 18 * screenScaleFactor)
+                height: 36 * screenScaleFactor
                 text: base.selectedLayerEtaText.length > 0 ? base.selectedLayerEtaText : " "
                 opacity: base.selectedLayerEtaText.length > 0 ? 1.0 : 0.0
                 color: UM.Theme.getColor("text")
                 font: UM.Theme.getFont("default")
                 wrapMode: Text.WordWrap
+                verticalAlignment: Text.AlignVCenter
+                clip: true
             }
 
             Column
