@@ -8,6 +8,8 @@ from UM.Logger import Logger
 from .FollowerRuntime import MoonrakerPrintFollower as _FollowerRuntime
 from .FollowerSession import FollowerSession
 from .GCodeRepository import GCodeRepository
+from .MoonrakerProtocol import gcode_script_endpoint
+from .MoonrakerSession import RequestCategory
 from .PauseScheduler import PauseScheduler
 from .PreviewController import PreviewController
 from .PrintTracker import PrintObservation, PrintTracker
@@ -21,6 +23,8 @@ class FollowerCoordinator(_FollowerRuntime):
     prevents the strangler boundary from creating two independent sources of truth.
     """
 
+    SCHEDULED_PAUSE_COMMAND = "ScheduledPause"
+
     def __init__(self, application) -> None:
         self._preview_controller = PreviewController()
         self._print_tracker = PrintTracker(self.ACTIVE_STATES)
@@ -28,10 +32,13 @@ class FollowerCoordinator(_FollowerRuntime):
         self._follower_session = FollowerSession()
         self._pause_layers: set[int] = set()
         self._pause_scheduler = PauseScheduler(self._pause_layers)
+        self._scheduled_pause_target: Optional[int] = None
+        self._scheduled_pause_observed_layer: Optional[int] = None
+        self._scheduled_pause_request_generation = 0
         super().__init__(application)
 
-        # The compatibility runtime has specialised reply lifecycles for metadata,
-        # PAUSE and streamed G-code downloads. Keep those lifecycles, but put every
+        # The compatibility runtime has specialised reply lifecycles for metadata
+        # and streamed G-code downloads. Keep those lifecycles, but put every
         # Moonraker request on the same Qt connection pool owned by the shared client.
         shared_network = self._client.transport.network
         self._network = shared_network
@@ -39,6 +46,10 @@ class FollowerCoordinator(_FollowerRuntime):
         self._file_network = shared_network
         self._metadata_network = shared_network
         self._follower_session.bind_machine(self._active_machine_id, self._active_machine_name)
+        try:
+            self._client.commandChanged.connect(self._on_follower_command_changed)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Compatibility attribute bridge: extracted services are authoritative.
@@ -310,6 +321,94 @@ class FollowerCoordinator(_FollowerRuntime):
             return
         self._sync_preview_button_state()
         self._send_scheduled_pause(due[0], current_layer)
+
+    def _abort_pause_reply(self) -> None:
+        self._scheduled_pause_request_generation += 1
+        self._client.transport.cancel("follower", "scheduled-pause")
+        self._pause_reply = None
+        self._pause_reply_job_key = None
+        self._scheduled_pause_target = None
+        self._scheduled_pause_observed_layer = None
+
+    def _send_scheduled_pause(self, target_layer: int, current_layer: int) -> None:
+        config = self._config_store.get()
+        base_url = self._normalise_base_url(config.url)
+        if not self._url_is_usable(base_url):
+            self._set_status(f"Could not PAUSE after layer {target_layer + 1}: Moonraker URL unavailable")
+            return
+
+        self._scheduled_pause_request_generation += 1
+        request_generation = self._scheduled_pause_request_generation
+        lifecycle_generation = self._lifecycle_generation
+        job_key = self._remote_job_key
+        self._scheduled_pause_target = target_layer
+        self._scheduled_pause_observed_layer = current_layer
+        self._client.track_command(self.SCHEDULED_PAUSE_COMMAND, {"paused"}, timeout_s=10.0)
+
+        started = self._client.transport.send_json(
+            "follower",
+            "scheduled-pause",
+            "POST",
+            gcode_script_endpoint(base_url),
+            lambda payload, error, rg=request_generation, lg=lifecycle_generation, j=job_key:
+                self._on_scheduled_pause_http_finished(payload, error, rg, lg, j),
+            body={"script": "PAUSE"},
+            replace=False,
+            category=RequestCategory.COMMAND.value,
+        )
+        if not started:
+            self._client.fail_command(self.SCHEDULED_PAUSE_COMMAND, "another scheduled PAUSE request is already in flight")
+            self._set_status(f"Could not PAUSE after layer {target_layer + 1}: request already in flight")
+            return
+        Logger.log(
+            "i",
+            "Moonraker Print Follower requesting PAUSE after scheduled layer %d (observed layer %d)",
+            target_layer + 1,
+            current_layer + 1,
+        )
+
+    def _on_scheduled_pause_http_finished(
+        self,
+        _payload: Optional[Dict[str, Any]],
+        error: Optional[str],
+        request_generation: int,
+        lifecycle_generation: int,
+        job_key: Optional[Tuple[str, int, int]],
+    ) -> None:
+        if (
+            request_generation != self._scheduled_pause_request_generation
+            or lifecycle_generation != self._lifecycle_generation
+            or job_key != self._remote_job_key
+        ):
+            return
+        target_layer = self._scheduled_pause_target
+        observed_layer = self._scheduled_pause_observed_layer
+        if error:
+            self._client.fail_command(self.SCHEDULED_PAUSE_COMMAND, error)
+            if target_layer is not None:
+                self._set_status(f"PAUSE after layer {target_layer + 1} failed: {error}")
+            return
+        self._client.accept_command(self.SCHEDULED_PAUSE_COMMAND)
+        if target_layer is not None:
+            suffix = f" (transition observed at layer {(observed_layer or 0) + 1})"
+            self._set_status(f"PAUSE accepted after layer {target_layer + 1}; waiting for printer confirmation{suffix}")
+
+    def _on_follower_command_changed(self, event: Any) -> None:
+        if not isinstance(event, dict) or str(event.get("name") or "") != self.SCHEDULED_PAUSE_COMMAND:
+            return
+        outcome = str(event.get("outcome") or "")
+        target_layer = self._scheduled_pause_target
+        if outcome == "confirmed":
+            if target_layer is not None:
+                self._set_status(f"PAUSE confirmed after layer {target_layer + 1}")
+            self._scheduled_pause_target = None
+            self._scheduled_pause_observed_layer = None
+        elif outcome in {"failed", "timed_out"}:
+            detail = str(event.get("detail") or outcome.replace("_", " "))
+            if target_layer is not None:
+                self._set_status(f"PAUSE after layer {target_layer + 1}: {detail}")
+            self._scheduled_pause_target = None
+            self._scheduled_pause_observed_layer = None
 
     def _adopt_cached_gcode_path(
         self,
