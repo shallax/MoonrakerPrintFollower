@@ -14,7 +14,7 @@ if str(pathlib.Path(__file__).resolve().parent) not in sys.path:
 from fake_moonraker import FakeMoonraker
 from MoonrakerSession import MoonrakerSessionState, PollPolicy, RequestCategory, RequestCoalescer
 from PauseScheduleService import PauseScheduleService
-from PrintTracker import PrintObservation, PrintTracker
+from RemoteJobService import RemoteJobService
 
 
 class V31ArchitectureTests(unittest.TestCase):
@@ -62,7 +62,7 @@ class V31ArchitectureTests(unittest.TestCase):
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes[0].outcome, "timed_out")
 
-    def test_scheduled_pause_flow_tightens_polling_and_confirms_from_status(self):
+    def test_scheduled_pause_tightens_polling_and_confirms_from_status(self):
         fake = FakeMoonraker([
             {"print_stats": {"state": "printing", "info": {"current_layer": 9}}},
             {"print_stats": {"state": "printing", "info": {"current_layer": 10}}},
@@ -101,26 +101,82 @@ class V31ArchitectureTests(unittest.TestCase):
         self.assertEqual(fake.commands[-1].name, "PAUSE")
 
     def test_same_filename_restart_gets_new_print_run_identity(self):
-        tracker = PrintTracker({"printing", "paused"})
-        first = tracker.observe(
-            PrintObservation("printing", "part.gcode", 1000, 600, 120),
+        jobs = RemoteJobService({"printing", "paused"})
+        first = jobs.observe(
+            {"state": "printing", "filename": "part.gcode", "print_duration": 120},
+            {"file_size": 1000, "file_position": 600},
             previous_state="standby",
         )
         self.assertTrue(first.new_job)
-        second = tracker.observe(
-            PrintObservation("printing", "part.gcode", 1000, 800, 180),
+        second = jobs.observe(
+            {"state": "printing", "filename": "part.gcode", "print_duration": 180},
+            {"file_size": 1000, "file_position": 800},
             previous_state="printing",
         )
         self.assertFalse(second.new_job)
-        restarted = tracker.observe(
-            PrintObservation("printing", "part.gcode", 1000, 20, 3),
+        restarted = jobs.observe(
+            {"state": "printing", "filename": "part.gcode", "print_duration": 3},
+            {"file_size": 1000, "file_position": 20},
             previous_state="printing",
         )
         self.assertTrue(restarted.new_job)
         self.assertNotEqual(first.key, restarted.key)
 
-    def test_active_architecture_has_one_service_per_domain(self):
+    def test_long_print_simulation_keeps_one_monotonic_shared_snapshot(self):
+        statuses = [
+            {
+                "print_stats": {
+                    "state": "printing",
+                    "filename": "long-print.gcode",
+                    "print_duration": float(layer * 10),
+                    "info": {"current_layer": layer},
+                },
+                "virtual_sdcard": {
+                    "file_size": 20_000_000,
+                    "file_position": layer * 9000,
+                },
+            }
+            for layer in range(1, 2001)
+        ]
+        fake = FakeMoonraker(statuses)
+        session = MoonrakerSessionState()
+        for tick in range(2000):
+            status, changes = fake.poll_session(session, now=float(tick))
+            self.assertFalse(changes)
+            self.assertEqual(status["print_stats"]["info"]["current_layer"], tick + 1)
+        self.assertEqual(session.snapshot.revision, 2000)
+        self.assertEqual(fake.remaining, 0)
+        self.assertEqual(len(fake.requests), 2000)
+
+    def test_exact_service_boundaries_exist_without_duplicate_wrappers(self):
+        required = (
+            "RemoteJobService.py",
+            "RemoteFileService.py",
+            "GCodeIndexService.py",
+            "PreviewFollowerService.py",
+            "PauseScheduleService.py",
+            "CuraLifecycleBridge.py",
+            "MoonrakerSession.py",
+        )
+        for name in required:
+            self.assertTrue((PLUGINS / name).is_file(), name)
+        redundant = (
+            "PrintTracker.py",
+            "GCodeRepository.py",
+            "PreviewController.py",
+            "PauseScheduler.py",
+            "FollowerSession.py",
+        )
+        for name in redundant:
+            self.assertFalse((PLUGINS / name).exists(), name)
+
+    def test_public_follower_is_thin_and_coordinator_uses_exact_services(self):
+        facade = (PLUGINS / "MoonrakerPrintFollower.py").read_text(encoding="utf-8")
         coordinator = (PLUGINS / "FollowerCoordinator.py").read_text(encoding="utf-8")
+        transport = (PLUGINS / "FollowerTransport.py").read_text(encoding="utf-8")
+        runtime = (PLUGINS / "FollowerRuntime.py").read_text(encoding="utf-8")
+        self.assertLess(len(facade.splitlines()), 20)
+        self.assertIn("class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime)", coordinator)
         for token in (
             "RemoteJobService",
             "RemoteFileService",
@@ -128,19 +184,8 @@ class V31ArchitectureTests(unittest.TestCase):
             "PreviewFollowerService",
             "PauseScheduleService",
             "CuraLifecycleBridge",
-            "FollowerTransportMixin",
         ):
             self.assertIn(token, coordinator)
-        for obsolete in ("PauseScheduler.py", "PreviewController.py", "FollowerStateBridge.py"):
-            self.assertFalse((PLUGINS / obsolete).exists(), obsolete)
-
-    def test_public_follower_is_thin_and_runtime_is_compatibility_boundary(self):
-        facade = (PLUGINS / "MoonrakerPrintFollower.py").read_text(encoding="utf-8")
-        coordinator = (PLUGINS / "FollowerCoordinator.py").read_text(encoding="utf-8")
-        transport = (PLUGINS / "FollowerTransport.py").read_text(encoding="utf-8")
-        runtime = (PLUGINS / "FollowerRuntime.py").read_text(encoding="utf-8")
-        self.assertLess(len(facade.splitlines()), 20)
-        self.assertIn("class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime)", coordinator)
         self.assertIn("_ensure_remote_metadata", transport)
         self.assertIn("_begin_gcode_download", transport)
         self.assertIn("_send_scheduled_pause", transport)
