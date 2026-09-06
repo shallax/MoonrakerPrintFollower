@@ -102,8 +102,14 @@ Component
                 Flickable
                 {
                     id: controlFlick
-                    anchors.fill: parent
-                    anchors.margins: UM.Theme.getSize("default_margin").width
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: emergencyDock.top
+                    anchors.topMargin: UM.Theme.getSize("default_margin").height
+                    anchors.leftMargin: UM.Theme.getSize("default_margin").width
+                    anchors.rightMargin: UM.Theme.getSize("default_margin").width
+                    anchors.bottomMargin: UM.Theme.getSize("default_margin").height
                     clip: true
                     contentWidth: width
                     contentHeight: controlContent.implicitHeight
@@ -359,35 +365,48 @@ Component
                                 UM.Label { text: "Z-offset nudges"; font: UM.Theme.getFont("medium_bold"); Layout.fillWidth: true }
                                 UM.Label { text: root.printer != null ? "Current " + root.printer.zOffsetText : "Current —"; font: UM.Theme.getFont("medium_bold") }
                             }
-                            RowLayout
+                            Column
                             {
+                                id: zOffsetGrid
                                 Layout.fillWidth: true
                                 spacing: 2 * screenScaleFactor
-                                Repeater
+                                property real buttonSpacing: 2 * screenScaleFactor
+                                property real buttonWidth: (width - 3 * buttonSpacing) / 4
+
+                                Row
                                 {
-                                    model: [-0.05, -0.025, -0.01, -0.005]
-                                    Cura.SecondaryButton
+                                    width: parent.width
+                                    spacing: zOffsetGrid.buttonSpacing
+                                    Repeater
                                     {
-                                        Layout.fillWidth: true
-                                        text: modelData.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
-                                        enabled: root.printer != null && !root.printer.actionBusy
-                                        onClicked: root.printer.adjustZOffset(modelData)
+                                        model: [-0.005, -0.01, -0.025, -0.05]
+                                        Cura.SecondaryButton
+                                        {
+                                            width: zOffsetGrid.buttonWidth
+                                            height: UM.Theme.getSize("action_button").height
+                                            fixedWidthMode: true
+                                            text: modelData.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
+                                            enabled: root.printer != null && !root.printer.actionBusy
+                                            onClicked: root.printer.adjustZOffset(modelData)
+                                        }
                                     }
                                 }
-                            }
-                            RowLayout
-                            {
-                                Layout.fillWidth: true
-                                spacing: 2 * screenScaleFactor
-                                Repeater
+                                Row
                                 {
-                                    model: [0.005, 0.01, 0.025, 0.05]
-                                    Cura.SecondaryButton
+                                    width: parent.width
+                                    spacing: zOffsetGrid.buttonSpacing
+                                    Repeater
                                     {
-                                        Layout.fillWidth: true
-                                        text: "+" + modelData.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
-                                        enabled: root.printer != null && !root.printer.actionBusy
-                                        onClicked: root.printer.adjustZOffset(modelData)
+                                        model: [0.005, 0.01, 0.025, 0.05]
+                                        Cura.SecondaryButton
+                                        {
+                                            width: zOffsetGrid.buttonWidth
+                                            height: UM.Theme.getSize("action_button").height
+                                            fixedWidthMode: true
+                                            text: "+" + modelData.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
+                                            enabled: root.printer != null && !root.printer.actionBusy
+                                            onClicked: root.printer.adjustZOffset(modelData)
+                                        }
                                     }
                                 }
                             }
@@ -575,53 +594,80 @@ Component
                             }
                         }
 
-                        Rectangle { Layout.fillWidth: true; height: UM.Theme.getSize("default_lining").height; color: UM.Theme.getColor("lining") }
-                        UM.Label { text: "Emergency"; font: UM.Theme.getFont("medium_bold") }
-
-                        Item
-                        {
-                            id: emergencyButton
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 46 * screenScaleFactor
-                            property int clicks: root.printer != null ? root.printer.emergencyStopClicks : 0
-                            Rectangle
-                            {
-                                anchors.fill: parent
-                                radius: UM.Theme.getSize("default_radius").width
-                                color: "transparent"
-                                border.color: "#d32f2f"
-                                border.width: 2 * screenScaleFactor
-                                clip: true
-                                Rectangle
-                                {
-                                    anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                                    width: parent.width * Math.min(1.0, emergencyButton.clicks / 3.0)
-                                    color: "#d32f2f"
-                                }
-                                UM.Label
-                                {
-                                    anchors.centerIn: parent
-                                    text: emergencyButton.clicks === 0 ? "EMERGENCY STOP — click 3 times" : "EMERGENCY STOP — " + emergencyButton.clicks + "/3"
-                                    font: UM.Theme.getFont("medium_bold")
-                                    color: "black"
-                                }
-                                MouseArea
-                                {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: if (root.printer != null) root.printer.emergencyStopClick()
-                                }
-                            }
-                        }
-                        UM.Label
-                        {
-                            text: "Each click must be within 1 second of the previous click. The third click stops the printer immediately."
-                            color: UM.Theme.getColor("text_inactive")
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                        }
                     }
                 }
+
+                Column
+                {
+                    id: emergencyDock
+                    z: 20
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.leftMargin: UM.Theme.getSize("default_margin").width
+                    anchors.rightMargin: UM.Theme.getSize("default_margin").width
+                    anchors.bottomMargin: UM.Theme.getSize("default_margin").height
+                    spacing: UM.Theme.getSize("thin_margin").height
+
+                    Rectangle
+                    {
+                        width: parent.width
+                        height: UM.Theme.getSize("default_lining").height
+                        color: UM.Theme.getColor("lining")
+                    }
+                    UM.Label
+                    {
+                        width: parent.width
+                        text: "Emergency"
+                        font: UM.Theme.getFont("medium_bold")
+                    }
+                    Item
+                    {
+                        id: emergencyButton
+                        width: parent.width
+                        height: 46 * screenScaleFactor
+                        property int clicks: root.printer != null ? root.printer.emergencyStopClicks : 0
+                        Rectangle
+                        {
+                            anchors.fill: parent
+                            radius: UM.Theme.getSize("default_radius").width
+                            color: "transparent"
+                            border.color: "#d32f2f"
+                            border.width: 2 * screenScaleFactor
+                            clip: true
+                            Rectangle
+                            {
+                                anchors.left: parent.left
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                width: parent.width * Math.min(1.0, emergencyButton.clicks / 3.0)
+                                color: "#d32f2f"
+                            }
+                            UM.Label
+                            {
+                                anchors.centerIn: parent
+                                text: emergencyButton.clicks === 0 ? "EMERGENCY STOP — click 3 times" : "EMERGENCY STOP — " + emergencyButton.clicks + "/3"
+                                font: UM.Theme.getFont("medium_bold")
+                                color: "black"
+                            }
+                            MouseArea
+                            {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: if (root.printer != null) root.printer.emergencyStopClick()
+                            }
+                        }
+                    }
+                    UM.Label
+                    {
+                        width: parent.width
+                        text: "Each click must be within 1 second of the previous click. The third click stops the printer immediately."
+                        color: UM.Theme.getColor("text_inactive")
+                        font: UM.Theme.getFont("default")
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
             }
         }
     }

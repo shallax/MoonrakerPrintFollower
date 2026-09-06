@@ -146,6 +146,22 @@ class V3FollowupRegressionTests(unittest.TestCase):
     def test_live_tuning_slider_ranges_expand_from_accepted_value(self):
         self.assertIn("to: Math.max(200, root.printer != null ? Math.ceil(root.printer.speedFactorPercent * 2) : 200)", DASHBOARD_QML)
         self.assertIn("to: Math.max(200, root.printer != null ? Math.ceil(root.printer.flowFactorPercent * 2) : 200)", DASHBOARD_QML)
+        self.assertIn("value = max(10, int(percent))", CONTROLS)
+        self.assertIn("value = max(50, int(percent))", CONTROLS)
+        self.assertNotIn("min(200, int(percent))", CONTROLS)
+        self.assertNotIn("min(150, int(percent))", CONTROLS)
+
+    def test_z_offset_buttons_are_opposites_with_equal_click_zones(self):
+        self.assertIn("id: zOffsetGrid", DASHBOARD_QML)
+        self.assertIn("model: [-0.005, -0.01, -0.025, -0.05]", DASHBOARD_QML)
+        self.assertIn("model: [0.005, 0.01, 0.025, 0.05]", DASHBOARD_QML)
+        self.assertEqual(DASHBOARD_QML.count("width: zOffsetGrid.buttonWidth"), 2)
+        self.assertGreaterEqual(DASHBOARD_QML.count("fixedWidthMode: true"), 2)
+
+    def test_emergency_stop_is_pinned_outside_scrollable_controls(self):
+        self.assertIn("anchors.bottom: emergencyDock.top", DASHBOARD_QML)
+        self.assertIn("id: emergencyDock", DASHBOARD_QML)
+        self.assertEqual(DASHBOARD_QML.count("id: emergencyButton"), 1)
 
     def test_emergency_stop_text_stays_black_during_click_sequence(self):
         self.assertIn('color: "black"', DASHBOARD_QML)

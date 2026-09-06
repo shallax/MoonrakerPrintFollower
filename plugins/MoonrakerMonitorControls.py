@@ -549,7 +549,9 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
     @pyqtSlot(int)
     def setSpeedFactor(self, percent: int) -> None:
         try:
-            value = max(10, min(200, int(percent)))
+            # Klipper accepts speed factors above 200%. The UI expands its
+            # range from the accepted live value, so do not silently clamp it here.
+            value = max(10, int(percent))
         except (TypeError, ValueError):
             return
         self._send_quick_gcode("speed-factor", f"M220 S{value}")
@@ -557,7 +559,9 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
     @pyqtSlot(int)
     def setFlowFactor(self, percent: int) -> None:
         try:
-            value = max(50, min(150, int(percent)))
+            # Match the self-expanding UI range rather than imposing the old
+            # 150% ceiling after the user has deliberately expanded it.
+            value = max(50, int(percent))
         except (TypeError, ValueError):
             return
         self._send_quick_gcode("flow-factor", f"M221 S{value}")
