@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional, Tuple
 
-from .MoonrakerMonitorModel import MoonrakerMonitorModel as _BaseMoonrakerMonitorModel
+from .MoonrakerMonitorSession import MoonrakerMonitorModel as _BaseMoonrakerMonitorModel
 
 
 class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
@@ -58,10 +58,6 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             except (TypeError, ValueError, AttributeError):
                 target_layer = None
 
-        # Many Klipper configurations never populate print_stats.info.current_layer.
-        # Once the follower has indexed the active G-code, file_position is enough
-        # to determine which layer byte range Klipper is currently consuming. This
-        # also handles variable layer heights without estimating from Z.
         if target_layer is None:
             try:
                 indexed_filename = getattr(self._follower, "_remote_index_filename", None)
@@ -131,9 +127,6 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             else:
                 return middle
 
-        # file_position may land in slicer header/trailer bytes between indexed
-        # ranges. Attribute a gap to the most recently started layer, but leave
-        # pre-first-layer positions unresolved so the Z fallback can handle them.
         if low > 0:
             return min(low - 1, len(ranges) - 1)
         return None
