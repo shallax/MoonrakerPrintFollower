@@ -9,9 +9,9 @@ PLUGINS = ROOT / "plugins"
 FACADE = (PLUGINS / "MoonrakerPrintFollower.py").read_text()
 COORDINATOR = (PLUGINS / "FollowerCoordinator.py").read_text()
 RUNTIME = (PLUGINS / "FollowerRuntime.py").read_text()
-FOLLOWER = "\n".join((FACADE, COORDINATOR, RUNTIME))
 CLIENT = (PLUGINS / "MoonrakerClient.py").read_text()
 SESSION = (PLUGINS / "MoonrakerSession.py").read_text()
+TRANSPORT = (PLUGINS / "MoonrakerTransport.py").read_text()
 MONITOR = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
 MONITOR_SESSION = (PLUGINS / "MoonrakerMonitorSession.py").read_text()
 OUTPUT = (PLUGINS / "MoonrakerOutputDevice.py").read_text()
@@ -37,15 +37,33 @@ class SourceContractTests(unittest.TestCase):
         self.assertLess(len(FACADE.splitlines()), 20)
         self.assertIn("FollowerCoordinator", FACADE)
         for name in (
-            "FollowerRuntime.py", "FollowerCoordinator.py", "FollowerSession.py",
-            "PrintTracker.py", "PauseScheduler.py", "PreviewController.py",
-            "GCodeRepository.py", "MoonrakerSession.py",
+            "FollowerRuntime.py",
+            "FollowerCoordinator.py",
+            "FollowerSession.py",
+            "RemoteJobService.py",
+            "PrintTracker.py",
+            "RemoteFileService.py",
+            "GCodeRepository.py",
+            "GCodeIndexService.py",
+            "PauseScheduleService.py",
+            "PreviewFollowerService.py",
+            "CuraLifecycleBridge.py",
+            "FollowerTransport.py",
+            "MoonrakerSession.py",
+            "MoonrakerTransport.py",
         ):
             self.assertTrue((PLUGINS / name).is_file(), name)
-        self.assertIn("PrintTracker", COORDINATOR)
-        self.assertIn("PauseScheduler", COORDINATOR)
-        self.assertIn("GCodeRepository", COORDINATOR)
-        self.assertIn("PreviewController", COORDINATOR)
+        for obsolete in ("PauseScheduler.py", "PreviewController.py", "FollowerStateBridge.py"):
+            self.assertFalse((PLUGINS / obsolete).exists(), obsolete)
+        for token in (
+            "RemoteJobService",
+            "RemoteFileService",
+            "GCodeIndexService",
+            "PauseScheduleService",
+            "PreviewFollowerService",
+            "CuraLifecycleBridge",
+        ):
+            self.assertIn(token, COORDINATOR)
 
     def test_established_follower_safety_contracts_remain_in_compatibility_runtime(self):
         for token in (
@@ -69,27 +87,33 @@ class SourceContractTests(unittest.TestCase):
         self.assertNotIn("_readMeshFinished", RUNTIME)
         self.assertNotIn("DepthFirstIterator", RUNTIME)
 
-    def test_shared_core_session_is_http_only_generation_guarded_and_coalesced(self):
+    def test_shared_session_is_http_only_generation_guarded_coalesced_and_observable(self):
         self.assertNotIn("QWebSocket", CLIENT)
         self.assertNotIn("websocket", CLIENT.lower())
+        self.assertIn("MoonrakerSession", CLIENT)
         self.assertIn("RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)", CLIENT)
         self.assertIn("generation != self._generation", CLIENT)
         self.assertIn("self._session.coalescer.begin", CLIENT)
+        self.assertIn("class MoonrakerSession", SESSION)
         self.assertIn("RequestCoalescer", SESSION)
         self.assertIn("PollPolicy", SESSION)
         self.assertIn("CommandTracker", SESSION)
         self.assertIn("SessionSnapshot", SESSION)
+        self.assertIn("TransportMetrics", TRANSPORT)
+        self.assertIn("request_id", TRANSPORT)
+        self.assertIn("elapsed_ms", TRANSPORT)
 
-    def test_monitor_uses_shared_core_but_retains_peripheral_generation_guards(self):
+    def test_monitor_uses_shared_core_and_shared_transport(self):
         self.assertIn("self._request_generation", MONITOR)
         self.assertIn("generation != self._request_generation", MONITOR)
         self.assertIn("self._core_timer.stop()", MONITOR_SESSION)
         self.assertIn("client.force_refresh", MONITOR_SESSION)
+        self.assertIn("transport.send_json", MONITOR_SESSION)
         self.assertNotIn("status_endpoint", MONITOR_SESSION)
         self.assertIn("RequestCategory.AUXILIARY", MONITOR_SESSION)
         self.assertIn("waiting for printer confirmation", MONITOR_SESSION)
 
-    def test_output_reuses_shared_readiness_and_keeps_upload_lifecycle(self):
+    def test_output_reuses_shared_transport_readiness_and_upload_lifecycle(self):
         self.assertIn('registry.getPluginObject("GCodeWriter")', OUTPUT)
         self.assertIn('registry.getPluginObject("UFPWriter")', OUTPUT)
         self.assertIn('self._request("server/files/upload")', OUTPUT)
@@ -97,6 +121,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("QTimer.singleShot", OUTPUT)
         self.assertNotIn("sleep(", OUTPUT)
         self.assertIn("_shared_client_ready", OUTPUT_SESSION)
+        self.assertIn("transport.send_json", OUTPUT_SESSION)
         self.assertIn("MoonrakerOutputSession", OUTPUT_PLUGIN)
 
     def test_preview_controls_remain_preview_only(self):
