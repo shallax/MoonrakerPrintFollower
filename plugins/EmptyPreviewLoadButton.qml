@@ -18,8 +18,12 @@ Item
     property string activePrinterName: ""
     property string statusText: ""
     property string statusIconName: "Information"
+    property bool bedMeshAvailable: false
+    property bool bedMeshVisible: true
+    property string bedMeshRangeText: ""
 
     signal loadClicked()
+    signal bedMeshVisibilityRequested(bool visible)
 
     Rectangle
     {
@@ -78,6 +82,18 @@ Item
                 tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
                 fixedWidthMode: true
                 onClicked: base.loadClicked()
+            }
+
+            Cura.SecondaryButton
+            {
+                visible: base.bedMeshAvailable
+                width: parent.width
+                height: visible ? UM.Theme.getSize("action_button").height : 0
+                text: base.bedMeshVisible ? "Hide bed mesh" : "Show bed mesh"
+                tooltip: "Show the active Klipper bed mesh as a coloured 3D surface on Cura's build plate"
+                    + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
+                fixedWidthMode: true
+                onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
             }
         }
     }
