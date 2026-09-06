@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Retain Monitor dashboard compatibility markers
 - 2026-09-06: Run bed mesh tests and verify package files
 - 2026-09-06: Test Klipper bed mesh rendering contracts
 - 2026-09-06: Use bed mesh Monitor wrapper
