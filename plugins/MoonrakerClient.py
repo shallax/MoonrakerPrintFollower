@@ -72,7 +72,11 @@ class MoonrakerClient(QObject):
         self._api_key = new_api_key
         self._poll_interval_ms = new_interval
         if endpoint_changed:
-            self._session.rebind(new_base_url)
+            # URL and credentials together define request identity. Never retain a
+            # snapshot obtained with the previous identity, even when only the API
+            # key changed and the URL text itself stayed the same.
+            self._session.reset()
+            self._session.base_url = new_base_url
         self._apply_adaptive_interval()
         if endpoint_changed and self._enabled:
             self.stop(reset_session=False)
