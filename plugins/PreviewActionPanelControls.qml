@@ -168,14 +168,10 @@ Item
                 height: visible ? UM.Theme.getSize("action_button").height : 0
                 enabled: base.pauseAtLayerScheduled || base.pauseAtLayerCanToggle
                 text: base.pauseAtLayerCandidate <= 0
-                    ? "Pause at end of selected layer"
+                    ? "⏸  Pause at end of selected layer"
                     : (base.pauseAtLayerScheduled
                         ? "Remove pause after layer " + base.pauseAtLayerCandidate
-                        : (base.pauseAtLayerCanToggle
-                            ? "Enable pause at end of layer " + base.pauseAtLayerCandidate
-                            : (base.pauseAtLayerUnavailableText.length > 0
-                                ? base.pauseAtLayerUnavailableText
-                                : "Pause unavailable")))
+                        : "⏸  Enable pause at end of layer " + base.pauseAtLayerCandidate)
                 tooltip: base.pauseAtLayerScheduled
                     ? "Remove the scheduled end-of-layer PAUSE."
                     : (base.pauseAtLayerCanToggle
@@ -183,6 +179,20 @@ Item
                         : "Scroll Cura Preview to the current or a future non-final layer to schedule an end-of-layer PAUSE.")
                 fixedWidthMode: true
                 onClicked: base.pauseAtLayerRequested(base.pauseAtLayerCandidate)
+            }
+
+            UM.Label
+            {
+                visible: pauseAtLayerButton.visible
+                    && !base.pauseAtLayerScheduled
+                    && !base.pauseAtLayerCanToggle
+                    && base.pauseAtLayerUnavailableText.length > 0
+                width: parent.width
+                height: visible ? implicitHeight : 0
+                text: "Can't schedule: " + base.pauseAtLayerUnavailableText
+                color: UM.Theme.getColor("text_inactive")
+                font: UM.Theme.getFont("default_italic")
+                wrapMode: Text.WordWrap
             }
 
             Column

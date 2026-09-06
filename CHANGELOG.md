@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Clarify Preview pause scheduling action
 - 2026-09-06: Run pause button UX
 - 2026-09-06: Fix staged pause UX test assertion
 - 2026-09-06: Stage pause button UX
