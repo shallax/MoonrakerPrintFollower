@@ -326,6 +326,7 @@ Component
                                 from: 10
                                 to: Math.max(200, root.printer != null ? Math.ceil(root.printer.speedFactorPercent * 2) : 200)
                                 stepSize: 1
+                                live: false
                                 value: root.printer != null ? root.printer.speedFactorPercent : 100
                                 enabled: root.printer != null
                                 onPressedChanged: if (!pressed && root.printer != null) root.printer.setSpeedFactor(Math.round(value))
@@ -349,6 +350,7 @@ Component
                                 from: 50
                                 to: Math.max(200, root.printer != null ? Math.ceil(root.printer.flowFactorPercent * 2) : 200)
                                 stepSize: 1
+                                live: false
                                 value: root.printer != null ? root.printer.flowFactorPercent : 100
                                 enabled: root.printer != null
                                 onPressedChanged: if (!pressed && root.printer != null) root.printer.setFlowFactor(Math.round(value))
@@ -441,6 +443,7 @@ Component
                                         id: fanSlider
                                         Layout.fillWidth: true
                                         from: 0; to: 100; stepSize: 1
+                                        from: 0; to: 100; live: false
                                         value: modelData.percent
                                         onPressedChanged: if (!pressed && root.printer != null) root.printer.setFanSpeed(modelData.object, Math.round(value))
                                     }
@@ -488,6 +491,7 @@ Component
                                         id: ledSlider
                                         Layout.fillWidth: true
                                         from: 0; to: 100; stepSize: 1
+                                        from: 0; to: 100; live: false
                                         value: modelData.percent
                                         onPressedChanged: if (!pressed && root.printer != null) root.printer.setLedBrightness(modelData.object, Math.round(value))
                                     }
@@ -500,19 +504,19 @@ Component
                                         rowSpacing: UM.Theme.getSize("thin_margin").height
 
                                         UM.Label { text: "R"; color: UM.Theme.getColor("text_inactive") }
-                                        Slider { id: redSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.redPercent; onPressedChanged: if (!pressed) applyLedColour() }
+                                        Slider { id: redSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.redPercent; onPressedChanged: if (!pressed) applyLedColour() }
                                         UM.Label { text: Math.round(redSlider.value) + "%" }
 
                                         UM.Label { text: "G"; color: UM.Theme.getColor("text_inactive") }
-                                        Slider { id: greenSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.greenPercent; onPressedChanged: if (!pressed) applyLedColour() }
+                                        Slider { id: greenSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.greenPercent; onPressedChanged: if (!pressed) applyLedColour() }
                                         UM.Label { text: Math.round(greenSlider.value) + "%" }
 
                                         UM.Label { text: "B"; color: UM.Theme.getColor("text_inactive") }
-                                        Slider { id: blueSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.bluePercent; onPressedChanged: if (!pressed) applyLedColour() }
+                                        Slider { id: blueSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.bluePercent; onPressedChanged: if (!pressed) applyLedColour() }
                                         UM.Label { text: Math.round(blueSlider.value) + "%" }
 
                                         UM.Label { visible: modelData.hasWhite; text: "W"; color: UM.Theme.getColor("text_inactive") }
-                                        Slider { id: whiteSlider; visible: modelData.hasWhite; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.whitePercent; onPressedChanged: if (!pressed) applyLedColour() }
+                                        Slider { id: whiteSlider; visible: modelData.hasWhite; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.whitePercent; onPressedChanged: if (!pressed) applyLedColour() }
                                         UM.Label { visible: modelData.hasWhite; text: Math.round(whiteSlider.value) + "%" }
                                     }
                                 }
@@ -543,6 +547,7 @@ Component
                                         from: 0
                                         to: 100
                                         stepSize: 1
+                                        live: false
                                         value: modelData.percent
                                         onPressedChanged:
                                         {

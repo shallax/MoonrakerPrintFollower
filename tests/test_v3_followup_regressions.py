@@ -167,6 +167,22 @@ class V3FollowupRegressionTests(unittest.TestCase):
         self.assertIn('color: "black"', DASHBOARD_QML)
         self.assertNotIn('emergencyButton.clicks >= 2 ? "white"', DASHBOARD_QML)
 
+    def test_monitor_sliders_only_commit_on_release(self):
+        # Speed, flow, fan, LED brightness, RGBW and PWM sliders all use
+        # Qt Quick Controls' deferred-value mode. Their existing
+        # onPressedChanged handlers therefore send exactly once on release.
+        self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 9)
+        for slider_id in (
+            "speedSlider", "flowSlider", "fanSlider", "ledSlider",
+            "redSlider", "greenSlider", "blueSlider", "whiteSlider",
+            "pwmSlider",
+        ):
+            marker = "id: " + slider_id
+            start = DASHBOARD_QML.find(marker)
+            self.assertGreaterEqual(start, 0, slider_id)
+            self.assertIn("live: false", DASHBOARD_QML[start:start + 500], slider_id)
+        self.assertNotIn("onMoved:", DASHBOARD_QML)
+
 
 if __name__ == "__main__":
     unittest.main()
