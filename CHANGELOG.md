@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Run Preview pause at layer
 - 2026-09-06: Fix pause-at-layer patch transport
 - 2026-09-06: Run Preview pause at layer
 - 2026-09-06: Stage Preview pause-at-layer implementation

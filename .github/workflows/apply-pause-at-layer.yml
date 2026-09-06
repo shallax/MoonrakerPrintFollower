@@ -26,8 +26,9 @@ jobs:
 
       - name: Apply feature
         run: |
+          python tools/fix_pause_at_layer_script.py
           python tools/apply_pause_at_layer.py
-          rm -f tools/apply_pause_at_layer.py
+          rm -f tools/apply_pause_at_layer.py tools/fix_pause_at_layer_script.py
 
       - name: Validate release candidate
         run: |
