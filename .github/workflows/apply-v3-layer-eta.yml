@@ -1,0 +1,44 @@
+name: Apply v3 layer and ETA fixes
+
+on:
+  push:
+    branches:
+      - v3-unified-moonraker
+
+permissions:
+  contents: write
+
+jobs:
+  apply-layer-eta:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out v3 branch
+        uses: actions/checkout@v4
+        with:
+          ref: v3-unified-moonraker
+          fetch-depth: 0
+
+      - name: Apply reviewed patch
+        run: |
+          test -f tools/v3_layer_eta.patch
+          git apply --check tools/v3_layer_eta.patch
+          git apply tools/v3_layer_eta.patch
+
+      - name: Verify focused regressions
+        run: |
+          python -m py_compile plugins/*.py
+          python -m unittest tests.test_v3_followup_regressions tests.test_hotfix_regressions tests.test_monitor_upload_regressions
+
+      - name: Remove temporary patch transport
+        run: |
+          rm tools/v3_layer_eta.patch
+          rm .github/workflows/apply-v3-layer-eta.yml
+
+      - name: Commit v3 corrections
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix Monitor layer tracking and ETA estimation"
+          git push origin HEAD:v3-unified-moonraker
