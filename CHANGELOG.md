@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Stage v3 release hardening audit
 - 2026-09-06: Remove corrected slider QML CI trigger
 - 2026-09-06: Trigger corrected slider QML package build
 - 2026-09-06: Fix duplicate slider QML properties
