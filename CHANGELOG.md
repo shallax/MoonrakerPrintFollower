@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Apply layer ETA and Preview UX fixes
 - 2026-09-06: Remove failed staged patch
 - 2026-09-06: Remove failed temporary apply workflow
 - 2026-09-06: Apply staged layer and ETA corrections
