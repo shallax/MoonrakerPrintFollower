@@ -169,8 +169,8 @@ class V3FollowupRegressionTests(unittest.TestCase):
 
     def test_monitor_sliders_only_commit_on_release(self):
         # Speed, flow, fan, LED brightness, RGBW and PWM sliders all use
-        # Qt Quick Controls' deferred-value mode. Their existing
-        # onPressedChanged handlers therefore send exactly once on release.
+        # Qt Quick Controls' deferred-value mode. onMoved only previews/holds
+        # the intended value; release queues the debounced Moonraker command.
         self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 9)
         for slider_id in (
             "speedSlider", "flowSlider", "fanSlider", "ledSlider",
@@ -181,7 +181,13 @@ class V3FollowupRegressionTests(unittest.TestCase):
             start = DASHBOARD_QML.find(marker)
             self.assertGreaterEqual(start, 0, slider_id)
             self.assertIn("live: false", DASHBOARD_QML[start:start + 500], slider_id)
-        self.assertNotIn("onMoved:", DASHBOARD_QML)
+        self.assertGreaterEqual(DASHBOARD_QML.count("onMoved:"), 9)
+        self.assertIn("previewSpeedFactor", DASHBOARD_QML)
+        self.assertIn("previewFlowFactor", DASHBOARD_QML)
+        self.assertIn("previewFanSpeed", DASHBOARD_QML)
+        self.assertIn("previewLedBrightness", DASHBOARD_QML)
+        self.assertIn("previewLedColor", DASHBOARD_QML)
+        self.assertIn("previewPwmOutput", DASHBOARD_QML)
         self.assertIn("function sliderSelection(slider)", DASHBOARD_QML)
         self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
         self.assertIn("root.sliderSelection(speedSlider) + \"%\"", DASHBOARD_QML)

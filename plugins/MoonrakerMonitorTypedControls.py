@@ -524,18 +524,33 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
                 current = 0.0
             current = max(0.0, min(scale, current))
             pin_name = str(object_name).split(" ", 1)[1].strip()
+            actual_percent = int(round(current * 100.0 / scale))
+            display_percent = int(self._slider_value_from_poll("pwm-output:" + str(object_name), actual_percent))
             items.append({
                 "object": str(object_name),
                 "pin": pin_name,
                 "name": self._friendly_pwm_name(object_name),
                 "scale": scale,
-                "percent": int(round(current * 100.0 / scale)),
+                "percent": display_percent,
             })
         return items
 
     @pyqtProperty(QVariant, notify=typedControlsChanged)
     def pwmOutputItems(self) -> QVariant:
         return QVariant(list(self._pwm_output_items))
+
+    @pyqtSlot(str, int)
+    def previewPwmOutput(self, object_name: str, percent: int) -> None:
+        object_name = str(object_name or "")
+        item = next((entry for entry in self._pwm_output_items if entry.get("object") == object_name), None)
+        if item is None:
+            return
+        try:
+            value = max(0, min(100, int(percent)))
+        except (TypeError, ValueError):
+            return
+        item["percent"] = value
+        self._preview_slider_value("pwm-output:" + object_name, value)
 
     @pyqtSlot(str, int)
     def setPwmOutput(self, object_name: str, percent: int) -> None:
@@ -551,8 +566,11 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         pin_name = str(item.get("pin") or "").strip()
         if not pin_name:
             return
+        item["percent"] = percent_value
         target = scale * percent_value / 100.0
-        self._send_quick_gcode(
+        self._queue_slider_gcode(
+            "pwm-output:" + object_name,
+            percent_value,
             "pwm-output-" + object_name,
             f"SET_PIN PIN={pin_name} VALUE={target:g}",
         )

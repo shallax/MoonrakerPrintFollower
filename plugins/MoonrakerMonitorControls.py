@@ -12,6 +12,9 @@ from .MoonrakerMonitorRuntime import MoonrakerMonitorModel as _BaseMoonrakerMoni
 class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
     """Advanced Monitor controls layered on the follower-aware Monitor model."""
 
+    SLIDER_DEBOUNCE_MS = 2000
+    SLIDER_CONFIRM_TIMEOUT_MS = 5000
+
     controlsChanged = pyqtSignal()
     emergencyStopChanged = pyqtSignal()
 
@@ -37,12 +40,181 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         self._estop_clicks = 0
         self._estop_last_click = 0.0
         self._estop_reset_timer: Optional[QTimer] = None
+        self._slider_pending: Dict[str, Dict[str, Any]] = {}
+        self._slider_debounce_timers: Dict[str, QTimer] = {}
+        self._slider_confirm_timers: Dict[str, QTimer] = {}
+        self._slider_revision = 0
         super().__init__(output_controller, number_of_extruders, follower)
 
         self._estop_reset_timer = QTimer(self)
         self._estop_reset_timer.setSingleShot(True)
         self._estop_reset_timer.setInterval(1000)
         self._estop_reset_timer.timeout.connect(self._reset_emergency_stop)
+
+    def _emit_slider_state_changed(self) -> None:
+        self.controlsChanged.emit()
+        typed = getattr(self, "typedControlsChanged", None)
+        if typed is not None:
+            try:
+                typed.emit()
+            except Exception:
+                pass
+
+    def _drop_slider_pending(self, key: str, *, emit: bool = False) -> None:
+        self._slider_pending.pop(key, None)
+        debounce = self._slider_debounce_timers.get(key)
+        if debounce is not None:
+            debounce.stop()
+        confirm = self._slider_confirm_timers.get(key)
+        if confirm is not None:
+            confirm.stop()
+        if emit:
+            self._emit_slider_state_changed()
+
+    def _clear_all_slider_pending(self, *, emit: bool = False) -> None:
+        for timer in list(self._slider_debounce_timers.values()) + list(self._slider_confirm_timers.values()):
+            try:
+                timer.stop()
+            except Exception:
+                pass
+        self._slider_pending.clear()
+        if emit:
+            self._emit_slider_state_changed()
+
+    def _invalidate_request_session(self) -> None:
+        # A delayed slider action must never be allowed to cross a printer/session switch.
+        self._clear_all_slider_pending(emit=False)
+        super()._invalidate_request_session()
+
+    def _slider_timer(self, timers: Dict[str, QTimer], key: str, interval: int, callback: Any) -> QTimer:
+        timer = timers.get(key)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda k=key: callback(k))
+            timers[key] = timer
+        timer.setInterval(interval)
+        return timer
+
+    def _preview_slider_value(self, key: str, desired: Any) -> None:
+        # While the user is actively manipulating the control, keep the local
+        # intended value authoritative and suppress any one-second poll echo.
+        self._slider_revision += 1
+        self._slider_pending[key] = {
+            "value": desired,
+            "sent": False,
+            "revision": self._slider_revision,
+        }
+        debounce = self._slider_debounce_timers.get(key)
+        if debounce is not None:
+            debounce.stop()
+        confirm = self._slider_confirm_timers.get(key)
+        if confirm is not None:
+            confirm.stop()
+
+    def _queue_slider_gcode(self, key: str, desired: Any, channel: str, script: str) -> None:
+        # This is a debounce, not a queue: every subsequent nudge replaces the
+        # pending value and restarts a fresh two-second quiet period.
+        self._slider_revision += 1
+        revision = self._slider_revision
+        self._slider_pending[key] = {
+            "value": desired,
+            "sent": False,
+            "revision": revision,
+            "channel": str(channel),
+            "script": str(script),
+        }
+        confirm = self._slider_confirm_timers.get(key)
+        if confirm is not None:
+            confirm.stop()
+        timer = self._slider_timer(
+            self._slider_debounce_timers,
+            key,
+            self.SLIDER_DEBOUNCE_MS,
+            self._apply_pending_slider,
+        )
+        timer.start()  # restarting an active single-shot timer resets the full 2 s debounce
+        self._emit_slider_state_changed()
+
+    def _apply_pending_slider(self, key: str) -> None:
+        state = self._slider_pending.get(key)
+        if not isinstance(state, dict):
+            return
+        script = str(state.get("script") or "")
+        channel = str(state.get("channel") or key)
+        if not script:
+            self._drop_slider_pending(key, emit=True)
+            return
+        revision = int(state.get("revision") or 0)
+        state["sent"] = True
+        started = self._json_request(
+            "quick-" + channel,
+            "POST",
+            "printer/gcode/script",
+            lambda _payload, error, k=key, r=revision: self._on_slider_command_finished(k, r, error),
+            body={"script": script},
+            replace=True,
+        )
+        if not started:
+            self._drop_slider_pending(key, emit=True)
+            self._refresh_slider_sources()
+            return
+        confirm = self._slider_timer(
+            self._slider_confirm_timers,
+            key,
+            self.SLIDER_CONFIRM_TIMEOUT_MS,
+            self._expire_slider_confirmation,
+        )
+        confirm.start()
+
+    def _on_slider_command_finished(self, key: str, revision: int, error: Optional[str]) -> None:
+        state = self._slider_pending.get(key)
+        if not isinstance(state, dict) or int(state.get("revision") or 0) != int(revision):
+            return
+        if error:
+            self._drop_slider_pending(key, emit=True)
+            self._refresh_slider_sources()
+            return
+        QTimer.singleShot(150, self._refresh_slider_sources)
+
+    def _expire_slider_confirmation(self, key: str) -> None:
+        # Do not leave a failed or unacknowledged slider pinned forever.
+        self._drop_slider_pending(key, emit=True)
+        self._refresh_slider_sources()
+
+    def _refresh_slider_sources(self) -> None:
+        try:
+            self._refresh_core_now()
+        except Exception:
+            pass
+        try:
+            self._poll_aux_status()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _slider_values_match(actual: Any, desired: Any, tolerance: float = 1.0) -> bool:
+        if isinstance(actual, (list, tuple)) or isinstance(desired, (list, tuple)):
+            if not isinstance(actual, (list, tuple)) or not isinstance(desired, (list, tuple)) or len(actual) != len(desired):
+                return False
+            try:
+                return all(abs(float(a) - float(d)) <= tolerance for a, d in zip(actual, desired))
+            except (TypeError, ValueError):
+                return False
+        try:
+            return abs(float(actual) - float(desired)) <= tolerance
+        except (TypeError, ValueError):
+            return actual == desired
+
+    def _slider_value_from_poll(self, key: str, actual: Any, tolerance: float = 1.0) -> Any:
+        state = self._slider_pending.get(key)
+        if not isinstance(state, dict):
+            return actual
+        desired = state.get("value")
+        if bool(state.get("sent")) and self._slider_values_match(actual, desired, tolerance):
+            self._drop_slider_pending(key, emit=False)
+            return actual
+        return desired
 
     @staticmethod
     def _same_print_file(indexed_filename: Any, live_filename: Any) -> bool:
@@ -74,13 +246,15 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         if isinstance(status, dict):
             gcode_move = self._status_object(status, "gcode_move")
             try:
-                self._speed_factor_percent = max(1, int(round(float(gcode_move.get("speed_factor") or 1.0) * 100.0)))
+                actual_speed = max(1, int(round(float(gcode_move.get("speed_factor") or 1.0) * 100.0)))
             except (TypeError, ValueError):
-                self._speed_factor_percent = 100
+                actual_speed = 100
+            self._speed_factor_percent = int(self._slider_value_from_poll("speed-factor", actual_speed))
             try:
-                self._flow_factor_percent = max(1, int(round(float(gcode_move.get("extrude_factor") or 1.0) * 100.0)))
+                actual_flow = max(1, int(round(float(gcode_move.get("extrude_factor") or 1.0) * 100.0)))
             except (TypeError, ValueError):
-                self._flow_factor_percent = 100
+                actual_flow = 100
+            self._flow_factor_percent = int(self._slider_value_from_poll("flow-factor", actual_flow))
             origin = gcode_move.get("homing_origin")
             if isinstance(origin, (list, tuple)) and len(origin) >= 3:
                 try:
@@ -307,10 +481,12 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
                 speed = max(0.0, min(1.0, float(value.get("speed") or 0.0)))
             except (TypeError, ValueError):
                 speed = 0.0
+            actual_percent = int(round(speed * 100.0))
+            display_percent = int(self._slider_value_from_poll("fan:" + object_name, actual_percent))
             controls.append({
                 "object": object_name,
                 "name": self._friendly_object_name(object_name),
-                "percent": int(round(speed * 100.0)),
+                "percent": display_percent,
             })
         return controls
 
@@ -373,14 +549,20 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
                 chroma_scale = max(representative)
             if chroma_scale > 0.001:
                 representative = [value / chroma_scale for value in representative]
+            actual_brightness = int(round(brightness * 100.0))
+            display_brightness = int(self._slider_value_from_poll("led-brightness:" + object_name, actual_brightness))
+            actual_colour = tuple(int(round(value * 100.0)) for value in representative)
+            display_colour = self._slider_value_from_poll("led-colour:" + object_name, actual_colour)
+            if not isinstance(display_colour, (list, tuple)) or len(display_colour) != 4:
+                display_colour = actual_colour
             result.append({
                 "object": object_name,
                 "name": self._friendly_led_name(object_name),
-                "percent": int(round(brightness * 100.0)),
-                "redPercent": int(round(representative[0] * 100.0)),
-                "greenPercent": int(round(representative[1] * 100.0)),
-                "bluePercent": int(round(representative[2] * 100.0)),
-                "whitePercent": int(round(representative[3] * 100.0)),
+                "percent": display_brightness,
+                "redPercent": int(display_colour[0]),
+                "greenPercent": int(display_colour[1]),
+                "bluePercent": int(display_colour[2]),
+                "whitePercent": int(display_colour[3]),
                 "hasWhite": self._led_supports_white(object_name),
             })
         return result
@@ -537,24 +719,40 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         return QVariant(self._led_items)
 
     @pyqtSlot(int)
-    def setSpeedFactor(self, percent: int) -> None:
+    def previewSpeedFactor(self, percent: int) -> None:
         try:
-            # Klipper accepts speed factors above 200%. The UI expands its
-            # range from the accepted live value, so do not silently clamp it here.
             value = max(10, int(percent))
         except (TypeError, ValueError):
             return
-        self._send_quick_gcode("speed-factor", f"M220 S{value}")
+        self._speed_factor_percent = value
+        self._preview_slider_value("speed-factor", value)
+
+    @pyqtSlot(int)
+    def setSpeedFactor(self, percent: int) -> None:
+        try:
+            value = max(10, int(percent))
+        except (TypeError, ValueError):
+            return
+        self._speed_factor_percent = value
+        self._queue_slider_gcode("speed-factor", value, "speed-factor", f"M220 S{value}")
+
+    @pyqtSlot(int)
+    def previewFlowFactor(self, percent: int) -> None:
+        try:
+            value = max(50, int(percent))
+        except (TypeError, ValueError):
+            return
+        self._flow_factor_percent = value
+        self._preview_slider_value("flow-factor", value)
 
     @pyqtSlot(int)
     def setFlowFactor(self, percent: int) -> None:
         try:
-            # Match the self-expanding UI range rather than imposing the old
-            # 150% ceiling after the user has deliberately expanded it.
             value = max(50, int(percent))
         except (TypeError, ValueError):
             return
-        self._send_quick_gcode("flow-factor", f"M221 S{value}")
+        self._flow_factor_percent = value
+        self._queue_slider_gcode("flow-factor", value, "flow-factor", f"M221 S{value}")
 
     @pyqtSlot(float)
     def adjustZOffset(self, amount: float) -> None:
@@ -573,6 +771,21 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         self._send_gcode_action("Clear Z offset", f"SET_GCODE_OFFSET Z=0{move}")
 
     @pyqtSlot(str, int)
+    def previewFanSpeed(self, object_name: str, percent: int) -> None:
+        object_name = str(object_name or "")
+        if not any(item.get("object") == object_name for item in self._fan_control_items):
+            return
+        try:
+            value = max(0, min(100, int(percent)))
+        except (TypeError, ValueError):
+            return
+        for item in self._fan_control_items:
+            if item.get("object") == object_name:
+                item["percent"] = value
+                break
+        self._preview_slider_value("fan:" + object_name, value)
+
+    @pyqtSlot(str, int)
     def setFanSpeed(self, object_name: str, percent: int) -> None:
         object_name = str(object_name or "")
         known = next((item for item in self._fan_control_items if item.get("object") == object_name), None)
@@ -582,12 +795,26 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             value = max(0, min(100, int(percent)))
         except (TypeError, ValueError):
             return
+        known["percent"] = value
         if object_name.lower() == "fan":
             script = f"M106 S{int(round(value * 255.0 / 100.0))}"
         else:
             fan_name = object_name.split(" ", 1)[1] if " " in object_name else object_name
             script = f"SET_FAN_SPEED FAN={fan_name} SPEED={value / 100.0:.3f}"
-        self._send_quick_gcode("fan-" + object_name, script)
+        self._queue_slider_gcode("fan:" + object_name, value, "fan-" + object_name, script)
+
+    @pyqtSlot(str, int)
+    def previewLedBrightness(self, object_name: str, percent: int) -> None:
+        object_name = str(object_name or "")
+        item = next((entry for entry in self._led_items if entry.get("object") == object_name), None)
+        if item is None:
+            return
+        try:
+            value = max(0, min(100, int(percent)))
+        except (TypeError, ValueError):
+            return
+        item["percent"] = value
+        self._preview_slider_value("led-brightness:" + object_name, value)
 
     @pyqtSlot(str, int)
     def setLedBrightness(self, object_name: str, percent: int) -> None:
@@ -625,7 +852,36 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
                 f"BLUE={scaled[2]:.4f} WHITE={scaled[3]:.4f} TRANSMIT={1 if index == len(colors) else 0}"
             )
         if commands:
-            self._send_quick_gcode("led-" + object_name, "\n".join(commands))
+            for item in self._led_items:
+                if item.get("object") == object_name:
+                    item["percent"] = int(percent)
+                    break
+            self._queue_slider_gcode(
+                "led-brightness:" + object_name,
+                int(percent),
+                "led-" + object_name,
+                "\n".join(commands),
+            )
+
+    @pyqtSlot(str, int, int, int, int, int)
+    def previewLedColor(self, object_name: str, red: int, green: int, blue: int, white: int = 0, brightness_percent: int = -1) -> None:
+        object_name = str(object_name or "")
+        item = next((entry for entry in self._led_items if entry.get("object") == object_name), None)
+        if item is None:
+            return
+        try:
+            raw = [max(0.0, min(1.0, int(value) / 100.0)) for value in (red, green, blue, white)]
+        except (TypeError, ValueError):
+            return
+        if not bool(item.get("hasWhite")):
+            raw[3] = 0.0
+        peak = max(raw)
+        if peak <= 0.001:
+            desired = (0, 0, 0, 0)
+        else:
+            desired = tuple(int(round(value * 100.0 / peak)) for value in raw)
+        item["redPercent"], item["greenPercent"], item["bluePercent"], item["whitePercent"] = desired
+        self._preview_slider_value("led-colour:" + object_name, desired)
 
     @pyqtSlot(str, int, int, int, int, int)
     def setLedColor(self, object_name: str, red: int, green: int, blue: int, white: int = 0, brightness_percent: int = -1) -> None:
@@ -661,7 +917,14 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             f"SET_LED LED={led_name} RED={scaled[0]:.4f} GREEN={scaled[1]:.4f} "
             f"BLUE={scaled[2]:.4f} WHITE={scaled[3]:.4f} TRANSMIT=1"
         )
-        self._send_quick_gcode("led-colour-" + object_name, script)
+        desired = tuple(int(round(value * 100.0)) for value in channels)
+        item["redPercent"], item["greenPercent"], item["bluePercent"], item["whitePercent"] = desired
+        self._queue_slider_gcode(
+            "led-colour:" + object_name,
+            desired,
+            "led-colour-" + object_name,
+            script,
+        )
 
     @pyqtProperty(bool, notify=controlsChanged)
     def saveConfigPending(self) -> bool:

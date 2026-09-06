@@ -316,7 +316,7 @@ Component
                         UM.Label { text: "Live tuning"; font: UM.Theme.getFont("medium_bold") }
                         UM.Label
                         {
-                            text: "Drag to preview a value; the change is sent to Klipper when you release the slider."
+                            text: "Drag to preview a value. After release, the latest value is applied once it has been unchanged for 2 seconds."
                             color: UM.Theme.getColor("text_inactive")
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
@@ -342,6 +342,13 @@ Component
                                 live: false
                                 value: root.printer != null ? root.printer.speedFactorPercent : 100
                                 enabled: root.printer != null
+                                onMoved:
+                                {
+                                    if (root.printer == null) return
+                                    var selected = root.sliderSelection(speedSlider)
+                                    root.printer.previewSpeedFactor(selected)
+                                    if (!pressed) root.printer.setSpeedFactor(selected)
+                                }
                                 onPressedChanged: if (!pressed && root.printer != null) root.printer.setSpeedFactor(root.sliderSelection(speedSlider))
                             }
                         }
@@ -366,6 +373,13 @@ Component
                                 live: false
                                 value: root.printer != null ? root.printer.flowFactorPercent : 100
                                 enabled: root.printer != null
+                                onMoved:
+                                {
+                                    if (root.printer == null) return
+                                    var selected = root.sliderSelection(flowSlider)
+                                    root.printer.previewFlowFactor(selected)
+                                    if (!pressed) root.printer.setFlowFactor(selected)
+                                }
                                 onPressedChanged: if (!pressed && root.printer != null) root.printer.setFlowFactor(root.sliderSelection(flowSlider))
                             }
                         }
@@ -458,6 +472,13 @@ Component
                                         from: 0; to: 100; stepSize: 1
                                         live: false
                                         value: modelData.percent
+                                        onMoved:
+                                        {
+                                            if (root.printer == null) return
+                                            var selected = root.sliderSelection(fanSlider)
+                                            root.printer.previewFanSpeed(modelData.object, selected)
+                                            if (!pressed) root.printer.setFanSpeed(modelData.object, selected)
+                                        }
                                         onPressedChanged: if (!pressed && root.printer != null) root.printer.setFanSpeed(modelData.object, root.sliderSelection(fanSlider))
                                     }
                                 }
@@ -478,19 +499,36 @@ Component
                                     Layout.fillWidth: true
                                     spacing: UM.Theme.getSize("thin_margin").height
 
+                                    function previewLedColour()
+                                    {
+                                        if (root.printer == null) return
+                                        root.printer.previewLedColor(
+                                            modelData.object,
+                                            root.sliderSelection(redSlider),
+                                            root.sliderSelection(greenSlider),
+                                            root.sliderSelection(blueSlider),
+                                            modelData.hasWhite ? root.sliderSelection(whiteSlider) : 0,
+                                            root.sliderSelection(ledSlider)
+                                        )
+                                    }
+
                                     function applyLedColour()
                                     {
-                                        if (root.printer != null)
-                                        {
-                                            root.printer.setLedColor(
-                                                modelData.object,
-                                                root.sliderSelection(redSlider),
-                                                root.sliderSelection(greenSlider),
-                                                root.sliderSelection(blueSlider),
-                                                modelData.hasWhite ? root.sliderSelection(whiteSlider) : 0,
-                                                root.sliderSelection(ledSlider)
-                                            )
-                                        }
+                                        if (root.printer == null) return
+                                        root.printer.setLedColor(
+                                            modelData.object,
+                                            root.sliderSelection(redSlider),
+                                            root.sliderSelection(greenSlider),
+                                            root.sliderSelection(blueSlider),
+                                            modelData.hasWhite ? root.sliderSelection(whiteSlider) : 0,
+                                            root.sliderSelection(ledSlider)
+                                        )
+                                    }
+
+                                    function ledColourMoved(slider)
+                                    {
+                                        previewLedColour()
+                                        if (!slider.pressed) applyLedColour()
                                     }
 
                                     RowLayout
@@ -506,6 +544,13 @@ Component
                                         from: 0; to: 100; stepSize: 1
                                         live: false
                                         value: modelData.percent
+                                        onMoved:
+                                        {
+                                            if (root.printer == null) return
+                                            var selected = root.sliderSelection(ledSlider)
+                                            root.printer.previewLedBrightness(modelData.object, selected)
+                                            if (!pressed) root.printer.setLedBrightness(modelData.object, selected)
+                                        }
                                         onPressedChanged: if (!pressed && root.printer != null) root.printer.setLedBrightness(modelData.object, root.sliderSelection(ledSlider))
                                     }
 
@@ -517,19 +562,19 @@ Component
                                         rowSpacing: UM.Theme.getSize("thin_margin").height
 
                                         UM.Label { text: "R"; color: UM.Theme.getColor("text_inactive") }
-                                        Slider { id: redSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.redPercent; onPressedChanged: if (!pressed) applyLedColour() }
+                                        Slider { id: redSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.redPercent; onMoved: ledColourMoved(redSlider); onPressedChanged: if (!pressed) applyLedColour() }
                                         UM.Label { text: root.sliderSelection(redSlider) + "%" }
 
                                         UM.Label { text: "G"; color: UM.Theme.getColor("text_inactive") }
-                                        Slider { id: greenSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.greenPercent; onPressedChanged: if (!pressed) applyLedColour() }
+                                        Slider { id: greenSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.greenPercent; onMoved: ledColourMoved(greenSlider); onPressedChanged: if (!pressed) applyLedColour() }
                                         UM.Label { text: root.sliderSelection(greenSlider) + "%" }
 
                                         UM.Label { text: "B"; color: UM.Theme.getColor("text_inactive") }
-                                        Slider { id: blueSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.bluePercent; onPressedChanged: if (!pressed) applyLedColour() }
+                                        Slider { id: blueSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.bluePercent; onMoved: ledColourMoved(blueSlider); onPressedChanged: if (!pressed) applyLedColour() }
                                         UM.Label { text: root.sliderSelection(blueSlider) + "%" }
 
                                         UM.Label { visible: modelData.hasWhite; text: "W"; color: UM.Theme.getColor("text_inactive") }
-                                        Slider { id: whiteSlider; visible: modelData.hasWhite; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.whitePercent; onPressedChanged: if (!pressed) applyLedColour() }
+                                        Slider { id: whiteSlider; visible: modelData.hasWhite; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.whitePercent; onMoved: ledColourMoved(whiteSlider); onPressedChanged: if (!pressed) applyLedColour() }
                                         UM.Label { visible: modelData.hasWhite; text: root.sliderSelection(whiteSlider) + "%" }
                                     }
                                 }
@@ -562,6 +607,13 @@ Component
                                         stepSize: 1
                                         live: false
                                         value: modelData.percent
+                                        onMoved:
+                                        {
+                                            if (root.printer == null) return
+                                            var selected = root.sliderSelection(pwmSlider)
+                                            root.printer.previewPwmOutput(modelData.object, selected)
+                                            if (!pressed) root.printer.setPwmOutput(modelData.object, selected)
+                                        }
                                         onPressedChanged:
                                         {
                                             if (!pressed && root.printer != null)

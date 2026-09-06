@@ -90,7 +90,12 @@ class HotfixRegressionTests(unittest.TestCase):
         base_module.MoonrakerMonitorModel = type(
             "BaseMoonrakerMonitorModel",
             (),
-            {"_want_aux_object": staticmethod(lambda _name: False)},
+            {
+                "_want_aux_object": staticmethod(lambda _name: False),
+                "_slider_value_from_poll": lambda self, _key, actual, _tolerance=1.0: actual,
+                "_preview_slider_value": lambda self, _key, _desired: None,
+                "_queue_slider_gcode": lambda self, _key, _desired, channel, script: self._send_quick_gcode(channel, script),
+            },
         )
 
         names = ["PyQt6", "PyQt6.QtCore", "plugins", "plugins.MoonrakerMonitorControls"]

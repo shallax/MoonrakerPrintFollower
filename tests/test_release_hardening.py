@@ -291,10 +291,26 @@ class ReleaseHardeningTests(unittest.TestCase):
         self.assertIn("self._set_monitor_active(self._current, False)", OUTPUT_PLUGIN_SOURCE)
         self.assertIn("self._set_monitor_active(device, True)", OUTPUT_PLUGIN_SOURCE)
 
-    def test_deferred_slider_labels_follow_thumb_but_commands_wait_for_release(self):
+    def test_deferred_slider_labels_follow_thumb_and_debounce_before_apply(self):
         self.assertGreaterEqual(DASHBOARD_SOURCE.count("live: false"), 9)
         self.assertIn("slider.valueAt(slider.position)", DASHBOARD_SOURCE)
-        self.assertNotIn("onMoved:", DASHBOARD_SOURCE)
+        self.assertGreaterEqual(DASHBOARD_SOURCE.count("onMoved:"), 9)
+        self.assertIn("previewSpeedFactor", DASHBOARD_SOURCE)
+        self.assertIn("previewFlowFactor", DASHBOARD_SOURCE)
+        self.assertIn("previewFanSpeed", DASHBOARD_SOURCE)
+        self.assertIn("previewLedBrightness", DASHBOARD_SOURCE)
+        self.assertIn("previewLedColor", DASHBOARD_SOURCE)
+        self.assertIn("previewPwmOutput", DASHBOARD_SOURCE)
+        self.assertIn("SLIDER_DEBOUNCE_MS = 2000", CONTROLS_SOURCE)
+        self.assertIn("timer.start()  # restarting an active single-shot timer resets the full 2 s debounce", CONTROLS_SOURCE)
+        self.assertIn("def _slider_value_from_poll", CONTROLS_SOURCE)
+        self.assertIn('self._slider_value_from_poll("speed-factor", actual_speed)', CONTROLS_SOURCE)
+        self.assertIn('self._slider_value_from_poll("flow-factor", actual_flow)', CONTROLS_SOURCE)
+        self.assertIn('self._slider_value_from_poll("fan:" + object_name, actual_percent)', CONTROLS_SOURCE)
+        self.assertIn('self._slider_value_from_poll("led-brightness:" + object_name, actual_brightness)', CONTROLS_SOURCE)
+        self.assertIn('self._slider_value_from_poll("led-colour:" + object_name, actual_colour)', CONTROLS_SOURCE)
+        self.assertIn('self._slider_value_from_poll("pwm-output:" + str(object_name), actual_percent)', TYPED_SOURCE)
+        self.assertIn("self._clear_all_slider_pending(emit=False)", CONTROLS_SOURCE)
         for slider in ("speedSlider", "flowSlider", "fanSlider", "ledSlider", "redSlider", "greenSlider", "blueSlider", "whiteSlider", "pwmSlider"):
             self.assertIn(f"root.sliderSelection({slider})", DASHBOARD_SOURCE)
 
@@ -342,7 +358,7 @@ def test_request_identity_change_aborts_old_replies(self):
     self.assertEqual(instance._requests, {})
 
 def test_monitor_ux_release_polish_is_explicit(self):
-    self.assertIn("Drag to preview a value; the change is sent to Klipper when you release the slider.", DASHBOARD_SOURCE)
+    self.assertIn("After release, the latest value is applied once it has been unchanged for 2 seconds.", DASHBOARD_SOURCE)
     self.assertIn('text: "Refresh camera"', MONITOR_QML)
     self.assertIn("root.printer.refreshWebcams()", MONITOR_QML)
     self.assertIn('title: "Exclude object?"', MONITOR_QML)
