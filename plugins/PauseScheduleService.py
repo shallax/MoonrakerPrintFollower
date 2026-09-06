@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from .Core import due_end_of_layer_pauses
+try:
+    from .Core import due_end_of_layer_pauses
+except ImportError:  # test/import convenience
+    from Core import due_end_of_layer_pauses
 
 
 @dataclass
@@ -47,6 +50,7 @@ class PauseScheduleService:
         return due
 
     def is_imminent(self, current_layer: int, *, lookahead_layers: int = 1) -> bool:
+        """Return True while an end-of-layer pause needs precision polling."""
         try:
             current = int(current_layer)
             lookahead = max(0, int(lookahead_layers))
