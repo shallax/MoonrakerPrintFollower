@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Stage slider debounce test fixups
 - 2026-09-06: Run slider debounce
 - 2026-09-06: Stage slider debounce workflow
 - 2026-09-06: Stage slider debounce implementation
