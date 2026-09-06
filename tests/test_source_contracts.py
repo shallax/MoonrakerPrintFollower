@@ -317,9 +317,8 @@ class SourceContractTests(unittest.TestCase):
         license_file = ROOT / "LICENSE"
         self.assertTrue(license_file.is_file())
         license_text = license_file.read_text()
-        self.assertIn("GNU General Public License", license_text)
-        self.assertIn("version 3", license_text)
-        self.assertIn("GPL-3.0-only", license_text)
+        self.assertIn("GNU GENERAL PUBLIC LICENSE", license_text)
+        self.assertIn("Version 3, 29 June 2007", license_text)
 
 
 if __name__ == "__main__":

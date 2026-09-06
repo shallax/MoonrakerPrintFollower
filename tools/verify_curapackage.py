@@ -5,7 +5,15 @@ import json
 import pathlib
 import zipfile
 
-from build_curapackage import LICENSE_FILE, PACKAGE_JSON, PLUGIN_ROOT, archive_name, expected_archive_entries, iter_plugin_sources
+from build_curapackage import (
+    CHANGELOG_FILE,
+    LICENSE_FILE,
+    PACKAGE_JSON,
+    PLUGIN_ROOT,
+    archive_name,
+    expected_archive_entries,
+    iter_plugin_sources,
+)
 
 
 def verify(path: pathlib.Path) -> None:
@@ -28,6 +36,11 @@ def verify(path: pathlib.Path) -> None:
             raise RuntimeError("embedded package.json differs from source")
         if archive.read("LICENSE") != LICENSE_FILE.read_bytes():
             raise RuntimeError("embedded LICENSE differs from source")
+        if archive.read("CHANGELOG.md") != CHANGELOG_FILE.read_bytes():
+            raise RuntimeError("embedded CHANGELOG.md differs from source")
+        if f"## {version}" not in CHANGELOG_FILE.read_text(encoding="utf-8"):
+            raise RuntimeError(f"CHANGELOG.md does not contain a {version} release section")
+
         plugin_meta_path = f"files/plugins/{package_id}/plugin.json"
         plugin_meta = json.loads(archive.read(plugin_meta_path).decode("utf-8"))
         if str(plugin_meta.get("version")) != version:
@@ -41,6 +54,7 @@ def verify(path: pathlib.Path) -> None:
         forbidden = [
             name for name in names
             if "__pycache__" in name
+            or name.lower().endswith(".curapackage")
             or name.endswith((".pyc", ".pyo", ".orig", ".rej", ".swp", ".swo", ".tmp", ".bak"))
             or "/." in name
         ]

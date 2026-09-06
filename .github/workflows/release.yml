@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate tag and metadata versions
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          expected = tag.removeprefix("v")
+          package = json.loads(pathlib.Path("package.json").read_text(encoding="utf-8"))
+          plugin = json.loads(pathlib.Path("plugins/plugin.json").read_text(encoding="utf-8"))
+          if package["package_version"] != expected:
+              raise SystemExit(f"package.json version {package['package_version']} != tag {expected}")
+          if plugin["version"] != expected:
+              raise SystemExit(f"plugin.json version {plugin['version']} != tag {expected}")
+          PY
+
+      - name: Run release checks
+        run: |
+          python -m compileall -q plugins tools tests
+          python tools/check_qml.py plugins
+          python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Build and verify release artifacts
+        run: |
+          python tools/build_curapackage.py
+          python tools/build_marketplace_source.py
+          VERSION="${GITHUB_REF_NAME#v}"
+          python tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v${VERSION}.curapackage"
+          python tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
+
+      - name: Extract release notes from changelog
+        run: |
+          python - <<'PY' > /tmp/release-notes.md
+          import os
+          import pathlib
+
+          version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          marker = f"## {version}\n"
+          if marker not in text:
+              raise SystemExit(f"CHANGELOG.md has no section for {version}")
+          section = text.split(marker, 1)[1]
+          section = section.split("\n## ", 1)[0].strip()
+          print(section)
+          PY
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          CURA="dist/MoonrakerPrintFollower-v${VERSION}.curapackage"
+          SOURCE="dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$CURA" "$SOURCE" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$CURA" "$SOURCE" \
+              --title "Moonraker Print Follower $GITHUB_REF_NAME" \
+              --notes-file /tmp/release-notes.md
+          fi

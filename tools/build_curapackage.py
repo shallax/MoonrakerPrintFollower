@@ -10,8 +10,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGIN_ROOT = ROOT / "plugins"
 PACKAGE_JSON = ROOT / "package.json"
 LICENSE_FILE = ROOT / "LICENSE"
+CHANGELOG_FILE = ROOT / "CHANGELOG.md"
 
-FORBIDDEN_SUFFIXES = {".pyc", ".pyo", ".orig", ".rej", ".swp", ".swo", ".tmp", ".bak"}
+FORBIDDEN_SUFFIXES = {".curapackage", ".pyc", ".pyo", ".orig", ".rej", ".swp", ".swo", ".tmp", ".bak"}
 FORBIDDEN_NAMES = {".DS_Store"}
 
 
@@ -40,7 +41,9 @@ def archive_name(path: pathlib.Path, package_id: str) -> str:
 
 
 def expected_archive_entries(package_id: str) -> set[str]:
-    return {"package.json", "LICENSE"} | {archive_name(path, package_id) for path in iter_plugin_sources()}
+    return {"package.json", "LICENSE", "CHANGELOG.md"} | {
+        archive_name(path, package_id) for path in iter_plugin_sources()
+    }
 
 
 def build(output: pathlib.Path | None = None) -> pathlib.Path:
@@ -55,6 +58,7 @@ def build(output: pathlib.Path | None = None) -> pathlib.Path:
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         archive.write(PACKAGE_JSON, "package.json")
         archive.write(LICENSE_FILE, "LICENSE")
+        archive.write(CHANGELOG_FILE, "CHANGELOG.md")
         for path in iter_plugin_sources():
             archive.write(path, archive_name(path, package_id))
 
