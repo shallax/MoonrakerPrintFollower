@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Use bed mesh Monitor wrapper
 - 2026-09-06: Add Monitor bed mesh height map
 - 2026-09-06: Expose bed mesh control in empty Preview
 - 2026-09-06: Add Preview bed mesh visibility control

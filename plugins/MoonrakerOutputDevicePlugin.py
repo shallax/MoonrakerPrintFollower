@@ -65,11 +65,10 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             # PrinterOutputDevice exposes activePrinter from this model list.
             device._printers = [monitor]
 
-        # "MoonrakerMonitorDashboard.qml" composes the established
-        # "MoonrakerMonitor.qml" view, preserving its camera/status/power UI
-        # while adding typed controls.
+        # Bed-mesh wrapper composes the established typed dashboard and adds the
+        # live Klipper height-map panel without replacing the existing Monitor UI.
         device._monitor_view_qml_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitorDashboard.qml"
+            os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitorBedMesh.qml"
         )
         try:
             monitor.refreshAll()
