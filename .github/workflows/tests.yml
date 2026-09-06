@@ -61,10 +61,18 @@ jobs:
       - name: Verify exact Cura package contents
         run: python tools/verify_curapackage.py dist/MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}.curapackage
 
-      - name: Upload Cura package artifact
+      - name: Build Cura Marketplace source ZIP
+        run: python tools/build_marketplace_source.py
+
+      - name: Verify Cura Marketplace source ZIP
+        run: python tools/verify_marketplace_source.py dist/MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}-source.zip
+
+      - name: Upload release candidate artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}-curapackage
-          path: dist/MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}.curapackage
+          name: MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}-release-candidates
+          path: |
+            dist/MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}.curapackage
+            dist/MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}-source.zip
           if-no-files-found: error
           retention-days: 30
