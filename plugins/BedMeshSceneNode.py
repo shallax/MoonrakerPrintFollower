@@ -19,13 +19,18 @@ class BedMeshSceneNode(SceneNode):
     remains exactly where Klipper says it is, while one additional outer ring is
     linearly extrapolated to the physical Cura bed edges. Extrapolated vertices
     are intentionally more transparent so the unprobed region is not presented
-    as measured data.
+    as measured data. A dark raised ribbon follows the exact Klipper mesh bounds
+    so the measured/interpolated area remains obvious even when the alpha change
+    at the extrapolated perimeter is visually subtle.
     """
 
     DEFAULT_EXAGGERATION = 20.0
     SURFACE_ALPHA = 0.58
     EXTRAPOLATED_ALPHA = 0.28
     SURFACE_LIFT = 0.035
+    BOUNDARY_WIDTH = 1.4
+    BOUNDARY_LIFT = 0.09
+    BOUNDARY_ALPHA = 0.94
 
     def __init__(self) -> None:
         super().__init__(name="Moonraker bed mesh", node_id="MoonrakerPrintFollowerBedMesh")
@@ -227,6 +232,70 @@ class BedMeshSceneNode(SceneNode):
                 face += 1
                 indices[face] = (b, c, d)
                 face += 1
+
+        # Make the transition from genuine Klipper mesh data to the extrapolated
+        # perimeter explicit.  This is a narrow ribbon rather than a GL line so
+        # its apparent thickness remains dependable across Cura/OpenGL versions.
+        boundary_vertices: List[Tuple[float, float, float]] = []
+        boundary_colours: List[List[float]] = []
+        boundary_indices: List[Tuple[int, int, int]] = []
+        half_boundary = self.BOUNDARY_WIDTH / 2.0
+
+        def append_boundary_segment(x0: float, y0: float, x1: float, y1: float) -> None:
+            dx = x1 - x0
+            dy = y1 - y0
+            length = math.hypot(dx, dy)
+            if length <= 1e-9:
+                return
+            normal_x = -dy / length * half_boundary
+            normal_y = dx / length * half_boundary
+            corners = (
+                (x0 + normal_x, y0 + normal_y),
+                (x0 - normal_x, y0 - normal_y),
+                (x1 + normal_x, y1 + normal_y),
+                (x1 - normal_x, y1 - normal_y),
+            )
+            start = len(boundary_vertices)
+            for printer_x, printer_y in corners:
+                value = self._sample_matrix(
+                    matrix,
+                    printer_x,
+                    printer_y,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                )
+                boundary_vertices.append((
+                    self._scene_x(printer_x, machine_width, center_is_zero),
+                    self.SURFACE_LIFT + value * exaggeration + self.BOUNDARY_LIFT,
+                    self._scene_z(printer_y, machine_depth, center_is_zero),
+                ))
+                boundary_colours.append([0.025, 0.025, 0.025, self.BOUNDARY_ALPHA])
+            boundary_indices.append((start, start + 1, start + 2))
+            boundary_indices.append((start + 2, start + 1, start + 3))
+
+        mesh_x_axis = [x_min + (x_max - x_min) * index / (columns - 1) for index in range(columns)]
+        mesh_y_axis = [y_min + (y_max - y_min) * index / (rows - 1) for index in range(rows)]
+        for index in range(len(mesh_x_axis) - 1):
+            append_boundary_segment(mesh_x_axis[index], y_min, mesh_x_axis[index + 1], y_min)
+            append_boundary_segment(mesh_x_axis[index], y_max, mesh_x_axis[index + 1], y_max)
+        for index in range(len(mesh_y_axis) - 1):
+            append_boundary_segment(x_min, mesh_y_axis[index], x_min, mesh_y_axis[index + 1])
+            append_boundary_segment(x_max, mesh_y_axis[index], x_max, mesh_y_axis[index + 1])
+
+        if boundary_vertices:
+            boundary_offset = len(vertices)
+            vertices = numpy.concatenate(
+                (vertices, numpy.asarray(boundary_vertices, dtype=numpy.float32)),
+                axis=0,
+            )
+            colours = numpy.concatenate(
+                (colours, numpy.asarray(boundary_colours, dtype=numpy.float32)),
+                axis=0,
+            )
+            boundary_faces = numpy.asarray(boundary_indices, dtype=numpy.int32) + boundary_offset
+            indices = numpy.concatenate((indices, boundary_faces), axis=0)
 
         self.setMeshData(MeshData(vertices=vertices, indices=indices, colors=colours))
         return True
