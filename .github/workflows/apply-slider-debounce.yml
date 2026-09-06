@@ -27,7 +27,8 @@ jobs:
       - name: Apply slider debounce
         run: |
           python tools/apply_slider_debounce.py
-          rm -f tools/apply_slider_debounce.py
+          python tools/apply_slider_debounce_fixups.py
+          rm -f tools/apply_slider_debounce.py tools/apply_slider_debounce_fixups.py
 
       - name: Validate release candidate
         run: |
@@ -47,4 +48,4 @@ jobs:
           git commit -m "Debounce Monitor sliders before apply"
           git push origin HEAD:v3-unified-moonraker
 
-# Trigger marker.
+# Trigger marker 2.
