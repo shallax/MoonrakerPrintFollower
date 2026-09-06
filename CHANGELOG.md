@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Render Klipper bed mesh in Cura Preview
 - 2026-09-06: Test hidden upload folder filtering
 - 2026-09-06: Hide dot-directories from upload folder prompt
 - 2026-09-06: Cover PWM output-pin Monitor controls
