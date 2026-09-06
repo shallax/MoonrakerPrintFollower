@@ -26,6 +26,8 @@ Item
     property bool pauseAtLayerCanToggle: false
     property bool pauseAtLayerScheduled: false
     property string pauseAtLayerSummary: ""
+    property var pauseAtLayerItems: []
+    property string pauseAtLayerUnavailableText: ""
 
     // ActionPanelWidget already inserts a default margin between saveButton
     // extension components. Reserve one further default margin inside this
@@ -42,6 +44,8 @@ Item
     signal pauseClicked()
     signal bedMeshVisibilityRequested(bool visible)
     signal pauseAtLayerRequested(int layer)
+    signal removePauseAtLayerRequested(int layer)
+    signal clearPauseAtLayersRequested()
 
     visible: previewStageActive && configuredForFollowing && CuraApplication.platformActivity
     width: visible ? externalGap + followerPanel.width : 0
@@ -162,35 +166,87 @@ Item
                 visible: base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive
                 width: parent.width
                 height: visible ? UM.Theme.getSize("action_button").height : 0
-                enabled: base.pauseAtLayerCanToggle
+                enabled: base.pauseAtLayerScheduled || base.pauseAtLayerCanToggle
                 text: base.pauseAtLayerCandidate <= 0
-                    ? "Pause at selected layer"
+                    ? "Pause at end of selected layer"
                     : (base.pauseAtLayerScheduled
-                        ? "Remove pause at layer " + base.pauseAtLayerCandidate
+                        ? "Remove pause after layer " + base.pauseAtLayerCandidate
                         : (base.pauseAtLayerCanToggle
-                            ? "Enable pause at layer " + base.pauseAtLayerCandidate
-                            : "Layer " + base.pauseAtLayerCandidate + " already reached"))
-                tooltip: base.pauseAtLayerCanToggle
-                    ? (base.pauseAtLayerScheduled
-                        ? "Remove the scheduled PAUSE for this future layer."
-                        : "Call the Klipper PAUSE macro when Moonraker reaches this future layer.")
-                    : "Scroll Cura Preview to a layer ahead of the current print layer to schedule PAUSE."
+                            ? "Enable pause at end of layer " + base.pauseAtLayerCandidate
+                            : (base.pauseAtLayerUnavailableText.length > 0
+                                ? base.pauseAtLayerUnavailableText
+                                : "Pause unavailable")))
+                tooltip: base.pauseAtLayerScheduled
+                    ? "Remove the scheduled end-of-layer PAUSE."
+                    : (base.pauseAtLayerCanToggle
+                        ? "Call the Klipper PAUSE macro once this layer has finished and Moonraker advances to the following layer."
+                        : "Scroll Cura Preview to a future non-final layer to schedule an end-of-layer PAUSE.")
                 fixedWidthMode: true
                 onClicked: base.pauseAtLayerRequested(base.pauseAtLayerCandidate)
             }
 
-            UM.Label
+            Column
             {
-                visible: base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive
+                id: scheduledPauseList
+                visible: base.hasToolpath
+                    && base.followingEnabled
+                    && base.pauseAtLayerActive
+                    && base.pauseAtLayerItems.length > 0
                 width: parent.width
-                height: visible ? 20 * screenScaleFactor : 0
-                text: base.pauseAtLayerSummary.length > 0 ? base.pauseAtLayerSummary : " "
-                opacity: base.pauseAtLayerSummary.length > 0 ? 1.0 : 0.0
-                color: UM.Theme.getColor("text_inactive")
-                font: UM.Theme.getFont("default_italic")
-                elide: Text.ElideRight
-                verticalAlignment: Text.AlignVCenter
-                clip: true
+                height: visible ? implicitHeight : 0
+                spacing: 2 * screenScaleFactor
+
+                UM.Label
+                {
+                    width: parent.width
+                    text: "Enabled pauses"
+                    color: UM.Theme.getColor("text")
+                    font: UM.Theme.getFont("default_bold")
+                }
+
+                Repeater
+                {
+                    model: base.pauseAtLayerItems
+                    delegate: Row
+                    {
+                        width: scheduledPauseList.width
+                        height: UM.Theme.getSize("action_button").height
+                        spacing: base.buttonSpacing
+                        property int pauseLayer: Number(modelData.layer)
+
+                        UM.Label
+                        {
+                            width: Math.max(0, parent.width - removePauseButton.width - parent.spacing)
+                            height: parent.height
+                            text: "End of layer " + parent.pauseLayer
+                            color: UM.Theme.getColor("text")
+                            font: UM.Theme.getFont("default")
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+
+                        Cura.SecondaryButton
+                        {
+                            id: removePauseButton
+                            width: 88 * screenScaleFactor
+                            height: parent.height
+                            text: "Remove"
+                            tooltip: "Remove the scheduled PAUSE after layer " + parent.pauseLayer + "."
+                            fixedWidthMode: true
+                            onClicked: base.removePauseAtLayerRequested(parent.pauseLayer)
+                        }
+                    }
+                }
+
+                Cura.SecondaryButton
+                {
+                    width: parent.width
+                    height: UM.Theme.getSize("action_button").height
+                    text: "Clear all pauses"
+                    tooltip: "Remove every scheduled end-of-layer PAUSE for the current print."
+                    fixedWidthMode: true
+                    onClicked: base.clearPauseAtLayersRequested()
+                }
             }
 
             Column

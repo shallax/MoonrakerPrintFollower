@@ -6,7 +6,13 @@ PLUGIN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plug
 if PLUGIN_DIR not in sys.path:
     sys.path.insert(0, PLUGIN_DIR)
 
-from Core import OperationContext, OperationPhase, RemoteFileIdentity, preview_override_kind
+from Core import (
+    OperationContext,
+    OperationPhase,
+    RemoteFileIdentity,
+    due_end_of_layer_pauses,
+    preview_override_kind,
+)
 
 
 class CoreTests(unittest.TestCase):
@@ -71,6 +77,15 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(identity.matches_job("a.gcode", 0))
         self.assertFalse(identity.matches_job("a.gcode", 101))
         self.assertFalse(identity.matches_job("b.gcode", 100))
+
+    def test_end_of_layer_pause_is_not_due_when_target_layer_is_reached(self):
+        self.assertEqual(due_end_of_layer_pauses({91}, 91), [])
+
+    def test_end_of_layer_pause_becomes_due_after_transition(self):
+        self.assertEqual(due_end_of_layer_pauses({91}, 92), [91])
+
+    def test_end_of_layer_pause_handles_poll_skips_and_orders_targets(self):
+        self.assertEqual(due_end_of_layer_pauses({94, 91, 92}, 94), [91, 92])
 
     def test_preview_override_detects_upper_layer_change(self):
         self.assertEqual(

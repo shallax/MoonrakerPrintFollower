@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Polish Preview pause management
 - 2026-09-06: Run pause management polish
 - 2026-09-06: Stage pause management polish
 - 2026-09-06: Remove temporary pause-at-layer workflow

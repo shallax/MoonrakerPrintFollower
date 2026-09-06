@@ -15,22 +15,30 @@ class PauseAtLayerTests(unittest.TestCase):
         self.assertIn("self._clear_scheduled_pauses(abort_request=True)", FOLLOWER)
         self.assertNotIn("pause_at_layer", CONFIG)
 
-    def test_preview_can_toggle_multiple_future_layers(self):
+    def test_preview_can_toggle_and_manage_multiple_future_layers(self):
         self.assertIn("pauseAtLayerRequested", QML)
-        self.assertIn('"Enable pause at layer " + base.pauseAtLayerCandidate', QML)
-        self.assertIn('"Remove pause at layer " + base.pauseAtLayerCandidate', QML)
-        self.assertIn("Scheduled PAUSE layers:", FOLLOWER)
+        self.assertIn("removePauseAtLayerRequested", QML)
+        self.assertIn("clearPauseAtLayersRequested", QML)
+        self.assertIn('"Enable pause at end of layer " + base.pauseAtLayerCandidate', QML)
+        self.assertIn('"Remove pause after layer " + base.pauseAtLayerCandidate', QML)
+        self.assertIn('text: "Enabled pauses"', QML)
+        self.assertIn('text: "Clear all pauses"', QML)
+        self.assertIn("pauseAtLayerItems", FOLLOWER)
+        self.assertIn("def _remove_scheduled_pause", FOLLOWER)
+        self.assertIn("def _clear_scheduled_pauses_from_preview", FOLLOWER)
         self.assertIn("selected_layer > current", FOLLOWER)
+        self.assertIn("selected_layer >= max_layer", FOLLOWER)
 
     def test_pause_uses_normal_klipper_macro_through_moonraker(self):
         self.assertIn("def gcode_script_endpoint", PROTOCOL)
         self.assertIn('json.dumps({"script": "PAUSE"}', FOLLOWER)
         self.assertIn("self._pause_network.post", FOLLOWER)
 
-    def test_polling_can_cross_a_short_target_layer_without_missing_pause(self):
-        self.assertIn("layer <= current_layer", FOLLOWER)
-        self.assertIn("due = sorted", FOLLOWER)
+    def test_pause_occurs_only_after_target_layer_has_finished(self):
+        self.assertIn("due_end_of_layer_pauses", FOLLOWER)
+        self.assertIn("layer < current", (PLUGINS / "Core.py").read_text(encoding="utf-8"))
         self.assertIn("for layer in due:", FOLLOWER)
+        self.assertIn("transition observed at layer", FOLLOWER)
 
     def test_layer_observation_continues_while_preview_following_is_paused(self):
         observation = FOLLOWER.index("observed_layer, observed_source = self._resolve_remote_layer_index")

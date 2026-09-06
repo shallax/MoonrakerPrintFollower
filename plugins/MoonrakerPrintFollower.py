@@ -26,7 +26,13 @@ from UM.Extension import Extension
 from UM.Logger import Logger
 from UM.Resources import Resources
 
-from .Core import OperationContext, OperationPhase, RemoteFileIdentity, preview_override_kind
+from .Core import (
+    OperationContext,
+    OperationPhase,
+    RemoteFileIdentity,
+    due_end_of_layer_pauses,
+    preview_override_kind,
+)
 from .CuraAdapter import active_machine_identity, apply_preview_decision
 from .FollowController import FollowController, FollowMode, FollowState, decide_layers
 from .MoonrakerClient import MoonrakerClient
@@ -1190,6 +1196,8 @@ class MoonrakerPrintFollower(QObject, Extension):
                 controls.setProperty("pauseAtLayerCanToggle", pause_state["canToggle"])
                 controls.setProperty("pauseAtLayerScheduled", pause_state["scheduled"])
                 controls.setProperty("pauseAtLayerSummary", pause_state["summary"])
+                controls.setProperty("pauseAtLayerItems", pause_state["items"])
+                controls.setProperty("pauseAtLayerUnavailableText", pause_state["unavailable"])
             except Exception:
                 pass
 
@@ -1200,6 +1208,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         )
         candidate = 0
         selected_layer: Optional[int] = None
+        max_layer: Optional[int] = None
         view = self._simulation_view() if active else None
         if view is not None:
             try:
@@ -1207,23 +1216,49 @@ class MoonrakerPrintFollower(QObject, Extension):
                 candidate = selected_layer + 1
             except Exception:
                 selected_layer = None
+            try:
+                if hasattr(view, "getMaxLayers"):
+                    max_layer = max(0, int(view.getMaxLayers()))
+            except Exception:
+                max_layer = None
 
         current = self._last_observed_remote_layer
+        scheduled = bool(selected_layer is not None and selected_layer in self._scheduled_pause_layers)
+        is_final_layer = bool(
+            selected_layer is not None
+            and max_layer is not None
+            and selected_layer >= max_layer
+        )
         can_toggle = bool(
             active
             and selected_layer is not None
             and current is not None
             and selected_layer > current
+            and not is_final_layer
         )
-        scheduled = bool(selected_layer is not None and selected_layer in self._scheduled_pause_layers)
-        layers = ", ".join(str(layer + 1) for layer in sorted(self._scheduled_pause_layers))
-        summary = f"Scheduled PAUSE layers: {layers}" if layers else ""
+
+        unavailable = ""
+        if active and selected_layer is not None and not scheduled and not can_toggle:
+            if current is None:
+                unavailable = "Waiting for current print layer"
+            elif selected_layer <= current:
+                unavailable = f"Layer {selected_layer + 1} already reached"
+            elif is_final_layer:
+                unavailable = "Final layer ends the print"
+            else:
+                unavailable = "Select a future layer"
+
+        items = [{"layer": layer + 1} for layer in sorted(self._scheduled_pause_layers)]
+        layers = ", ".join(str(item["layer"]) for item in items)
+        summary = f"End-of-layer PAUSE: {layers}" if layers else ""
         return {
             "active": active,
             "candidate": candidate,
             "canToggle": can_toggle,
             "scheduled": scheduled,
             "summary": summary,
+            "items": items,
+            "unavailable": unavailable,
         }
 
     def _toggle_pause_at_selected_layer(self, human_layer: int) -> None:
@@ -1231,22 +1266,47 @@ class MoonrakerPrintFollower(QObject, Extension):
             layer = int(human_layer) - 1
         except (TypeError, ValueError):
             return
-        current = self._last_observed_remote_layer
+
+        # A scheduled pause can always be removed until its trigger has fired,
+        # including while the printer is physically printing that target layer.
+        if layer in self._scheduled_pause_layers:
+            self._scheduled_pause_layers.remove(layer)
+            self._set_status(f"Removed end-of-layer PAUSE after layer {layer + 1}")
+            self._sync_preview_button_state()
+            return
+
+        state = self._pause_at_layer_preview_state()
         if (
-            self._last_remote_state not in self.ACTIVE_STATES
-            or self._remote_job_key is None
-            or current is None
-            or layer <= current
+            int(state.get("candidate") or 0) != layer + 1
+            or not bool(state.get("canToggle"))
         ):
             self._sync_preview_button_state()
             return
 
-        if layer in self._scheduled_pause_layers:
-            self._scheduled_pause_layers.remove(layer)
-            self._set_status(f"Removed scheduled PAUSE at layer {layer + 1}")
-        else:
-            self._scheduled_pause_layers.add(layer)
-            self._set_status(f"PAUSE scheduled for layer {layer + 1}")
+        self._scheduled_pause_layers.add(layer)
+        self._set_status(f"PAUSE scheduled for end of layer {layer + 1}")
+        self._sync_preview_button_state()
+
+    def _remove_scheduled_pause(self, human_layer: int) -> None:
+        try:
+            layer = int(human_layer) - 1
+        except (TypeError, ValueError):
+            return
+        if layer not in self._scheduled_pause_layers:
+            self._sync_preview_button_state()
+            return
+        self._scheduled_pause_layers.remove(layer)
+        self._set_status(f"Removed end-of-layer PAUSE after layer {layer + 1}")
+        self._sync_preview_button_state()
+
+    def _clear_scheduled_pauses_from_preview(self) -> None:
+        count = len(self._scheduled_pause_layers)
+        if count <= 0:
+            self._sync_preview_button_state()
+            return
+        self._scheduled_pause_layers.clear()
+        suffix = "pause" if count == 1 else "pauses"
+        self._set_status(f"Cleared {count} scheduled end-of-layer {suffix}")
         self._sync_preview_button_state()
 
     def _clear_scheduled_pauses(self, *, abort_request: bool = False) -> None:
@@ -1279,11 +1339,14 @@ class MoonrakerPrintFollower(QObject, Extension):
         except (TypeError, ValueError):
             return
 
-        due = sorted(layer for layer in self._scheduled_pause_layers if layer <= current_layer)
+        # End-of-layer semantics are deliberately strict: merely arriving at a
+        # scheduled layer must not pause at its beginning. A target becomes due
+        # only after Moonraker advances to a later layer. If polling skips across
+        # several very short layers, one PAUSE is sufficient and all crossed
+        # targets are consumed together.
+        due = due_end_of_layer_pauses(self._scheduled_pause_layers, current_layer)
         if not due:
             return
-        # One PAUSE is sufficient if polling skipped across more than one scheduled
-        # very short layer. Consume every already-reached target, but keep later ones.
         for layer in due:
             self._scheduled_pause_layers.discard(layer)
         target_layer = due[0]
@@ -1296,7 +1359,7 @@ class MoonrakerPrintFollower(QObject, Extension):
                 if self._pause_reply.isRunning():
                     Logger.log(
                         "w",
-                        "Moonraker Print Follower skipped overlapping PAUSE request for layer %d",
+                        "Moonraker Print Follower skipped overlapping end-of-layer PAUSE request after layer %d",
                         target_layer + 1,
                     )
                     return
@@ -1306,7 +1369,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         config = self._config_store.get()
         base_url = self._normalise_base_url(config.url)
         if not self._url_is_usable(base_url):
-            self._set_status(f"Could not PAUSE at layer {target_layer + 1}: Moonraker URL unavailable")
+            self._set_status(f"Could not PAUSE after layer {target_layer + 1}: Moonraker URL unavailable")
             return
 
         request = QNetworkRequest(QUrl(gcode_script_endpoint(base_url)))
@@ -1331,7 +1394,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         )
         Logger.log(
             "i",
-            "Moonraker Print Follower requesting PAUSE for scheduled layer %d (observed layer %d)",
+            "Moonraker Print Follower requesting PAUSE after scheduled layer %d (observed layer %d)",
             target_layer + 1,
             current_layer + 1,
         )
@@ -1358,11 +1421,11 @@ class MoonrakerPrintFollower(QObject, Extension):
                 return
             if reply.error() != QNetworkReply.NetworkError.NoError:
                 self._set_status(
-                    f"PAUSE at layer {target_layer + 1} failed: {reply.errorString()}"
+                    f"PAUSE after layer {target_layer + 1} failed: {reply.errorString()}"
                 )
                 return
-            suffix = "" if current_layer == target_layer else f" (detected at layer {current_layer + 1})"
-            self._set_status(f"PAUSE requested at layer {target_layer + 1}{suffix}")
+            suffix = f" (transition observed at layer {current_layer + 1})"
+            self._set_status(f"PAUSE requested after layer {target_layer + 1}{suffix}")
         finally:
             try:
                 reply.deleteLater()
@@ -1635,6 +1698,8 @@ class MoonrakerPrintFollower(QObject, Extension):
                         action_controls.loadClicked.connect(self._confirm_force_load_current_print)
                         action_controls.pauseClicked.connect(self._toggle_following_pause)
                         action_controls.pauseAtLayerRequested.connect(self._toggle_pause_at_selected_layer)
+                        action_controls.removePauseAtLayerRequested.connect(self._remove_scheduled_pause)
+                        action_controls.clearPauseAtLayersRequested.connect(self._clear_scheduled_pauses_from_preview)
                     except Exception as error:
                         Logger.logException(
                             "e",
