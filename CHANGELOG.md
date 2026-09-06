@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Remove final v3 polish CI trigger
 - 2026-09-06: Trigger final v3 polish package verification
 - 2026-09-06: Polish tuning LED and emergency controls
 - 2026-09-06: Fix slider polish workflow runner
