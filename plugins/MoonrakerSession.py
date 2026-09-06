@@ -27,14 +27,24 @@ class PollPolicy:
     power_ms: int = 5000
     system_ms: int = 10000
     discovery_ms: int = 30000
+    pause_guard_ms: int = 250
 
-    def interval_ms(self, category: RequestCategory | str, configured_ms: int, printer_state: str = "") -> int:
+    def interval_ms(
+        self,
+        category: RequestCategory | str,
+        configured_ms: int,
+        printer_state: str = "",
+        *,
+        urgent: bool = False,
+    ) -> int:
         category = RequestCategory(category)
         configured = max(1, int(configured_ms or 1))
         state = str(printer_state or "").strip().lower()
         active = state == "printing"
         paused = state == "paused"
         if category == RequestCategory.CORE:
+            if urgent and active:
+                return min(configured, self.pause_guard_ms)
             if active:
                 return configured
             if paused:
@@ -223,6 +233,7 @@ class MoonrakerSessionState:
         self.generation = 0
         self.base_url = ""
         self.connected = False
+        self.pause_guard = False
 
     def rebind(self, base_url: str) -> bool:
         target = str(base_url or "").rstrip("/")
@@ -231,6 +242,7 @@ class MoonrakerSessionState:
         self.generation += 1
         self.base_url = target
         self.connected = False
+        self.pause_guard = False
         self.snapshot = SessionSnapshot()
         self.commands.clear()
         self.coalescer.clear()
@@ -239,9 +251,17 @@ class MoonrakerSessionState:
     def reset(self) -> None:
         self.generation += 1
         self.connected = False
+        self.pause_guard = False
         self.snapshot = SessionSnapshot()
         self.commands.clear()
         self.coalescer.clear()
+
+    def set_pause_guard(self, active: bool) -> bool:
+        active = bool(active)
+        if active == self.pause_guard:
+            return False
+        self.pause_guard = active
+        return True
 
     def merge_status(self, patch: Dict[str, Any], *, now: Optional[float] = None) -> tuple[Dict[str, Any], list[CommandAcknowledgement]]:
         status = self.snapshot.merge_status(patch, now=now)
