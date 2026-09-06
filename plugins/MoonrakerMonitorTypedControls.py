@@ -10,7 +10,7 @@ from .MoonrakerMonitorControls import MoonrakerMonitorModel as _BaseMoonrakerMon
 
 
 class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
-    """Typed macro arguments and truthful temperature-profile state for Monitor."""
+    """Typed macro arguments, truthful presets, and PWM output controls."""
 
     typedControlsChanged = pyqtSignal()
 
@@ -21,16 +21,110 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
 
     def __init__(self, output_controller: Any, number_of_extruders: int, follower: Any) -> None:
         self._macro_parameter_definitions: Dict[str, List[Dict[str, Any]]] = {}
+        self._pwm_output_items: List[Dict[str, Any]] = []
         super().__init__(output_controller, number_of_extruders, follower)
+
+    @staticmethod
+    def _want_aux_object(name: str) -> bool:
+        lower = str(name or "").lower()
+        if lower.startswith("output_pin "):
+            return True
+        return _BaseMoonrakerMonitorModel._want_aux_object(name)
 
     def _rebuild_peripherals(self) -> None:
         super()._rebuild_peripherals()
         self._rebuild_macro_parameter_definitions()
+        self._pwm_output_items = self._build_pwm_output_items()
         self.typedControlsChanged.emit()
 
     def _on_temperature_presets(self, payload: Optional[Dict[str, Any]], error: Optional[str]) -> None:
         super()._on_temperature_presets(payload, error)
         self.typedControlsChanged.emit()
+
+    # ------------------------------------------------------------------
+    # PWM output_pin discovery and control
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _config_truthy(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        return str(value or "").strip().casefold() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _find_config_section(raw_config: Dict[str, Any], section_name: str) -> Optional[Dict[str, Any]]:
+        wanted = str(section_name or "").casefold()
+        for key, value in raw_config.items():
+            if str(key).casefold() == wanted and isinstance(value, dict):
+                return value
+        return None
+
+    @staticmethod
+    def _friendly_pwm_name(object_name: str) -> str:
+        suffix = str(object_name or "").split(" ", 1)[1] if " " in str(object_name or "") else str(object_name or "")
+        suffix = suffix.replace("_", " ").strip()
+        return suffix[:1].upper() + suffix[1:] if suffix else str(object_name or "")
+
+    def _build_pwm_output_items(self) -> List[Dict[str, Any]]:
+        configfile = self._aux_status.get("configfile") or {}
+        raw_config = configfile.get("config") if isinstance(configfile, dict) else None
+        if not isinstance(raw_config, dict):
+            return []
+
+        items: List[Dict[str, Any]] = []
+        for object_name in sorted(self._aux_status.keys(), key=str.casefold):
+            if not str(object_name).lower().startswith("output_pin "):
+                continue
+            status = self._aux_status.get(object_name)
+            if not isinstance(status, dict) or status.get("value") is None:
+                continue
+            section = self._find_config_section(raw_config, object_name)
+            if not isinstance(section, dict) or not self._config_truthy(section.get("pwm")):
+                continue
+            try:
+                scale = float(section.get("scale") or 1.0)
+            except (TypeError, ValueError):
+                scale = 1.0
+            if scale <= 0:
+                scale = 1.0
+            try:
+                current = float(status.get("value") or 0.0)
+            except (TypeError, ValueError):
+                current = 0.0
+            current = max(0.0, min(scale, current))
+            pin_name = str(object_name).split(" ", 1)[1].strip()
+            items.append({
+                "object": str(object_name),
+                "pin": pin_name,
+                "name": self._friendly_pwm_name(object_name),
+                "scale": scale,
+                "percent": int(round(current * 100.0 / scale)),
+            })
+        return items
+
+    @pyqtProperty(QVariant, notify=typedControlsChanged)
+    def pwmOutputItems(self) -> QVariant:
+        return QVariant(list(self._pwm_output_items))
+
+    @pyqtSlot(str, int)
+    def setPwmOutput(self, object_name: str, percent: int) -> None:
+        object_name = str(object_name or "")
+        item = next((entry for entry in self._pwm_output_items if entry.get("object") == object_name), None)
+        if item is None:
+            return
+        try:
+            percent_value = max(0, min(100, int(percent)))
+            scale = float(item.get("scale") or 1.0)
+        except (TypeError, ValueError):
+            return
+        pin_name = str(item.get("pin") or "").strip()
+        if not pin_name:
+            return
+        target = scale * percent_value / 100.0
+        self._send_quick_gcode(
+            "pwm-output-" + object_name,
+            f"SET_PIN PIN={pin_name} VALUE={target:g}",
+        )
 
     # ------------------------------------------------------------------
     # Macro argument discovery
@@ -53,13 +147,9 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             definitions[macro] = self._infer_macro_parameters(gcode)
         self._macro_parameter_definitions = definitions
 
-    @staticmethod
-    def _find_macro_section(raw_config: Dict[str, Any], macro: str) -> Optional[Dict[str, Any]]:
-        wanted = f"gcode_macro {macro}".casefold()
-        for key, value in raw_config.items():
-            if str(key).casefold() == wanted and isinstance(value, dict):
-                return value
-        return None
+    @classmethod
+    def _find_macro_section(cls, raw_config: Dict[str, Any], macro: str) -> Optional[Dict[str, Any]]:
+        return cls._find_config_section(raw_config, f"gcode_macro {macro}")
 
     @classmethod
     def _infer_macro_parameters(cls, gcode: str) -> List[Dict[str, Any]]:
