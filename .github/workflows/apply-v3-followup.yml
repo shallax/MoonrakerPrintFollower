@@ -1,0 +1,48 @@
+name: Apply v3 follow-up
+
+on:
+  push:
+    branches:
+      - v3-unified-moonraker
+    paths:
+      - .github/workflows/apply-v3-followup.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-followup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out v3 branch
+        uses: actions/checkout@v4
+        with:
+          ref: v3-unified-moonraker
+          fetch-depth: 0
+
+      - name: Assemble and apply reviewed follow-up patch
+        run: |
+          cat tools/v3_followup_1.patch tools/v3_followup_2.patch tools/v3_followup_3.patch tools/v3_followup_4.patch tools/v3_followup_5.patch > /tmp/v3_followup.patch
+          # Patch chunks 3-5 were transported as text resources; normalise only
+          # accidental leading whitespace on unified-diff file separators.
+          sed -i 's/^ diff --git /diff --git /' /tmp/v3_followup.patch
+          git apply --check /tmp/v3_followup.patch
+          git apply /tmp/v3_followup.patch
+
+      - name: Verify changed Python and focused regressions
+        run: |
+          python -m py_compile plugins/*.py tools/*.py
+          python -m unittest tests.test_v3_followup_regressions
+
+      - name: Remove temporary patch transport
+        run: |
+          git rm tools/v3_followup_1.patch tools/v3_followup_2.patch tools/v3_followup_3.patch tools/v3_followup_4.patch tools/v3_followup_5.patch
+          git rm .github/workflows/apply-v3-followup.yml
+
+      - name: Commit v3 follow-up
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add plugins tests
+          git commit -m "Fix bed mesh lifecycle and expand Monitor controls"
+          git push origin HEAD:v3-unified-moonraker
