@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Describe neon orange mesh boundary in empty Preview
 - 2026-09-06: Describe neon orange mesh boundary in Preview
 - 2026-09-06: Use neon orange bed mesh boundary
 - 2026-09-06: Keep empty Preview scrub ETA layout fixed
