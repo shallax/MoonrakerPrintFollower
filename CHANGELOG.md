@@ -74,6 +74,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 ## Development history
 
 - 2026-09-06: Run final release UX refactor
+- 2026-09-06: Run final release UX refactor
 - 2026-09-06: Add release UX refactor fixups
 - 2026-09-06: Run final release UX refactor
 - 2026-09-06: Stage release UX and architecture audit

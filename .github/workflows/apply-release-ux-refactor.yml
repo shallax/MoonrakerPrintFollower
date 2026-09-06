@@ -28,6 +28,7 @@ jobs:
         run: |
           python tools/apply_release_ux_refactor.py
           python tools/apply_release_ux_refactor_fixups.py
+          rm -f tools/apply_release_ux_refactor.py tools/apply_release_ux_refactor_fixups.py
 
       - name: Validate hardened release candidate
         run: |
@@ -41,7 +42,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm -f tools/apply_release_ux_refactor.py tools/apply_release_ux_refactor_fixups.py
           rm -rf dist
           find . -type d -name __pycache__ -prune -exec rm -rf {} +
           git add -A
