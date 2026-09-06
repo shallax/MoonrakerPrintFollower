@@ -14,16 +14,141 @@ from .PrintTracker import PrintObservation, PrintTracker
 
 
 class FollowerCoordinator(_FollowerRuntime):
-    """Thin orchestration layer over the established Cura-facing runtime."""
+    """Thin orchestration layer over the established Cura-facing runtime.
+
+    Compatibility code may still refer to its historical private attribute names,
+    but those names are properties backed by the extracted services below. This
+    prevents the strangler boundary from creating two independent sources of truth.
+    """
 
     def __init__(self, application) -> None:
         self._preview_controller = PreviewController()
         self._print_tracker = PrintTracker(self.ACTIVE_STATES)
         self._gcode_repository = GCodeRepository()
         self._follower_session = FollowerSession()
+        self._pause_layers: set[int] = set()
+        self._pause_scheduler = PauseScheduler(self._pause_layers)
         super().__init__(application)
-        self._pause_scheduler = PauseScheduler(self._scheduled_pause_layers)
+
+        # The compatibility runtime has specialised reply lifecycles for metadata,
+        # PAUSE and streamed G-code downloads. Keep those lifecycles, but put every
+        # Moonraker request on the same Qt connection pool owned by the shared client.
+        shared_network = self._client.transport.network
+        self._network = shared_network
+        self._pause_network = shared_network
+        self._file_network = shared_network
+        self._metadata_network = shared_network
         self._follower_session.bind_machine(self._active_machine_id, self._active_machine_name)
+
+    # ------------------------------------------------------------------
+    # Compatibility attribute bridge: extracted services are authoritative.
+    # ------------------------------------------------------------------
+
+    @property
+    def _following_paused(self) -> bool:
+        return bool(self._follower_session.following_paused)
+
+    @_following_paused.setter
+    def _following_paused(self, value: bool) -> None:
+        self._follower_session.following_paused = bool(value)
+
+    @property
+    def _remote_job_key(self) -> Optional[Tuple[str, int, int]]:
+        return self._follower_session.remote_job_key
+
+    @_remote_job_key.setter
+    def _remote_job_key(self, value: Optional[Tuple[str, int, int]]) -> None:
+        self._follower_session.set_job(value)
+
+    @property
+    def _remote_job_serial(self) -> int:
+        return int(self._print_tracker.serial)
+
+    @_remote_job_serial.setter
+    def _remote_job_serial(self, value: int) -> None:
+        self._print_tracker.serial = max(0, int(value or 0))
+
+    @property
+    def _last_remote_file_position(self) -> Optional[int]:
+        return self._print_tracker.last_file_position
+
+    @_last_remote_file_position.setter
+    def _last_remote_file_position(self, value: Optional[int]) -> None:
+        self._print_tracker.last_file_position = None if value is None else int(value)
+
+    @property
+    def _last_remote_print_duration(self) -> Optional[float]:
+        return self._print_tracker.last_print_duration
+
+    @_last_remote_print_duration.setter
+    def _last_remote_print_duration(self, value: Optional[float]) -> None:
+        self._print_tracker.last_print_duration = None if value is None else float(value)
+
+    @property
+    def _scheduled_pause_layers(self) -> set[int]:
+        return self._pause_layers
+
+    @_scheduled_pause_layers.setter
+    def _scheduled_pause_layers(self, value) -> None:
+        self._pause_layers.clear()
+        if value:
+            self._pause_layers.update(int(item) for item in value)
+
+    @property
+    def _expected_follow_layer(self) -> Optional[int]:
+        return self._preview_controller.expected.layer
+
+    @_expected_follow_layer.setter
+    def _expected_follow_layer(self, value: Optional[int]) -> None:
+        self._preview_controller.expected.layer = None if value is None else int(value)
+
+    @property
+    def _expected_follow_minimum_layer(self) -> Optional[int]:
+        return self._preview_controller.expected.minimum_layer
+
+    @_expected_follow_minimum_layer.setter
+    def _expected_follow_minimum_layer(self, value: Optional[int]) -> None:
+        self._preview_controller.expected.minimum_layer = None if value is None else int(value)
+
+    @property
+    def _expected_follow_path(self) -> Optional[float]:
+        return self._preview_controller.expected.path
+
+    @_expected_follow_path.setter
+    def _expected_follow_path(self, value: Optional[float]) -> None:
+        self._preview_controller.expected.path = None if value is None else float(value)
+
+    @property
+    def _expected_follow_minimum_path(self) -> Optional[int]:
+        return self._preview_controller.expected.minimum_path
+
+    @_expected_follow_minimum_path.setter
+    def _expected_follow_minimum_path(self, value: Optional[int]) -> None:
+        self._preview_controller.expected.minimum_path = None if value is None else int(value)
+
+    @property
+    def _cached_gcode_filename(self) -> Optional[str]:
+        return self._gcode_repository.cached.filename
+
+    @_cached_gcode_filename.setter
+    def _cached_gcode_filename(self, value: Optional[str]) -> None:
+        self._gcode_repository.cached.filename = None if value is None else str(value)
+
+    @property
+    def _cached_gcode_path(self) -> Optional[str]:
+        return self._gcode_repository.cached.path
+
+    @_cached_gcode_path.setter
+    def _cached_gcode_path(self, value: Optional[str]) -> None:
+        self._gcode_repository.cached.path = None if value is None else str(value)
+
+    @property
+    def _cached_gcode_job_key(self) -> Optional[Tuple[str, int, int]]:
+        return self._gcode_repository.cached.job_key
+
+    @_cached_gcode_job_key.setter
+    def _cached_gcode_job_key(self, value: Optional[Tuple[str, int, int]]) -> None:
+        self._gcode_repository.cached.job_key = value
 
     @property
     def session(self):
@@ -105,32 +230,16 @@ class FollowerCoordinator(_FollowerRuntime):
         else:
             self._remote_job_key = transition.key
 
-        self._remote_job_serial = transition.serial
-        self._last_remote_file_position = self._print_tracker.last_file_position
-        self._last_remote_print_duration = self._print_tracker.last_print_duration
-        self._follower_session.set_job(self._remote_job_key)
         return self._remote_job_key
 
     def _clear_expected_preview_position(self) -> None:
         self._preview_controller.clear()
-        self._expected_follow_layer = None
-        self._expected_follow_minimum_layer = None
-        self._expected_follow_path = None
-        self._expected_follow_minimum_path = None
 
     def _remember_plugin_preview_position(self, view) -> None:
-        expected = self._preview_controller.remember(view)
-        self._expected_follow_layer = expected.layer
-        self._expected_follow_minimum_layer = expected.minimum_layer
-        self._expected_follow_path = expected.path
-        self._expected_follow_minimum_path = expected.minimum_path
+        self._preview_controller.remember(view)
 
     def _scheduler(self) -> PauseScheduler:
-        scheduler = getattr(self, "_pause_scheduler", None)
-        if scheduler is None:
-            scheduler = PauseScheduler(self._scheduled_pause_layers)
-            self._pause_scheduler = scheduler
-        return scheduler
+        return self._pause_scheduler
 
     def _toggle_pause_at_selected_layer(self, human_layer: int) -> None:
         try:
@@ -194,19 +303,12 @@ class FollowerCoordinator(_FollowerRuntime):
     ) -> None:
         effective_key = job_key if job_key is not None else self._remote_job_key
         old_path = self._gcode_repository.adopt(filename, path, effective_key)
-        self._cached_gcode_filename = filename
-        self._cached_gcode_path = path
-        self._cached_gcode_job_key = effective_key
         if old_path and os.path.abspath(old_path) != os.path.abspath(path):
             self._cleanup_cached_job_dir(old_path)
         Logger.log("i", "Moonraker Print Follower streamed remote G-code %s to %s", filename, path)
 
     def _discard_cached_gcode(self) -> None:
-        old_path = self._cached_gcode_path or self._gcode_repository.cached.path
-        self._gcode_repository.discard()
-        self._cached_gcode_filename = None
-        self._cached_gcode_path = None
-        self._cached_gcode_job_key = None
+        old_path = self._gcode_repository.discard()
         self._cleanup_cached_job_dir(old_path)
 
     def _on_active_machine_changed(self, *_args) -> None:
