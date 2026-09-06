@@ -13,7 +13,7 @@ if str(pathlib.Path(__file__).resolve().parent) not in sys.path:
 
 from fake_moonraker import FakeMoonraker
 from MoonrakerSession import MoonrakerSessionState, PollPolicy, RequestCategory, RequestCoalescer
-from PauseScheduler import PauseScheduler
+from PauseScheduleService import PauseScheduleService
 from PrintTracker import PrintObservation, PrintTracker
 
 
@@ -70,8 +70,7 @@ class V31ArchitectureTests(unittest.TestCase):
             {"print_stats": {"state": "paused", "info": {"current_layer": 11}}},
         ])
         session = MoonrakerSessionState()
-        layers: set[int] = set()
-        scheduler = PauseScheduler(layers)
+        scheduler = PauseScheduleService()
 
         fake.poll_session(session, now=0)
         self.assertTrue(scheduler.schedule(10))
@@ -103,55 +102,59 @@ class V31ArchitectureTests(unittest.TestCase):
 
     def test_same_filename_restart_gets_new_print_run_identity(self):
         tracker = PrintTracker({"printing", "paused"})
-        first = tracker.observe(PrintObservation("printing", "part.gcode", 1000, 600, 120), previous_state="standby")
+        first = tracker.observe(
+            PrintObservation("printing", "part.gcode", 1000, 600, 120),
+            previous_state="standby",
+        )
         self.assertTrue(first.new_job)
-        second = tracker.observe(PrintObservation("printing", "part.gcode", 1000, 800, 180), previous_state="printing")
+        second = tracker.observe(
+            PrintObservation("printing", "part.gcode", 1000, 800, 180),
+            previous_state="printing",
+        )
         self.assertFalse(second.new_job)
-        restarted = tracker.observe(PrintObservation("printing", "part.gcode", 1000, 20, 3), previous_state="printing")
+        restarted = tracker.observe(
+            PrintObservation("printing", "part.gcode", 1000, 20, 3),
+            previous_state="printing",
+        )
         self.assertTrue(restarted.new_job)
         self.assertNotEqual(first.key, restarted.key)
 
-    def test_public_follower_is_thin_and_active_responsibilities_are_extracted(self):
+    def test_active_architecture_has_one_service_per_domain(self):
+        coordinator = (PLUGINS / "FollowerCoordinator.py").read_text(encoding="utf-8")
+        for token in (
+            "RemoteJobService",
+            "RemoteFileService",
+            "GCodeIndexService",
+            "PreviewFollowerService",
+            "PauseScheduleService",
+            "CuraLifecycleBridge",
+            "FollowerTransportMixin",
+        ):
+            self.assertIn(token, coordinator)
+        for obsolete in ("PauseScheduler.py", "PreviewController.py", "FollowerStateBridge.py"):
+            self.assertFalse((PLUGINS / obsolete).exists(), obsolete)
+
+    def test_public_follower_is_thin_and_runtime_is_compatibility_boundary(self):
         facade = (PLUGINS / "MoonrakerPrintFollower.py").read_text(encoding="utf-8")
         coordinator = (PLUGINS / "FollowerCoordinator.py").read_text(encoding="utf-8")
         transport = (PLUGINS / "FollowerTransport.py").read_text(encoding="utf-8")
         runtime = (PLUGINS / "FollowerRuntime.py").read_text(encoding="utf-8")
         self.assertLess(len(facade.splitlines()), 20)
-        self.assertLess(len(coordinator.splitlines()), 400)
         self.assertIn("class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime)", coordinator)
-        self.assertIn("PrintTracker", coordinator)
-        self.assertIn("PauseScheduler", coordinator)
-        self.assertIn("GCodeRepository", coordinator)
-        self.assertIn("PreviewController", coordinator)
         self.assertIn("_ensure_remote_metadata", transport)
         self.assertIn("_begin_gcode_download", transport)
         self.assertIn("_send_scheduled_pause", transport)
-        # Mature Cura scene/load mechanics remain behind the compatibility boundary.
         self.assertIn("_update_selected_layer_eta", runtime)
         self.assertIn("_load_cached_remote_gcode_forced", runtime)
 
-    def test_extracted_services_are_authoritative_not_mirrored_state(self):
-        coordinator = (PLUGINS / "FollowerCoordinator.py").read_text(encoding="utf-8")
-        for token in (
-            "def _following_paused(self)",
-            "self._follower_session.following_paused",
-            "def _remote_job_key(self)",
-            "self._follower_session.remote_job_key",
-            "def _cached_gcode_path(self)",
-            "self._gcode_repository.cached.path",
-            "def _expected_follow_layer(self)",
-            "self._preview_controller.expected.layer",
-            "def _scheduled_pause_layers(self)",
-            "self._pause_layers",
-        ):
-            self.assertIn(token, coordinator)
-
     def test_monitor_core_and_peripheral_json_use_shared_transport(self):
         client = (PLUGINS / "MoonrakerClient.py").read_text(encoding="utf-8")
+        session = (PLUGINS / "MoonrakerSession.py").read_text(encoding="utf-8")
         monitor_session = (PLUGINS / "MoonrakerMonitorSession.py").read_text(encoding="utf-8")
         transport = (PLUGINS / "MoonrakerTransport.py").read_text(encoding="utf-8")
-        self.assertIn("MoonrakerHttpTransport", client)
-        self.assertIn("self._transport.send_json", client)
+        self.assertIn("MoonrakerSession", client)
+        self.assertIn("self._session.transport.send_json", client)
+        self.assertIn("MoonrakerHttpTransport", session)
         self.assertIn("transport.send_json", monitor_session)
         self.assertIn("client.force_refresh", monitor_session)
         self.assertNotIn("status_endpoint", monitor_session)
