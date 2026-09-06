@@ -29,6 +29,13 @@ class HotfixRegressionTests(unittest.TestCase):
         self.assertIn("manager.uploadPathOptions", UPLOAD_QML)
         self.assertIn("UM.I18nCatalog", UPLOAD_QML)
 
+    def test_hidden_upload_folders_are_not_presented(self):
+        self.assertIn("def _is_hidden_remote_path", LIFECYCLE)
+        self.assertIn('part.startswith(".")', LIFECYCLE)
+        self.assertIn('dirname.startswith(".")', LIFECYCLE)
+        self.assertIn("not self._is_hidden_remote_path(normalised)", LIFECYCLE)
+        self.assertIn('return "" if self._is_hidden_remote_path(path) else path', LIFECYCLE)
+
     def test_dashboard_shows_current_z_offset_beside_nudges(self):
         self.assertIn('text: "Current Z offset"', DASHBOARD_QML)
         self.assertIn('"Current " + root.printer.zOffsetText', DASHBOARD_QML)
