@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Remove deferred slider CI trigger
 - 2026-09-06: Trigger deferred slider package CI
 - 2026-09-06: Defer Monitor slider commits until release
 - 2026-09-06: Run deferred slider patch
