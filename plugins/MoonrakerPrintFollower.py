@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timedelta
 import shutil
 import tempfile
 import threading
@@ -206,6 +207,9 @@ class MoonrakerPrintFollower(QObject, Extension):
         # on closed/repeated geometry and visibly rewind Cura's path slider.
         self._path_progress_layer: Optional[int] = None
         self._path_progress_fraction: Optional[float] = None
+        self._last_resolved_remote_layer: Optional[int] = None
+        self._selected_layer_eta_text = ""
+        self._last_speed_factor = 1.0
         self._scene = None
         self._scene_root = None
         self._lifecycle_generation = 0
@@ -376,6 +380,7 @@ class MoonrakerPrintFollower(QObject, Extension):
             self._follow_controller.pause_by_user("pause button")
         else:
             self._follow_controller.resume()
+            self._selected_layer_eta_text = ""
         self._sync_preview_button_state()
 
         if self._following_paused:
@@ -515,10 +520,12 @@ class MoonrakerPrintFollower(QObject, Extension):
     def _watch_for_manual_preview_change(self) -> None:
         """Fallback watcher for Cura builds without layer/path change signals."""
         self._check_for_manual_preview_change()
+        self._update_selected_layer_eta()
 
     def _on_preview_position_changed(self, *_args) -> None:
         """Event-driven manual override detection for normal Cura 5.x builds."""
         self._check_for_manual_preview_change()
+        self._update_selected_layer_eta()
 
     def _check_for_manual_preview_change(self) -> None:
         """Pause following when Cura Preview moves outside our own write.
@@ -1163,8 +1170,78 @@ class MoonrakerPrintFollower(QObject, Extension):
                 controls.setProperty("hasToolpath", has_toolpath)
                 controls.setProperty("statusText", compact_status)
                 controls.setProperty("statusIconName", status_icon_name)
+                controls.setProperty("selectedLayerEtaText", self._selected_layer_eta_text)
             except Exception:
                 pass
+
+    @staticmethod
+    def _format_preview_duration(seconds: float) -> str:
+        total = max(0, int(round(float(seconds))))
+        hours, remainder = divmod(total, 3600)
+        minutes, secs = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    def _update_selected_layer_eta(self, view=None) -> None:
+        """Show ETA to the manually selected Cura layer while following is paused."""
+        text = ""
+        if self._following_paused and self._last_remote_state in self.ACTIVE_STATES:
+            if view is None:
+                view = self._simulation_view()
+            index = self._remote_index_data
+            times = list(getattr(index, "layer_elapsed_times", []) or []) if index is not None else []
+            current_layer = self._last_resolved_remote_layer
+            if view is not None and current_layer is not None:
+                try:
+                    selected_layer = max(0, int(view.getCurrentLayer()))
+                except Exception:
+                    selected_layer = None
+                if selected_layer is not None:
+                    human_layer = selected_layer + 1
+                    if selected_layer < current_layer:
+                        text = f"Selected layer {human_layer} — already printed"
+                    elif selected_layer == current_layer:
+                        text = f"Selected layer {human_layer} — current print layer"
+                    elif selected_layer < len(times):
+                        def layer_start_elapsed(layer: int) -> Optional[float]:
+                            if layer <= 0:
+                                return 0.0
+                            boundary = layer - 1
+                            if 0 <= boundary < len(times) and times[boundary] is not None:
+                                return float(times[boundary])
+                            return None
+
+                        target_elapsed = layer_start_elapsed(selected_layer)
+                        current_start = layer_start_elapsed(current_layer)
+                        current_end = (
+                            float(times[current_layer])
+                            if 0 <= current_layer < len(times) and times[current_layer] is not None
+                            else None
+                        )
+                        if target_elapsed is not None and current_start is not None:
+                            fraction = 0.0
+                            if self._path_progress_layer == current_layer and self._path_progress_fraction is not None:
+                                fraction = max(0.0, min(1.0, float(self._path_progress_fraction)))
+                            planned_now = current_start
+                            if current_end is not None and current_end >= current_start:
+                                planned_now += (current_end - current_start) * fraction
+                            remaining = max(0.0, target_elapsed - planned_now)
+                            speed = max(0.05, float(self._last_speed_factor or 1.0))
+                            remaining /= speed
+                            finish = datetime.now().astimezone() + timedelta(seconds=remaining)
+                            clock = finish.strftime("%a %H:%M") if remaining >= 20 * 3600 else finish.strftime("%H:%M")
+                            text = (
+                                f"Selected layer {human_layer} — in {self._format_preview_duration(remaining)} "
+                                f"· ~{clock}"
+                            )
+                        else:
+                            text = f"Selected layer {human_layer} — ETA unavailable (no layer timing)"
+                    else:
+                        text = f"Selected layer {human_layer} — ETA unavailable"
+
+        if text == self._selected_layer_eta_text:
+            return
+        self._selected_layer_eta_text = text
+        self._sync_preview_button_state()
 
     def _on_simulation_activity_changed(self, *_args) -> None:
         """Refresh controls and catch up as soon as Cura finishes loading layer data."""
@@ -1788,6 +1865,10 @@ class MoonrakerPrintFollower(QObject, Extension):
     ) -> None:
         state = str(print_stats.get("state") or "")
         filename = str(print_stats.get("filename") or "")
+        try:
+            self._last_speed_factor = max(0.05, float(gcode_move.get("speed_factor") or 1.0))
+        except (TypeError, ValueError):
+            self._last_speed_factor = 1.0
         self._follow_controller.set_connection(True)
         self._follow_controller.set_remote_state(state)
 
@@ -1816,6 +1897,8 @@ class MoonrakerPrintFollower(QObject, Extension):
 
         if state not in self.ACTIVE_STATES:
             self._toolhead_path_valid = False
+            self._last_resolved_remote_layer = None
+            self._selected_layer_eta_text = ""
             self._hide_toolhead_indicator()
             label = state or "unknown"
             suffix = f" — {filename}" if filename else ""
@@ -1922,6 +2005,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         # valid zero-based index. First clamp the actual printer layer, then let
         # the selected follow mode decide what Cura should display.
         remote_target_layer = max(0, min(target_layer, max(0, max_layer)))
+        self._last_resolved_remote_layer = remote_target_layer
         decision = decide_layers(
             remote_target_layer, max_layer, self._config_store.get().follow_mode
         )
@@ -1966,6 +2050,7 @@ class MoonrakerPrintFollower(QObject, Extension):
             self._applying_follow_update = max(0, self._applying_follow_update - 1)
 
         self._remember_plugin_preview_position(view)
+        self._update_selected_layer_eta(view)
         self._update_toolhead_indicator(view)
 
         self._last_source = source
@@ -2272,6 +2357,8 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._hydrating_layers.clear()
         self._path_progress_layer = None
         self._path_progress_fraction = None
+        self._last_resolved_remote_layer = None
+        self._selected_layer_eta_text = ""
         self._remote_index_filename = None
         self._remote_index_job_key = None
         self._remote_layer_ranges = []

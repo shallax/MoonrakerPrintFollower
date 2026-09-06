@@ -23,6 +23,7 @@ Item
     property string bedMeshRangeText: ""
     property string bedMeshMinimumText: ""
     property string bedMeshMaximumText: ""
+    property string selectedLayerEtaText: ""
 
     signal loadClicked()
     signal bedMeshVisibilityRequested(bool visible)
@@ -98,11 +99,24 @@ Item
                 onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
             }
 
+            UM.Label
+            {
+                width: parent.width
+                height: Math.max(implicitHeight, 18 * screenScaleFactor)
+                text: base.selectedLayerEtaText.length > 0 ? base.selectedLayerEtaText : " "
+                opacity: base.selectedLayerEtaText.length > 0 ? 1.0 : 0.0
+                color: UM.Theme.getColor("text")
+                font: UM.Theme.getFont("default")
+                wrapMode: Text.WordWrap
+            }
+
             Column
             {
-                visible: base.bedMeshAvailable && base.bedMeshVisible
+                visible: base.bedMeshAvailable
+                opacity: base.bedMeshVisible ? 1.0 : 0.0
+                enabled: base.bedMeshVisible
                 width: parent.width
-                height: visible ? implicitHeight : 0
+                height: implicitHeight
                 spacing: 2 * screenScaleFactor
 
                 Rectangle
@@ -144,7 +158,7 @@ Item
                 UM.Label
                 {
                     width: parent.width
-                    text: "Faded edge = extrapolated outside probe bounds"
+                    text: "Dark outline = Klipper mesh bounds; outside = extrapolated"
                     color: UM.Theme.getColor("text_inactive")
                     font: UM.Theme.getFont("default_italic")
                     wrapMode: Text.WordWrap

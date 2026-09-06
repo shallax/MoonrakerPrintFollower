@@ -84,6 +84,11 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(index.layer_count(), 2)
         self.assertEqual(index.current_layer_map, {1: 0, 2: 1})
 
+    def test_time_elapsed_values_are_retained_per_layer(self):
+        data = b""";LAYER:0\nG1 X1\n;TIME_ELAPSED:12.5\n;LAYER:1\nG1 X2\n;TIME_ELAPSED:31.75\n"""
+        index = build_index_from_bytes(data)
+        self.assertEqual(index.layer_elapsed_times, [12.5, 31.75])
+
     def test_time_elapsed_ends_layer_before_following_travel(self):
         data = b"""G90\n;LAYER:0\nG1 X10 Y10 Z0.2\n;TIME_ELAPSED:1\nG1 X20 Y20 Z0.4\n;LAYER:1\nG1 X30 Y30 Z0.4\n"""
         index = build_index_from_bytes(data)

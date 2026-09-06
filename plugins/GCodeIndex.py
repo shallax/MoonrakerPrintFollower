@@ -32,12 +32,12 @@ _STATS_MARKER = re.compile(
     re.IGNORECASE,
 )
 _MOTION = re.compile(rb"^\s*(?:N\d+\s*)?G(?:0|1|2|3)(?!\d)", re.IGNORECASE)
-_ELAPSED = re.compile(rb"^\s*;TIME_ELAPSED:", re.IGNORECASE)
+_ELAPSED = re.compile(rb"^\s*;TIME_ELAPSED:\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
 _COMMAND = re.compile(rb"^\s*(?:N\d+\s*)?([GMT]\d+)(?!\d)", re.IGNORECASE)
 _AXIS = re.compile(rb"([XYZ])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
 
 _CACHE_MAGIC = b"MPFI110\0"
-_CACHE_VERSION = 2
+_CACHE_VERSION = 3
 _LARGE_FILE_COMPACT_THRESHOLD = 128 * 1024 * 1024
 
 
@@ -52,6 +52,7 @@ class LayerMotionIndex:
     layer_start_absolute: List[bool] = field(default_factory=list)
     layer_start_units: List[float] = field(default_factory=list)
     current_layer_map: Dict[int, int] = field(default_factory=dict)
+    layer_elapsed_times: List[Optional[float]] = field(default_factory=list)
     compact: bool = False
     hydrated_layers: set[int] = field(default_factory=set, repr=False)
     cache_lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
@@ -197,7 +198,7 @@ def _build_pass(
     cancel_event=None,
 ) -> Tuple[
     List[Tuple[int, int]], List[array], List[array], List[array], List[array],
-    List[Tuple[float, float, float]], List[bool], List[float], List[int],
+    List[Tuple[float, float, float]], List[bool], List[float], List[Optional[float]], List[int],
 ]:
     blocks: List[dict] = []
     current: Optional[dict] = None
@@ -210,7 +211,7 @@ def _build_pass(
     handle.seek(0)
     while True:
         if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
-            return [], [], [], [], [], [], [], [], []
+            return [], [], [], [], [], [], [], [], [], []
         offset = handle.tell()
         line = handle.readline()
         if not line:
@@ -233,6 +234,7 @@ def _build_pass(
             current = {
                 "start": offset,
                 "end": None,
+                "elapsed": None,
                 "motions": array("Q"),
                 "x": array("f"),
                 "y": array("f"),
@@ -242,8 +244,14 @@ def _build_pass(
                 "start_units": units_scale,
             }
             blocks.append(current)
-        elif current is not None and current["end"] is None and _ELAPSED.search(stripped):
-            current["end"] = offset
+        elif current is not None and current["end"] is None:
+            elapsed_match = _ELAPSED.search(stripped)
+            if elapsed_match is not None:
+                current["end"] = offset
+                try:
+                    current["elapsed"] = float(elapsed_match.group(1))
+                except (TypeError, ValueError):
+                    current["elapsed"] = None
 
         # Track G-code XYZ state even outside the indexed layer body. This is
         # important for Cura files that emit travel/macro motion between
@@ -287,7 +295,7 @@ def _build_pass(
         line_number += 1
 
     if cancel_event is not None and cancel_event.is_set():
-        return [], [], [], [], [], [], [], [], []
+        return [], [], [], [], [], [], [], [], [], []
 
     file_end = handle.tell()
     if current is not None and current["end"] is None:
@@ -301,6 +309,7 @@ def _build_pass(
     starts: List[Tuple[float, float, float]] = []
     start_absolute: List[bool] = []
     start_units: List[float] = []
+    elapsed_times: List[Optional[float]] = []
     for block in blocks:
         start = int(block["start"])
         end = int(block["end"] if block["end"] is not None else file_end)
@@ -312,7 +321,9 @@ def _build_pass(
         starts.append(tuple(float(v) for v in block["start_position"]))
         start_absolute.append(bool(block["start_absolute"]))
         start_units.append(float(block["start_units"]))
-    return ranges, motions, motion_x, motion_y, motion_z, starts, start_absolute, start_units, stats_values
+        elapsed = block.get("elapsed")
+        elapsed_times.append(float(elapsed) if elapsed is not None else None)
+    return ranges, motions, motion_x, motion_y, motion_z, starts, start_absolute, start_units, elapsed_times, stats_values
 
 
 def _collect_marker_values(handle: BinaryIO, capture: Optional[re.Pattern[bytes]], cancel_event=None) -> List[int]:
@@ -350,14 +361,14 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         (_PRUSA_LAYER_CHANGE, None),
         (_STATS_MARKER, _STATS_MARKER),
     )
-    ranges = motions = xs = ys = zs = starts = start_absolute = start_units = stats_values = None
+    ranges = motions = xs = ys = zs = starts = start_absolute = start_units = elapsed_times = stats_values = None
     marker_values: List[int] = []
     with open(path, "rb") as handle:
         for marker, capture in markers:
             result = _build_pass(
                 handle, marker, collect_stats=True, collect_motions=not compact, cancel_event=cancel_event
             )
-            ranges, motions, xs, ys, zs, starts, start_absolute, start_units, stats_values = result
+            ranges, motions, xs, ys, zs, starts, start_absolute, start_units, elapsed_times, stats_values = result
             if ranges:
                 marker_values = _collect_marker_values(handle, capture, cancel_event)
                 break
@@ -374,6 +385,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
     starts = starts or []
     start_absolute = start_absolute or []
     start_units = start_units or []
+    elapsed_times = elapsed_times or []
     stats_values = stats_values or []
 
     layer_map: Dict[int, int] = {}
@@ -409,6 +421,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         layer_start_absolute=start_absolute,
         layer_start_units=start_units,
         current_layer_map=layer_map,
+        layer_elapsed_times=elapsed_times,
         compact=bool(compact),
         hydrated_layers=hydrated,
     )
@@ -545,11 +558,12 @@ class PersistentIndexCache:
                 start_absolute = [bool(v) for v in header.get("start_absolute", [True] * len(ranges))]
                 start_units = [float(v) for v in header.get("start_units", [1.0] * len(ranges))]
                 layer_map = {int(k): int(v) for k, v in (header.get("layer_map") or {}).items()}
+                elapsed_times = [float(v) if v is not None else None for v in header.get("elapsed_times", [])]
                 compact = bool(header.get("compact", False))
                 counts = [int(v) for v in header.get("counts", [])]
                 if not (
                     len(ranges) == len(counts) == len(starts)
-                    == len(start_absolute) == len(start_units)
+                    == len(start_absolute) == len(start_units) == len(elapsed_times)
                 ):
                     return None
 
@@ -593,6 +607,7 @@ class PersistentIndexCache:
                 layer_start_absolute=start_absolute,
                 layer_start_units=start_units,
                 current_layer_map=layer_map,
+                layer_elapsed_times=elapsed_times,
                 compact=compact,
                 hydrated_layers=hydrated,
             )
@@ -612,6 +627,7 @@ class PersistentIndexCache:
                 and len(index.layer_start_positions) == layer_count
                 and len(index.layer_start_absolute) == layer_count
                 and len(index.layer_start_units) == layer_count
+                and len(index.layer_elapsed_times) == layer_count
             ):
                 return
             for i in range(layer_count):
@@ -629,6 +645,7 @@ class PersistentIndexCache:
                 "start_absolute": index.layer_start_absolute,
                 "start_units": index.layer_start_units,
                 "layer_map": {str(k): int(v) for k, v in index.current_layer_map.items()},
+                "elapsed_times": index.layer_elapsed_times,
                 "compact": bool(index.compact),
                 "hydrated": sorted(index.hydrated_layers),
                 "counts": [len(v) for v in index.motion_offsets],

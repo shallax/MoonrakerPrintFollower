@@ -132,30 +132,14 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         indexed_filename = getattr(self._follower, "_remote_index_filename", None)
         same_index_file = self._same_print_file(indexed_filename, filename)
         ranges = list(getattr(self._follower, "_remote_layer_ranges", []) or [])
-        if total_layer is None and same_index_file and ranges:
+        if same_index_file and ranges:
+            # The follower index is built from the exact G-code being printed,
+            # so its layer count is the authoritative denominator once available.
             total_layer = len(ranges)
 
-        # When live Preview following is active, Cura's current layer is the
-        # authoritative result of the follower's CURRENT_LAYER mapping, one/zero
-        # based handling and Z fallback. Reusing that settled value keeps Monitor
-        # layer progress from independently choosing a different layer.
-        try:
-            config = self._follower.current_printer_config()
-            following_live = bool(config.enabled) and not bool(getattr(self._follower, "_following_paused", False))
-            if following_live and self._same_print_file(getattr(self._follower, "_last_remote_filename", ""), filename):
-                view = self._follower._simulation_view()
-                if view is not None and bool(getattr(self._follower, "_cura_has_toolpath")()):
-                    authoritative_layer = max(0, int(view.getCurrentLayer()))
-                    authoritative_total = total_layer
-                    if hasattr(view, "getMaxLayers"):
-                        local_total = max(1, int(view.getMaxLayers()) + 1)
-                        if authoritative_total is None:
-                            authoritative_total = local_total
-                    if authoritative_total is not None:
-                        authoritative_layer = min(authoritative_layer, authoritative_total - 1)
-                    return authoritative_layer + 1, authoritative_total
-        except Exception:
-            pass
+        # Do not derive the physical printer layer from SimulationView. Cura's
+        # selected layer may intentionally differ because of follow mode or a
+        # manual layer-slider inspection. Resolve only from Klipper/G-code data.
 
         if raw_remote_layer is not None:
             try:
@@ -211,15 +195,15 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             return None, total_layer
 
         target_layer = max(0, int(target_layer))
-        try:
-            view = self._follower._simulation_view()
-            if view is not None and hasattr(view, "getMaxLayers"):
-                max_layer = max(0, int(view.getMaxLayers()))
-                target_layer = min(target_layer, max_layer)
-                if total_layer is None:
-                    total_layer = max_layer + 1
-        except Exception:
-            pass
+        if total_layer is None:
+            # Cura's layer count is only a last-resort denominator. It must never
+            # clamp the remote physical layer or make the Monitor follow a slider.
+            try:
+                view = self._follower._simulation_view()
+                if view is not None and hasattr(view, "getMaxLayers"):
+                    total_layer = max(1, int(view.getMaxLayers()) + 1)
+            except Exception:
+                pass
 
         if total_layer is not None:
             target_layer = min(target_layer, max(0, total_layer - 1))

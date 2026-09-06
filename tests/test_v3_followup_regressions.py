@@ -37,13 +37,27 @@ class V3FollowupRegressionTests(unittest.TestCase):
             float(BED_MESH.split("SURFACE_ALPHA =", 1)[1].splitlines()[0].strip()),
         )
 
+    def test_bed_mesh_draws_an_obvious_probe_bounds_outline(self):
+        for token in (
+            "BOUNDARY_WIDTH = 1.4",
+            "BOUNDARY_LIFT = 0.09",
+            "BOUNDARY_ALPHA = 0.94",
+            "append_boundary_segment",
+            "boundary_vertices",
+            "boundary_colours",
+        ):
+            self.assertIn(token, BED_MESH)
+
     def test_bed_mesh_visibility_forces_scene_redraw_and_rebuilds_after_file_load(self):
         self.assertIn("scene.sceneChanged.emit(node)", TYPED)
         self.assertIn("fileCompleted", TYPED)
         self.assertIn("_on_cura_bed_mesh_scene_changed", TYPED)
         self.assertIn("_ensure_bed_mesh_scene_node() if snapshot", TYPED)
         for qml in (PREVIEW_QML, EMPTY_PREVIEW_QML):
-            self.assertIn("Faded edge = extrapolated outside probe bounds", qml)
+            self.assertIn("Dark outline = Klipper mesh bounds; outside = extrapolated", qml)
+            self.assertIn("opacity: base.bedMeshVisible ? 1.0 : 0.0", qml)
+            self.assertIn("height: implicitHeight", qml)
+            self.assertIn("selectedLayerEtaText", qml)
             self.assertIn("bedMeshMinimumText", qml)
             self.assertIn("bedMeshMaximumText", qml)
             self.assertIn("GradientStop", qml)
@@ -75,11 +89,28 @@ class V3FollowupRegressionTests(unittest.TestCase):
         self.assertIn("camera_selected", TYPED)
         self.assertIn("Layout.preferredWidth: 260 * screenScaleFactor", MONITOR_QML)
 
-    def test_monitor_layer_uses_followers_settled_preview_layer_when_available(self):
-        self.assertIn("authoritative result of the follower", CONTROLS)
-        self.assertIn("view.getCurrentLayer()", CONTROLS)
-        self.assertIn("view.getMaxLayers()", CONTROLS)
+    def test_monitor_layer_tracks_remote_print_not_cura_slider(self):
+        self.assertIn("Do not derive the physical printer layer from SimulationView", CONTROLS)
+        self.assertIn("if same_index_file and ranges:", CONTROLS)
+        self.assertIn("total_layer = len(ranges)", CONTROLS)
         self.assertIn("_remote_layer_ranges", CONTROLS)
+        self.assertNotIn("authoritative result of the follower", CONTROLS)
+
+    def test_eta_anchors_to_slicer_metadata_instead_of_gcode_bytes(self):
+        self.assertIn("_estimate_remaining_seconds", MONITOR_MODEL)
+        self.assertIn("slicer_remaining = max(0.0, slicer_total - elapsed)", MONITOR_MODEL)
+        self.assertIn("0.60 * slicer_total <= file_total <= 1.75 * slicer_total", MONITOR_MODEL)
+        self.assertIn("_metadata_lookup_complete", MONITOR_MODEL)
+        self.assertNotIn("self._metadata_estimated_time * (1.0 - progress)", MONITOR_MODEL)
+
+    def test_preview_layer_scrub_shows_duration_and_local_clock_eta(self):
+        follower = (PLUGINS / "MoonrakerPrintFollower.py").read_text()
+        index = (PLUGINS / "GCodeIndex.py").read_text()
+        self.assertIn("layer_elapsed_times", index)
+        self.assertIn("_update_selected_layer_eta", follower)
+        self.assertIn("datetime.now().astimezone()", follower)
+        self.assertIn("Selected layer", follower)
+        self.assertIn('controls.setProperty("selectedLayerEtaText"', follower)
 
     def test_mcu_stats_are_exposed_individually(self):
         for token in (

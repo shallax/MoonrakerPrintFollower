@@ -71,6 +71,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._print_duration = 0.0
         self._metadata_estimated_time: Optional[float] = None
         self._metadata_filename = ""
+        self._metadata_lookup_complete = False
 
         self._available_objects: List[str] = []
         self._aux_objects: List[str] = []
@@ -387,6 +388,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if filename != self._metadata_filename:
             self._metadata_filename = filename
             self._metadata_estimated_time = None
+            self._metadata_lookup_complete = not bool(filename)
             if filename:
                 self._fetch_metadata(filename)
 
@@ -398,13 +400,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _fetch_metadata(self, filename: str) -> None:
         encoded = quote(filename, safe="/")
-        self._json_request(
+        started = self._json_request(
             "metadata",
             "GET",
             f"server/files/metadata?filename={encoded}",
             lambda payload, error, f=filename: self._on_metadata(f, payload, error),
             replace=True,
         )
+        if not started and filename == self._monitor_filename:
+            self._metadata_lookup_complete = True
+            self._update_eta()
+            self.monitorChanged.emit()
 
     def _on_metadata(
         self,
@@ -412,10 +418,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         payload: Optional[Dict[str, Any]],
         error: Optional[str],
     ) -> None:
-        if filename != self._monitor_filename or error:
+        if filename != self._monitor_filename:
+            return
+        self._metadata_lookup_complete = True
+        if error:
+            self._update_eta()
+            self.monitorChanged.emit()
             return
         data = self._result(payload)
         if not isinstance(data, dict):
+            self._update_eta()
+            self.monitorChanged.emit()
             return
         try:
             estimate = float(data.get("estimated_time") or 0.0)
@@ -424,6 +437,56 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._metadata_estimated_time = estimate if estimate > 0 else None
         self._update_eta()
         self.monitorChanged.emit()
+
+    @staticmethod
+    def _estimate_remaining_seconds(
+        print_duration: float,
+        file_progress: float,
+        slicer_estimated_time: Optional[float],
+        metadata_lookup_complete: bool,
+    ) -> Optional[float]:
+        """Estimate remaining print time without treating G-code bytes as time.
+
+        Moonraker's virtual_sdcard.progress is a byte-position fraction. Cura can
+        emit very different amounts of G-code per unit of print time, so using
+        elapsed/progress as the primary ETA can turn a seven-hour job into an
+        absurd multi-day estimate. File progress is retained only as a fallback
+        and as a small correction when it broadly agrees with slicer metadata.
+        """
+        try:
+            elapsed = max(0.0, float(print_duration))
+        except (TypeError, ValueError):
+            elapsed = 0.0
+        try:
+            progress = max(0.0, min(1.0, float(file_progress)))
+        except (TypeError, ValueError):
+            progress = 0.0
+
+        file_remaining: Optional[float] = None
+        if progress >= 0.02 and elapsed >= 60.0:
+            file_total = elapsed / progress
+            file_remaining = max(0.0, file_total - elapsed)
+
+        try:
+            slicer_total = float(slicer_estimated_time or 0.0)
+        except (TypeError, ValueError):
+            slicer_total = 0.0
+
+        if slicer_total > 0.0:
+            slicer_remaining = max(0.0, slicer_total - elapsed)
+            if slicer_remaining > 0.0:
+                if file_remaining is not None:
+                    file_total = elapsed + file_remaining
+                    if 0.60 * slicer_total <= file_total <= 1.75 * slicer_total:
+                        return 0.75 * slicer_remaining + 0.25 * file_remaining
+                return slicer_remaining
+            return file_remaining if file_remaining is not None else 0.0
+
+        # Avoid flashing a bad byte-based ETA while the reliable metadata request
+        # is still in flight. If metadata is unavailable, fall back gracefully.
+        if not metadata_lookup_complete:
+            return None
+        return file_remaining
 
     def _update_eta(self) -> None:
         if self._monitor_state_raw == "paused":
@@ -435,13 +498,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._monitor_finish = "—"
             return
 
-        remaining: Optional[float] = None
-        progress = self._monitor_progress_fraction
-        if progress >= 0.02 and self._print_duration >= 10.0:
-            total = self._print_duration / progress
-            remaining = max(0.0, total - self._print_duration)
-        elif self._metadata_estimated_time is not None:
-            remaining = max(0.0, self._metadata_estimated_time * (1.0 - progress))
+        remaining = self._estimate_remaining_seconds(
+            self._print_duration,
+            self._monitor_progress_fraction,
+            self._metadata_estimated_time,
+            self._metadata_lookup_complete,
+        )
 
         if remaining is None:
             self._monitor_eta = "—"
