@@ -313,11 +313,13 @@ class SourceContractTests(unittest.TestCase):
         self.assertNotIn("getPluginPath(self.PLUGIN_ID)", PLUGIN)
         self.assertIn("os.path.dirname(os.path.abspath(__file__))", PLUGIN)
 
-    def test_source_tree_has_no_license_file(self):
-        self.assertFalse(any(
-            path.name.lower().startswith("license")
-            for path in ROOT.rglob("*") if path.is_file()
-        ))
+    def test_source_tree_has_gplv3_license_file(self):
+        license_file = ROOT / "LICENSE"
+        self.assertTrue(license_file.is_file())
+        license_text = license_file.read_text()
+        self.assertIn("GNU General Public License", license_text)
+        self.assertIn("version 3", license_text)
+        self.assertIn("GPL-3.0-only", license_text)
 
 
 if __name__ == "__main__":
