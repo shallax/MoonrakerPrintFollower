@@ -15,12 +15,13 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
     Cura invokes the upload/cancel slots from inside the QML dialog's event handler.
     Destroying the last Python reference to that dialog, closing the output stream,
     or emitting a terminal write signal before the QML handler returns can invalidate
-    objects still on Qt's stack.  Accepted/rejected dialogs are therefore finalized on
+    objects still on Qt's stack. Accepted/rejected dialogs are therefore finalized on
     the next event-loop turn.
 
     This wrapper also discovers writable subdirectories from Moonraker's ``gcodes``
     root so the upload folder combo box reflects the printer rather than only paths
-    previously typed into Cura.
+    previously typed into Cura. Hidden path components (names beginning with ``.``)
+    are deliberately excluded from the upload prompt.
     """
 
     uploadPathsChanged = pyqtSignal()
@@ -47,6 +48,16 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
     # Upload dialog lifetime and folder discovery
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_hidden_remote_path(path: str) -> bool:
+        normalised = str(path or "").replace("\\", "/").strip("/")
+        return any(part.startswith(".") for part in normalised.split("/") if part)
+
+    @pyqtProperty(str, notify=uploadPathsChanged)
+    def initialUploadPath(self) -> str:
+        path = self._normalise_remote_path(self._path_name)
+        return "" if self._is_hidden_remote_path(path) else path
+
     @pyqtProperty(QVariant, notify=uploadPathsChanged)
     def uploadPathOptions(self) -> QVariant:
         return QVariant(list(self._upload_path_options))
@@ -56,14 +67,17 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
         try:
             for path in self._config.upload_paths:
                 normalised = self._normalise_remote_path(path)
-                if normalised:
+                if normalised and not self._is_hidden_remote_path(normalised):
                     options.add(normalised)
             current = self._normalise_remote_path(self._config.upload_path)
-            if current:
+            if current and not self._is_hidden_remote_path(current):
                 options.add(current)
         except Exception:
             pass
-        options.update(self._folder_scan_discovered)
+        options.update(
+            item for item in self._folder_scan_discovered
+            if not self._is_hidden_remote_path(item)
+        )
         ordered = [""] + sorted((item for item in options if item), key=str.casefold)
         if ordered != self._upload_path_options:
             self._upload_path_options = ordered
@@ -112,9 +126,11 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
                     continue
                 dirname = str(item.get("dirname") or "").strip().strip("/\\")
                 permissions = str(item.get("permissions") or "rw").lower()
-                if not dirname or "w" not in permissions:
+                if not dirname or dirname.startswith(".") or "w" not in permissions:
                     continue
                 full_path = parent.rstrip("/") + "/" + dirname
+                if self._is_hidden_remote_path(full_path):
+                    continue
                 if full_path in self._folder_scan_seen:
                     continue
                 self._folder_scan_seen.add(full_path)
@@ -122,7 +138,7 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
                     break
                 relative = full_path[len("gcodes/"):] if full_path.startswith("gcodes/") else ""
                 relative = self._normalise_remote_path(relative)
-                if relative:
+                if relative and not self._is_hidden_remote_path(relative):
                     self._folder_scan_discovered.add(relative)
                 self._folder_scan_queue.append(full_path)
 
