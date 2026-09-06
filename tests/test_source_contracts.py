@@ -39,7 +39,6 @@ class SourceContractTests(unittest.TestCase):
         for name in (
             "FollowerRuntime.py",
             "FollowerCoordinator.py",
-            "FollowerSession.py",
             "RemoteJobService.py",
             "PrintTracker.py",
             "RemoteFileService.py",
@@ -53,7 +52,12 @@ class SourceContractTests(unittest.TestCase):
             "MoonrakerTransport.py",
         ):
             self.assertTrue((PLUGINS / name).is_file(), name)
-        for obsolete in ("PauseScheduler.py", "PreviewController.py", "FollowerStateBridge.py"):
+        for obsolete in (
+            "PauseScheduler.py",
+            "PreviewController.py",
+            "FollowerStateBridge.py",
+            "FollowerSession.py",
+        ):
             self.assertFalse((PLUGINS / obsolete).exists(), obsolete)
         for token in (
             "RemoteJobService",
