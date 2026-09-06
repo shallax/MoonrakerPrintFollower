@@ -69,7 +69,7 @@ replace_once(
 ''',
     '''        self.assertIn('"⏸  Enable pause at end of layer " + base.pauseAtLayerCandidate', QML)
         self.assertIn('"Remove pause after layer " + base.pauseAtLayerCandidate', QML)
-        self.assertIn('text: "Can\\'t schedule: " + base.pauseAtLayerUnavailableText', QML)
+        self.assertIn("text: \\\"Can't schedule: \\\" + base.pauseAtLayerUnavailableText", QML)
 ''',
     "pause UX assertions",
 )
