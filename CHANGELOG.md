@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Test Preview button UX
 - 2026-09-06: Centre empty Preview buttons
 - 2026-09-06: Polish Preview controls
 - 2026-09-06: Add centred Preview button wrapper
