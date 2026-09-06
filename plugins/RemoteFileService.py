@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
 from .Core import RemoteFileIdentity
@@ -23,14 +23,14 @@ class CachedGCode:
 class RemoteFileState:
     identity: Optional[RemoteFileIdentity] = None
     metadata_job_key: Optional[JobKey] = None
-    cached: CachedGCode = CachedGCode()
+    cached: CachedGCode = field(default_factory=CachedGCode)
 
 
 class RemoteFileService:
     """Authoritative owner of remote-file identity and local G-code cache state."""
 
     def __init__(self) -> None:
-        self.state = RemoteFileState(cached=CachedGCode())
+        self.state = RemoteFileState()
 
     @property
     def identity(self) -> Optional[RemoteFileIdentity]:
