@@ -35,6 +35,7 @@ jobs:
           tests.test_monitor_upload_regressions
           tests.test_hotfix_regressions
           tests.test_bed_mesh
+          tests.test_v3_followup_regressions
 
       - name: Read package version
         id: package_meta
