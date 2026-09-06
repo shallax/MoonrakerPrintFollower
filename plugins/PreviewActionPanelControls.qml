@@ -198,7 +198,7 @@ Item
                 UM.Label
                 {
                     width: parent.width
-                    text: "Dark outline = Klipper mesh bounds; outside = extrapolated"
+                    text: "Neon orange outline = Klipper mesh bounds; outside = extrapolated"
                     color: UM.Theme.getColor("text_inactive")
                     font: UM.Theme.getFont("default_italic")
                     wrapMode: Text.WordWrap
