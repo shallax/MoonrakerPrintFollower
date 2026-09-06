@@ -1,0 +1,30 @@
+name: Publish final releases
+
+on:
+  push:
+    branches:
+      - v3-unified-moonraker
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.event.head_commit.message == 'Run final GitHub release publication'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out full repository history
+        uses: actions/checkout@v4
+        with:
+          ref: v3-unified-moonraker
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Publish historical and v3 releases, merge main and clean branches
+        run: bash tools/publish_github_releases.sh
