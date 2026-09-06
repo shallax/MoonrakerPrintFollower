@@ -39,7 +39,7 @@ Item
         property real horizontalPadding: UM.Theme.getSize("thick_margin").width
         property real verticalPadding: UM.Theme.getSize("thick_margin").height
         property real rowSpacing: UM.Theme.getSize("thin_margin").height
-        property real contentWidth: 260 * screenScaleFactor
+        property real contentWidth: 300 * screenScaleFactor
 
         width: contentWidth + 2 * horizontalPadding
         height: contentColumn.implicitHeight + 2 * verticalPadding
@@ -76,18 +76,17 @@ Item
                 font: UM.Theme.getFont("default")
             }
 
-            Cura.SecondaryButton
+            PreviewSecondaryButton
             {
                 id: loadButton
                 width: parent.width
                 height: UM.Theme.getSize("action_button").height
                 text: "Load current print"
                 tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
-                fixedWidthMode: true
                 onClicked: base.loadClicked()
             }
 
-            Cura.SecondaryButton
+            PreviewSecondaryButton
             {
                 visible: base.bedMeshAvailable
                 width: parent.width
@@ -95,7 +94,6 @@ Item
                 text: base.bedMeshVisible ? "Hide bed mesh" : "Show bed mesh"
                 tooltip: "Show the active Klipper bed mesh as a coloured 3D surface on Cura's build plate"
                     + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
-                fixedWidthMode: true
                 onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
             }
 
