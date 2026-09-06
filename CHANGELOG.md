@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Prepare final GitHub release publication
 - 2026-09-06: Remove final ETA bed mesh CI trigger
 - 2026-09-06: Trigger final ETA bed mesh CI
 - 2026-09-06: Restore live layer ETAs and expand bed mesh controls
