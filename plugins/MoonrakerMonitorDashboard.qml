@@ -454,6 +454,43 @@ Component
                             }
                         }
 
+                        ColumnLayout
+                        {
+                            visible: root.printer != null && root.printer.pwmOutputItems.length > 0
+                            Layout.fillWidth: true
+                            UM.Label { text: "PWM outputs"; font: UM.Theme.getFont("medium_bold") }
+                            Repeater
+                            {
+                                model: root.printer != null ? root.printer.pwmOutputItems : []
+                                ColumnLayout
+                                {
+                                    Layout.fillWidth: true
+                                    RowLayout
+                                    {
+                                        Layout.fillWidth: true
+                                        UM.Label { text: modelData.name; Layout.fillWidth: true; elide: Text.ElideRight }
+                                        UM.Label { text: Math.round(pwmSlider.value) + "%" }
+                                    }
+                                    Slider
+                                    {
+                                        id: pwmSlider
+                                        Layout.fillWidth: true
+                                        from: 0
+                                        to: 100
+                                        stepSize: 1
+                                        value: modelData.percent
+                                        onPressedChanged:
+                                        {
+                                            if (!pressed && root.printer != null)
+                                            {
+                                                root.printer.setPwmOutput(modelData.object, Math.round(value))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         UM.Label
                         {
                             visible: root.anyPowerLocked
