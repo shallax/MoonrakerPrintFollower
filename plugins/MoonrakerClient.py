@@ -5,12 +5,11 @@ from typing import Any, Dict, Iterable, Optional
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from .MoonrakerProtocol import status_endpoint
-from .MoonrakerSession import MoonrakerSessionState, RequestCategory
-from .MoonrakerTransport import MoonrakerHttpTransport
+from .MoonrakerSession import MoonrakerSession, MoonrakerSessionState, RequestCategory
 
 
 class MoonrakerClient(QObject):
-    """Shared resilient HTTP-only Moonraker core-status session."""
+    """Shared resilient HTTP-only core poller over one MoonrakerSession."""
 
     statusReceived = pyqtSignal(object)
     connectionChanged = pyqtSignal(bool, str)
@@ -19,12 +18,7 @@ class MoonrakerClient(QObject):
 
     RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)
 
-    def __init__(
-        self,
-        parent=None,
-        session: Optional[MoonrakerSessionState] = None,
-        transport: Optional[MoonrakerHttpTransport] = None,
-    ) -> None:
+    def __init__(self, parent=None, session=None, transport=None) -> None:
         super().__init__(parent)
         self._base_url = ""
         self._api_key = ""
@@ -33,8 +27,11 @@ class MoonrakerClient(QObject):
         self._connected = False
         self._retry_index = 0
         self._generation = 0
-        self._session = session or MoonrakerSessionState()
-        self._transport = transport or MoonrakerHttpTransport(self)
+        if isinstance(session, MoonrakerSession):
+            self._session = session
+        else:
+            state = session if isinstance(session, MoonrakerSessionState) else None
+            self._session = MoonrakerSession(self, state=state, transport=transport)
         self._capabilities: Dict[str, Any] = {
             "objects": [],
             "current_layer": False,
@@ -47,16 +44,16 @@ class MoonrakerClient(QObject):
         self._poll_timer.timeout.connect(self.force_refresh)
 
     @property
-    def session(self) -> MoonrakerSessionState:
+    def session(self) -> MoonrakerSession:
         return self._session
 
     @property
-    def transport(self) -> MoonrakerHttpTransport:
-        return self._transport
+    def transport(self):
+        return self._session.transport
 
     @property
     def transport_metrics(self) -> Dict[str, Dict[str, float | int]]:
-        return self._transport.metrics
+        return self._session.transport.metrics
 
     @property
     def connected(self) -> bool:
@@ -77,18 +74,13 @@ class MoonrakerClient(QObject):
             new_interval = max(1, int(poll_interval_ms))
         except (TypeError, ValueError):
             new_interval = 750
-        endpoint_changed = new_base_url != self._base_url or new_api_key != self._api_key
+        endpoint_changed = (new_base_url, new_api_key) != (self._base_url, self._api_key)
         interval_changed = new_interval != self._poll_interval_ms
         self._base_url = new_base_url
         self._api_key = new_api_key
         self._poll_interval_ms = new_interval
         if endpoint_changed:
-            # URL and credentials together define request identity. The shared
-            # transport invalidates every owner before the new identity is used,
-            # so Monitor/output/follower replies cannot cross a printer switch.
-            self._transport.configure(new_base_url, new_api_key)
-            self._session.reset()
-            self._session.base_url = new_base_url
+            self._session.configure(new_base_url, new_api_key)
         self._apply_adaptive_interval()
         if endpoint_changed and self._enabled:
             self.stop(reset_session=False)
@@ -120,7 +112,7 @@ class MoonrakerClient(QObject):
         self._poll_timer.stop()
         self._retry_index = 0
         self._session.coalescer.cancel(RequestCategory.CORE.value)
-        self._transport.cancel_owner("core")
+        self._session.transport.cancel_owner("core")
         was_connected = self._connected
         self._connected = False
         self._session.connected = False
@@ -133,8 +125,6 @@ class MoonrakerClient(QObject):
         changed = self._session.set_pause_guard(active)
         self._apply_adaptive_interval()
         if changed and active and self._enabled:
-            # Do not wait for the old slower timer interval before entering the
-            # precision window around an end-of-layer PAUSE.
             self.force_refresh()
 
     def force_refresh(self) -> None:
@@ -144,7 +134,7 @@ class MoonrakerClient(QObject):
         if not self._session.coalescer.begin(key, force=True):
             return
         generation = self._generation
-        started = self._transport.send_json(
+        started = self._session.transport.send_json(
             "core",
             "status",
             "GET",
