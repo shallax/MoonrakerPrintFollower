@@ -180,7 +180,7 @@ Item
                     ? "Remove the scheduled end-of-layer PAUSE."
                     : (base.pauseAtLayerCanToggle
                         ? "Call the Klipper PAUSE macro once this layer has finished and Moonraker advances to the following layer."
-                        : "Scroll Cura Preview to a future non-final layer to schedule an end-of-layer PAUSE.")
+                        : "Scroll Cura Preview to the current or a future non-final layer to schedule an end-of-layer PAUSE.")
                 fixedWidthMode: true
                 onClicked: base.pauseAtLayerRequested(base.pauseAtLayerCandidate)
             }

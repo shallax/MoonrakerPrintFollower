@@ -1233,7 +1233,7 @@ class MoonrakerPrintFollower(QObject, Extension):
             active
             and selected_layer is not None
             and current is not None
-            and selected_layer > current
+            and selected_layer >= current
             and not is_final_layer
         )
 
@@ -1241,8 +1241,8 @@ class MoonrakerPrintFollower(QObject, Extension):
         if active and selected_layer is not None and not scheduled and not can_toggle:
             if current is None:
                 unavailable = "Waiting for current print layer"
-            elif selected_layer <= current:
-                unavailable = f"Layer {selected_layer + 1} already reached"
+            elif selected_layer < current:
+                unavailable = f"Layer {selected_layer + 1} already printed"
             elif is_final_layer:
                 unavailable = "Final layer ends the print"
             else:

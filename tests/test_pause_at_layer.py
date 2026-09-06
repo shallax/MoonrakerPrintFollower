@@ -15,7 +15,7 @@ class PauseAtLayerTests(unittest.TestCase):
         self.assertIn("self._clear_scheduled_pauses(abort_request=True)", FOLLOWER)
         self.assertNotIn("pause_at_layer", CONFIG)
 
-    def test_preview_can_toggle_and_manage_multiple_future_layers(self):
+    def test_preview_can_toggle_and_manage_current_or_future_layers(self):
         self.assertIn("pauseAtLayerRequested", QML)
         self.assertIn("removePauseAtLayerRequested", QML)
         self.assertIn("clearPauseAtLayersRequested", QML)
@@ -26,7 +26,10 @@ class PauseAtLayerTests(unittest.TestCase):
         self.assertIn("pauseAtLayerItems", FOLLOWER)
         self.assertIn("def _remove_scheduled_pause", FOLLOWER)
         self.assertIn("def _clear_scheduled_pauses_from_preview", FOLLOWER)
-        self.assertIn("selected_layer > current", FOLLOWER)
+        self.assertIn("selected_layer >= current", FOLLOWER)
+        self.assertIn("selected_layer < current", FOLLOWER)
+        self.assertIn("already printed", FOLLOWER)
+        self.assertIn("current or a future non-final layer", QML)
         self.assertIn("selected_layer >= max_layer", FOLLOWER)
 
     def test_pause_uses_normal_klipper_macro_through_moonraker(self):
