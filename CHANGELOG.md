@@ -2,6 +2,19 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 3.0.0
+
+Version 3.0.0 turns Moonraker Print Follower into a much more complete Cura-side companion for Klipper/Moonraker while preserving the core live Preview follower.
+
+### Highlights
+- Integrates Moonraker connection/output functionality into one plugin, including G-code upload and printer-aware file handling.
+- Adds a live printer dashboard with temperatures, print state, macros, power controls, Z offset, speed/flow tuning, fans, LEDs, PWM outputs and an emergency stop.
+- Adds rich bed-mesh support including a 3D Preview overlay and mesh controls.
+- Adds end-of-layer PAUSE scheduling directly from Cura Preview, including multiple scheduled pauses and ETA display.
+- Restores and improves selected-layer ETA while inspecting future layers.
+- Renames Preview following controls to **Detach / Attach** so they cannot be confused with pausing the printer.
+- Improves multi-printer behaviour, large-print performance, polling efficiency and stale-response protection.
+
 ## 2.0.0
 
 Version 2.0.0 makes Moonraker Print Follower feel like part of Cura rather than a separate utility.
@@ -73,6 +86,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Finalize v3.0.0 release tree
 - 2026-09-06: Run final GitHub release publication
 - 2026-09-06: Add one-shot final release publisher
 - 2026-09-06: Prepare final GitHub release publication
