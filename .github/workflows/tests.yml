@@ -8,7 +8,26 @@ on:
   pull_request:
 
 jobs:
-  unit-tests:
+  python-compatibility:
+    name: Python ${{ matrix.python-version }} syntax
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile Python sources
+        run: python -m compileall -q plugins tools tests
+
+  release-tests:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -19,23 +38,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Compile plugin sources
-        run: python -m py_compile plugins/*.py tools/*.py
+      - name: QML structural sanity
+        run: python tools/check_qml.py plugins
 
-      - name: Run standard-library unit and contract tests
-        run: >-
-          python -m unittest
-          tests.test_core
-          tests.test_follow_controller
-          tests.test_index
-          tests.test_protocol
-          tests.test_printer_config
-          tests.test_source_contracts
-          tests.test_sdk_compatibility
-          tests.test_monitor_upload_regressions
-          tests.test_hotfix_regressions
-          tests.test_bed_mesh
-          tests.test_v3_followup_regressions
+      - name: Run all discovered tests
+        run: python -m unittest discover -s tests -p "test_*.py"
 
       - name: Read package version
         id: package_meta
@@ -51,44 +58,8 @@ jobs:
       - name: Build Cura package
         run: python tools/build_curapackage.py
 
-      - name: Verify Cura package contents
-        run: |
-          python - <<'PY'
-          import json
-          import pathlib
-          import zipfile
-          package = json.load(open("package.json", encoding="utf-8"))
-          package_id = package["package_id"]
-          version = package["package_version"]
-          path = pathlib.Path("dist") / f"MoonrakerPrintFollower-v{version}.curapackage"
-          assert path.is_file(), path
-          with zipfile.ZipFile(path) as archive:
-              names = set(archive.namelist())
-              root = f"files/plugins/{package_id}/"
-              required = {
-                  "package.json",
-                  root + "plugin.json",
-                  root + "MoonrakerMonitor.qml",
-                  root + "MoonrakerMonitorModel.py",
-                  root + "MoonrakerMonitorRuntime.py",
-                  root + "MoonrakerMonitorControls.py",
-                  root + "MoonrakerMonitorTypedControls.py",
-                  root + "BedMeshSceneNode.py",
-                  root + "MoonrakerMonitorEnhanced.qml",
-                  root + "MoonrakerMonitorDashboard.qml",
-                  root + "MoonrakerMonitorBedMesh.qml",
-                  root + "MoonrakerUploadDialog.qml",
-                  root + "MoonrakerOutputDevice.py",
-                  root + "MoonrakerOutputDeviceLifecycle.py",
-                  root + "MoonrakerOutputDevicePlugin.py",
-              }
-              missing = sorted(required - names)
-              assert not missing, missing
-              embedded = json.loads(archive.read("package.json"))
-              assert embedded["package_version"] == version
-              assert embedded["package_id"] == package_id
-          print(f"Verified {path}")
-          PY
+      - name: Verify exact Cura package contents
+        run: python tools/verify_curapackage.py dist/MoonrakerPrintFollower-v${{ steps.package_meta.outputs.version }}.curapackage
 
       - name: Upload Cura package artifact
         uses: actions/upload-artifact@v4
