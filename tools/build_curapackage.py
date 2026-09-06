@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
+import os
 import pathlib
+import subprocess
 import zipfile
 from typing import Iterable
 
@@ -15,10 +18,57 @@ CHANGELOG_FILE = ROOT / "CHANGELOG.md"
 FORBIDDEN_SUFFIXES = {".curapackage", ".pyc", ".pyo", ".orig", ".rej", ".swp", ".swo", ".tmp", ".bak"}
 FORBIDDEN_NAMES = {".DS_Store"}
 
-# Fixed ZIP metadata makes release archives byte-for-byte reproducible from the
-# same source tree. Stored entries also avoid depending on the host zlib build.
-DETERMINISTIC_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+# Release archives use stable metadata so rebuilding the same commit produces
+# identical bytes. SOURCE_DATE_EPOCH is preferred; local Git checkouts derive
+# it from HEAD automatically. ZIP timestamps have two-second resolution.
 DETERMINISTIC_FILE_MODE = 0o100644
+ZIP_MIN_YEAR = 1980
+ZIP_MAX_YEAR = 2107
+
+
+def source_date_epoch() -> int:
+    value = os.environ.get("SOURCE_DATE_EPOCH")
+    if value is None:
+        try:
+            value = subprocess.check_output(
+                ["git", "show", "-s", "--format=%ct", "HEAD"],
+                cwd=ROOT,
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise RuntimeError(
+                "Cannot determine reproducible archive timestamp; set SOURCE_DATE_EPOCH "
+                "or build from a Git checkout."
+            ) from exc
+
+    try:
+        epoch = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("SOURCE_DATE_EPOCH must be an integer Unix timestamp") from exc
+    if epoch < 0:
+        raise ValueError("SOURCE_DATE_EPOCH must not be negative")
+    return epoch
+
+
+def zip_timestamp_for_epoch(epoch: int) -> tuple[int, int, int, int, int, int]:
+    try:
+        stamp = dt.datetime.fromtimestamp(epoch, tz=dt.timezone.utc)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise ValueError(f"Invalid archive timestamp epoch: {epoch}") from exc
+
+    if not ZIP_MIN_YEAR <= stamp.year <= ZIP_MAX_YEAR:
+        raise ValueError(
+            f"Archive timestamp year {stamp.year} is outside ZIP's supported "
+            f"range {ZIP_MIN_YEAR}-{ZIP_MAX_YEAR}"
+        )
+
+    second = stamp.second - (stamp.second % 2)
+    return (stamp.year, stamp.month, stamp.day, stamp.hour, stamp.minute, second)
+
+
+def reproducible_zip_timestamp() -> tuple[int, int, int, int, int, int]:
+    return zip_timestamp_for_epoch(source_date_epoch())
 
 
 def is_packaged_source(path: pathlib.Path) -> bool:
@@ -51,16 +101,26 @@ def expected_archive_entries(package_id: str) -> set[str]:
     }
 
 
-def write_deterministic_bytes(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
-    info = zipfile.ZipInfo(name, date_time=DETERMINISTIC_ZIP_TIMESTAMP)
+def write_deterministic_bytes(
+    archive: zipfile.ZipFile,
+    name: str,
+    data: bytes,
+    timestamp: tuple[int, int, int, int, int, int],
+) -> None:
+    info = zipfile.ZipInfo(name, date_time=timestamp)
     info.create_system = 3
     info.external_attr = DETERMINISTIC_FILE_MODE << 16
     info.compress_type = zipfile.ZIP_STORED
     archive.writestr(info, data)
 
 
-def write_deterministic_file(archive: zipfile.ZipFile, source: pathlib.Path, name: str) -> None:
-    write_deterministic_bytes(archive, name, source.read_bytes())
+def write_deterministic_file(
+    archive: zipfile.ZipFile,
+    source: pathlib.Path,
+    name: str,
+    timestamp: tuple[int, int, int, int, int, int],
+) -> None:
+    write_deterministic_bytes(archive, name, source.read_bytes(), timestamp)
 
 
 def build(output: pathlib.Path | None = None) -> pathlib.Path:
@@ -71,13 +131,14 @@ def build(output: pathlib.Path | None = None) -> pathlib.Path:
         output = ROOT / "dist" / f"MoonrakerPrintFollower-v{version}.curapackage"
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = reproducible_zip_timestamp()
 
     with zipfile.ZipFile(output, "w") as archive:
-        write_deterministic_file(archive, PACKAGE_JSON, "package.json")
-        write_deterministic_file(archive, LICENSE_FILE, "LICENSE")
-        write_deterministic_file(archive, CHANGELOG_FILE, "CHANGELOG.md")
+        write_deterministic_file(archive, PACKAGE_JSON, "package.json", timestamp)
+        write_deterministic_file(archive, LICENSE_FILE, "LICENSE", timestamp)
+        write_deterministic_file(archive, CHANGELOG_FILE, "CHANGELOG.md", timestamp)
         for path in iter_plugin_sources():
-            write_deterministic_file(archive, path, archive_name(path, package_id))
+            write_deterministic_file(archive, path, archive_name(path, package_id), timestamp)
 
     print(output)
     return output

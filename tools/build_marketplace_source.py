@@ -12,6 +12,7 @@ from build_curapackage import (
     PLUGIN_ROOT,
     ROOT,
     iter_plugin_sources,
+    reproducible_zip_timestamp,
     write_deterministic_file,
 )
 
@@ -36,12 +37,13 @@ def build(output: pathlib.Path | None = None) -> pathlib.Path:
         output = ROOT / "dist" / f"MoonrakerPrintFollower-v{version}-source.zip"
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = reproducible_zip_timestamp()
 
     with zipfile.ZipFile(output, "w") as archive:
-        write_deterministic_file(archive, LICENSE_FILE, f"{package_id}/LICENSE")
-        write_deterministic_file(archive, CHANGELOG_FILE, f"{package_id}/CHANGELOG.md")
+        write_deterministic_file(archive, LICENSE_FILE, f"{package_id}/LICENSE", timestamp)
+        write_deterministic_file(archive, CHANGELOG_FILE, f"{package_id}/CHANGELOG.md", timestamp)
         for path in iter_plugin_sources():
-            write_deterministic_file(archive, path, archive_name(path, package_id))
+            write_deterministic_file(archive, path, archive_name(path, package_id), timestamp)
 
     print(output)
     return output
