@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Remove temporary Preview UX contract workflow
 - 2026-09-06: Update Preview UX source contract
 - 2026-09-06: Run Preview UX contract update
 - 2026-09-06: Stage Preview UX contract update
