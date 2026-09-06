@@ -15,6 +15,9 @@ Item
     property string activePrinterName: ""
     property string statusText: ""
     property string statusIconName: "Information"
+    property bool bedMeshAvailable: false
+    property bool bedMeshVisible: true
+    property string bedMeshRangeText: ""
 
     // ActionPanelWidget already inserts a default margin between saveButton
     // extension components. Reserve one further default margin inside this
@@ -29,6 +32,7 @@ Item
 
     signal loadClicked()
     signal pauseClicked()
+    signal bedMeshVisibilityRequested(bool visible)
 
     visible: previewStageActive && configuredForFollowing && CuraApplication.platformActivity
     width: visible ? externalGap + followerPanel.width : 0
@@ -115,6 +119,19 @@ Item
                     fixedWidthMode: true
                     onClicked: base.loadClicked()
                 }
+            }
+
+            Cura.SecondaryButton
+            {
+                id: bedMeshButton
+                visible: base.bedMeshAvailable
+                width: parent.width
+                height: visible ? UM.Theme.getSize("action_button").height : 0
+                text: base.bedMeshVisible ? "Hide bed mesh" : "Show bed mesh"
+                tooltip: "Show the active Klipper bed mesh as a coloured 3D surface on Cura's build plate"
+                    + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
+                fixedWidthMode: true
+                onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
             }
         }
     }
