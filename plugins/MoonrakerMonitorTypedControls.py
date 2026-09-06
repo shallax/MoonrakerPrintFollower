@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import math
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,10 +20,47 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
     )
     _DEFAULT_RE = re.compile(r"\|\s*default\s*\(\s*([^,\)]+)", re.IGNORECASE)
 
+    BED_MESH_VISIBLE_PREF = "moonraker_print_follower/bed_mesh_visible"
+    BED_MESH_EXAGGERATION = 20.0
+
     def __init__(self, output_controller: Any, number_of_extruders: int, follower: Any) -> None:
         self._macro_parameter_definitions: Dict[str, List[Dict[str, Any]]] = {}
         self._pwm_output_items: List[Dict[str, Any]] = []
+        self._bed_mesh_snapshot: Dict[str, Any] = {}
+        self._bed_mesh_fingerprint: Optional[Tuple[Any, ...]] = None
+        self._bound_preview_control_ids: set[int] = set()
         super().__init__(output_controller, number_of_extruders, follower)
+
+        preferences = getattr(follower, "_preferences", None)
+        if preferences is not None:
+            try:
+                preferences.addPreference(self.BED_MESH_VISIBLE_PREF, True)
+            except Exception:
+                pass
+        if not hasattr(follower, "_bed_mesh_preview_visible"):
+            setattr(follower, "_bed_mesh_preview_visible", self._read_bed_mesh_visibility_preference())
+        if not hasattr(follower, "_bed_mesh_snapshot"):
+            setattr(follower, "_bed_mesh_snapshot", {})
+        if not hasattr(follower, "_bed_mesh_fingerprint"):
+            setattr(follower, "_bed_mesh_fingerprint", None)
+        if not hasattr(follower, "_bed_mesh_scene_node"):
+            setattr(follower, "_bed_mesh_scene_node", None)
+
+        controller = getattr(follower, "_controller", None)
+        stage_changed = getattr(controller, "activeStageChanged", None)
+        if stage_changed is not None:
+            try:
+                stage_changed.connect(self._sync_bed_mesh_scene_visibility)
+            except Exception:
+                pass
+        application = getattr(follower, "_application", None)
+        machine_changed = getattr(application, "globalContainerStackChanged", None)
+        if machine_changed is not None:
+            try:
+                machine_changed.connect(self._on_bed_mesh_machine_changed)
+            except Exception:
+                pass
+        self._bind_preview_bed_mesh_controls()
 
     @staticmethod
     def _want_aux_object(name: str) -> bool:
@@ -35,10 +73,368 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         super()._rebuild_peripherals()
         self._rebuild_macro_parameter_definitions()
         self._pwm_output_items = self._build_pwm_output_items()
+        self._update_bed_mesh_snapshot(self._aux_status.get("bed_mesh"))
+        self._bind_preview_bed_mesh_controls()
+        self._sync_preview_bed_mesh_controls()
         self.typedControlsChanged.emit()
 
     def _on_temperature_presets(self, payload: Optional[Dict[str, Any]], error: Optional[str]) -> None:
         super()._on_temperature_presets(payload, error)
+        self.typedControlsChanged.emit()
+
+
+    # ------------------------------------------------------------------
+    # Bed mesh data, Monitor heatmap and Preview scene overlay
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalise_bed_mesh_matrix(raw: Any) -> Optional[List[List[float]]]:
+        if not isinstance(raw, (list, tuple)) or len(raw) < 2:
+            return None
+        matrix: List[List[float]] = []
+        columns: Optional[int] = None
+        for raw_row in raw:
+            if not isinstance(raw_row, (list, tuple)) or len(raw_row) < 2:
+                return None
+            if columns is None:
+                columns = len(raw_row)
+            elif len(raw_row) != columns:
+                return None
+            row: List[float] = []
+            for raw_value in raw_row:
+                try:
+                    value = float(raw_value)
+                except (TypeError, ValueError):
+                    return None
+                if not math.isfinite(value):
+                    return None
+                row.append(value)
+            matrix.append(row)
+        return matrix
+
+    @classmethod
+    def _parse_bed_mesh_status(cls, status: Any) -> Dict[str, Any]:
+        if not isinstance(status, dict):
+            return {}
+
+        source = "mesh_matrix"
+        matrix = cls._normalise_bed_mesh_matrix(status.get("mesh_matrix"))
+        if matrix is None:
+            source = "probed_matrix"
+            matrix = cls._normalise_bed_mesh_matrix(status.get("probed_matrix"))
+        if matrix is None:
+            return {}
+
+        mesh_min = status.get("mesh_min")
+        mesh_max = status.get("mesh_max")
+        if not isinstance(mesh_min, (list, tuple)) or len(mesh_min) < 2:
+            return {}
+        if not isinstance(mesh_max, (list, tuple)) or len(mesh_max) < 2:
+            return {}
+        try:
+            x_min = float(mesh_min[0])
+            y_min = float(mesh_min[1])
+            x_max = float(mesh_max[0])
+            y_max = float(mesh_max[1])
+        except (TypeError, ValueError):
+            return {}
+        if not all(math.isfinite(value) for value in (x_min, y_min, x_max, y_max)):
+            return {}
+        if x_max <= x_min or y_max <= y_min:
+            return {}
+
+        rows = len(matrix)
+        columns = len(matrix[0])
+        values = [value for row in matrix for value in row]
+        minimum = min(values)
+        maximum = max(values)
+        profile = str(status.get("profile_name") or "").strip()
+        return {
+            "profile": profile,
+            "source": source,
+            "rows": rows,
+            "columns": columns,
+            "values": values,
+            "xMin": x_min,
+            "xMax": x_max,
+            "yMin": y_min,
+            "yMax": y_max,
+            "minimum": minimum,
+            "maximum": maximum,
+            "range": maximum - minimum,
+        }
+
+    @staticmethod
+    def _bed_mesh_snapshot_fingerprint(snapshot: Dict[str, Any]) -> Optional[Tuple[Any, ...]]:
+        if not snapshot:
+            return None
+        return (
+            snapshot.get("profile"),
+            snapshot.get("source"),
+            int(snapshot.get("rows") or 0),
+            int(snapshot.get("columns") or 0),
+            round(float(snapshot.get("xMin") or 0.0), 5),
+            round(float(snapshot.get("xMax") or 0.0), 5),
+            round(float(snapshot.get("yMin") or 0.0), 5),
+            round(float(snapshot.get("yMax") or 0.0), 5),
+            tuple(round(float(value), 6) for value in (snapshot.get("values") or [])),
+        )
+
+    def _read_bed_mesh_visibility_preference(self) -> bool:
+        preferences = getattr(self._follower, "_preferences", None)
+        if preferences is None:
+            return True
+        try:
+            value = preferences.getValue(self.BED_MESH_VISIBLE_PREF)
+        except Exception:
+            return True
+        if isinstance(value, bool):
+            return value
+        return str(value or "").strip().casefold() not in {"0", "false", "no", "off"}
+
+    def _preview_stage_active(self) -> bool:
+        controller = getattr(self._follower, "_controller", None)
+        if controller is None:
+            return False
+        try:
+            stage = controller.getActiveStage()
+            if stage is None:
+                return False
+            getter = getattr(stage, "getId", None)
+            stage_id = getter() if callable(getter) else getattr(stage, "stageId", None)
+            return stage_id == "PreviewStage"
+        except Exception:
+            return False
+
+    def _ensure_bed_mesh_scene_node(self):
+        follower = self._follower
+        controller = getattr(follower, "_controller", None)
+        if controller is None:
+            return None
+        try:
+            scene = controller.getScene()
+            root = scene.getRoot()
+        except Exception:
+            return None
+
+        node = getattr(follower, "_bed_mesh_scene_node", None)
+        if node is None:
+            try:
+                from .BedMeshSceneNode import BedMeshSceneNode
+                node = BedMeshSceneNode()
+                setattr(follower, "_bed_mesh_scene_node", node)
+            except Exception:
+                return None
+
+        try:
+            current_parent = node.getParent()
+        except Exception:
+            current_parent = None
+        if current_parent is root:
+            return node
+
+        # The follower intentionally treats arbitrary root children changes as a
+        # Cura scene lifecycle reset.  Adding our own non-sliceable visual node
+        # must not look like the user replaced the model, so momentarily detach
+        # only that one follower callback while parenting the overlay.
+        disconnected = False
+        handler = getattr(follower, "_on_scene_children_changed", None)
+        tracked_root = getattr(follower, "_scene_root", None)
+        if handler is not None and tracked_root is root:
+            try:
+                root.childrenChanged.disconnect(handler)
+                disconnected = True
+            except Exception:
+                disconnected = False
+        try:
+            node.setParent(root)
+        except Exception:
+            return None
+        finally:
+            if disconnected:
+                try:
+                    root.childrenChanged.connect(handler)
+                except Exception:
+                    pass
+        return node
+
+    def _rebuild_bed_mesh_scene(self) -> None:
+        snapshot = dict(getattr(self._follower, "_bed_mesh_snapshot", {}) or {})
+        node = self._ensure_bed_mesh_scene_node() if snapshot else getattr(self._follower, "_bed_mesh_scene_node", None)
+        if node is None:
+            return
+        if not snapshot:
+            try:
+                node.clear()
+            except Exception:
+                pass
+            return
+
+        application = getattr(self._follower, "_application", None)
+        try:
+            stack = application.getGlobalContainerStack() if application is not None else None
+            if stack is None:
+                return
+            width = float(stack.getProperty("machine_width", "value"))
+            depth = float(stack.getProperty("machine_depth", "value"))
+            center_is_zero = bool(stack.getProperty("machine_center_is_zero", "value"))
+            node.updateMesh(
+                snapshot,
+                width,
+                depth,
+                center_is_zero,
+                self.BED_MESH_EXAGGERATION,
+            )
+        except Exception:
+            return
+        self._sync_bed_mesh_scene_visibility()
+
+    def _update_bed_mesh_snapshot(self, status: Any) -> None:
+        snapshot = self._parse_bed_mesh_status(status)
+        fingerprint = self._bed_mesh_snapshot_fingerprint(snapshot)
+        self._bed_mesh_snapshot = snapshot
+        follower_fingerprint = getattr(self._follower, "_bed_mesh_fingerprint", None)
+        if fingerprint != follower_fingerprint:
+            setattr(self._follower, "_bed_mesh_snapshot", dict(snapshot))
+            setattr(self._follower, "_bed_mesh_fingerprint", fingerprint)
+            self._rebuild_bed_mesh_scene()
+        else:
+            self._sync_bed_mesh_scene_visibility()
+
+    def _sync_bed_mesh_scene_visibility(self, *_args: Any) -> None:
+        node = getattr(self._follower, "_bed_mesh_scene_node", None)
+        if node is None:
+            return
+        visible = bool(
+            getattr(self._follower, "_bed_mesh_preview_visible", True)
+            and getattr(self._follower, "_bed_mesh_snapshot", {})
+            and self._preview_stage_active()
+        )
+        try:
+            node.setVisible(visible)
+        except Exception:
+            pass
+        self._sync_preview_bed_mesh_controls()
+
+    def _on_bed_mesh_machine_changed(self, *_args: Any) -> None:
+        self._bed_mesh_snapshot = {}
+        self._bed_mesh_fingerprint = None
+        setattr(self._follower, "_bed_mesh_snapshot", {})
+        setattr(self._follower, "_bed_mesh_fingerprint", None)
+        node = getattr(self._follower, "_bed_mesh_scene_node", None)
+        if node is not None:
+            try:
+                node.clear()
+            except Exception:
+                pass
+        self._sync_preview_bed_mesh_controls()
+        self.typedControlsChanged.emit()
+
+    def _bind_preview_bed_mesh_controls(self) -> None:
+        for attribute in ("_preview_overlay", "_action_panel_controls"):
+            controls = getattr(self._follower, attribute, None)
+            if controls is None:
+                continue
+            control_id = id(controls)
+            if control_id in self._bound_preview_control_ids:
+                continue
+            signal = getattr(controls, "bedMeshVisibilityRequested", None)
+            if signal is None:
+                continue
+            try:
+                signal.connect(self.setBedMeshPreviewVisible)
+                self._bound_preview_control_ids.add(control_id)
+            except Exception:
+                pass
+        self._sync_preview_bed_mesh_controls()
+
+    def _sync_preview_bed_mesh_controls(self) -> None:
+        available = bool(self._bed_mesh_snapshot)
+        visible = bool(getattr(self._follower, "_bed_mesh_preview_visible", True))
+        range_text = self.bedMeshRangeText
+        for attribute in ("_preview_overlay", "_action_panel_controls"):
+            controls = getattr(self._follower, attribute, None)
+            if controls is None:
+                continue
+            try:
+                controls.setProperty("bedMeshAvailable", available)
+                controls.setProperty("bedMeshVisible", visible)
+                controls.setProperty("bedMeshRangeText", range_text)
+            except Exception:
+                pass
+
+    @pyqtProperty(bool, notify=typedControlsChanged)
+    def bedMeshAvailable(self) -> bool:
+        return bool(self._bed_mesh_snapshot)
+
+    @pyqtProperty(str, notify=typedControlsChanged)
+    def bedMeshProfile(self) -> str:
+        if not self._bed_mesh_snapshot:
+            return ""
+        return str(self._bed_mesh_snapshot.get("profile") or "Current mesh")
+
+    @pyqtProperty(int, notify=typedControlsChanged)
+    def bedMeshRows(self) -> int:
+        return int(self._bed_mesh_snapshot.get("rows") or 0)
+
+    @pyqtProperty(int, notify=typedControlsChanged)
+    def bedMeshColumns(self) -> int:
+        return int(self._bed_mesh_snapshot.get("columns") or 0)
+
+    @pyqtProperty(QVariant, notify=typedControlsChanged)
+    def bedMeshValues(self) -> QVariant:
+        return QVariant(list(self._bed_mesh_snapshot.get("values") or []))
+
+    @pyqtProperty(float, notify=typedControlsChanged)
+    def bedMeshMinimum(self) -> float:
+        return float(self._bed_mesh_snapshot.get("minimum") or 0.0)
+
+    @pyqtProperty(float, notify=typedControlsChanged)
+    def bedMeshMaximum(self) -> float:
+        return float(self._bed_mesh_snapshot.get("maximum") or 0.0)
+
+    @pyqtProperty(float, notify=typedControlsChanged)
+    def bedMeshRange(self) -> float:
+        return float(self._bed_mesh_snapshot.get("range") or 0.0)
+
+    @pyqtProperty(float, notify=typedControlsChanged)
+    def bedMeshXMin(self) -> float:
+        return float(self._bed_mesh_snapshot.get("xMin") or 0.0)
+
+    @pyqtProperty(float, notify=typedControlsChanged)
+    def bedMeshXMax(self) -> float:
+        return float(self._bed_mesh_snapshot.get("xMax") or 0.0)
+
+    @pyqtProperty(float, notify=typedControlsChanged)
+    def bedMeshYMin(self) -> float:
+        return float(self._bed_mesh_snapshot.get("yMin") or 0.0)
+
+    @pyqtProperty(float, notify=typedControlsChanged)
+    def bedMeshYMax(self) -> float:
+        return float(self._bed_mesh_snapshot.get("yMax") or 0.0)
+
+    @pyqtProperty(str, notify=typedControlsChanged)
+    def bedMeshRangeText(self) -> str:
+        if not self._bed_mesh_snapshot:
+            return ""
+        return f"{self.bedMeshRange:.3f} mm range"
+
+    @pyqtProperty(bool, notify=typedControlsChanged)
+    def bedMeshPreviewVisible(self) -> bool:
+        return bool(getattr(self._follower, "_bed_mesh_preview_visible", True))
+
+    @pyqtSlot(bool)
+    def setBedMeshPreviewVisible(self, visible: bool) -> None:
+        visible = bool(visible)
+        setattr(self._follower, "_bed_mesh_preview_visible", visible)
+        preferences = getattr(self._follower, "_preferences", None)
+        if preferences is not None:
+            try:
+                preferences.setValue(self.BED_MESH_VISIBLE_PREF, visible)
+            except Exception:
+                pass
+        self._sync_bed_mesh_scene_visibility()
+        self._sync_preview_bed_mesh_controls()
         self.typedControlsChanged.emit()
 
     # ------------------------------------------------------------------
