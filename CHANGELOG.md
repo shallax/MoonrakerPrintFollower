@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Stage layer and ETA corrections
 - 2026-09-06: Outline Klipper bed mesh bounds in Preview
 - 2026-09-06: Run v3 follow-up regressions in CI
 - 2026-09-06: Fix bed mesh lifecycle and expand Monitor controls
