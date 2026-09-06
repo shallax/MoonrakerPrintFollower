@@ -29,6 +29,9 @@ class CuraLifecycleBridge:
         self.state.reason = str(reason or "Cura lifecycle changed")
         return self.state.generation
 
+    def record_reason(self, reason: str) -> None:
+        self.state.reason = str(reason or "Cura lifecycle changed")
+
     def token(self) -> int:
         return self.state.generation
 
