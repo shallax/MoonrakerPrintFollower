@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.orig
+*.rej
+*.swp
+*.swo
+*.tmp
+*.bak
+.DS_Store
+/dist/

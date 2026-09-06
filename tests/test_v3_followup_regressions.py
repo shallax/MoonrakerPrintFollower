@@ -182,6 +182,11 @@ class V3FollowupRegressionTests(unittest.TestCase):
             self.assertGreaterEqual(start, 0, slider_id)
             self.assertIn("live: false", DASHBOARD_QML[start:start + 500], slider_id)
         self.assertNotIn("onMoved:", DASHBOARD_QML)
+        self.assertIn("function sliderSelection(slider)", DASHBOARD_QML)
+        self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
+        self.assertIn("root.sliderSelection(speedSlider) + \"%\"", DASHBOARD_QML)
+        self.assertIn("setSpeedFactor(root.sliderSelection(speedSlider))", DASHBOARD_QML)
+        self.assertIn("setFlowFactor(root.sliderSelection(flowSlider))", DASHBOARD_QML)
 
     def test_monitor_sliders_do_not_repeat_qml_properties(self):
         duplicate = "from: 0; to: 100; stepSize: 1\n                                        from: 0; to: 100; live: false"

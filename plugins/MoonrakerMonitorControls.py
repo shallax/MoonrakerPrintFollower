@@ -57,7 +57,7 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
     @pyqtSlot(object)
     def updateMoonrakerStatus(self, status: Any) -> None:
         if isinstance(status, dict):
-            print_stats = status.get("print_stats") or {}
+            print_stats = self._status_object(status, "print_stats")
             filename = str(print_stats.get("filename") or "")
             if filename != self._runtime_metadata_filename:
                 self._runtime_metadata_filename = filename
@@ -81,7 +81,7 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         self._monitor_layer_height = self._resolve_layer_height_text(current_layer)
 
         if isinstance(status, dict):
-            gcode_move = status.get("gcode_move") or {}
+            gcode_move = self._status_object(status, "gcode_move")
             try:
                 self._speed_factor_percent = max(1, int(round(float(gcode_move.get("speed_factor") or 1.0) * 100.0)))
             except (TypeError, ValueError):
@@ -117,9 +117,9 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         if not isinstance(status, dict):
             return None, self._metadata_layer_count
 
-        print_stats = status.get("print_stats") or {}
-        gcode_move = status.get("gcode_move") or {}
-        virtual_sdcard = status.get("virtual_sdcard") or {}
+        print_stats = self._status_object(status, "print_stats")
+        gcode_move = self._status_object(status, "gcode_move")
+        virtual_sdcard = self._status_object(status, "virtual_sdcard")
         info = print_stats.get("info") or {}
         if not isinstance(info, dict):
             info = {}

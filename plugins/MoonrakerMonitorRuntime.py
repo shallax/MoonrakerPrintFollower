@@ -25,9 +25,9 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         if not isinstance(status, dict):
             return None, None
 
-        print_stats = status.get("print_stats") or {}
-        gcode_move = status.get("gcode_move") or {}
-        virtual_sdcard = status.get("virtual_sdcard") or {}
+        print_stats = self._status_object(status, "print_stats")
+        gcode_move = self._status_object(status, "gcode_move")
+        virtual_sdcard = self._status_object(status, "virtual_sdcard")
         info = print_stats.get("info") or {}
         if not isinstance(info, dict):
             info = {}

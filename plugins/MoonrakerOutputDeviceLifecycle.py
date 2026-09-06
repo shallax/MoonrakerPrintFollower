@@ -54,8 +54,7 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
         normalised = str(path or "").replace("\\", "/").strip("/")
         return any(part.startswith(".") for part in normalised.split("/") if part)
 
-    # Legacy hidden-path contract was: return "" if self._is_hidden_remote_path(path) else path
-    # The UI now labels that same logical empty/root path as <root>.
+    # The UI labels Moonraker's logical empty/root path as <root>.
     @pyqtProperty(str, notify=uploadPathsChanged)
     def initialUploadPath(self) -> str:
         path = self._normalise_remote_path(self._path_name)

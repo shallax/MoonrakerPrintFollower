@@ -47,6 +47,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._follower = follower
         self._network = QNetworkAccessManager(self)
         self._requests: Dict[str, QNetworkReply] = {}
+        self._request_generation = 0
+        self._request_identity: Optional[tuple[str, str]] = None
+        self._monitoring_active = True
 
         self._webcams: List[Dict[str, Any]] = []
         self._active_webcam_index = -1
@@ -121,10 +124,49 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             except Exception as exc:
                 Logger.log("w", "Moonraker Print Follower: could not bind Monitor status: %s", exc)
 
-        self._aux_timer.start()
-        self._power_timer.start()
-        self._system_timer.start()
-        self._discovery_timer.start()
+        self._start_background_timers()
+        self.refreshAll()
+
+    def _start_background_timers(self) -> None:
+        for timer in (self._aux_timer, self._power_timer, self._system_timer, self._discovery_timer):
+            if not timer.isActive():
+                timer.start()
+
+    def _stop_background_timers(self) -> None:
+        for timer in (self._core_timer, self._aux_timer, self._power_timer, self._system_timer, self._discovery_timer):
+            timer.stop()
+
+    def _current_request_identity(self) -> tuple[str, str]:
+        config = self._follower.current_printer_config()
+        return (str(config.url or "").strip().rstrip("/"), str(config.api_key or ""))
+
+    def _invalidate_request_session(self) -> None:
+        self._request_generation += 1
+        for channel in list(self._requests):
+            self._cancel_channel(channel)
+
+    def _ensure_request_session(self) -> None:
+        identity = self._current_request_identity()
+        if identity != self._request_identity:
+            self._request_identity = identity
+            self._invalidate_request_session()
+
+    def setMonitoringActive(self, active: bool) -> None:
+        active = bool(active)
+        if active == self._monitoring_active:
+            if active:
+                self._ensure_request_session()
+            return
+        self._monitoring_active = active
+        if not active:
+            self._stop_background_timers()
+            self._invalidate_request_session()
+            self._action_busy = False
+            self._action_status = ""
+            self.actionChanged.emit()
+            return
+        self._request_identity = None
+        self._start_background_timers()
         self.refreshAll()
 
     # ------------------------------------------------------------------
@@ -175,6 +217,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         body: Optional[Dict[str, Any]] = None,
         replace: bool = False,
     ) -> bool:
+        if not self._monitoring_active:
+            return False
+        self._ensure_request_session()
         if not self._usable_base_url():
             return False
 
@@ -201,8 +246,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         else:
             reply = self._network.get(request)
         self._requests[channel] = reply
+        generation = self._request_generation
         reply.finished.connect(
-            lambda r=reply, c=channel, cb=callback: self._finish_json_request(c, r, cb)
+            lambda r=reply, c=channel, cb=callback, g=generation: self._finish_json_request(c, r, cb, g)
         )
         return True
 
@@ -211,7 +257,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         channel: str,
         reply: QNetworkReply,
         callback: Callable[[Optional[Dict[str, Any]], Optional[str]], None],
+        generation: int,
     ) -> None:
+        if generation != self._request_generation:
+            if self._requests.get(channel) is reply:
+                self._requests.pop(channel, None)
+            try:
+                reply.deleteLater()
+            except Exception:
+                pass
+            return
         if self._requests.get(channel) is not reply:
             try:
                 reply.deleteLater()
@@ -250,6 +305,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             Logger.log("w", "Moonraker Print Follower: Monitor callback failed: %s", exc)
 
     @staticmethod
+    def _status_object(status: Any, name: str) -> Dict[str, Any]:
+        if not isinstance(status, dict):
+            return {}
+        value = status.get(name)
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
     def _result(payload: Optional[Dict[str, Any]]) -> Any:
         if not isinstance(payload, dict):
             return None
@@ -261,6 +323,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot()
     def refreshAll(self) -> None:
+        if not self._monitoring_active:
+            return
         self.refreshTransport()
         self.refreshCapabilities()
         self.refreshWebcams()
@@ -269,6 +333,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot()
     def refreshTransport(self) -> None:
+        if not self._monitoring_active:
+            self._core_timer.stop()
+            self._cancel_channel("core")
+            return
+        self._ensure_request_session()
         config = self._follower.current_printer_config()
         if bool(config.enabled):
             self._core_timer.stop()
@@ -317,13 +386,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(object)
     def updateMoonrakerStatus(self, status: Any) -> None:
-        if not isinstance(status, dict):
+        if not self._monitoring_active or not isinstance(status, dict):
             return
 
-        print_stats = status.get("print_stats") or {}
-        virtual_sdcard = status.get("virtual_sdcard") or {}
-        gcode_move = status.get("gcode_move") or {}
-        motion_report = status.get("motion_report") or {}
+        print_stats = self._status_object(status, "print_stats")
+        virtual_sdcard = self._status_object(status, "virtual_sdcard")
+        gcode_move = self._status_object(status, "gcode_move")
+        motion_report = self._status_object(status, "motion_report")
 
         state = str(print_stats.get("state") or "unknown").strip().lower()
         self._monitor_state_raw = state

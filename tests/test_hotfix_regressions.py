@@ -34,7 +34,8 @@ class HotfixRegressionTests(unittest.TestCase):
         self.assertIn('part.startswith(".")', LIFECYCLE)
         self.assertIn('dirname.startswith(".")', LIFECYCLE)
         self.assertIn("not self._is_hidden_remote_path(normalised)", LIFECYCLE)
-        self.assertIn('return "" if self._is_hidden_remote_path(path) else path', LIFECYCLE)
+        self.assertIn("if not path or self._is_hidden_remote_path(path):", LIFECYCLE)
+        self.assertIn("return self.ROOT_UPLOAD_LABEL", LIFECYCLE)
 
     def test_dashboard_shows_current_z_offset_beside_nudges(self):
         self.assertIn('text: "Current Z offset"', DASHBOARD_QML)

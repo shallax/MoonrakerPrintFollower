@@ -90,13 +90,14 @@ class MonitorUploadRegressionTests(unittest.TestCase):
         ):
             self.assertIn(token, MONITOR_MODEL + MONITOR_QML)
 
-    def test_enhanced_monitor_is_packaged_and_selected(self):
+    def test_active_monitor_chain_is_packaged_and_selected(self):
         self.assertIn('"MoonrakerMonitorDashboard.qml"', OUTPUT_PLUGIN)
         self.assertIn('"MoonrakerMonitor.qml"', OUTPUT_PLUGIN)
         self.assertIn("MoonrakerMonitorTypedControls", OUTPUT_PLUGIN)
         self.assertIn("MoonrakerMonitorControls", MONITOR_TYPED_CONTROLS)
         self.assertIn("MoonrakerMonitor", DASHBOARD_QML)
         self.assertIn("Printer controls", DASHBOARD_QML)
+        self.assertFalse((PLUGINS / "MoonrakerMonitorEnhanced.qml").exists())
 
     def test_enhanced_monitor_exposes_requested_setup_and_macro_controls(self):
         combined_controls = MONITOR_CONTROLS + MONITOR_TYPED_CONTROLS

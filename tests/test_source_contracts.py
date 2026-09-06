@@ -257,6 +257,7 @@ class SourceContractTests(unittest.TestCase):
             "MoonrakerMonitorRuntime.py", "MoonrakerMonitorControls.py",
             "MoonrakerMonitorTypedControls.py", "MoonrakerMonitor.qml",
             "MoonrakerMonitorDashboard.qml",
+            "MoonrakerMonitorBedMesh.qml",
         ):
             self.assertTrue((PLUGINS / name).is_file(), name)
 

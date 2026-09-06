@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Harden v3.0.0 release candidate
 - 2026-09-06: Apply v3 hardening without workflow-token writes
 - 2026-09-06: Retry v3 release hardening with staged hygiene
 - 2026-09-06: Run v3 release hardening audit

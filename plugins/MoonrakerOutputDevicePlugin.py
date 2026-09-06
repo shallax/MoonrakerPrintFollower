@@ -9,7 +9,6 @@ from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
 # MoonrakerMonitorRuntime remains the proven layer-following base implementation.
 # MoonrakerMonitorControls remains the tested control base beneath the typed layer.
-# MoonrakerMonitorEnhanced.qml is retained in the package as the previous dashboard.
 # Compatibility/source-contract markers: "MoonrakerMonitorDashboard.qml" still
 # composes "MoonrakerMonitor.qml" underneath the active bed-mesh wrapper.
 from .MoonrakerMonitorTypedControls import MoonrakerMonitorModel
@@ -35,12 +34,24 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         self.refresh()
 
     def stop(self) -> None:
+        for device in self._devices.values():
+            self._set_monitor_active(device, False)
         if self._current is not None:
             try:
                 self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
             except Exception:
                 pass
         self._current = None
+
+    @staticmethod
+    def _set_monitor_active(device: MoonrakerOutputDevice, active: bool) -> None:
+        monitor = getattr(device, "activePrinter", None)
+        setter = getattr(monitor, "setMonitoringActive", None)
+        if callable(setter):
+            try:
+                setter(bool(active))
+            except Exception:
+                pass
 
     @staticmethod
     def _usable_url(value: str) -> bool:
@@ -67,6 +78,8 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             # PrinterOutputDevice exposes activePrinter from this model list.
             device._printers = [monitor]
 
+        self._set_monitor_active(device, True)
+
         # Bed-mesh wrapper composes the established typed dashboard and adds the
         # live Klipper height-map panel without replacing the existing Monitor UI.
         device._monitor_view_qml_path = os.path.join(
@@ -87,11 +100,13 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             usable = self._usable_url(str(config.url or "").strip())
 
             if self._current is not None and self._current.getId() != MoonrakerOutputDevice.DEVICE_PREFIX + machine_id:
+                self._set_monitor_active(self._current, False)
                 self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
                 self._current = None
 
             if not usable:
                 if self._current is not None:
+                    self._set_monitor_active(self._current, False)
                     self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
                     self._current = None
                 return
@@ -107,6 +122,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
 
             if self._current is not device:
                 if self._current is not None:
+                    self._set_monitor_active(self._current, False)
                     try:
                         self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
                     except Exception:

@@ -25,6 +25,12 @@ Component
             return false
         }
 
+        function sliderSelection(slider)
+        {
+            if (slider == null) return 0
+            return Math.round(slider.valueAt(slider.position))
+        }
+
         function refreshMacroParameters()
         {
             if (root.printer == null || macroSelector.currentIndex < 0)
@@ -317,7 +323,7 @@ Component
                             {
                                 Layout.fillWidth: true
                                 UM.Label { text: "Speed factor"; Layout.fillWidth: true }
-                                UM.Label { text: Math.round(speedSlider.value) + "%" }
+                                UM.Label { text: root.sliderSelection(speedSlider) + "%" }
                             }
                             Slider
                             {
@@ -329,7 +335,7 @@ Component
                                 live: false
                                 value: root.printer != null ? root.printer.speedFactorPercent : 100
                                 enabled: root.printer != null
-                                onPressedChanged: if (!pressed && root.printer != null) root.printer.setSpeedFactor(Math.round(value))
+                                onPressedChanged: if (!pressed && root.printer != null) root.printer.setSpeedFactor(root.sliderSelection(speedSlider))
                             }
                         }
 
@@ -341,7 +347,7 @@ Component
                             {
                                 Layout.fillWidth: true
                                 UM.Label { text: "Extrusion multiplier"; Layout.fillWidth: true }
-                                UM.Label { text: Math.round(flowSlider.value) + "%" }
+                                UM.Label { text: root.sliderSelection(flowSlider) + "%" }
                             }
                             Slider
                             {
@@ -353,7 +359,7 @@ Component
                                 live: false
                                 value: root.printer != null ? root.printer.flowFactorPercent : 100
                                 enabled: root.printer != null
-                                onPressedChanged: if (!pressed && root.printer != null) root.printer.setFlowFactor(Math.round(value))
+                                onPressedChanged: if (!pressed && root.printer != null) root.printer.setFlowFactor(root.sliderSelection(flowSlider))
                             }
                         }
 
@@ -436,7 +442,7 @@ Component
                                     {
                                         Layout.fillWidth: true
                                         UM.Label { text: modelData.name; Layout.fillWidth: true; elide: Text.ElideRight }
-                                        UM.Label { text: Math.round(fanSlider.value) + "%" }
+                                        UM.Label { text: root.sliderSelection(fanSlider) + "%" }
                                     }
                                     Slider
                                     {
@@ -445,7 +451,7 @@ Component
                                         from: 0; to: 100; stepSize: 1
                                         live: false
                                         value: modelData.percent
-                                        onPressedChanged: if (!pressed && root.printer != null) root.printer.setFanSpeed(modelData.object, Math.round(value))
+                                        onPressedChanged: if (!pressed && root.printer != null) root.printer.setFanSpeed(modelData.object, root.sliderSelection(fanSlider))
                                     }
                                 }
                             }
@@ -471,11 +477,11 @@ Component
                                         {
                                             root.printer.setLedColor(
                                                 modelData.object,
-                                                Math.round(redSlider.value),
-                                                Math.round(greenSlider.value),
-                                                Math.round(blueSlider.value),
-                                                modelData.hasWhite ? Math.round(whiteSlider.value) : 0,
-                                                Math.round(ledSlider.value)
+                                                root.sliderSelection(redSlider),
+                                                root.sliderSelection(greenSlider),
+                                                root.sliderSelection(blueSlider),
+                                                modelData.hasWhite ? root.sliderSelection(whiteSlider) : 0,
+                                                root.sliderSelection(ledSlider)
                                             )
                                         }
                                     }
@@ -484,7 +490,7 @@ Component
                                     {
                                         Layout.fillWidth: true
                                         UM.Label { text: modelData.name; Layout.fillWidth: true; elide: Text.ElideRight }
-                                        UM.Label { text: "Brightness " + Math.round(ledSlider.value) + "%" }
+                                        UM.Label { text: "Brightness " + root.sliderSelection(ledSlider) + "%" }
                                     }
                                     Slider
                                     {
@@ -493,7 +499,7 @@ Component
                                         from: 0; to: 100; stepSize: 1
                                         live: false
                                         value: modelData.percent
-                                        onPressedChanged: if (!pressed && root.printer != null) root.printer.setLedBrightness(modelData.object, Math.round(value))
+                                        onPressedChanged: if (!pressed && root.printer != null) root.printer.setLedBrightness(modelData.object, root.sliderSelection(ledSlider))
                                     }
 
                                     GridLayout
@@ -505,19 +511,19 @@ Component
 
                                         UM.Label { text: "R"; color: UM.Theme.getColor("text_inactive") }
                                         Slider { id: redSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.redPercent; onPressedChanged: if (!pressed) applyLedColour() }
-                                        UM.Label { text: Math.round(redSlider.value) + "%" }
+                                        UM.Label { text: root.sliderSelection(redSlider) + "%" }
 
                                         UM.Label { text: "G"; color: UM.Theme.getColor("text_inactive") }
                                         Slider { id: greenSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.greenPercent; onPressedChanged: if (!pressed) applyLedColour() }
-                                        UM.Label { text: Math.round(greenSlider.value) + "%" }
+                                        UM.Label { text: root.sliderSelection(greenSlider) + "%" }
 
                                         UM.Label { text: "B"; color: UM.Theme.getColor("text_inactive") }
                                         Slider { id: blueSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.bluePercent; onPressedChanged: if (!pressed) applyLedColour() }
-                                        UM.Label { text: Math.round(blueSlider.value) + "%" }
+                                        UM.Label { text: root.sliderSelection(blueSlider) + "%" }
 
                                         UM.Label { visible: modelData.hasWhite; text: "W"; color: UM.Theme.getColor("text_inactive") }
                                         Slider { id: whiteSlider; visible: modelData.hasWhite; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; live: false; value: modelData.whitePercent; onPressedChanged: if (!pressed) applyLedColour() }
-                                        UM.Label { visible: modelData.hasWhite; text: Math.round(whiteSlider.value) + "%" }
+                                        UM.Label { visible: modelData.hasWhite; text: root.sliderSelection(whiteSlider) + "%" }
                                     }
                                 }
                             }
@@ -538,7 +544,7 @@ Component
                                     {
                                         Layout.fillWidth: true
                                         UM.Label { text: modelData.name; Layout.fillWidth: true; elide: Text.ElideRight }
-                                        UM.Label { text: Math.round(pwmSlider.value) + "%" }
+                                        UM.Label { text: root.sliderSelection(pwmSlider) + "%" }
                                     }
                                     Slider
                                     {
@@ -553,7 +559,7 @@ Component
                                         {
                                             if (!pressed && root.printer != null)
                                             {
-                                                root.printer.setPwmOutput(modelData.object, Math.round(value))
+                                                root.printer.setPwmOutput(modelData.object, root.sliderSelection(pwmSlider))
                                             }
                                         }
                                     }
