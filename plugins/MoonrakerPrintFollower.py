@@ -227,6 +227,13 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._last_resolved_remote_layer: Optional[int] = None
         self._selected_layer_eta_text = ""
         self._last_speed_factor = 1.0
+        # ETA estimates use the slicer's cumulative layer timings, but keep an
+        # independent Moonraker print-duration anchor for the current layer.
+        # This lets ETAs continue counting down while Cura Preview is detached
+        # and its own path slider is no longer being advanced by the follower.
+        self._eta_anchor_layer: Optional[int] = None
+        self._eta_anchor_print_duration: Optional[float] = None
+        self._eta_current_print_duration: Optional[float] = None
         self._scene = None
         self._scene_root = None
         self._lifecycle_generation = 0
@@ -1248,7 +1255,15 @@ class MoonrakerPrintFollower(QObject, Extension):
             else:
                 unavailable = "Select a future layer"
 
-        items = [{"layer": layer + 1} for layer in sorted(self._scheduled_pause_layers)]
+        items = []
+        for layer in sorted(self._scheduled_pause_layers):
+            remaining = self._estimate_layer_boundary_remaining(layer, end_of_layer=True)
+            eta = (
+                f"in {self._format_preview_duration(remaining)}"
+                if remaining is not None
+                else "ETA unavailable"
+            )
+            items.append({"layer": layer + 1, "eta": eta})
         layers = ", ".join(str(item["layer"]) for item in items)
         summary = f"End-of-layer PAUSE: {layers}" if layers else ""
         return {
@@ -1440,15 +1455,106 @@ class MoonrakerPrintFollower(QObject, Extension):
         minutes, secs = divmod(remainder, 60)
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
+    def _estimate_layer_boundary_remaining(
+        self, target_layer: int, *, end_of_layer: bool
+    ) -> Optional[float]:
+        """Estimate seconds until a layer starts or finishes.
+
+        ``layer_elapsed_times[n]`` is the slicer's cumulative planned elapsed
+        time at the end of zero-based layer ``n``. The current position is
+        refined by whichever progress signal is furthest ahead: exact path
+        progress while attached, or Moonraker print-duration elapsed within the
+        current layer while Preview is detached. Taking the maximum keeps the
+        ETA monotonic and prevents an old Preview fraction from making it jump
+        backwards after detaching.
+        """
+        try:
+            target_layer = max(0, int(target_layer))
+        except (TypeError, ValueError):
+            return None
+        index = self._remote_index_data
+        times = list(getattr(index, "layer_elapsed_times", []) or []) if index is not None else []
+        current_layer = (
+            self._last_observed_remote_layer
+            if self._last_observed_remote_layer is not None
+            else self._last_resolved_remote_layer
+        )
+        if current_layer is None or not times:
+            return None
+        current_layer = max(0, int(current_layer))
+
+        def layer_start_elapsed(layer: int) -> Optional[float]:
+            if layer <= 0:
+                return 0.0
+            boundary = layer - 1
+            if 0 <= boundary < len(times) and times[boundary] is not None:
+                try:
+                    return float(times[boundary])
+                except (TypeError, ValueError):
+                    return None
+            return None
+
+        target_boundary = target_layer if end_of_layer else target_layer - 1
+        if target_boundary < 0:
+            target_elapsed = 0.0
+        elif target_boundary < len(times) and times[target_boundary] is not None:
+            try:
+                target_elapsed = float(times[target_boundary])
+            except (TypeError, ValueError):
+                return None
+        else:
+            return None
+
+        current_start = layer_start_elapsed(current_layer)
+        if current_start is None:
+            return None
+        current_end = None
+        if 0 <= current_layer < len(times) and times[current_layer] is not None:
+            try:
+                current_end = float(times[current_layer])
+            except (TypeError, ValueError):
+                current_end = None
+
+        speed = max(0.05, float(self._last_speed_factor or 1.0))
+        fractions: List[float] = []
+        if self._path_progress_layer == current_layer and self._path_progress_fraction is not None:
+            try:
+                fractions.append(max(0.0, min(1.0, float(self._path_progress_fraction))))
+            except (TypeError, ValueError):
+                pass
+        if (
+            self._eta_anchor_layer == current_layer
+            and self._eta_anchor_print_duration is not None
+            and self._eta_current_print_duration is not None
+            and current_end is not None
+            and current_end > current_start
+        ):
+            actual_into_layer = max(
+                0.0,
+                float(self._eta_current_print_duration) - float(self._eta_anchor_print_duration),
+            )
+            planned_layer_duration = current_end - current_start
+            fractions.append(
+                max(0.0, min(1.0, actual_into_layer * speed / planned_layer_duration))
+            )
+        fraction = max(fractions) if fractions else 0.0
+        planned_now = current_start
+        if current_end is not None and current_end >= current_start:
+            planned_now += (current_end - current_start) * fraction
+        remaining_planned = max(0.0, target_elapsed - planned_now)
+        return remaining_planned / speed
+
     def _update_selected_layer_eta(self, view=None) -> None:
-        """Show ETA to the manually selected Cura layer while following is paused."""
+        """Show a live ETA for the layer selected in Cura Preview."""
         text = ""
-        if self._following_paused and self._last_remote_state in self.ACTIVE_STATES:
+        if self._last_remote_state in self.ACTIVE_STATES:
             if view is None:
                 view = self._simulation_view()
-            index = self._remote_index_data
-            times = list(getattr(index, "layer_elapsed_times", []) or []) if index is not None else []
-            current_layer = self._last_resolved_remote_layer
+            current_layer = (
+                self._last_observed_remote_layer
+                if self._last_observed_remote_layer is not None
+                else self._last_resolved_remote_layer
+            )
             if view is not None and current_layer is not None:
                 try:
                     selected_layer = max(0, int(view.getCurrentLayer()))
@@ -1459,43 +1565,25 @@ class MoonrakerPrintFollower(QObject, Extension):
                     if selected_layer < current_layer:
                         text = f"Selected layer {human_layer} — already printed"
                     elif selected_layer == current_layer:
-                        text = f"Selected layer {human_layer} — current print layer"
-                    elif selected_layer < len(times):
-                        def layer_start_elapsed(layer: int) -> Optional[float]:
-                            if layer <= 0:
-                                return 0.0
-                            boundary = layer - 1
-                            if 0 <= boundary < len(times) and times[boundary] is not None:
-                                return float(times[boundary])
-                            return None
-
-                        target_elapsed = layer_start_elapsed(selected_layer)
-                        current_start = layer_start_elapsed(current_layer)
-                        current_end = (
-                            float(times[current_layer])
-                            if 0 <= current_layer < len(times) and times[current_layer] is not None
-                            else None
+                        if self._following_paused:
+                            text = f"Selected layer {human_layer} — current print layer"
+                    else:
+                        remaining = self._estimate_layer_boundary_remaining(
+                            selected_layer, end_of_layer=False
                         )
-                        if target_elapsed is not None and current_start is not None:
-                            fraction = 0.0
-                            if self._path_progress_layer == current_layer and self._path_progress_fraction is not None:
-                                fraction = max(0.0, min(1.0, float(self._path_progress_fraction)))
-                            planned_now = current_start
-                            if current_end is not None and current_end >= current_start:
-                                planned_now += (current_end - current_start) * fraction
-                            remaining = max(0.0, target_elapsed - planned_now)
-                            speed = max(0.05, float(self._last_speed_factor or 1.0))
-                            remaining /= speed
+                        if remaining is None:
+                            text = f"Selected layer {human_layer} — ETA unavailable (no layer timing)"
+                        else:
                             finish = datetime.now().astimezone() + timedelta(seconds=remaining)
-                            clock = finish.strftime("%a %H:%M") if remaining >= 20 * 3600 else finish.strftime("%H:%M")
+                            clock = (
+                                finish.strftime("%a %H:%M")
+                                if remaining >= 20 * 3600
+                                else finish.strftime("%H:%M")
+                            )
                             text = (
                                 f"Selected layer {human_layer} — in {self._format_preview_duration(remaining)} "
                                 f"· ~{clock}"
                             )
-                        else:
-                            text = f"Selected layer {human_layer} — ETA unavailable (no layer timing)"
-                    else:
-                        text = f"Selected layer {human_layer} — ETA unavailable"
 
         if text == self._selected_layer_eta_text:
             return
@@ -2175,6 +2263,10 @@ class MoonrakerPrintFollower(QObject, Extension):
         previous_filename = self._last_remote_filename
         self._update_remote_job_identity(print_stats, virtual_sdcard)
         try:
+            self._eta_current_print_duration = max(0.0, float(print_stats.get("print_duration") or 0.0))
+        except (TypeError, ValueError):
+            self._eta_current_print_duration = None
+        try:
             reported_size = int(virtual_sdcard.get("file_size") or 0)
         except (TypeError, ValueError):
             reported_size = 0
@@ -2199,6 +2291,9 @@ class MoonrakerPrintFollower(QObject, Extension):
             self._toolhead_path_valid = False
             self._last_resolved_remote_layer = None
             self._last_observed_remote_layer = None
+            self._eta_anchor_layer = None
+            self._eta_anchor_print_duration = None
+            self._eta_current_print_duration = None
             self._selected_layer_eta_text = ""
             if self._scheduled_pause_layers:
                 self._clear_scheduled_pauses(abort_request=True)
@@ -2217,6 +2312,9 @@ class MoonrakerPrintFollower(QObject, Extension):
         )
         if observed_layer is not None:
             observed_layer = max(0, int(observed_layer))
+            if self._eta_anchor_layer != observed_layer:
+                self._eta_anchor_layer = observed_layer
+                self._eta_anchor_print_duration = self._eta_current_print_duration
             self._last_observed_remote_layer = observed_layer
             self._maybe_trigger_scheduled_pause(observed_layer)
             if view is not None and hasattr(view, "getMaxLayers"):
@@ -2651,6 +2749,9 @@ class MoonrakerPrintFollower(QObject, Extension):
         self._path_progress_layer = None
         self._path_progress_fraction = None
         self._last_resolved_remote_layer = None
+        self._eta_anchor_layer = None
+        self._eta_anchor_print_duration = None
+        self._eta_current_print_duration = None
         self._selected_layer_eta_text = ""
         self._remote_index_filename = None
         self._remote_index_job_key = None

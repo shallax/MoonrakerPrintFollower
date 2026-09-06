@@ -221,12 +221,14 @@ Item
                         height: UM.Theme.getSize("action_button").height
                         spacing: base.buttonSpacing
                         property int pauseLayer: Number(modelData.layer)
+                        property string pauseEta: String(modelData.eta || "")
 
                         UM.Label
                         {
                             width: Math.max(0, parent.width - removePauseButton.width - parent.spacing)
                             height: parent.height
                             text: "End of layer " + parent.pauseLayer
+                                + (parent.pauseEta.length > 0 ? " · " + parent.pauseEta : "")
                             color: UM.Theme.getColor("text")
                             font: UM.Theme.getFont("default")
                             verticalAlignment: Text.AlignVCenter

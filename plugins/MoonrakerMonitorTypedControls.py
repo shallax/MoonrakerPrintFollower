@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import math
 import re
+import shlex
 from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QVariant, pyqtProperty, pyqtSignal, pyqtSlot
@@ -30,6 +31,7 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         self._restoring_webcam = False
         self._bed_mesh_snapshot: Dict[str, Any] = {}
         self._bed_mesh_fingerprint: Optional[Tuple[Any, ...]] = None
+        self._bed_mesh_profile_names: List[str] = []
         self._bound_preview_control_ids: set[int] = set()
         super().__init__(output_controller, number_of_extruders, follower)
 
@@ -82,7 +84,9 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         self._rebuild_macro_parameter_definitions()
         self._pwm_output_items = self._build_pwm_output_items()
         self._mcu_items = self._build_mcu_items()
-        self._update_bed_mesh_snapshot(self._aux_status.get("bed_mesh"))
+        bed_mesh_status = self._aux_status.get("bed_mesh")
+        self._bed_mesh_profile_names = self._bed_mesh_profiles_from_status(bed_mesh_status)
+        self._update_bed_mesh_snapshot(bed_mesh_status)
         self._bind_preview_bed_mesh_controls()
         self._sync_preview_bed_mesh_controls()
         self.typedControlsChanged.emit()
@@ -95,6 +99,32 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
     # ------------------------------------------------------------------
     # Bed mesh data, Monitor heatmap and Preview scene overlay
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _bed_mesh_profiles_from_status(status: Any) -> List[str]:
+        if not isinstance(status, dict):
+            return []
+        raw = status.get("profiles")
+        names: List[str] = []
+        if isinstance(raw, dict):
+            names = [str(name).strip() for name in raw.keys()]
+        elif isinstance(raw, (list, tuple, set)):
+            for item in raw:
+                if isinstance(item, str):
+                    names.append(item.strip())
+                elif isinstance(item, dict):
+                    candidate = str(item.get("name") or item.get("profile") or "").strip()
+                    if candidate:
+                        names.append(candidate)
+        names = sorted({name for name in names if name}, key=str.casefold)
+        active = str(status.get("profile_name") or "").strip()
+        if active in names:
+            names.remove(active)
+            names.insert(0, active)
+        elif "default" in names:
+            names.remove("default")
+            names.insert(0, "default")
+        return names
 
     @staticmethod
     def _normalise_bed_mesh_matrix(raw: Any) -> Optional[List[List[float]]]:
@@ -355,6 +385,7 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
     def _on_bed_mesh_machine_changed(self, *_args: Any) -> None:
         self._bed_mesh_snapshot = {}
         self._bed_mesh_fingerprint = None
+        self._bed_mesh_profile_names = []
         setattr(self._follower, "_bed_mesh_snapshot", {})
         setattr(self._follower, "_bed_mesh_fingerprint", None)
         node = getattr(self._follower, "_bed_mesh_scene_node", None)
@@ -410,6 +441,28 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         if not self._bed_mesh_snapshot:
             return ""
         return str(self._bed_mesh_snapshot.get("profile") or "Current mesh")
+
+    @pyqtProperty(QVariant, notify=typedControlsChanged)
+    def bedMeshProfileNames(self) -> QVariant:
+        return QVariant(list(self._bed_mesh_profile_names))
+
+    @pyqtSlot(str)
+    def loadBedMeshProfile(self, profile_name: str) -> None:
+        name = str(profile_name or "").strip()
+        if (
+            not name
+            or name not in self._bed_mesh_profile_names
+            or not self._has_bed_mesh
+            or not self.canRunSetup
+        ):
+            return
+        safe = shlex.quote(name)
+        self._send_gcode_action(f"Load mesh {name}", f"BED_MESH_PROFILE LOAD={safe}")
+
+    @pyqtSlot()
+    def clearBedMesh(self) -> None:
+        if self._has_bed_mesh and self.canRunSetup and self.bedMeshAvailable:
+            self._send_gcode_action("Clear bed mesh", "BED_MESH_CLEAR")
 
     @pyqtProperty(int, notify=typedControlsChanged)
     def bedMeshRows(self) -> int:

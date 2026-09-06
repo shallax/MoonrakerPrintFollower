@@ -173,15 +173,62 @@ Component
                             {
                                 Layout.fillWidth: true
                                 visible: root.printer != null && root.printer.hasBedMesh
-                                text: "Bed mesh"
+                                text: "Calibrate mesh"
+                                tooltip: "Probe the bed now and replace the active mesh with a newly calibrated one."
                                 enabled: root.printer != null && root.printer.canRunSetup
                                 onClicked: root.printer.calibrateBedMesh()
                             }
                         }
+
+                        RowLayout
+                        {
+                            visible: root.printer != null && root.printer.hasBedMesh
+                            Layout.fillWidth: true
+                            spacing: UM.Theme.getSize("default_margin").width / 2
+
+                            Cura.ComboBox
+                            {
+                                id: bedMeshProfileSelector
+                                Layout.fillWidth: true
+                                model: root.printer != null ? root.printer.bedMeshProfileNames : []
+                                enabled: root.printer != null
+                                    && root.printer.canRunSetup
+                                    && root.printer.bedMeshProfileNames.length > 0
+                            }
+
+                            Cura.SecondaryButton
+                            {
+                                text: "Load saved mesh"
+                                enabled: root.printer != null
+                                    && root.printer.canRunSetup
+                                    && bedMeshProfileSelector.currentText.length > 0
+                                tooltip: "Load the selected saved Klipper bed mesh without probing the bed again."
+                                onClicked: root.printer.loadBedMeshProfile(bedMeshProfileSelector.currentText)
+                            }
+
+                            Cura.SecondaryButton
+                            {
+                                text: "Clear mesh"
+                                enabled: root.printer != null
+                                    && root.printer.canRunSetup
+                                    && root.printer.bedMeshAvailable
+                                tooltip: "Clear the active Klipper bed mesh and remove its Z adjustment."
+                                onClicked: root.printer.clearBedMesh()
+                            }
+                        }
+                        UM.Label
+                        {
+                            visible: root.printer != null && root.printer.hasBedMesh
+                                && root.printer.bedMeshProfileNames.length === 0
+                            text: "No saved bed mesh profiles reported by Klipper."
+                            color: UM.Theme.getColor("text_inactive")
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
                         UM.Label
                         {
                             visible: root.printer != null && root.printer.printActive
-                            text: "Homing and calibration controls are disabled during a print."
+                            text: "Homing and bed-mesh setup controls are disabled during a print."
                             color: UM.Theme.getColor("text_inactive")
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
