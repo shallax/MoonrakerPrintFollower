@@ -36,27 +36,26 @@ jobs:
               text = text.replace("import re\n", "import re\nimport shlex\n", 1)
           start = text.index("    @pyqtSlot(str)\n    def loadBedMeshProfile")
           end = text.index("    @pyqtProperty(int, notify=typedControlsChanged)", start)
-          replacement = '''    @pyqtSlot(str)
-          def loadBedMeshProfile(self, profile_name: str) -> None:
-              name = str(profile_name or "").strip()
-              if (
-                  not name
-                  or name not in self._bed_mesh_profile_names
-                  or not self._has_bed_mesh
-                  or not self.canRunSetup
-              ):
-                  return
-              safe = shlex.quote(name)
-              self._send_gcode_action(f"Load mesh {name}", f"BED_MESH_PROFILE LOAD={safe}")
-
-          @pyqtSlot()
-          def clearBedMesh(self) -> None:
-              if self._has_bed_mesh and self.canRunSetup and self.bedMeshAvailable:
-                  self._send_gcode_action("Clear bed mesh", "BED_MESH_CLEAR")
-
-          '''
-          # Strip the workflow's indentation from the literal above.
-          replacement = "\n".join(line[10:] if line.startswith("          ") else line for line in replacement.splitlines()) + "\n"
+          replacement = (
+              "    @pyqtSlot(str)\n"
+              "    def loadBedMeshProfile(self, profile_name: str) -> None:\n"
+              "        name = str(profile_name or \"\").strip()\n"
+              "        if (\n"
+              "            not name\n"
+              "            or name not in self._bed_mesh_profile_names\n"
+              "            or not self._has_bed_mesh\n"
+              "            or not self.canRunSetup\n"
+              "        ):\n"
+              "            return\n"
+              "        safe = shlex.quote(name)\n"
+              "        self._send_gcode_action(f\"Load mesh {name}\", f\"BED_MESH_PROFILE LOAD={safe}\")\n"
+              "\n"
+              "    @pyqtSlot()\n"
+              "    def clearBedMesh(self) -> None:\n"
+              "        if self._has_bed_mesh and self.canRunSetup and self.bedMeshAvailable:\n"
+              "            self._send_gcode_action(\"Clear bed mesh\", \"BED_MESH_CLEAR\")\n"
+              "\n"
+          )
           path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
 
           test_path = Path("tests/test_eta_bed_mesh_release.py")

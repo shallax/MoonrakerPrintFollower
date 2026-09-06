@@ -73,6 +73,7 @@ This is the original 1.0 release of the plugin. The historical metadata has been
 
 ## Development history
 
+- 2026-09-06: Fix ETA bed mesh method indentation
 - 2026-09-06: Run ETA and bed mesh release polish
 - 2026-09-06: Fix ETA bed mesh patch runner
 - 2026-09-06: Run ETA and bed mesh release polish
