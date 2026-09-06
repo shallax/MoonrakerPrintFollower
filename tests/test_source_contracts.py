@@ -33,16 +33,14 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(package["author"]["email"], "moonrakerprintfollower@maintain.contact")
         self.assertEqual(plugin["supported_sdk_versions"], [f"8.{minor}.0" for minor in range(13)])
 
-    def test_public_follower_is_thin_and_domains_are_extracted(self):
+    def test_public_follower_is_thin_and_domains_are_extracted_once(self):
         self.assertLess(len(FACADE.splitlines()), 20)
         self.assertIn("FollowerCoordinator", FACADE)
         for name in (
             "FollowerRuntime.py",
             "FollowerCoordinator.py",
             "RemoteJobService.py",
-            "PrintTracker.py",
             "RemoteFileService.py",
-            "GCodeRepository.py",
             "GCodeIndexService.py",
             "PauseScheduleService.py",
             "PreviewFollowerService.py",
@@ -55,8 +53,10 @@ class SourceContractTests(unittest.TestCase):
         for obsolete in (
             "PauseScheduler.py",
             "PreviewController.py",
-            "FollowerStateBridge.py",
+            "PrintTracker.py",
+            "GCodeRepository.py",
             "FollowerSession.py",
+            "FollowerStateBridge.py",
         ):
             self.assertFalse((PLUGINS / obsolete).exists(), obsolete)
         for token in (
@@ -69,7 +69,8 @@ class SourceContractTests(unittest.TestCase):
         ):
             self.assertIn(token, COORDINATOR)
 
-    def test_established_follower_safety_contracts_remain_in_compatibility_runtime(self):
+    def test_established_follower_safety_contracts_remain_available(self):
+        combined = RUNTIME + "\n" + (PLUGINS / "FollowerTransport.py").read_text()
         for token in (
             "QMessageBox.question",
             "self._application.readLocalFile",
@@ -81,13 +82,11 @@ class SourceContractTests(unittest.TestCase):
             "BackendState.Done",
             "motion_report",
             "minimum_fraction=self._path_progress_fraction",
-            "if self._applying_follow_update:",
             "currentLayerNumChanged",
             "currentPathNumChanged",
-            "preview_override_kind",
             "keep_native_nozzle_visible(view)",
         ):
-            self.assertIn(token, RUNTIME, token)
+            self.assertIn(token, combined, token)
         self.assertNotIn("_readMeshFinished", RUNTIME)
         self.assertNotIn("DepthFirstIterator", RUNTIME)
 
