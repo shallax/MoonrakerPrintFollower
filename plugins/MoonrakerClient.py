@@ -129,6 +129,14 @@ class MoonrakerClient(QObject):
         if was_connected:
             self.connectionChanged.emit(False, "Moonraker polling stopped")
 
+    def set_pause_guard(self, active: bool) -> None:
+        changed = self._session.set_pause_guard(active)
+        self._apply_adaptive_interval()
+        if changed and active and self._enabled:
+            # Do not wait for the old slower timer interval before entering the
+            # precision window around an end-of-layer PAUSE.
+            self.force_refresh()
+
     def force_refresh(self) -> None:
         if not self._enabled or not self._base_url:
             return
@@ -187,6 +195,7 @@ class MoonrakerClient(QObject):
             RequestCategory.CORE,
             self._poll_interval_ms,
             self._session.snapshot.printer_state,
+            urgent=self._session.pause_guard,
         )
         if self._poll_timer.interval() != interval:
             self._poll_timer.setInterval(interval)
@@ -205,6 +214,7 @@ class MoonrakerClient(QObject):
             RequestCategory.CORE,
             self._poll_interval_ms,
             self._session.snapshot.printer_state,
+            urgent=self._session.pause_guard,
         )
         retry_interval = max(adaptive, delay)
         if self._poll_timer.interval() != retry_interval:
