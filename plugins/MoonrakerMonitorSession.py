@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from PyQt6.QtCore import QTimer
 
@@ -9,7 +9,7 @@ from .MoonrakerSession import RequestCategory
 
 
 class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
-    """Monitor adapter backed by the follower's shared core Moonraker session."""
+    """Monitor adapter backed by the follower's shared Moonraker session/transport."""
 
     _PRINT_COMMAND_STATES = {
         "Pause": {"paused"},
@@ -19,17 +19,97 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
 
     def __init__(self, output_controller: Any, number_of_extruders: int, follower: Any) -> None:
         self._tracked_control_label = ""
+        self._shared_transport_ready = False
         super().__init__(output_controller, number_of_extruders, follower)
-        client = getattr(follower, "_client", None)
+        client = self._shared_client()
+        transport = getattr(client, "transport", None)
+        if transport is not None:
+            # The base model creates a private manager for compatibility, but no
+            # request is allowed through it: initial peripheral refreshes are
+            # suppressed until this shared transport is installed.
+            self._network = transport.network
+            self._shared_transport_ready = True
         signal = getattr(client, "commandChanged", None)
         if signal is not None:
             try:
                 signal.connect(self._on_shared_command_changed)
             except Exception:
                 pass
+        if self._shared_transport_ready:
+            self.refreshAll()
 
     def _shared_client(self):
         return getattr(self._follower, "_client", None)
+
+    def _shared_transport(self):
+        return getattr(self._shared_client(), "transport", None)
+
+    @staticmethod
+    def _request_category(channel: str) -> RequestCategory:
+        channel = str(channel or "")
+        if channel.startswith("power"):
+            return RequestCategory.POWER
+        if channel in {"server-info", "printer-info"} or channel.startswith("mcu"):
+            return RequestCategory.SYSTEM
+        if channel in {"objects", "config-static", "webcams", "temperature-presets"}:
+            return RequestCategory.DISCOVERY
+        if channel in {"control", "power-action", "emergency-stop"} or channel.startswith("quick-"):
+            return RequestCategory.COMMAND
+        return RequestCategory.AUXILIARY
+
+    def _json_request(
+        self,
+        channel: str,
+        method: str,
+        path: str,
+        callback: Callable[[Optional[Dict[str, Any]], Optional[str]], None],
+        *,
+        body: Optional[Dict[str, Any]] = None,
+        replace: bool = False,
+    ) -> bool:
+        if not self._monitoring_active or not self._shared_transport_ready:
+            return False
+        self._ensure_request_session()
+        if not self._usable_base_url():
+            return False
+        transport = self._shared_transport()
+        if transport is None:
+            return False
+        generation = self._request_generation
+
+        def finished(payload: Optional[Dict[str, Any]], error: Optional[str]) -> None:
+            if generation != self._request_generation:
+                return
+            try:
+                callback(payload, error)
+            except Exception:
+                return
+
+        return bool(
+            transport.send_json(
+                "monitor",
+                channel,
+                method,
+                path,
+                finished,
+                body=body,
+                replace=replace,
+                category=self._request_category(channel).value,
+            )
+        )
+
+    def _cancel_channel(self, channel: str) -> None:
+        transport = self._shared_transport()
+        if transport is not None:
+            transport.cancel("monitor", channel)
+        self._requests.pop(channel, None)
+
+    def _invalidate_request_session(self) -> None:
+        self._request_generation += 1
+        transport = self._shared_transport()
+        if transport is not None:
+            transport.cancel_owner("monitor")
+        self._requests.clear()
 
     def _start_background_timers(self) -> None:
         self._core_timer.stop()
