@@ -443,7 +443,7 @@ Component
                                         id: fanSlider
                                         Layout.fillWidth: true
                                         from: 0; to: 100; stepSize: 1
-                                        from: 0; to: 100; live: false
+                                        live: false
                                         value: modelData.percent
                                         onPressedChanged: if (!pressed && root.printer != null) root.printer.setFanSpeed(modelData.object, Math.round(value))
                                     }
@@ -491,7 +491,7 @@ Component
                                         id: ledSlider
                                         Layout.fillWidth: true
                                         from: 0; to: 100; stepSize: 1
-                                        from: 0; to: 100; live: false
+                                        live: false
                                         value: modelData.percent
                                         onPressedChanged: if (!pressed && root.printer != null) root.printer.setLedBrightness(modelData.object, Math.round(value))
                                     }

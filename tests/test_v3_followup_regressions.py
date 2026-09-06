@@ -183,6 +183,10 @@ class V3FollowupRegressionTests(unittest.TestCase):
             self.assertIn("live: false", DASHBOARD_QML[start:start + 500], slider_id)
         self.assertNotIn("onMoved:", DASHBOARD_QML)
 
+    def test_monitor_sliders_do_not_repeat_qml_properties(self):
+        duplicate = "from: 0; to: 100; stepSize: 1\n                                        from: 0; to: 100; live: false"
+        self.assertNotIn(duplicate, DASHBOARD_QML)
+
 
 if __name__ == "__main__":
     unittest.main()
