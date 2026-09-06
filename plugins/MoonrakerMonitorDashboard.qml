@@ -317,7 +317,9 @@ Component
                             {
                                 id: speedSlider
                                 Layout.fillWidth: true
-                                from: 10; to: 200; stepSize: 1
+                                from: 10
+                                to: Math.max(200, root.printer != null ? Math.ceil(root.printer.speedFactorPercent * 2) : 200)
+                                stepSize: 1
                                 value: root.printer != null ? root.printer.speedFactorPercent : 100
                                 enabled: root.printer != null
                                 onPressedChanged: if (!pressed && root.printer != null) root.printer.setSpeedFactor(Math.round(value))
@@ -338,7 +340,9 @@ Component
                             {
                                 id: flowSlider
                                 Layout.fillWidth: true
-                                from: 50; to: 150; stepSize: 1
+                                from: 50
+                                to: Math.max(200, root.printer != null ? Math.ceil(root.printer.flowFactorPercent * 2) : 200)
+                                stepSize: 1
                                 value: root.printer != null ? root.printer.flowFactorPercent : 100
                                 enabled: root.printer != null
                                 onPressedChanged: if (!pressed && root.printer != null) root.printer.setFlowFactor(Math.round(value))
@@ -439,6 +443,21 @@ Component
                                     Layout.fillWidth: true
                                     spacing: UM.Theme.getSize("thin_margin").height
 
+                                    function applyLedColour()
+                                    {
+                                        if (root.printer != null)
+                                        {
+                                            root.printer.setLedColor(
+                                                modelData.object,
+                                                Math.round(redSlider.value),
+                                                Math.round(greenSlider.value),
+                                                Math.round(blueSlider.value),
+                                                modelData.hasWhite ? Math.round(whiteSlider.value) : 0,
+                                                Math.round(ledSlider.value)
+                                            )
+                                        }
+                                    }
+
                                     RowLayout
                                     {
                                         Layout.fillWidth: true
@@ -462,40 +481,20 @@ Component
                                         rowSpacing: UM.Theme.getSize("thin_margin").height
 
                                         UM.Label { text: "R"; color: UM.Theme.getColor("text_inactive") }
-                                        Slider { id: redSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.redPercent }
+                                        Slider { id: redSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.redPercent; onPressedChanged: if (!pressed) applyLedColour() }
                                         UM.Label { text: Math.round(redSlider.value) + "%" }
 
                                         UM.Label { text: "G"; color: UM.Theme.getColor("text_inactive") }
-                                        Slider { id: greenSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.greenPercent }
+                                        Slider { id: greenSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.greenPercent; onPressedChanged: if (!pressed) applyLedColour() }
                                         UM.Label { text: Math.round(greenSlider.value) + "%" }
 
                                         UM.Label { text: "B"; color: UM.Theme.getColor("text_inactive") }
-                                        Slider { id: blueSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.bluePercent }
+                                        Slider { id: blueSlider; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.bluePercent; onPressedChanged: if (!pressed) applyLedColour() }
                                         UM.Label { text: Math.round(blueSlider.value) + "%" }
 
                                         UM.Label { visible: modelData.hasWhite; text: "W"; color: UM.Theme.getColor("text_inactive") }
-                                        Slider { id: whiteSlider; visible: modelData.hasWhite; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.whitePercent }
+                                        Slider { id: whiteSlider; visible: modelData.hasWhite; Layout.fillWidth: true; from: 0; to: 100; stepSize: 1; value: modelData.whitePercent; onPressedChanged: if (!pressed) applyLedColour() }
                                         UM.Label { visible: modelData.hasWhite; text: Math.round(whiteSlider.value) + "%" }
-                                    }
-
-                                    Cura.SecondaryButton
-                                    {
-                                        Layout.fillWidth: true
-                                        text: "Set colour"
-                                        onClicked:
-                                        {
-                                            if (root.printer != null)
-                                            {
-                                                root.printer.setLedColor(
-                                                    modelData.object,
-                                                    Math.round(redSlider.value),
-                                                    Math.round(greenSlider.value),
-                                                    Math.round(blueSlider.value),
-                                                    modelData.hasWhite ? Math.round(whiteSlider.value) : 0,
-                                                    Math.round(ledSlider.value)
-                                                )
-                                            }
-                                        }
                                     }
                                 }
                             }
@@ -604,7 +603,7 @@ Component
                                     anchors.centerIn: parent
                                     text: emergencyButton.clicks === 0 ? "EMERGENCY STOP — click 3 times" : "EMERGENCY STOP — " + emergencyButton.clicks + "/3"
                                     font: UM.Theme.getFont("medium_bold")
-                                    color: emergencyButton.clicks >= 2 ? "white" : UM.Theme.getColor("text")
+                                    color: "black"
                                 }
                                 MouseArea
                                 {

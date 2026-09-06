@@ -42,6 +42,7 @@ class V3FollowupRegressionTests(unittest.TestCase):
             "BOUNDARY_WIDTH = 1.4",
             "BOUNDARY_LIFT = 0.09",
             "BOUNDARY_ALPHA = 0.94",
+            "BOUNDARY_COLOUR = (1.0, 0.353, 0.0)",
             "append_boundary_segment",
             "boundary_vertices",
             "boundary_colours",
@@ -54,7 +55,7 @@ class V3FollowupRegressionTests(unittest.TestCase):
         self.assertIn("_on_cura_bed_mesh_scene_changed", TYPED)
         self.assertIn("_ensure_bed_mesh_scene_node() if snapshot", TYPED)
         for qml in (PREVIEW_QML, EMPTY_PREVIEW_QML):
-            self.assertIn("Dark outline = Klipper mesh bounds; outside = extrapolated", qml)
+            self.assertIn("Neon orange outline = Klipper mesh bounds; outside = extrapolated", qml)
             self.assertIn("opacity: base.bedMeshVisible ? 1.0 : 0.0", qml)
             self.assertIn("height: implicitHeight", qml)
             self.assertIn("selectedLayerEtaText", qml)
@@ -137,8 +138,18 @@ class V3FollowupRegressionTests(unittest.TestCase):
             "SET_LED LED=",
         ):
             self.assertIn(token, CONTROLS)
-        self.assertIn('text: "Set colour"', DASHBOARD_QML)
+        self.assertIn("function applyLedColour()", DASHBOARD_QML)
+        self.assertIn("onPressedChanged: if (!pressed) applyLedColour()", DASHBOARD_QML)
+        self.assertNotIn('text: "Set colour"', DASHBOARD_QML)
         self.assertIn("root.printer.setLedColor", DASHBOARD_QML)
+
+    def test_live_tuning_slider_ranges_expand_from_accepted_value(self):
+        self.assertIn("to: Math.max(200, root.printer != null ? Math.ceil(root.printer.speedFactorPercent * 2) : 200)", DASHBOARD_QML)
+        self.assertIn("to: Math.max(200, root.printer != null ? Math.ceil(root.printer.flowFactorPercent * 2) : 200)", DASHBOARD_QML)
+
+    def test_emergency_stop_text_stays_black_during_click_sequence(self):
+        self.assertIn('color: "black"', DASHBOARD_QML)
+        self.assertNotIn('emergencyButton.clicks >= 2 ? "white"', DASHBOARD_QML)
 
 
 if __name__ == "__main__":
