@@ -25,7 +25,52 @@ jobs:
           python-version: '3.11'
 
       - name: Apply release polish
-        run: python tools/apply_eta_bedmesh_release.py
+        run: |
+          python tools/apply_eta_bedmesh_release.py
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("plugins/MoonrakerMonitorTypedControls.py")
+          text = path.read_text(encoding="utf-8")
+          if "import shlex\n" not in text:
+              text = text.replace("import re\n", "import re\nimport shlex\n", 1)
+          start = text.index("    @pyqtSlot(str)\n    def loadBedMeshProfile")
+          end = text.index("    @pyqtProperty(int, notify=typedControlsChanged)", start)
+          replacement = '''    @pyqtSlot(str)
+          def loadBedMeshProfile(self, profile_name: str) -> None:
+              name = str(profile_name or "").strip()
+              if (
+                  not name
+                  or name not in self._bed_mesh_profile_names
+                  or not self._has_bed_mesh
+                  or not self.canRunSetup
+              ):
+                  return
+              safe = shlex.quote(name)
+              self._send_gcode_action(f"Load mesh {name}", f"BED_MESH_PROFILE LOAD={safe}")
+
+          @pyqtSlot()
+          def clearBedMesh(self) -> None:
+              if self._has_bed_mesh and self.canRunSetup and self.bedMeshAvailable:
+                  self._send_gcode_action("Clear bed mesh", "BED_MESH_CLEAR")
+
+          '''
+          # Strip the workflow's indentation from the literal above.
+          replacement = "\n".join(line[10:] if line.startswith("          ") else line for line in replacement.splitlines()) + "\n"
+          path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
+
+          test_path = Path("tests/test_eta_bed_mesh_release.py")
+          test_text = test_path.read_text(encoding="utf-8")
+          test_text = test_text.replace(
+              "self.assertIn('BED_MESH_PROFILE LOAD=\"{safe}\"', TYPED)",
+              "self.assertIn('BED_MESH_PROFILE LOAD={safe}', TYPED)",
+          )
+          test_text = test_text.replace(
+              'self.assertIn("loadBedMeshProfile", TYPED)\n',
+              'self.assertIn("loadBedMeshProfile", TYPED)\n        self.assertIn("shlex.quote(name)", TYPED)\n',
+          )
+          test_path.write_text(test_text, encoding="utf-8")
+          PY
 
       - name: Validate release candidate
         run: |
