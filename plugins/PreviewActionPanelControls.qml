@@ -38,7 +38,7 @@ Item
     property real verticalPadding: UM.Theme.getSize("thick_margin").height
     property real rowSpacing: UM.Theme.getSize("thin_margin").height
     property real buttonSpacing: UM.Theme.getSize("default_margin").width
-    property real contentWidth: 260 * screenScaleFactor
+    property real contentWidth: 300 * screenScaleFactor
 
     signal loadClicked()
     signal pauseClicked()
@@ -107,34 +107,34 @@ Item
                 height: UM.Theme.getSize("action_button").height
                 spacing: base.buttonSpacing
 
-                Cura.SecondaryButton
+                PreviewSecondaryButton
                 {
                     id: followButton
                     visible: base.hasToolpath && (base.followingEnabled || base.followingPaused)
-                    width: (buttons.width - base.buttonSpacing) / 2
+                    width: Math.round((buttons.width - base.buttonSpacing) * 0.32)
                     height: UM.Theme.getSize("action_button").height
-                    text: base.followingPaused ? "Resume" : "Pause"
+                    text: base.followingPaused ? "Attach" : "Detach"
                     tooltip: base.followingPaused
-                        ? "Resume synchronising Cura Preview with the current Moonraker print."
-                        : "Pause Cura Preview synchronisation while Moonraker status polling continues."
-                    fixedWidthMode: true
+                        ? "Attach Cura Preview to the live Moonraker print and resume automatic synchronisation."
+                        : "Detach Cura Preview from automatic synchronisation while Moonraker status polling continues. This does not pause the printer."
                     enabled: base.hasToolpath && (base.followingEnabled || base.followingPaused)
                     onClicked: base.pauseClicked()
                 }
 
-                Cura.SecondaryButton
+                PreviewSecondaryButton
                 {
                     id: loadButton
-                    width: followButton.visible ? (buttons.width - base.buttonSpacing) / 2 : buttons.width
+                    width: followButton.visible
+                        ? buttons.width - base.buttonSpacing - followButton.width
+                        : buttons.width
                     height: UM.Theme.getSize("action_button").height
                     text: "Load current print"
                     tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
-                    fixedWidthMode: true
                     onClicked: base.loadClicked()
                 }
             }
 
-            Cura.SecondaryButton
+            PreviewSecondaryButton
             {
                 id: bedMeshButton
                 visible: base.bedMeshAvailable
@@ -143,7 +143,6 @@ Item
                 text: base.bedMeshVisible ? "Hide bed mesh" : "Show bed mesh"
                 tooltip: "Show the active Klipper bed mesh as a coloured 3D surface on Cura's build plate"
                     + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
-                fixedWidthMode: true
                 onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
             }
 
@@ -160,7 +159,7 @@ Item
                 clip: true
             }
 
-            Cura.SecondaryButton
+            PreviewSecondaryButton
             {
                 id: pauseAtLayerButton
                 visible: base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive
@@ -177,7 +176,6 @@ Item
                     : (base.pauseAtLayerCanToggle
                         ? "Call the Klipper PAUSE macro once this layer has finished and Moonraker advances to the following layer."
                         : "Scroll Cura Preview to the current or a future non-final layer to schedule an end-of-layer PAUSE.")
-                fixedWidthMode: true
                 onClicked: base.pauseAtLayerRequested(base.pauseAtLayerCandidate)
             }
 
@@ -235,26 +233,24 @@ Item
                             elide: Text.ElideRight
                         }
 
-                        Cura.SecondaryButton
+                        PreviewSecondaryButton
                         {
                             id: removePauseButton
                             width: 88 * screenScaleFactor
                             height: parent.height
                             text: "Remove"
                             tooltip: "Remove the scheduled PAUSE after layer " + parent.pauseLayer + "."
-                            fixedWidthMode: true
                             onClicked: base.removePauseAtLayerRequested(parent.pauseLayer)
                         }
                     }
                 }
 
-                Cura.SecondaryButton
+                PreviewSecondaryButton
                 {
                     width: parent.width
                     height: UM.Theme.getSize("action_button").height
                     text: "Clear all pauses"
                     tooltip: "Remove every scheduled end-of-layer PAUSE for the current print."
-                    fixedWidthMode: true
                     onClicked: base.clearPauseAtLayersRequested()
                 }
             }
