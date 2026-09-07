@@ -126,8 +126,8 @@ class CuraViewBridgeMixin:
         self._clear_expected_preview_position()
         if (
             self._cura_has_toolpath()
-            and self._pref_bool(self.PREF_ENABLED)
-            and not self._following_paused
+            and self.current_printer_config().enabled
+            and not self._preview_follower_service.following_paused
         ):
             self._queue_lifecycle_callback(lambda: self._poll(force=True))
 

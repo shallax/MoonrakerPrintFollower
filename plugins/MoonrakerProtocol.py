@@ -3,10 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
-try:
-    from .Core import RemoteFileIdentity
-except ImportError:  # test/import convenience
-    from Core import RemoteFileIdentity
+from .Core import RemoteFileIdentity
 
 
 def status_endpoint(base_url: str) -> str:

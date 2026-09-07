@@ -32,35 +32,19 @@ class RemoteJobState:
 
 
 class RemoteJobService:
-    """Authoritative owner of remote print-run identity and restart detection."""
+    """Own remote print-run identity and same-file restart detection."""
 
     def __init__(self, active_states: Iterable[str]) -> None:
-        self.active_states = {str(item) for item in active_states}
-        self.state = RemoteJobState()
+        self._active_states = {str(item) for item in active_states}
+        self._state = RemoteJobState()
+
+    @property
+    def key(self) -> Optional[JobKey]:
+        return self._state.key
 
     @property
     def serial(self) -> int:
-        return self.state.serial
-
-    @serial.setter
-    def serial(self, value: int) -> None:
-        self.state.serial = max(0, int(value or 0))
-
-    @property
-    def last_file_position(self) -> Optional[int]:
-        return self.state.last_file_position
-
-    @last_file_position.setter
-    def last_file_position(self, value: Optional[int]) -> None:
-        self.state.last_file_position = None if value is None else int(value)
-
-    @property
-    def last_print_duration(self) -> Optional[float]:
-        return self.state.last_print_duration
-
-    @last_print_duration.setter
-    def last_print_duration(self, value: Optional[float]) -> None:
-        self.state.last_print_duration = None if value is None else float(value)
+        return self._state.serial
 
     def observe(
         self,
@@ -84,40 +68,44 @@ class RemoteJobService:
         except (TypeError, ValueError):
             print_duration = 0.0
 
-        observation = PrintObservation(state, filename, file_size, file_position, print_duration)
-        active = observation.state in self.active_states and bool(observation.filename)
+        observation = PrintObservation(
+            state, filename, file_size, file_position, print_duration
+        )
+        active = observation.state in self._active_states and bool(observation.filename)
         new_job = False
         if active:
-            key = self.state.key
+            key = self._state.key
             if key is None:
                 new_job = True
             elif key[0] != observation.filename or key[1] != observation.file_size:
                 new_job = True
-            elif previous_state not in self.active_states:
+            elif previous_state not in self._active_states:
                 new_job = True
             elif (
-                self.state.last_file_position is not None
-                and observation.file_position < self.state.last_file_position
+                self._state.last_file_position is not None
+                and observation.file_position < self._state.last_file_position
             ):
                 new_job = True
             elif (
-                self.state.last_print_duration is not None
-                and observation.print_duration + 0.05 < self.state.last_print_duration
+                self._state.last_print_duration is not None
+                and observation.print_duration + 0.05 < self._state.last_print_duration
             ):
                 new_job = True
+
             if new_job:
-                self.state.serial += 1
-                self.state.key = (observation.filename, observation.file_size, self.state.serial)
-            self.state.last_file_position = observation.file_position
-            self.state.last_print_duration = observation.print_duration
+                self._state.serial += 1
+                self._state.key = (
+                    observation.filename,
+                    observation.file_size,
+                    self._state.serial,
+                )
+            self._state.last_file_position = observation.file_position
+            self._state.last_print_duration = observation.print_duration
         else:
-            self.state.last_file_position = None
-            self.state.last_print_duration = None
+            self._state.last_file_position = None
+            self._state.last_print_duration = None
 
-        return PrintTransition(self.state.key, new_job, self.state.serial)
-
-    def set_key(self, key: Optional[JobKey]) -> None:
-        self.state.key = key
+        return PrintTransition(self._state.key, new_job, self._state.serial)
 
     def reset(self) -> None:
-        self.state = RemoteJobState()
+        self._state = RemoteJobState()

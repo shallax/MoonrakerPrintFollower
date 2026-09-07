@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import time
+
 from UM.Backend.Backend import BackendState
 from UM.Logger import Logger
+
 from .Core import OperationPhase
 
 
@@ -23,7 +25,7 @@ class CuraLifecycleRuntimeMixin:
             self._scene_root = None
 
     def _invalidate_lifecycle(self, reason: str, abort_network: bool = True) -> None:
-        self._lifecycle_generation += 1
+        self._cura_lifecycle_bridge.invalidate(reason)
         self._toolhead_path_valid = False
         self._hide_toolhead_indicator()
         self._clear_expected_preview_position()
@@ -33,23 +35,20 @@ class CuraLifecycleRuntimeMixin:
             self._abort_status_reply()
             self._abort_metadata_reply()
             self._abort_file_reply()
-            self._file_reply_generation = self._lifecycle_generation
+            self._file_reply_generation = self._cura_lifecycle_bridge.generation
 
-        was_loading = self._cura_load_in_progress
-        self._cura_load_in_progress = False
-        self._cura_load_started_at = None
-        self._cura_load_path = None
-        self._cura_load_filename = None
-        self._cura_load_job_key = None
+        was_loading = self._operation.is_cura_loading
+        self._operation.reset(OperationPhase.IDLE)
         if not was_loading:
             self._cleanup_deferred_cache_dirs()
-        self._force_load_requested = False
-        self._force_load_pending_filename = None
-        self._operation.reset(OperationPhase.IDLE)
-        Logger.log("d", "Moonraker Print Follower invalidated scene lifecycle: %s", reason)
+        Logger.log(
+            "d",
+            "Moonraker Print Follower invalidated scene lifecycle: %s",
+            reason,
+        )
 
     def _on_scene_children_changed(self, source=None) -> None:
-        if self._cura_load_in_progress or self._slicing_in_progress:
+        if self._operation.is_cura_loading or self._slicing_in_progress:
             return
         if time.monotonic() < self._scene_settle_until:
             return
@@ -63,11 +62,14 @@ class CuraLifecycleRuntimeMixin:
         self._bind_scene_structure_signal()
         self._refresh_simulation_view_connection()
         self._sync_preview_button_state()
-        if self._pref_bool(self.PREF_ENABLED) and not self._following_paused:
+        if (
+            self.current_printer_config().enabled
+            and not self._preview_follower_service.following_paused
+        ):
             self._poll(force=True)
 
     def _on_slicing_started(self, *_args) -> None:
-        if self._cura_load_in_progress:
+        if self._operation.is_cura_loading:
             return
         self._slicing_in_progress = True
         self._follow_controller.set_cura_suspended(True)
@@ -95,7 +97,10 @@ class CuraLifecycleRuntimeMixin:
         self._refresh_simulation_view_connection()
         self._sync_preview_button_state()
         Logger.log("d", "Moonraker Print Follower: %s", reason)
-        if self._pref_bool(self.PREF_ENABLED) and not self._following_paused:
+        if (
+            self.current_printer_config().enabled
+            and not self._preview_follower_service.following_paused
+        ):
             self._queue_lifecycle_callback(lambda: self._poll(force=True), 100)
 
     def _on_active_view_changed(self, *_args) -> None:

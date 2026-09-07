@@ -19,7 +19,7 @@ class PreviewEtaMixin:
             target_layer = max(0, int(target_layer))
         except (TypeError, ValueError):
             return None
-        index = self._remote_index_data
+        index = self._gcode_index_service.data
         times = list(getattr(index, "layer_elapsed_times", []) or []) if index is not None else []
         current_layer = (
             self._last_observed_remote_layer
@@ -110,7 +110,7 @@ class PreviewEtaMixin:
                     if selected_layer < current_layer:
                         text = f"Selected layer {human_layer} — already printed"
                     elif selected_layer == current_layer:
-                        if self._following_paused:
+                        if self._preview_follower_service.following_paused:
                             text = f"Selected layer {human_layer} — current print layer"
                     else:
                         remaining = self._estimate_layer_boundary_remaining(

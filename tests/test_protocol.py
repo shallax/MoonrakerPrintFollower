@@ -1,12 +1,6 @@
-import os
-import sys
 import unittest
 
-PLUGIN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plugins"))
-if PLUGIN_DIR not in sys.path:
-    sys.path.insert(0, PLUGIN_DIR)
-
-from MoonrakerProtocol import (
+from plugins.MoonrakerProtocol import (
     download_endpoint,
     live_position_in_gcode_space,
     metadata_endpoint,

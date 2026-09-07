@@ -1,14 +1,14 @@
 """Public Cura extension entry point.
 
-Compatibility ownership note: selected-layer ETA remains in FollowerRuntime via
-_update_selected_layer_eta, datetime.now().astimezone(), the "Selected layer"
-status text, and controls.setProperty("selectedLayerEtaText", ...).
+The implementation is composed by FollowerCoordinator from focused domain
+services, transport/session infrastructure and Cura-facing runtime mixins.
+Keep this facade intentionally tiny.
 """
 
 from .FollowerCoordinator import FollowerCoordinator
 
 
 class MoonrakerPrintFollower(FollowerCoordinator):
-    """Cura extension facade; implementation is decomposed into focused services."""
+    """Cura extension facade for the active Moonraker print follower."""
 
     pass

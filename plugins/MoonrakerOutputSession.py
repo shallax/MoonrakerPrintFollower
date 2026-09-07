@@ -13,9 +13,17 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
         super().__init__(application, follower, machine_id)
         transport = self._shared_transport()
         if transport is not None:
-            # Multipart upload remains a specialised reply lifecycle, but it uses
-            # the same connection pool and request identity as every JSON call.
+            # The compatibility base creates a manager before this adapter can
+            # bind. No request has started yet; release that unused manager and
+            # retain the shared active-printer pool for multipart and JSON work.
+            legacy_network = getattr(self, "_network", None)
+            shared_network = transport.network
             self._network = transport.network
+            if legacy_network is not None and legacy_network is not shared_network:
+                try:
+                    legacy_network.deleteLater()
+                except Exception:
+                    pass
 
     def _shared_client(self):
         return getattr(self._follower, "_client", None)
@@ -36,12 +44,20 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
     def _category_for(path: str, method: str) -> RequestCategory:
         path = str(path or "")
         if "device_power" in path:
-            return RequestCategory.POWER if method.upper() == "GET" else RequestCategory.COMMAND
+            return (
+                RequestCategory.POWER
+                if method.upper() == "GET"
+                else RequestCategory.COMMAND
+            )
         if path.startswith("server/files/directory"):
             return RequestCategory.DISCOVERY
         if path in {"server/info", "printer/info"}:
             return RequestCategory.SYSTEM
-        return RequestCategory.COMMAND if method.upper() == "POST" else RequestCategory.AUXILIARY
+        return (
+            RequestCategory.COMMAND
+            if method.upper() == "POST"
+            else RequestCategory.AUXILIARY
+        )
 
     def _json_request(
         self,

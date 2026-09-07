@@ -24,10 +24,17 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         client = self._shared_client()
         transport = getattr(client, "transport", None)
         if transport is not None:
-            # The base model creates a private manager for compatibility, but no
-            # request is allowed through it: initial peripheral refreshes are
-            # suppressed until this shared transport is installed.
-            self._network = transport.network
+            # The compatibility base constructs a manager, but polymorphic
+            # _json_request suppresses all traffic until this point. Replace it
+            # with the one active-printer pool and release the unused manager.
+            legacy_network = getattr(self, "_network", None)
+            shared_network = transport.network
+            self._network = shared_network
+            if legacy_network is not None and legacy_network is not shared_network:
+                try:
+                    legacy_network.deleteLater()
+                except Exception:
+                    pass
             self._shared_transport_ready = True
         signal = getattr(client, "commandChanged", None)
         if signal is not None:
@@ -113,7 +120,12 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
 
     def _start_background_timers(self) -> None:
         self._core_timer.stop()
-        for timer in (self._aux_timer, self._power_timer, self._system_timer, self._discovery_timer):
+        for timer in (
+            self._aux_timer,
+            self._power_timer,
+            self._system_timer,
+            self._discovery_timer,
+        ):
             if not timer.isActive():
                 timer.start()
 
@@ -157,10 +169,18 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
             configured = int(self._follower.current_printer_config().poll_interval_ms)
         except Exception:
             pass
-        self._aux_timer.setInterval(policy.interval_ms(RequestCategory.AUXILIARY, configured, state))
-        self._power_timer.setInterval(policy.interval_ms(RequestCategory.POWER, configured, state))
-        self._system_timer.setInterval(policy.interval_ms(RequestCategory.SYSTEM, configured, state))
-        self._discovery_timer.setInterval(policy.interval_ms(RequestCategory.DISCOVERY, configured, state))
+        self._aux_timer.setInterval(
+            policy.interval_ms(RequestCategory.AUXILIARY, configured, state)
+        )
+        self._power_timer.setInterval(
+            policy.interval_ms(RequestCategory.POWER, configured, state)
+        )
+        self._system_timer.setInterval(
+            policy.interval_ms(RequestCategory.SYSTEM, configured, state)
+        )
+        self._discovery_timer.setInterval(
+            policy.interval_ms(RequestCategory.DISCOVERY, configured, state)
+        )
 
     def _send_print_action(self, label: str, path: str) -> None:
         expected = self._PRINT_COMMAND_STATES.get(str(label))

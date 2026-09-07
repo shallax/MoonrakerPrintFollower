@@ -40,20 +40,20 @@ class PreviewFollowEngineMixin:
             try:
                 raw_remote_layer = int(remote_layer)
                 if (
-                    self._remote_index_filename == filename
-                    and raw_remote_layer in self._remote_current_layer_map
+                    self._gcode_index_service.filename == filename
+                    and raw_remote_layer in self._gcode_index_service.current_layer_map
                 ):
-                    target_layer = self._remote_current_layer_map[raw_remote_layer]
+                    target_layer = self._gcode_index_service.current_layer_map[raw_remote_layer]
                     source = "Moonraker current_layer (G-code mapped)"
                 else:
                     target_layer = raw_remote_layer
-                    if self._pref_bool(self.PREF_ONE_BASED):
+                    if self.current_printer_config().moonraker_layer_is_one_based:
                         target_layer -= 1
                     source = "Moonraker current_layer"
             except (TypeError, ValueError):
                 target_layer = None
 
-        if target_layer is None and self._pref_bool(self.PREF_Z_FALLBACK) and view is not None:
+        if target_layer is None and self.current_printer_config().z_fallback and view is not None:
             target_layer = self._layer_from_z(view, gcode_move)
             if target_layer is not None:
                 source = "Z-height fallback"
@@ -113,7 +113,7 @@ class PreviewFollowEngineMixin:
             self._eta_anchor_print_duration = None
             self._eta_current_print_duration = None
             self._selected_layer_eta_text = ""
-            if self._scheduled_pause_layers:
+            if self._pause_schedule_service.layers:
                 self._clear_scheduled_pauses(abort_request=True)
             self._hide_toolhead_indicator()
             label = state or "unknown"
@@ -142,7 +142,7 @@ class PreviewFollowEngineMixin:
                 except Exception:
                     pass
 
-        if self._following_paused:
+        if self._preview_follower_service.following_paused:
             self._toolhead_path_valid = False
             self._hide_toolhead_indicator()
             self._update_selected_layer_eta(view)
@@ -158,7 +158,7 @@ class PreviewFollowEngineMixin:
             )
             return
 
-        if self._pref_bool(self.PREF_PATH_FOLLOW) and filename:
+        if self.current_printer_config().path_follow and filename:
             if self._cura_has_toolpath() and not self._slicing_in_progress:
                 self._ensure_remote_gcode_index(filename)
             else:
@@ -251,7 +251,7 @@ class PreviewFollowEngineMixin:
                     view, target_layer, minimum_layer
                 )
 
-            if self._pref_bool(self.PREF_PATH_FOLLOW) and decision.follow_path:
+            if self.current_printer_config().path_follow and decision.follow_path:
                 path_detail = self._apply_path_progress(
                     view,
                     remote_target_layer,
@@ -285,7 +285,7 @@ class PreviewFollowEngineMixin:
         )
 
     def _maybe_switch_to_preview(self) -> None:
-        if self._preview_switched_for_job or not self._pref_bool(self.PREF_AUTO_PREVIEW):
+        if self._preview_switched_for_job or not self.current_printer_config().auto_preview:
             return
         try:
             self._controller.setActiveStage("PreviewStage")

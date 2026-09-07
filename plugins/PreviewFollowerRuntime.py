@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from UM.Logger import Logger
 from .FollowController import FollowMode
-from .NativeNozzleFallback import keep_native_nozzle_visible
+from .NativeNozzleLifecycle import keep_native_nozzle_visible
 
 
 class PreviewFollowerRuntimeMixin:
@@ -26,7 +26,7 @@ class PreviewFollowerRuntimeMixin:
         if (
             not config.show_toolhead_indicator
             or not config.enabled
-            or self._following_paused
+            or self._preview_follower_service.following_paused
             or self._last_remote_state not in self.ACTIVE_STATES
             or not self._toolhead_path_valid
             or not config.path_follow
@@ -41,7 +41,7 @@ class PreviewFollowerRuntimeMixin:
             return
         try:
             if not keep_native_nozzle_visible(view):
-                Logger.log("d", "Moonraker Print Follower could not enable Cura's native nozzle fallback")
+                Logger.log("d", "Moonraker Print Follower could not enable Cura's native nozzle lifecycle")
         except Exception as error:
             Logger.log("w", "Moonraker Print Follower could not update printhead indicator: %s", error)
 
@@ -54,7 +54,7 @@ class PreviewFollowerRuntimeMixin:
         self._update_selected_layer_eta()
 
     def _update_manual_view_watch_mode(self) -> None:
-        should_run = self._pref_bool(self.PREF_ENABLED) and self._valid_configured_url()
+        should_run = self.current_printer_config().enabled and self._valid_configured_url()
         if should_run:
             self._manual_view_watch_timer.start()
         else:

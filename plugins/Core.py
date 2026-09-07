@@ -75,6 +75,44 @@ class OperationContext:
         if message is not None:
             self.message = message
 
+    def begin_force_load(self) -> None:
+        self.reset(OperationPhase.RESOLVING)
+        self.force_load = True
+
+    def set_force_load_filename(self, filename: str) -> None:
+        self.filename = str(filename)
+        self.force_load = True
+
+    def cancel_force_load(self) -> None:
+        self.force_load = False
+        if self.phase != OperationPhase.CURA_LOADING:
+            self.filename = None
+
+    def begin_cura_load(
+        self,
+        *,
+        filename: str,
+        job_key: Optional[Tuple[str, int, int]],
+        local_path: str,
+        started_at: float,
+    ) -> None:
+        self.phase = OperationPhase.CURA_LOADING
+        self.filename = str(filename)
+        self.job_key = job_key
+        self.local_path = str(local_path)
+        self.started_at = float(started_at)
+
+    def finish_cura_load(self, phase: OperationPhase = OperationPhase.READY) -> None:
+        self.phase = phase
+        self.force_load = False
+        self.local_path = None
+        self.started_at = None
+        self.job_key = None
+
+    @property
+    def is_force_load(self) -> bool:
+        return bool(self.force_load)
+
     @property
     def is_busy(self) -> bool:
         return self.phase in {

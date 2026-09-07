@@ -24,7 +24,7 @@ class GCodeIndexRuntimeMixin:
     """
 
     def _ensure_remote_layer_hydrated(self, layer: int) -> None:
-        index = self._remote_index_data
+        index = self._gcode_index_service.data
         if index is None or not getattr(index, "compact", False):
             return
         try:
@@ -38,18 +38,18 @@ class GCodeIndexRuntimeMixin:
         if not self._gcode_index_service.begin_hydration(layer):
             return
 
-        path = self._cached_gcode_path
+        path = self._remote_file_service.cached_path
         if not (
             path
-            and self._cached_gcode_filename == self._last_remote_filename
-            and self._cached_gcode_job_key == self._remote_job_key
+            and self._remote_file_service.cached_filename == self._last_remote_filename
+            and self._remote_file_service.cached_job_key == self._remote_job_service.key
             and os.path.isfile(path)
         ):
             self._gcode_index_service.finish_hydration(layer)
             return
 
-        generation = self._remote_index_generation
-        job_key = self._remote_job_key
+        generation = self._gcode_index_service.generation
+        job_key = self._remote_job_service.key
 
         def worker() -> None:
             ok = False
@@ -64,7 +64,7 @@ class GCodeIndexRuntimeMixin:
                 )
             if not self._destroyed:
                 self._remoteLayerHydrated.emit(
-                    generation, layer, ok and job_key == self._remote_job_key
+                    generation, layer, ok and job_key == self._remote_job_service.key
                 )
 
         thread = threading.Thread(
@@ -80,21 +80,21 @@ class GCodeIndexRuntimeMixin:
         self, generation: int, layer: int, ok: bool
     ) -> None:
         self._gcode_index_service.finish_hydration(layer)
-        if generation != self._remote_index_generation or not ok:
+        if generation != self._gcode_index_service.generation or not ok:
             return
-        index = self._remote_index_data
+        index = self._gcode_index_service.data
         if index is None or layer not in getattr(index, "hydrated_layers", set()):
             return
-        self._remote_motion_offsets = list(index.motion_offsets)
-        self._persist_index_async(self._remote_file_identity, index)
-        if self._pref_bool(self.PREF_ENABLED) and not self._following_paused:
+        self._gcode_index_service.update_motion_offsets(index)
+        self._persist_index_async(self._remote_file_service.identity, index)
+        if self.current_printer_config().enabled and not self._preview_follower_service.following_paused:
             self._client.force_refresh()
 
     def _cancel_remote_index_build(
         self, wait: bool = False, timeout: float = 1.0
     ) -> None:
         """Cancel the active index generation without blocking normal Cura UI work."""
-        thread = self._remote_index_thread
+        thread = self._gcode_index_service.thread
         self._gcode_index_service.invalidate_build()
         if (
             wait
@@ -110,11 +110,11 @@ class GCodeIndexRuntimeMixin:
                     timeout,
                 )
         if thread is not None and not thread.is_alive():
-            self._remote_index_thread = None
+            self._gcode_index_service.clear_finished_thread(thread)
         if self._operation.phase == OperationPhase.INDEXING:
             next_phase = (
                 OperationPhase.READY
-                if self._remote_index_data is not None
+                if self._gcode_index_service.data is not None
                 else OperationPhase.IDLE
             )
             self._set_operation_phase(next_phase)
@@ -151,53 +151,53 @@ class GCodeIndexRuntimeMixin:
         thread.start()
 
     def _try_load_persistent_index(self, filename: str) -> bool:
-        if not filename or self._remote_file_identity is None:
+        if not filename or self._remote_file_service.identity is None:
             return False
-        if self._metadata_job_key != self._remote_job_key:
+        if self._remote_file_service.metadata_job_key != self._remote_job_service.key:
             return False
-        if not self._remote_file_identity.uuid and self._remote_file_identity.modified <= 0:
+        if not self._remote_file_service.identity.uuid and self._remote_file_service.identity.modified <= 0:
             return False
-        if not self._remote_file_identity.matches_job(
-            filename, self._remote_job_key[1] if self._remote_job_key else 0
+        if not self._remote_file_service.identity.matches_job(
+            filename, self._remote_job_service.key[1] if self._remote_job_service.key else 0
         ):
             return False
         if (
-            self._remote_index_filename == filename
-            and self._remote_index_job_key == self._remote_job_key
-            and self._remote_index_data is not None
+            self._gcode_index_service.filename == filename
+            and self._gcode_index_service.job_key == self._remote_job_service.key
+            and self._gcode_index_service.data is not None
         ):
             return True
-        index = self._persistent_index_cache.load(self._remote_file_identity)
+        index = self._persistent_index_cache.load(self._remote_file_service.identity)
         if index is None:
             return False
         return self._install_remote_index(
-            filename, index, self._remote_job_key, source="restored cached"
+            filename, index, self._remote_job_service.key, source="restored cached"
         )
 
     def _ensure_remote_gcode_cached(self, filename: str) -> None:
         if not filename:
             return
         if (
-            self._cached_gcode_filename == filename
-            and self._cached_gcode_path
-            and self._cached_gcode_job_key == self._remote_job_key
-            and os.path.isfile(self._cached_gcode_path)
+            self._remote_file_service.cached_filename == filename
+            and self._remote_file_service.cached_path
+            and self._remote_file_service.cached_job_key == self._remote_job_service.key
+            and os.path.isfile(self._remote_file_service.cached_path)
         ):
             return
         if self._file_reply is not None and self._file_reply.isRunning():
             if (
                 self._file_reply_filename == filename
-                and self._file_reply_job_key == self._remote_job_key
+                and self._file_reply_job_key == self._remote_job_service.key
             ):
                 return
             self._abort_file_reply()
         self._begin_gcode_download(filename)
 
     def _ensure_remote_gcode_index(self, filename: str) -> None:
-        if not filename or self._cura_load_in_progress or self._slicing_in_progress:
+        if not filename or self._operation.is_cura_loading or self._slicing_in_progress:
             return
         if (
-            self._metadata_job_key != self._remote_job_key
+            self._remote_file_service.metadata_job_key != self._remote_job_service.key
             and self._metadata_reply is not None
             and self._metadata_reply.isRunning()
             and self._metadata_filename == filename
@@ -205,37 +205,37 @@ class GCodeIndexRuntimeMixin:
             return
 
         if self._try_load_persistent_index(filename):
-            if self._remote_index_data is not None and getattr(
-                self._remote_index_data, "compact", False
+            if self._gcode_index_service.data is not None and getattr(
+                self._gcode_index_service.data, "compact", False
             ):
                 self._ensure_remote_gcode_cached(filename)
             return
         if (
-            self._remote_index_filename == filename
-            and self._remote_index_job_key == self._remote_job_key
+            self._gcode_index_service.filename == filename
+            and self._gcode_index_service.job_key == self._remote_job_service.key
         ):
             return
         if (
-            self._remote_index_build_filename == filename
-            and self._remote_index_build_job_key == self._remote_job_key
+            self._gcode_index_service.build_filename == filename
+            and self._gcode_index_service.build_job_key == self._remote_job_service.key
         ):
             return
 
         if (
-            self._cached_gcode_filename == filename
-            and self._cached_gcode_path
-            and self._cached_gcode_job_key == self._remote_job_key
-            and os.path.isfile(self._cached_gcode_path)
+            self._remote_file_service.cached_filename == filename
+            and self._remote_file_service.cached_path
+            and self._remote_file_service.cached_job_key == self._remote_job_service.key
+            and os.path.isfile(self._remote_file_service.cached_path)
         ):
             self._start_remote_gcode_index_build_from_file(
-                filename, self._cached_gcode_path
+                filename, self._remote_file_service.cached_path
             )
             return
 
         if self._file_reply is not None and self._file_reply.isRunning():
             if (
                 self._file_reply_filename == filename
-                and self._file_reply_job_key == self._remote_job_key
+                and self._file_reply_job_key == self._remote_job_service.key
             ):
                 return
             self._abort_file_reply()
@@ -246,24 +246,24 @@ class GCodeIndexRuntimeMixin:
     ) -> None:
         if not filename or not path or not os.path.isfile(path):
             return
-        job_key = self._remote_job_key
+        job_key = self._remote_job_service.key
         if (
-            self._remote_index_filename == filename
-            and self._remote_index_job_key == job_key
+            self._gcode_index_service.filename == filename
+            and self._gcode_index_service.job_key == job_key
         ):
             return
         if (
-            self._remote_index_build_filename == filename
-            and self._remote_index_build_job_key == job_key
+            self._gcode_index_service.build_filename == filename
+            and self._gcode_index_service.build_job_key == job_key
         ):
             return
         if self._try_load_persistent_index(filename):
             return
 
-        active_thread = self._remote_index_thread
+        active_thread = self._gcode_index_service.thread
         if active_thread is not None and active_thread.is_alive():
             self._cancel_remote_index_build(wait=True, timeout=0.5)
-            active_thread = self._remote_index_thread
+            active_thread = self._gcode_index_service.thread
             if active_thread is not None and active_thread.is_alive():
                 self._queue_lifecycle_callback(
                     lambda f=filename, p=path: self._start_remote_gcode_index_build_from_file(
@@ -273,13 +273,13 @@ class GCodeIndexRuntimeMixin:
                 )
                 return
 
-        lifecycle_generation = self._lifecycle_generation
+        lifecycle_generation = self._cura_lifecycle_bridge.generation
         job_serial = job_key[2] if job_key is not None else 0
         cancel_event = threading.Event()
 
         # The worker closes over generation after begin_build has established
         # this build as the service's active generation.
-        generation_holder = {"value": self._remote_index_generation}
+        generation_holder = {"value": self._gcode_index_service.generation}
 
         def worker() -> None:
             try:
@@ -321,25 +321,25 @@ class GCodeIndexRuntimeMixin:
         lifecycle_generation: int,
         job_serial: int,
     ) -> None:
-        if generation != self._remote_index_generation:
+        if generation != self._gcode_index_service.generation:
             return
-        if lifecycle_generation != self._lifecycle_generation:
+        if lifecycle_generation != self._cura_lifecycle_bridge.generation:
             return
         if filename != self._last_remote_filename:
             return
-        if self._remote_job_key is not None and job_serial != self._remote_job_key[2]:
+        if self._remote_job_service.key is not None and job_serial != self._remote_job_service.key[2]:
             return
 
         self._gcode_index_service.finish_build()
         if isinstance(index, LayerMotionIndex) and self._install_remote_index(
-            filename, index, self._remote_job_key, source="built"
+            filename, index, self._remote_job_service.key, source="built"
         ):
-            if self._remote_file_identity is not None and (
-                self._remote_file_identity.uuid
-                or self._remote_file_identity.modified > 0
+            if self._remote_file_service.identity is not None and (
+                self._remote_file_service.identity.uuid
+                or self._remote_file_service.identity.modified > 0
             ):
-                self._persist_index_async(self._remote_file_identity, index)
-            if self._pref_bool(self.PREF_ENABLED) and not self._following_paused:
+                self._persist_index_async(self._remote_file_service.identity, index)
+            if self.current_printer_config().enabled and not self._preview_follower_service.following_paused:
                 self._queue_lifecycle_callback(lambda: self._poll(force=True))
         else:
             self._set_operation_phase(OperationPhase.READY, filename=filename)

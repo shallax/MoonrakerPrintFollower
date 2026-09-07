@@ -17,6 +17,8 @@ PREVIEW_QML = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
 EMPTY_PREVIEW_QML = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
 UPLOAD = (PLUGINS / "MoonrakerOutputDeviceLifecycle.py").read_text()
 UPLOAD_QML = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
+PREVIEW_ETA = (PLUGINS / "PreviewEta.py").read_text()
+PREVIEW_STATUS = (PLUGINS / "PreviewStatus.py").read_text()
 
 from PrinterConfig import PrinterConfig, PrinterConfigStore
 
@@ -105,13 +107,12 @@ class V3FollowupRegressionTests(unittest.TestCase):
         self.assertNotIn("self._metadata_estimated_time * (1.0 - progress)", MONITOR_MODEL)
 
     def test_preview_layer_scrub_shows_duration_and_local_clock_eta(self):
-        follower = (PLUGINS / "MoonrakerPrintFollower.py").read_text()
         index = (PLUGINS / "GCodeIndex.py").read_text()
         self.assertIn("layer_elapsed_times", index)
-        self.assertIn("_update_selected_layer_eta", follower)
-        self.assertIn("datetime.now().astimezone()", follower)
-        self.assertIn("Selected layer", follower)
-        self.assertIn('controls.setProperty("selectedLayerEtaText"', follower)
+        self.assertIn("_update_selected_layer_eta", PREVIEW_ETA)
+        self.assertIn("datetime.now().astimezone()", PREVIEW_ETA)
+        self.assertIn("Selected layer", PREVIEW_ETA)
+        self.assertIn('controls.setProperty("selectedLayerEtaText"', PREVIEW_STATUS)
 
     def test_mcu_stats_are_exposed_individually(self):
         for token in (

@@ -19,13 +19,13 @@ class PreviewStatusMixin:
         if phase == OperationPhase.ERROR:
             return "Error"
         state = self._follow_controller.state
-        if state == FollowState.USER_OVERRIDE or self._following_paused:
+        if state == FollowState.USER_OVERRIDE or self._preview_follower_service.following_paused:
             return "Paused"
         if state == FollowState.CURA_SUSPENDED:
             return "Cura busy"
         if state == FollowState.CONNECTING:
             return "Connecting…"
-        if state == FollowState.DISCONNECTED and self._pref_bool(self.PREF_ENABLED):
+        if state == FollowState.DISCONNECTED and self.current_printer_config().enabled:
             return "Disconnected"
         if state == FollowState.ERROR:
             return "Connection error"
@@ -33,7 +33,7 @@ class PreviewStatusMixin:
             return "Printer paused"
         if has_toolpath is None:
             has_toolpath = self._cura_has_toolpath()
-        if has_toolpath and self._pref_bool(self.PREF_ENABLED) and self._last_remote_state in self.ACTIVE_STATES:
+        if has_toolpath and self.current_printer_config().enabled and self._last_remote_state in self.ACTIVE_STATES:
             return "Following"
         if self._last_remote_state in self.ACTIVE_STATES:
             return "Print active"
@@ -67,8 +67,8 @@ class PreviewStatusMixin:
             if controls is None:
                 continue
             try:
-                controls.setProperty("followingPaused", self._following_paused)
-                controls.setProperty("followingEnabled", self._pref_bool(self.PREF_ENABLED))
+                controls.setProperty("followingPaused", self._preview_follower_service.following_paused)
+                controls.setProperty("followingEnabled", self.current_printer_config().enabled)
                 controls.setProperty("configuredForFollowing", configured)
                 controls.setProperty("activePrinterName", active_printer_name)
                 controls.setProperty("hasToolpath", has_toolpath)
@@ -86,7 +86,7 @@ class PreviewStatusMixin:
                 pass
 
     def _pause_at_layer_preview_state(self) -> Dict[str, Any]:
-        active = bool(self._last_remote_state in self.ACTIVE_STATES and self._remote_job_key is not None)
+        active = bool(self._last_remote_state in self.ACTIVE_STATES and self._remote_job_service.key is not None)
         candidate = 0
         selected_layer: Optional[int] = None
         max_layer: Optional[int] = None
@@ -103,7 +103,7 @@ class PreviewStatusMixin:
             except Exception:
                 max_layer = None
         current = self._last_observed_remote_layer
-        scheduled = bool(selected_layer is not None and selected_layer in self._scheduled_pause_layers)
+        scheduled = bool(selected_layer is not None and selected_layer in self._pause_schedule_service.layers)
         is_final_layer = bool(selected_layer is not None and max_layer is not None and selected_layer >= max_layer)
         can_toggle = bool(active and selected_layer is not None and current is not None and selected_layer >= current and not is_final_layer)
         unavailable = ""
@@ -117,7 +117,7 @@ class PreviewStatusMixin:
             else:
                 unavailable = "Select a future layer"
         items = []
-        for layer in sorted(self._scheduled_pause_layers):
+        for layer in sorted(self._pause_schedule_service.layers):
             remaining = self._estimate_layer_boundary_remaining(layer, end_of_layer=True)
             eta = f"in {self._format_preview_duration(remaining)}" if remaining is not None else "ETA unavailable"
             items.append({"layer": layer + 1, "eta": eta})
