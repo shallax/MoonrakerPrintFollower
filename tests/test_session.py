@@ -128,6 +128,38 @@ class SessionStateTests(unittest.TestCase):
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes[0].outcome, "timed_out")
 
+    def test_published_snapshot_is_detached_from_session_internals(self):
+        session = MoonrakerSessionState()
+        session.merge_status({
+            "print_stats": {"state": "printing", "info": {"current_layer": 3}},
+            "gcode_move": {"gcode_position": [0, 0, 0.4, 10]},
+        }, now=1)
+
+        published = session.snapshot.copy_status()
+        published["print_stats"]["info"]["current_layer"] = 999
+        published["gcode_move"]["gcode_position"][2] = 50.0
+        published["print_stats"]["state"] = "paused"
+
+        internal = session.snapshot.status
+        self.assertEqual(internal["print_stats"]["state"], "printing")
+        self.assertEqual(internal["print_stats"]["info"]["current_layer"], 3)
+        self.assertEqual(internal["gcode_move"]["gcode_position"], [0, 0, 0.4, 10])
+
+    def test_merge_stores_defensive_copies_of_patch_values(self):
+        session = MoonrakerSessionState()
+        patch = {
+            "print_stats": {"info": {"current_layer": 1}},
+            "gcode_move": {"gcode_position": [1, 2, 3, 4]},
+        }
+        session.merge_status(patch, now=1)
+
+        patch["print_stats"]["info"]["current_layer"] = 42
+        patch["gcode_move"]["gcode_position"][0] = 99
+
+        internal = session.snapshot.status
+        self.assertEqual(internal["print_stats"]["info"]["current_layer"], 1)
+        self.assertEqual(internal["gcode_move"]["gcode_position"], [1, 2, 3, 4])
+
     def test_long_print_simulation_keeps_one_monotonic_shared_snapshot(self):
         statuses = [
             {

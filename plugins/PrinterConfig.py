@@ -5,6 +5,19 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 
+def normalise_url(value: Any) -> str:
+    """Canonical Moonraker base URL: scheme required, no trailing slash."""
+    text = str(value or "").strip()
+    if not text:
+        return "http://"
+    if not text.lower().startswith(("http://", "https://")):
+        text = f"http://{text}"
+    # rstrip("/") would eat the scheme's own "//"; only strip path separators.
+    while text.endswith("/") and not text.endswith("://"):
+        text = text[:-1]
+    return text
+
+
 @dataclass
 class PrinterConfig:
     # Live Preview follower settings.
@@ -71,8 +84,10 @@ class PrinterConfig:
             rotation = defaults.camera_rotation
         data["camera_rotation"] = rotation if rotation in {0, 90, 180, 270} else 0
 
+        data["url"] = normalise_url(data.get("url"))
+
         for key in (
-            "url", "api_key", "follow_mode", "frontend_url", "output_format",
+            "api_key", "follow_mode", "frontend_url", "output_format",
             "upload_path", "power_devices", "filename_translate_input",
             "filename_translate_output", "filename_translate_remove", "camera_url", "camera_selected",
         ):
@@ -242,7 +257,8 @@ class PrinterConfigStore:
             current = PrinterConfig.from_dict(data.get(key))
             merged = asdict(current)
 
-            legacy_url = str(legacy.get("url") or "").strip().rstrip("/")
+            legacy_raw = str(legacy.get("url") or "").strip()
+            legacy_url = normalise_url(legacy_raw) if legacy_raw else ""
             if legacy_url and current.url.strip() in ("", "http://", "https://"):
                 merged["url"] = legacy_url
             legacy_api_key = str(legacy.get("api_key") or "").strip()

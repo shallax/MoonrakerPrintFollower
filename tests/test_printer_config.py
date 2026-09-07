@@ -2,7 +2,7 @@ import json
 import pathlib
 import unittest
 
-from plugins.PrinterConfig import PrinterConfig, PrinterConfigStore
+from plugins.PrinterConfig import PrinterConfig, PrinterConfigStore, normalise_url
 
 PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
 
@@ -231,6 +231,18 @@ class PrinterConfigTests(unittest.TestCase):
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
         self.assertIn('UM.TabRowButton { text: "Upload" }', config)
         self.assertIn('text: "Upload format"', config)
+
+    def test_normalise_url_is_the_single_url_rule(self):
+        self.assertEqual(normalise_url(""), "http://")
+        self.assertEqual(normalise_url(None), "http://")
+        self.assertEqual(normalise_url(" 192.168.1.5 "), "http://192.168.1.5")
+        self.assertEqual(normalise_url("https://printer/"), "https://printer")
+        self.assertEqual(normalise_url("HTTP://Printer:7125//"), "HTTP://Printer:7125")
+
+    def test_from_dict_normalises_url(self):
+        self.assertEqual(PrinterConfig.from_dict({"url": "printer.lan"}).url, "http://printer.lan")
+        self.assertEqual(PrinterConfig.from_dict({"url": "https://printer.lan/"}).url, "https://printer.lan")
+        self.assertEqual(PrinterConfig.from_dict({}).url, "http://")
 
 
 if __name__ == "__main__":

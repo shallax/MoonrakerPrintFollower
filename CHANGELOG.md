@@ -14,6 +14,10 @@ Version 3.2.0 closes the remaining 3.1.0 architecture gaps and codifies how the 
 - Removes the unused `MoonrakerSessionState.rebind()` path; rebinding goes through the production `configure()`/`reset()` flow only.
 - Extends the import/ownership contract tests to every domain module, including the new formatting module.
 - Version metadata test now checks `package.json` and `plugin.json` stay in sync; the release workflow still validates both against the git tag.
+- Publishes fully detached status snapshots from the session boundary; consumers can no longer mutate session internals through nested values.
+- Separates metadata completeness from download identity: a failed metadata request installs a fallback identity so downloads proceed, then retries with backoff instead of permanently degrading the run.
+- Moves Preview view reads/writes into typed `CuraAdapter` accessors; `PreviewFollower` no longer calls view methods by name.
+- Consolidates URL normalisation into one `PrinterConfig.normalise_url` rule used by configuration parsing, migration and the Machine Action.
 
 ## 3.1.0
 

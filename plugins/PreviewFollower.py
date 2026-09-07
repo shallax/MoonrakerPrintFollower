@@ -5,7 +5,16 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Optional
 
-from .CuraAdapter import apply_preview_decision
+from .CuraAdapter import (
+    apply_preview_decision,
+    preview_current_layer,
+    preview_current_path,
+    preview_max_paths,
+    preview_minimum_layer,
+    preview_minimum_path,
+    set_preview_minimum_path,
+    set_preview_path,
+)
 from .FollowController import decide_layers
 from .MoonrakerProtocol import live_position_in_gcode_space
 
@@ -103,29 +112,24 @@ class PreviewFollower:
         self._state = replace(self._state, attached=bool(attached), nozzle_valid=False, eta_text="")
         self.remember()
 
-    @staticmethod
-    def _get(view, method, cast=int):
-        try: return cast(getattr(view, method)())
-        except Exception: return None
-
     def remember(self):
         view = self._cura.view
         self._state = replace(self._state,
-            expected_layer=self._get(view, "getCurrentLayer"),
-            expected_minimum=self._get(view, "getMinimumLayer"),
-            expected_path=self._get(view, "getCurrentPath", float),
-            expected_minimum_path=self._get(view, "getMinimumPath"))
+            expected_layer=preview_current_layer(view),
+            expected_minimum=preview_minimum_layer(view),
+            expected_path=preview_current_path(view),
+            expected_minimum_path=preview_minimum_path(view))
 
     def detect_override(self):
         state, view = self._state, self._cura.view
         if not state.attached or state.expected_layer is None or self._cura.suspended or view is None:
             return None
-        current = self._get(view, "getCurrentLayer")
+        current = preview_current_layer(view)
         if current is None: return None
         kind = preview_override_kind(expected_layer=state.expected_layer, current_layer=current,
-            expected_minimum_layer=state.expected_minimum, current_minimum_layer=self._get(view, "getMinimumLayer"),
-            expected_path=state.expected_path, current_path=self._get(view, "getCurrentPath", float),
-            expected_minimum_path=state.expected_minimum_path, current_minimum_path=self._get(view, "getMinimumPath"))
+            expected_minimum_layer=state.expected_minimum, current_minimum_layer=preview_minimum_layer(view),
+            expected_path=state.expected_path, current_path=preview_current_path(view),
+            expected_minimum_path=state.expected_minimum_path, current_minimum_path=preview_minimum_path(view))
         if kind:
             self.attach(False)
         return kind
@@ -166,8 +170,8 @@ class PreviewFollower:
             if self._cura.switch_to_preview(): self._state = replace(self._state, switched=True)
         hydration = ()
         with self._cura.writing_preview():
-            if (self._get(view, "getCurrentLayer") != decision.current_layer
-                    or self._get(view, "getMinimumLayer") != decision.minimum_layer):
+            if (preview_current_layer(view) != decision.current_layer
+                    or preview_minimum_layer(view) != decision.minimum_layer):
                 apply_preview_decision(view, decision.current_layer, decision.minimum_layer)
             if config.path_follow and decision.follow_path:
                 detail, hydration = self._follow_path(view, min(layer, maximum), status, index)
@@ -185,27 +189,29 @@ class PreviewFollower:
             state = replace(state, path_layer=layer, path_fraction=None)
             self._state = state
         if index is None or layer >= len(index.ranges):
-            view.setPath(0.0)
+            set_preview_path(view, 0.0)
             return "Waiting for index", ()
         if not index.hydrated(layer):
             self._state = replace(state, path_fraction=0.0)
-            view.setPath(0.0)
+            set_preview_path(view, 0.0)
             return "Hydrating layer", (layer,)
         try:
             position = int((status.get("virtual_sdcard") or {}).get("file_position"))
-            maximum = int(view.getMaxPaths())
         except (TypeError, ValueError, AttributeError):
+            return "Waiting for file position", ()
+        maximum = preview_max_paths(view)
+        if maximum is None:
             return "Waiting for file position", ()
         if maximum <= 0: return "Layer has no paths", ()
         live = live_position_in_gcode_space(status.get("motion_report") or {}, status.get("gcode_move") or {})
         fraction, method = index.fraction(layer, position, live, state.path_fraction)
         fraction = max(state.path_fraction or 0.0, max(0.0, min(1.0, fraction)))
         self._state = replace(state, path_fraction=fraction)
-        if hasattr(view, "setMinimumPath") and self._get(view, "getMinimumPath") != 0:
-            view.setMinimumPath(0)
+        if preview_minimum_path(view) != 0:
+            set_preview_minimum_path(view, 0)
         target = fraction * maximum
-        current = self._get(view, "getCurrentPath", float)
-        if current is None or abs(current - target) >= 0.5: view.setPath(target)
+        current = preview_current_path(view)
+        if current is None or abs(current - target) >= 0.5: set_preview_path(view, target)
         return f"path {round(target)}/{maximum} ({method})", (layer + 1,)
 
     @staticmethod

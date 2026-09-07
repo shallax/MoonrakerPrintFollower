@@ -1,7 +1,6 @@
 """Cross-domain orchestration with explicit dependencies; not a shared state bag."""
 from __future__ import annotations
 
-from copy import deepcopy
 from PyQt6.QtCore import QObject
 
 from .PreviewFormatting import (
@@ -58,7 +57,8 @@ class PrintCoordinator(QObject):
         if self._closed or not isinstance(status, dict): return
         self._processing = True
         try:
-            self._status = deepcopy(status)
+            # The session boundary already publishes a fully detached copy.
+            self._status = status
             stats = status.get("print_stats")
             sd = status.get("virtual_sdcard")
             stats, sd = stats if isinstance(stats, dict) else {}, sd if isinstance(sd, dict) else {}
@@ -97,7 +97,7 @@ class PrintCoordinator(QObject):
             except (TypeError, ValueError):
                 estimate = 0
             self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
-                estimate if estimate > 0 else None, self._files.identity is not None)
+                estimate if estimate > 0 else None, self._files.metadata_complete)
             self._cura.watch(config.enabled)
             if self._snapshot.active:
                 self._files.request_metadata()

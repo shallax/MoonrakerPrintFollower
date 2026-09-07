@@ -94,6 +94,10 @@ replacement/cancellation. Request IDs, categories, latency and errors are logged
 without credentials. Streaming downloads and multipart uploads use the same request
 builder/pool but own their replies directly.
 
+`SessionSnapshot` publishes fully detached status copies and stores defensive
+copies of merged patches, so no consumer can mutate session internals through a
+published snapshot.
+
 The Machine Action may create an isolated instance of the same transport for
 unsaved credentials; a probe must not reconfigure the live binding.
 
@@ -143,9 +147,11 @@ clears print-local state without automatically reattaching a manually detached v
 
 Manual Preview changes are detected against remembered plugin-written values.
 `CuraIntegration.writing_preview()` suppresses callbacks from plugin writes, while
-user writes detach the follower. Physical observation and scheduled PAUSE continue
-while Preview is detached. ETA uses slicer layer timing, speed, path progress and
-observed duration anchors—not G-code byte percentage as time.
+user writes detach the follower. Preview view reads and writes go through typed
+`CuraAdapter` accessors rather than stringly-named view methods. Physical
+observation and scheduled PAUSE continue while Preview is detached. ETA uses
+slicer layer timing, speed, path progress and observed duration anchors—not
+G-code byte percentage as time.
 
 ## 6. Remote files, leases and bounded indexing
 
@@ -153,6 +159,10 @@ observed duration anchors—not G-code byte percentage as time.
 restarts invalidate old metadata and downloads. A streamed download uses a bounded
 Qt read buffer, writes incrementally to a temporary file and verifies known file
 size before publication.
+
+Metadata completeness is separate from download identity: a failed metadata
+request installs a fallback identity so downloads proceed, then retries with
+backoff; only a successful response marks the run's metadata complete.
 
 A `FileLease` explicitly keeps that file alive for an index worker or Cura parse
 job. Rebinding retires old files; deletion waits for all leases to close. An unrelated
