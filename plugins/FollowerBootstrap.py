@@ -44,6 +44,7 @@ class FollowerBootstrapMixin:
         self._config_store = PrinterConfigStore(
             self._preferences, lambda: active_machine_identity(self._application)
         )
+        self._config_store.migrate_legacy_to_current_machine()
         self._active_machine_id, self._active_machine_name = self._config_store.identity()
         self._follow_controller = FollowController()
         self._follow_controller.set_enabled(self._config_store.get().enabled)
@@ -54,20 +55,11 @@ class FollowerBootstrapMixin:
         self._client.connectionChanged.connect(self._on_client_connection_changed)
         self._client.capabilitiesChanged.connect(self._on_client_capabilities_changed)
 
-        # Scheduled PAUSE state is owned by PauseScheduleService plus the
-        # request-generation fields in FollowerTransport.
-        self._last_observed_remote_layer: Optional[int] = None
-
         cache_dir = os.path.join(Resources.getCacheStoragePath(), self.PLUGIN_ID, "indexes")
         self._persistent_index_cache = PersistentIndexCache(cache_dir)
         self._cache_save_threads: set[threading.Thread] = set()
 
         self._last_status_text = "Not connected"
-        self._last_remote_filename: Optional[str] = None
-        self._last_remote_state: Optional[str] = None
-        self._last_extruder_position: Optional[float] = None
-        self._preview_switched_for_job = False
-        self._last_source: Optional[str] = None
         self._follow_controller.resume()
 
         # Detect direct user interaction with Cura's Preview layer/path controls.
@@ -82,17 +74,6 @@ class FollowerBootstrapMixin:
         self._preview_overlay = None
         self._action_panel_controls = None
         self._connected_simulation_view = None
-        self._toolhead_path_valid = False
-
-        # Within a running layer, displayed path progress is monotonic.
-        self._path_progress_layer: Optional[int] = None
-        self._path_progress_fraction: Optional[float] = None
-        self._last_resolved_remote_layer: Optional[int] = None
-        self._selected_layer_eta_text = ""
-        self._last_speed_factor = 1.0
-        self._eta_anchor_layer: Optional[int] = None
-        self._eta_anchor_print_duration: Optional[float] = None
-        self._eta_current_print_duration: Optional[float] = None
 
         self._scene = None
         self._scene_root = None

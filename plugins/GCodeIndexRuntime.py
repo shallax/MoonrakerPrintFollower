@@ -41,7 +41,7 @@ class GCodeIndexRuntimeMixin:
         path = self._remote_file_service.cached_path
         if not (
             path
-            and self._remote_file_service.cached_filename == self._last_remote_filename
+            and self._remote_file_service.cached_filename == self._remote_job_service.filename
             and self._remote_file_service.cached_job_key == self._remote_job_service.key
             and os.path.isfile(path)
         ):
@@ -323,7 +323,7 @@ class GCodeIndexRuntimeMixin:
             return
         if lifecycle_generation != self._cura_lifecycle_bridge.generation:
             return
-        if filename != self._last_remote_filename:
+        if filename != self._remote_job_service.filename:
             return
         if self._remote_job_service.key is not None and job_serial != self._remote_job_service.key[2]:
             return

@@ -45,6 +45,17 @@ class MoonrakerOutputDevice(_BaseMoonrakerOutputDevice):
         self._cancel_pending = False
         super().requestWrite(*args, **kwargs)
 
+    def deactivate(self) -> None:
+        """Cancel work owned by this Cura printer before it loses active ownership."""
+        had_started_write = bool(self._busy)
+        self._accept_pending = False
+        self._cancel_pending = False
+        self._folder_scan_queue = []
+        self._release_dialog()
+        self._cleanup()
+        if had_started_write:
+            self._emit_write_finished_once()
+
     # ------------------------------------------------------------------
     # Upload dialog lifetime and folder discovery
     # ------------------------------------------------------------------

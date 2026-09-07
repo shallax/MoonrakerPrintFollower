@@ -147,8 +147,6 @@ class FollowerTransportMixin:
             return
 
         self._update_remote_job_identity(print_stats, virtual_sdcard)
-        self._last_remote_filename = filename
-        self._last_remote_state = state
         try:
             reported_size = int(virtual_sdcard.get("file_size") or 0)
         except (TypeError, ValueError):
@@ -228,7 +226,7 @@ class FollowerTransportMixin:
             return
         try:
             identity = parse_file_identity(filename, payload or {}, fallback_size)
-            if self._last_remote_filename != filename:
+            if self._remote_job_service.filename != filename:
                 return
             if current_job is not None and not identity.matches_job(
                 current_job[0], current_job[1]

@@ -26,7 +26,7 @@ class CuraLifecycleRuntimeMixin:
 
     def _invalidate_lifecycle(self, reason: str, abort_network: bool = True) -> None:
         self._cura_lifecycle_bridge.invalidate(reason)
-        self._toolhead_path_valid = False
+        self._preview_follower_service.runtime.toolhead_path_valid = False
         self._hide_toolhead_indicator()
         self._clear_expected_preview_position()
         self._cancel_remote_index_build()

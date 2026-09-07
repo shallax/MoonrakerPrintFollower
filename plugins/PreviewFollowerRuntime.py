@@ -23,12 +23,13 @@ class PreviewFollowerRuntimeMixin:
     def _update_toolhead_indicator(self, view=None) -> None:
         """Keep Cura's native SimulationView nozzle visible while following."""
         config = self._config_store.get()
+        runtime = self._preview_follower_service.runtime
         if (
             not config.show_toolhead_indicator
             or not config.enabled
             or self._preview_follower_service.following_paused
-            or self._last_remote_state not in self.ACTIVE_STATES
-            or not self._toolhead_path_valid
+            or self._remote_job_service.printer_state not in self.ACTIVE_STATES
+            or not runtime.toolhead_path_valid
             or not config.path_follow
             or config.follow_mode != FollowMode.EXACT.value
             or self._slicing_in_progress

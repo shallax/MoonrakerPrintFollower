@@ -116,14 +116,10 @@ class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime):
         except (TypeError, ValueError):
             file_size = 0
 
-        transition = self._remote_job_service.observe(
-            print_stats,
-            virtual_sdcard,
-            previous_state=str(self._last_remote_state or ""),
-        )
+        transition = self._remote_job_service.observe(print_stats, virtual_sdcard)
         if transition.new_job:
             self._clear_remote_gcode_index()
-            self._last_observed_remote_layer = None
+            self._preview_follower_service.reset_print_state()
             self._clear_scheduled_pauses(abort_request=True)
             identity = self._remote_file_service.identity
             if (
@@ -165,13 +161,7 @@ class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime):
     def _clear_remote_gcode_index(self) -> None:
         self._cancel_remote_index_build()
         self._gcode_index_service.clear_hydrations()
-        self._path_progress_layer = None
-        self._path_progress_fraction = None
-        self._last_resolved_remote_layer = None
-        self._eta_anchor_layer = None
-        self._eta_anchor_print_duration = None
-        self._eta_current_print_duration = None
-        self._selected_layer_eta_text = ""
+        self._preview_follower_service.reset_tracking()
         self._gcode_index_service.clear_index()
         self._discard_cached_gcode()
         self._abort_file_reply()
@@ -185,7 +175,7 @@ class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime):
         source: str = "built",
     ) -> bool:
         current_job = self._remote_job_service.key
-        if not index or filename != self._last_remote_filename:
+        if not index or filename != self._remote_job_service.filename:
             return False
         if job_key is not None and current_job is not None and job_key != current_job:
             return False
@@ -229,7 +219,7 @@ class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime):
             return
 
         self._preview_follower_service.set_paused(True)
-        self._toolhead_path_valid = False
+        self._preview_follower_service.runtime.toolhead_path_valid = False
         self._hide_toolhead_indicator()
         self._follow_controller.pause_by_user(f"manual {override_kind} change")
         self._preview_follower_service.remember(view)
@@ -249,7 +239,7 @@ class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime):
 
     def _update_pause_poll_guard(self, current_layer: Optional[int] = None) -> None:
         if current_layer is None:
-            current_layer = self._last_observed_remote_layer
+            current_layer = self._preview_follower_service.runtime.observed_remote_layer
         active = False
         if current_layer is not None and self._remote_job_service.key is not None:
             active = self._pause_schedule_service.is_imminent(

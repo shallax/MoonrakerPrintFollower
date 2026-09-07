@@ -17,7 +17,7 @@ class PreviewExpectation:
 
 @dataclass
 class PreviewTrackingState:
-    """Transient live-follow state associated with the current print/Preview."""
+    """Path/ETA state that may be reset when the active G-code index changes."""
 
     path_layer: Optional[int] = None
     path_fraction: Optional[float] = None
@@ -29,19 +29,37 @@ class PreviewTrackingState:
     eta_current_print_duration: Optional[float] = None
 
 
+@dataclass
+class PreviewRuntimeState:
+    """Print-local Preview state that survives ordinary index invalidation."""
+
+    observed_remote_layer: Optional[int] = None
+    last_extruder_position: Optional[float] = None
+    preview_switched_for_job: bool = False
+    toolhead_path_valid: bool = False
+
+
 class PreviewFollowerService:
-    """Authoritative owner of Preview attachment, expected position and tracking state."""
+    """Authoritative owner of Preview attachment, expectations and live state."""
 
     def __init__(self) -> None:
         self.expected = PreviewExpectation()
         self.tracking = PreviewTrackingState()
+        self.runtime = PreviewRuntimeState()
         self.following_paused = False
 
     def clear(self) -> None:
         self.expected = PreviewExpectation()
 
     def reset_tracking(self) -> None:
+        """Reset index-derived path/ETA state without inventing a new print run."""
         self.tracking = PreviewTrackingState()
+        self.runtime.toolhead_path_valid = False
+
+    def reset_print_state(self) -> None:
+        """Reset all print-local Preview state for a new/inactive print binding."""
+        self.tracking = PreviewTrackingState()
+        self.runtime = PreviewRuntimeState()
 
     def set_paused(self, paused: bool) -> None:
         self.following_paused = bool(paused)
@@ -60,6 +78,11 @@ class PreviewFollowerService:
             fraction = max(float(current), fraction)
         self.tracking.path_fraction = fraction
         return fraction
+
+    def observe_remote_layer(self, layer: int) -> None:
+        layer = max(0, int(layer))
+        self.runtime.observed_remote_layer = layer
+        self.observe_eta_layer(layer)
 
     def observe_eta_layer(self, layer: int) -> None:
         layer = int(layer)

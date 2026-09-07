@@ -33,9 +33,10 @@ class PreviewStatusMixin:
             return "Printer paused"
         if has_toolpath is None:
             has_toolpath = self._cura_has_toolpath()
-        if has_toolpath and self.current_printer_config().enabled and self._last_remote_state in self.ACTIVE_STATES:
+        remote_state = self._remote_job_service.printer_state
+        if has_toolpath and self.current_printer_config().enabled and remote_state in self.ACTIVE_STATES:
             return "Following"
-        if self._last_remote_state in self.ACTIVE_STATES:
+        if remote_state in self.ACTIVE_STATES:
             return "Print active"
         if state == FollowState.IDLE:
             return "Connected"
@@ -63,6 +64,7 @@ class PreviewStatusMixin:
             self._active_machine_name = machine_name
         active_printer_name = self._active_machine_name or machine_name
         pause_state = self._pause_at_layer_preview_state()
+        tracking = self._preview_follower_service.tracking
         for controls in (self._preview_overlay, self._action_panel_controls):
             if controls is None:
                 continue
@@ -74,7 +76,7 @@ class PreviewStatusMixin:
                 controls.setProperty("hasToolpath", has_toolpath)
                 controls.setProperty("statusText", compact_status)
                 controls.setProperty("statusIconName", status_icon_name)
-                controls.setProperty("selectedLayerEtaText", self._selected_layer_eta_text)
+                controls.setProperty("selectedLayerEtaText", tracking.selected_layer_eta_text)
                 controls.setProperty("pauseAtLayerActive", pause_state["active"])
                 controls.setProperty("pauseAtLayerCandidate", pause_state["candidate"])
                 controls.setProperty("pauseAtLayerCanToggle", pause_state["canToggle"])
@@ -86,7 +88,10 @@ class PreviewStatusMixin:
                 pass
 
     def _pause_at_layer_preview_state(self) -> Dict[str, Any]:
-        active = bool(self._last_remote_state in self.ACTIVE_STATES and self._remote_job_service.key is not None)
+        active = bool(
+            self._remote_job_service.printer_state in self.ACTIVE_STATES
+            and self._remote_job_service.key is not None
+        )
         candidate = 0
         selected_layer: Optional[int] = None
         max_layer: Optional[int] = None
@@ -102,7 +107,7 @@ class PreviewStatusMixin:
                     max_layer = max(0, int(view.getMaxLayers()))
             except Exception:
                 max_layer = None
-        current = self._last_observed_remote_layer
+        current = self._preview_follower_service.runtime.observed_remote_layer
         scheduled = bool(selected_layer is not None and selected_layer in self._pause_schedule_service.layers)
         is_final_layer = bool(selected_layer is not None and max_layer is not None and selected_layer >= max_layer)
         can_toggle = bool(active and selected_layer is not None and current is not None and selected_layer >= current and not is_final_layer)

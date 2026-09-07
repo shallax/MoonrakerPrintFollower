@@ -156,17 +156,14 @@ class V31ArchitectureTests(unittest.TestCase):
         first = jobs.observe(
             {"state": "printing", "filename": "part.gcode", "print_duration": 120},
             {"file_size": 1000, "file_position": 600},
-            previous_state="standby",
         )
         second = jobs.observe(
             {"state": "printing", "filename": "part.gcode", "print_duration": 180},
             {"file_size": 1000, "file_position": 800},
-            previous_state="printing",
         )
         restarted = jobs.observe(
             {"state": "printing", "filename": "part.gcode", "print_duration": 3},
             {"file_size": 1000, "file_position": 20},
-            previous_state="printing",
         )
         self.assertTrue(first.new_job)
         self.assertFalse(second.new_job)

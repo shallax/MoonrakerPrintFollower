@@ -22,9 +22,10 @@ class PreviewEtaMixin:
         index = self._gcode_index_service.data
         times = list(getattr(index, "layer_elapsed_times", []) or []) if index is not None else []
         tracking = self._preview_follower_service.tracking
+        runtime = self._preview_follower_service.runtime
         current_layer = (
-            self._last_observed_remote_layer
-            if self._last_observed_remote_layer is not None
+            runtime.observed_remote_layer
+            if runtime.observed_remote_layer is not None
             else tracking.resolved_remote_layer
         )
         if current_layer is None or not times:
@@ -95,12 +96,13 @@ class PreviewEtaMixin:
     def _update_selected_layer_eta(self, view=None) -> None:
         text = ""
         tracking = self._preview_follower_service.tracking
-        if self._last_remote_state in self.ACTIVE_STATES:
+        runtime = self._preview_follower_service.runtime
+        if self._remote_job_service.printer_state in self.ACTIVE_STATES:
             if view is None:
                 view = self._simulation_view()
             current_layer = (
-                self._last_observed_remote_layer
-                if self._last_observed_remote_layer is not None
+                runtime.observed_remote_layer
+                if runtime.observed_remote_layer is not None
                 else tracking.resolved_remote_layer
             )
             if view is not None and current_layer is not None:

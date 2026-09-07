@@ -44,7 +44,7 @@ class CuraFileLifecycleMixin:
         self._operation.finish_cura_load()
         self._follow_controller.set_cura_suspended(False)
         self._cleanup_deferred_cache_dirs()
-        self._preview_switched_for_job = True
+        self._preview_follower_service.runtime.preview_switched_for_job = True
         self._bind_scene_structure_signal()
         self._scene_settle_until = time.monotonic() + 0.25
         self._refresh_simulation_view_connection()

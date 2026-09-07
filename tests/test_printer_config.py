@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from plugins.PrinterConfig import PrinterConfig, PrinterConfigStore
@@ -48,6 +49,133 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertEqual(store.get().power_devices, "printer, lights")
         self.assertFalse(store.get().upload_start_print)
 
+    def test_legacy_follower_settings_migrate_once_to_active_machine(self):
+        prefs = FakePreferences()
+        defaults = {
+            "enabled": True,
+            "url": "http://legacy.example.invalid:7125",
+            "api_key": "",
+            "poll_interval_ms": 1234,
+            "moonraker_layer_is_one_based": False,
+            "auto_preview": True,
+            "z_fallback": False,
+            "z_tolerance": 0.08,
+            "path_follow": False,
+        }
+        for field, key in PrinterConfigStore.LEGACY_MAP.items():
+            prefs.values[key] = defaults[field]
+
+        active = ["machine-a", "Machine A"]
+        store = PrinterConfigStore(prefs, lambda: tuple(active))
+        self.assertTrue(store.migrate_legacy_to_current_machine())
+        migrated = store.get()
+        self.assertTrue(migrated.enabled)
+        self.assertEqual(migrated.url, "http://legacy.example.invalid:7125")
+        self.assertEqual(migrated.poll_interval_ms, 1234)
+        self.assertFalse(migrated.path_follow)
+
+        prefs.values[PrinterConfigStore.LEGACY_MAP["url"]] = "http://changed.example.invalid:7125"
+        active[:] = ["machine-b", "Machine B"]
+        self.assertFalse(store.migrate_legacy_to_current_machine())
+        self.assertEqual(store.get().url, "http://")
+        active[:] = ["machine-a", "Machine A"]
+        self.assertEqual(store.get().url, "http://legacy.example.invalid:7125")
+
+    def test_legacy_migration_defers_when_cura_machine_is_unknown(self):
+        prefs = FakePreferences()
+        prefs.values[PrinterConfigStore.LEGACY_MAP["url"]] = "http://legacy.example.invalid:7125"
+        active = ["unknown", "Unknown Cura printer"]
+        store = PrinterConfigStore(prefs, lambda: tuple(active))
+
+        self.assertFalse(store.migrate_legacy_to_current_machine())
+        self.assertFalse(store._truthy(prefs.values[PrinterConfigStore.MIGRATED_KEY]))
+
+        active[:] = ["machine-a", "Printer A"]
+        self.assertTrue(store.migrate_legacy_to_current_machine())
+        self.assertEqual(store.get().url, "http://legacy.example.invalid:7125")
+
+    def test_standalone_moonraker_connection_settings_migrate_for_all_printers(self):
+        prefs = FakePreferences()
+        prefs.values[PrinterConfigStore.MOONRAKER_CONNECTION_PREF_KEY] = json.dumps({
+            "machine-a": {
+                "url": "http://old-a.example.invalid:7125/",
+                "api_key": "",
+                "frontend_url": "https://ui-a.example.invalid/",
+                "output_format": "ufp",
+                "upload_dialog": False,
+                "upload_path": "/jobs/a/",
+                "upload_pathes": ["jobs/a", "/archive/a/"],
+                "upload_start_print_job": True,
+                "upload_remember_state": True,
+                "upload_autohide_messagebox": True,
+                "power_device": "printer, lights",
+                "retry_interval": "1.25",
+                "trans_input": " _",
+                "trans_output": "--",
+                "trans_remove": "[]",
+                "camera_url": "/webcam/?action=stream",
+                "camera_image_rotation": "270",
+                "camera_image_mirror": True,
+            },
+            "machine-b": {
+                "url": "http://old-b.example.invalid:7125/",
+                "upload_path": "jobs/b",
+            },
+        })
+        active = ["machine-a", "Printer A"]
+        store = PrinterConfigStore(prefs, lambda: tuple(active))
+
+        self.assertEqual(store.migrate_moonraker_connection(), 2)
+        cfg_a = store.get("machine-a")
+        self.assertEqual(cfg_a.url, "http://old-a.example.invalid:7125")
+        self.assertEqual(cfg_a.frontend_url, "https://ui-a.example.invalid/")
+        self.assertEqual(cfg_a.output_format, "ufp")
+        self.assertFalse(cfg_a.upload_dialog)
+        self.assertEqual(cfg_a.upload_path, "jobs/a")
+        self.assertEqual(cfg_a.upload_paths, ["jobs/a", "archive/a"])
+        self.assertTrue(cfg_a.upload_start_print)
+        self.assertTrue(cfg_a.upload_remember_state)
+        self.assertTrue(cfg_a.upload_autohide_message)
+        self.assertEqual(cfg_a.power_devices, "printer, lights")
+        self.assertEqual(cfg_a.ready_retry_interval_s, 1.25)
+        self.assertEqual(cfg_a.filename_translate_input, " _")
+        self.assertEqual(cfg_a.filename_translate_output, "--")
+        self.assertEqual(cfg_a.filename_translate_remove, "[]")
+        self.assertEqual(cfg_a.camera_url, "/webcam/?action=stream")
+        self.assertEqual(cfg_a.camera_rotation, 270)
+        self.assertTrue(cfg_a.camera_mirror)
+
+        cfg_b = store.get("machine-b")
+        self.assertEqual(cfg_b.url, "http://old-b.example.invalid:7125")
+        self.assertEqual(cfg_b.upload_path, "jobs/b")
+
+        # Migration is deliberately one-shot and leaves the old preference data
+        # untouched so rollback to the standalone plugin remains possible.
+        self.assertEqual(store.migrate_moonraker_connection(), 0)
+        self.assertIn("machine-a", json.loads(prefs.values[PrinterConfigStore.MOONRAKER_CONNECTION_PREF_KEY]))
+
+    def test_existing_follower_connection_wins_during_standalone_migration(self):
+        prefs = FakePreferences()
+        store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
+        store.set(PrinterConfig(
+            url="https://new.example.invalid",
+            api_key="",
+            follow_mode="window",
+        ), "machine-a")
+        prefs.values[PrinterConfigStore.MOONRAKER_CONNECTION_PREF_KEY] = json.dumps({
+            "machine-a": {
+                "url": "http://old.example.invalid:7125/",
+                "api_key": "",
+                "upload_start_print_job": True,
+            }
+        })
+
+        self.assertEqual(store.migrate_moonraker_connection(), 1)
+        cfg = store.get("machine-a")
+        self.assertEqual(cfg.url, "https://new.example.invalid")
+        self.assertEqual(cfg.follow_mode, "window")
+        self.assertTrue(cfg.upload_start_print)
+
     def test_invalid_values_are_normalised(self):
         cfg = PrinterConfig.from_dict({
             "poll_interval_ms": "bad",
@@ -87,12 +215,6 @@ class PrinterConfigTests(unittest.TestCase):
         store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
         store.set(cfg)
         self.assertFalse(store.get().show_toolhead_indicator)
-
-    def test_store_has_no_legacy_migration_api(self):
-        self.assertFalse(hasattr(PrinterConfigStore, "LEGACY_MAP"))
-        self.assertFalse(hasattr(PrinterConfigStore, "MOONRAKER_CONNECTION_PREF_KEY"))
-        self.assertFalse(hasattr(PrinterConfigStore, "migrate_legacy_to_current_machine"))
-        self.assertFalse(hasattr(PrinterConfigStore, "migrate_moonraker_connection"))
 
 
 if __name__ == "__main__":

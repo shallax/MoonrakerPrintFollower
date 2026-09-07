@@ -27,12 +27,11 @@ class PrintTransition:
 class RemoteJobState:
     key: Optional[JobKey] = None
     serial: int = 0
-    last_file_position: Optional[int] = None
-    last_print_duration: Optional[float] = None
+    observation: Optional[PrintObservation] = None
 
 
 class RemoteJobService:
-    """Own remote print-run identity and same-file restart detection."""
+    """Own remote print observation, run identity and same-file restart detection."""
 
     def __init__(self, active_states: Iterable[str]) -> None:
         self._active_states = {str(item) for item in active_states}
@@ -46,12 +45,24 @@ class RemoteJobService:
     def serial(self) -> int:
         return self._state.serial
 
+    @property
+    def observation(self) -> Optional[PrintObservation]:
+        return self._state.observation
+
+    @property
+    def printer_state(self) -> str:
+        observation = self._state.observation
+        return observation.state if observation is not None else ""
+
+    @property
+    def filename(self) -> str:
+        observation = self._state.observation
+        return observation.filename if observation is not None else ""
+
     def observe(
         self,
         print_stats: Dict[str, Any],
         virtual_sdcard: Dict[str, Any],
-        *,
-        previous_state: str = "",
     ) -> PrintTransition:
         state = str(print_stats.get("state") or "")
         filename = str(print_stats.get("filename") or "")
@@ -71,6 +82,7 @@ class RemoteJobService:
         observation = PrintObservation(
             state, filename, file_size, file_position, print_duration
         )
+        previous = self._state.observation
         active = observation.state in self._active_states and bool(observation.filename)
         new_job = False
         if active:
@@ -79,17 +91,11 @@ class RemoteJobService:
                 new_job = True
             elif key[0] != observation.filename or key[1] != observation.file_size:
                 new_job = True
-            elif previous_state not in self._active_states:
+            elif previous is None or previous.state not in self._active_states:
                 new_job = True
-            elif (
-                self._state.last_file_position is not None
-                and observation.file_position < self._state.last_file_position
-            ):
+            elif observation.file_position < previous.file_position:
                 new_job = True
-            elif (
-                self._state.last_print_duration is not None
-                and observation.print_duration + 0.05 < self._state.last_print_duration
-            ):
+            elif observation.print_duration + 0.05 < previous.print_duration:
                 new_job = True
 
             if new_job:
@@ -99,12 +105,8 @@ class RemoteJobService:
                     observation.file_size,
                     self._state.serial,
                 )
-            self._state.last_file_position = observation.file_position
-            self._state.last_print_duration = observation.print_duration
-        else:
-            self._state.last_file_position = None
-            self._state.last_print_duration = None
 
+        self._state.observation = observation
         return PrintTransition(self._state.key, new_job, self._state.serial)
 
     def reset(self) -> None:

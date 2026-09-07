@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Optional, Tuple
 
 from .MoonrakerMonitorModel import MoonrakerMonitorModel as _BaseMoonrakerMonitorModel
+from .MoonrakerSession import RequestCategory
 
 
 class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
@@ -12,9 +13,33 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         self._resolved_current_layer: Optional[int] = None
         self._resolved_total_layer: Optional[int] = None
         super().__init__(output_controller, number_of_extruders, follower)
+        self._apply_adaptive_monitor_intervals()
+
+    def _apply_adaptive_monitor_intervals(self) -> None:
+        """Apply the active session's category-aware polling policy to Monitor timers."""
+        try:
+            session = self._follower.session
+            policy = session.poll_policy
+            printer_state = session.snapshot.printer_state
+        except Exception:
+            return
+
+        for timer, category, configured_ms in (
+            (self._aux_timer, RequestCategory.AUXILIARY, self.AUX_POLL_MS),
+            (self._power_timer, RequestCategory.POWER, self.POWER_POLL_MS),
+            (self._system_timer, RequestCategory.SYSTEM, self.SYSTEM_POLL_MS),
+            (self._discovery_timer, RequestCategory.DISCOVERY, self.DISCOVERY_POLL_MS),
+        ):
+            try:
+                timer.setInterval(
+                    policy.interval_ms(category, configured_ms, printer_state)
+                )
+            except Exception:
+                pass
 
     def _after_core_status(self, status: Any) -> None:
         super()._after_core_status(status)
+        self._apply_adaptive_monitor_intervals()
         current_layer, total_layer = self._resolve_live_layer(status)
         self._resolved_current_layer = current_layer
         self._resolved_total_layer = total_layer

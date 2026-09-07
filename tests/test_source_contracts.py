@@ -102,7 +102,7 @@ class SourceContractTests(unittest.TestCase):
             "childrenChanged.connect",
             "BackendState.Done",
             "motion_report",
-            "minimum_fraction=self._path_progress_fraction",
+            "minimum_fraction=tracking.path_fraction",
             "currentLayerNumChanged",
             "currentPathNumChanged",
             "keep_native_nozzle_visible(view)",
@@ -206,6 +206,13 @@ class SourceContractTests(unittest.TestCase):
             "self._pause_network",
             "self._file_network",
             "self._metadata_network",
+            "self._last_remote_filename",
+            "self._last_remote_state",
+            "self._last_observed_remote_layer",
+            "self._last_extruder_position",
+            "self._preview_switched_for_job",
+            "self._toolhead_path_valid",
+            "self._last_source",
         ):
             offenders = [
                 name for name, source in follower_sources.items()
@@ -243,6 +250,53 @@ class SourceContractTests(unittest.TestCase):
             "_init_follower_transport",
         ):
             self.assertNotIn(removed, FOLLOWER_IMPLEMENTATION, removed)
+
+    def test_preview_service_owns_live_tracking_and_print_runtime_state(self):
+        preview_service = (PLUGINS / "PreviewFollowerService.py").read_text(encoding="utf-8")
+        remote_job_service = (PLUGINS / "RemoteJobService.py").read_text(encoding="utf-8")
+        follower_sources = {
+            name: (PLUGINS / name).read_text(encoding="utf-8")
+            for name in ("FollowerCoordinator.py", "FollowerBootstrap.py") + FOLLOWER_RUNTIME_FILES
+        }
+
+        self.assertIn("class PreviewTrackingState", preview_service)
+        self.assertIn("class PreviewRuntimeState", preview_service)
+        self.assertIn("self.tracking = PreviewTrackingState()", preview_service)
+        self.assertIn("self.runtime = PreviewRuntimeState()", preview_service)
+        self.assertIn("def reset_tracking(self) -> None:", preview_service)
+        self.assertIn("def reset_print_state(self) -> None:", preview_service)
+        self.assertIn("def update_path_fraction(self, fraction: float) -> float:", preview_service)
+        self.assertIn("def observe_remote_layer(self, layer: int) -> None:", preview_service)
+        self.assertIn("self._preview_follower_service.reset_tracking()", COORDINATOR)
+        self.assertIn("self._preview_follower_service.reset_print_state()", COORDINATOR)
+
+        self.assertIn("observation: Optional[PrintObservation]", remote_job_service)
+        self.assertIn("def printer_state(self) -> str:", remote_job_service)
+        self.assertIn("def filename(self) -> str:", remote_job_service)
+        self.assertNotIn("previous_state:", remote_job_service)
+
+        for removed_field in (
+            "self._path_progress_layer",
+            "self._path_progress_fraction",
+            "self._last_resolved_remote_layer",
+            "self._selected_layer_eta_text",
+            "self._last_speed_factor",
+            "self._eta_anchor_layer",
+            "self._eta_anchor_print_duration",
+            "self._eta_current_print_duration",
+            "self._last_remote_filename",
+            "self._last_remote_state",
+            "self._last_observed_remote_layer",
+            "self._last_extruder_position",
+            "self._preview_switched_for_job",
+            "self._toolhead_path_valid",
+            "self._last_source",
+        ):
+            offenders = [
+                name for name, source in follower_sources.items()
+                if removed_field in source
+            ]
+            self.assertEqual(offenders, [], f"{removed_field}: {offenders}")
 
     def test_only_shared_transport_constructs_a_network_manager(self):
         production_sources = {

@@ -31,7 +31,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
 
     def stop(self) -> None:
         for device in self._devices.values():
-            self._set_monitor_active(device, False)
+            self._deactivate_device(device)
         if self._current is not None:
             try:
                 self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
@@ -46,6 +46,19 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         if callable(setter):
             try:
                 setter(bool(active))
+            except Exception:
+                pass
+
+    def _deactivate_device(self, device: MoonrakerOutputDevice) -> None:
+        """Invalidate Monitor and upload work before an output device loses ownership."""
+        if device is self._current:
+            self._set_monitor_active(self._current, False)
+        else:
+            self._set_monitor_active(device, False)
+        deactivate = getattr(device, "deactivate", None)
+        if callable(deactivate):
+            try:
+                deactivate()
             except Exception:
                 pass
 
@@ -86,7 +99,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             stack = self._application.getGlobalContainerStack()
             if stack is None:
                 if self._current is not None:
-                    self._set_monitor_active(self._current, False)
+                    self._deactivate_device(self._current)
                     try:
                         self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
                     except Exception:
@@ -98,13 +111,13 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             usable = self._usable_url(str(config.url or "").strip())
 
             if self._current is not None and self._current.getId() != MoonrakerOutputDevice.DEVICE_PREFIX + machine_id:
-                self._set_monitor_active(self._current, False)
+                self._deactivate_device(self._current)
                 self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
                 self._current = None
 
             if not usable:
                 if self._current is not None:
-                    self._set_monitor_active(self._current, False)
+                    self._deactivate_device(self._current)
                     self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
                     self._current = None
                 return
@@ -120,7 +133,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
 
             if self._current is not device:
                 if self._current is not None:
-                    self._set_monitor_active(self._current, False)
+                    self._deactivate_device(self._current)
                     try:
                         self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
                     except Exception:

@@ -69,21 +69,28 @@ class PreviewFollowEngineMixin:
     ) -> None:
         state = str(print_stats.get("state") or "")
         filename = str(print_stats.get("filename") or "")
-        try:
-            self._last_speed_factor = max(0.05, float(gcode_move.get("speed_factor") or 1.0))
-        except (TypeError, ValueError):
-            self._last_speed_factor = 1.0
         self._follow_controller.set_connection(True)
         self._follow_controller.set_remote_state(state)
 
-        previous_filename = self._last_remote_filename
+        previous_observation = self._remote_job_service.observation
+        previous_filename = previous_observation.filename if previous_observation is not None else ""
+        previous_state = previous_observation.state if previous_observation is not None else ""
         self._update_remote_job_identity(print_stats, virtual_sdcard)
+
+        tracking = self._preview_follower_service.tracking
+        runtime = self._preview_follower_service.runtime
         try:
-            self._eta_current_print_duration = max(
+            tracking.speed_factor = max(
+                0.05, float(gcode_move.get("speed_factor") or 1.0)
+            )
+        except (TypeError, ValueError):
+            tracking.speed_factor = 1.0
+        try:
+            tracking.eta_current_print_duration = max(
                 0.0, float(print_stats.get("print_duration") or 0.0)
             )
         except (TypeError, ValueError):
-            self._eta_current_print_duration = None
+            tracking.eta_current_print_duration = None
         try:
             reported_size = int(virtual_sdcard.get("file_size") or 0)
         except (TypeError, ValueError):
@@ -92,27 +99,17 @@ class PreviewFollowEngineMixin:
             self._ensure_remote_metadata(filename, reported_size)
 
         if filename != previous_filename:
-            self._toolhead_path_valid = False
+            runtime.toolhead_path_valid = False
             self._hide_toolhead_indicator()
-            self._last_extruder_position = None
-            self._preview_switched_for_job = False
-            self._last_source = None
-        self._last_remote_filename = filename
+            runtime.last_extruder_position = None
+            runtime.preview_switched_for_job = False
 
-        if state != self._last_remote_state:
-            if state not in self.ACTIVE_STATES:
-                self._last_extruder_position = None
-                self._preview_switched_for_job = False
-            self._last_remote_state = state
+        if state != previous_state and state not in self.ACTIVE_STATES:
+            runtime.last_extruder_position = None
+            runtime.preview_switched_for_job = False
 
         if state not in self.ACTIVE_STATES:
-            self._toolhead_path_valid = False
-            self._last_resolved_remote_layer = None
-            self._last_observed_remote_layer = None
-            self._eta_anchor_layer = None
-            self._eta_anchor_print_duration = None
-            self._eta_current_print_duration = None
-            self._selected_layer_eta_text = ""
+            self._preview_follower_service.reset_print_state()
             if self._pause_schedule_service.layers:
                 self._clear_scheduled_pauses(abort_request=True)
             self._hide_toolhead_indicator()
@@ -130,27 +127,24 @@ class PreviewFollowEngineMixin:
         )
         if observed_layer is not None:
             observed_layer = max(0, int(observed_layer))
-            if self._eta_anchor_layer != observed_layer:
-                self._eta_anchor_layer = observed_layer
-                self._eta_anchor_print_duration = self._eta_current_print_duration
-            self._last_observed_remote_layer = observed_layer
+            self._preview_follower_service.observe_remote_layer(observed_layer)
             self._maybe_trigger_scheduled_pause(observed_layer)
             if view is not None and hasattr(view, "getMaxLayers"):
                 try:
                     observed_max = max(0, int(view.getMaxLayers()))
-                    self._last_resolved_remote_layer = min(observed_layer, observed_max)
+                    tracking.resolved_remote_layer = min(observed_layer, observed_max)
                 except Exception:
                     pass
 
         if self._preview_follower_service.following_paused:
-            self._toolhead_path_valid = False
+            runtime.toolhead_path_valid = False
             self._hide_toolhead_indicator()
             self._update_selected_layer_eta(view)
             self._set_status(
                 self._active_status_text(
                     filename,
-                    remote_layer=(self._last_observed_remote_layer + 1)
-                    if self._last_observed_remote_layer is not None
+                    remote_layer=(runtime.observed_remote_layer + 1)
+                    if runtime.observed_remote_layer is not None
                     else None,
                     total_layer=(print_stats.get("info") or {}).get("total_layer"),
                     detail="following paused; Moonraker polling continues",
@@ -165,7 +159,7 @@ class PreviewFollowEngineMixin:
                 self._ensure_remote_gcode_cached(filename)
 
         if self._slicing_in_progress or time.monotonic() < self._scene_settle_until:
-            self._toolhead_path_valid = False
+            runtime.toolhead_path_valid = False
             self._hide_toolhead_indicator()
             self._set_status(
                 self._active_status_text(
@@ -178,7 +172,7 @@ class PreviewFollowEngineMixin:
             return
 
         if view is None or not hasattr(view, "setLayer"):
-            self._toolhead_path_valid = False
+            runtime.toolhead_path_valid = False
             self._hide_toolhead_indicator()
             self._set_status("Connected, but Cura's SimulationView is unavailable")
             return
@@ -190,7 +184,7 @@ class PreviewFollowEngineMixin:
         target_layer = observed_layer
         source = observed_source
         if target_layer is None:
-            self._toolhead_path_valid = False
+            runtime.toolhead_path_valid = False
             self._hide_toolhead_indicator()
             self._set_status(
                 self._active_status_text(
@@ -210,7 +204,7 @@ class PreviewFollowEngineMixin:
             max_layer = target_layer
 
         remote_target_layer = max(0, min(target_layer, max(0, max_layer)))
-        self._last_resolved_remote_layer = remote_target_layer
+        tracking.resolved_remote_layer = remote_target_layer
         decision = decide_layers(
             remote_target_layer, max_layer, self._config_store.get().follow_mode
         )
@@ -239,7 +233,7 @@ class PreviewFollowEngineMixin:
             current_minimum = None
 
         path_detail = ""
-        self._toolhead_path_valid = False
+        runtime.toolhead_path_valid = False
         self._applying_follow_update += 1
         try:
             if current != target_layer or (
@@ -259,7 +253,7 @@ class PreviewFollowEngineMixin:
                     motion_report or {},
                     gcode_move,
                 )
-                self._toolhead_path_valid = path_detail.startswith("path ")
+                runtime.toolhead_path_valid = path_detail.startswith("path ")
         finally:
             self._applying_follow_update = max(0, self._applying_follow_update - 1)
 
@@ -267,7 +261,6 @@ class PreviewFollowEngineMixin:
         self._update_selected_layer_eta(view)
         self._update_toolhead_indicator(view)
 
-        self._last_source = source
         mode = self._config_store.get().follow_mode
         detail = f"following via {source}; mode {mode}"
         if state == "paused":
@@ -285,11 +278,12 @@ class PreviewFollowEngineMixin:
         )
 
     def _maybe_switch_to_preview(self) -> None:
-        if self._preview_switched_for_job or not self.current_printer_config().auto_preview:
+        runtime = self._preview_follower_service.runtime
+        if runtime.preview_switched_for_job or not self.current_printer_config().auto_preview:
             return
         try:
             self._controller.setActiveStage("PreviewStage")
-            self._preview_switched_for_job = True
+            runtime.preview_switched_for_job = True
         except Exception:
             # Following remains usable if Cura refuses a stage switch.
             pass

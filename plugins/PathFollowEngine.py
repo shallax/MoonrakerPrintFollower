@@ -22,10 +22,11 @@ class PathFollowEngineMixin:
 
         self._preview_follower_service.begin_path_layer(target_layer)
         tracking = self._preview_follower_service.tracking
-
+        current_filename = self._remote_job_service.filename
         current_job = self._remote_job_service.key
+
         if (
-            self._gcode_index_service.filename != self._last_remote_filename
+            self._gcode_index_service.filename != current_filename
             or self._gcode_index_service.job_key != current_job
         ):
             try:
@@ -34,7 +35,7 @@ class PathFollowEngineMixin:
                 pass
             if (
                 (self._file_reply is not None and self._file_reply.isRunning())
-                or self._gcode_index_service.build_filename == self._last_remote_filename
+                or self._gcode_index_service.build_filename == current_filename
             ):
                 return "indexing remote G-code"
             return "waiting for remote G-code index"
@@ -64,12 +65,12 @@ class PathFollowEngineMixin:
         if getattr(index, "compact", False):
             cached_path = self._remote_file_service.cached_path
             if not (
-                self._remote_file_service.cached_filename == self._last_remote_filename
+                self._remote_file_service.cached_filename == current_filename
                 and cached_path
                 and self._remote_file_service.cached_job_key == current_job
                 and os.path.isfile(cached_path)
             ):
-                self._ensure_remote_gcode_cached(self._last_remote_filename or "")
+                self._ensure_remote_gcode_cached(current_filename)
             self._ensure_remote_layer_hydrated(target_layer)
             if target_layer not in getattr(index, "hydrated_layers", set()):
                 tracking.path_fraction = 0.0
@@ -136,8 +137,9 @@ class PathFollowEngineMixin:
         except (TypeError, ValueError):
             return None
 
-        previous_e = self._last_extruder_position
-        self._last_extruder_position = e
+        runtime = self._preview_follower_service.runtime
+        previous_e = runtime.last_extruder_position
+        runtime.last_extruder_position = e
         if previous_e is None or e <= previous_e + 0.0001:
             return None
 

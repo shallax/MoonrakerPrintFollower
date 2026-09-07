@@ -38,11 +38,11 @@ class FollowerConfigurationMixin:
             self._follow_controller.pause_by_user("pause button")
         else:
             self._follow_controller.resume()
-            self._selected_layer_eta_text = ""
+            self._preview_follower_service.set_selected_layer_eta_text("")
         self._sync_preview_button_state()
 
         if paused:
-            self._toolhead_path_valid = False
+            self._preview_follower_service.runtime.toolhead_path_valid = False
             self._hide_toolhead_indicator()
             self._set_status("Following paused; Moonraker connection remains active")
         else:
@@ -60,9 +60,9 @@ class FollowerConfigurationMixin:
             bool(connected), connecting=not connected and config.enabled
         )
         if not connected:
-            self._toolhead_path_valid = False
+            self._preview_follower_service.runtime.toolhead_path_valid = False
             self._hide_toolhead_indicator()
-        if not connected and self._last_remote_state not in self.ACTIVE_STATES:
+        if not connected and self._remote_job_service.printer_state not in self.ACTIVE_STATES:
             self._set_status(detail)
         self._sync_preview_button_state()
 
@@ -84,12 +84,9 @@ class FollowerConfigurationMixin:
         self._active_machine_id = machine_id
         self._active_machine_name = machine_name
         self._preview_follower_service.set_paused(False)
+        self._preview_follower_service.reset_print_state()
         self._follow_controller.resume()
-        self._last_remote_filename = None
-        self._last_remote_state = None
-        self._last_extruder_position = None
         self._last_capabilities = {}
-        self._last_observed_remote_layer = None
         self._clear_scheduled_pauses(abort_request=True)
         self._clear_remote_gcode_index()
         self._remote_job_service.reset()
