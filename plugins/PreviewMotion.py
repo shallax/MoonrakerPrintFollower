@@ -41,10 +41,12 @@ MAX_VELOCITY = 0.5
 # so the head does not begin every layer from a standstill.
 VELOCITY_WARM_START = 0.8
 class PreviewMotion(QObject):
-    def __init__(self, cura, remember, parent=None):
+    def __init__(self, cura, remember, parent=None, trace_path=None):
         super().__init__(parent)
         self._cura = cura
         self._remember = remember
+        self._trace_path = trace_path
+        self._trace_next = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_MS)
         self._timer.timeout.connect(self._tick)
@@ -55,10 +57,11 @@ class PreviewMotion(QObject):
         self._history = deque()
         self._last = 0.0
 
-    def write(self, layer: int, fraction: float) -> None:
+    def write(self, layer: int, fraction: float, method: str = "") -> None:
         """Record the newest observed path fraction for a layer."""
         fraction = max(0.0, min(1.0, float(fraction)))
         now = time.monotonic()
+        self._trace("obs", now, layer, fraction, method)
         if layer != self._layer or self._displayed is None:
             # A layer transition (or the first observation): jump, never
             # animate across layers. Layers print at similar rates, so the
@@ -108,6 +111,7 @@ class PreviewMotion(QObject):
         displayed = advance_display(displayed=self._displayed, target=self._target,
                                     velocity=self._velocity, dt=dt)
         self._displayed = displayed
+        self._trace("tick", now, self._layer, displayed)
         self._write(displayed)
         if displayed >= self._target:
             self._timer.stop()
@@ -123,6 +127,33 @@ class PreviewMotion(QObject):
             set_preview_path(view, fraction * maximum)
             set_preview_minimum_path(view, 0)
         self._remember()
+
+    def _trace(self, event: str, now: float, layer, fraction: float, method: str = "") -> None:
+        if not self._trace_path:
+            return
+        try:
+            import os
+            if now >= self._trace_next:
+                self._trace_next = now + 0.5  # sample ticks at ~2 Hz
+            elif event == "obs":
+                pass
+            else:
+                return
+            try:
+                size = os.path.getsize(self._trace_path)
+            except OSError:
+                size = 0
+            if size > 512 * 1024:
+                mode = "w"
+            else:
+                mode = "a"
+            with open(self._trace_path, mode, encoding="utf-8") as handle:
+                if mode == "w":
+                    handle.write("time,event,layer,fraction,displayed,velocity,method\n")
+                handle.write(f"{now:.3f},{event},{layer},{fraction:.6f},{self._displayed if self._displayed is not None else -1:.6f},"
+                             f"{self._velocity:.6f},{method}\n")
+        except Exception:
+            pass
 
     def close(self) -> None:
         self._timer.stop()

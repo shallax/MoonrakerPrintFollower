@@ -226,7 +226,7 @@ class PreviewFollower:
             set_preview_minimum_path(view, 0)
         target = fraction * maximum
         if smooth and self._motion is not None:
-            self._motion.write(layer, fraction)
+            self._motion.write(layer, fraction, method)
         else:
             if self._motion is not None:
                 self._motion.reset()
