@@ -9,9 +9,30 @@ PLUGINS = ROOT / "plugins"
 FACADE = (PLUGINS / "MoonrakerPrintFollower.py").read_text()
 COORDINATOR = (PLUGINS / "FollowerCoordinator.py").read_text()
 RUNTIME = (PLUGINS / "FollowerRuntime.py").read_text()
-FOLLOWER = "\n".join((FACADE, COORDINATOR, RUNTIME))
+FOLLOWER_RUNTIME_FILES = (
+    "FollowerBootstrap.py",
+    "FollowerConfiguration.py",
+    "CuraLifecycleRuntime.py",
+    "CuraViewBridge.py",
+    "CuraFileLifecycle.py",
+    "PreviewFollowerRuntime.py",
+    "PreviewStatus.py",
+    "PreviewEta.py",
+    "PreviewControls.py",
+    "PreviewLoad.py",
+    "PreviewFollowEngine.py",
+    "PathFollowEngine.py",
+    "GCodeIndexRuntime.py",
+    "RemoteFileTransfer.py",
+)
+FOLLOWER_IMPLEMENTATION = "\n".join(
+    [FACADE, COORDINATOR, RUNTIME]
+    + [(PLUGINS / name).read_text() for name in FOLLOWER_RUNTIME_FILES]
+    + [(PLUGINS / "FollowerTransport.py").read_text()]
+)
 CLIENT = (PLUGINS / "MoonrakerClient.py").read_text()
 SESSION = (PLUGINS / "MoonrakerSession.py").read_text()
+TRANSPORT = (PLUGINS / "MoonrakerTransport.py").read_text()
 MONITOR = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
 MONITOR_SESSION = (PLUGINS / "MoonrakerMonitorSession.py").read_text()
 OUTPUT = (PLUGINS / "MoonrakerOutputDevice.py").read_text()
@@ -28,26 +49,54 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(package["package_version"], "3.1.0")
         self.assertEqual(plugin["version"], "3.1.0")
         self.assertEqual(package["package_id"], "Moonraker_Print_Follower")
-        self.assertEqual(package["website"], "https://github.com/shallax/MoonrakerPrintFollower")
+        self.assertEqual(
+            package["website"], "https://github.com/shallax/MoonrakerPrintFollower"
+        )
         self.assertEqual(package["author"]["display_name"], "shallax")
-        self.assertEqual(package["author"]["email"], "moonrakerprintfollower@maintain.contact")
-        self.assertEqual(plugin["supported_sdk_versions"], [f"8.{minor}.0" for minor in range(13)])
+        self.assertEqual(
+            package["author"]["email"], "moonrakerprintfollower@maintain.contact"
+        )
+        self.assertEqual(
+            plugin["supported_sdk_versions"], [f"8.{minor}.0" for minor in range(13)]
+        )
 
-    def test_public_follower_is_thin_and_domains_are_extracted(self):
+    def test_public_follower_is_thin_and_domains_are_extracted_once(self):
         self.assertLess(len(FACADE.splitlines()), 20)
         self.assertIn("FollowerCoordinator", FACADE)
         for name in (
-            "FollowerRuntime.py", "FollowerCoordinator.py", "FollowerSession.py",
-            "PrintTracker.py", "PauseScheduler.py", "PreviewController.py",
-            "GCodeRepository.py", "MoonrakerSession.py",
-        ):
+            "FollowerRuntime.py",
+            "FollowerCoordinator.py",
+            "RemoteJobService.py",
+            "RemoteFileService.py",
+            "GCodeIndexService.py",
+            "PauseScheduleService.py",
+            "PreviewFollowerService.py",
+            "CuraLifecycleBridge.py",
+            "FollowerTransport.py",
+            "MoonrakerSession.py",
+            "MoonrakerTransport.py",
+        ) + FOLLOWER_RUNTIME_FILES:
             self.assertTrue((PLUGINS / name).is_file(), name)
-        self.assertIn("PrintTracker", COORDINATOR)
-        self.assertIn("PauseScheduler", COORDINATOR)
-        self.assertIn("GCodeRepository", COORDINATOR)
-        self.assertIn("PreviewController", COORDINATOR)
+        for obsolete in (
+            "PauseScheduler.py",
+            "PreviewController.py",
+            "PrintTracker.py",
+            "GCodeRepository.py",
+            "FollowerSession.py",
+            "FollowerStateBridge.py",
+        ):
+            self.assertFalse((PLUGINS / obsolete).exists(), obsolete)
+        for token in (
+            "RemoteJobService",
+            "RemoteFileService",
+            "GCodeIndexService",
+            "PauseScheduleService",
+            "PreviewFollowerService",
+            "CuraLifecycleBridge",
+        ):
+            self.assertIn(token, COORDINATOR)
 
-    def test_established_follower_safety_contracts_remain_in_compatibility_runtime(self):
+    def test_established_follower_safety_contracts_remain_available(self):
         for token in (
             "QMessageBox.question",
             "self._application.readLocalFile",
@@ -59,37 +108,54 @@ class SourceContractTests(unittest.TestCase):
             "BackendState.Done",
             "motion_report",
             "minimum_fraction=self._path_progress_fraction",
-            "if self._applying_follow_update:",
             "currentLayerNumChanged",
             "currentPathNumChanged",
-            "preview_override_kind",
             "keep_native_nozzle_visible(view)",
         ):
-            self.assertIn(token, RUNTIME, token)
-        self.assertNotIn("_readMeshFinished", RUNTIME)
-        self.assertNotIn("DepthFirstIterator", RUNTIME)
+            self.assertIn(token, FOLLOWER_IMPLEMENTATION, token)
+        self.assertNotIn("_readMeshFinished", FOLLOWER_IMPLEMENTATION)
+        self.assertNotIn("DepthFirstIterator", FOLLOWER_IMPLEMENTATION)
 
-    def test_shared_core_session_is_http_only_generation_guarded_and_coalesced(self):
+    def test_focused_runtime_has_no_shadow_http_stack(self):
+        runtime_layer = "\n".join(
+            [RUNTIME] + [(PLUGINS / name).read_text() for name in FOLLOWER_RUNTIME_FILES]
+        )
+        self.assertNotIn("QNetworkAccessManager", runtime_layer)
+        self.assertNotIn("QNetworkRequest", runtime_layer)
+        self.assertNotIn("status_endpoint", runtime_layer)
+        self.assertNotIn("metadata_endpoint", runtime_layer)
+        self.assertNotIn("gcode_script_endpoint", runtime_layer)
+        self.assertNotIn("download_endpoint", runtime_layer)
+
+    def test_shared_session_is_http_only_generation_guarded_coalesced_and_observable(self):
         self.assertNotIn("QWebSocket", CLIENT)
         self.assertNotIn("websocket", CLIENT.lower())
-        self.assertIn("RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)", CLIENT)
+        self.assertIn("MoonrakerSession", CLIENT)
+        self.assertIn(
+            "RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)", CLIENT
+        )
         self.assertIn("generation != self._generation", CLIENT)
         self.assertIn("self._session.coalescer.begin", CLIENT)
+        self.assertIn("class MoonrakerSession", SESSION)
         self.assertIn("RequestCoalescer", SESSION)
         self.assertIn("PollPolicy", SESSION)
         self.assertIn("CommandTracker", SESSION)
         self.assertIn("SessionSnapshot", SESSION)
+        self.assertIn("TransportMetrics", TRANSPORT)
+        self.assertIn("request_id", TRANSPORT)
+        self.assertIn("elapsed_ms", TRANSPORT)
 
-    def test_monitor_uses_shared_core_but_retains_peripheral_generation_guards(self):
+    def test_monitor_uses_shared_core_and_shared_transport(self):
         self.assertIn("self._request_generation", MONITOR)
         self.assertIn("generation != self._request_generation", MONITOR)
         self.assertIn("self._core_timer.stop()", MONITOR_SESSION)
         self.assertIn("client.force_refresh", MONITOR_SESSION)
+        self.assertIn("transport.send_json", MONITOR_SESSION)
         self.assertNotIn("status_endpoint", MONITOR_SESSION)
         self.assertIn("RequestCategory.AUXILIARY", MONITOR_SESSION)
         self.assertIn("waiting for printer confirmation", MONITOR_SESSION)
 
-    def test_output_reuses_shared_readiness_and_keeps_upload_lifecycle(self):
+    def test_output_reuses_shared_transport_readiness_and_upload_lifecycle(self):
         self.assertIn('registry.getPluginObject("GCodeWriter")', OUTPUT)
         self.assertIn('registry.getPluginObject("UFPWriter")', OUTPUT)
         self.assertIn('self._request("server/files/upload")', OUTPUT)
@@ -97,6 +163,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("QTimer.singleShot", OUTPUT)
         self.assertNotIn("sleep(", OUTPUT)
         self.assertIn("_shared_client_ready", OUTPUT_SESSION)
+        self.assertIn("transport.send_json", OUTPUT_SESSION)
         self.assertIn("MoonrakerOutputSession", OUTPUT_PLUGIN)
 
     def test_preview_controls_remain_preview_only(self):
@@ -118,14 +185,24 @@ class SourceContractTests(unittest.TestCase):
 
     def test_source_contains_no_private_network_examples_or_literal_api_key(self):
         text_files = [
-            path for path in ROOT.rglob("*")
-            if path.is_file() and path.suffix.lower() in {".py", ".qml", ".md", ".json", ".txt"}
+            path
+            for path in ROOT.rglob("*")
+            if path.is_file()
+            and path.suffix.lower() in {".py", ".qml", ".md", ".json", ".txt"}
         ]
-        combined = "\n".join(path.read_text(errors="replace") for path in text_files)
+        combined = "\n".join(
+            path.read_text(errors="replace") for path in text_files
+        )
         self.assertIsNone(re.search(r"\b(?:10|127)\.\d+\.\d+\.\d+\b", combined))
         self.assertIsNone(re.search(r"\b192\.168\.\d+\.\d+\b", combined))
-        self.assertIsNone(re.search(r"\b172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+\b", combined))
-        self.assertIsNone(re.search(r"api_key\s*[=:]\s*[\"'][^\"']+[\"']", combined, re.IGNORECASE))
+        self.assertIsNone(
+            re.search(r"\b172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+\b", combined)
+        )
+        self.assertIsNone(
+            re.search(
+                r"api_key\s*[=:]\s*[\"'][^\"']+[\"']", combined, re.IGNORECASE
+            )
+        )
 
 
 if __name__ == "__main__":

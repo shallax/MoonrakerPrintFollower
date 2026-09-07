@@ -4,22 +4,39 @@ import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+PLUGINS = ROOT / "plugins"
 PACKAGE = json.loads((ROOT / "package.json").read_text())
-PLUGIN_META = json.loads((ROOT / "plugins" / "plugin.json").read_text())
-PLUGIN = "\n".join([
-    (ROOT / "plugins" / "MoonrakerPrintFollower.py").read_text(),
-    (ROOT / "plugins" / "FollowerCoordinator.py").read_text(),
-    (ROOT / "plugins" / "FollowerRuntime.py").read_text(),
-])
-CLIENT = (ROOT / "plugins" / "MoonrakerClient.py").read_text()
-MONITOR_MODEL = (ROOT / "plugins" / "MoonrakerMonitorModel.py").read_text()
-MACHINE_ACTION = (ROOT / "plugins" / "MoonrakerFollowerMachineAction.py").read_text()
-CONFIG_QML = (ROOT / "plugins" / "MoonrakerFollowerConfiguration.qml").read_text()
-MONITOR_QML = (ROOT / "plugins" / "MoonrakerMonitor.qml").read_text()
-UPLOAD_QML = (ROOT / "plugins" / "MoonrakerUploadDialog.qml").read_text()
-ACTION_QML = (ROOT / "plugins" / "PreviewActionPanelControls.qml").read_text()
-EMPTY_QML = (ROOT / "plugins" / "EmptyPreviewLoadButton.qml").read_text()
-NOZZLE_FALLBACK = (ROOT / "plugins" / "NativeNozzleFallback.py").read_text()
+PLUGIN_META = json.loads((PLUGINS / "plugin.json").read_text())
+FOLLOWER_SOURCES = (
+    "MoonrakerPrintFollower.py",
+    "FollowerCoordinator.py",
+    "FollowerRuntime.py",
+    "FollowerBootstrap.py",
+    "FollowerConfiguration.py",
+    "CuraLifecycleRuntime.py",
+    "CuraViewBridge.py",
+    "CuraFileLifecycle.py",
+    "PreviewFollowerRuntime.py",
+    "PreviewStatus.py",
+    "PreviewEta.py",
+    "PreviewControls.py",
+    "PreviewLoad.py",
+    "PreviewFollowEngine.py",
+    "PathFollowEngine.py",
+    "GCodeIndexRuntime.py",
+    "RemoteFileTransfer.py",
+    "FollowerTransport.py",
+)
+PLUGIN = "\n".join((PLUGINS / name).read_text() for name in FOLLOWER_SOURCES)
+CLIENT = (PLUGINS / "MoonrakerClient.py").read_text()
+MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
+MACHINE_ACTION = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+CONFIG_QML = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
+UPLOAD_QML = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
+ACTION_QML = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
+EMPTY_QML = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
+NOZZLE_FALLBACK = (PLUGINS / "NativeNozzleFallback.py").read_text()
 README = (ROOT / "README.md").read_text()
 
 
@@ -29,7 +46,10 @@ class SdkCompatibilityTests(unittest.TestCase):
         self.assertEqual(PACKAGE["sdk_version_semver"], "8.0.0")
 
     def test_plugin_declares_complete_cura_5_sdk_8_line(self):
-        self.assertEqual(PLUGIN_META["supported_sdk_versions"], [f"8.{minor}.0" for minor in range(13)])
+        self.assertEqual(
+            PLUGIN_META["supported_sdk_versions"],
+            [f"8.{minor}.0" for minor in range(13)],
+        )
         self.assertEqual(PLUGIN_META["api"], 8)
 
     def test_readme_states_cura_5_compatibility_boundary(self):
@@ -45,7 +65,12 @@ class SdkCompatibilityTests(unittest.TestCase):
         self.assertIn("getMachineActionManager().addSupportedAction", MACHINE_ACTION)
 
     def test_settings_qml_avoids_um_controls_added_in_sdk_8_3(self):
-        for newer_control in ("UM.TextField", "UM.Switch", "UM.Slider", "UM.ComponentWithIcon"):
+        for newer_control in (
+            "UM.TextField",
+            "UM.Switch",
+            "UM.Slider",
+            "UM.ComponentWithIcon",
+        ):
             self.assertNotIn(newer_control, CONFIG_QML)
         self.assertIn("Cura.TextField", CONFIG_QML)
         self.assertIn("Cura.RadioButton", CONFIG_QML)
@@ -63,27 +88,47 @@ class SdkCompatibilityTests(unittest.TestCase):
             "getCurrentPath",
         ):
             self.assertIn(token, PLUGIN)
-        self.assertIn('getattr(simulation_view, "getSimulationPass", None)', NOZZLE_FALLBACK)
+        self.assertIn(
+            'getattr(simulation_view, "getSimulationPass", None)', NOZZLE_FALLBACK
+        )
         self.assertIn('getattr(simulation_view, "getNozzleNode", None)', NOZZLE_FALLBACK)
 
     def test_optional_qt_timeout_api_is_capability_guarded(self):
         for source in (PLUGIN, CLIENT, MACHINE_ACTION, MONITOR_MODEL):
-            occurrences = [m.start() for m in re.finditer(r"\.setTransferTimeout\(", source)]
+            occurrences = [
+                match.start()
+                for match in re.finditer(r"\.setTransferTimeout\(", source)
+            ]
             for pos in occurrences:
-                preceding = source[max(0, pos - 180):pos]
+                preceding = source[max(0, pos - 180) : pos]
                 self.assertIn('hasattr(request, "setTransferTimeout")', preceding)
 
     def test_no_qt5_or_websocket_dependency_is_reintroduced(self):
-        combined = "\n".join((
-            PLUGIN, CLIENT, MONITOR_MODEL, MACHINE_ACTION,
-            CONFIG_QML, MONITOR_QML, UPLOAD_QML, ACTION_QML, EMPTY_QML,
-        ))
+        combined = "\n".join(
+            (
+                PLUGIN,
+                CLIENT,
+                MONITOR_MODEL,
+                MACHINE_ACTION,
+                CONFIG_QML,
+                MONITOR_QML,
+                UPLOAD_QML,
+                ACTION_QML,
+                EMPTY_QML,
+            )
+        )
         self.assertNotIn("PyQt5", combined)
         self.assertNotIn("QtWebSockets", combined)
         self.assertNotIn("QWebSocket", combined)
 
     def test_qml_imports_are_qt6_2_compatible(self):
-        for qml in (CONFIG_QML, MONITOR_QML, UPLOAD_QML, ACTION_QML, EMPTY_QML):
+        for qml in (
+            CONFIG_QML,
+            MONITOR_QML,
+            UPLOAD_QML,
+            ACTION_QML,
+            EMPTY_QML,
+        ):
             self.assertRegex(qml, r"^import QtQuick 2\.15", qml[:80])
         for qml in (CONFIG_QML, MONITOR_QML, UPLOAD_QML):
             self.assertIn("import QtQuick.Controls 2.15", qml)

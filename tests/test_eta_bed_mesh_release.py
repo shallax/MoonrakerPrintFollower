@@ -3,10 +3,10 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
-FOLLOWER = "\n".join([
-    (PLUGINS / "FollowerRuntime.py").read_text(encoding="utf-8"),
-    (PLUGINS / "FollowerCoordinator.py").read_text(encoding="utf-8"),
-])
+PREVIEW_ETA = (PLUGINS / "PreviewEta.py").read_text(encoding="utf-8")
+PREVIEW_STATUS = (PLUGINS / "PreviewStatus.py").read_text(encoding="utf-8")
+FOLLOW_ENGINE = (PLUGINS / "PreviewFollowEngine.py").read_text(encoding="utf-8")
+FOLLOWER = "\n".join([PREVIEW_ETA, PREVIEW_STATUS, FOLLOW_ENGINE])
 PREVIEW = (PLUGINS / "PreviewActionPanelControls.qml").read_text(encoding="utf-8")
 TYPED = (PLUGINS / "MoonrakerMonitorTypedControls.py").read_text(encoding="utf-8")
 DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text(encoding="utf-8")
@@ -14,17 +14,20 @@ DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text(encoding="utf-
 
 class EtaAndBedMeshReleaseTests(unittest.TestCase):
     def test_selected_layer_eta_uses_live_remote_layer_and_duration_anchor(self):
-        self.assertIn("def _estimate_layer_boundary_remaining", FOLLOWER)
+        self.assertIn("def _estimate_layer_boundary_remaining", PREVIEW_ETA)
         self.assertIn("self._last_observed_remote_layer", FOLLOWER)
         self.assertIn("self._eta_anchor_print_duration", FOLLOWER)
         self.assertIn("self._eta_current_print_duration", FOLLOWER)
-        self.assertIn("actual_into_layer * speed / planned_layer_duration", FOLLOWER)
-        self.assertIn("if self._last_remote_state in self.ACTIVE_STATES:", FOLLOWER)
-        self.assertNotIn("if self._following_paused and self._last_remote_state in self.ACTIVE_STATES:", FOLLOWER)
+        self.assertIn("actual_into_layer * speed / planned_layer_duration", PREVIEW_ETA)
+        self.assertIn("if self._last_remote_state in self.ACTIVE_STATES:", PREVIEW_ETA)
+        self.assertNotIn(
+            "if self._following_paused and self._last_remote_state in self.ACTIVE_STATES:",
+            PREVIEW_ETA,
+        )
 
     def test_each_scheduled_pause_has_a_live_end_of_layer_eta(self):
-        self.assertIn("end_of_layer=True", FOLLOWER)
-        self.assertIn('items.append({"layer": layer + 1, "eta": eta})', FOLLOWER)
+        self.assertIn("end_of_layer=True", PREVIEW_STATUS)
+        self.assertIn('items.append({"layer": layer + 1, "eta": eta})', PREVIEW_STATUS)
         self.assertIn("property string pauseEta", PREVIEW)
         self.assertIn('" · " + parent.pauseEta', PREVIEW)
 

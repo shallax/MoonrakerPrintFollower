@@ -10,7 +10,6 @@ from UM.Logger import Logger
 from .Core import OperationPhase
 from .CuraLifecycleBridge import CuraLifecycleBridge
 from .FollowerRuntime import MoonrakerPrintFollower as _FollowerRuntime
-from .FollowerSession import FollowerSession
 from .FollowerTransport import FollowerTransportMixin
 from .GCodeIndex import LayerMotionIndex
 from .GCodeIndexService import GCodeIndexService
@@ -27,7 +26,6 @@ class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime):
         # Create authoritative state owners before the compatibility runtime: its
         # historical private-attribute assignments are intercepted by properties
         # below and therefore initialise these services rather than shadow state.
-        self._follower_session = FollowerSession()
         self._remote_job_service = RemoteJobService(self.ACTIVE_STATES)
         self._remote_file_service = RemoteFileService()
         self._gcode_index_service = GCodeIndexService()
@@ -36,7 +34,6 @@ class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime):
         self._cura_lifecycle_bridge = CuraLifecycleBridge()
         super().__init__(application)
         self._init_follower_transport()
-        self._follower_session.bind_machine(self._active_machine_id, self._active_machine_name)
 
     # ------------------------------------------------------------------
     # Compatibility attribute bridge. Each mutable domain has one owner.
@@ -44,11 +41,11 @@ class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime):
 
     @property
     def _following_paused(self) -> bool:
-        return bool(self._follower_session.following_paused)
+        return bool(self._preview_follower_service.following_paused)
 
     @_following_paused.setter
     def _following_paused(self, value: bool) -> None:
-        self._follower_session.following_paused = bool(value)
+        self._preview_follower_service.set_paused(value)
 
     @property
     def _lifecycle_generation(self) -> int:
@@ -545,4 +542,3 @@ class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime):
             self._remote_job_service.reset()
             self._remote_file_service.clear_identity()
             self._client.set_pause_guard(False)
-        self._follower_session.bind_machine(self._active_machine_id, self._active_machine_name)
