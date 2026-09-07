@@ -211,9 +211,20 @@ class CommandTracker:
             elif timestamp - command.issued_at >= command.timeout_s:
                 command.terminal = True
                 command.outcome = "timed_out"
-                command.detail = "Moonraker accepted the command, but the expected printer state was not observed"
+                command.detail = (
+                    "Moonraker accepted the command, but the expected printer state was not observed"
+                    if command.http_accepted else "Moonraker did not acknowledge the command in time"
+                )
                 changed.append(command)
         return changed
+
+    def expire(self, *, now: Optional[float] = None) -> list[CommandAcknowledgement]:
+        """Advance deadlines without treating a cached snapshot as a new observation."""
+        return self.observe("", now=now)
+
+    @property
+    def has_pending(self) -> bool:
+        return any(not command.terminal for command in self._commands.values())
 
     def get(self, name: str) -> Optional[CommandAcknowledgement]:
         return self._commands.get(str(name))
@@ -265,7 +276,11 @@ class MoonrakerSessionState:
 
     def merge_status(self, patch: Dict[str, Any], *, now: Optional[float] = None) -> tuple[Dict[str, Any], list[CommandAcknowledgement]]:
         status = self.snapshot.merge_status(patch, now=now)
-        changed = self.commands.observe(self.snapshot.printer_state, now=now)
+        # Only a fresh print_stats.state can confirm a command. An unrelated
+        # partial patch must not confirm it using an old merged state.
+        stats = patch.get("print_stats") if isinstance(patch, dict) else None
+        state = stats.get("state", "") if isinstance(stats, dict) else ""
+        changed = self.commands.observe(state, now=now)
         return status, changed
 
 
@@ -343,6 +358,7 @@ class MoonrakerSession:
         return True
 
     def reset(self) -> None:
+        self.transport.cancel_all()
         self._state.reset()
 
     def set_pause_guard(self, active: bool) -> bool:

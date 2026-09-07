@@ -9,23 +9,15 @@ PACKAGE = json.loads((ROOT / "package.json").read_text())
 PLUGIN_META = json.loads((PLUGINS / "plugin.json").read_text())
 FOLLOWER_SOURCES = (
     "MoonrakerPrintFollower.py",
-    "FollowerCoordinator.py",
     "FollowerRuntime.py",
-    "FollowerBootstrap.py",
-    "FollowerConfiguration.py",
-    "CuraLifecycleRuntime.py",
-    "CuraViewBridge.py",
-    "CuraFileLifecycle.py",
-    "PreviewFollowerRuntime.py",
-    "PreviewStatus.py",
-    "PreviewEta.py",
-    "PreviewControls.py",
-    "PreviewLoad.py",
-    "PreviewFollowEngine.py",
-    "PathFollowEngine.py",
-    "GCodeIndexRuntime.py",
-    "RemoteFileTransfer.py",
-    "FollowerTransport.py",
+    "PrintCoordinator.py",
+    "PrinterBinding.py",
+    "CuraIntegration.py",
+    "PreviewPresentation.py",
+    "PreviewFollower.py",
+    "RemoteFileService.py",
+    "GCodeIndexService.py",
+    "MoonrakerTransport.py",
 )
 PLUGIN = "\n".join((PLUGINS / name).read_text() for name in FOLLOWER_SOURCES)
 CLIENT = (PLUGINS / "MoonrakerClient.py").read_text()
@@ -80,7 +72,7 @@ class SdkCompatibilityTests(unittest.TestCase):
     def test_cura_5_0_preview_contracts_are_used(self):
         for token in (
             "globalContainerStackChanged",
-            "self._application.readLocalFile",
+            "self.application.readLocalFile",
             'addAdditionalComponent("saveButton"',
             "currentLayerNumChanged",
             "currentPathNumChanged",

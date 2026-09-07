@@ -20,20 +20,9 @@ from plugins.RemoteJobService import RemoteJobService
 
 
 RUNTIME_COMPONENTS = (
-    "FollowerBootstrap.py",
-    "FollowerConfiguration.py",
-    "CuraLifecycleRuntime.py",
-    "CuraViewBridge.py",
-    "CuraFileLifecycle.py",
-    "PreviewFollowerRuntime.py",
-    "PreviewStatus.py",
-    "PreviewEta.py",
-    "PreviewControls.py",
-    "PreviewLoad.py",
-    "PreviewFollowEngine.py",
-    "PathFollowEngine.py",
-    "GCodeIndexRuntime.py",
-    "RemoteFileTransfer.py",
+    "PrinterBinding.py", "CuraIntegration.py", "PreviewFollower.py",
+    "PreviewPresentation.py", "PrintCoordinator.py", "RemoteFileService.py",
+    "GCodeIndexService.py", "PauseController.py", "BedMeshPresenter.py",
 )
 
 
@@ -196,7 +185,7 @@ class V31ArchitectureTests(unittest.TestCase):
     def test_exact_service_boundaries_exist_without_duplicate_wrappers(self):
         required = (
             "RemoteJobService.py", "RemoteFileService.py", "GCodeIndexService.py",
-            "PreviewFollowerService.py", "PauseScheduleService.py", "CuraLifecycleBridge.py",
+            "PreviewFollower.py", "PauseScheduleService.py", "CuraLifecycleBridge.py",
             "MoonrakerSession.py",
         )
         for name in required:
@@ -229,29 +218,21 @@ class V31ArchitectureTests(unittest.TestCase):
 
     def test_public_follower_is_thin_and_coordinator_uses_exact_services(self):
         facade = (PLUGINS / "MoonrakerPrintFollower.py").read_text(encoding="utf-8")
-        coordinator = (PLUGINS / "FollowerCoordinator.py").read_text(encoding="utf-8")
-        transport = (PLUGINS / "FollowerTransport.py").read_text(encoding="utf-8")
-        eta = (PLUGINS / "PreviewEta.py").read_text(encoding="utf-8")
-        load = (PLUGINS / "PreviewLoad.py").read_text(encoding="utf-8")
-        follow = (PLUGINS / "PreviewFollowEngine.py").read_text(encoding="utf-8")
-        self.assertLess(len(facade.splitlines()), 20)
-        self.assertIn("class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime)", coordinator)
+        root = (PLUGINS / "FollowerRuntime.py").read_text(encoding="utf-8")
+        coordinator = (PLUGINS / "PrintCoordinator.py").read_text(encoding="utf-8")
+        self.assertLess(len(facade.splitlines()), 70)
+        self.assertIn("class MoonrakerPrintFollower(QObject, Extension)", facade)
         for token in (
-            "RemoteJobService", "RemoteFileService", "GCodeIndexService",
-            "PreviewFollowerService", "PauseScheduleService", "CuraLifecycleBridge",
+            "RemoteFileService", "GCodeIndexService", "PreviewFollower", "PauseController", "CuraIntegration",
         ):
-            self.assertIn(token, coordinator)
-        self.assertIn("_ensure_remote_metadata", transport)
-        self.assertIn("_begin_gcode_download", transport)
-        self.assertIn("_send_scheduled_pause", transport)
-        self.assertIn("_update_selected_layer_eta", eta)
-        self.assertIn("_load_cached_remote_gcode_forced", load)
-        self.assertIn("self._preview_follower_service.apply_layer_decision", follow)
+            self.assertIn(token, root)
+        self.assertIn("RemoteJobService", coordinator)
+        self.assertNotIn("Mixin", root)
 
     def test_monitor_core_and_peripheral_json_use_shared_transport(self):
         client = (PLUGINS / "MoonrakerClient.py").read_text(encoding="utf-8")
         session = (PLUGINS / "MoonrakerSession.py").read_text(encoding="utf-8")
-        monitor = (PLUGINS / "MoonrakerMonitorModel.py").read_text(encoding="utf-8")
+        monitor = (PLUGINS / "MonitorData.py").read_text(encoding="utf-8")
         transport = (PLUGINS / "MoonrakerTransport.py").read_text(encoding="utf-8")
         self.assertIn("MoonrakerSession", client)
         self.assertIn("self._session.transport.send_json", client)
@@ -266,14 +247,14 @@ class V31ArchitectureTests(unittest.TestCase):
         self.assertNotIn("websocket", client.lower())
 
     def test_output_and_follower_reuse_shared_transport(self):
-        output = (PLUGINS / "MoonrakerOutputDevice.py").read_text(encoding="utf-8")
-        follower_transport = (PLUGINS / "FollowerTransport.py").read_text(encoding="utf-8")
+        output = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")
+        follower_transport = (PLUGINS / "RemoteFileService.py").read_text(encoding="utf-8")
         self.assertIn("transport.send_json", output)
         self.assertIn("transport.network.post", output)
         self.assertNotIn("QNetworkAccessManager", output)
-        self.assertIn("self._client.transport.send_json", follower_transport)
-        self.assertIn("self._client.transport.request", follower_transport)
-        self.assertIn("self._client.transport.network.get", follower_transport)
+        self.assertIn("self._transport.send_json", follower_transport)
+        self.assertIn("self._transport.request", follower_transport)
+        self.assertIn("self._transport.network.get", follower_transport)
 
     def test_connection_probe_reuses_transport_implementation_but_is_isolated(self):
         action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
@@ -291,10 +272,11 @@ class V31ArchitectureTests(unittest.TestCase):
             self.assertIn(token, source)
 
     def test_output_reuses_shared_readiness(self):
-        source = (PLUGINS / "MoonrakerOutputDevice.py").read_text(encoding="utf-8")
-        self.assertIn("_shared_client_ready", source)
-        self.assertIn("self._upload_now()", source)
-        self.assertNotIn("super()._wait_for_ready()", source)
+        source = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")
+        self.assertIn("self._client.connected", source)
+        self.assertIn("self._upload()", source)
+        self.assertNotIn("getvalue()", source)
+        self.assertIn("part.setBodyDevice(file)", source)
 
 
 if __name__ == "__main__":

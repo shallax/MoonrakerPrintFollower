@@ -1,169 +1,178 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 import threading
-from typing import Dict, Optional, Set, Tuple
+from types import MappingProxyType
 
-from .GCodeIndex import LayerMotionIndex
+from PyQt6.QtCore import QObject, pyqtSignal
 
-
-JobKey = Tuple[str, int, int]
-
-
-@dataclass
-class GCodeIndexState:
-    generation: int = 0
-    filename: Optional[str] = None
-    job_key: Optional[JobKey] = None
-    ranges: list = field(default_factory=list)
-    motion_offsets: list = field(default_factory=list)
-    current_layer_map: Dict[int, int] = field(default_factory=dict)
-    data: Optional[LayerMotionIndex] = None
-    build_filename: Optional[str] = None
-    build_job_key: Optional[JobKey] = None
-    cancel_event: Optional[threading.Event] = None
-    thread: Optional[threading.Thread] = None
-    hydrating_layers: Set[int] = field(default_factory=set)
-    hydration_threads: Set[threading.Thread] = field(default_factory=set)
+from .GCodeIndex import LayerMotionIndex, build_index_from_file, hydrate_layer_from_file
 
 
-class GCodeIndexService:
-    """Own active G-code index, build and hydration lifecycle state."""
-
-    def __init__(self) -> None:
-        self._state = GCodeIndexState()
+@dataclass(frozen=True)
+class IndexView:
+    """Read-only query capability, never mutable arrays or worker state."""
+    job_key: tuple
+    _index: LayerMotionIndex
 
     @property
-    def generation(self) -> int:
-        return self._state.generation
+    def ranges(self): return tuple(self._index.ranges)
+    @property
+    def current_layer_map(self): return MappingProxyType(self._index.current_layer_map)
+    @property
+    def elapsed_times(self): return tuple(self._index.layer_elapsed_times)
+    @property
+    def compact(self): return self._index.compact
+
+    def hydrated(self, layer):
+        return not self.compact or layer in self._index.hydrated_layers
+
+    def fraction(self, layer, position, live, minimum=None):
+        return self._index.refined_fraction(layer, position, live, minimum_fraction=minimum)
+
+    def layer_at(self, position):
+        low, high = 0, len(self._index.ranges) - 1
+        while low <= high:
+            middle = (low + high) // 2
+            start, end = self._index.ranges[middle]
+            if position < start: high = middle - 1
+            elif position >= end: low = middle + 1
+            else: return middle
+        return min(low - 1, len(self._index.ranges) - 1) if low else None
+
+
+class GCodeIndexService(QObject):
+    """Own index lifecycle with at most ONE submitted worker job, no work queue.
+
+    Requests coalesce into desired state; replacement waits asynchronously for
+    the old worker. Cache restore/build/hydration/save all run off the UI thread.
+    """
+    changed = pyqtSignal()
+    failed = pyqtSignal(str)
+    _completed = pyqtSignal(int, str, object, object, object)
+
+    def __init__(self, files, cache, parent=None):
+        super().__init__(parent)
+        self._files, self._cache = files, cache
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="MoonrakerIndex")
+        self._generation = 0
+        self._job = None
+        self._view = None
+        self._cancel = threading.Event()
+        self._busy = ""
+        self._wanted = self._restored = self._save = False
+        self._hydrate = set()
+        self._closed = False
+        self._error = ""
+        self._completed.connect(self._finish)
+        files.changed.connect(self._advance)
 
     @property
-    def filename(self) -> Optional[str]:
-        return self._state.filename
-
+    def view(self): return self._view
     @property
-    def job_key(self) -> Optional[JobKey]:
-        return self._state.job_key
-
+    def generation(self): return self._generation
     @property
-    def ranges(self):
-        return self._state.ranges
+    def phase(self):
+        if self._error: return "error"
+        if self._busy in {"build", "restore"}: return "indexing"
+        return "ready" if self._view else "idle"
 
-    @property
-    def motion_offsets(self):
-        return self._state.motion_offsets
+    def bind(self, job_key):
+        if self._job == job_key: return
+        self._generation += 1
+        self._cancel.set()
+        self._cancel = threading.Event()
+        self._job, self._view = job_key, None
+        self._wanted = self._restored = self._save = False
+        self._hydrate.clear()
+        self._error = ""
+        # Keep _busy until the submitted worker actually completes. No new task
+        # is submitted while a stale job is still executing.
+        self.changed.emit()
 
-    @property
-    def current_layer_map(self):
-        return self._state.current_layer_map
+    def request(self):
+        self._wanted = True
+        self._advance()
 
-    @property
-    def data(self) -> Optional[LayerMotionIndex]:
-        return self._state.data
+    def request_hydration(self, layer):
+        view = self._view
+        if view is not None and 0 <= layer < len(view.ranges) and not view.hydrated(layer):
+            # Only the current and next layer are useful; never grow a work queue.
+            self._hydrate = {int(layer), int(layer) + 1}
+            self._advance()
 
-    @property
-    def build_filename(self) -> Optional[str]:
-        return self._state.build_filename
+    def _advance(self):
+        if self._closed or self._busy or not self._job or not self._wanted or self._error:
+            return
+        if self._files.job_key != self._job: return
+        identity = self._files.identity
+        if identity is None:
+            self._files.request_metadata()
+            return
+        strong = bool(identity.uuid or identity.modified > 0)
+        if not self._restored and strong:
+            self._restored = True
+            self._submit("restore", lambda: self._cache.load(identity))
+            return
+        self._restored = True
+        if self._view is None:
+            lease = self._files.lease()
+            if lease is None:
+                self._files.request_file()
+                return
+            cancel = self._cancel
+            self._submit("build", lambda: build_index_from_file(lease.path, cancel), lease)
+            return
+        self._hydrate = {n for n in self._hydrate if n < len(self._view.ranges) and not self._view.hydrated(n)}
+        if self._hydrate:
+            lease = self._files.lease()
+            if lease is None:
+                self._files.request_file()
+                return
+            layer = min(self._hydrate)
+            self._hydrate.remove(layer)
+            index = self._view._index
+            self._submit("hydrate", lambda: hydrate_layer_from_file(index, lease.path, layer), lease)
+        elif self._save and strong:
+            self._save = False
+            index = self._view._index
+            self._submit("save", lambda: self._cache.save(identity, index))
 
-    @property
-    def build_job_key(self) -> Optional[JobKey]:
-        return self._state.build_job_key
+    def _submit(self, kind, work, lease=None):
+        generation = self._generation
+        self._busy = kind
+        future = self._executor.submit(work)
+        def done(result):
+            try: value, error = result.result(), None
+            except Exception as exc: value, error = None, str(exc)
+            try:
+                self._completed.emit(generation, kind, value, error, lease)
+            except RuntimeError:
+                if lease is not None: lease.close()  # Qt owner destroyed at shutdown.
+        future.add_done_callback(done)
+        self.changed.emit()
 
-    @property
-    def thread(self) -> Optional[threading.Thread]:
-        return self._state.thread
+    def _finish(self, generation, kind, value, error, lease):
+        if lease is not None: lease.close()
+        self._busy = ""
+        if self._closed: return
+        if generation == self._generation:
+            if kind in {"build", "restore"}:
+                if isinstance(value, LayerMotionIndex) and value:
+                    self._view = IndexView(self._job, value)
+                    self._save = kind == "build"
+                elif kind == "build":
+                    self._error = error or "Remote G-code contains no supported layer markers"
+                    self.failed.emit(self._error)
+            elif kind == "hydrate" and value:
+                self._save = True
+            self.changed.emit()
+        self._advance()
 
-    @property
-    def hydrating_layers(self) -> frozenset[int]:
-        return frozenset(self._state.hydrating_layers)
-
-    @property
-    def hydration_threads(self) -> frozenset[threading.Thread]:
-        return frozenset(self._state.hydration_threads)
-
-    def invalidate_build(self) -> int:
-        event = self._state.cancel_event
-        if event is not None:
-            event.set()
-        self._state.cancel_event = None
-        self._state.generation += 1
-        self._state.build_filename = None
-        self._state.build_job_key = None
-        return self._state.generation
-
-    def clear_index(self) -> None:
-        self._state.filename = None
-        self._state.job_key = None
-        self._state.ranges = []
-        self._state.motion_offsets = []
-        self._state.current_layer_map = {}
-        self._state.data = None
-        self._state.hydrating_layers.clear()
-
-    def install(
-        self,
-        filename: str,
-        index: LayerMotionIndex,
-        job_key: Optional[JobKey],
-    ) -> bool:
-        if not index:
-            return False
-        self._state.filename = str(filename)
-        self._state.job_key = job_key
-        self._state.data = index
-        self._state.ranges = list(index.ranges)
-        self._state.motion_offsets = list(index.motion_offsets)
-        self._state.current_layer_map = dict(index.current_layer_map)
-        return True
-
-    def update_motion_offsets(self, index: LayerMotionIndex) -> None:
-        if index is self._state.data:
-            self._state.motion_offsets = list(index.motion_offsets)
-
-    def begin_build(
-        self,
-        filename: str,
-        job_key: Optional[JobKey],
-        cancel_event: threading.Event,
-        thread: threading.Thread,
-    ) -> int:
-        self._state.cancel_event = cancel_event
-        self._state.thread = thread
-        self._state.build_filename = str(filename)
-        self._state.build_job_key = job_key
-        return self._state.generation
-
-    def finish_build(self) -> None:
-        self._state.build_filename = None
-        self._state.build_job_key = None
-        self._state.cancel_event = None
-        self._state.thread = None
-
-    def clear_finished_thread(self, thread: Optional[threading.Thread]) -> None:
-        if thread is not None and self._state.thread is thread and not thread.is_alive():
-            self._state.thread = None
-
-    def begin_hydration(self, layer: int) -> bool:
-        layer = int(layer)
-        if layer in self._state.hydrating_layers:
-            return False
-        self._state.hydrating_layers.add(layer)
-        return True
-
-    def finish_hydration(self, layer: int) -> None:
-        self._state.hydrating_layers.discard(int(layer))
-        self._state.hydration_threads = {
-            thread for thread in self._state.hydration_threads if thread.is_alive()
-        }
-
-    def add_hydration_thread(self, thread: threading.Thread) -> None:
-        self._state.hydration_threads = {
-            item for item in self._state.hydration_threads if item.is_alive()
-        }
-        self._state.hydration_threads.add(thread)
-
-    def clear_hydrations(self) -> None:
-        self._state.hydrating_layers.clear()
-
-    def clear_hydration_threads(self) -> None:
-        self._state.hydration_threads.clear()
+    def close(self):
+        if self._closed: return
+        self._closed = True
+        self._generation += 1
+        self._cancel.set()
+        self._executor.shutdown(wait=False, cancel_futures=True)

@@ -52,17 +52,15 @@ class V31RaceGuardTests(unittest.TestCase):
         self.assertFalse(session.pause_guard)
 
     def test_active_machine_switch_resets_session_before_new_binding(self):
-        source = (PLUGINS / "FollowerConfiguration.py").read_text(encoding="utf-8")
-        start = source.index("def _on_active_machine_changed")
-        end = source.index("def _active_printer_is_configured_for_following", start)
+        source = (PLUGINS / "PrinterBinding.py").read_text(encoding="utf-8")
+        start = source.index("def _machine_changed")
+        end = source.index("def _apply", start)
         switch = source[start:end]
 
-        stop_pos = switch.index("self._client.stop()")
-        invalidate_pos = switch.index('self._invalidate_lifecycle("active Cura printer changed")')
-        assign_pos = switch.index("self._active_machine_id = machine_id")
-        apply_pos = switch.index("self._apply_timer_state()")
+        invalidate_pos = switch.index("self._client.stop()")
+        assign_pos = switch.index("self._machine_id, self._machine_name = machine_id, name")
+        apply_pos = switch.index("self._apply()")
 
-        self.assertLess(stop_pos, invalidate_pos)
         self.assertLess(invalidate_pos, assign_pos)
         self.assertLess(assign_pos, apply_pos)
 
@@ -71,46 +69,14 @@ class V31RaceGuardTests(unittest.TestCase):
         self.assertIn("if reset_session:\n            self._session.reset()", client)
 
     def test_specialised_follower_replies_validate_lifecycle_and_job_identity(self):
-        transport = (PLUGINS / "FollowerTransport.py").read_text(encoding="utf-8")
-        transfer = (PLUGINS / "RemoteFileTransfer.py").read_text(encoding="utf-8")
-
-        self.assertIn(
-            "reply_generation != self._cura_lifecycle_bridge.generation",
-            transport,
-        )
-        self.assertIn("reply_job_key != current_job", transport)
-        self.assertIn(
-            "reply_generation != self._cura_lifecycle_bridge.generation",
-            transfer,
-        )
-        self.assertIn("reply_job_key != self._remote_job_service.key", transfer)
-        self.assertIn(
-            "request_generation != self._scheduled_pause_request_generation",
-            transport,
-        )
-        self.assertIn(
-            "lifecycle_generation != self._cura_lifecycle_bridge.generation",
-            transport,
-        )
-        self.assertIn("job_key != self._remote_job_service.key", transport)
-        for legacy_alias in (
-            "self._lifecycle_generation",
-            "self._remote_job_key",
-            "self._remote_file_identity",
-            "self._metadata_job_key",
-            "self._following_paused",
-        ):
-            self.assertNotIn(legacy_alias, transport)
-        for legacy_alias in (
-            "self._lifecycle_generation",
-            "self._remote_job_key",
-            "self._remote_file_identity",
-            "self._force_load_requested",
-            "self._force_load_pending_filename",
-            "self._cura_load_in_progress",
-            "self._cura_load_path",
-        ):
-            self.assertNotIn(legacy_alias, transfer)
+        files = (PLUGINS / "RemoteFileService.py").read_text()
+        pause = (PLUGINS / "PauseController.py").read_text()
+        upload = (PLUGINS / "UploadController.py").read_text()
+        for source in (files, pause):
+            self.assertIn("generation != self._generation", source)
+            self.assertIn("job != self._job", source)
+        self.assertIn("self._session == self._client.session.generation", upload)
+        self.assertIn("self._machine_id == self._active_identity()[0]", upload)
 
 
 if __name__ == "__main__":
