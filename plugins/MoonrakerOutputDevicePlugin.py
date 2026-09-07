@@ -129,6 +129,19 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 return
 
             device = self._devices.get(machine_id)
+            if device is None:
+                device = MoonrakerOutputDevice(self._application, machine_id,
+                    client=self._follower.client,
+                    config=self._follower.current_printer_config,
+                    apply_config=self._follower.apply_printer_config,
+                    active_identity=self._follower.current_printer_identity)
+                self._devices[machine_id] = device
+            else:
+                device.updateConfig(config)
+
+            # The transition must be computed after the incoming device is
+            # resolved: at startup both _current and device are None before
+            # this point, and the registration below must still fire.
             transition = self._current is not device
             if transition and self._current is not None:
                 # Deactivate the outgoing instance before the incoming Monitor
@@ -140,16 +153,6 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                     self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
                 except Exception:
                     pass
-
-            if device is None:
-                device = MoonrakerOutputDevice(self._application, machine_id,
-                    client=self._follower.client,
-                    config=self._follower.current_printer_config,
-                    apply_config=self._follower.apply_printer_config,
-                    active_identity=self._follower.current_printer_identity)
-                self._devices[machine_id] = device
-            else:
-                device.updateConfig(config)
 
             self._install_monitor(device, stack)
             self._current = device

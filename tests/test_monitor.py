@@ -381,6 +381,18 @@ class MonitorQtTests(unittest.TestCase):
         }
         client._handle_http_status({"result": {"status": status}}, None, client._generation)
 
+    def test_monitor_device_is_registered_with_output_manager(self):
+        # The Monitor stage shows Cura's "connect the printer" placeholder when
+        # no output device is registered; refresh() must register the incoming
+        # device with the output-device manager on every transition, including
+        # the very first one at startup.
+        output = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(self.app, self.follower)
+        output.start()
+        self.addCleanup(output.stop)
+        manager = output.getOutputDeviceManager()
+        self.assertIsNotNone(output._current)
+        manager.addOutputDevice.assert_called_once_with(output._current)
+
     def test_regrabbing_slider_keeps_last_released_value_until_next_release(self):
         model = self.monitor()
         self.deliver()

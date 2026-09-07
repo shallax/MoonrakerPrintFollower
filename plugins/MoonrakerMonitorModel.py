@@ -177,7 +177,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot()
     def refreshAll(self): self._data.refresh_all()
     @pyqtSlot()
-    @pyqtSlot()
     def refreshWebcams(self): self._data.refresh_webcams()
     @pyqtSlot(object)
     def updateMoonrakerStatus(self, status): self._data.observe(status)
