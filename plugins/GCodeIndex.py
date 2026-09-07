@@ -36,6 +36,10 @@ _AXIS = re.compile(rb"([XYZ])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
 _CACHE_MAGIC = b"MPFI110\0"
 _CACHE_VERSION = 3
 _LARGE_FILE_COMPACT_THRESHOLD = 128 * 1024 * 1024
+# How far below the monotonic floor the refinement search may start, in
+# motions. Generous enough to cover a parser-chunk lead and any earlier
+# floor overshoot; the monotonic clamp is applied to the result.
+FLOOR_LOOKBACK = 256
 
 
 @dataclass
@@ -132,10 +136,12 @@ class LayerMotionIndex:
         lo = max(0, coarse_completed - max(1, int(lag_window)) - 1)
         if floor_fraction is not None:
             # Live XYZ can match more than one place on a closed/repeated toolpath.
-            # Once a layer has visibly progressed, never search behind that point;
-            # otherwise a later visit to the same XY can make Preview rewind.
+            # The monotonic clamp is applied to the *result* below, which is what
+            # prevents rewind; the search may dip a bounded distance below the
+            # floor so an inflated floor sample can never exclude the true
+            # segment (which previously cascaded into permanent coarse fallback).
             floor_completed = max(0, min(n, int(math.floor(floor_fraction * n))))
-            lo = max(lo, max(0, floor_completed - 1))
+            lo = max(lo, max(0, floor_completed - FLOOR_LOOKBACK - 1))
         hi = min(n - 1, coarse_completed + max(0, int(ahead_window)))
         if hi < lo:
             return with_floor(base_fraction, base_method)
@@ -170,6 +176,12 @@ class LayerMotionIndex:
                 best_completed = i + t
 
         if best_completed is None or math.sqrt(best_distance_sq) > max(0.1, max_distance_mm):
+            # The live position is off-model (Z-lift, off-path movement) or
+            # ambiguous. Hold the last refined value instead of jumping to the
+            # parser-position fraction, which sits ahead of the nozzle and
+            # inflates the monotonic floor into a cm-apart staircase.
+            if floor_fraction is not None:
+                return floor_fraction, "held (refined unavailable)"
             return with_floor(base_fraction, base_method)
 
         refined = max(0.0, min(1.0, float(best_completed) / n))

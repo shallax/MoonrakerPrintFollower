@@ -167,7 +167,9 @@ G1 X5 Y0 Z0.2
             minimum_fraction=0.6,
         )
         self.assertGreaterEqual(stable, 0.6)
-        self.assertEqual(method, "live position")
+        # The search may dip below the floor (bounded lookback); the
+        # monotonic clamp then labels the result honestly.
+        self.assertTrue(method.startswith("live position"))
 
     def test_refined_fraction_never_drops_below_visible_progress_floor(self):
         data = b";LAYER:0\nG1 X1 Y0 Z0.2\nG1 X2 Y0 Z0.2\nG1 X3 Y0 Z0.2\n"

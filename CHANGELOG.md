@@ -9,10 +9,14 @@ quality.
 
 ### Highlights
 - Smooths the Preview path head: the displayed position glides along the
-  toolpath at the observed physical velocity with a bounded one-poll
-  lookahead (observations are stale samples), never gets far ahead of
-  reality and never snaps back within a layer. Layer transitions are
-  jumped, not animated.
+  toolpath at the observed physical velocity, never gets ahead of the
+  newest observation and never snaps back within a layer. Layer
+  transitions are jumped, not animated.
+- Fixes the physical observation itself for slow moves: the refinement
+  search window is widened past Klipper's parser-chunk lead and the
+  ambiguity fallback holds the last good value instead of jumping to the
+  parser-position fraction, so the observed progress is a smooth
+  sub-segment signal rather than a cm-apart staircase.
 - The smoothing is display-only: the physical path fraction used for ETA is
   unchanged, and animated writes re-remember the plugin-written position so
   manual-override detection is unaffected.
