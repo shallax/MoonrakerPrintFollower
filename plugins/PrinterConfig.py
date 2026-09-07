@@ -2,7 +2,25 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
+from math import isfinite
 from typing import Any, Dict, List, Optional, Tuple
+
+
+def normalise_url(value: Any) -> str:
+    """Canonical Moonraker base URL: scheme required, no trailing slash.
+
+    Scheme-only input (``http:``, ``https://``, …) is the unconfigured
+    placeholder and maps to ``http://``; ``usable_url`` rejects it.
+    """
+    text = str(value or "").strip()
+    if not text or text.lower() in ("http:", "https:", "http://", "https://"):
+        return "http://"
+    if not text.lower().startswith(("http://", "https://")):
+        text = f"http://{text}"
+    # rstrip("/") would eat the scheme's own "//"; only strip path separators.
+    while text.endswith("/") and not text.endswith("://"):
+        text = text[:-1]
+    return text
 
 
 @dataclass
@@ -43,6 +61,11 @@ class PrinterConfig:
     camera_mirror: bool = False
     camera_selected: str = ""
 
+    @property
+    def frontend_target(self) -> str:
+        """The URL a browser should open: the dedicated frontend when set, else the printer."""
+        return self.frontend_url or self.url
+
     @classmethod
     def from_dict(cls, value: Any) -> "PrinterConfig":
         raw = value if isinstance(value, dict) else {}
@@ -52,11 +75,14 @@ class PrinterConfig:
             data[key] = raw.get(key, getattr(defaults, key))
 
         try:
-            data["poll_interval_ms"] = max(1, int(data["poll_interval_ms"]))
+            data["poll_interval_ms"] = max(1, min(3_600_000, int(data["poll_interval_ms"])))
         except (TypeError, ValueError):
             data["poll_interval_ms"] = defaults.poll_interval_ms
         try:
-            data["z_tolerance"] = float(data["z_tolerance"])
+            tolerance = float(data["z_tolerance"])
+            if not isfinite(tolerance) or not (0.005 <= tolerance <= 0.250):
+                tolerance = defaults.z_tolerance
+            data["z_tolerance"] = tolerance
         except (TypeError, ValueError):
             data["z_tolerance"] = defaults.z_tolerance
         try:
@@ -71,8 +97,10 @@ class PrinterConfig:
             rotation = defaults.camera_rotation
         data["camera_rotation"] = rotation if rotation in {0, 90, 180, 270} else 0
 
+        data["url"] = normalise_url(data.get("url"))
+
         for key in (
-            "url", "api_key", "follow_mode", "frontend_url", "output_format",
+            "api_key", "follow_mode", "frontend_url", "output_format",
             "upload_path", "power_devices", "filename_translate_input",
             "filename_translate_output", "filename_translate_remove", "camera_url", "camera_selected",
         ):
@@ -242,7 +270,8 @@ class PrinterConfigStore:
             current = PrinterConfig.from_dict(data.get(key))
             merged = asdict(current)
 
-            legacy_url = str(legacy.get("url") or "").strip().rstrip("/")
+            legacy_raw = str(legacy.get("url") or "").strip()
+            legacy_url = normalise_url(legacy_raw) if legacy_raw else ""
             if legacy_url and current.url.strip() in ("", "http://", "https://"):
                 merged["url"] = legacy_url
             legacy_api_key = str(legacy.get("api_key") or "").strip()

@@ -23,6 +23,47 @@ def friendly(name):
     return name.split(" ", 1)[-1].replace("_", " ").strip().capitalize()
 
 
+# One classification policy for Klipper printer objects. MonitorData uses it
+# to decide what to query; the controllers and formatting use it to decide
+# what to project. Adding a new object family means editing these tables only.
+FAN_OBJECT_PREFIXES = ("fan_generic ", "heater_fan ", "controller_fan ", "temperature_fan ")
+LED_OBJECT_PREFIXES = ("neopixel ", "dotstar ", "led ", "pca9533 ", "pca9632 ")
+PWM_OBJECT_PREFIXES = ("output_pin ",)
+TEMPERATURE_OBJECT_PREFIXES = ("heater_generic ", "temperature_", "bme280 ", "htu21d ", "sht3x ", "lm75 ")
+FILAMENT_OBJECT_PREFIXES = ("filament_switch_sensor ", "filament_motion_sensor ")
+MCU_OBJECT_PREFIXES = ("mcu ",)
+
+_SYSTEM_OBJECTS = {"heater_bed", "fan", "exclude_object", "system_stats", "webhooks", "mcu",
+                   "configfile", "toolhead", "quad_gantry_level", "bed_mesh"}
+
+
+def object_kind(name):
+    """Classify a Klipper printer object into one shared projection kind."""
+    lower = str(name or "").lower()
+    if lower in _SYSTEM_OBJECTS or re.fullmatch(r"extruder\d*", lower):
+        return "system"
+    if lower.startswith("gcode_macro "):
+        return "macro"
+    if lower.startswith(FAN_OBJECT_PREFIXES):
+        return "fan"
+    if lower.startswith(LED_OBJECT_PREFIXES):
+        return "led"
+    if lower.startswith(PWM_OBJECT_PREFIXES):
+        return "pwm"
+    if lower.startswith(TEMPERATURE_OBJECT_PREFIXES):
+        return "temperature"
+    if lower.startswith(FILAMENT_OBJECT_PREFIXES):
+        return "filament"
+    if lower.startswith(MCU_OBJECT_PREFIXES):
+        return "mcu"
+    return ""
+
+
+def wanted_object(name):
+    """Whether MonitorData should query this object's auxiliary state."""
+    return object_kind(name) in {"system", "fan", "led", "pwm", "temperature", "filament", "mcu"}
+
+
 def duration(seconds):
     hours, rest = divmod(max(0, int(round(number(seconds)))), 3600)
     minutes, seconds = divmod(rest, 60)
@@ -97,14 +138,14 @@ def peripheral_values(snapshot):
                 detail = f"{temperature:.1f} °C" + (f"  → {target:.0f} °C" if target is not None else "") + (f"  · {power * 100:.0f}%" if power is not None else "")
                 temperatures.append({"name": label, "temperature": temperature, "target": target if target is not None else -1, "power": power if power is not None else -1, "detail": detail})
                 if cpu is None and (lower.startswith("temperature_host ") or "cpu" in lower or "rpi" in lower): cpu = temperature
-        if "speed" in value and (lower == "fan" or lower.startswith(("fan_generic ", "heater_fan ", "controller_fan ", "temperature_fan "))):
+        if "speed" in value and (lower == "fan" or lower.startswith(FAN_OBJECT_PREFIXES)):
             speed = max(0, min(1, number(value.get("speed"))))
             detail = f"{speed * 100:.0f}%" + (f"  · {int(number(value['rpm'])):,} RPM" if value.get("rpm") is not None else "")
             fans.append({"name": label, "speed": speed, "detail": detail})
-        if lower.startswith(("filament_switch_sensor ", "filament_motion_sensor ")):
+        if lower.startswith(FILAMENT_OBJECT_PREFIXES):
             detected, enabled = bool(value.get("filament_detected")), bool(value.get("enabled", True))
             filament.append({"name": label, "detected": detected, "enabled": enabled, "state": "Disabled" if not enabled else "Filament detected" if detected else "Runout / not detected"})
-        if lower == "mcu" or lower.startswith("mcu "):
+        if lower == "mcu" or lower.startswith(MCU_OBJECT_PREFIXES):
             stats = parse_mcu_stats(value.get("last_stats"))
             frequency = stats.get("freq") or number((value.get("mcu_constants") or {}).get("CLOCK_FREQ"), None)
             memory = next((number(value[key], None) for key in ("memory_free", "memavail", "free_memory", "memory") if value.get(key) is not None), None)

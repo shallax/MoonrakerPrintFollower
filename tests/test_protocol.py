@@ -1,6 +1,7 @@
 import unittest
 
 from plugins.MoonrakerProtocol import (
+    RemoteFileIdentity,
     download_endpoint,
     live_position_in_gcode_space,
     metadata_endpoint,
@@ -18,6 +19,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("gcode_move", url)
         self.assertIn("virtual_sdcard", url)
         self.assertIn("motion_report", url)
+        self.assertIn("bed_mesh", url)
 
     def test_capability_probe_endpoints(self):
         self.assertEqual(server_info_endpoint("http://printer.example.invalid:7125/"), "http://printer.example.invalid:7125/server/info")
@@ -58,6 +60,26 @@ class ProtocolTests(unittest.TestCase):
     def test_invalid_live_position_returns_none(self):
         self.assertIsNone(live_position_in_gcode_space({}, {}))
         self.assertIsNone(live_position_in_gcode_space({"live_position": [1]}, {}))
+
+
+class FileIdentityTests(unittest.TestCase):
+    def test_remote_identity_prefers_uuid(self):
+        a = RemoteFileIdentity("same.gcode", 100, 1.0, "abc")
+        b = RemoteFileIdentity("same.gcode", 100, 999.0, "abc")
+        self.assertEqual(a.stable_key(), b.stable_key())
+        self.assertEqual(a.stable_key(), "uuid:abc")
+
+    def test_remote_identity_fallback_distinguishes_modified(self):
+        a = RemoteFileIdentity("same.gcode", 100, 1.0, "")
+        b = RemoteFileIdentity("same.gcode", 100, 2.0, "")
+        self.assertNotEqual(a.stable_key(), b.stable_key())
+
+    def test_remote_identity_job_match_allows_unknown_size(self):
+        identity = RemoteFileIdentity("a.gcode", 100, 1.0, "")
+        self.assertTrue(identity.matches_job("a.gcode", 100))
+        self.assertTrue(identity.matches_job("a.gcode", 0))
+        self.assertFalse(identity.matches_job("a.gcode", 101))
+        self.assertFalse(identity.matches_job("b.gcode", 100))
 
 
 if __name__ == "__main__":

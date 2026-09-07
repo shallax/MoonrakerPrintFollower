@@ -5,7 +5,10 @@ from copy import deepcopy
 import shlex
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from .MonitorFormatting import friendly, infer_macro_parameters, number, mesh_profiles, parse_bed_mesh
+from .MonitorFormatting import (
+    FAN_OBJECT_PREFIXES, LED_OBJECT_PREFIXES, PWM_OBJECT_PREFIXES,
+    friendly, infer_macro_parameters, number, mesh_profiles,
+)
 
 
 class MonitorControls(QObject):
@@ -58,10 +61,10 @@ class MonitorControls(QObject):
         for name, value in sorted(aux.items()):
             if not isinstance(value, Mapping): continue
             lower = name.lower()
-            if lower == "fan" or lower.startswith("fan_generic "):
+            if lower == "fan" or lower.startswith(FAN_OBJECT_PREFIXES):
                 actual = round(max(0, min(1, number(value.get("speed")))) * 100)
                 fans.append({"object": name, "name": friendly(name), "percent": self._display("fan:" + name, actual)})
-            if lower.startswith(("neopixel ", "dotstar ", "led ", "pca9533 ", "pca9632 ")):
+            if lower.startswith(LED_OBJECT_PREFIXES):
                 colors = [[max(0, min(1, number(c))) for c in raw[:4]] for raw in value.get("color_data", ()) if isinstance(raw, (tuple, list))]
                 if not colors: continue
                 brightness = max(max(color, default=0) for color in colors)
@@ -75,7 +78,7 @@ class MonitorControls(QObject):
                 leds.append({"object": name, "name": friendly(name), "percent": self._display("led-brightness:" + name, round(brightness * 100)),
                     "redPercent": color[0], "greenPercent": color[1], "bluePercent": color[2], "whitePercent": color[3],
                     "hasWhite": "white_pin" in section or "W" in str(section.get("color_order") or "").upper()})
-            if lower.startswith("output_pin "):
+            if lower.startswith(PWM_OBJECT_PREFIXES):
                 section = self.section(config, name)
                 if str(section.get("pwm") or "").lower() not in {"1", "true", "yes", "on"} or value.get("value") is None: continue
                 scale = number(section.get("scale"), 1)
@@ -94,7 +97,6 @@ class MonitorControls(QObject):
         setup = self._commands.setup_allowed
         objects = {name.lower() for name in snapshot.objects}
         profiles = mesh_profiles(aux.get("bed_mesh"))
-        if self._data.active: self._mesh.update(parse_bed_mesh(aux.get("bed_mesh")))
         self._values = {
             "macroNames": list(self._macros), "hasQuadGantryLevel": "quad_gantry_level" in objects,
             "hasBedMesh": "bed_mesh" in objects, "canRunSetup": setup,

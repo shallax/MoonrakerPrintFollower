@@ -1,9 +1,17 @@
 """Cross-domain orchestration with explicit dependencies; not a shared state bag."""
 from __future__ import annotations
 
-from copy import deepcopy
 from PyQt6.QtCore import QObject
 
+from .MonitorFormatting import parse_bed_mesh
+from .PreviewFormatting import (
+    pause_can_toggle,
+    pause_eta,
+    pause_summary,
+    pause_unavailable,
+    status_icon,
+    status_text,
+)
 from .PrintState import LayerResolver, PrintSnapshot
 from .RemoteJobService import RemoteJobService
 
@@ -50,7 +58,8 @@ class PrintCoordinator(QObject):
         if self._closed or not isinstance(status, dict): return
         self._processing = True
         try:
-            self._status = deepcopy(status)
+            # The session boundary already publishes a fully detached copy.
+            self._status = status
             stats = status.get("print_stats")
             sd = status.get("virtual_sdcard")
             stats, sd = stats if isinstance(stats, dict) else {}, sd if isinstance(sd, dict) else {}
@@ -89,7 +98,11 @@ class PrintCoordinator(QObject):
             except (TypeError, ValueError):
                 estimate = 0
             self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
-                estimate if estimate > 0 else None, self._files.identity is not None)
+                estimate if estimate > 0 else None, self._files.metadata_complete)
+            # The coordinator owns the mesh observation; the Monitor reads the
+            # presenter's snapshot but never writes it. The presenter's
+            # fingerprint guard makes the per-poll update cheap.
+            self._bed_mesh.update(parse_bed_mesh(self._status.get("bed_mesh")))
             self._cura.watch(config.enabled)
             if self._snapshot.active:
                 self._files.request_metadata()
@@ -201,34 +214,32 @@ class PrintCoordinator(QObject):
         selected, current, total = self._cura.selected_layer, snapshot.layer.index, snapshot.layer.total
         if total is None and self._cura.max_layer is not None: total = self._cura.max_layer + 1
         scheduled = selected is not None and selected in self._pauses.layers
-        can_toggle = snapshot.active and selected is not None and current is not None and selected >= current and (total is None or selected < total - 1)
-        unavailable = ""
-        if snapshot.active and not can_toggle and not scheduled:
-            if current is None: unavailable = "Waiting for current print layer"
-            elif selected is not None and selected < current: unavailable = f"Layer {selected + 1} already printed"
-            else: unavailable = "Final layer ends the print"
+        can_toggle = pause_can_toggle(snapshot.active, selected, current, total)
+        unavailable = pause_unavailable(snapshot.active, can_toggle, scheduled, current, selected)
         items = []
         for layer in sorted(self._pauses.layers):
             remaining = self._preview.remaining(layer, self._index.view, end=True)
-            items.append({"layer": layer + 1, "eta": "in " + self._preview.format_duration(remaining) if remaining is not None else "ETA unavailable"})
-        phase = self._files.phase
-        compact = self._detail
-        if self._load_requested: compact = "Resolving…"
-        elif self._cura.loading: compact = "Loading print…"
-        elif phase == "downloading": compact = "Downloading…"
-        elif self._index.phase == "indexing": compact = "Indexing…"
-        elif phase == "error" or self._index.phase == "error": compact = "Error"
-        elif not state.attached and config.enabled: compact = "Detached"
-        elif not self._client.connected: compact = "Disconnected" if self._binding.configured else "Not configured"
+            items.append({"layer": layer + 1, "eta": pause_eta(remaining, self._preview.format_duration)})
+        compact = status_text(
+            detail=self._detail,
+            load_requested=self._load_requested,
+            loading=self._cura.loading,
+            files_phase=self._files.phase,
+            index_phase=self._index.phase,
+            attached=state.attached,
+            enabled=config.enabled,
+            connected=self._client.connected,
+            configured=self._binding.configured,
+        )
         self._presentation.publish({
             "followingPaused": not state.attached, "followingEnabled": config.enabled,
             "configuredForFollowing": self._binding.configured and config.enabled,
             "activePrinterName": self._binding.identity[1], "hasToolpath": self._cura.has_toolpath,
-            "statusText": compact, "statusIconName": "CheckCircle" if compact in {"Following", "Connected"} else "Information",
+            "statusText": compact, "statusIconName": status_icon(compact),
             "selectedLayerEtaText": state.eta_text,
             "pauseAtLayerActive": snapshot.active, "pauseAtLayerCandidate": selected + 1 if selected is not None else 0,
             "pauseAtLayerCanToggle": can_toggle, "pauseAtLayerScheduled": scheduled,
-            "pauseAtLayerSummary": "End-of-layer PAUSE: " + ", ".join(str(item["layer"]) for item in items) if items else "",
+            "pauseAtLayerSummary": pause_summary(items),
             "pauseAtLayerItems": items, "pauseAtLayerUnavailableText": unavailable,
         })
 

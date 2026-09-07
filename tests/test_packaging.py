@@ -1,3 +1,4 @@
+"""Release packaging: QML structural checks, hygiene and reproducible artifacts."""
 from __future__ import annotations
 
 import os
@@ -10,6 +11,7 @@ from unittest import mock
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+PLUGINS = ROOT / "plugins"
 TOOLS = ROOT / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
@@ -21,11 +23,44 @@ from build_curapackage import (
     zip_timestamp_for_epoch,
 )
 from build_marketplace_source import build as build_marketplace_source
+from check_qml import check_text
 from verify_curapackage import verify as verify_curapackage
 from verify_marketplace_source import verify as verify_marketplace_source
 
 
-class ReleaseReproducibilityTests(unittest.TestCase):
+class QmlCheckerTests(unittest.TestCase):
+    def test_all_qml_pass_structural_checker(self):
+        failures = []
+        for path in PLUGINS.glob("*.qml"): failures.extend(check_text(path.read_text(), path.name))
+        self.assertEqual(failures, [])
+
+    def test_qml_checker_rejects_duplicate_property_and_unbalanced_brace(self):
+        failures = check_text("import QtQuick 2.15\nItem { width: 1; width: 2\n", "bad.qml")
+        self.assertTrue(any("duplicate property 'width'" in item for item in failures))
+        self.assertTrue(any("unclosed '{'" in item for item in failures))
+
+    def test_qml_checker_allows_leading_comment_lines(self):
+        failures = check_text("// Moonraker settings panel\nimport QtQuick 2.15\nItem { width: 1 }\n", "commented.qml")
+        self.assertEqual(failures, [])
+
+
+class PackageSourceTests(unittest.TestCase):
+    def test_repository_has_no_tracked_python_cache_or_legacy_dashboard(self):
+        tracked = subprocess.check_output(["git", "--no-pager", "ls-files"], cwd=ROOT, text=True).splitlines()
+        self.assertEqual([name for name in tracked if "__pycache__" in name or name.endswith((".pyc", ".pyo"))], [])
+        self.assertFalse((PLUGINS / "MoonrakerMonitorEnhanced.qml").exists())
+        gitignore = (ROOT / ".gitignore").read_text()
+        self.assertIn("__pycache__/", gitignore)
+        self.assertIn("*.py[cod]", gitignore)
+
+    def test_package_is_exact_byte_for_byte_source_projection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = pathlib.Path(directory) / "candidate.curapackage"
+            build_curapackage(package)
+            verify_curapackage(package)
+
+
+class PackageReproducibilityTests(unittest.TestCase):
     def _assert_normalized_zip_metadata(
         self,
         path: pathlib.Path,

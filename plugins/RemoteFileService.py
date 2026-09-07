@@ -3,12 +3,13 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import time
 from types import MappingProxyType
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtNetwork import QNetworkReply
 
-from .Core import RemoteFileIdentity
+from .MoonrakerProtocol import RemoteFileIdentity
 from .DownloadStream import DownloadTarget
 from .MoonrakerProtocol import download_endpoint, metadata_endpoint, parse_file_identity
 
@@ -26,9 +27,17 @@ class FileLease:
 
 
 class RemoteFileService(QObject):
-    """Own metadata, streamed downloads and leased files; no Cura/index knowledge."""
+    """Own metadata, streamed downloads and leased files; no Cura/index knowledge.
+
+    Download identity and metadata completeness are separate: a failed metadata
+    request installs a fallback identity so downloads can proceed, but retries
+    with backoff until a real response arrives. Only a successful response
+    marks the run's metadata complete.
+    """
     changed = pyqtSignal()
     failed = pyqtSignal(str)
+
+    METADATA_RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)
 
     def __init__(self, transport, parent=None):
         super().__init__(parent)
@@ -39,6 +48,9 @@ class RemoteFileService(QObject):
         self._identity = None
         self._metadata = {}
         self._metadata_pending = False
+        self._metadata_fetched = False
+        self._metadata_attempts = 0
+        self._metadata_retry_at = 0.0
         self._path = None
         self._reply = self._target = None
         self._want_file = False
@@ -53,6 +65,8 @@ class RemoteFileService(QObject):
     def identity(self): return self._identity
     @property
     def metadata(self): return MappingProxyType(self._metadata)
+    @property
+    def metadata_complete(self): return self._metadata_fetched
     @property
     def path(self): return self._path
     @property
@@ -75,12 +89,17 @@ class RemoteFileService(QObject):
         self._identity = self._path = None
         self._metadata = {}
         self._metadata_pending = self._want_file = False
+        self._metadata_fetched = False
+        self._metadata_attempts = 0
+        self._metadata_retry_at = 0.0
         self._error = ""
         self.changed.emit()
 
     def request_metadata(self):
-        if self._closed or not self._job or self._identity is not None or self._metadata_pending:
+        if self._closed or not self._job or self._metadata_pending or self._metadata_fetched:
             return
+        if self._identity is not None and time.monotonic() < self._metadata_retry_at:
+            return  # inside the backoff window; the fallback identity already unblocks downloads
         self._metadata_pending = True
         generation, job = self._generation, self._job
         def finished(payload, error):
@@ -89,11 +108,22 @@ class RemoteFileService(QObject):
             self._metadata_pending = False
             result = (payload or {}).get("result", {})
             self._metadata = dict(result) if isinstance(result, dict) else {}
+            if error:
+                self._metadata_attempts += 1
+                delay = self.METADATA_RETRY_DELAYS_MS[min(self._metadata_attempts - 1, len(self.METADATA_RETRY_DELAYS_MS) - 1)]
+                self._metadata_retry_at = time.monotonic() + delay / 1000.0
+                if self._identity is None:
+                    self._identity = RemoteFileIdentity(job[0], job[1])
+                self.changed.emit()
+                self._advance()
+                return
+            self._metadata_fetched = True
+            self._metadata_attempts = 0
+            self._metadata_retry_at = 0.0
             try:
                 self._identity = parse_file_identity(job[0], payload or {}, job[1])
             except (TypeError, ValueError):
                 self._identity = RemoteFileIdentity(job[0], job[1])
-            if error: self._identity = RemoteFileIdentity(job[0], job[1])
             self.changed.emit()
             self._advance()
         started = self._transport.send_json("files", "metadata", "GET",

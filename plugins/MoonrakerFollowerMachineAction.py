@@ -15,7 +15,7 @@ from .FollowController import FollowMode
 from .MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
 from .MoonrakerSession import RequestCategory
 from .MoonrakerTransport import MoonrakerHttpTransport
-from .PrinterConfig import PrinterConfig
+from .PrinterConfig import PrinterConfig, normalise_url
 
 
 class MoonrakerFollowerMachineAction(MachineAction):
@@ -200,22 +200,13 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return self._test_busy
 
     @staticmethod
-    def _normalise_base_url(value: str) -> str:
-        value = str(value or "").strip()
-        if not value:
-            return "http://"
-        if not value.lower().startswith(("http://", "https://")):
-            value = f"http://{value}"
-        return value.rstrip("/")
-
-    @staticmethod
     def _url_is_usable(value: str) -> bool:
         parsed = QUrl(value)
         return parsed.isValid() and parsed.scheme() in ("http", "https") and bool(parsed.host())
 
     @pyqtSlot(str, result=bool)
     def validUrl(self, value: str) -> bool:
-        return self._url_is_usable(self._normalise_base_url(value))
+        return self._url_is_usable(normalise_url(value))
 
     @pyqtSlot(str, result=bool)
     def validPollInterval(self, value: str) -> bool:
@@ -254,7 +245,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
             interval = int(str(raw.get("poll_interval_ms", "")).strip())
             tolerance = float(str(raw.get("z_tolerance", "")).strip())
             retry_interval = float(str(raw.get("ready_retry_interval_s", "")).strip())
-            url = self._normalise_base_url(str(raw.get("url", "")))
+            url = normalise_url(str(raw.get("url", "")))
             enabled = bool(raw.get("enabled", False))
             if interval <= 0 or not (0.005 <= tolerance <= 0.250):
                 return False
@@ -326,7 +317,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
 
     @pyqtSlot(str, str)
     def testConnection(self, url: str, api_key: str) -> None:
-        base_url = self._normalise_base_url(url)
+        base_url = normalise_url(url)
         if not self._url_is_usable(base_url):
             self._set_test_state("Enter a valid Moonraker URL", busy=False)
             return

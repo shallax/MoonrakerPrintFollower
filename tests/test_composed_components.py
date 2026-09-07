@@ -108,7 +108,7 @@ class ComposedComponentTests(unittest.TestCase):
         service, files = self.parts.index, self.parts.files
         key = ("part.gcode", 100, 1)
         files.bind(key)
-        files._identity = self.qt.load("Core").RemoteFileIdentity("part.gcode", 100, modified=1)
+        files._identity = self.qt.load("MoonrakerProtocol").RemoteFileIdentity("part.gcode", 100, modified=1)
         service.bind(key)
         entered, release = threading.Event(), threading.Event()
         threads = []
@@ -317,11 +317,14 @@ class ComposedComponentTests(unittest.TestCase):
         app.fileCompleted.emit(parts.files.path)
         self.assertFalse(parts.cura.loading)
 
-    def test_only_active_monitor_can_update_shared_mesh(self):
+    def test_mesh_observation_flows_through_coordinator_not_monitor(self):
         model = self.monitor()
-        self.deliver(self.status())
-        model._data._update(auxiliary={"bed_mesh": {"mesh_matrix": [[0, 1], [2, 3]], "mesh_min": [0, 0], "mesh_max": [10, 10]}})
+        status = self.status()
+        status["bed_mesh"] = {"mesh_matrix": [[0, 1], [2, 3]], "mesh_min": [0, 0], "mesh_max": [10, 10]}
+        self.deliver(status)
         self.assertTrue(self.follower.bed_mesh.snapshot)
+        # Monitor deactivation must not touch the shared mesh observation;
+        # the coordinator is its only writer.
         model.setMonitoringActive(False)
         model._controls.observe()
         self.assertTrue(self.follower.bed_mesh.snapshot)

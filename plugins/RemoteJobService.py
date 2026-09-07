@@ -89,11 +89,17 @@ class RemoteJobService:
             key = self._state.key
             if key is None:
                 new_job = True
-            elif key[0] != observation.filename or key[1] != observation.file_size:
+            elif key[0] != observation.filename:
+                new_job = True
+            elif key[1] > 0 and observation.file_size > 0 and key[1] != observation.file_size:
+                # An unknown size on either side must not churn the run
+                # identity: a poll that transiently lacks virtual_sdcard
+                # (reconnect, restart, truncated response) would otherwise
+                # restart Preview tracking, pause schedules and downloads.
                 new_job = True
             elif previous is None or previous.state not in self._active_states:
                 new_job = True
-            elif observation.file_position < previous.file_position:
+            elif observation.file_position > 0 and previous.file_position > 0 and observation.file_position < previous.file_position:
                 new_job = True
             elif observation.print_duration + 0.05 < previous.print_duration:
                 new_job = True

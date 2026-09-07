@@ -23,11 +23,15 @@ PLUGIN = "\n".join((PLUGINS / name).read_text() for name in FOLLOWER_SOURCES)
 CLIENT = (PLUGINS / "MoonrakerClient.py").read_text()
 MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
 MACHINE_ACTION = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
-CONFIG_QML = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
-MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
-UPLOAD_QML = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
-ACTION_QML = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
-EMPTY_QML = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
+# Every shipped QML file is audited; a newly added file must not silently
+# bypass the Qt6.2 import checks.
+QML_FILES = sorted(path.name for path in PLUGINS.glob("*.qml"))
+QML_SOURCES = {path.name: path.read_text() for path in PLUGINS.glob("*.qml")}
+CONFIG_QML = QML_SOURCES["MoonrakerFollowerConfiguration.qml"]
+MONITOR_QML = QML_SOURCES["MoonrakerMonitor.qml"]
+UPLOAD_QML = QML_SOURCES["MoonrakerUploadDialog.qml"]
+ACTION_QML = QML_SOURCES["PreviewActionPanelControls.qml"]
+EMPTY_QML = QML_SOURCES["EmptyPreviewLoadButton.qml"]
 NOZZLE_LIFECYCLE = (PLUGINS / "NativeNozzleLifecycle.py").read_text()
 README = (ROOT / "README.md").read_text()
 
@@ -114,14 +118,8 @@ class SdkCompatibilityTests(unittest.TestCase):
         self.assertNotIn("QWebSocket", combined)
 
     def test_qml_imports_are_qt6_2_compatible(self):
-        for qml in (
-            CONFIG_QML,
-            MONITOR_QML,
-            UPLOAD_QML,
-            ACTION_QML,
-            EMPTY_QML,
-        ):
-            self.assertRegex(qml, r"^import QtQuick 2\.15", qml[:80])
+        for name in QML_FILES:
+            self.assertRegex(QML_SOURCES[name], r"^import QtQuick 2\.15", name)
         for qml in (CONFIG_QML, MONITOR_QML, UPLOAD_QML):
             self.assertIn("import QtQuick.Controls 2.15", qml)
 

@@ -2,7 +2,8 @@
 
 This is the current implementation contract, not a roadmap. Package identity,
 version and SDK support are defined in `package.json`, `plugins/plugin.json` and
-CI. Release history belongs in `CHANGELOG.md`.
+CI. Release history belongs in `CHANGELOG.md`. Change procedures, including the
+version bump checklist, live in `INSTRUCTIONS.md`.
 
 ## 1. Design rules
 
@@ -43,25 +44,36 @@ private follower state to either integration.
 | Component | Owns | Does not own |
 | --- | --- | --- |
 | `PrinterBinding.py` | Per-printer configuration, migrations, active-machine transitions | Preview, files, uploads |
+| `PrinterConfig.py` | Per-machine settings schema, URL normalisation, both migrations | Networking or Qt |
 | `MoonrakerClient.py` | Core polling, retries, command deadline timer, Qt notifications | Cura lifecycle |
 | `MoonrakerSession.py` | Binding state, merged core snapshot, polling policy, coalescer, command tracker | UI or G-code files |
 | `MoonrakerTransport.py` | Request builder, credentials, HTTP pool, JSON lanes and metrics | Feature state |
+| `MoonrakerProtocol.py` | Endpoint construction, file identity, coordinate conversion | Networking or UI |
 | `RemoteJobService.py` | Print observation and same-filename run identity | Preview selection |
 | `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer` and the single `LayerResolver` | QML/Cura writes |
 | `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` | Index algorithms or Cura loading |
+| `DownloadStream.py` | Bounded streaming G-code downloads to disk | Networking policy or Cura |
 | `GCodeIndexService.py` | Index lifecycle, bounded worker execution and `IndexView` | Networking or UI |
 | `GCodeIndex.py` | Parsing, motion matching, compact hydration and cache serialization algorithms | Application orchestration |
+| `FollowController.py` | Follow-mode decisions and state precedence | Preview writes or networking |
 | `CuraIntegration.py` | Scene/view/file lifecycle, guarded callbacks and Preview API access | Printer protocol |
+| `CuraAdapter.py` | Typed Cura view access, machine identity, Preview write decisions | Policy or networking |
+| `CuraLifecycleBridge.py` | Cura-scene generation tokens for stale-work rejection | Scene contents |
+| `NativeNozzleLifecycle.py` | Cura native-nozzle repair during exact following | Scene mesh semantics |
 | `PreviewFollower.py` | Frozen `PreviewState`, attachment, expected positions, path progress and ETA | Downloads or workers |
 | `PauseScheduleService.py` | Pure print-local target set and crossing policy | Network commands |
 | `PauseController.py` | Scheduled PAUSE command and acknowledgement lifecycle | Preview rendering |
 | `PreviewPresentation.py` | Preview QML objects, displayed values and user-intent signals | Following or scheduling policy |
 | `BedMeshPresenter.py` | Active mesh overlay, visibility preference and Preview mesh controls | Macro execution |
+| `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
 | `MonitorData.py` | Monitor request lifetime, category timers and frozen `MonitorSnapshot` | QML declarations |
+| `MoonrakerMonitorModel.py` | The single Qt Monitor model: property declarations and projection merge | Domain policy or networking |
+| `MoonrakerFollowerMachineAction.py` | Configuration QML properties, validation and the isolated probe transport | Live binding state |
 | `MonitorCommands.py` | Monitor action acknowledgement and emergency-stop click sequence | Sliders or discovery |
 | `MonitorTuning.py` | Debounce, pending tuning values, revision/confirmation timers | QML or printer discovery |
 | `MonitorControls.py` | Macro, preset, fan/LED/PWM, setup and power/exclusion policy | Qt model inheritance |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
+| `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
 | `MonitorCamera.py` | Camera selection, transforms and per-printer selection persistence | Private configuration store |
 | `CuraOutputWriter.py` | Cura-affine preparation of a temporary G-code/UFP file | HTTP upload |
 | `UploadController.py` | One write operation: discovery, readiness, multipart stream and cancellation | Cura application or QML |
@@ -91,6 +103,10 @@ means that an existing upload may silently move to another printer.
 replacement/cancellation. Request IDs, categories, latency and errors are logged
 without credentials. Streaming downloads and multipart uploads use the same request
 builder/pool but own their replies directly.
+
+`SessionSnapshot` publishes fully detached status copies and stores defensive
+copies of merged patches, so no consumer can mutate session internals through a
+published snapshot.
 
 The Machine Action may create an isolated instance of the same transport for
 unsaved credentials; a probe must not reconfigure the live binding.
@@ -141,9 +157,11 @@ clears print-local state without automatically reattaching a manually detached v
 
 Manual Preview changes are detected against remembered plugin-written values.
 `CuraIntegration.writing_preview()` suppresses callbacks from plugin writes, while
-user writes detach the follower. Physical observation and scheduled PAUSE continue
-while Preview is detached. ETA uses slicer layer timing, speed, path progress and
-observed duration anchors—not G-code byte percentage as time.
+user writes detach the follower. Preview view reads and writes go through typed
+`CuraAdapter` accessors rather than stringly-named view methods. Physical
+observation and scheduled PAUSE continue while Preview is detached. ETA uses
+slicer layer timing, speed, path progress and observed duration anchors—not
+G-code byte percentage as time.
 
 ## 6. Remote files, leases and bounded indexing
 
@@ -151,6 +169,10 @@ observed duration anchors—not G-code byte percentage as time.
 restarts invalidate old metadata and downloads. A streamed download uses a bounded
 Qt read buffer, writes incrementally to a temporary file and verifies known file
 size before publication.
+
+Metadata completeness is separate from download identity: a failed metadata
+request installs a fallback identity so downloads proceed, then retries with
+backoff; only a successful response marks the run's metadata complete.
 
 A `FileLease` explicitly keeps that file alive for an index worker or Cura parse
 job. Rebinding retires old files; deletion waits for all leases to close. An unrelated
@@ -224,6 +246,7 @@ an earlier write's terminal notification.
 
 - New high-frequency printer fields: extend the one core query and immutable print observation.
 - New Monitor objects: add discovery/projection to `MonitorData` and pure formatting.
+- New Preview projections: add pure formatting in `PreviewFormatting.py`.
 - New controls: add policy to a focused controller and declare the Qt property/slot.
 - New file operations: consume `FileLease`, never infer lifetime from Preview flags.
 - New index work: use the bounded index owner and generation-valid publication.

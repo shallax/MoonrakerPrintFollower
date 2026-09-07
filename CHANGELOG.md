@@ -2,6 +2,32 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 3.2.0
+
+Version 3.2.0 closes the remaining 3.1.0 architecture gaps and codifies how the repository changes. User-facing behaviour is unchanged.
+
+### Highlights
+- Reorganises the test suite by domain; version/regression-named test files are gone and coverage is unchanged.
+- Codifies change procedures in `INSTRUCTIONS.md`, including the version bump checklist; the architecture document references it.
+- Extracts pure `PreviewFormatting` (status text/icon, pause-item and ETA projections) out of `PrintCoordinator`, which now publishes a domain projection instead of formatting UI strings.
+- Dissolves the mixed-domain `Core` module: `RemoteFileIdentity` joins `MoonrakerProtocol`, end-of-layer pause crossing joins `PauseScheduleService`, Preview override detection joins `PreviewFollower`, and the unused `OperationContext`/`OperationPhase` runtime is removed rather than relocated.
+- Removes the unused `MoonrakerSessionState.rebind()` path; rebinding goes through the production `configure()`/`reset()` flow only.
+- Extends the import/ownership contract tests to every domain module, including the new formatting module.
+- Version metadata test now checks `package.json` and `plugin.json` stay in sync; the release workflow still validates both against the git tag.
+- Publishes fully detached status snapshots from the session boundary; consumers can no longer mutate session internals through nested values.
+- Separates metadata completeness from download identity: a failed metadata request installs a fallback identity so downloads proceed, then retries with backoff instead of permanently degrading the run.
+- Moves Preview view reads/writes into typed `CuraAdapter` accessors; `PreviewFollower` no longer calls view methods by name.
+- Consolidates URL normalisation into one `PrinterConfig.normalise_url` rule used by configuration parsing, binding and the Machine Action.
+- Fixes the G-code layer map for files whose start-gcode emits `CURRENT_LAYER=0` before the first layer marker; scheduled pauses could previously fire one layer early.
+- Keeps print run identity stable across transient `file_size` gaps (reconnect/restart), so a mid-print poll gap no longer restarts Preview tracking, pause schedules or downloads.
+- Treats pre-print `current_layer=0` in one-based mode as no-layer rather than layer zero, and stops Z-fallback from jumping layers across pause/resume Z-lifts.
+- Rejects non-finite or out-of-range Z tolerance values and caps the polling interval.
+- Validates persistent index caches against size/modified time alongside the uuid, and recognises `G01`/`G00` motion forms.
+- Guards the Monitor camera restore against webcam-set changes, prunes renamed/removed objects from the auxiliary snapshot, deactivates the outgoing Monitor before the incoming one activates, and removes a phantom signal key.
+- Consolidates printer-object classification into one shared policy table, narrows Monitor controller capabilities instead of passing the whole client, and moves the bed-mesh observation to the print coordinator (Monitor can no longer write follower mesh state).
+- Completes the `ARCHITECTURE.md` ownership map, overhauls the README (release header, feature and structure sections), and makes the tag-release CI run the full Qt suite; verifier tools share one checks implementation.
+- Applies released Monitor slider values after a 250 ms unchanged window instead of 2 seconds.
+
 ## 3.1.0
 
 Version 3.1.0 is primarily an internal architecture and reliability release. It preserves the v3.0 user-facing workflow while reducing duplicated state/transport ownership and making the high-risk parts independently testable.

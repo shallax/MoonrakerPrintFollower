@@ -60,3 +60,40 @@ def apply_preview_decision(view, current_layer: int, minimum_layer: Optional[int
     if minimum_layer is not None and hasattr(view, "setMinimumLayer"):
         view.setMinimumLayer(int(minimum_layer))
     view.setLayer(int(current_layer))
+
+
+def _view_value(view, method: str, cast=int):
+    try:
+        return cast(getattr(view, method)())
+    except Exception:
+        return None
+
+
+def preview_current_layer(view) -> Optional[int]:
+    return _view_value(view, "getCurrentLayer", int)
+
+
+def preview_minimum_layer(view) -> Optional[int]:
+    return _view_value(view, "getMinimumLayer", int)
+
+
+def preview_current_path(view) -> Optional[float]:
+    return _view_value(view, "getCurrentPath", float)
+
+
+def preview_minimum_path(view) -> Optional[int]:
+    return _view_value(view, "getMinimumPath", int)
+
+
+def preview_max_paths(view) -> Optional[int]:
+    return _view_value(view, "getMaxPaths", int)
+
+
+def set_preview_path(view, value: float) -> None:
+    if view is not None and hasattr(view, "setPath"):
+        view.setPath(value)
+
+
+def set_preview_minimum_path(view, value: int) -> None:
+    if view is not None and hasattr(view, "setMinimumPath"):
+        view.setMinimumPath(value)

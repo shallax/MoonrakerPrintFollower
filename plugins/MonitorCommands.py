@@ -17,7 +17,7 @@ class MonitorCommands(QObject):
         self._reset_timer.setInterval(1000)
         self._reset_timer.timeout.connect(self._reset_clicks)
         data.invalidated.connect(self.reset)
-        data.client.commandChanged.connect(self._command_changed)
+        data.commandChanged.connect(self._command_changed)
 
     @property
     def busy(self): return self._busy
@@ -27,7 +27,7 @@ class MonitorCommands(QObject):
     def clicks(self): return self._clicks
     @property
     def state(self):
-        if not self._data.active or not self._data.client.connected: return ""
+        if not self._data.active or not self._data.connected: return ""
         return str((self._data.snapshot.core.get("print_stats") or {}).get("state") or "")
     @property
     def print_active(self): return self.state in {"printing", "paused"}
@@ -46,16 +46,16 @@ class MonitorCommands(QObject):
         self._status = f"{label} requested…"
         expected = self.EXPECTED.get(label)
         self._tracked = label if expected else ""
-        if expected: self._data.client.track_command(label, expected)
+        if expected: self._data.track_command(label, expected)
         self.changed.emit()
         def finished(payload, error):
             if error:
                 self._busy = False
                 self._status = f"{label} failed: {error}"
-                if expected: self._data.client.fail_command(label, error)
+                if expected: self._data.fail_command(label, error)
                 self._tracked = ""
             elif expected:
-                self._data.client.accept_command(label)
+                self._data.accept_command(label)
             else:
                 self._busy = False
                 self._status = f"{label} accepted"
@@ -91,7 +91,7 @@ class MonitorCommands(QObject):
             def finished(payload, error):
                 self._status = f"Emergency stop failed: {error}" if error else "Emergency stop issued"
                 self.changed.emit()
-                self._data.client.force_refresh()
+                self._data.force_refresh()
             self._data.request("emergency-stop", "POST", "printer/emergency_stop", finished,
                 replace=True, category="command")
 

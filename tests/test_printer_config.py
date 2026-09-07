@@ -1,7 +1,10 @@
 import json
+import pathlib
 import unittest
 
-from plugins.PrinterConfig import PrinterConfig, PrinterConfigStore
+from plugins.PrinterConfig import PrinterConfig, PrinterConfigStore, normalise_url
+
+PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
 
 
 class FakePreferences:
@@ -215,6 +218,44 @@ class PrinterConfigTests(unittest.TestCase):
         store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
         store.set(cfg)
         self.assertFalse(store.get().show_toolhead_indicator)
+
+    def test_camera_selection_round_trips_per_printer(self):
+        active = ["printer-a", "Printer A"]
+        store = PrinterConfigStore(FakePreferences(), lambda: tuple(active))
+        store.set(PrinterConfig(camera_selected="bed-camera"))
+        self.assertEqual(store.get().camera_selected, "bed-camera")
+        active[:] = ["printer-b", "Printer B"]
+        self.assertEqual(store.get().camera_selected, "")
+
+    def test_settings_tab_lists_upload(self):
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        self.assertIn('UM.TabRowButton { text: "Upload" }', config)
+        self.assertIn('text: "Upload format"', config)
+
+    def test_normalise_url_is_the_single_url_rule(self):
+        self.assertEqual(normalise_url(""), "http://")
+        self.assertEqual(normalise_url(None), "http://")
+        self.assertEqual(normalise_url(" 192.168.1.5 "), "http://192.168.1.5")
+        self.assertEqual(normalise_url("https://printer/"), "https://printer")
+        self.assertEqual(normalise_url("HTTP://Printer:7125//"), "HTTP://Printer:7125")
+        for scheme_only in ("http:", "https:", "http://", "https://", "HTTP://"):
+            self.assertEqual(normalise_url(scheme_only), "http://")
+
+    def test_from_dict_normalises_url(self):
+        self.assertEqual(PrinterConfig.from_dict({"url": "printer.lan"}).url, "http://printer.lan")
+        self.assertEqual(PrinterConfig.from_dict({"url": "https://printer.lan/"}).url, "https://printer.lan")
+        self.assertEqual(PrinterConfig.from_dict({}).url, "http://")
+
+    def test_from_dict_rejects_nonfinite_or_out_of_range_tolerance(self):
+        self.assertEqual(PrinterConfig.from_dict({"z_tolerance": float("nan")}).z_tolerance, 0.04)
+        self.assertEqual(PrinterConfig.from_dict({"z_tolerance": float("inf")}).z_tolerance, 0.04)
+        self.assertEqual(PrinterConfig.from_dict({"z_tolerance": 0.0}).z_tolerance, 0.04)
+        self.assertEqual(PrinterConfig.from_dict({"z_tolerance": 9.0}).z_tolerance, 0.04)
+        self.assertEqual(PrinterConfig.from_dict({"z_tolerance": 0.1}).z_tolerance, 0.1)
+
+    def test_from_dict_caps_poll_interval(self):
+        self.assertEqual(PrinterConfig.from_dict({"poll_interval_ms": 10 ** 20}).poll_interval_ms, 3_600_000)
+        self.assertEqual(PrinterConfig.from_dict({"poll_interval_ms": 0}).poll_interval_ms, 1)
 
 
 if __name__ == "__main__":

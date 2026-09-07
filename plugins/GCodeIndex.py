@@ -16,7 +16,7 @@ from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import BinaryIO, Dict, List, Optional, Sequence, Tuple
 
-from .Core import RemoteFileIdentity
+from .MoonrakerProtocol import RemoteFileIdentity
 
 
 _LAYER_COMMENT = re.compile(rb"^\s*;LAYER:\s*-?\d+\s*$", re.IGNORECASE)
@@ -28,7 +28,7 @@ _STATS_MARKER = re.compile(
     rb"^\s*SET_PRINT_STATS_INFO\b.*\bCURRENT_LAYER\s*=\s*(-?\d+)",
     re.IGNORECASE,
 )
-_MOTION = re.compile(rb"^\s*(?:N\d+\s*)?G(?:0|1|2|3)(?!\d)", re.IGNORECASE)
+_MOTION = re.compile(rb"^\s*(?:N\d+\s*)?G0?[0-3](?!\d)", re.IGNORECASE)
 _ELAPSED = re.compile(rb"^\s*;TIME_ELAPSED:\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
 _COMMAND = re.compile(rb"^\s*(?:N\d+\s*)?([GMT]\d+)(?!\d)", re.IGNORECASE)
 _AXIS = re.compile(rb"([XYZ])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
@@ -208,7 +208,7 @@ def _build_pass(
     handle.seek(0)
     while True:
         if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
-            return [], [], [], [], [], [], [], [], [], []
+            return [], [], [], [], [], [], [], [], [], [], []
         offset = handle.tell()
         line = handle.readline()
         if not line:
@@ -222,6 +222,12 @@ def _build_pass(
                     value = int(stats_match.group(1))
                     if not stats_values or stats_values[-1] != value:
                         stats_values.append(value)
+                    # Record the first CURRENT_LAYER seen inside each layer
+                    # block. A global consecutive-value heuristic cannot tell a
+                    # leading start-gcode value (CURRENT_LAYER=0 before the
+                    # first ;LAYER) from the first layer's own value.
+                    if current is not None and current["end"] is None and current["stats"] is None:
+                        current["stats"] = value
                 except (TypeError, ValueError):
                     pass
 
@@ -232,6 +238,7 @@ def _build_pass(
                 "start": offset,
                 "end": None,
                 "elapsed": None,
+                "stats": None,
                 "motions": array("Q"),
                 "x": array("f"),
                 "y": array("f"),
@@ -292,7 +299,7 @@ def _build_pass(
         line_number += 1
 
     if cancel_event is not None and cancel_event.is_set():
-        return [], [], [], [], [], [], [], [], [], []
+        return [], [], [], [], [], [], [], [], [], [], []
 
     file_end = handle.tell()
     if current is not None and current["end"] is None:
@@ -307,6 +314,7 @@ def _build_pass(
     start_absolute: List[bool] = []
     start_units: List[float] = []
     elapsed_times: List[Optional[float]] = []
+    block_stats: List[Optional[int]] = []
     for block in blocks:
         start = int(block["start"])
         end = int(block["end"] if block["end"] is not None else file_end)
@@ -320,7 +328,9 @@ def _build_pass(
         start_units.append(float(block["start_units"]))
         elapsed = block.get("elapsed")
         elapsed_times.append(float(elapsed) if elapsed is not None else None)
-    return ranges, motions, motion_x, motion_y, motion_z, starts, start_absolute, start_units, elapsed_times, stats_values
+        stats = block.get("stats")
+        block_stats.append(int(stats) if stats is not None else None)
+    return ranges, motions, motion_x, motion_y, motion_z, starts, start_absolute, start_units, elapsed_times, stats_values, block_stats
 
 
 def _collect_marker_values(handle: BinaryIO, capture: Optional[re.Pattern[bytes]], cancel_event=None) -> List[int]:
@@ -358,14 +368,14 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         (_PRUSA_LAYER_CHANGE, None),
         (_STATS_MARKER, _STATS_MARKER),
     )
-    ranges = motions = xs = ys = zs = starts = start_absolute = start_units = elapsed_times = stats_values = None
+    ranges = motions = xs = ys = zs = starts = start_absolute = start_units = elapsed_times = stats_values = block_stats = None
     marker_values: List[int] = []
     with open(path, "rb") as handle:
         for marker, capture in markers:
             result = _build_pass(
                 handle, marker, collect_stats=True, collect_motions=not compact, cancel_event=cancel_event
             )
-            ranges, motions, xs, ys, zs, starts, start_absolute, start_units, elapsed_times, stats_values = result
+            ranges, motions, xs, ys, zs, starts, start_absolute, start_units, elapsed_times, stats_values, block_stats = result
             if ranges:
                 marker_values = _collect_marker_values(handle, capture, cancel_event)
                 break
@@ -386,18 +396,21 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
     stats_values = stats_values or []
 
     layer_map: Dict[int, int] = {}
-    if ranges and len(stats_values) == len(ranges):
+    # Per-block values are positionally grounded: each layer's own first
+    # CURRENT_LAYER, immune to leading start-gcode values and trailing extras.
+    if ranges and len(block_stats) == len(ranges) and all(value is not None for value in block_stats):
+        for index, value in enumerate(block_stats):
+            if value in layer_map:
+                layer_map = {}
+                break
+            layer_map[value] = index
+    if not layer_map and ranges and len(stats_values) == len(ranges):
         for index, value in enumerate(stats_values):
             if value in layer_map:
                 layer_map = {}
                 break
             layer_map[value] = index
-    elif ranges and len(stats_values) >= 2:
-        if all(stats_values[i] == stats_values[0] + i for i in range(len(stats_values))):
-            base = stats_values[0]
-            for index in range(len(ranges)):
-                layer_map[base + index] = index
-    elif ranges and len(marker_values) == len(ranges):
+    elif not layer_map and ranges and len(marker_values) == len(ranges):
         # Cura and Orca numeric layer markers provide a useful mapping even when
         # SET_PRINT_STATS_INFO is absent. The exact values are preserved instead
         # of assuming zero/one-based numbering.
@@ -548,6 +561,17 @@ class PersistentIndexCache:
                     return None
                 if header.get("identity") != identity.stable_key():
                     return None
+                # A uuid alone must not vouch for content: re-uploads of a
+                # same-named file can keep a path-derived uuid while size or
+                # modified time changes. Validate every known field.
+                fields = header.get("identity_fields")
+                if fields and isinstance(fields, list) and len(fields) == 4:
+                    if identity.size > 0 and int(fields[1]) > 0 and int(fields[1]) != identity.size:
+                        return None
+                    if identity.modified > 0 and float(fields[2]) > 0 and float(fields[2]) != identity.modified:
+                        return None
+                    if str(fields[3]) != identity.uuid:
+                        return None
                 if header.get("byteorder") != sys.byteorder:
                     return None
                 ranges = [(int(a), int(b)) for a, b in header.get("ranges", [])]
@@ -636,6 +660,7 @@ class PersistentIndexCache:
             header = {
                 "version": _CACHE_VERSION,
                 "identity": identity.stable_key(),
+                "identity_fields": [identity.filename, identity.size, identity.modified, identity.uuid],
                 "byteorder": sys.byteorder,
                 "ranges": index.ranges,
                 "starts": index.layer_start_positions,

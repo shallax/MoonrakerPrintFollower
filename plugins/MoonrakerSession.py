@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from enum import Enum
 import time
@@ -114,19 +115,19 @@ class SessionSnapshot:
                 if not isinstance(current, dict):
                     current = {}
                 merged = dict(current)
-                merged.update(value)
+                merged.update(copy.deepcopy(value))
                 self.status[object_name] = merged
             else:
-                self.status[object_name] = value
+                # Store a defensive copy so callers cannot mutate the snapshot
+                # through objects they still hold.
+                self.status[object_name] = copy.deepcopy(value)
         self.revision += 1
         self.updated_at = time.monotonic() if now is None else float(now)
         return self.copy_status()
 
     def copy_status(self) -> Dict[str, Any]:
-        result: Dict[str, Any] = {}
-        for name, value in self.status.items():
-            result[name] = dict(value) if isinstance(value, dict) else value
-        return result
+        """Return a fully detached copy; nested mutation cannot reach internals."""
+        return copy.deepcopy(self.status)
 
     @property
     def printer_state(self) -> str:
@@ -245,19 +246,6 @@ class MoonrakerSessionState:
         self.base_url = ""
         self.connected = False
         self.pause_guard = False
-
-    def rebind(self, base_url: str) -> bool:
-        target = str(base_url or "").rstrip("/")
-        if target == self.base_url:
-            return False
-        self.generation += 1
-        self.base_url = target
-        self.connected = False
-        self.pause_guard = False
-        self.snapshot = SessionSnapshot()
-        self.commands.clear()
-        self.coalescer.clear()
-        return True
 
     def reset(self) -> None:
         self.generation += 1

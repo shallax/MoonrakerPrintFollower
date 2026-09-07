@@ -34,6 +34,7 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         self._writer = CuraOutputWriter(application)
         self._upload = UploadController(client, machine_id, active_identity, self)
         self._dialog = self._message = None
+        self._monitor_view_qml_path = None
         self._upload.changed.connect(self.uploadPathsChanged.emit)
         self._upload.dialogClosed.connect(self._release_dialog)
         self._upload.choicesAccepted.connect(self._remember)
@@ -58,6 +59,10 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
 
     @pyqtProperty(str, notify=uploadPathsChanged)
     def initialUploadPath(self): return self._upload.path or "<root>"
+
+    def setMonitorViewQmlPath(self, path: str) -> None:
+        """Explicit capability the output plugin supplies for the Monitor panel."""
+        self._monitor_view_qml_path = str(path or "")
     @pyqtProperty(str, notify=uploadPathsChanged)
     def initialUploadFilename(self): return self._upload.filename
     @pyqtProperty(bool, notify=uploadPathsChanged)
@@ -142,7 +147,7 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
                 self._message.setTitle("Moonraker")
                 self._message.addAction("open_browser", "Open Browser", "globe", "Open the configured Moonraker frontend")
                 self._message.actionTriggered.connect(lambda message, action:
-                    QDesktopServices.openUrl(QUrl(config.frontend_url or config.url)) if action == "open_browser" else None)
+                    QDesktopServices.openUrl(QUrl(config.frontend_target)) if action == "open_browser" else None)
                 self._message.show()
                 self.writeSuccess.emit(self)
             elif error:

@@ -77,6 +77,12 @@ class LayerResolver:
             mapping = index.current_layer_map if index is not None else {}
             if raw in mapping:
                 layer, source = int(mapping[raw]), "G-code mapped current_layer"
+            elif raw <= 0 and config.moonraker_layer_is_one_based:
+                # Klipper reports current_layer=0 before the start-gcode runs
+                # the first SET_PRINT_STATS_INFO. In one-based mode that is a
+                # pre-print value, not layer zero; fall through to the
+                # file-position/geometry paths instead of clamping to layer 0.
+                layer, source = None, ""
             else:
                 layer = raw - int(bool(config.moonraker_layer_is_one_based))
                 source = "Moonraker current_layer"
@@ -93,15 +99,26 @@ class LayerResolver:
             previous = self._extrusion
             self._extrusion = extrusion
             if z is not None and extrusion is not None and previous is not None and extrusion > previous + 0.0001:
-                matches = [(abs(height - z), n) for n, height in enumerate(heights)
-                           if height > 0 and abs(height - z) <= config.z_tolerance]
-                if matches:
-                    self._z_layer = min(matches)[1]
+                if heights:
+                    matches = [(abs(height - z), n) for n, height in enumerate(heights)
+                               if height > 0 and abs(height - z) <= config.z_tolerance]
+                    if matches:
+                        self._z_layer = min(matches)[1]
+                    # Geometry exists but Z is off-model (e.g. a pause Z-lift):
+                    # keep the last known layer instead of extrapolating from
+                    # the lifted height.
                 else:
                     step = self._number(metadata.get("layer_height"))
                     first = self._number(metadata.get("first_layer_height")) or step
                     if step and step > 0 and first is not None:
-                        self._z_layer = max(0, int(round((z - first) / step)))
+                        candidate = max(0, int(round((z - first) / step)))
+                        if self._z_layer is None:
+                            self._z_layer = candidate
+                        elif candidate > self._z_layer:
+                            # Without geometry the extrapolation can only move
+                            # one layer at a time; a pause Z-lift would
+                            # otherwise jump the physical layer by dozens.
+                            self._z_layer += 1
             if layer is None and self._z_layer is not None:
                 layer, source = self._z_layer, "extrusion-guarded Z height"
         if layer is not None:
