@@ -83,7 +83,7 @@ class LayerMotionIndex:
         file_position: int,
         live_position: Optional[Sequence[float]],
         *,
-        lag_window: int = 128,
+        lag_window: int = 1024,
         ahead_window: int = 8,
         max_distance_mm: float = 3.0,
         minimum_fraction: Optional[float] = None,

@@ -376,6 +376,23 @@ SET_PRINT_STATS_INFO CURRENT_LAYER=3
         index = build_index_from_bytes(data)
         self.assertEqual(index.current_layer_map, {1: 0, 2: 1})
 
+    def test_live_position_wins_when_parser_is_far_ahead(self):
+        # Klipper's parser reads the file in ~4KB chunks, so the coarse file
+        # position can sit hundreds of motions ahead of the nozzle. The
+        # refinement window must cover that lead and track the live position
+        # instead of falling back to the quantised coarse fraction (which
+        # made the observed progress a cm-apart staircase).
+        lines = [b"G90\n"]
+        x = 0.0
+        for _ in range(300):
+            x += 1.0
+            lines.append(f"G1 X{x} Y0 Z0.2\n".encode())
+        index = build_index_from_bytes(b";LAYER:0\n" + b"".join(lines))
+        position = int(index.motion_offsets[0][250])
+        fraction, method = index.refined_fraction(0, position, (100.0, 0.0, 0.2))
+        self.assertEqual(method, "live position")
+        self.assertAlmostEqual(fraction, 100 / 300, places=3)
+
     def test_leading_zero_motion_forms_count_as_motion(self):
         data = b"""G91
 ;LAYER:0
