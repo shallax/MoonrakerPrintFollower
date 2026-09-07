@@ -1,6 +1,9 @@
 import pathlib
+from types import SimpleNamespace
 import unittest
-from plugins.MonitorFormatting import infer_macro_parameters
+
+from plugins.MonitorFormatting import core_values, infer_macro_parameters
+from plugins.PrintState import LayerResolver
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
@@ -57,6 +60,57 @@ class HotfixRegressionTests(unittest.TestCase):
         self.assertEqual(by_name["SCALE"]["type"], "float")
         self.assertEqual(by_name["LABEL"]["type"], "string")
         self.assertTrue(by_name["REQUIRED"]["required"])
+
+    def test_monitor_layer_height_reports_current_thickness(self):
+        config = SimpleNamespace(
+            moonraker_layer_is_one_based=True,
+            z_fallback=False,
+            z_tolerance=0.05,
+        )
+        layer = LayerResolver().resolve(
+            {"print_stats": {"info": {"current_layer": 2, "total_layer": 3}}},
+            config,
+            metadata={"first_layer_height": 0.2, "layer_height": 0.2},
+            heights=(0.2, 0.35, 0.55),
+        )
+        self.assertEqual(layer.index, 1)
+        self.assertAlmostEqual(layer.height, 0.35)
+        self.assertAlmostEqual(layer.thickness, 0.15)
+
+        snapshot = SimpleNamespace(core={
+            "print_stats": {"state": "printing", "print_duration": 0},
+            "virtual_sdcard": {"progress": 0},
+            "gcode_move": {},
+            "motion_report": {},
+        })
+        physical = SimpleNamespace(
+            layer=layer,
+            estimated_time=None,
+            metadata_complete=False,
+        )
+        self.assertEqual(core_values(snapshot, physical, True)["monitorLayerHeight"], "0.150 mm")
+
+    def test_layer_thickness_falls_back_to_metadata_without_geometry(self):
+        config = SimpleNamespace(
+            moonraker_layer_is_one_based=True,
+            z_fallback=False,
+            z_tolerance=0.05,
+        )
+        resolver = LayerResolver()
+        first = resolver.resolve(
+            {"print_stats": {"info": {"current_layer": 1, "total_layer": 5}}},
+            config,
+            metadata={"first_layer_height": 0.24, "layer_height": 0.1},
+        )
+        later = resolver.resolve(
+            {"print_stats": {"info": {"current_layer": 3, "total_layer": 5}}},
+            config,
+            metadata={"first_layer_height": 0.24, "layer_height": 0.1},
+        )
+        self.assertAlmostEqual(first.height, 0.24)
+        self.assertAlmostEqual(first.thickness, 0.24)
+        self.assertAlmostEqual(later.height, 0.44)
+        self.assertAlmostEqual(later.thickness, 0.1)
 
     def test_pwm_controls_remain_in_dashboard(self):
         self.assertIn("pwmOutputItems", DASHBOARD_QML)

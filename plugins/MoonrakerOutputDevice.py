@@ -7,6 +7,7 @@ from PyQt6.QtGui import QDesktopServices
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from cura.PrinterOutput.PrinterOutputController import PrinterOutputController
 from cura.PrinterOutput.PrinterOutputDevice import ConnectionType, PrinterOutputDevice
+from UM.Logger import Logger
 from UM.Message import Message
 from UM.OutputDevice import OutputDeviceError
 
@@ -96,12 +97,16 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
     def deactivate(self): self._upload.abort()
 
     def _remember(self, path, start_print):
-        config = self._config()
-        paths = list(config.upload_paths)
-        if path and path not in paths: paths.append(path)
-        updated = replace(config, upload_paths=paths)
-        if config.upload_remember_state: updated = replace(updated, upload_path=path, upload_start_print=start_print)
-        self._apply_config(updated)
+        try:
+            config = self._config()
+            paths = list(config.upload_paths)
+            if path and path not in paths: paths.append(path)
+            updated = replace(config, upload_paths=paths)
+            if config.upload_remember_state: updated = replace(updated, upload_path=path, upload_start_print=start_print)
+            self._apply_config(updated)
+        except Exception as error:
+            # Remembering convenience choices must never block the actual upload.
+            Logger.log("w", "Moonraker Print Follower: could not remember upload choices: %s", error)
 
     def _release_dialog(self):
         dialog, self._dialog = self._dialog, None
@@ -126,21 +131,23 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         message.show()
 
     def _finished(self, success, error):
-        if self._message is not None:
-            self._message.hide()
-            self._message = None
-        if success:
-            config = self._upload.config
-            suffix = " and started the print" if self._upload.start_print else ""
-            self._message = Message(f"Uploaded '{self._upload.filename}' to {self.getName()}{suffix}.", 30 if config.upload_autohide_message else 0, True)
-            self._message.setTitle("Moonraker")
-            self._message.addAction("open_browser", "Open Browser", "globe", "Open the configured Moonraker frontend")
-            self._message.actionTriggered.connect(lambda message, action:
-                QDesktopServices.openUrl(QUrl(config.frontend_url or config.url)) if action == "open_browser" else None)
-            self._message.show()
-            self.writeSuccess.emit(self)
-        elif error:
-            self._error(error)
-            self.writeError.emit(self)
-        self._upload.terminal_delivered()
-        self.writeFinished.emit(self)
+        try:
+            if self._message is not None:
+                self._message.hide()
+                self._message = None
+            if success:
+                config = self._upload.config
+                suffix = " and started the print" if self._upload.start_print else ""
+                self._message = Message(f"Uploaded '{self._upload.filename}' to {self.getName()}{suffix}.", 30 if config.upload_autohide_message else 0, True)
+                self._message.setTitle("Moonraker")
+                self._message.addAction("open_browser", "Open Browser", "globe", "Open the configured Moonraker frontend")
+                self._message.actionTriggered.connect(lambda message, action:
+                    QDesktopServices.openUrl(QUrl(config.frontend_url or config.url)) if action == "open_browser" else None)
+                self._message.show()
+                self.writeSuccess.emit(self)
+            elif error:
+                self._error(error)
+                self.writeError.emit(self)
+        finally:
+            self._upload.terminal_delivered()
+            self.writeFinished.emit(self)

@@ -114,18 +114,16 @@ class LayerResolver:
 
         thickness = None
         if layer is not None:
-            # Preserve v3.0 Monitor semantics: "Layer height" means the thickness
-            # of the current layer, not its cumulative Z coordinate. Moonraker
-            # metadata is authoritative when available; exact Cura/G-code Z
-            # heights provide a useful adaptive-layer fallback.
-            thickness = first if layer == 0 and first else step
-            if thickness is None and layer < len(heights):
+            # "Layer height" means this layer's material thickness, not its
+            # cumulative Z coordinate. Prefer exact geometry so adaptive layer
+            # heights remain accurate, then fall back to nominal metadata.
+            if layer < len(heights):
                 current_height = self._number(heights[layer])
                 previous_height = self._number(heights[layer - 1]) if layer > 0 else 0.0
                 if current_height is not None and previous_height is not None:
                     delta = current_height - previous_height
                     if delta > 0:
                         thickness = delta
+            if thickness is None:
+                thickness = first if layer == 0 and first is not None else step
         return PhysicalLayer(layer, total, height, source, thickness)
-
-

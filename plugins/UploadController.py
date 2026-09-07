@@ -94,6 +94,18 @@ class UploadController(QObject):
             if self._current(generation): callback()
         QTimer.singleShot(delay, run)
 
+    def _later_owned(self, delay, callback):
+        """Defer teardown while retaining only this operation's ownership token.
+
+        UI cancellation must still be able to retire an operation whose live
+        printer/session predicates have already gone stale. Requiring _current()
+        here would turn that stale operation into a permanently busy device.
+        """
+        generation = self._generation
+        def run():
+            if self._active and generation == self._generation: callback()
+        QTimer.singleShot(delay, run)
+
     def _request(self, method, path, callback, *, body=None):
         if not self._current(): return
         generation = self._generation
@@ -143,7 +155,11 @@ class UploadController(QObject):
 
     def accept(self, path, filename, start_print):
         filename = self.normalise_filename(filename)
-        if not self._current() or self._choice_pending or not filename: return
+        if not self._active or self._choice_pending or not filename: return
+        if not self._current():
+            self._choice_pending = True
+            self._later_owned(0, lambda: self._finish(False, "Moonraker connection changed; retry the upload"))
+            return
         if "." not in filename:
             filename += os.path.splitext(self._filename)[1]
         self._choice_pending = True
@@ -162,9 +178,9 @@ class UploadController(QObject):
         self._later(0, finish)
 
     def cancel(self):
-        if not self._current() or self._choice_pending: return
+        if not self._active or self._choice_pending: return
         self._choice_pending = True
-        self._later(0, lambda: self._finish(False, ""))
+        self._later_owned(0, lambda: self._finish(False, ""))
 
     def start(self):
         if not self._current() or self._source is None: return
@@ -284,6 +300,3 @@ class UploadController(QObject):
     def terminal_delivered(self):
         """Adapter acknowledges completion immediately before writeFinished."""
         self._terminal_pending = False
-
-
-

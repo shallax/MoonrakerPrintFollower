@@ -63,7 +63,7 @@ def core_values(snapshot, physical, connected):
         "monitorState": state.capitalize() if connected else "Disconnected",
         "monitorFilename": str(stats.get("filename") or ""),
         "monitorProgress": max(0, min(100, round(number(sd.get("progress")) * 100))),
-        "monitorLayer": layer_text, "monitorLayerHeight": f"{layer.height:.3f} mm" if layer.height is not None else "—",
+        "monitorLayer": layer_text, "monitorLayerHeight": f"{layer.thickness:.3f} mm" if layer.thickness is not None else "—",
         "monitorElapsed": duration(stats.get("print_duration")), "monitorEta": eta, "monitorFinish": finish,
         "monitorSpeed": f"{round(number(move.get('speed_factor'), 1) * 100)}%",
         "monitorFlow": f"{round(number(move.get('extrude_factor'), 1) * 100)}%",
@@ -208,5 +208,4 @@ def infer_macro_parameters(gcode):
                 if old["type"] == "string" and kind != "string": old["type"] = kind
                 if not old["hasDefault"] and item["hasDefault"]: old.update(default=item["default"], hasDefault=True, required=False)
     return list(found.values())
-
 

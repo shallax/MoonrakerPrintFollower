@@ -14,6 +14,9 @@ class MonitorUploadRegressionTests(unittest.TestCase):
         self.assertIn('text: "Upload format"', config)
         self.assertIn('property variant catalog: UM.I18nCatalog { name: "cura" }', upload)
         self.assertIn("manager.uploadPathOptions", upload)
+        self.assertIn("id: form", upload)
+        self.assertIn("form.implicitHeight", upload)
+        self.assertIn("height: minimumHeight", upload)
 
     def test_cancel_is_deferred_and_not_an_error(self):
         controller = text("UploadController.py")
