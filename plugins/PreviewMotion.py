@@ -40,6 +40,13 @@ MAX_VELOCITY = 0.5
 # Fraction of the previous layer's velocity kept when a new layer starts,
 # so the head does not begin every layer from a standstill.
 VELOCITY_WARM_START = 0.8
+# The observations are stale samples of the true trajectory (they only
+# update near path ends/starts). Treating the newest one as a hard wall
+# makes the head dwell at every stale step. The head may glide past the
+# newest observation by at most this many seconds of estimated progress;
+# if the next observation shows reality behind the head, the head waits
+# there — it never snaps back.
+LOOKAHEAD_S = 0.3
 class PreviewMotion(QObject):
     def __init__(self, cura, remember, parent=None, trace_path=None):
         super().__init__(parent)
@@ -108,12 +115,13 @@ class PreviewMotion(QObject):
         if self._displayed is None or self._target is None:
             self._timer.stop()
             return
-        displayed = advance_display(displayed=self._displayed, target=self._target,
+        ceiling = min(1.0, self._target + self._velocity * LOOKAHEAD_S)
+        displayed = advance_display(displayed=self._displayed, target=ceiling,
                                     velocity=self._velocity, dt=dt)
         self._displayed = displayed
         self._trace("tick", now, self._layer, displayed)
         self._write(displayed)
-        if displayed >= self._target:
+        if displayed >= ceiling:
             self._timer.stop()
 
     def _write(self, fraction: float) -> None:

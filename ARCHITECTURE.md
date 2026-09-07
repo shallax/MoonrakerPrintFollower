@@ -166,12 +166,14 @@ slicer layer timing, speed, path progress and observed duration anchors—not
 G-code byte percentage as time.
 
 Path smoothing is display-only: `PreviewMotion` animates the displayed path
-toward the newest physical target using the pure `PreviewSmoothing` policy,
-which never exceeds the observed target and never decreases within a layer;
-layer transitions are jumped, never animated. The physical `path_fraction`
-that ETA consumes is unchanged, and each animated write re-remembers the
-plugin-written position so the override detector cannot mistake the animation
-for a manual grab.
+toward the newest physical observation using the pure `PreviewSmoothing`
+policy. Observations are stale samples of the true trajectory, so the head
+may glide past the newest one by a bounded one-poll lookahead and never
+decreases within a layer; if reality turns out to be behind the head, the
+head waits rather than snapping back. Layer transitions are jumped, never
+animated. The physical `path_fraction` that ETA consumes is unchanged, and
+each animated write re-remembers the plugin-written position so the override
+detector cannot mistake the animation for a manual grab.
 
 ## 6. Remote files, leases and bounded indexing
 

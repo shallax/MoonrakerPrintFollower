@@ -8,10 +8,11 @@ Version 3.3.0 is the first feature release after the debt payoff: follower
 quality.
 
 ### Highlights
-- Smooths the Preview path head: the displayed position glides at the
-  observed physical velocity, capped by the newest observation, so it never
-  gets ahead of reality and never snaps back within a layer. Layer
-  transitions are jumped, not animated.
+- Smooths the Preview path head: the displayed position glides along the
+  toolpath at the observed physical velocity with a bounded one-poll
+  lookahead (observations are stale samples), never gets far ahead of
+  reality and never snaps back within a layer. Layer transitions are
+  jumped, not animated.
 - The smoothing is display-only: the physical path fraction used for ETA is
   unchanged, and animated writes re-remember the plugin-written position so
   manual-override detection is unaffected.

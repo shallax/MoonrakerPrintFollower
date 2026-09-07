@@ -566,9 +566,10 @@ class PreviewMotionTests(unittest.TestCase):
         self.motion.write(0, 0.6)
         self.qt.events(400)
         # The head cruises at the windowed rate: it has advanced past the
-        # first observation's position and never exceeds the newest target.
+        # first observation's position and never exceeds the newest target
+        # by more than the bounded lookahead.
         self.assertGreater(self.view.path, 50.0)
-        self.assertLessEqual(self.view.path, 60.0)
+        self.assertLessEqual(self.view.path, 62.0)
         # A new layer jumps straight to its target; no cross-layer animation.
         self.motion.write(1, 0.05)
         self.assertEqual(self.view.path, 5.0)

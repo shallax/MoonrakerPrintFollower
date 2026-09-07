@@ -4,14 +4,14 @@ The physical observation stays untouched; this module only decides how the
 *displayed* head position moves between observations.
 
 The head cruises at the estimated physical velocity and treats the newest
-observed target as a hard ceiling; a gap-feedback term compensates the
-estimate's drift so the head stays in sync. The feedback is sized so the
-steady-state lag is small, while corner dwells still stall the target and
-resync the head naturally.
+observed target — plus a small bounded lookahead, since observations are
+stale samples of the true trajectory — as its ceiling; a gap-feedback term
+compensates the estimate's drift so the head stays in sync.
 
 Guarantees:
 
-- never exceeds the observed target (the head never gets ahead of reality);
+- never exceeds the newest observation by more than the bounded lookahead
+  (and never gets far ahead of reality);
 - never decreases (the head never snaps back within a layer);
 - steady cruise between observations, with the gap term only correcting
   drift — no chase bursts.
