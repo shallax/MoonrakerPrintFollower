@@ -141,7 +141,8 @@ class V3FollowupRegressionTests(unittest.TestCase):
         ):
             self.assertIn(token, CONTROLS + MONITOR_MODEL)
         self.assertIn("function applyLedColour()", DASHBOARD_QML)
-        self.assertIn("onPressedChanged: if (!pressed) applyLedColour()", DASHBOARD_QML)
+        self.assertGreaterEqual(DASHBOARD_QML.count("if (!pressed) applyLedColour()"), 4)
+        self.assertIn("root.tuningSliderPressed = pressed", DASHBOARD_QML)
         self.assertNotIn('text: "Set colour"', DASHBOARD_QML)
         self.assertIn("root.printer.setLedColor", DASHBOARD_QML)
 

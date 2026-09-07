@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
 import threading
 import unittest
 
@@ -79,6 +80,37 @@ class UploadLifecycleTests(unittest.TestCase):
         self.qt.events(10)
         self.assertFalse(device._upload.busy)
         self.assertEqual(finished, [device, device])
+
+    def test_cancel_retires_operation_even_if_binding_went_stale(self):
+        transport = ScriptedTransport()
+        client = self.client_module.MoonrakerClient(transport=transport)
+        client.configure("http://printer-a", "", 750)
+        self.addCleanup(client.stop)
+        config = self.config_type(url="http://printer-a", upload_dialog=True, upload_start_print=False)
+        self.install_dialog_factory(self.app)
+        active_machine = ["A"]
+        device = self.device_module.MoonrakerOutputDevice(
+            self.app, "A", client=client, config=lambda: config,
+            apply_config=lambda value: None,
+            active_identity=lambda: (active_machine[0], active_machine[0]),
+        )
+        self.addCleanup(device.deactivate)
+        finished, errors = [], []
+        device.writeFinished.connect(finished.append)
+        device.writeError.connect(errors.append)
+
+        device.requestWrite(None, "stale.gcode")
+        source_path = device._upload._source.path
+        self.assertTrue(os.path.exists(source_path))
+        active_machine[0] = "B"
+        self.assertFalse(device._upload._current())
+
+        device.cancelUpload()
+        self.qt.events(10)
+        self.assertFalse(device._upload.busy)
+        self.assertFalse(os.path.exists(source_path))
+        self.assertEqual(finished, [device])
+        self.assertEqual(errors, [])
 
     def test_dialog_accept_starts_real_http_upload(self):
         received = []

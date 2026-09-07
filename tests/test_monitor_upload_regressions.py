@@ -21,7 +21,7 @@ class MonitorUploadRegressionTests(unittest.TestCase):
     def test_cancel_is_deferred_and_not_an_error(self):
         controller = text("UploadController.py")
         adapter = text("MoonrakerOutputDevice.py")
-        self.assertIn('self._later(0, lambda: self._finish(False, ""))', controller)
+        self.assertIn('self._later_owned(0, lambda: self._finish(False, ""))', controller)
         self.assertIn("elif error:", adapter)
         self.assertIn("self.writeFinished.emit(self)", adapter)
         self.assertIn("self._upload.terminal_delivered()", adapter)

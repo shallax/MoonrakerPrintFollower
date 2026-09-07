@@ -114,7 +114,7 @@ Component
                             enabled: visible
                             model: root.printer != null ? root.printer.webcamNames : []
                             currentIndex: root.printer != null ? root.printer.activeWebcamIndex : -1
-                            onActivated:
+                            onActivated: function(index)
                             {
                                 if (root.printer != null)
                                 {

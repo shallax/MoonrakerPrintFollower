@@ -33,6 +33,28 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     emergencyStopChanged = pyqtSignal()
     typedControlsChanged = pyqtSignal()
 
+    _SIGNAL_KEYS = (
+        ("monitorChanged", ("monitorState", "monitorFilename", "monitorProgress", "monitorLayer", "monitorElapsed",
+                            "monitorEta", "monitorFinish", "monitorSpeed", "monitorFlow", "monitorPosition", "monitorMessage")),
+        ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
+        ("cameraTransformChanged", ("cameraName", "cameraRotation", "cameraFlipHorizontal", "cameraFlipVertical", "cameraUrlValue")),
+        ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
+        ("excludeObjectsChanged", ("excludeObjectItems",)),
+        ("powerDevicesChanged", ("powerDevices",)),
+        ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
+                           "cpuTemperature", "mcuSummary", "mcuItems")),
+        ("actionChanged", ("printActive", "canPausePrint", "canResumePrint", "canCancelPrint", "actionBusy", "actionStatus")),
+        ("controlsChanged", ("monitorLayerHeight", "macroNames", "hasQuadGantryLevel", "hasBedMesh", "canRunSetup",
+                             "temperaturePresetNames", "canApplyTemperaturePreset", "speedFactorPercent", "flowFactorPercent",
+                             "zOffset", "zOffsetText", "fanControlItems", "ledItems", "saveConfigPending", "saveConfigSummary",
+                             "canSaveConfig")),
+        ("emergencyStopChanged", ("emergencyStopClicks",)),
+        ("typedControlsChanged", ("temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
+                                  "bedMeshProfileNames", "bedMeshRows", "bedMeshColumns", "bedMeshValues", "bedMeshMinimum",
+                                  "bedMeshMaximum", "bedMeshRange", "bedMeshXMin", "bedMeshXMax", "bedMeshYMin", "bedMeshYMax",
+                                  "bedMeshRangeText", "bedMeshPreviewVisible")),
+    )
+
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh):
         super().__init__(output_controller, number_of_extruders)
         self._client, self._print_state, self._config, self._mesh = client, print_state, config, bed_mesh
@@ -50,6 +72,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def setMonitoringActive(self, active): self._data.set_active(active)
 
     def _publish(self):
+        previous = self._values
         values = core_values(self._data.snapshot, self._print_state(), self._client.connected)
         values.update(peripheral_values(self._data.snapshot))
         values.update(self._controls.values)
@@ -66,13 +89,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             bedMeshXMin=float(mesh.get("xMin") or 0), bedMeshXMax=float(mesh.get("xMax") or 0),
             bedMeshYMin=float(mesh.get("yMin") or 0), bedMeshYMax=float(mesh.get("yMax") or 0),
             bedMeshRangeText=f"{float(mesh.get('range') or 0):.3f} mm range" if mesh else "",
-            bedMeshPreviewVisible=self._mesh.visible)
+            bedMeshPreviewVisible=self._mesh.visible, cameraUrlValue=self._camera.url)
         self._values = values
         try: self.setCameraUrl(QUrl(self._camera.url))
         except AttributeError: pass
-        for signal in (self.monitorChanged, self.webcamsChanged, self.cameraTransformChanged, self.peripheralsChanged,
-            self.excludeObjectsChanged, self.powerDevicesChanged, self.systemChanged, self.actionChanged,
-            self.controlsChanged, self.emergencyStopChanged, self.typedControlsChanged): signal.emit()
+
+        # Qt notify signals are part of control ownership. Broadcasting every
+        # signal for every poll was re-evaluating bound ComboBox/Slider values
+        # while the user was interacting with them, and QVariant-list updates
+        # could also rebuild Repeater delegates mid-drag. Only notify the group
+        # whose published values actually changed.
+        for signal_name, keys in self._SIGNAL_KEYS:
+            if any(previous.get(key) != values.get(key) for key in keys):
+                getattr(self, signal_name).emit()
 
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
     monitorFilename = value_property(str, "monitorFilename", monitorChanged, "")

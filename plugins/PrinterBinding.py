@@ -1,6 +1,7 @@
 """Active printer/configuration ownership, independent of following and UI features."""
 from __future__ import annotations
 
+from dataclasses import replace
 from PyQt6.QtCore import QObject, QUrl, pyqtSignal
 from UM.Logger import Logger
 
@@ -46,6 +47,13 @@ class PrinterBinding(QObject):
             try: migrate()
             except Exception as error: Logger.log("w", "Moonraker settings migration failed: %s", error)
 
+    def _flush_preferences(self):
+        """Force preference-backed selections to disk when Cura exposes the hook."""
+        save = getattr(self._application, "savePreferences", None)
+        if not callable(save): return
+        try: save()
+        except Exception as error: Logger.log("w", "Moonraker camera preference flush failed: %s", error)
+
     def start(self):
         self._migrate()
         self._apply()
@@ -53,9 +61,23 @@ class PrinterBinding(QObject):
     def apply(self, config):
         if self._closed: return
         previous = self.config
-        if (self.normalise(previous.url), previous.api_key) != (self.normalise(config.url), config.api_key):
+        endpoint_changed = (self.normalise(previous.url), previous.api_key) != (self.normalise(config.url), config.api_key)
+        camera_changed = previous.camera_selected != config.camera_selected
+        camera_only = camera_changed and replace(previous, camera_selected=config.camera_selected) == config
+
+        if endpoint_changed:
             self._client.stop()  # all owners invalidate before persistence/rebind
+
+        # Camera selection is UI state, not connection state. Persist it directly
+        # against the active machine and flush Cura's preference file immediately;
+        # do not reconfigure/restart the Moonraker client just because a dropdown
+        # changed.
         self._store.set(config, self._machine_id)
+        if camera_changed:
+            self._flush_preferences()
+        if camera_only:
+            self.changed.emit()
+            return
         self._apply()
 
     def _machine_changed(self, *_args):

@@ -33,22 +33,43 @@ class MonitorTuning(QObject):
         self.changed.emit()
 
     def preview(self, key, value):
-        self._drop(key)
+        # Preview is strictly local interaction state. A poll may still rebuild
+        # MonitorControls while a Slider is pressed, so value() deliberately does
+        # not expose an uncommitted preview to the Qt property model below. The
+        # QML Slider renders its own handle position during the gesture.
+        pending = self._pending.get(key)
         self._revision += 1
+        if pending is not None and pending.script:
+            # Re-grabbing a Slider before its previous release has been sent or
+            # confirmed must keep that released value authoritative. Dropping it
+            # here exposes the older printer-reported value and makes the bound
+            # Slider snap backwards at the start of the next gesture. Cancel the
+            # old timers and invalidate any in-flight completion, but retain the
+            # last released value until this gesture is released and queued.
+            pending.revision = self._revision
+            for timers in (self._debounce, self._confirm):
+                if key in timers: timers[key].stop()
+            return
+        self._drop(key)
         self._pending[key] = PendingValue(value, self._revision)
-        self.changed.emit()
 
     def queue(self, key, value, channel, script):
         if not self._data.active: return
-        self.preview(key, value)
-        pending = self._pending[key]
-        pending.script, pending.channel = script, channel
+        # A release replaces either a preview-only value or the last released
+        # value retained while the user re-grabbed the Slider.
+        self._drop(key)
+        self._revision += 1
+        self._pending[key] = PendingValue(value, self._revision, script=script, channel=channel)
         timer = self._timer(self._debounce, key, self.DEBOUNCE_MS, self._send)
         timer.start()
+        self.changed.emit()
 
     def value(self, key, actual):
         pending = self._pending.get(key)
-        return pending.value if pending else actual
+        # Only a released/queued value is authoritative for model publication.
+        # Exposing preview-only values here causes the next status poll to emit a
+        # property notification that rebinds the Slider underneath an active drag.
+        return pending.value if pending is not None and pending.script else actual
 
     def observe(self, key, actual, tolerance=1.0):
         pending = self._pending.get(key)
@@ -97,4 +118,3 @@ class MonitorTuning(QObject):
         self._drop(key)
         self.changed.emit()
         self._data.refresh_all()
-

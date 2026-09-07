@@ -18,7 +18,7 @@ OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
 class HotfixRegressionTests(unittest.TestCase):
     def test_upload_dialog_teardown_is_queued_out_of_qml_callbacks(self):
         self.assertIn("self._later(0, finish)", UPLOAD)
-        self.assertIn('self._later(0, lambda: self._finish(False, ""))', UPLOAD)
+        self.assertIn('self._later_owned(0, lambda: self._finish(False, ""))', UPLOAD)
         self.assertIn("dialog.deleteLater()", ADAPTER)
 
     def test_upload_folders_are_discovered_and_hidden_paths_excluded(self):
