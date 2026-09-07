@@ -264,12 +264,12 @@ class PreviewSmoothingTests(unittest.TestCase):
         self.assertEqual(advance_display(displayed=displayed, target=0.3, velocity=0.1, dt=0.033), 0.6)
 
     def test_zero_velocity_eases_into_a_static_target(self):
-        # With no velocity estimate the gap decay (0.2/s) closes large gaps
-        # gently instead of leaving the head stranded: after 0.25 s the head
-        # has covered about 1 - e^-0.05 of a full-layer gap.
+        # With no velocity estimate the gap decay (0.8/s) closes large gaps
+        # promptly instead of leaving the head stranded: after 0.25 s the
+        # head has covered about 1 - e^-0.2 of a full-layer gap.
         displayed = advance_display(displayed=0.0, target=1.0, velocity=0.0, dt=0.25)
-        self.assertGreaterEqual(displayed, 0.03)
-        self.assertLessEqual(displayed, 0.07)
+        self.assertGreaterEqual(displayed, 0.15)
+        self.assertLessEqual(displayed, 0.25)
 
     def test_clamps_target_to_unit_range(self):
         value = advance_display(displayed=0.5, target=2.0, velocity=1.0, dt=0.033)

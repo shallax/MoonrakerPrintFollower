@@ -13,6 +13,7 @@ start exactly as the unsmoothed follower would.
 """
 from __future__ import annotations
 
+from collections import deque
 import math
 import time
 
@@ -22,18 +23,23 @@ from .CuraAdapter import preview_max_paths, set_preview_minimum_path, set_previe
 from .PreviewSmoothing import advance_display
 
 TICK_MS = 33
-# Velocity smoothing time constant, in seconds. Sized in time (not per
-# observation) so the behaviour is identical at any polling rate; long
-# slow moves produce tiny quantised per-poll deltas, and a faster
-# response would make the glide speed wobble visibly between polls.
-VELOCITY_TAU = 8.0
-# Floor for the observation interval so an immediate second observation
-# cannot produce a huge instantaneous velocity.
-MIN_OBSERVATION_DT = 0.05
+# The physical rate is derived from a sliding window of observations, not
+# from consecutive polls: per-poll deltas are tiny and quantised at fast
+# polling rates, and differencing them makes the glide speed wobble.
+VELOCITY_WINDOW = 2.0
+# A window shorter than this produces no rate update; the previous estimate
+# is kept until enough history accumulates.
+MIN_RATE_SPAN = 0.5
+# Mild additional smoothing of the windowed rate; sized in time so the
+# behaviour is identical at any polling rate.
+VELOCITY_TAU = 1.5
 # Cap on the instantaneous rate in layer-fractions per second. Extrusion
 # rates are far below this; travel moves spike above it and are clipped so
 # the head does not race to the newest observation and stall there.
 MAX_VELOCITY = 0.5
+# Fraction of the previous layer's velocity kept when a new layer starts,
+# so the head does not begin every layer from a standstill.
+VELOCITY_WARM_START = 0.8
 
 
 class PreviewMotion(QObject):
@@ -48,8 +54,7 @@ class PreviewMotion(QObject):
         self._target = None
         self._displayed = None
         self._velocity = 0.0
-        self._prev_fraction = None
-        self._prev_time = 0.0
+        self._history = deque()
         self._last = 0.0
 
     def write(self, layer: int, fraction: float) -> None:
@@ -58,24 +63,26 @@ class PreviewMotion(QObject):
         now = time.monotonic()
         if layer != self._layer or self._displayed is None:
             # A layer transition (or the first observation): jump, never
-            # animate across layers. The velocity estimate restarts too.
+            # animate across layers. Layers print at similar rates, so the
+            # velocity estimate is warm-started rather than reset.
             self._layer = layer
             self._target = fraction
             self._displayed = fraction
-            self._velocity = 0.0
-            self._prev_fraction = fraction
-            self._prev_time = now
+            self._velocity *= VELOCITY_WARM_START
+            self._history.clear()
+            self._history.append((now, fraction))
             self._last = now
             self._timer.stop()
             self._write(fraction)
             return
-        if self._prev_fraction is not None:
-            dt = max(MIN_OBSERVATION_DT, now - self._prev_time)
-            instant = max(0.0, min(MAX_VELOCITY, (fraction - self._prev_fraction) / dt))
-            alpha = 1.0 - math.exp(-dt / VELOCITY_TAU)
+        self._history.append((now, fraction))
+        while self._history and now - self._history[0][0] > VELOCITY_WINDOW:
+            self._history.popleft()
+        span = now - self._history[0][0]
+        if span >= MIN_RATE_SPAN:
+            instant = max(0.0, min(MAX_VELOCITY, (fraction - self._history[0][1]) / span))
+            alpha = 1.0 - math.exp(-span / VELOCITY_TAU)
             self._velocity += (instant - self._velocity) * alpha
-        self._prev_fraction = fraction
-        self._prev_time = now
         self._target = fraction
         self._last = now
         if self._displayed < fraction:
@@ -86,8 +93,7 @@ class PreviewMotion(QObject):
         self._timer.stop()
         self._layer = self._target = self._displayed = None
         self._velocity = 0.0
-        self._prev_fraction = None
-        self._prev_time = 0.0
+        self._history.clear()
 
     def _tick(self) -> None:
         now = time.monotonic()

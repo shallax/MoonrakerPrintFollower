@@ -20,9 +20,9 @@ from __future__ import annotations
 
 # Fraction of the remaining gap closed per second when the velocity
 # estimate has drifted from reality (equilibrium lag ≈ velocity / decay).
-# Kept small so the per-observation gap reopening does not pulse the head's
-# speed; speed changes come from the slow velocity estimate instead.
-LAG_DECAY_PER_SECOND = 0.2
+# Fast enough to keep the head in sync; the windowed rate estimate is
+# smooth by construction, so this term no longer causes speed pulsation.
+LAG_DECAY_PER_SECOND = 0.8
 
 
 def advance_display(*, displayed: float, target: float, velocity: float, dt: float,
