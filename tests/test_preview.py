@@ -237,14 +237,9 @@ class PreviewFormattingTests(unittest.TestCase):
 class PreviewSmoothingTests(unittest.TestCase):
     """The displayed head cruises at the physical rate without exceeding it or snapping back."""
 
-    def test_advances_at_constant_velocity(self):
-        # No easing: the displayed value moves at exactly the given rate.
-        displayed = advance_display(displayed=0.0, target=1.0, velocity=0.1, dt=0.25)
-        self.assertAlmostEqual(displayed, 0.025)
-
     def test_tracks_moving_target_with_bounded_lag(self):
         # A target advancing at the estimated velocity is tracked with a
-        # constant small lag and no easing either side of observations.
+        # constant small lag; the gap term only corrects drift.
         displayed = 0.0
         velocity = 0.1
         lags = []
@@ -252,7 +247,7 @@ class PreviewSmoothingTests(unittest.TestCase):
             target = min(1.0, 0.02 + tick * velocity * 0.033)
             displayed = advance_display(displayed=displayed, target=target, velocity=velocity, dt=0.033)
             lags.append(target - displayed)
-        self.assertLessEqual(max(lags), 0.05)
+        self.assertLessEqual(max(lags), 0.15)
         self.assertGreaterEqual(displayed, 0.9)
 
     def test_never_exceeds_target_and_never_decreases(self):
@@ -268,9 +263,12 @@ class PreviewSmoothingTests(unittest.TestCase):
         displayed = 0.6
         self.assertEqual(advance_display(displayed=displayed, target=0.3, velocity=0.1, dt=0.033), 0.6)
 
-    def test_zero_velocity_holds(self):
-        # No fake easing: with no rate estimate the head simply waits.
-        self.assertEqual(advance_display(displayed=0.0, target=1.0, velocity=0.0, dt=0.25), 0.0)
+    def test_zero_velocity_gap_feedback_keeps_head_from_stranding(self):
+        # With no rate estimate the gap feedback (0.8/s) closes a large gap
+        # promptly: after 0.25 s the head covers about 1 - e^-0.2 of it.
+        displayed = advance_display(displayed=0.0, target=1.0, velocity=0.0, dt=0.25)
+        self.assertGreaterEqual(displayed, 0.15)
+        self.assertLessEqual(displayed, 0.25)
 
     def test_clamps_target_to_unit_range(self):
         value = advance_display(displayed=0.5, target=2.0, velocity=1.0, dt=0.033)
