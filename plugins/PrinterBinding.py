@@ -6,7 +6,7 @@ from PyQt6.QtCore import QObject, QUrl, pyqtSignal
 from UM.Logger import Logger
 
 from .CuraAdapter import active_machine_identity
-from .PrinterConfig import PrinterConfigStore
+from .PrinterConfig import PrinterConfigStore, normalise_url
 
 
 class PrinterBinding(QObject):
@@ -28,14 +28,7 @@ class PrinterBinding(QObject):
     @property
     def identity(self): return self._machine_id, self._machine_name
     @property
-    def configured(self): return self._machine_id != "unknown" and self.usable(self.normalise(self.config.url))
-
-    @staticmethod
-    def normalise(url):
-        value = str(url or "").strip()
-        if value.lower() in {"", "http:", "https:", "http://", "https://"}: return ""
-        value = value.rstrip("/")
-        return value if value.lower().startswith(("http://", "https://")) else "http://" + value
+    def configured(self): return self._machine_id != "unknown" and self.usable(normalise_url(self.config.url))
 
     @staticmethod
     def usable(url):
@@ -61,7 +54,7 @@ class PrinterBinding(QObject):
     def apply(self, config):
         if self._closed: return
         previous = self.config
-        endpoint_changed = (self.normalise(previous.url), previous.api_key) != (self.normalise(config.url), config.api_key)
+        endpoint_changed = (normalise_url(previous.url), previous.api_key) != (normalise_url(config.url), config.api_key)
         camera_changed = previous.camera_selected != config.camera_selected
         camera_only = camera_changed and replace(previous, camera_selected=config.camera_selected) == config
 
@@ -93,7 +86,7 @@ class PrinterBinding(QObject):
 
     def _apply(self):
         config = self.config
-        url = self.normalise(config.url)
+        url = normalise_url(config.url)
         self._client.configure(url, config.api_key, config.poll_interval_ms)
         if self.configured: self._client.start()
         else: self._client.stop()

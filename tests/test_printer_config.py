@@ -238,11 +238,24 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertEqual(normalise_url(" 192.168.1.5 "), "http://192.168.1.5")
         self.assertEqual(normalise_url("https://printer/"), "https://printer")
         self.assertEqual(normalise_url("HTTP://Printer:7125//"), "HTTP://Printer:7125")
+        for scheme_only in ("http:", "https:", "http://", "https://", "HTTP://"):
+            self.assertEqual(normalise_url(scheme_only), "http://")
 
     def test_from_dict_normalises_url(self):
         self.assertEqual(PrinterConfig.from_dict({"url": "printer.lan"}).url, "http://printer.lan")
         self.assertEqual(PrinterConfig.from_dict({"url": "https://printer.lan/"}).url, "https://printer.lan")
         self.assertEqual(PrinterConfig.from_dict({}).url, "http://")
+
+    def test_from_dict_rejects_nonfinite_or_out_of_range_tolerance(self):
+        self.assertEqual(PrinterConfig.from_dict({"z_tolerance": float("nan")}).z_tolerance, 0.04)
+        self.assertEqual(PrinterConfig.from_dict({"z_tolerance": float("inf")}).z_tolerance, 0.04)
+        self.assertEqual(PrinterConfig.from_dict({"z_tolerance": 0.0}).z_tolerance, 0.04)
+        self.assertEqual(PrinterConfig.from_dict({"z_tolerance": 9.0}).z_tolerance, 0.04)
+        self.assertEqual(PrinterConfig.from_dict({"z_tolerance": 0.1}).z_tolerance, 0.1)
+
+    def test_from_dict_caps_poll_interval(self):
+        self.assertEqual(PrinterConfig.from_dict({"poll_interval_ms": 10 ** 20}).poll_interval_ms, 3_600_000)
+        self.assertEqual(PrinterConfig.from_dict({"poll_interval_ms": 0}).poll_interval_ms, 1)
 
 
 if __name__ == "__main__":

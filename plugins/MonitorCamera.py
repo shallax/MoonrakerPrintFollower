@@ -75,7 +75,7 @@ class MonitorCamera(QObject):
                 values["activeWebcamIndex"] = -1
                 self._values = values
                 self.changed.emit()
-                QTimer.singleShot(0, self._restore_after_population)
+                QTimer.singleShot(0, lambda: self._restore_after_population(signature))
                 return
             self._restore_pending = False
 
@@ -83,8 +83,13 @@ class MonitorCamera(QObject):
             return
         self._restore_selection(config, cameras)
 
-    def _restore_after_population(self):
+    def _restore_after_population(self, scheduled_signature=None):
         if not self._restore_pending:
+            return
+        if scheduled_signature is not None and scheduled_signature != self._camera_signature:
+            # The webcam set changed (or the session was invalidated) between
+            # scheduling and firing. Keep the restore pending; the next
+            # observe() re-schedules against the current snapshot.
             return
         self._restore_pending = False
         self._key = None

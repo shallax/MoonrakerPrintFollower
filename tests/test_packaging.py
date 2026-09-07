@@ -39,6 +39,10 @@ class QmlCheckerTests(unittest.TestCase):
         self.assertTrue(any("duplicate property 'width'" in item for item in failures))
         self.assertTrue(any("unclosed '{'" in item for item in failures))
 
+    def test_qml_checker_allows_leading_comment_lines(self):
+        failures = check_text("// Moonraker settings panel\nimport QtQuick 2.15\nItem { width: 1 }\n", "commented.qml")
+        self.assertEqual(failures, [])
+
 
 class PackageSourceTests(unittest.TestCase):
     def test_repository_has_no_tracked_python_cache_or_legacy_dashboard(self):

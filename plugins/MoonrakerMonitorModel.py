@@ -37,7 +37,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("monitorChanged", ("monitorState", "monitorFilename", "monitorProgress", "monitorLayer", "monitorElapsed",
                             "monitorEta", "monitorFinish", "monitorSpeed", "monitorFlow", "monitorPosition", "monitorMessage")),
         ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
-        ("cameraTransformChanged", ("cameraName", "cameraRotation", "cameraFlipHorizontal", "cameraFlipVertical", "cameraUrlValue")),
+        ("cameraTransformChanged", ("cameraName", "cameraRotation", "cameraFlipHorizontal", "cameraFlipVertical")),
         ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
         ("excludeObjectsChanged", ("excludeObjectItems",)),
         ("powerDevicesChanged", ("powerDevices",)),
@@ -89,7 +89,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             bedMeshXMin=float(mesh.get("xMin") or 0), bedMeshXMax=float(mesh.get("xMax") or 0),
             bedMeshYMin=float(mesh.get("yMin") or 0), bedMeshYMax=float(mesh.get("yMax") or 0),
             bedMeshRangeText=f"{float(mesh.get('range') or 0):.3f} mm range" if mesh else "",
-            bedMeshPreviewVisible=self._mesh.visible, cameraUrlValue=self._camera.url)
+            bedMeshPreviewVisible=self._mesh.visible)
         self._values = values
         try: self.setCameraUrl(QUrl(self._camera.url))
         except AttributeError: pass
@@ -177,15 +177,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot()
     def refreshAll(self): self._data.refresh_all()
     @pyqtSlot()
-    def refreshTransport(self): self._client.force_refresh()
-    @pyqtSlot()
-    def refreshCapabilities(self): self._data.refresh_discovery()
-    @pyqtSlot()
-    def refreshTemperaturePresets(self): self._data.refresh_discovery()
-    @pyqtSlot()
-    def refreshPowerDevices(self): self._data.refresh_power()
-    @pyqtSlot()
-    def refreshSystemInfo(self): self._data.refresh_system()
     @pyqtSlot()
     def refreshWebcams(self): self._data.refresh_webcams()
     @pyqtSlot(object)
@@ -208,7 +199,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot()
     def openFrontend(self):
         config = self._config()
-        QDesktopServices.openUrl(QUrl(config.frontend_url or config.url))
+        QDesktopServices.openUrl(QUrl(config.frontend_target))
     @pyqtSlot(str, str)
     def runMacro(self, name, arguments=""): self._controls.run_macro(name, arguments)
     @pyqtSlot()

@@ -169,7 +169,8 @@ def check_text(text: str, name: str = "<qml>") -> List[str]:
 
     for frame in reversed(stack):
         errors.append(f"line {frame.line}: unclosed '{frame.opener}'")
-    first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    first = next((line for line in lines if not line.startswith("//")), "")
     if first and not first.startswith("import "):
         errors.append("line 1: QML file should begin with imports")
     return [f"{name}: {error}" for error in errors]

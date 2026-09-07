@@ -50,11 +50,14 @@ class ArchitectureDocumentTests(unittest.TestCase):
 
     def test_document_names_the_runtime_components_and_services(self):
         for module in (
-            "PrinterBinding.py", "CuraIntegration.py", "PreviewPresentation.py", "PreviewFollower.py",
-            "PreviewFormatting.py", "PrintCoordinator.py", "PrintState.py", "RemoteFileService.py",
+            "PrinterBinding.py", "PrinterConfig.py", "CuraIntegration.py", "CuraAdapter.py",
+            "CuraLifecycleBridge.py", "NativeNozzleLifecycle.py", "FollowController.py",
+            "PreviewPresentation.py", "PreviewFollower.py", "PreviewFormatting.py",
+            "PrintCoordinator.py", "PrintState.py", "RemoteFileService.py", "DownloadStream.py",
             "GCodeIndexService.py", "MonitorData.py", "MonitorCommands.py", "MonitorTuning.py",
             "MonitorControls.py", "MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py",
-            "UploadController.py", "CuraOutputWriter.py",
+            "BedMeshSceneNode.py", "MoonrakerMonitorModel.py", "MoonrakerFollowerMachineAction.py",
+            "MoonrakerProtocol.py", "UploadController.py", "CuraOutputWriter.py",
         ):
             self.assertIn(f"`{module}`", ARCH)
 
@@ -83,7 +86,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
     def test_instructions_document_records_the_version_bump_checklist(self):
         instructions = (ROOT / "INSTRUCTIONS.md").read_text(encoding="utf-8")
         for token in (
-            "package.json", "plugins/plugin.json", "CHANGELOG.md",
+            "package.json", "plugins/plugin.json", "CHANGELOG.md", "README.md",
             "release workflow", "v<version>",
         ):
             self.assertIn(token, instructions)
@@ -130,7 +133,7 @@ class SourceContractTests(unittest.TestCase):
             "MonitorCamera": set(),
             "MonitorCommands": set(),
             "MonitorControls": {"MonitorFormatting"},
-            "MonitorData": {"MoonrakerSession"},
+            "MonitorData": {"MonitorFormatting", "MoonrakerSession"},
             "MonitorFormatting": set(),
             "MonitorTuning": set(),
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
@@ -148,7 +151,7 @@ class SourceContractTests(unittest.TestCase):
             "PreviewFollower": {"CuraAdapter", "FollowController", "MoonrakerProtocol"},
             "PreviewFormatting": set(),
             "PreviewPresentation": set(),
-            "PrintCoordinator": {"PreviewFormatting", "PrintState", "RemoteJobService"},
+            "PrintCoordinator": {"MonitorFormatting", "PreviewFormatting", "PrintState", "RemoteJobService"},
             "PrinterBinding": {"CuraAdapter", "PrinterConfig"},
             "PrinterConfig": set(),
             "PrintState": {"RemoteJobService"},
@@ -316,8 +319,8 @@ class CompositionStructureTests(unittest.TestCase):
         self.assertIn("MoonrakerSession", client)
         self.assertIn("self._session.transport.send_json", client)
         self.assertIn("MoonrakerHttpTransport", session)
-        self.assertIn("transport.send_json", monitor)
-        self.assertIn("client.force_refresh", monitor)
+        self.assertIn("_client.transport.send_json", monitor)
+        self.assertIn("_client.force_refresh", monitor)
         self.assertNotIn("status_endpoint", monitor)
         self.assertNotIn("QNetworkAccessManager", monitor)
         self.assertIn("QNetworkAccessManager", transport)

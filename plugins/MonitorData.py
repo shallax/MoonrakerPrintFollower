@@ -4,9 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import MappingProxyType
 from collections.abc import Mapping
-import re
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from .MonitorFormatting import wanted_object
 from .MoonrakerSession import RequestCategory
 
 
@@ -35,10 +35,11 @@ class MonitorSnapshot:
 class MonitorData(QObject):
     changed = pyqtSignal()
     invalidated = pyqtSignal()
+    commandChanged = pyqtSignal(object)
 
     def __init__(self, client, parent=None):
         super().__init__(parent)
-        self.client = client
+        self._client = client
         self._active = False
         self._generation = 0
         self._timers = {}
@@ -53,6 +54,7 @@ class MonitorData(QObject):
         # PyQt can automatically disconnect bound QObject receivers when this MonitorData
         # is destroyed; a lambda would outlive the C++ object on the long-lived client.
         client.statusReceived.connect(self.observe)
+        client.commandChanged.connect(self.commandChanged.emit)
         client.sessionInvalidated.connect(self._session_invalidated)
         client.connectionChanged.connect(self._connection_changed)
 
@@ -71,6 +73,26 @@ class MonitorData(QObject):
     @property
     def active(self): return self._active
 
+    @property
+    def connected(self) -> bool:
+        return bool(self._client.connected)
+
+    @property
+    def status(self):
+        return self._client.status
+
+    def track_command(self, name, expected_states=(), *, timeout_s=10.0):
+        self._client.track_command(name, expected_states, timeout_s=timeout_s)
+
+    def accept_command(self, name):
+        self._client.accept_command(name)
+
+    def fail_command(self, name, detail):
+        self._client.fail_command(name, detail)
+
+    def force_refresh(self):
+        self._client.force_refresh()
+
     def _update(self, **patch):
         from dataclasses import replace
         self._snapshot = replace(self._snapshot, **{key: freeze(value) for key, value in patch.items()})
@@ -82,35 +104,35 @@ class MonitorData(QObject):
         if not active:
             self._generation += 1
             for timer in self._timers.values(): timer.stop()
-            self.client.transport.cancel_owner("monitor")
+            self._client.transport.cancel_owner("monitor")
             self._clear()
             self.invalidated.emit()
             self.changed.emit()
         else:
             self._intervals()
             for timer in self._timers.values(): timer.start()
-            self.observe(self.client.status)
+            self.observe(self._client.status)
             self.refresh_all()
 
     def _intervals(self):
         for category, timer in self._timers.items():
-            interval = self.client.session.poll_policy.interval_ms(category, 1000, self.client.session.snapshot.printer_state)
+            interval = self._client.session.poll_policy.interval_ms(category, 1000, self._client.session.snapshot.printer_state)
             if timer.interval() != interval: timer.setInterval(interval)
 
     def request(self, channel, method, path, callback, *, body=None, replace=False, category="auxiliary"):
-        if not self._active or not self.client.session.base_url: return False
+        if not self._active or not self._client.session.base_url: return False
         generation = self._generation
-        session = self.client.session.generation
+        session = self._client.session.generation
         def finished(payload, error):
-            if self._active and generation == self._generation and session == self.client.session.generation:
+            if self._active and generation == self._generation and session == self._client.session.generation:
                 callback(payload, error)
-        return self.client.transport.send_json("monitor", channel, method, path, finished,
+        return self._client.transport.send_json("monitor", channel, method, path, finished,
             body=body, replace=replace, category=category)
 
     def later(self, delay_ms, callback):
-        generation, session = self._generation, self.client.session.generation
+        generation, session = self._generation, self._client.session.generation
         def run():
-            if self._active and generation == self._generation and session == self.client.session.generation:
+            if self._active and generation == self._generation and session == self._client.session.generation:
                 callback()
         QTimer.singleShot(delay_ms, run)
 
@@ -122,7 +144,7 @@ class MonitorData(QObject):
 
     def refresh_all(self):
         if not self._active: return
-        self.client.force_refresh()
+        self._client.force_refresh()
         self.refresh_discovery()
         self.refresh_power()
         self.refresh_system()
@@ -130,13 +152,7 @@ class MonitorData(QObject):
 
     @staticmethod
     def wants_object(name):
-        lower = name.lower()
-        return (lower in {"heater_bed", "fan", "exclude_object", "system_stats", "webhooks", "mcu",
-                          "configfile", "toolhead", "quad_gantry_level", "bed_mesh"}
-            or bool(re.fullmatch(r"extruder\d*", lower))
-            or lower.startswith(("heater_generic ", "temperature_", "bme280 ", "htu21d ", "sht3x ", "lm75 ",
-                "fan_generic ", "heater_fan ", "controller_fan ", "filament_", "mcu ",
-                "neopixel ", "dotstar ", "led ", "pca9533 ", "pca9632 ", "output_pin ")))
+        return wanted_object(name)
 
     def refresh_discovery(self):
         self.request("objects", "GET", "printer/objects/list", self._objects, category="discovery")
@@ -163,8 +179,13 @@ class MonitorData(QObject):
         value = result(payload)
         incoming = value.get("status") if isinstance(value, Mapping) else None
         if error or not isinstance(incoming, Mapping): return
-        merged = dict(self._snapshot.auxiliary)
+        # Rebuild from the current wanted set so objects that were renamed or
+        # hot-removed stop rendering instead of staying in the snapshot for
+        # the rest of the session.
+        wanted = {name for name in self._snapshot.objects if self.wants_object(name)}
+        merged = {name: state for name, state in self._snapshot.auxiliary.items() if name in wanted}
         for name, value in incoming.items():
+            if name not in wanted: continue
             previous = merged.get(name)
             merged[name] = dict(previous, **value) if isinstance(previous, Mapping) and isinstance(value, Mapping) else value
         self._update(auxiliary=merged)

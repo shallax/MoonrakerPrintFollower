@@ -24,7 +24,7 @@ class RemoteFileIdentity:
 def status_endpoint(base_url: str) -> str:
     return (
         f"{base_url}/printer/objects/query?"
-        "print_stats&gcode_move&virtual_sdcard&motion_report"
+        "print_stats&gcode_move&virtual_sdcard&motion_report&bed_mesh"
     )
 
 

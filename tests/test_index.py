@@ -346,6 +346,58 @@ G1 X5 Y0 Z0.2
         resumed = build_index_from_file(str(FIXTURES / "resume.gcode"), compact=False)
         self.assertEqual(resumed.current_layer_map, {1: 0, 2: 1, 3: 2, 4: 3})
 
+    def test_leading_start_gcode_stats_value_does_not_shift_layer_map(self):
+        # Klipper START_PRINT macros commonly emit CURRENT_LAYER=0 before the
+        # first ;LAYER marker. The per-layer map must not treat that leading
+        # value as layer zero's own.
+        data = b"""SET_PRINT_STATS_INFO CURRENT_LAYER=0
+G28
+;LAYER:0
+SET_PRINT_STATS_INFO CURRENT_LAYER=1
+G1 X1
+;TIME_ELAPSED:1
+;LAYER:1
+SET_PRINT_STATS_INFO CURRENT_LAYER=2
+G1 X2
+"""
+        index = build_index_from_bytes(data)
+        self.assertEqual(index.current_layer_map, {1: 0, 2: 1})
+
+    def test_trailing_stats_value_keeps_layer_map(self):
+        data = b""";LAYER:0
+SET_PRINT_STATS_INFO CURRENT_LAYER=1
+G1 X1
+;TIME_ELAPSED:1
+;LAYER:1
+SET_PRINT_STATS_INFO CURRENT_LAYER=2
+G1 X2
+SET_PRINT_STATS_INFO CURRENT_LAYER=3
+"""
+        index = build_index_from_bytes(data)
+        self.assertEqual(index.current_layer_map, {1: 0, 2: 1})
+
+    def test_leading_zero_motion_forms_count_as_motion(self):
+        data = b"""G91
+;LAYER:0
+G01 X1 Y2 Z0.2
+G00 X2 Y2 Z0.2
+"""
+        index = build_index_from_bytes(data)
+        self.assertEqual(index.motion_count(0), 2)
+        self.assertAlmostEqual(index.motion_x[0][1], 3.0)
+
+    def test_cache_rejects_same_uuid_with_changed_size_or_modified(self):
+        data = b";LAYER:0\nG1 X1\n"
+        index = build_index_from_bytes(data)
+        with tempfile.TemporaryDirectory() as directory:
+            cache = PersistentIndexCache(directory)
+            original = RemoteFileIdentity("a.gcode", 100, 1.0, "path-uuid")
+            cache.save(original, index)
+            self.assertIsNotNone(cache.load(RemoteFileIdentity("a.gcode", 100, 1.0, "path-uuid")))
+            self.assertIsNone(cache.load(RemoteFileIdentity("a.gcode", 200, 1.0, "path-uuid")))
+            self.assertIsNone(cache.load(RemoteFileIdentity("a.gcode", 100, 2.0, "path-uuid")))
+            self.assertIsNone(cache.load(RemoteFileIdentity("a.gcode", 100, 1.0, "other-uuid")))
+
 
 if __name__ == "__main__":
     unittest.main()

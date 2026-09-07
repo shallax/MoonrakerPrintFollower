@@ -121,7 +121,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(transport.requests, [])
         binding = self.qt.load("PrinterBinding").PrinterBinding
         for placeholder in ("", "http://", "https://", "http:", "https:"):
-            self.assertEqual(binding.normalise(placeholder), "")
+            self.assertFalse(binding.usable(self.qt.load("PrinterConfig").normalise_url(placeholder)))
 
     def test_connection_edit_invalidates_follower_domains(self):
         app, follower, transport = self.follower()
@@ -449,6 +449,70 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertTrue(any(e and "non-object" in e for p, e in results))
         self.assertTrue(all(key == "test-key" for key in received))
         cancelled.assert_not_called()
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
+class MonitorDataAuxTests(unittest.TestCase):
+    def setUp(self):
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+        self.transport = ScriptedTransport()
+        self.client = self.qt.load("MoonrakerClient").MoonrakerClient(transport=self.transport)
+        self.client.configure("http://printer-a", "test-key", 750)
+        self.addCleanup(self.client.stop)
+        self.data = self.qt.load("MonitorData").MonitorData(self.client, None)
+        self.data.set_active(True)
+        self.addCleanup(self.data.set_active, False)
+
+    def deliver(self, channel, payload, error=None):
+        request = next((r for r in self.transport.requests if r.channel == channel), None)
+        self.assertIsNotNone(request, channel)
+        request.callback(payload, error)
+
+    def test_auxiliary_snapshot_prunes_removed_objects(self):
+        self.deliver("objects", {"result": {"objects": ["fan", "heater_bed"]}})
+        self.deliver("aux", {"result": {"status": {"fan": {"speed": 0.5}, "heater_bed": {"target": 60}}}})
+        self.assertEqual(set(self.data.snapshot.auxiliary), {"fan", "heater_bed"})
+
+        # The fan disappears from printer/objects/list; the next aux response
+        # must stop keeping its stale values alive.
+        self.transport.requests.clear()
+        self.data.refresh_discovery()
+        self.deliver("objects", {"result": {"objects": ["heater_bed"]}})
+        self.deliver("aux", {"result": {"status": {"heater_bed": {"target": 55}}}})
+        self.assertEqual(set(self.data.snapshot.auxiliary), {"heater_bed"})
+        self.assertEqual(self.data.snapshot.auxiliary["heater_bed"]["target"], 55)
+
+    def test_camera_restore_bails_when_webcams_changed_before_turn(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class FakeData(QObject):
+            changed = pyqtSignal()
+            def __init__(self):
+                super().__init__()
+                self.active = True
+                self.snapshot = SimpleNamespace(webcams=(
+                    {"uid": "front-uid", "name": "Front", "stream_url": "/front"},))
+
+        camera_module = self.qt.load("MonitorCamera")
+        config = self.qt.load("PrinterConfig").PrinterConfig(camera_selected="front-uid")
+        fake = FakeData()
+        camera = camera_module.MonitorCamera(fake, lambda: config, lambda value: None)
+        # The constructor's observe() already scheduled the zero-timer restore.
+
+        # Swap the webcam set before the scheduled zero-timer fires.
+        fake.snapshot = SimpleNamespace(webcams=(
+            {"uid": "rear-uid", "name": "Rear", "stream_url": "/rear"},))
+        self.qt.events()
+
+        # The stale restore must have bailed; a fresh observe against the
+        # current snapshot restores cleanly.
+        self.assertTrue(camera._restore_pending)
+        fake.changed.emit()
+        self.qt.events()
+        self.assertEqual(camera.values["activeWebcamIndex"], 0)
+        self.assertEqual(camera.values["cameraName"], "Rear")
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")

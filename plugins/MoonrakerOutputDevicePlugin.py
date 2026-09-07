@@ -92,9 +92,9 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             device._printers = [monitor]
 
         self._set_monitor_active(device, True)
-        device._monitor_view_qml_path = os.path.join(
+        device.setMonitorViewQmlPath(os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitorBedMesh.qml"
-        )
+        ))
         try:
             monitor.refreshAll()
         except Exception as exc:
@@ -129,28 +129,31 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 return
 
             device = self._devices.get(machine_id)
+            transition = self._current is not device
+            if transition and self._current is not None:
+                # Deactivate the outgoing instance before the incoming Monitor
+                # activates: both share the "monitor" transport owner, and the
+                # old instance's teardown would otherwise cancel the new
+                # instance's first in-flight requests.
+                self._deactivate_device(self._current)
+                try:
+                    self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
+                except Exception:
+                    pass
+
             if device is None:
                 device = MoonrakerOutputDevice(self._application, machine_id,
                     client=self._follower.client,
                     config=self._follower.current_printer_config,
                     apply_config=self._follower.apply_printer_config,
                     active_identity=self._follower.current_printer_identity)
-                self._install_monitor(device, stack)
                 self._devices[machine_id] = device
             else:
                 device.updateConfig(config)
-                self._install_monitor(device, stack)
 
-            if self._current is not device:
-                if self._current is not None:
-                    self._deactivate_device(self._current)
-                    try:
-                        self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
-                    except Exception:
-                        pass
-                self._current = device
+            self._install_monitor(device, stack)
+            self._current = device
+            if transition:
                 self.getOutputDeviceManager().addOutputDevice(device)
-            else:
-                device.updateConfig(config)
         except Exception as exc:
             Logger.log("e", "Moonraker Print Follower: output-device refresh failed: %s", exc)

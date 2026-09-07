@@ -46,6 +46,17 @@ jobs:
           python tools/check_qml.py plugins
           python -m unittest discover -s tests -p "test_*.py"
 
+      - name: Install Qt test runtime (Cura supplies Qt in production)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1
+          python -m pip install PyQt6==6.11.0
+
+      - name: Run the full suite with the real Qt runtime
+        run: |
+          python -c "from PyQt6.QtCore import QCoreApplication"
+          python -m unittest discover -s tests -p "test_*.py"
+
       - name: Build and verify release artifacts
         run: |
           python tools/build_curapackage.py

@@ -90,6 +90,62 @@ def iter_plugin_sources() -> Iterable[pathlib.Path]:
             yield path
 
 
+def verify_archive(
+    path: pathlib.Path,
+    *,
+    label: str,
+    expected_entries,
+    archive_names,
+    package_meta_path: str,
+    license_name: str,
+    changelog_name: str,
+    max_bytes=None,
+    extra_forbidden=(),
+) -> None:
+    """Shared release-archive checks for both exact source projections.
+
+    The .curapackage and the Marketplace source ZIP differ only in their path
+    prefix and the Marketplace size cap; every parity/metadata/debris check is
+    identical and must not drift between the two verifiers.
+    """
+    package = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
+    version = str(package["package_version"])
+    if max_bytes is not None and path.stat().st_size > max_bytes:
+        raise RuntimeError(f"{label} exceeds the {max_bytes // (1024 * 1024)} MB size limit")
+    with zipfile.ZipFile(path, "r") as archive:
+        names = archive.namelist()
+        if len(names) != len(set(names)):
+            raise RuntimeError(f"{label} contains duplicate archive entries")
+        actual = set(names)
+        expected = set(expected_entries)
+        missing, unexpected = sorted(expected - actual), sorted(actual - expected)
+        if missing or unexpected:
+            raise RuntimeError(f"{label} file set mismatch; missing={missing}, unexpected={unexpected}")
+        plugin_meta = json.loads(archive.read(package_meta_path).decode("utf-8"))
+        if str(plugin_meta.get("version")) != version:
+            raise RuntimeError(f"{label} plugin.json version does not match package version")
+        if archive.read(license_name) != LICENSE_FILE.read_bytes():
+            raise RuntimeError(f"{label} LICENSE differs from source")
+        if archive.read(changelog_name) != CHANGELOG_FILE.read_bytes():
+            raise RuntimeError(f"{label} CHANGELOG.md differs from source")
+        if f"## {version}" not in CHANGELOG_FILE.read_text(encoding="utf-8"):
+            raise RuntimeError(f"CHANGELOG.md does not contain a {version} release section")
+        for source in iter_plugin_sources():
+            name = archive_names(source)
+            if archive.read(name) != source.read_bytes():
+                raise RuntimeError(f"{label} packaged bytes differ from source: {source.relative_to(PLUGIN_ROOT)}")
+        forbidden = [
+            name for name in names
+            if "__pycache__" in name
+            or name.lower().endswith(extra_forbidden)
+            or name.endswith((".pyc", ".pyo", ".orig", ".rej", ".swp", ".swo", ".tmp", ".bak"))
+            or "/." in name
+        ]
+        if forbidden:
+            raise RuntimeError(f"{label} contains forbidden build debris: {forbidden}")
+    print(f"Verified {label} for {path}")
+
+
 def archive_name(path: pathlib.Path, package_id: str) -> str:
     relative = path.relative_to(PLUGIN_ROOT).as_posix()
     return f"files/plugins/{package_id}/{relative}"

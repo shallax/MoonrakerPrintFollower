@@ -44,21 +44,31 @@ private follower state to either integration.
 | Component | Owns | Does not own |
 | --- | --- | --- |
 | `PrinterBinding.py` | Per-printer configuration, migrations, active-machine transitions | Preview, files, uploads |
+| `PrinterConfig.py` | Per-machine settings schema, URL normalisation, both migrations | Networking or Qt |
 | `MoonrakerClient.py` | Core polling, retries, command deadline timer, Qt notifications | Cura lifecycle |
 | `MoonrakerSession.py` | Binding state, merged core snapshot, polling policy, coalescer, command tracker | UI or G-code files |
 | `MoonrakerTransport.py` | Request builder, credentials, HTTP pool, JSON lanes and metrics | Feature state |
+| `MoonrakerProtocol.py` | Endpoint construction, file identity, coordinate conversion | Networking or UI |
 | `RemoteJobService.py` | Print observation and same-filename run identity | Preview selection |
 | `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer` and the single `LayerResolver` | QML/Cura writes |
 | `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` | Index algorithms or Cura loading |
+| `DownloadStream.py` | Bounded streaming G-code downloads to disk | Networking policy or Cura |
 | `GCodeIndexService.py` | Index lifecycle, bounded worker execution and `IndexView` | Networking or UI |
 | `GCodeIndex.py` | Parsing, motion matching, compact hydration and cache serialization algorithms | Application orchestration |
+| `FollowController.py` | Follow-mode decisions and state precedence | Preview writes or networking |
 | `CuraIntegration.py` | Scene/view/file lifecycle, guarded callbacks and Preview API access | Printer protocol |
+| `CuraAdapter.py` | Typed Cura view access, machine identity, Preview write decisions | Policy or networking |
+| `CuraLifecycleBridge.py` | Cura-scene generation tokens for stale-work rejection | Scene contents |
+| `NativeNozzleLifecycle.py` | Cura native-nozzle repair during exact following | Scene mesh semantics |
 | `PreviewFollower.py` | Frozen `PreviewState`, attachment, expected positions, path progress and ETA | Downloads or workers |
 | `PauseScheduleService.py` | Pure print-local target set and crossing policy | Network commands |
 | `PauseController.py` | Scheduled PAUSE command and acknowledgement lifecycle | Preview rendering |
 | `PreviewPresentation.py` | Preview QML objects, displayed values and user-intent signals | Following or scheduling policy |
 | `BedMeshPresenter.py` | Active mesh overlay, visibility preference and Preview mesh controls | Macro execution |
+| `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
 | `MonitorData.py` | Monitor request lifetime, category timers and frozen `MonitorSnapshot` | QML declarations |
+| `MoonrakerMonitorModel.py` | The single Qt Monitor model: property declarations and projection merge | Domain policy or networking |
+| `MoonrakerFollowerMachineAction.py` | Configuration QML properties, validation and the isolated probe transport | Live binding state |
 | `MonitorCommands.py` | Monitor action acknowledgement and emergency-stop click sequence | Sliders or discovery |
 | `MonitorTuning.py` | Debounce, pending tuning values, revision/confirmation timers | QML or printer discovery |
 | `MonitorControls.py` | Macro, preset, fan/LED/PWM, setup and power/exclusion policy | Qt model inheritance |

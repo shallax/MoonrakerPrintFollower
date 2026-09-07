@@ -19,6 +19,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("gcode_move", url)
         self.assertIn("virtual_sdcard", url)
         self.assertIn("motion_report", url)
+        self.assertIn("bed_mesh", url)
 
     def test_capability_probe_endpoints(self):
         self.assertEqual(server_info_endpoint("http://printer.example.invalid:7125/"), "http://printer.example.invalid:7125/server/info")

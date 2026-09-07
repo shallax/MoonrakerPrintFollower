@@ -18,15 +18,15 @@ from build_curapackage import (
 
 
 def archive_name(path: pathlib.Path, package_id: str) -> str:
+    # Marketplace entries live at the ZIP root: "<package_id>/<relative>".
     relative = path.relative_to(PLUGIN_ROOT).as_posix()
     return f"{package_id}/{relative}"
 
 
 def expected_archive_entries(package_id: str) -> set[str]:
-    return {
-        f"{package_id}/LICENSE",
-        f"{package_id}/CHANGELOG.md",
-    } | {archive_name(path, package_id) for path in iter_plugin_sources()}
+    return {f"{package_id}/LICENSE", f"{package_id}/CHANGELOG.md"} | {
+        archive_name(path, package_id) for path in iter_plugin_sources()
+    }
 
 
 def build(output: pathlib.Path | None = None) -> pathlib.Path:

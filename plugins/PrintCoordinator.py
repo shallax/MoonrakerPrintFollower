@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QObject
 
+from .MonitorFormatting import parse_bed_mesh
 from .PreviewFormatting import (
     pause_can_toggle,
     pause_eta,
@@ -98,6 +99,10 @@ class PrintCoordinator(QObject):
                 estimate = 0
             self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
                 estimate if estimate > 0 else None, self._files.metadata_complete)
+            # The coordinator owns the mesh observation; the Monitor reads the
+            # presenter's snapshot but never writes it. The presenter's
+            # fingerprint guard makes the per-poll update cheap.
+            self._bed_mesh.update(parse_bed_mesh(self._status.get("bed_mesh")))
             self._cura.watch(config.enabled)
             if self._snapshot.active:
                 self._files.request_metadata()

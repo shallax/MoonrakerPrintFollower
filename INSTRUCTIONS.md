@@ -11,7 +11,9 @@ change together:
 1. `package.json` — `package_version`
 2. `plugins/plugin.json` — `version`
 3. `CHANGELOG.md` — a new section at the top, following the existing format
-4. Git tag — `v<version>`; the release workflow validates the tag against both
+4. `README.md` — the release header (`**Release:**`) and the "What changed"
+   section
+5. Git tag — `v<version>`; the release workflow validates the tag against both
    version fields and fails on mismatch
 
 The version test asserts `package_version` and `plugin` `version` stay in
@@ -51,7 +53,9 @@ Local:
     python tools/check_qml.py plugins
     python -m unittest discover -s tests -p "test_*.py"
 
-CI on tag push runs the release workflow (reproducible archives, source/package
-byte parity, Marketplace layout). Before tagging, run the smoke checks the
-harness cannot cover: real QML rendering, native nozzle/bed-mesh integration,
-Cura file-writer compatibility, multi-printer interaction and large files.
+CI on tag push runs the release workflow: reproducible archives, source/package
+byte parity, Marketplace layout, and the full test suite including the real-Qt
+tests (PyQt6 is installed there as well). Before tagging, run the smoke checks
+the harness cannot cover: real QML rendering, native nozzle/bed-mesh
+integration, Cura file-writer compatibility, multi-printer interaction and
+large files.

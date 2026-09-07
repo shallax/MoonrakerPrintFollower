@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
+from math import isfinite
 from typing import Any, Dict, List, Optional, Tuple
 
 
 def normalise_url(value: Any) -> str:
-    """Canonical Moonraker base URL: scheme required, no trailing slash."""
+    """Canonical Moonraker base URL: scheme required, no trailing slash.
+
+    Scheme-only input (``http:``, ``https://``, …) is the unconfigured
+    placeholder and maps to ``http://``; ``usable_url`` rejects it.
+    """
     text = str(value or "").strip()
-    if not text:
+    if not text or text.lower() in ("http:", "https:", "http://", "https://"):
         return "http://"
     if not text.lower().startswith(("http://", "https://")):
         text = f"http://{text}"
@@ -56,6 +61,11 @@ class PrinterConfig:
     camera_mirror: bool = False
     camera_selected: str = ""
 
+    @property
+    def frontend_target(self) -> str:
+        """The URL a browser should open: the dedicated frontend when set, else the printer."""
+        return self.frontend_url or self.url
+
     @classmethod
     def from_dict(cls, value: Any) -> "PrinterConfig":
         raw = value if isinstance(value, dict) else {}
@@ -65,11 +75,14 @@ class PrinterConfig:
             data[key] = raw.get(key, getattr(defaults, key))
 
         try:
-            data["poll_interval_ms"] = max(1, int(data["poll_interval_ms"]))
+            data["poll_interval_ms"] = max(1, min(3_600_000, int(data["poll_interval_ms"])))
         except (TypeError, ValueError):
             data["poll_interval_ms"] = defaults.poll_interval_ms
         try:
-            data["z_tolerance"] = float(data["z_tolerance"])
+            tolerance = float(data["z_tolerance"])
+            if not isfinite(tolerance) or not (0.005 <= tolerance <= 0.250):
+                tolerance = defaults.z_tolerance
+            data["z_tolerance"] = tolerance
         except (TypeError, ValueError):
             data["z_tolerance"] = defaults.z_tolerance
         try:

@@ -1,16 +1,18 @@
 # Moonraker Print Follower
 
-Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. Version 3.0.0 keeps Cura Preview synchronised with a live print, provides Cura's Moonraker upload/print destination, and adds a full live Monitor view, so the separate Moonraker Connection plugin is no longer required.
+Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It keeps Cura Preview synchronised with a live print, provides Cura's Moonraker upload/print destination, and adds a full live Monitor view, so the separate Moonraker Connection plugin is no longer required.
 
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 3.0.0
+- **Release:** 3.2.0
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
 
-## What changed in 3.0.0
+## What changed in 3.2.0
 
-Version 3.0.0 combines Preview following, Cura-to-Moonraker upload/print support and live monitoring into one plugin and one per-printer configuration.
+Version 3.2.0 preserves the 3.0 workflow while paying down architecture debt. The test suite was reorganised by domain, change procedures were codified in `INSTRUCTIONS.md`, the mixed-domain `Core` module was dissolved, Preview presentation was extracted into pure formatting, session snapshots became fully immutable at their boundary, failed metadata requests now retry with backoff, Monitor classification uses one shared object-policy table, and the bed-mesh observation is owned by the print coordinator. Full details are in `CHANGELOG.md`.
+
+Version 3.0.0 combined Preview following, Cura-to-Moonraker upload/print support and live monitoring into one plugin and one per-printer configuration.
 
 For each Cura printer, the same Moonraker URL and optional API key now drive:
 
@@ -39,7 +41,7 @@ The generic Cura output controller remains conservative and does not advertise u
 
 ### Upgrading from Moonraker Connection
 
-On first 3.0.0 startup, Moonraker Print Follower looks for the standalone plugin's existing per-printer preference data under `moonraker/instances` and imports compatible settings once.
+On startup, Moonraker Print Follower looks for the standalone plugin's existing per-printer preference data under `moonraker/instances` and imports compatible settings once.
 
 Existing Moonraker Print Follower URL/API-key values take precedence when already configured. Upload-specific settings such as format/path, start-print behaviour, power devices, retry interval, frontend URL and filename translation are imported from Moonraker Connection. Its legacy camera URL, rotation and mirror settings are also imported as a fallback for Moonraker installations that do not expose webcam configuration through the webcam API. The old preference data is left untouched so rollback remains possible.
 
@@ -47,7 +49,7 @@ After verifying the integrated plugin with your printers, the separate Moonraker
 
 ## Cura / SDK compatibility
 
-Version 3.0.0 targets the complete Cura 5.x SDK 8 line from **Cura 5.0 / SDK 8.0** through **Cura 5.13 / SDK 8.12**. The package declares SDK 8.0 as its minimum package SDK, while `plugin.json` explicitly records SDK 8.0 through 8.12 support.
+The plugin targets the complete Cura 5.x SDK 8 line from **Cura 5.0 / SDK 8.0** through **Cura 5.13 / SDK 8.12**. The package declares SDK 8.0 as its minimum package SDK, while `plugin.json` explicitly records SDK 8.0 through 8.12 support.
 
 The implementation stays on APIs already present in Cura 5.0 where practical: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls and Cura's native nozzle interface. Optional Qt conveniences such as request transfer timeouts are capability-checked where required.
 
@@ -180,7 +182,30 @@ The System section can show:
 - CPU/host temperature when the printer exposes an appropriate temperature sensor
 - MCU firmware versions
 
-When automatic Preview following is enabled, Monitor consumes the follower's existing core status stream rather than creating a duplicate poller. When following is disabled, Monitor uses a lightweight one-second core-status fallback. Peripheral status is capability-driven and polled separately, while slower-changing power/system/capability data uses longer intervals.
+### Control panels
+
+The dashboard includes direct printer controls when the printer is idle:
+
+- **Macros** — run any non-private `gcode_macro`, with typed parameter fields inferred from `{% set x = params.NAME|default(...) %}` declarations
+- **Live tuning** — speed factor, flow factor and fan sliders that preview during a drag and send one debounced command after release
+- **Z offset** — current offset display, nudging buttons and clear
+- **Fans and LEDs** — per-object speed/brightness and RGBW colour controls discovered from the printer
+- **PWM outputs** — per-pin percentage controls for `output_pin` objects configured for PWM
+- **Temperature presets** — one-click profiles from the configured presets database
+- **Setup** — home all, quad gantry level and bed-mesh calibration
+- **Emergency stop** — a pinned three-click control; the third click within the one-second window stops the printer immediately
+
+### Bed mesh
+
+When Klipper exposes `bed_mesh`, the plugin provides:
+
+- a 3D mesh overlay in Cura Preview, shown in the build volume with a probe-bounds outline and exaggerated heights, plus minimum/maximum/range readouts
+- a Show/Hide mesh toggle in both the Preview card and the Monitor panel
+- Monitor mesh controls: **Calibrate mesh**, **Clear mesh** and **Load saved mesh**, with the active profile listed
+
+The overlay is non-sliceable scene decoration, so it never affects slicing, and its visibility preference is remembered per installation.
+
+Monitor always consumes the follower's shared core status stream rather than creating a duplicate poller, whether or not Preview following is enabled. Peripheral status is capability-driven and polled separately, while slower-changing power/system/capability data uses longer intervals.
 
 ## Preview controls
 
@@ -189,6 +214,7 @@ The follower controls live in their own Cura-styled action-panel card in Preview
 - Cura's native nozzle icon and a bold **Moonraker Print Follower** title
 - a state icon plus the active Cura printer name and live follower status
 - **Detach/Attach** and **Load print** actions
+- **Scheduled pause** — pause at the end of a selected layer, with multiple pauses allowed, each showing its own ETA, and one-click removal or clear-all. Polling tightens to 250 ms as the target layer approaches, so the pause fires as close to the layer boundary as HTTP polling allows. The schedule is print-local: it never persists into printer configuration and clears when the print changes.
 
 The panel uses a fixed layout so status changes do not resize it. If the currently active Cura printer is not enabled and configured with a usable Moonraker URL, the follower card is hidden. A configured printer that is temporarily offline still shows the card with its disconnected state.
 
@@ -203,7 +229,7 @@ Follower live status uses HTTP polling only.
 - the normal interval resumes immediately after a successful response
 - capabilities are inferred from the objects Moonraker actually exposes
 
-Monitor reuses that stream while following is enabled and otherwise polls core status once per second. Webcam configuration is discovered independently because it changes rarely. Uploads use Moonraker's HTTP file API with multipart form data. Power-device, print-control, printer-readiness and Monitor auxiliary requests also use Moonraker HTTP endpoints. There is no WebSocket transport and no automatic printer discovery.
+Monitor consumes the same core status stream as the follower. Webcam configuration is discovered independently because it changes rarely. Uploads use Moonraker's HTTP file API with multipart form data. Power-device, print-control, printer-readiness and Monitor auxiliary requests also use Moonraker HTTP endpoints. There is no WebSocket transport and no automatic printer discovery.
 
 ## Large G-code handling
 
@@ -238,26 +264,33 @@ Version 3.0.0 additionally migrates compatible upload and fallback-camera settin
 
 ## Internal structure
 
-High-risk logic is separated into focused modules:
+High-risk logic is separated into focused modules. The authoritative ownership map — which module owns which mutable domain — lives in `ARCHITECTURE.md`, together with the design rules and the import/dependency contract enforced by the test suite. A few landmarks:
 
-- `PrinterConfig.py` — unified per-Cura-machine settings plus follower and Moonraker Connection migration
+- `FollowerRuntime.py` — the composition root; constructs the follower's components and implements no domain policy
+- `PrintCoordinator.py` — cross-domain orchestration with explicit constructor dependencies
+- `PrinterConfig.py` — unified per-Cura-machine settings, URL normalisation and both migrations
 - `MoonrakerFollowerMachineAction.py` — native Manage Printers configuration backend
 - `MoonrakerFollowerConfiguration.qml` — Connection / Following / Upload settings UI
 - `MoonrakerOutputDevicePlugin.py` — exposes the Moonraker upload destination and Monitor view for the active Cura printer
 - `MoonrakerOutputDevice.py` — G-code/UFP writing, power/readiness orchestration, multipart upload, progress and browser handoff
-- `MoonrakerOutputDeviceLifecycle.py` — completes Cura's write lifecycle cleanly for success, failure and user cancellation
+- `UploadController.py` — one upload operation: discovery, readiness, multipart streaming and cancellation
 - `MoonrakerUploadDialog.qml` — per-upload remote path/name/start-print dialog
-- `MoonrakerMonitorModel.py` — Monitor transport, status, capabilities, peripherals, controls, power, system health and webcam discovery
-- `MoonrakerMonitorRuntime.py` — follower-aware live-layer interpretation for Monitor
+- `MoonrakerMonitorModel.py` — the single Qt Monitor model; declarative properties over controller projections
+- `MonitorData.py` — Monitor request lifetime, category timers and the frozen Monitor snapshot
+- `MonitorControls.py` / `MonitorCommands.py` / `MonitorTuning.py` / `MonitorCamera.py` — focused Monitor policy owners
+- `MonitorFormatting.py` — pure projections, parsers and the shared printer-object classification table
 - `MoonrakerMonitor.qml` — Cura Monitor dashboard presentation
 - `MoonrakerClient.py` — resilient live-status HTTP polling, retry backoff and capability detection
+- `MoonrakerSession.py` — session state, poll policy, coalescing and command acknowledgement
+- `MoonrakerTransport.py` — the only module that constructs a `QNetworkAccessManager`
 - `FollowController.py` — follower state machine and follow-mode decisions
-- `CuraAdapter.py` — Cura machine identity, Preview writes and toolpath-head position mapping
-- `NativeNozzleFallback.py` — repairs Cura's native SimulationView nozzle lifecycle during exact live following
+- `PreviewFollower.py` — Preview state, attachment, path progress and ETA
+- `PreviewFormatting.py` — pure status/icon/pause projections for the Preview panel
+- `BedMeshPresenter.py` — the active mesh overlay, visibility preference and mesh controls
+- `CuraIntegration.py` / `CuraAdapter.py` / `CuraLifecycleBridge.py` — Cura API isolation and lifecycle guards
 - `GCodeIndex.py` — streaming/compact parsing, lazy layer hydration and persistent index cache
-- `MoonrakerProtocol.py` — endpoint construction and coordinate conversion
+- `MoonrakerProtocol.py` — endpoint construction, file identity and coordinate conversion
 - `DownloadStream.py` — bounded streaming G-code downloads
-- `Core.py` — shared operation, identity and manual-override primitives
 
 ## Development and release checks
 

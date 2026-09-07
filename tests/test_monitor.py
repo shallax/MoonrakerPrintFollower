@@ -214,7 +214,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('category="discovery"', DATA)
 
     def test_monitor_consumes_shared_session_poll_policy(self):
-        self.assertIn("self.client.session.snapshot.printer_state", DATA)
+        self.assertIn("self._client.session.snapshot.printer_state", DATA)
         self.assertIn("poll_policy.interval_ms(category, 1000", DATA)
         self.assertIn("if timer.interval() != interval:", DATA)
         for category in (
@@ -297,6 +297,55 @@ class MonitorFormattingTests(unittest.TestCase):
         for matrix, bounds in (([[0, 1], [2]], [0, 0]), ([[0, float("nan")], [1, 2]], [0, 0]), ([[0, 1], [1, 2]], [2, 0])):
             self.assertEqual(parse_bed_mesh({"mesh_matrix": matrix, "mesh_min": bounds, "mesh_max": [1, 1]}), {})
         self.assertEqual(parse_mcu_stats("mcu_awake=0.02 nonsense bytes_write=abc bytes_read=123"), {"mcu_awake": 0.02, "bytes_read": 123.0})
+
+
+class MonitorPolicyConsistencyTests(unittest.TestCase):
+    """Behavior constants restated as QML prose must not drift."""
+
+    def test_qml_prose_matches_policy_constants(self):
+        import re as _re
+        tuning = (PLUGINS / "MonitorTuning.py").read_text()
+        debounce = int(_re.search(r"DEBOUNCE_MS\s*=\s*(\d+)", tuning).group(1))
+        self.assertEqual(debounce, 2000)
+        self.assertIn(f"unchanged for {debounce // 1000} seconds", DASHBOARD_QML)
+
+        commands = (PLUGINS / "MonitorCommands.py").read_text()
+        click_window = int(_re.search(r"_reset_timer\.setInterval\((\d+)\)", commands).group(1))
+        self.assertEqual(click_window, 1000)
+        self.assertIn(f"within {click_window // 1000} second", DASHBOARD_QML)
+
+        follow = (PLUGINS / "FollowController.py").read_text()
+        radius = int(_re.search(r"window_radius: int = (\d+)", follow).group(1))
+        self.assertIn(f"(±{radius})", (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text())
+
+    def test_classification_table_is_the_single_object_policy(self):
+        from plugins.MonitorFormatting import object_kind, wanted_object
+        self.assertEqual(object_kind("fan"), "system")
+        self.assertEqual(object_kind("heater_bed"), "system")
+        self.assertEqual(object_kind("gcode_macro START_PRINT"), "macro")
+        self.assertEqual(object_kind("fan_generic Chamber"), "fan")
+        self.assertEqual(object_kind("heater_fan hotend"), "fan")
+        self.assertEqual(object_kind("neopixel case"), "led")
+        self.assertEqual(object_kind("output_pin pwm1"), "pwm")
+        self.assertEqual(object_kind("heater_generic chamber"), "temperature")
+        self.assertEqual(object_kind("temperature_sensor board"), "temperature")
+        self.assertEqual(object_kind("filament_switch_sensor runout"), "filament")
+        self.assertEqual(object_kind("mcu rpi"), "mcu")
+        self.assertEqual(object_kind("unknown object"), "")
+        self.assertTrue(wanted_object("fan"))
+        self.assertTrue(wanted_object("heater_fan hotend"))
+        self.assertFalse(wanted_object("gcode_macro START_PRINT"))
+        self.assertFalse(wanted_object("unknown object"))
+
+    def test_consumers_use_the_shared_classification_tables(self):
+        data = (PLUGINS / "MonitorData.py").read_text()
+        controls = (PLUGINS / "MonitorControls.py").read_text()
+        self.assertIn("wanted_object", data)
+        self.assertIn("FAN_OBJECT_PREFIXES", controls)
+        self.assertIn("LED_OBJECT_PREFIXES", controls)
+        self.assertIn("PWM_OBJECT_PREFIXES", controls)
+        self.assertNotIn("neopixel ", data)
+        self.assertNotIn("fan_generic ", data)
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
