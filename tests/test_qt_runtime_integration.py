@@ -574,6 +574,24 @@ class PreviewMotionTests(unittest.TestCase):
         self.motion.write(1, 0.05)
         self.assertEqual(self.view.path, 5.0)
 
+    def test_target_ramps_between_observations(self):
+        # Two observations 0.6 s apart: the target is reconstructed between
+        # them, so the head glides forward instead of holding at the first
+        # observation until the poll lands and then stepping.
+        self.motion.write(0, 0.5)
+        self.assertEqual(self.view.path, 50.0)
+        self.qt.events(600)
+        self.motion.write(0, 0.8)
+        self.qt.events(250)
+        # Mid-ramp: the head has advanced continuously past the first
+        # observation but never exceeds the newest one (the hard cap).
+        self.assertGreater(self.view.path, 50.0)
+        self.assertLess(self.view.path, 80.0)
+        # Once the ramp saturates, the display converges to the newest
+        # observation, never through it and never backwards.
+        self.qt.events(700)
+        self.assertLessEqual(self.view.path, 80.0)
+
     def test_target_behind_display_never_moves_backwards(self):
         self.motion.write(0, 0.9)
         self.qt.events(200)

@@ -168,7 +168,10 @@ G-code byte percentage as time.
 Path smoothing is display-only: `PreviewMotion` animates the displayed path
 toward the newest physical observation using the pure `PreviewSmoothing`
 policy: the head cruises at the estimated physical velocity, never exceeds
-the newest observation and never decreases within a layer. The refinement
+the newest observation and never decreases within a layer. The target itself
+is reconstructed between consecutive observations by linear interpolation
+over the measured poll interval, so the glide is continuous at any polling
+rate; the newest observation remains the hard ceiling. The refinement
 itself now produces a smooth sub-segment observation (a widened search
 window plus a hold-on-ambiguity fallback that never inflates the monotonic
 floor). Layer transitions are jumped, never animated. The physical

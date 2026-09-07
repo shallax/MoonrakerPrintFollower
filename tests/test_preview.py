@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import unittest
 
 from plugins.PreviewFollower import PreviewFollower, preview_override_kind
-from plugins.PreviewSmoothing import advance_display
+from plugins.PreviewSmoothing import advance_display, interpolate_target
 from plugins.PreviewFormatting import (
     pause_can_toggle,
     pause_eta,
@@ -276,6 +276,36 @@ class PreviewSmoothingTests(unittest.TestCase):
         # A negative displayed value is pathological but must not decrease.
         self.assertLessEqual(advance_display(displayed=-0.1, target=0.0, velocity=0.0, dt=0.033), 0.0)
 
+
+class InterpolateTargetTests(unittest.TestCase):
+    """Between-poll reconstruction: linear, saturated at both ends."""
+
+    def test_midpoint_is_linear(self):
+        self.assertAlmostEqual(
+            interpolate_target(start=0.2, end=0.6, elapsed=0.5, interval=1.0), 0.4)
+
+    def test_saturates_at_interval_end(self):
+        self.assertEqual(
+            interpolate_target(start=0.2, end=0.6, elapsed=1.0, interval=1.0), 0.6)
+        # A late poll holds the target at the newest observation.
+        self.assertEqual(
+            interpolate_target(start=0.2, end=0.6, elapsed=9.0, interval=1.0), 0.6)
+
+    def test_never_before_start(self):
+        self.assertEqual(
+            interpolate_target(start=0.2, end=0.6, elapsed=-1.0, interval=1.0), 0.2)
+
+    def test_zero_interval_is_guarded(self):
+        # A degenerate interval clamps to a tiny floor instead of exploding.
+        self.assertEqual(
+            interpolate_target(start=0.2, end=0.6, elapsed=0.0, interval=0.0), 0.2)
+        self.assertEqual(
+            interpolate_target(start=0.2, end=0.6, elapsed=1.0, interval=0.0), 0.6)
+
+    def test_equal_endpoints_hold(self):
+        # A dwell observation produces a flat ramp, not motion.
+        self.assertEqual(
+            interpolate_target(start=0.4, end=0.4, elapsed=0.5, interval=1.0), 0.4)
 
 class PreviewPresentationContractTests(unittest.TestCase):
     """Source-level contracts for what Preview exposes to the user."""

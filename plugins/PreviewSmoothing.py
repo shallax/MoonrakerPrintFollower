@@ -4,14 +4,16 @@ The physical observation stays untouched; this module only decides how the
 *displayed* head position moves between observations.
 
 The head cruises at the estimated physical velocity and treats the newest
-observed target — plus a small bounded lookahead, since observations are
-stale samples of the true trajectory — as its ceiling; a gap-feedback term
-compensates the estimate's drift so the head stays in sync.
+observed target as its hard ceiling; a gap-feedback term compensates the
+estimate's drift so the head stays in sync. The target itself is
+reconstructed between consecutive observations by linear interpolation over
+the measured poll interval, so the glide is continuous at any polling rate
+instead of stepping once per poll.
 
 Guarantees:
 
-- never exceeds the newest observation by more than the bounded lookahead
-  (and never gets far ahead of reality);
+- never exceeds the newest observation (and never gets far ahead of
+  reality);
 - never decreases (the head never snaps back within a layer);
 - steady cruise between observations, with the gap term only correcting
   drift — no chase bursts.
@@ -38,3 +40,21 @@ def advance_display(*, displayed: float, target: float, velocity: float, dt: flo
     gap = target - displayed
     step = velocity * dt + gap * lag_decay_per_second * dt
     return min(target, displayed + step)
+
+
+def interpolate_target(*, start: float, end: float, elapsed: float, interval: float) -> float:
+    """Reconstruct the trajectory between two consecutive observations.
+
+    The newest observation is a sample of a continuous physical position,
+    not the position itself; between polls the true position lies along the
+    line from the previous sample to the current one. Ramping the target
+    across the measured poll interval makes the displayed motion continuous
+    at any polling rate.
+
+    Saturates at both ends: the value never leaves [start, end], so a late
+    poll holds the target at the newest observation while an early one
+    continues the ramp from where it had reached.
+    """
+    interval = max(0.001, float(interval))
+    ratio = min(1.0, max(0.0, float(elapsed) / interval))
+    return float(start) + (float(end) - float(start)) * ratio

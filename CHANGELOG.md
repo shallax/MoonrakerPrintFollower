@@ -12,6 +12,10 @@ quality.
   toolpath at the observed physical velocity, never gets ahead of the
   newest observation and never snaps back within a layer. Layer
   transitions are jumped, not animated.
+- Reconstructs the physical trajectory between polls: the target ramps
+  linearly over the measured poll interval, so the glide is equally smooth
+  at any configured polling rate instead of stepping once per poll at slow
+  rates.
 - Fixes the physical observation itself for slow moves: the refinement
   search window is widened past Klipper's parser-chunk lead and the
   ambiguity fallback holds the last good value instead of jumping to the
