@@ -201,11 +201,11 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 9)
         self.assertGreaterEqual(DASHBOARD_QML.count("onMoved:"), 9)
         self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
-        self.assertIn("After release, the latest value is applied once it has been unchanged for 2 seconds.", DASHBOARD_QML)
+        self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", DASHBOARD_QML)
         self.assertIn('text: "Refresh camera"', MONITOR_QML)
         self.assertIn('title: "Exclude object?"', MONITOR_QML)
         tuning = (PLUGINS / "MonitorTuning.py").read_text()
-        self.assertIn("DEBOUNCE_MS = 2000", tuning)
+        self.assertIn("DEBOUNCE_MS = 250", tuning)
         self.assertIn("current.revision != revision", tuning)
 
     def test_full_config_is_discovered_not_polled_every_second(self):
@@ -306,8 +306,9 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         import re as _re
         tuning = (PLUGINS / "MonitorTuning.py").read_text()
         debounce = int(_re.search(r"DEBOUNCE_MS\s*=\s*(\d+)", tuning).group(1))
-        self.assertEqual(debounce, 2000)
-        self.assertIn(f"unchanged for {debounce // 1000} seconds", DASHBOARD_QML)
+        self.assertEqual(debounce, 250)
+        window = f"unchanged for {debounce} ms" if debounce < 1000 else f"unchanged for {debounce // 1000} seconds"
+        self.assertIn(window, DASHBOARD_QML)
 
         commands = (PLUGINS / "MonitorCommands.py").read_text()
         click_window = int(_re.search(r"_reset_timer\.setInterval\((\d+)\)", commands).group(1))

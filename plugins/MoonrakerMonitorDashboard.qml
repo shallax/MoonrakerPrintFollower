@@ -365,7 +365,7 @@ Component
                         UM.Label { text: "Live tuning"; font: UM.Theme.getFont("medium_bold") }
                         UM.Label
                         {
-                            text: "Drag to preview a value. After release, the latest value is applied once it has been unchanged for 2 seconds."
+                            text: "Drag to preview a value. After release, the latest value is applied once it has been unchanged for 250 ms."
                             color: UM.Theme.getColor("text_inactive")
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap

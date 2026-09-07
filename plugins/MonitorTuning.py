@@ -15,7 +15,7 @@ class PendingValue:
 
 class MonitorTuning(QObject):
     changed = pyqtSignal()
-    DEBOUNCE_MS = 2000
+    DEBOUNCE_MS = 250
     CONFIRM_MS = 5000
 
     def __init__(self, data, commands, parent=None):

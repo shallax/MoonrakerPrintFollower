@@ -26,6 +26,7 @@ Version 3.2.0 closes the remaining 3.1.0 architecture gaps and codifies how the 
 - Guards the Monitor camera restore against webcam-set changes, prunes renamed/removed objects from the auxiliary snapshot, deactivates the outgoing Monitor before the incoming one activates, and removes a phantom signal key.
 - Consolidates printer-object classification into one shared policy table, narrows Monitor controller capabilities instead of passing the whole client, and moves the bed-mesh observation to the print coordinator (Monitor can no longer write follower mesh state).
 - Completes the `ARCHITECTURE.md` ownership map, overhauls the README (release header, feature and structure sections), and makes the tag-release CI run the full Qt suite; verifier tools share one checks implementation.
+- Applies released Monitor slider values after a 250 ms unchanged window instead of 2 seconds.
 
 ## 3.1.0
 
