@@ -21,12 +21,17 @@ from .CuraAdapter import preview_max_paths, set_preview_minimum_path, set_previe
 from .PreviewSmoothing import advance_display
 
 TICK_MS = 20
-# Velocity-EMA weight applied per observation; ~3 s time constant at the
-# normal 750 ms polling cadence.
-VELOCITY_EMA = 0.25
+# Velocity-EMA weight applied per observation; ~5 s time constant at the
+# normal 750 ms polling cadence, so travel-move spikes cannot inflate the
+# glide speed.
+VELOCITY_EMA = 0.15
 # Floor for the observation interval so an immediate second observation
 # cannot produce a huge instantaneous velocity.
 MIN_OBSERVATION_DT = 0.05
+# Cap on the instantaneous rate in layer-fractions per second. Extrusion
+# rates are far below this; travel moves spike above it and are clipped so
+# the head does not race to the newest observation and stall there.
+MAX_VELOCITY = 0.5
 
 
 class PreviewMotion(QObject):
@@ -64,7 +69,7 @@ class PreviewMotion(QObject):
             return
         if self._prev_fraction is not None:
             dt = max(MIN_OBSERVATION_DT, now - self._prev_time)
-            instant = max(0.0, (fraction - self._prev_fraction) / dt)
+            instant = max(0.0, min(MAX_VELOCITY, (fraction - self._prev_fraction) / dt))
             self._velocity += (instant - self._velocity) * VELOCITY_EMA
         self._prev_fraction = fraction
         self._prev_time = now
