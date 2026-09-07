@@ -1,10 +1,11 @@
 """Qt tick driver for the smoothed Preview path; the policy stays pure.
 
-The physical target arrives from PreviewFollower via `write()`; this object
-owns the displayed value, advances it on a timer using the pure policy, and
-writes the view through the typed adapters. After every write it re-remembers
-the plugin-written position so Cura's change watcher never mistakes the
-animation for a manual override.
+The physical path fraction (0..1 within the layer) arrives from
+PreviewFollower via `write()`; this object owns the displayed fraction,
+advances it on a timer using the pure policy, and writes the view through the
+typed adapters, converting to path units against the view's live max paths.
+After every write it re-remembers the plugin-written position so Cura's
+change watcher never mistakes the animation for a manual override.
 
 Layer changes are jumped, never smoothed: the head moves to the new layer's
 start exactly as the unsmoothed follower would.
@@ -15,7 +16,7 @@ import time
 
 from PyQt6.QtCore import QObject, QTimer
 
-from .CuraAdapter import set_preview_minimum_path, set_preview_path
+from .CuraAdapter import preview_max_paths, set_preview_minimum_path, set_preview_path
 from .PreviewSmoothing import advance_display
 
 TICK_MS = 33
@@ -34,22 +35,22 @@ class PreviewMotion(QObject):
         self._displayed = None
         self._last = 0.0
 
-    def write(self, layer: int, target: float) -> None:
-        """Record the newest observed target for a layer."""
-        target = max(0.0, min(1.0, float(target)))
+    def write(self, layer: int, fraction: float) -> None:
+        """Record the newest observed path fraction for a layer."""
+        fraction = max(0.0, min(1.0, float(fraction)))
         if layer != self._layer or self._displayed is None:
             # A layer transition (or the first observation): jump, never
             # animate across layers.
             self._layer = layer
-            self._target = target
-            self._displayed = target
+            self._target = fraction
+            self._displayed = fraction
             self._last = time.monotonic()
             self._timer.stop()
-            self._write(target)
+            self._write(fraction)
             return
-        self._target = target
+        self._target = fraction
         self._last = time.monotonic()
-        if self._displayed < target:
+        if self._displayed < fraction:
             self._timer.start()
 
     def reset(self) -> None:
@@ -70,12 +71,15 @@ class PreviewMotion(QObject):
         if displayed >= self._target:
             self._timer.stop()
 
-    def _write(self, value: float) -> None:
+    def _write(self, fraction: float) -> None:
         view = self._cura.view
         if view is None:
             return
+        maximum = preview_max_paths(view)
+        if maximum is None or maximum <= 0:
+            return
         with self._cura.writing_preview():
-            set_preview_path(view, value)
+            set_preview_path(view, fraction * maximum)
             set_preview_minimum_path(view, 0)
         self._remember()
 

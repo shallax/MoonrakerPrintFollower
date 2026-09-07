@@ -556,15 +556,16 @@ class PreviewMotionTests(unittest.TestCase):
         self.addCleanup(self.motion.close)
 
     def test_layer_change_jumps_and_same_layer_animates(self):
+        # The fake view exposes 100 max paths; the driver works in fractions.
         self.motion.write(0, 0.8)
-        self.assertEqual(self.view.path, 0.8)  # first observation jumps
+        self.assertEqual(self.view.path, 80.0)  # first observation jumps
         self.motion.write(0, 0.9)
         self.qt.events(120)
-        self.assertGreater(self.view.path, 0.8)
-        self.assertLessEqual(self.view.path, 0.9)
+        self.assertGreater(self.view.path, 80.0)
+        self.assertLessEqual(self.view.path, 90.0)
         # A new layer jumps straight to its target; no cross-layer animation.
         self.motion.write(1, 0.05)
-        self.assertEqual(self.view.path, 0.05)
+        self.assertEqual(self.view.path, 5.0)
 
     def test_target_behind_display_never_moves_backwards(self):
         self.motion.write(0, 0.9)
@@ -573,7 +574,7 @@ class PreviewMotionTests(unittest.TestCase):
         self.motion.write(0, 0.3)  # stale/ambiguous observation behind us
         self.qt.events(200)
         self.assertGreaterEqual(self.view.path, reached)
-        self.assertLessEqual(self.view.path, 0.9)
+        self.assertLessEqual(self.view.path, 90.0)
 
     def test_writes_are_remembered(self):
         self.motion.write(0, 0.5)
@@ -588,7 +589,7 @@ class PreviewMotionTests(unittest.TestCase):
         self.qt.events(120)
         self.assertEqual(self.view.path, moving)
         self.motion.write(0, 0.75)
-        self.assertEqual(self.view.path, 0.75)  # re-synchronises with a jump
+        self.assertEqual(self.view.path, 75.0)  # re-synchronises with a jump
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
