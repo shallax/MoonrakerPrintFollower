@@ -235,41 +235,47 @@ class PreviewFormattingTests(unittest.TestCase):
 
 
 class PreviewSmoothingTests(unittest.TestCase):
-    """The displayed head converges to the target without exceeding it or snapping back."""
+    """The displayed head glides at the physical rate without exceeding it or snapping back."""
 
-    def test_never_exceeds_target_and_converges(self):
+    def test_tracks_moving_target_with_bounded_lag(self):
+        # A target advancing at the estimated velocity is tracked with a
+        # bounded lag (equilibrium lag ≈ velocity / lag decay).
         displayed = 0.0
-        for _ in range(400):
-            displayed = advance_display(displayed=displayed, target=0.5, dt=0.033)
+        velocity = 0.1
+        lags = []
+        for tick in range(300):
+            target = min(1.0, 0.02 + tick * velocity * 0.033)
+            displayed = advance_display(displayed=displayed, target=target, velocity=velocity, dt=0.033)
+            lags.append(target - displayed)
+        self.assertLessEqual(max(lags), 0.15)
+        self.assertGreaterEqual(displayed, 0.9)
+
+    def test_never_exceeds_target_and_never_decreases(self):
+        displayed = 0.0
+        for _ in range(200):
+            before = displayed
+            displayed = advance_display(displayed=displayed, target=0.5, velocity=2.0, dt=0.033)
+            self.assertGreaterEqual(displayed, before)
             self.assertLessEqual(displayed, 0.5)
         self.assertAlmostEqual(displayed, 0.5, places=4)
 
-    def test_never_decreases_when_target_moves_behind(self):
+    def test_target_behind_display_is_ignored(self):
         displayed = 0.6
-        displayed = advance_display(displayed=displayed, target=0.3, dt=0.033)
-        self.assertEqual(displayed, 0.6)
-        # A later target ahead still resumes convergence from where we were.
-        self.assertGreater(advance_display(displayed=displayed, target=0.9, dt=0.033), 0.6)
+        self.assertEqual(advance_display(displayed=displayed, target=0.3, velocity=0.1, dt=0.033), 0.6)
 
-    def test_moves_toward_moving_target_without_jumping(self):
-        displayed = 0.0
-        for tick, target in enumerate((0.4, 0.45, 0.5, 0.55)):
-            for _ in range(10):
-                displayed = advance_display(displayed=displayed, target=target, dt=0.033)
-        self.assertLessEqual(displayed, 0.55)
-        self.assertGreater(displayed, 0.0)
-
-    def test_large_gap_catches_up_linearly(self):
-        # A full-layer gap must not lag arbitrarily: the catch-up floor is
-        # 1.5 layer-fractions per second.
-        displayed = advance_display(displayed=0.0, target=1.0, dt=0.25)
-        self.assertGreaterEqual(displayed, 0.25)
+    def test_zero_velocity_eases_into_a_static_target(self):
+        # With no velocity estimate the gap decay (~1.0/s) closes large gaps
+        # gently instead of leaving the head stranded: after 0.25 s the head
+        # has covered about 1 - e^-0.25 of a full-layer gap.
+        displayed = advance_display(displayed=0.0, target=1.0, velocity=0.0, dt=0.25)
+        self.assertGreaterEqual(displayed, 0.2)
+        self.assertLessEqual(displayed, 0.3)
 
     def test_clamps_target_to_unit_range(self):
-        value = advance_display(displayed=0.5, target=2.0, dt=0.033)
+        value = advance_display(displayed=0.5, target=2.0, velocity=1.0, dt=0.033)
         self.assertTrue(0.5 < value <= 1.0)
         # A negative displayed value is pathological but must not decrease.
-        self.assertLessEqual(advance_display(displayed=-0.1, target=0.0, dt=0.033), 0.0)
+        self.assertLessEqual(advance_display(displayed=-0.1, target=0.0, velocity=0.0, dt=0.033), 0.0)
 
 
 class PreviewPresentationContractTests(unittest.TestCase):

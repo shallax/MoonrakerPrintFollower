@@ -1,35 +1,36 @@
 """Pure display-smoothing policy for the Preview path within one layer.
 
 The physical observation stays untouched; this module only decides how the
-*displayed* head position converges toward the newest observed target.
+*displayed* head position moves between observations.
 
-Guarantees:
+The head cruises at the estimated physical velocity and treats the newest
+observed target as a hard ceiling. Guarantees:
+
 - never exceeds the observed target (the head never gets ahead of reality);
 - never decreases (the head never snaps back within a layer);
-- exponential easing on small gaps so the final approach feels smooth;
-- a linear catch-up floor on large gaps so the head cannot lag far behind.
+- moves at a steady glide while the estimate is accurate, instead of
+  racing to each new observation and holding (chase-hold stutter);
+- a gentle gap decay keeps any accumulated lag bounded without ever
+  forcing a minimum speed, so slow prints glide slowly.
 
 Layer transitions are not smoothed here: the motion driver jumps directly
-to the new layer's target, which is exactly how the unsmoothed follower
-behaves.
+to the new layer's target, exactly as the unsmoothed follower does.
 """
 from __future__ import annotations
 
-import math
-
-# Exponential convergence rate per second; dominates small gaps.
-CONVERGENCE_PER_SECOND = 6.0
-# Linear catch-up floor, in fraction of the layer per second.
-CATCH_UP_PER_SECOND = 1.5
+# Fraction of the remaining gap closed per second when the velocity
+# estimate has drifted from reality (equilibrium lag ≈ velocity / decay).
+LAG_DECAY_PER_SECOND = 1.0
 
 
-def advance_display(*, displayed: float, target: float, dt: float) -> float:
-    """Advance the displayed path toward the observed target for one tick."""
+def advance_display(*, displayed: float, target: float, velocity: float, dt: float,
+                    lag_decay_per_second: float = LAG_DECAY_PER_SECOND) -> float:
+    """Advance the displayed path for one tick at the estimated physical rate."""
     target = max(float(displayed), min(1.0, max(0.0, float(target))))
     if target <= displayed:
         return displayed
     dt = max(0.0, float(dt))
+    velocity = max(0.0, float(velocity))
     gap = target - displayed
-    easing = 1.0 - math.exp(-CONVERGENCE_PER_SECOND * dt)
-    step = max(gap * easing, min(gap, CATCH_UP_PER_SECOND * dt))
+    step = velocity * dt + gap * lag_decay_per_second * dt
     return min(target, displayed + step)

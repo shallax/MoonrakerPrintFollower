@@ -1,11 +1,12 @@
 """Qt tick driver for the smoothed Preview path; the policy stays pure.
 
 The physical path fraction (0..1 within the layer) arrives from
-PreviewFollower via `write()`; this object owns the displayed fraction,
-advances it on a timer using the pure policy, and writes the view through the
-typed adapters, converting to path units against the view's live max paths.
-After every write it re-remembers the plugin-written position so Cura's
-change watcher never mistakes the animation for a manual override.
+PreviewFollower via `write()`; this object estimates the physical velocity
+from consecutive observations, owns the displayed fraction, and advances it
+on a timer using the pure policy. It converts to path units against the
+view's live max paths at write time. After every write it re-remembers the
+plugin-written position so Cura's change watcher never mistakes the
+animation for a manual override.
 
 Layer changes are jumped, never smoothed: the head moves to the new layer's
 start exactly as the unsmoothed follower would.
@@ -19,7 +20,13 @@ from PyQt6.QtCore import QObject, QTimer
 from .CuraAdapter import preview_max_paths, set_preview_minimum_path, set_preview_path
 from .PreviewSmoothing import advance_display
 
-TICK_MS = 33
+TICK_MS = 20
+# Velocity-EMA weight applied per observation; ~3 s time constant at the
+# normal 750 ms polling cadence.
+VELOCITY_EMA = 0.25
+# Floor for the observation interval so an immediate second observation
+# cannot produce a huge instantaneous velocity.
+MIN_OBSERVATION_DT = 0.05
 
 
 class PreviewMotion(QObject):
@@ -33,23 +40,36 @@ class PreviewMotion(QObject):
         self._layer = None
         self._target = None
         self._displayed = None
+        self._velocity = 0.0
+        self._prev_fraction = None
+        self._prev_time = 0.0
         self._last = 0.0
 
     def write(self, layer: int, fraction: float) -> None:
         """Record the newest observed path fraction for a layer."""
         fraction = max(0.0, min(1.0, float(fraction)))
+        now = time.monotonic()
         if layer != self._layer or self._displayed is None:
             # A layer transition (or the first observation): jump, never
-            # animate across layers.
+            # animate across layers. The velocity estimate restarts too.
             self._layer = layer
             self._target = fraction
             self._displayed = fraction
-            self._last = time.monotonic()
+            self._velocity = 0.0
+            self._prev_fraction = fraction
+            self._prev_time = now
+            self._last = now
             self._timer.stop()
             self._write(fraction)
             return
+        if self._prev_fraction is not None:
+            dt = max(MIN_OBSERVATION_DT, now - self._prev_time)
+            instant = max(0.0, (fraction - self._prev_fraction) / dt)
+            self._velocity += (instant - self._velocity) * VELOCITY_EMA
+        self._prev_fraction = fraction
+        self._prev_time = now
         self._target = fraction
-        self._last = time.monotonic()
+        self._last = now
         if self._displayed < fraction:
             self._timer.start()
 
@@ -57,6 +77,9 @@ class PreviewMotion(QObject):
         """Stop animating; the next write() re-synchronises from the view."""
         self._timer.stop()
         self._layer = self._target = self._displayed = None
+        self._velocity = 0.0
+        self._prev_fraction = None
+        self._prev_time = 0.0
 
     def _tick(self) -> None:
         now = time.monotonic()
@@ -65,7 +88,8 @@ class PreviewMotion(QObject):
         if self._displayed is None or self._target is None:
             self._timer.stop()
             return
-        displayed = advance_display(displayed=self._displayed, target=self._target, dt=dt)
+        displayed = advance_display(displayed=self._displayed, target=self._target,
+                                    velocity=self._velocity, dt=dt)
         self._displayed = displayed
         self._write(displayed)
         if displayed >= self._target:
