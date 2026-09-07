@@ -3,7 +3,10 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
-FOLLOWER = (PLUGINS / "MoonrakerPrintFollower.py").read_text(encoding="utf-8")
+FOLLOWER = "\n".join([
+    (PLUGINS / "FollowerRuntime.py").read_text(encoding="utf-8"),
+    (PLUGINS / "FollowerCoordinator.py").read_text(encoding="utf-8"),
+])
 PREVIEW = (PLUGINS / "PreviewActionPanelControls.qml").read_text(encoding="utf-8")
 TYPED = (PLUGINS / "MoonrakerMonitorTypedControls.py").read_text(encoding="utf-8")
 DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text(encoding="utf-8")

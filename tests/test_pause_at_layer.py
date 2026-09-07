@@ -3,7 +3,10 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
-FOLLOWER = (PLUGINS / "MoonrakerPrintFollower.py").read_text(encoding="utf-8")
+FOLLOWER = "\n".join([
+    (PLUGINS / "FollowerRuntime.py").read_text(encoding="utf-8"),
+    (PLUGINS / "FollowerCoordinator.py").read_text(encoding="utf-8"),
+])
 QML = (PLUGINS / "PreviewActionPanelControls.qml").read_text(encoding="utf-8")
 CONFIG = (PLUGINS / "PrinterConfig.py").read_text(encoding="utf-8")
 PROTOCOL = (PLUGINS / "MoonrakerProtocol.py").read_text(encoding="utf-8")
@@ -39,9 +42,11 @@ class PauseAtLayerTests(unittest.TestCase):
         self.assertIn("self._pause_network.post", FOLLOWER)
 
     def test_pause_occurs_only_after_target_layer_has_finished(self):
-        self.assertIn("due_end_of_layer_pauses", FOLLOWER)
+        scheduler = (PLUGINS / "PauseScheduler.py").read_text(encoding="utf-8")
+        self.assertIn("due_end_of_layer_pauses", scheduler)
         self.assertIn("layer < current", (PLUGINS / "Core.py").read_text(encoding="utf-8"))
-        self.assertIn("for layer in due:", FOLLOWER)
+        self.assertIn("consume_due", scheduler)
+        self.assertIn("self._send_scheduled_pause(due[0], current_layer)", FOLLOWER)
         self.assertIn("transition observed at layer", FOLLOWER)
 
     def test_layer_observation_continues_while_preview_following_is_paused(self):

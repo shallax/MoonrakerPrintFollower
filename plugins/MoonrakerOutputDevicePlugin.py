@@ -9,7 +9,7 @@ from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
 from .MoonrakerMonitorTypedControls import MoonrakerMonitorModel
 from .MoonrakerOutputDevice import MoonrakerOutputController
-from .MoonrakerOutputDeviceLifecycle import MoonrakerOutputDevice
+from .MoonrakerOutputSession import MoonrakerOutputDevice
 
 
 class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
@@ -55,7 +55,6 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         return url.isValid() and url.scheme() in ("http", "https") and bool(url.host())
 
     def _install_monitor(self, device: MoonrakerOutputDevice, stack: Any) -> None:
-        """Attach the unified Moonraker model and Cura Monitor QML to a device."""
         monitor = getattr(device, "activePrinter", None)
         if not isinstance(monitor, MoonrakerMonitorModel):
             try:
@@ -71,13 +70,9 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 monitor.updateBuildplate(stack.getProperty("machine_buildplate_type", "value"))
             except Exception:
                 pass
-            # PrinterOutputDevice exposes activePrinter from this model list.
             device._printers = [monitor]
 
         self._set_monitor_active(device, True)
-
-        # Bed-mesh wrapper composes the established typed dashboard and adds the
-        # live Klipper height-map panel without replacing the existing Monitor UI.
         device._monitor_view_qml_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitorBedMesh.qml"
         )

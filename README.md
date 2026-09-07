@@ -101,7 +101,7 @@ Settings include:
 - **Look ahead one layer** — shows the layer after the current printer layer.
 - **Window around current layer (±2)** — shows a five-layer window around the live layer where Cura supports it.
 
-Manual movement of either Cura layer handle or either within-layer path handle pauses following. **Resume** in the Preview card catches the view back up without stopping Moonraker polling. Within a live layer, follower progress is monotonic so repeated or closed toolpaths cannot make Cura visibly rewind and retrace a section when Moonraker's live position is ambiguous.
+Manual movement of either Cura layer handle or either within-layer path handle detaches following. **Attach** in the Preview card catches the view back up without stopping Moonraker polling. Within a live layer, follower progress is monotonic so repeated or closed toolpaths cannot make Cura visibly rewind and retrace a section when Moonraker's live position is ambiguous.
 
 ## Upload tab
 
@@ -188,7 +188,7 @@ The follower controls live in their own Cura-styled action-panel card in Preview
 
 - Cura's native nozzle icon and a bold **Moonraker Print Follower** title
 - a state icon plus the active Cura printer name and live follower status
-- **Pause/Resume** and **Load print** actions
+- **Detach/Attach** and **Load print** actions
 
 The panel uses a fixed layout so status changes do not resize it. If the currently active Cura printer is not enabled and configured with a usable Moonraker URL, the follower card is hidden. A configured printer that is temporarily offline still shows the card with its disconnected state.
 
@@ -216,8 +216,6 @@ Persistent indexes are validated against remote file identity before reuse. Laye
 ### Cura package
 
 Release builds use the canonical Cura/Marketplace package id `Moonraker_Print_Follower`. CI compiles and tests the plugin, builds the `.curapackage`, verifies its Marketplace layout and uploads the installable package as a workflow artifact.
-
-The repository may still contain an older 2.0.0 `.curapackage` for historical/testing purposes; do not treat that file as the current build.
 
 ### Manual installation from source
 
