@@ -499,18 +499,30 @@ class MonitorDataAuxTests(unittest.TestCase):
         config = self.qt.load("PrinterConfig").PrinterConfig(camera_selected="front-uid")
         fake = FakeData()
         camera = camera_module.MonitorCamera(fake, lambda: config, lambda value: None)
-        # The constructor's observe() already scheduled the zero-timer restore.
+        # The constructor's observe() published the Front model and scheduled
+        # its selection restore for the next Qt turn.
+        self.assertTrue(camera._restore_pending)
+        first_signature = camera._camera_signature
 
-        # Swap the webcam set before the scheduled zero-timer fires.
+        # A second snapshot replaces the webcam set before that turn arrives.
+        # The change reaches observe() exactly as in production
+        # (data.changed -> observe) and re-publishes the model for Rear.
         fake.snapshot = SimpleNamespace(webcams=(
             {"uid": "rear-uid", "name": "Rear", "stream_url": "/rear"},))
-        self.qt.events()
-
-        # The stale restore must have bailed; a fresh observe against the
-        # current snapshot restores cleanly.
-        self.assertTrue(camera._restore_pending)
         fake.changed.emit()
+        self.assertNotEqual(camera._camera_signature, first_signature)
+        self.assertEqual(camera.values["activeWebcamIndex"], -1)
+
+        # The stale Front restore fires first: it was scheduled for a snapshot
+        # that is no longer current, so it must bail and keep the restore
+        # pending rather than publish an index against the Rear model early.
+        camera._restore_after_population(first_signature)
+        self.assertTrue(camera._restore_pending)
+        self.assertEqual(camera.values["activeWebcamIndex"], -1)
+
+        # The restore scheduled against the current snapshot then completes.
         self.qt.events()
+        self.assertFalse(camera._restore_pending)
         self.assertEqual(camera.values["activeWebcamIndex"], 0)
         self.assertEqual(camera.values["cameraName"], "Rear")
 

@@ -108,7 +108,7 @@ class ComposedComponentTests(unittest.TestCase):
         service, files = self.parts.index, self.parts.files
         key = ("part.gcode", 100, 1)
         files.bind(key)
-        files._identity = self.qt.load("Core").RemoteFileIdentity("part.gcode", 100, modified=1)
+        files._identity = self.qt.load("MoonrakerProtocol").RemoteFileIdentity("part.gcode", 100, modified=1)
         service.bind(key)
         entered, release = threading.Event(), threading.Event()
         threads = []
