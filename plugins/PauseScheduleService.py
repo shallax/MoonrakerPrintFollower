@@ -2,7 +2,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .Core import due_end_of_layer_pauses
+
+def due_end_of_layer_pauses(scheduled_layers, current_layer: int):
+    """Return scheduled zero-based layers whose *end* has been crossed.
+
+    A target layer is due only after Moonraker has advanced to a strictly later
+    layer. Reaching the target layer itself must never pause at its beginning.
+    """
+    try:
+        current = int(current_layer)
+    except (TypeError, ValueError):
+        return []
+
+    due = []
+    for raw_layer in scheduled_layers or ():
+        try:
+            layer = int(raw_layer)
+        except (TypeError, ValueError):
+            continue
+        if layer < current:
+            due.append(layer)
+    return sorted(set(due))
 
 
 @dataclass

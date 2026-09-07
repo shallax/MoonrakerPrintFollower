@@ -14,7 +14,7 @@ PLUGINS = ROOT / "plugins"
 ARCH = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
 
 RETIRED = {
-    "FollowerBootstrap", "FollowerConfiguration", "FollowerCoordinator", "FollowerTransport",
+    "Core", "FollowerBootstrap", "FollowerConfiguration", "FollowerCoordinator", "FollowerTransport",
     "CuraLifecycleRuntime", "CuraViewBridge", "CuraFileLifecycle", "PreviewFollowerRuntime",
     "PreviewStatus", "PreviewEta", "PreviewControls", "PreviewLoad", "PreviewFollowEngine",
     "PathFollowEngine", "GCodeIndexRuntime", "RemoteFileTransfer", "PreviewFollowerService",
@@ -31,13 +31,30 @@ RUNTIME_COMPONENTS = (
 
 
 class ArchitectureDocumentTests(unittest.TestCase):
-    def test_document_matches_runtime_composition_and_service_ownership(self):
-        self.assertIn("`FollowerRuntime.py` constructs and closes", ARCH)
+    """Structural anchors and rule tokens, not sentence-level prose checks.
+
+    Rewording the doc must not fail CI; dropping a rule, a section or a
+    component from it must.
+    """
+
+    def test_document_keeps_its_section_structure(self):
+        for heading in (
+            "## 1. Design rules", "## 2. Composition roots and public APIs",
+            "## 3. Binding and migration", "## 4. Shared networking and polling",
+            "## 5. Physical state and Preview", "## 6. Remote files, leases and bounded indexing",
+            "## 7. Commands and scheduled PAUSE", "## 8. Monitor and bed mesh",
+            "## 9. File-backed upload lifecycle", "## 10. Extending the architecture",
+            "## 11. Verification and release gates",
+        ):
+            self.assertIn(heading, ARCH)
+
+    def test_document_names_the_runtime_components_and_services(self):
         for module in (
             "PrinterBinding.py", "CuraIntegration.py", "PreviewPresentation.py", "PreviewFollower.py",
-            "PrintCoordinator.py", "PrintState.py", "RemoteFileService.py", "GCodeIndexService.py",
-            "MonitorData.py", "MonitorCommands.py", "MonitorTuning.py", "MonitorControls.py", "MonitorCamera.py",
-            "BedMeshPresenter.py", "UploadController.py", "CuraOutputWriter.py",
+            "PreviewFormatting.py", "PrintCoordinator.py", "PrintState.py", "RemoteFileService.py",
+            "GCodeIndexService.py", "MonitorData.py", "MonitorCommands.py", "MonitorTuning.py",
+            "MonitorControls.py", "MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py",
+            "UploadController.py", "CuraOutputWriter.py",
         ):
             self.assertIn(f"`{module}`", ARCH)
 
@@ -47,30 +64,39 @@ class ArchitectureDocumentTests(unittest.TestCase):
         self.assertIn("`reset_print()`", ARCH)
         self.assertIn("immutable print observations", ARCH)
 
-    def test_document_records_compatibility_and_shared_polling(self):
+    def test_document_records_polling_cadence_and_migration(self):
         self.assertIn("Legacy follower preferences", ARCH)
         self.assertIn("Standalone Moonraker Connection settings", ARCH)
-        self.assertIn("Monitor auxiliary, idle", ARCH)
         self.assertIn("2500 ms", ARCH)
         self.assertIn("`MonitorData` alone applies Monitor timer policy", ARCH)
 
     def test_document_records_output_rebind_cleanup_and_network_law(self):
         self.assertIn("`MoonrakerClient.sessionInvalidated`", ARCH)
         self.assertIn("QHttpPart.setBodyDevice()", ARCH)
-        self.assertIn("only production module constructing", ARCH)
-        self.assertIn("HTTP only — no WebSocket transport", ARCH)
+        self.assertIn("HTTP only", ARCH)
+        self.assertIn("no WebSocket transport", ARCH)
 
     def test_document_distinguishes_harness_from_live_cura_validation(self):
         self.assertIn("The harness is not Cura or printer firmware", ARCH)
         self.assertIn("Stdlib-only local runs explicitly skip", ARCH)
+
+    def test_instructions_document_records_the_version_bump_checklist(self):
+        instructions = (ROOT / "INSTRUCTIONS.md").read_text(encoding="utf-8")
+        for token in (
+            "package.json", "plugins/plugin.json", "CHANGELOG.md",
+            "release workflow", "v<version>",
+        ):
+            self.assertIn(token, instructions)
 
 
 class SourceContractTests(unittest.TestCase):
     def test_release_metadata_and_license_remain_canonical(self):
         package = json.loads((ROOT / "package.json").read_text())
         plugin = json.loads((PLUGINS / "plugin.json").read_text())
-        self.assertEqual(package["package_version"], "3.1.0")
-        self.assertEqual(plugin["version"], "3.1.0")
+        # The absolute version is validated against the git tag by the release
+        # workflow; here the two metadata files must stay in sync.
+        self.assertEqual(package["package_version"], plugin["version"])
+        self.assertNotEqual(package["package_version"], "")
         self.assertEqual(package["package_id"], "Moonraker_Print_Follower")
         self.assertIn("GNU GENERAL PUBLIC LICENSE", (ROOT / "LICENSE").read_text())
 
@@ -88,23 +114,61 @@ class SourceContractTests(unittest.TestCase):
 
     def test_components_import_only_their_declared_dependencies(self):
         allowed = {
-            "RemoteFileService": {"Core", "DownloadStream", "MoonrakerProtocol"},
+            "BedMeshPresenter": {"BedMeshSceneNode"},
+            "BedMeshSceneNode": set(),
+            "CuraAdapter": set(),
+            "CuraIntegration": {"CuraLifecycleBridge", "NativeNozzleLifecycle"},
+            "CuraLifecycleBridge": set(),
+            "CuraOutputWriter": set(),
+            "DownloadStream": set(),
+            "FollowController": set(),
+            "FollowerRuntime": {"BedMeshPresenter", "CuraIntegration", "GCodeIndex", "GCodeIndexService",
+                "MoonrakerClient", "PauseController", "PreviewFollower", "PreviewPresentation",
+                "PrintCoordinator", "PrinterBinding", "RemoteFileService"},
+            "GCodeIndex": {"MoonrakerProtocol"},
             "GCodeIndexService": {"GCodeIndex"},
-            "PrintState": {"RemoteJobService"},
-            "PreviewFollower": {"Core", "CuraAdapter", "FollowController", "MoonrakerProtocol"},
-            "PauseController": {"PauseScheduleService"},
-            "PrinterBinding": {"CuraAdapter", "PrinterConfig"},
+            "MonitorCamera": set(),
+            "MonitorCommands": set(),
+            "MonitorControls": {"MonitorFormatting"},
             "MonitorData": {"MoonrakerSession"},
-            "MonitorCommands": set(), "MonitorTuning": set(), "MonitorCamera": set(),
-            "MonitorControls": {"MonitorFormatting"}, "MonitorFormatting": set(),
-            "UploadController": {"PrinterConfig"}, "CuraOutputWriter": set(),
+            "MonitorFormatting": set(),
+            "MonitorTuning": set(),
+            "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
+            "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
+            "MoonrakerMonitorModel": {"MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTuning"},
+            "MoonrakerOutputDevice": {"CuraOutputWriter", "UploadController"},
+            "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice"},
+            "MoonrakerPrintFollower": {"FollowerRuntime"},
+            "MoonrakerProtocol": set(),
+            "MoonrakerSession": {"MoonrakerTransport"},
+            "MoonrakerTransport": set(),
+            "NativeNozzleLifecycle": set(),
+            "PauseController": {"PauseScheduleService"},
+            "PauseScheduleService": set(),
+            "PreviewFollower": {"CuraAdapter", "FollowController", "MoonrakerProtocol"},
+            "PreviewFormatting": set(),
+            "PreviewPresentation": set(),
+            "PrintCoordinator": {"PreviewFormatting", "PrintState", "RemoteJobService"},
+            "PrinterBinding": {"CuraAdapter", "PrinterConfig"},
+            "PrinterConfig": set(),
+            "PrintState": {"RemoteJobService"},
+            "RemoteFileService": {"DownloadStream", "MoonrakerProtocol"},
+            "RemoteJobService": set(),
+            "UploadController": {"PrinterConfig"},
         }
+        # Cura adapters sanctioned to import cura APIs.
+        cura_exceptions = {"CuraOutputWriter", "MoonrakerFollowerMachineAction", "MoonrakerMonitorModel", "MoonrakerOutputDevice", "PrinterBinding"}
+        # The output plugin and Machine Action receive the follower at the
+        # documented composition boundary; PrinterConfig and BedMeshPresenter
+        # only contain the string inside preference-key literals.
+        follower_exceptions = {"BedMeshPresenter", "MoonrakerFollowerMachineAction", "MoonrakerOutputDevicePlugin", "PrinterConfig"}
         for module, dependencies in allowed.items():
             source = (PLUGINS / (module + ".py")).read_text()
             imported = {node.module for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ImportFrom) and node.level}
             self.assertLessEqual(imported, dependencies, module)
-            self.assertNotIn("_follower", source, module)
-            if module not in {"PrinterBinding", "CuraOutputWriter"}:
+            if module not in follower_exceptions:
+                self.assertNotIn("_follower", source, module)
+            if module not in cura_exceptions:
                 self.assertNotIn("from cura.", source, module)
 
     def test_local_import_graph_is_acyclic(self):
@@ -214,7 +278,17 @@ class CompositionStructureTests(unittest.TestCase):
         self.assertNotIn("QNetworkRequest", implementation)
 
     def test_domain_constructors_do_not_accept_whole_follower_or_model(self):
-        for name in ("RemoteFileService", "GCodeIndexService", "PreviewFollower", "PauseController", "MonitorData", "MonitorCommands", "MonitorControls", "MonitorCamera", "MonitorTuning", "UploadController"):
+        # The output plugin and Machine Action are the sanctioned composition
+        # boundary that receives the follower facade; every other component
+        # takes explicit capabilities only.
+        for name in ("BedMeshPresenter", "BedMeshSceneNode", "CuraAdapter", "CuraIntegration", "CuraLifecycleBridge",
+                     "CuraOutputWriter", "DownloadStream", "FollowController", "GCodeIndex", "GCodeIndexService",
+                     "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting",
+                     "MonitorTuning", "MoonrakerClient", "MoonrakerMonitorModel", "MoonrakerPrintFollower",
+                     "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "NativeNozzleLifecycle",
+                     "PauseController", "PauseScheduleService", "PreviewFollower", "PreviewFormatting",
+                     "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "PrinterConfig", "PrintState",
+                     "RemoteFileService", "RemoteJobService", "UploadController"):
             source = (PLUGINS / (name + ".py")).read_text()
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.FunctionDef) and node.name == "__init__":

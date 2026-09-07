@@ -17,6 +17,7 @@ class _FakeTransport:
     def __init__(self) -> None:
         self.identity = ("", "")
         self.configure_calls = []
+        self.cancel_calls = 0
 
     def configure(self, base_url: str, api_key: str) -> bool:
         target = (str(base_url or "").rstrip("/"), str(api_key or ""))
@@ -24,6 +25,9 @@ class _FakeTransport:
         self.identity = target
         self.configure_calls.append(target)
         return changed
+
+    def cancel_all(self) -> None:
+        self.cancel_calls += 1
 
 
 class SessionStateTests(unittest.TestCase):
@@ -75,8 +79,11 @@ class SessionStateTests(unittest.TestCase):
         self.assertEqual(transport.identity, ("http://other-printer", "second-key"))
 
     def test_session_reset_invalidates_old_generation_and_shared_state(self):
-        session = MoonrakerSessionState()
-        session.rebind("http://printer-a")
+        # Drive the production identity path (MoonrakerSession.configure) and
+        # then reset, as a rebind does, rather than a test-only state mutation.
+        transport = _FakeTransport()
+        session = MoonrakerSession(transport=transport)
+        self.assertTrue(session.configure("http://printer-a", "key"))
         session.merge_status(
             {
                 "print_stats": {"state": "printing", "filename": "old.gcode"},
@@ -97,6 +104,7 @@ class SessionStateTests(unittest.TestCase):
         self.assertIsNone(session.commands.get("Pause"))
         self.assertFalse(session.connected)
         self.assertFalse(session.pause_guard)
+        self.assertEqual(transport.cancel_calls, 1)
 
     def test_command_ack_requires_observed_printer_state(self):
         fake = FakeMoonraker([

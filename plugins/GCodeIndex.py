@@ -16,7 +16,7 @@ from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import BinaryIO, Dict, List, Optional, Sequence, Tuple
 
-from .Core import RemoteFileIdentity
+from .MoonrakerProtocol import RemoteFileIdentity
 
 
 _LAYER_COMMENT = re.compile(rb"^\s*;LAYER:\s*-?\d+\s*$", re.IGNORECASE)

@@ -8,7 +8,7 @@ from types import MappingProxyType
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtNetwork import QNetworkReply
 
-from .Core import RemoteFileIdentity
+from .MoonrakerProtocol import RemoteFileIdentity
 from .DownloadStream import DownloadTarget
 from .MoonrakerProtocol import download_endpoint, metadata_endpoint, parse_file_identity
 

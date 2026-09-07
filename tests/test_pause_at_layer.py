@@ -2,7 +2,7 @@ import pathlib
 import unittest
 
 from tests.fake_moonraker import FakeMoonraker
-from plugins.PauseScheduleService import PauseScheduleService
+from plugins.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
 from plugins.MoonrakerSession import MoonrakerSessionState, PollPolicy, RequestCategory
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -11,6 +11,15 @@ QML = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
 
 
 class PauseAtLayerTests(unittest.TestCase):
+    def test_end_of_layer_pause_is_not_due_when_target_layer_is_reached(self):
+        self.assertEqual(due_end_of_layer_pauses({91}, 91), [])
+
+    def test_end_of_layer_pause_becomes_due_after_transition(self):
+        self.assertEqual(due_end_of_layer_pauses({91}, 92), [91])
+
+    def test_end_of_layer_pause_handles_poll_skips_and_orders_targets(self):
+        self.assertEqual(due_end_of_layer_pauses({94, 91, 92}, 94), [91, 92])
+
     def test_schedule_is_print_local_and_clearable(self):
         schedule = PauseScheduleService()
         self.assertTrue(schedule.schedule(4))

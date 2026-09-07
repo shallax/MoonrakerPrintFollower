@@ -246,19 +246,6 @@ class MoonrakerSessionState:
         self.connected = False
         self.pause_guard = False
 
-    def rebind(self, base_url: str) -> bool:
-        target = str(base_url or "").rstrip("/")
-        if target == self.base_url:
-            return False
-        self.generation += 1
-        self.base_url = target
-        self.connected = False
-        self.pause_guard = False
-        self.snapshot = SessionSnapshot()
-        self.commands.clear()
-        self.coalescer.clear()
-        return True
-
     def reset(self) -> None:
         self.generation += 1
         self.connected = False

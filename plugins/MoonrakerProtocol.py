@@ -1,9 +1,24 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
-from .Core import RemoteFileIdentity
+
+@dataclass(frozen=True)
+class RemoteFileIdentity:
+    filename: str
+    size: int = 0
+    modified: float = 0.0
+    uuid: str = ""
+
+    def stable_key(self) -> str:
+        if self.uuid:
+            return f"uuid:{self.uuid}"
+        return f"file:{self.filename}|size:{int(self.size)}|modified:{self.modified:.6f}"
+
+    def matches_job(self, filename: str, size: int) -> bool:
+        return self.filename == filename and (self.size <= 0 or size <= 0 or self.size == size)
 
 
 def status_endpoint(base_url: str) -> str:

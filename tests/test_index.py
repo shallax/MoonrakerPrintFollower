@@ -7,7 +7,7 @@ import threading
 import unittest
 from bisect import bisect_right
 
-from plugins.Core import RemoteFileIdentity
+from plugins.MoonrakerProtocol import RemoteFileIdentity
 from plugins.GCodeIndex import (
     LayerMotionIndex,
     PersistentIndexCache,

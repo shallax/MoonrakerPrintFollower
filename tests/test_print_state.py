@@ -7,6 +7,7 @@ import unittest
 
 from plugins.PrintState import LayerResolver, PhysicalLayer, PrintSnapshot
 from plugins.PrinterConfig import PrinterConfig
+from plugins.RemoteJobService import RemoteJobService
 
 
 class PrintStateTests(unittest.TestCase):
@@ -74,6 +75,27 @@ class PrintStateTests(unittest.TestCase):
         self.assertAlmostEqual(first.thickness, 0.24)
         self.assertAlmostEqual(later.height, 0.44)
         self.assertAlmostEqual(later.thickness, 0.1)
+
+
+class JobIdentityTests(unittest.TestCase):
+    def test_same_filename_restart_gets_new_print_run_identity(self):
+        jobs = RemoteJobService({"printing", "paused"})
+        first = jobs.observe(
+            {"state": "printing", "filename": "part.gcode", "print_duration": 120},
+            {"file_size": 1000, "file_position": 600},
+        )
+        second = jobs.observe(
+            {"state": "printing", "filename": "part.gcode", "print_duration": 180},
+            {"file_size": 1000, "file_position": 800},
+        )
+        restarted = jobs.observe(
+            {"state": "printing", "filename": "part.gcode", "print_duration": 3},
+            {"file_size": 1000, "file_position": 20},
+        )
+        self.assertTrue(first.new_job)
+        self.assertFalse(second.new_job)
+        self.assertTrue(restarted.new_job)
+        self.assertNotEqual(first.key, restarted.key)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,8 @@
 
 This is the current implementation contract, not a roadmap. Package identity,
 version and SDK support are defined in `package.json`, `plugins/plugin.json` and
-CI. Release history belongs in `CHANGELOG.md`.
+CI. Release history belongs in `CHANGELOG.md`. Change procedures, including the
+version bump checklist, live in `INSTRUCTIONS.md`.
 
 ## 1. Design rules
 
@@ -62,6 +63,7 @@ private follower state to either integration.
 | `MonitorTuning.py` | Debounce, pending tuning values, revision/confirmation timers | QML or printer discovery |
 | `MonitorControls.py` | Macro, preset, fan/LED/PWM, setup and power/exclusion policy | Qt model inheritance |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
+| `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
 | `MonitorCamera.py` | Camera selection, transforms and per-printer selection persistence | Private configuration store |
 | `CuraOutputWriter.py` | Cura-affine preparation of a temporary G-code/UFP file | HTTP upload |
 | `UploadController.py` | One write operation: discovery, readiness, multipart stream and cancellation | Cura application or QML |
@@ -224,6 +226,7 @@ an earlier write's terminal notification.
 
 - New high-frequency printer fields: extend the one core query and immutable print observation.
 - New Monitor objects: add discovery/projection to `MonitorData` and pure formatting.
+- New Preview projections: add pure formatting in `PreviewFormatting.py`.
 - New controls: add policy to a focused controller and declare the Qt property/slot.
 - New file operations: consume `FileLease`, never infer lifetime from Preview flags.
 - New index work: use the bounded index owner and generation-valid publication.
