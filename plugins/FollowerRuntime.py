@@ -12,6 +12,7 @@ from .GCodeIndexService import GCodeIndexService
 from .MoonrakerClient import MoonrakerClient
 from .PauseController import PauseController
 from .PreviewFollower import PreviewFollower
+from .PreviewMotion import PreviewMotion
 from .PreviewPresentation import PreviewPresentation
 from .PrintCoordinator import PrintCoordinator
 from .PrinterBinding import PrinterBinding
@@ -24,9 +25,13 @@ class FollowerRuntime:
         self.binding = PrinterBinding(application, self.client, parent)
         self.cura = CuraIntegration(application, parent)
         self.files = RemoteFileService(self.client.transport, parent)
-        cache = PersistentIndexCache(os.path.join(Resources.getCacheStoragePath(), "Moonraker_Print_Follower", "indexes"))
+        cache_dir = os.path.join(Resources.getCacheStoragePath(), "Moonraker_Print_Follower")
+        cache = PersistentIndexCache(os.path.join(cache_dir, "indexes"))
         self.index = GCodeIndexService(self.files, cache, parent)
         self.preview = PreviewFollower(self.cura)
+        self.motion = PreviewMotion(self.cura, self.preview.remember, parent,
+                                    trace_path=os.path.join(cache_dir, "smoothing_trace.csv"))
+        self.preview.bind_motion(self.motion)
         self.pauses = PauseController(self.client, parent)
         self.presentation = PreviewPresentation(application, self.cura, parent)
         self.bed_mesh = BedMeshPresenter(application, self.cura, self.presentation, parent)
@@ -44,6 +49,7 @@ class FollowerRuntime:
         self.pauses.close()
         self.bed_mesh.close()
         self.presentation.close()
+        self.motion.close()
         self.cura.close()
         self.index.close()
         self.files.close()

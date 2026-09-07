@@ -209,6 +209,16 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertEqual(PrinterConfig.from_dict({"ready_retry_interval_s": 0}).ready_retry_interval_s, 0.1)
         self.assertEqual(PrinterConfig.from_dict({"ready_retry_interval_s": 999}).ready_retry_interval_s, 60.0)
 
+    def test_path_smoothing_defaults_on_and_round_trips(self):
+        self.assertTrue(PrinterConfig().path_smoothing)
+        cfg = PrinterConfig.from_dict({"path_smoothing": False})
+        self.assertFalse(cfg.path_smoothing)
+
+        prefs = FakePreferences()
+        store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
+        store.set(cfg)
+        self.assertFalse(store.get().path_smoothing)
+
     def test_toolhead_indicator_defaults_on_and_round_trips(self):
         self.assertTrue(PrinterConfig().show_toolhead_indicator)
         cfg = PrinterConfig.from_dict({"show_toolhead_indicator": False})

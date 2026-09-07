@@ -90,27 +90,41 @@ class PreviewState:
 
 
 class PreviewFollower:
-    def __init__(self, cura):
+    def __init__(self, cura, motion=None):
         self._cura = cura
+        self._motion = motion
         self._state = PreviewState()
 
     @property
     def state(self): return self._state
 
+    def bind_motion(self, motion):
+        """The optional Qt display driver for path smoothing (see PreviewMotion)."""
+        self._motion = motion
+
     def reset_print(self):
+        self._reset_motion()
         self._state = PreviewState(attached=self._state.attached)
 
     def reset_tracking(self):
+        self._reset_motion()
         self._state = replace(self._state, path_layer=None, path_fraction=None,
             anchor_layer=None, anchor_duration=None, nozzle_valid=False, eta_text="")
 
     def invalidate_view(self):
+        self._reset_motion()
         self._state = replace(self._state, expected_layer=None, expected_minimum=None,
             expected_path=None, expected_minimum_path=None, nozzle_valid=False)
 
     def attach(self, attached=True):
+        if not attached:
+            self._reset_motion()
         self._state = replace(self._state, attached=bool(attached), nozzle_valid=False, eta_text="")
         self.remember()
+
+    def _reset_motion(self):
+        if self._motion is not None:
+            self._motion.reset()
 
     def remember(self):
         view = self._cura.view
@@ -174,14 +188,15 @@ class PreviewFollower:
                     or preview_minimum_layer(view) != decision.minimum_layer):
                 apply_preview_decision(view, decision.current_layer, decision.minimum_layer)
             if config.path_follow and decision.follow_path:
-                detail, hydration = self._follow_path(view, min(layer, maximum), status, index)
+                detail, hydration = self._follow_path(view, min(layer, maximum), status, index,
+                    smooth=bool(getattr(config, "path_smoothing", True)))
                 self._state = replace(self._state, nozzle_valid=detail.startswith("path "))
         self.remember()
         self.update_eta(snapshot, index)
         if self._state.nozzle_valid and config.show_toolhead_indicator: self._cura.show_nozzle()
         return "Printer paused" if snapshot.observation.state == "paused" else "Following", hydration
 
-    def _follow_path(self, view, layer, status, index):
+    def _follow_path(self, view, layer, status, index, *, smooth=True):
         if not hasattr(view, "setPath") or not hasattr(view, "getMaxPaths"):
             return "Path tracking unavailable", ()
         state = self._state
@@ -210,8 +225,13 @@ class PreviewFollower:
         if preview_minimum_path(view) != 0:
             set_preview_minimum_path(view, 0)
         target = fraction * maximum
-        current = preview_current_path(view)
-        if current is None or abs(current - target) >= 0.5: set_preview_path(view, target)
+        if smooth and self._motion is not None:
+            self._motion.write(layer, fraction, method)
+        else:
+            if self._motion is not None:
+                self._motion.reset()
+            current = preview_current_path(view)
+            if current is None or abs(current - target) >= 0.5: set_preview_path(view, target)
         return f"path {round(target)}/{maximum} ({method})", (layer + 1,)
 
     @staticmethod

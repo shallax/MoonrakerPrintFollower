@@ -53,6 +53,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
             "PrinterBinding.py", "PrinterConfig.py", "CuraIntegration.py", "CuraAdapter.py",
             "CuraLifecycleBridge.py", "NativeNozzleLifecycle.py", "FollowController.py",
             "PreviewPresentation.py", "PreviewFollower.py", "PreviewFormatting.py",
+            "PreviewMotion.py", "PreviewSmoothing.py",
             "PrintCoordinator.py", "PrintState.py", "RemoteFileService.py", "DownloadStream.py",
             "GCodeIndexService.py", "MonitorData.py", "MonitorCommands.py", "MonitorTuning.py",
             "MonitorControls.py", "MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py",
@@ -126,8 +127,8 @@ class SourceContractTests(unittest.TestCase):
             "DownloadStream": set(),
             "FollowController": set(),
             "FollowerRuntime": {"BedMeshPresenter", "CuraIntegration", "GCodeIndex", "GCodeIndexService",
-                "MoonrakerClient", "PauseController", "PreviewFollower", "PreviewPresentation",
-                "PrintCoordinator", "PrinterBinding", "RemoteFileService"},
+                "MoonrakerClient", "PauseController", "PreviewFollower", "PreviewMotion",
+                "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService"},
             "GCodeIndex": {"MoonrakerProtocol"},
             "GCodeIndexService": {"GCodeIndex"},
             "MonitorCamera": set(),
@@ -150,7 +151,9 @@ class SourceContractTests(unittest.TestCase):
             "PauseScheduleService": set(),
             "PreviewFollower": {"CuraAdapter", "FollowController", "MoonrakerProtocol"},
             "PreviewFormatting": set(),
+            "PreviewMotion": {"CuraAdapter", "PreviewSmoothing"},
             "PreviewPresentation": set(),
+            "PreviewSmoothing": set(),
             "PrintCoordinator": {"MonitorFormatting", "PreviewFormatting", "PrintState", "RemoteJobService"},
             "PrinterBinding": {"CuraAdapter", "PrinterConfig"},
             "PrinterConfig": set(),
@@ -290,7 +293,8 @@ class CompositionStructureTests(unittest.TestCase):
                      "MonitorTuning", "MoonrakerClient", "MoonrakerMonitorModel", "MoonrakerPrintFollower",
                      "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "NativeNozzleLifecycle",
                      "PauseController", "PauseScheduleService", "PreviewFollower", "PreviewFormatting",
-                     "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "PrinterConfig", "PrintState",
+                     "PreviewMotion", "PreviewPresentation", "PreviewSmoothing", "PrintCoordinator",
+                     "PrinterBinding", "PrinterConfig", "PrintState",
                      "RemoteFileService", "RemoteJobService", "UploadController"):
             source = (PLUGINS / (name + ".py")).read_text()
             for node in ast.walk(ast.parse(source)):

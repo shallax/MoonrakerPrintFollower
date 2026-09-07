@@ -61,6 +61,8 @@ private follower state to either integration.
 | `CuraLifecycleBridge.py` | Cura-scene generation tokens for stale-work rejection | Scene contents |
 | `NativeNozzleLifecycle.py` | Cura native-nozzle repair during exact following | Scene mesh semantics |
 | `PreviewFollower.py` | Frozen `PreviewState`, attachment, expected positions, path progress and ETA | Downloads or workers |
+| `PreviewSmoothing.py` | Pure display-path convergence policy (bounded, monotonic within a layer) | Qt or view writes |
+| `PreviewMotion.py` | The Qt tick driver for the smoothed displayed path and its view writes | Physical observations |
 | `PauseScheduleService.py` | Pure print-local target set and crossing policy | Network commands |
 | `PauseController.py` | Scheduled PAUSE command and acknowledgement lifecycle | Preview rendering |
 | `PreviewPresentation.py` | Preview QML objects, displayed values and user-intent signals | Following or scheduling policy |
@@ -163,6 +165,20 @@ observation and scheduled PAUSE continue while Preview is detached. ETA uses
 slicer layer timing, speed, path progress and observed duration anchors—not
 G-code byte percentage as time.
 
+Path smoothing is display-only: `PreviewMotion` animates the displayed path
+toward the newest physical observation using the pure `PreviewSmoothing`
+policy: the head cruises at the estimated physical velocity, never exceeds
+the newest observation and never decreases within a layer. The target itself
+is reconstructed between consecutive observations by linear interpolation
+over the measured poll interval, so the glide is continuous at any polling
+rate; the newest observation remains the hard ceiling. The refinement
+itself now produces a smooth sub-segment observation (a widened search
+window plus a hold-on-ambiguity fallback that never inflates the monotonic
+floor). Layer transitions are jumped, never animated. The physical
+`path_fraction` that ETA consumes is unchanged, and each animated write
+re-remembers the plugin-written position so the override detector cannot
+mistake the animation for a manual grab.
+
 ## 6. Remote files, leases and bounded indexing
 
 `RemoteFileService` binds metadata/cache identity to a job token. Same-filename
@@ -247,6 +263,9 @@ an earlier write's terminal notification.
 - New high-frequency printer fields: extend the one core query and immutable print observation.
 - New Monitor objects: add discovery/projection to `MonitorData` and pure formatting.
 - New Preview projections: add pure formatting in `PreviewFormatting.py`.
+- New display behaviour: keep policy pure (like `PreviewSmoothing`) and put
+  the Qt tick/writes in `PreviewMotion`; never let displayed state feed back
+  into physical observations.
 - New controls: add policy to a focused controller and declare the Qt property/slot.
 - New file operations: consume `FileLease`, never infer lifetime from Preview flags.
 - New index work: use the bounded index owner and generation-valid publication.

@@ -37,6 +37,7 @@ Cura.MachineAction
             follow_mode: followMode(),
             moonraker_layer_is_one_based: oneBasedBox.checked,
             path_follow: pathFollowBox.checked,
+            path_smoothing: pathSmoothingBox.checked,
             auto_preview: autoPreviewBox.checked,
             show_toolhead_indicator: toolheadIndicatorBox.checked,
             z_fallback: zFallbackBox.checked,
@@ -237,6 +238,7 @@ Cura.MachineAction
                         Cura.RadioButton { id: windowMode; ButtonGroup.group: followModeGroup; text: "Window around current layer (±2)"; checked: manager.settingsFollowMode === "window" }
 
                         UM.CheckBox { id: pathFollowBox; text: "Follow progress through each layer"; checked: manager.settingsPathFollow }
+                        UM.CheckBox { id: pathSmoothingBox; text: "Smooth path progress"; enabled: pathFollowBox.checked; checked: manager.settingsPathSmoothing }
                         UM.CheckBox { id: oneBasedBox; text: "Treat Moonraker current_layer as 1-based when G-code mapping is unavailable"; checked: manager.settingsLayerOneBased }
                         UM.CheckBox { id: autoPreviewBox; text: "Switch to Preview once when a print starts"; checked: manager.settingsAutoPreview }
                         UM.CheckBox { id: toolheadIndicatorBox; text: "Show live printhead indicator"; checked: manager.settingsToolheadIndicator }
