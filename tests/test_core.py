@@ -13,6 +13,7 @@ from Core import (
     due_end_of_layer_pauses,
     preview_override_kind,
 )
+from plugins.RemoteJobService import RemoteJobService
 
 
 class CoreTests(unittest.TestCase):
@@ -77,6 +78,25 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(identity.matches_job("a.gcode", 0))
         self.assertFalse(identity.matches_job("a.gcode", 101))
         self.assertFalse(identity.matches_job("b.gcode", 100))
+
+    def test_same_filename_restart_gets_new_print_run_identity(self):
+        jobs = RemoteJobService({"printing", "paused"})
+        first = jobs.observe(
+            {"state": "printing", "filename": "part.gcode", "print_duration": 120},
+            {"file_size": 1000, "file_position": 600},
+        )
+        second = jobs.observe(
+            {"state": "printing", "filename": "part.gcode", "print_duration": 180},
+            {"file_size": 1000, "file_position": 800},
+        )
+        restarted = jobs.observe(
+            {"state": "printing", "filename": "part.gcode", "print_duration": 3},
+            {"file_size": 1000, "file_position": 20},
+        )
+        self.assertTrue(first.new_job)
+        self.assertFalse(second.new_job)
+        self.assertTrue(restarted.new_job)
+        self.assertNotEqual(first.key, restarted.key)
 
     def test_end_of_layer_pause_is_not_due_when_target_layer_is_reached(self):
         self.assertEqual(due_end_of_layer_pauses({91}, 91), [])

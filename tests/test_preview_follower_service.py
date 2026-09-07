@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
+import pathlib
 from types import SimpleNamespace
 import unittest
 
@@ -7,6 +8,8 @@ from plugins.PreviewFollower import PreviewFollower
 from plugins.PrinterConfig import PrinterConfig
 from plugins.PrintState import PhysicalLayer, PrintSnapshot
 from plugins.RemoteJobService import PrintObservation
+
+PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
 
 
 class View:
@@ -101,6 +104,35 @@ class PreviewFollowerServiceTests(unittest.TestCase):
         self.assertEqual(self.service.remaining(6, self.index), 14)
         self.observe(4, 108)
         self.assertEqual(self.service.remaining(6, self.index), 12)
+
+
+class PreviewPresentationContractTests(unittest.TestCase):
+    """Source-level contracts for what Preview exposes to the user."""
+
+    def test_selected_layer_eta_uses_live_observation_and_anchor(self):
+        preview = (PLUGINS / "PreviewFollower.py").read_text()
+        self.assertIn("state.observed_layer", preview)
+        self.assertIn("state.duration - state.anchor_duration", preview)
+        self.assertIn("@dataclass(frozen=True)", preview)
+        self.assertIn("def remaining", preview)
+        self.assertIn("datetime.now().astimezone()", preview)
+
+    def test_each_scheduled_pause_has_end_of_layer_eta(self):
+        coordinator = (PLUGINS / "PrintCoordinator.py").read_text()
+        qml = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
+        self.assertIn("self._preview.remaining(layer, self._index.view, end=True)", coordinator)
+        self.assertIn("property string pauseEta", qml)
+        self.assertIn("parent.pauseEta.length > 0", qml)
+
+    def test_preview_layer_scrub_shows_duration_and_local_clock_eta(self):
+        index = (PLUGINS / "GCodeIndex.py").read_text()
+        preview = (PLUGINS / "PreviewFollower.py").read_text()
+        status = (PLUGINS / "PrintCoordinator.py").read_text()
+        self.assertIn("layer_elapsed_times", index)
+        self.assertIn("def update_eta", preview)
+        self.assertIn("datetime.now().astimezone()", preview)
+        self.assertIn("Selected layer", preview)
+        self.assertIn('"selectedLayerEtaText": state.eta_text', status)
 
 
 if __name__ == "__main__":

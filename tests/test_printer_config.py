@@ -1,7 +1,10 @@
 import json
+import pathlib
 import unittest
 
 from plugins.PrinterConfig import PrinterConfig, PrinterConfigStore
+
+PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
 
 
 class FakePreferences:
@@ -215,6 +218,19 @@ class PrinterConfigTests(unittest.TestCase):
         store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
         store.set(cfg)
         self.assertFalse(store.get().show_toolhead_indicator)
+
+    def test_camera_selection_round_trips_per_printer(self):
+        active = ["printer-a", "Printer A"]
+        store = PrinterConfigStore(FakePreferences(), lambda: tuple(active))
+        store.set(PrinterConfig(camera_selected="bed-camera"))
+        self.assertEqual(store.get().camera_selected, "bed-camera")
+        active[:] = ["printer-b", "Printer B"]
+        self.assertEqual(store.get().camera_selected, "")
+
+    def test_settings_tab_lists_upload(self):
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        self.assertIn('UM.TabRowButton { text: "Upload" }', config)
+        self.assertIn('text: "Upload format"', config)
 
 
 if __name__ == "__main__":

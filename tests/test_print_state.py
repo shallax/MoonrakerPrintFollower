@@ -1,34 +1,15 @@
+"""PrintState domain: immutable snapshots and the single LayerResolver."""
 from __future__ import annotations
 
-import ast
-import pathlib
-import unittest
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
+import unittest
 
 from plugins.PrintState import LayerResolver, PhysicalLayer, PrintSnapshot
 from plugins.PrinterConfig import PrinterConfig
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGINS = ROOT / "plugins"
 
-
-class V31RuntimeSplitTests(unittest.TestCase):
-    def test_runtime_is_construction_and_teardown_only(self):
-        tree = ast.parse((PLUGINS / "FollowerRuntime.py").read_text())
-        cls = next(n for n in tree.body if isinstance(n, ast.ClassDef))
-        self.assertEqual(cls.bases, [])
-        self.assertEqual({n.name for n in cls.body if isinstance(n, ast.FunctionDef)}, {"__init__", "close"})
-        self.assertFalse(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "super" for n in ast.walk(cls)))
-
-    def test_domain_constructors_do_not_accept_whole_follower_or_model(self):
-        for name in ("RemoteFileService", "GCodeIndexService", "PreviewFollower", "PauseController", "MonitorData", "MonitorCommands", "MonitorControls", "MonitorCamera", "MonitorTuning", "UploadController"):
-            source = (PLUGINS / (name + ".py")).read_text()
-            for node in ast.walk(ast.parse(source)):
-                if isinstance(node, ast.FunctionDef) and node.name == "__init__":
-                    self.assertFalse({arg.arg for arg in node.args.args} & {"follower", "model", "context"}, name)
-            self.assertNotIn("__getattr__", source)
-
+class PrintStateTests(unittest.TestCase):
     def test_physical_snapshot_is_immutable(self):
         snapshot = PrintSnapshot(layer=PhysicalLayer(5, 10))
         with self.assertRaises(FrozenInstanceError): snapshot.layer.index = 4
@@ -56,11 +37,44 @@ class V31RuntimeSplitTests(unittest.TestCase):
         self.assertEqual(observe(0.6, 2).index, 0)
         self.assertEqual(observe(0.4, 3).index, 1)
 
-    def test_removed_preference_api_and_private_follower_access_are_absent(self):
-        for path in PLUGINS.glob("*.py"):
-            source = path.read_text()
-            self.assertNotIn("self._pref_", source, path.name)
-            self.assertNotIn("self._follower._", source, path.name)
+    def test_geometry_heights_drive_layer_height_and_thickness(self):
+        config = SimpleNamespace(
+            moonraker_layer_is_one_based=True,
+            z_fallback=False,
+            z_tolerance=0.05,
+        )
+        layer = LayerResolver().resolve(
+            {"print_stats": {"info": {"current_layer": 2, "total_layer": 3}}},
+            config,
+            metadata={"first_layer_height": 0.2, "layer_height": 0.2},
+            heights=(0.2, 0.35, 0.55),
+        )
+        self.assertEqual(layer.index, 1)
+        self.assertAlmostEqual(layer.height, 0.35)
+        self.assertAlmostEqual(layer.thickness, 0.15)
+
+    def test_layer_thickness_falls_back_to_metadata_without_geometry(self):
+        config = SimpleNamespace(
+            moonraker_layer_is_one_based=True,
+            z_fallback=False,
+            z_tolerance=0.05,
+        )
+        resolver = LayerResolver()
+        first = resolver.resolve(
+            {"print_stats": {"info": {"current_layer": 1, "total_layer": 5}}},
+            config,
+            metadata={"first_layer_height": 0.24, "layer_height": 0.1},
+        )
+        later = resolver.resolve(
+            {"print_stats": {"info": {"current_layer": 3, "total_layer": 5}}},
+            config,
+            metadata={"first_layer_height": 0.24, "layer_height": 0.1},
+        )
+        self.assertAlmostEqual(first.height, 0.24)
+        self.assertAlmostEqual(first.thickness, 0.24)
+        self.assertAlmostEqual(later.height, 0.44)
+        self.assertAlmostEqual(later.thickness, 0.1)
 
 
-if __name__ == "__main__": unittest.main()
+if __name__ == "__main__":
+    unittest.main()

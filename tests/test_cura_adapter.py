@@ -2,6 +2,8 @@ import importlib.util
 import pathlib
 import unittest
 
+from plugins.CuraLifecycleBridge import CuraLifecycleBridge
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("mpf_cura_adapter", ROOT / "plugins" / "CuraAdapter.py")
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -46,6 +48,19 @@ class CuraAdapterTests(unittest.TestCase):
 
     def test_established_global_stack_supplies_identity(self):
         self.assertEqual(active_machine_identity(_AppWithMachine()), ("machine-123", "Printer A"))
+
+    def test_stale_cura_lifecycle_callback_is_rejected(self):
+        bridge = CuraLifecycleBridge()
+        token = bridge.token()
+        observed: list[str] = []
+
+        bridge.invalidate("scene replaced")
+
+        self.assertFalse(bridge.guarded(token, lambda: observed.append("stale")))
+        self.assertEqual(observed, [])
+        current = bridge.token()
+        self.assertTrue(bridge.guarded(current, lambda: observed.append("current")))
+        self.assertEqual(observed, ["current"])
 
 
 if __name__ == "__main__":

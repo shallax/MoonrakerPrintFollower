@@ -1,4 +1,5 @@
 import os
+import pathlib
 import random
 import re
 import tempfile
@@ -14,6 +15,8 @@ from plugins.GCodeIndex import (
     build_index_from_file,
     hydrate_layer_from_file,
 )
+
+FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures" / "gcode"
 
 _LAYER = re.compile(rb"^\s*;LAYER:\s*-?\d+\s*$", re.I)
 _MOVE = re.compile(rb"^\s*(?:N\d+\s+)?G(?:0|1|2|3)(?:\s|$)", re.I)
@@ -322,6 +325,26 @@ G1 X5 Y0 Z0.2
             for i in range(4):
                 cache.save(RemoteFileIdentity(f"{i}.gcode", len(data), float(i), f"u{i}"), index)
             self.assertLessEqual(len([n for n in os.listdir(directory) if n.endswith('.mpfi.gz')]), 2)
+
+    def test_cura_orca_prusa_and_variable_layer_fixtures(self):
+        cura = build_index_from_file(str(FIXTURES / "cura.gcode"), compact=False)
+        self.assertEqual(cura.layer_count(), 3)
+        self.assertEqual(cura.current_layer_map, {1: 0, 2: 1, 3: 2})
+        self.assertEqual(cura.layer_elapsed_times, [120.0, 420.0, 900.0])
+        orca = build_index_from_file(str(FIXTURES / "orca.gcode"), compact=False)
+        self.assertEqual(orca.current_layer_map, {1: 0, 2: 1, 3: 2})
+        self.assertEqual(build_index_from_file(str(FIXTURES / "prusa.gcode"), compact=False).layer_count(), 3)
+        variable = build_index_from_file(str(FIXTURES / "variable_layers.gcode"), compact=False)
+        self.assertEqual(variable.layer_elapsed_times, [10.0, 22.0, 45.0])
+
+    def test_pause_missing_time_and_resume_fixtures_remain_indexable(self):
+        paused = build_index_from_file(str(FIXTURES / "pause.gcode"), compact=False)
+        self.assertEqual(paused.layer_count(), 3)
+        self.assertEqual(paused.motion_count(1), 2)
+        missing = build_index_from_file(str(FIXTURES / "missing_time.gcode"), compact=False)
+        self.assertEqual(missing.layer_elapsed_times, [None, None])
+        resumed = build_index_from_file(str(FIXTURES / "resume.gcode"), compact=False)
+        self.assertEqual(resumed.current_layer_map, {1: 0, 2: 1, 3: 2, 4: 3})
 
 
 if __name__ == "__main__":

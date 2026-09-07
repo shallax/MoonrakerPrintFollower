@@ -2,15 +2,18 @@ import pathlib
 import sys
 import types
 import unittest
-from plugins.MonitorFormatting import parse_bed_mesh
+from plugins.MonitorFormatting import mesh_profiles, parse_bed_mesh
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
 
 TYPED_CONTROLS = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
+TYPED = "\n".join((PLUGINS / name).read_text() for name in ("MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py", "CuraIntegration.py", "MoonrakerMonitorModel.py"))
 PRESENTER = (PLUGINS / "BedMeshPresenter.py").read_text()
 SCENE_NODE = (PLUGINS / "BedMeshSceneNode.py").read_text()
+MONITOR_CONTROLS = (PLUGINS / "MonitorControls.py").read_text()
 DASHBOARD = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
+MAIN_DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 PREVIEW_CONTROLS = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
 EMPTY_PREVIEW = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
 
@@ -90,6 +93,59 @@ class BedMeshTests(unittest.TestCase):
             self.assertIn("bedMeshVisibilityRequested", qml)
             self.assertIn('"Hide bed mesh"', qml)
             self.assertIn('"Show bed mesh"', qml)
+
+    def test_bed_mesh_extends_to_bed_edges_without_disguising_extrapolation(self):
+        for token in (
+            "EXTRAPOLATED_ALPHA",
+            "_axis_with_bed_edges",
+            "_sample_matrix",
+            "bed_x_min, bed_x_max",
+            "bed_y_min, bed_y_max",
+            "extrapolated=extrapolated",
+        ):
+            self.assertIn(token, SCENE_NODE)
+        self.assertLess(
+            float(SCENE_NODE.split("EXTRAPOLATED_ALPHA =", 1)[1].splitlines()[0].strip()),
+            float(SCENE_NODE.split("SURFACE_ALPHA =", 1)[1].splitlines()[0].strip()),
+        )
+
+    def test_bed_mesh_draws_an_obvious_probe_bounds_outline(self):
+        for token in (
+            "BOUNDARY_WIDTH = 1.4",
+            "BOUNDARY_LIFT = 0.09",
+            "BOUNDARY_ALPHA = 0.94",
+            "BOUNDARY_COLOUR = (1.0, 0.353, 0.0)",
+            "append_boundary_segment",
+            "boundary_vertices",
+            "boundary_colours",
+        ):
+            self.assertIn(token, SCENE_NODE)
+
+    def test_bed_mesh_visibility_forces_scene_redraw_and_rebuilds_after_file_load(self):
+        self.assertIn("sceneChanged.emit(self._node)", TYPED)
+        self.assertIn("fileCompleted", TYPED)
+        self.assertIn("cura.changed.connect(self._render)", TYPED)
+        self.assertIn("with self._cura.decorating_scene()", TYPED)
+        for qml in (PREVIEW_CONTROLS, EMPTY_PREVIEW):
+            self.assertIn("Neon orange outline = Klipper mesh bounds; outside = extrapolated", qml)
+            self.assertIn("opacity: base.bedMeshVisible ? 1.0 : 0.0", qml)
+            self.assertIn("height: implicitHeight", qml)
+            self.assertIn("selectedLayerEtaText", qml)
+            self.assertIn("bedMeshMinimumText", qml)
+            self.assertIn("bedMeshMaximumText", qml)
+            self.assertIn("GradientStop", qml)
+
+    def test_saved_profiles_are_ordered_and_loadable(self):
+        self.assertEqual(mesh_profiles({"profiles": {"summer": {}, "default": {}, "winter": {}}, "profile_name": "winter"}), ["winter", "default", "summer"])
+        self.assertIn("shlex.quote(name)", MONITOR_CONTROLS)
+        self.assertIn("BED_MESH_PROFILE LOAD=", MONITOR_CONTROLS)
+        self.assertIn('text: "Load saved mesh"', MAIN_DASHBOARD)
+
+    def test_clearing_active_mesh_does_not_delete_saved_profiles(self):
+        self.assertIn('"BED_MESH_CLEAR"', MONITOR_CONTROLS)
+        self.assertNotIn("BED_MESH_PROFILE REMOVE", MONITOR_CONTROLS)
+        self.assertIn('text: "Clear mesh"', MAIN_DASHBOARD)
+        self.assertIn('text: "Calibrate mesh"', MAIN_DASHBOARD)
 
 
 if __name__ == "__main__":
