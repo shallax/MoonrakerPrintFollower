@@ -9,8 +9,12 @@ UM.Dialog
 {
     id: base
     title: "Upload to Moonraker"
+
+    property real dialogMargin: UM.Theme.getSize("default_margin").width
     minimumWidth: 520 * screenScaleFactor
-    minimumHeight: 280 * screenScaleFactor
+    minimumHeight: Math.max(340 * screenScaleFactor, form.implicitHeight + 2 * dialogMargin)
+    width: minimumWidth
+    height: minimumHeight
 
     // Cura.ComboBox expects a catalog in the creation context.  Supplying it here
     // avoids the undefined-catalog QML error seen in Cura 5.13's upload dialog.
@@ -44,8 +48,9 @@ UM.Dialog
 
     ColumnLayout
     {
+        id: form
         anchors.fill: parent
-        anchors.margins: UM.Theme.getSize("default_margin").width
+        anchors.margins: base.dialogMargin
         spacing: UM.Theme.getSize("default_margin").height
 
         UM.Label

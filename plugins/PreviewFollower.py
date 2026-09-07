@@ -1,0 +1,202 @@
+"""Preview policy/state, composed with a Cura port and read-only print/index inputs."""
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
+from typing import Optional
+
+from .Core import preview_override_kind
+from .CuraAdapter import apply_preview_decision
+from .FollowController import decide_layers
+from .MoonrakerProtocol import live_position_in_gcode_space
+
+
+@dataclass(frozen=True)
+class PreviewState:
+    attached: bool = True
+    expected_layer: Optional[int] = None
+    expected_minimum: Optional[int] = None
+    expected_path: Optional[float] = None
+    expected_minimum_path: Optional[int] = None
+    observed_layer: Optional[int] = None
+    path_layer: Optional[int] = None
+    path_fraction: Optional[float] = None
+    speed: float = 1.0
+    duration: Optional[float] = None
+    anchor_layer: Optional[int] = None
+    anchor_duration: Optional[float] = None
+    nozzle_valid: bool = False
+    switched: bool = False
+    eta_text: str = ""
+
+
+class PreviewFollower:
+    def __init__(self, cura):
+        self._cura = cura
+        self._state = PreviewState()
+
+    @property
+    def state(self): return self._state
+
+    def reset_print(self):
+        self._state = PreviewState(attached=self._state.attached)
+
+    def reset_tracking(self):
+        self._state = replace(self._state, path_layer=None, path_fraction=None,
+            anchor_layer=None, anchor_duration=None, nozzle_valid=False, eta_text="")
+
+    def invalidate_view(self):
+        self._state = replace(self._state, expected_layer=None, expected_minimum=None,
+            expected_path=None, expected_minimum_path=None, nozzle_valid=False)
+
+    def attach(self, attached=True):
+        self._state = replace(self._state, attached=bool(attached), nozzle_valid=False, eta_text="")
+        self.remember()
+
+    @staticmethod
+    def _get(view, method, cast=int):
+        try: return cast(getattr(view, method)())
+        except Exception: return None
+
+    def remember(self):
+        view = self._cura.view
+        self._state = replace(self._state,
+            expected_layer=self._get(view, "getCurrentLayer"),
+            expected_minimum=self._get(view, "getMinimumLayer"),
+            expected_path=self._get(view, "getCurrentPath", float),
+            expected_minimum_path=self._get(view, "getMinimumPath"))
+
+    def detect_override(self):
+        state, view = self._state, self._cura.view
+        if not state.attached or state.expected_layer is None or self._cura.suspended or view is None:
+            return None
+        current = self._get(view, "getCurrentLayer")
+        if current is None: return None
+        kind = preview_override_kind(expected_layer=state.expected_layer, current_layer=current,
+            expected_minimum_layer=state.expected_minimum, current_minimum_layer=self._get(view, "getMinimumLayer"),
+            expected_path=state.expected_path, current_path=self._get(view, "getCurrentPath", float),
+            expected_minimum_path=state.expected_minimum_path, current_minimum_path=self._get(view, "getMinimumPath"))
+        if kind:
+            self.attach(False)
+        return kind
+
+    def observe(self, snapshot, status, config, index):
+        """Observe physical state even when detached; apply only through the Cura port.
+
+        Returns (status detail, hydration requests). No networking/index mutation.
+        """
+        stats = status.get("print_stats") or {}
+        move = status.get("gcode_move") or {}
+        try: speed = max(0.05, float(move.get("speed_factor") or 1))
+        except (TypeError, ValueError): speed = 1.0
+        try: duration = max(0.0, float(stats.get("print_duration") or 0))
+        except (TypeError, ValueError): duration = None
+        layer = snapshot.layer.index
+        state = replace(self._state, speed=speed, duration=duration, nozzle_valid=False)
+        if layer is not None:
+            if layer != state.anchor_layer:
+                state = replace(state, anchor_layer=layer, anchor_duration=duration)
+            state = replace(state, observed_layer=layer)
+        self._state = state
+        if not snapshot.active:
+            self.reset_print()
+            return "Connected", ()
+        if not config.enabled: return "Print active", ()
+        if not state.attached:
+            self.update_eta(snapshot, index)
+            return "Detached", ()
+        if self._cura.suspended: return "Cura busy", ()
+        view = self._cura.view
+        if view is None or not self._cura.has_toolpath: return "Print active", ()
+        if layer is None: return "Waiting for layer data", ()
+        maximum = self._cura.max_layer
+        if maximum is None: return "Cura layer data unavailable", ()
+        decision = decide_layers(layer, maximum, config.follow_mode)
+        if config.auto_preview and not state.switched:
+            if self._cura.switch_to_preview(): self._state = replace(self._state, switched=True)
+        hydration = ()
+        with self._cura.writing_preview():
+            if (self._get(view, "getCurrentLayer") != decision.current_layer
+                    or self._get(view, "getMinimumLayer") != decision.minimum_layer):
+                apply_preview_decision(view, decision.current_layer, decision.minimum_layer)
+            if config.path_follow and decision.follow_path:
+                detail, hydration = self._follow_path(view, min(layer, maximum), status, index)
+                self._state = replace(self._state, nozzle_valid=detail.startswith("path "))
+        self.remember()
+        self.update_eta(snapshot, index)
+        if self._state.nozzle_valid and config.show_toolhead_indicator: self._cura.show_nozzle()
+        return "Printer paused" if snapshot.observation.state == "paused" else "Following", hydration
+
+    def _follow_path(self, view, layer, status, index):
+        if not hasattr(view, "setPath") or not hasattr(view, "getMaxPaths"):
+            return "Path tracking unavailable", ()
+        state = self._state
+        if state.path_layer != layer:
+            state = replace(state, path_layer=layer, path_fraction=None)
+            self._state = state
+        if index is None or layer >= len(index.ranges):
+            view.setPath(0.0)
+            return "Waiting for index", ()
+        if not index.hydrated(layer):
+            self._state = replace(state, path_fraction=0.0)
+            view.setPath(0.0)
+            return "Hydrating layer", (layer,)
+        try:
+            position = int((status.get("virtual_sdcard") or {}).get("file_position"))
+            maximum = int(view.getMaxPaths())
+        except (TypeError, ValueError, AttributeError):
+            return "Waiting for file position", ()
+        if maximum <= 0: return "Layer has no paths", ()
+        live = live_position_in_gcode_space(status.get("motion_report") or {}, status.get("gcode_move") or {})
+        fraction, method = index.fraction(layer, position, live, state.path_fraction)
+        fraction = max(state.path_fraction or 0.0, max(0.0, min(1.0, fraction)))
+        self._state = replace(state, path_fraction=fraction)
+        if hasattr(view, "setMinimumPath") and self._get(view, "getMinimumPath") != 0:
+            view.setMinimumPath(0)
+        target = fraction * maximum
+        current = self._get(view, "getCurrentPath", float)
+        if current is None or abs(current - target) >= 0.5: view.setPath(target)
+        return f"path {round(target)}/{maximum} ({method})", (layer + 1,)
+
+    @staticmethod
+    def format_duration(seconds):
+        hours, rest = divmod(max(0, int(round(seconds))), 3600)
+        minutes, seconds = divmod(rest, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def remaining(self, layer, index, *, end=False):
+        state = self._state
+        current = state.observed_layer
+        if current is None or index is None: return None
+        times = index.elapsed_times
+        def boundary(n):
+            if n < 0: return 0.0
+            if n >= len(times) or times[n] is None: return None
+            return float(times[n])
+        target = boundary(layer if end else layer - 1)
+        start, finish = boundary(current - 1), boundary(current)
+        if target is None or start is None: return None
+        fraction = state.path_fraction or 0.0 if state.path_layer == current else 0.0
+        if (state.anchor_layer == current and state.anchor_duration is not None and state.duration is not None
+                and finish is not None and finish > start):
+            observed = (state.duration - state.anchor_duration) * state.speed / (finish - start)
+            fraction = max(fraction, min(1.0, max(0.0, observed)))
+        now = start + ((finish - start) * fraction if finish is not None and finish >= start else 0)
+        return max(0.0, target - now) / state.speed
+
+    def update_eta(self, snapshot, index):
+        selected, current = self._cura.selected_layer, self._state.observed_layer
+        text = ""
+        if snapshot.active and selected is not None and current is not None:
+            prefix = f"Selected layer {selected + 1} — "
+            if selected < current: text = prefix + "already printed"
+            elif selected == current and not self._state.attached: text = prefix + "current print layer"
+            elif selected > current:
+                remaining = self.remaining(selected, index)
+                if remaining is None: text = prefix + "ETA unavailable (no layer timing)"
+                else:
+                    finish = datetime.now().astimezone() + timedelta(seconds=remaining)
+                    clock = finish.strftime("%a %H:%M" if remaining >= 20 * 3600 else "%H:%M")
+                    text = prefix + f"in {self.format_duration(remaining)} · ~{clock}"
+        self._state = replace(self._state, eta_text=text)
+

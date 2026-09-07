@@ -133,6 +133,17 @@ class PrinterConfigStore:
         "z_tolerance": "moonraker_print_follower/z_tolerance",
         "path_follow": "moonraker_print_follower/path_follow",
     }
+    LEGACY_DEFAULTS = {
+        "enabled": False,
+        "url": "http://",
+        "api_key": "",
+        "poll_interval_ms": 750,
+        "moonraker_layer_is_one_based": True,
+        "auto_preview": False,
+        "z_fallback": True,
+        "z_tolerance": 0.04,
+        "path_follow": True,
+    }
 
     def __init__(self, preferences, identity_provider) -> None:
         self._preferences = preferences
@@ -141,6 +152,11 @@ class PrinterConfigStore:
         preferences.addPreference(self.MIGRATED_KEY, False)
         preferences.addPreference(self.MOONRAKER_CONNECTION_PREF_KEY, "{}")
         preferences.addPreference(self.MOONRAKER_CONNECTION_MIGRATED_KEY, False)
+        # Legacy follower keys used to be registered by the old runtime. Keep
+        # their registration here so migration is self-contained after the
+        # runtime split and stored values remain readable during upgrade.
+        for field_name, pref_key in self.LEGACY_MAP.items():
+            preferences.addPreference(pref_key, self.LEGACY_DEFAULTS[field_name])
 
     @staticmethod
     def _truthy(value: Any) -> bool:
@@ -168,8 +184,7 @@ class PrinterConfigStore:
         return machine_id, machine_name
 
     def _load_all(self) -> Dict[str, Dict[str, Any]]:
-        data = self._decode_mapping(self._preferences.getValue(self.PREF_KEY))
-        return data if isinstance(data, dict) else {}
+        return self._decode_mapping(self._preferences.getValue(self.PREF_KEY))
 
     def _save_all(self, data: Dict[str, Dict[str, Any]]) -> None:
         self._preferences.setValue(
@@ -184,13 +199,14 @@ class PrinterConfigStore:
         return PrinterConfig.from_dict(raw)
 
     def migrate_legacy_to_current_machine(self) -> bool:
+        """Move pre-per-printer follower preferences into the active machine once."""
         if self._truthy(self._preferences.getValue(self.MIGRATED_KEY)):
             return False
         machine_id, _ = self.identity()
         if machine_id == "unknown":
             # Cura can instantiate extensions before the first machine stack is
-            # fully available. Defer migration rather than permanently assigning
-            # the user's 1.x target to an artificial "unknown" printer.
+            # fully available. Defer migration rather than assigning data to an
+            # artificial printer identity.
             return False
         data = self._load_all()
         if machine_id not in data:

@@ -1,13 +1,7 @@
 import json
-import os
-import sys
 import unittest
 
-PLUGIN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plugins"))
-if PLUGIN_DIR not in sys.path:
-    sys.path.insert(0, PLUGIN_DIR)
-
-from PrinterConfig import PrinterConfig, PrinterConfigStore
+from plugins.PrinterConfig import PrinterConfig, PrinterConfigStore
 
 
 class FakePreferences:
@@ -85,6 +79,19 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertFalse(store.migrate_legacy_to_current_machine())
         self.assertEqual(store.get().url, "http://")
         active[:] = ["machine-a", "Machine A"]
+        self.assertEqual(store.get().url, "http://legacy.example.invalid:7125")
+
+    def test_legacy_migration_defers_when_cura_machine_is_unknown(self):
+        prefs = FakePreferences()
+        prefs.values[PrinterConfigStore.LEGACY_MAP["url"]] = "http://legacy.example.invalid:7125"
+        active = ["unknown", "Unknown Cura printer"]
+        store = PrinterConfigStore(prefs, lambda: tuple(active))
+
+        self.assertFalse(store.migrate_legacy_to_current_machine())
+        self.assertFalse(store._truthy(prefs.values[PrinterConfigStore.MIGRATED_KEY]))
+
+        active[:] = ["machine-a", "Printer A"]
+        self.assertTrue(store.migrate_legacy_to_current_machine())
         self.assertEqual(store.get().url, "http://legacy.example.invalid:7125")
 
     def test_standalone_moonraker_connection_settings_migrate_for_all_printers(self):

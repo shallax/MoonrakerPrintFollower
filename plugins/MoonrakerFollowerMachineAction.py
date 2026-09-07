@@ -6,7 +6,6 @@ from dataclasses import asdict
 from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from cura.MachineAction import MachineAction
 from UM.Logger import Logger
@@ -14,6 +13,8 @@ from UM.Settings.DefinitionContainer import DefinitionContainer
 
 from .FollowController import FollowMode
 from .MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
+from .MoonrakerSession import RequestCategory
+from .MoonrakerTransport import MoonrakerHttpTransport
 from .PrinterConfig import PrinterConfig
 
 
@@ -34,8 +35,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
         self._output_plugin = output_plugin
         self._qml_url = "MoonrakerFollowerConfiguration.qml"
 
-        self._probe_network = QNetworkAccessManager(self)
-        self._probe_reply: Optional[QNetworkReply] = None
+        # Connection tests intentionally use a separate transport instance because
+        # the URL/API key may be unsaved. They still use the same HTTP utility,
+        # parsing, cancellation and telemetry as the live session.
+        self._probe_transport = MoonrakerHttpTransport(self)
         self._probe_base_url = ""
         self._probe_api_key = ""
         self._probe_server_info: Dict[str, Any] = {}
@@ -327,61 +330,58 @@ class MoonrakerFollowerMachineAction(MachineAction):
         if not self._url_is_usable(base_url):
             self._set_test_state("Enter a valid Moonraker URL", busy=False)
             return
-        if self._probe_reply is not None:
-            try:
-                if self._probe_reply.isRunning():
-                    return
-            except Exception:
-                pass
+        if self._test_busy:
+            return
 
         self._probe_base_url = base_url
         self._probe_api_key = str(api_key or "").strip()
         self._probe_server_info = {}
+        self._probe_transport.configure(self._probe_base_url, self._probe_api_key)
         self._set_test_state("Testing connection…", busy=True)
-        self._start_probe_request(server_info_endpoint(base_url), self._handle_probe_server_info)
+        self._start_probe_request("server-info", server_info_endpoint(base_url), self._handle_probe_server_info)
 
-    def _start_probe_request(self, endpoint: str, handler: Any) -> None:
-        request = QNetworkRequest(QUrl(endpoint))
-        request.setRawHeader(b"Accept", b"application/json")
-        if hasattr(request, "setTransferTimeout"):
-            request.setTransferTimeout(5000)
-        if self._probe_api_key:
-            request.setRawHeader(b"X-Api-Key", self._probe_api_key.encode("utf-8"))
-        reply = self._probe_network.get(request)
-        self._probe_reply = reply
-        reply.finished.connect(lambda r=reply: handler(r))
+    def _start_probe_request(self, channel: str, endpoint: str, handler: Any) -> None:
+        started = self._probe_transport.send_json(
+            "probe",
+            channel,
+            "GET",
+            endpoint,
+            handler,
+            replace=True,
+            category=RequestCategory.DISCOVERY.value,
+        )
+        if not started:
+            self._set_test_state("A connection test request is already in progress", busy=False)
 
-    def _handle_probe_server_info(self, reply: QNetworkReply) -> None:
-        if reply is not self._probe_reply:
-            reply.deleteLater()
+    def _handle_probe_server_info(
+        self,
+        payload: Optional[Dict[str, Any]],
+        error: Optional[str],
+    ) -> None:
+        if error:
+            self._set_test_state(f"Connection failed: {error}", busy=False)
             return
-        self._probe_reply = None
         try:
-            if reply.error() != QNetworkReply.NetworkError.NoError:
-                self._set_test_state(f"Connection failed: {reply.errorString()}", busy=False)
-                return
-            import json
-            payload = json.loads(bytes(reply.readAll()).decode("utf-8", errors="replace"))
-            self._probe_server_info = payload.get("result") or {}
+            self._probe_server_info = (payload or {}).get("result") or {}
         except Exception as exc:
             self._set_test_state(f"Invalid server response: {exc}", busy=False)
             return
-        finally:
-            reply.deleteLater()
-        self._start_probe_request(objects_list_endpoint(self._probe_base_url), self._handle_probe_objects)
+        self._start_probe_request(
+            "objects",
+            objects_list_endpoint(self._probe_base_url),
+            self._handle_probe_objects,
+        )
 
-    def _handle_probe_objects(self, reply: QNetworkReply) -> None:
-        if reply is not self._probe_reply:
-            reply.deleteLater()
+    def _handle_probe_objects(
+        self,
+        payload: Optional[Dict[str, Any]],
+        error: Optional[str],
+    ) -> None:
+        if error:
+            self._set_test_state(f"Printer-object test failed: {error}", busy=False)
             return
-        self._probe_reply = None
         try:
-            if reply.error() != QNetworkReply.NetworkError.NoError:
-                self._set_test_state(f"Printer-object test failed: {reply.errorString()}", busy=False)
-                return
-            import json
-            payload = json.loads(bytes(reply.readAll()).decode("utf-8", errors="replace"))
-            objects = set(str(value) for value in ((payload.get("result") or {}).get("objects") or []))
+            objects = set(str(value) for value in (((payload or {}).get("result") or {}).get("objects") or []))
             required = {"print_stats", "virtual_sdcard", "gcode_move"}
             missing = sorted(required - objects)
             info = self._probe_server_info
@@ -396,23 +396,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
             )
         except Exception as exc:
             self._set_test_state(f"Invalid printer-object response: {exc}", busy=False)
-        finally:
-            reply.deleteLater()
 
     @pyqtSlot()
     def cancelTest(self) -> None:
-        reply = self._probe_reply
-        self._probe_reply = None
-        if reply is not None:
-            try:
-                if reply.isRunning():
-                    reply.abort()
-            except Exception:
-                pass
-            try:
-                reply.deleteLater()
-            except Exception:
-                pass
+        self._probe_transport.cancel_owner("probe")
         if self._test_busy:
             self._test_busy = False
             self.testBusyChanged.emit()

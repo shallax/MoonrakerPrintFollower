@@ -8,7 +8,7 @@ while Preview is already active, that activation handler may not run again and
 SimulationPass has no nozzle node to discover.  Leaving and re-entering Preview
 then appears to "fix" the nozzle because the activation handler finally runs.
 
-The follower therefore repairs that small piece of SimulationView lifecycle
+The follower repairs that small piece of SimulationView lifecycle
 before nudging the pass out of its transient layer-switch state.  All access is
 capability-checked and uses interfaces present throughout Cura 5.x / SDK 8.x.
 """
@@ -38,7 +38,7 @@ def keep_native_nozzle_visible(simulation_view) -> bool:
         if simulation_pass is None:
             return False
 
-        # Compatibility mode deliberately does not render Cura's nozzle.
+        # Cura renderer compatibility mode deliberately does not render its nozzle.
         if bool(getattr(simulation_pass, "_compatibility_mode", False)):
             return False
 

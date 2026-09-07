@@ -1,0 +1,189 @@
+"""Active Monitor request/poll lifecycle and immutable data projections."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from types import MappingProxyType
+from collections.abc import Mapping
+import re
+
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from .MoonrakerSession import RequestCategory
+
+
+def freeze(value):
+    if isinstance(value, dict): return MappingProxyType({key: freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)): return tuple(freeze(item) for item in value)
+    return value
+
+
+def result(payload):
+    return payload.get("result", payload) if isinstance(payload, Mapping) else {}
+
+
+@dataclass(frozen=True)
+class MonitorSnapshot:
+    core: Mapping
+    auxiliary: Mapping
+    objects: tuple
+    server: Mapping
+    printer: Mapping
+    power: tuple
+    webcams: tuple
+    presets: Mapping
+
+
+class MonitorData(QObject):
+    changed = pyqtSignal()
+    invalidated = pyqtSignal()
+
+    def __init__(self, client, parent=None):
+        super().__init__(parent)
+        self.client = client
+        self._active = False
+        self._generation = 0
+        self._timers = {}
+        self._clear()
+        for category, callback in ((RequestCategory.AUXILIARY, self.refresh_aux),
+            (RequestCategory.POWER, self.refresh_power), (RequestCategory.SYSTEM, self.refresh_system),
+            (RequestCategory.DISCOVERY, self.refresh_discovery)):
+            timer = QTimer(self)
+            timer.timeout.connect(callback)
+            self._timers[category] = timer
+        # Use QObject-bound receivers rather than lambdas that capture ``self``.
+        # PyQt can automatically disconnect bound QObject receivers when this MonitorData
+        # is destroyed; a lambda would outlive the C++ object on the long-lived client.
+        client.statusReceived.connect(self.observe)
+        client.sessionInvalidated.connect(self._session_invalidated)
+        client.connectionChanged.connect(self._connection_changed)
+
+    def _session_invalidated(self):
+        self.set_active(False)
+
+    def _connection_changed(self, *_args):
+        self.changed.emit()
+
+    def _clear(self):
+        empty = freeze({})
+        self._snapshot = MonitorSnapshot(empty, empty, (), empty, empty, (), (), empty)
+
+    @property
+    def snapshot(self): return self._snapshot
+    @property
+    def active(self): return self._active
+
+    def _update(self, **patch):
+        from dataclasses import replace
+        self._snapshot = replace(self._snapshot, **{key: freeze(value) for key, value in patch.items()})
+        self.changed.emit()
+
+    def set_active(self, active):
+        if bool(active) == self._active: return
+        self._active = bool(active)
+        if not active:
+            self._generation += 1
+            for timer in self._timers.values(): timer.stop()
+            self.client.transport.cancel_owner("monitor")
+            self._clear()
+            self.invalidated.emit()
+            self.changed.emit()
+        else:
+            self._intervals()
+            for timer in self._timers.values(): timer.start()
+            self.observe(self.client.status)
+            self.refresh_all()
+
+    def _intervals(self):
+        for category, timer in self._timers.items():
+            interval = self.client.session.poll_policy.interval_ms(category, 1000, self.client.session.snapshot.printer_state)
+            if timer.interval() != interval: timer.setInterval(interval)
+
+    def request(self, channel, method, path, callback, *, body=None, replace=False, category="auxiliary"):
+        if not self._active or not self.client.session.base_url: return False
+        generation = self._generation
+        session = self.client.session.generation
+        def finished(payload, error):
+            if self._active and generation == self._generation and session == self.client.session.generation:
+                callback(payload, error)
+        return self.client.transport.send_json("monitor", channel, method, path, finished,
+            body=body, replace=replace, category=category)
+
+    def later(self, delay_ms, callback):
+        generation, session = self._generation, self.client.session.generation
+        def run():
+            if self._active and generation == self._generation and session == self.client.session.generation:
+                callback()
+        QTimer.singleShot(delay_ms, run)
+
+    def observe(self, status):
+        if not self._active or not isinstance(status, Mapping): return
+        status = {name: value for name, value in status.items() if isinstance(value, Mapping)}
+        self._intervals()
+        self._update(core=dict(status))
+
+    def refresh_all(self):
+        if not self._active: return
+        self.client.force_refresh()
+        self.refresh_discovery()
+        self.refresh_power()
+        self.refresh_system()
+        self.refresh_webcams()
+
+    @staticmethod
+    def wants_object(name):
+        lower = name.lower()
+        return (lower in {"heater_bed", "fan", "exclude_object", "system_stats", "webhooks", "mcu",
+                          "configfile", "toolhead", "quad_gantry_level", "bed_mesh"}
+            or bool(re.fullmatch(r"extruder\d*", lower))
+            or lower.startswith(("heater_generic ", "temperature_", "bme280 ", "htu21d ", "sht3x ", "lm75 ",
+                "fan_generic ", "heater_fan ", "controller_fan ", "filament_", "mcu ",
+                "neopixel ", "dotstar ", "led ", "pca9533 ", "pca9632 ", "output_pin ")))
+
+    def refresh_discovery(self):
+        self.request("objects", "GET", "printer/objects/list", self._objects, category="discovery")
+        self.request("presets", "GET", "server/database/item?namespace=mainsail&key=presets",
+            lambda payload, error: self._update(presets=result(payload).get("value", {})) if not error and isinstance(result(payload), Mapping) else None,
+            category="discovery")
+
+    def _objects(self, payload, error):
+        value = result(payload)
+        names = value.get("objects") if isinstance(value, Mapping) else None
+        if error or not isinstance(names, (tuple, list)): return
+        self._update(objects=tuple(sorted(str(name) for name in names)))
+        if "configfile" in names:
+            self.request("config-static", "POST", "printer/objects/query", self._aux,
+                body={"objects": {"configfile": None}}, replace=True, category="discovery")
+        self.refresh_aux()
+
+    def refresh_aux(self):
+        objects = {name: ["save_config_pending", "save_config_pending_items"] if name == "configfile" else None
+                   for name in self._snapshot.objects if self.wants_object(name)}
+        if objects: self.request("aux", "POST", "printer/objects/query", self._aux, body={"objects": objects})
+
+    def _aux(self, payload, error):
+        value = result(payload)
+        incoming = value.get("status") if isinstance(value, Mapping) else None
+        if error or not isinstance(incoming, Mapping): return
+        merged = dict(self._snapshot.auxiliary)
+        for name, value in incoming.items():
+            previous = merged.get(name)
+            merged[name] = dict(previous, **value) if isinstance(previous, Mapping) and isinstance(value, Mapping) else value
+        self._update(auxiliary=merged)
+
+    def refresh_power(self):
+        self.request("power-list", "GET", "machine/device_power/devices",
+            lambda p, e: self._update(power=result(p).get("devices", ())) if not e and isinstance(result(p), Mapping) else None,
+            category="power")
+
+    def refresh_system(self):
+        for channel, path, key in (("server-info", "server/info", "server"), ("printer-info", "printer/info", "printer")):
+            self.request(channel, "GET", path,
+                lambda p, e, k=key: self._update(**{k: result(p)}) if not e and isinstance(result(p), Mapping) else None,
+                category="system")
+
+    def refresh_webcams(self):
+        self.request("webcams", "GET", "server/webcams/list",
+            lambda p, e: self._update(webcams=tuple(item for item in result(p).get("webcams", ()) if isinstance(item, dict) and item.get("enabled", True)))
+            if not e and isinstance(result(p), Mapping) else self._update(webcams=()),
+            replace=True, category="discovery")
+
+

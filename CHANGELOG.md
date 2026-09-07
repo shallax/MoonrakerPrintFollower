@@ -2,6 +2,23 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 3.1.0
+
+Version 3.1.0 is primarily an internal architecture and reliability release. It preserves the v3.0 user-facing workflow while reducing duplicated state/transport ownership and making the high-risk parts independently testable.
+
+### Highlights
+- Introduces a shared HTTP-only Moonraker session/state layer for the active Cura printer.
+- Coalesces overlapping core refreshes and adapts polling cadence by printer state and request category.
+- Removes Monitor's duplicate core-status fallback poller; Preview and Monitor consume the same generation-guarded core snapshot.
+- Distinguishes command HTTP acceptance from observed printer-state confirmation for pause/resume/cancel.
+- Replaces the follower mixin runtime and Monitor inheritance chain with explicit composed components and immutable print/Preview observations.
+- Shares one physical-layer resolver between Preview, Monitor and scheduled PAUSE; manual Preview selection cannot change printer observation.
+- Moves index restoration, building, hydration and persistence to a bounded worker with explicit file leases and stale-result guards.
+- Streams prepared G-code/UFP uploads from temporary files and gives each write one cancellation/terminal-signal owner.
+- Preserves configuration migration before connection startup and invalidates old work on profile or credential changes.
+- Adds real-Qt component and loopback HTTP tests, QML interface checks, and dependency contracts that reject retired implementations and private follower coupling.
+- Keeps HTTP as the sole Moonraker transport; WebSockets are intentionally not introduced.
+
 ## 3.0.0
 
 Version 3.0.0 turns Moonraker Print Follower into a much more complete Cura-side companion for Klipper/Moonraker while preserving the core live Preview follower.

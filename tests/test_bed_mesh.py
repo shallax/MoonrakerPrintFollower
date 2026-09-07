@@ -2,11 +2,13 @@ import pathlib
 import sys
 import types
 import unittest
+from plugins.MonitorFormatting import parse_bed_mesh
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
 
-TYPED_CONTROLS = (PLUGINS / "MoonrakerMonitorTypedControls.py").read_text()
+TYPED_CONTROLS = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
+PRESENTER = (PLUGINS / "BedMeshPresenter.py").read_text()
 SCENE_NODE = (PLUGINS / "BedMeshSceneNode.py").read_text()
 DASHBOARD = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 PREVIEW_CONTROLS = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
@@ -16,62 +18,7 @@ EMPTY_PREVIEW = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
 class BedMeshTests(unittest.TestCase):
     @staticmethod
     def _load_typed_model():
-        class DummySignal:
-            def emit(self, *_args, **_kwargs):
-                pass
-
-            def connect(self, *_args, **_kwargs):
-                pass
-
-        def pyqt_signal(*_args, **_kwargs):
-            return DummySignal()
-
-        def pyqt_property(*_args, **_kwargs):
-            def decorate(function):
-                return property(function)
-            return decorate
-
-        def pyqt_slot(*_args, **_kwargs):
-            def decorate(function):
-                return function
-            return decorate
-
-        class QVariant:
-            def __init__(self, value=None):
-                self.value = value
-
-        pyqt6 = types.ModuleType("PyQt6")
-        qtcore = types.ModuleType("PyQt6.QtCore")
-        qtcore.QVariant = QVariant
-        qtcore.pyqtProperty = pyqt_property
-        qtcore.pyqtSignal = pyqt_signal
-        qtcore.pyqtSlot = pyqt_slot
-
-        package = types.ModuleType("plugins")
-        package.__path__ = []
-        base_module = types.ModuleType("plugins.MoonrakerMonitorControls")
-        base_module.MoonrakerMonitorModel = type(
-            "BaseMoonrakerMonitorModel",
-            (),
-            {"_want_aux_object": staticmethod(lambda _name: False)},
-        )
-
-        names = ["PyQt6", "PyQt6.QtCore", "plugins", "plugins.MoonrakerMonitorControls"]
-        old = {name: sys.modules.get(name) for name in names}
-        try:
-            sys.modules["PyQt6"] = pyqt6
-            sys.modules["PyQt6.QtCore"] = qtcore
-            sys.modules["plugins"] = package
-            sys.modules["plugins.MoonrakerMonitorControls"] = base_module
-            namespace = {"__name__": "plugins.MoonrakerMonitorTypedControls", "__package__": "plugins"}
-            exec(compile(TYPED_CONTROLS, "MoonrakerMonitorTypedControls.py", "exec"), namespace)
-            return namespace["MoonrakerMonitorModel"]
-        finally:
-            for name, value in old.items():
-                if value is None:
-                    sys.modules.pop(name, None)
-                else:
-                    sys.modules[name] = value
+        return types.SimpleNamespace(_parse_bed_mesh_status=parse_bed_mesh)
 
     def test_parses_interpolated_klipper_mesh(self):
         model = self._load_typed_model()
@@ -131,7 +78,8 @@ class BedMeshTests(unittest.TestCase):
     def test_monitor_and_preview_controls_expose_mesh(self):
         self.assertIn("bedMeshAvailable", TYPED_CONTROLS)
         self.assertIn("setBedMeshPreviewVisible", TYPED_CONTROLS)
-        self.assertIn("_bed_mesh_scene_node", TYPED_CONTROLS)
+        self.assertIn("self._node", PRESENTER)
+        self.assertNotIn("self._follower", PRESENTER)
         self.assertIn("Canvas", DASHBOARD)
         self.assertIn('text: "Bed mesh — "', DASHBOARD)
         self.assertIn("bedMeshMinimum", DASHBOARD)

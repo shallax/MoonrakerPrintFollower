@@ -1,14 +1,6 @@
-import importlib.util
-import pathlib
 import unittest
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location(
-    "NativeNozzleFallback", ROOT / "plugins" / "NativeNozzleFallback.py"
-)
-MODULE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(MODULE)
-keep_native_nozzle_visible = MODULE.keep_native_nozzle_visible
+from plugins.NativeNozzleLifecycle import keep_native_nozzle_visible
 
 
 class _Pass:
@@ -89,7 +81,7 @@ class _View:
         self.activity_calls += 1
 
 
-class NativeNozzleFallbackTests(unittest.TestCase):
+class NativeNozzleLifecycleTests(unittest.TestCase):
     def test_repairs_nozzle_lifecycle_and_clears_layer_switch_gate(self):
         render_pass = _Pass()
         view = _View(render_pass, 17, activity=False)
@@ -112,7 +104,7 @@ class NativeNozzleFallbackTests(unittest.TestCase):
         self.assertTrue(keep_native_nozzle_visible(view))
         self.assertEqual(view.nozzle.parent_calls, 0)
 
-    def test_does_not_override_compatibility_mode(self):
+    def test_does_not_override_cura_compatibility_mode(self):
         render_pass = _Pass(compatibility=True)
         view = _View(render_pass, 9)
         self.assertFalse(keep_native_nozzle_visible(view))

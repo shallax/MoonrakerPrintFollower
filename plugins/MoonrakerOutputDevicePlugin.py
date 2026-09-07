@@ -7,9 +7,8 @@ from PyQt6.QtCore import QUrl
 from UM.Logger import Logger
 from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
-from .MoonrakerMonitorTypedControls import MoonrakerMonitorModel
-from .MoonrakerOutputDevice import MoonrakerOutputController
-from .MoonrakerOutputDeviceLifecycle import MoonrakerOutputDevice
+from .MoonrakerMonitorModel import MoonrakerMonitorModel
+from .MoonrakerOutputDevice import MoonrakerOutputController, MoonrakerOutputDevice
 
 
 class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
@@ -21,6 +20,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         self._follower = follower
         self._devices: Dict[str, MoonrakerOutputDevice] = {}
         self._current: Optional[MoonrakerOutputDevice] = None
+        follower.client.sessionInvalidated.connect(self._invalidate_devices)
 
         changed = getattr(application, "globalContainerStackChanged", None)
         if changed is not None:
@@ -29,9 +29,13 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
     def start(self) -> None:
         self.refresh()
 
-    def stop(self) -> None:
+    def _invalidate_devices(self) -> None:
+        """Runs before the shared transport changes credentials or session."""
         for device in self._devices.values():
-            self._set_monitor_active(device, False)
+            self._deactivate_device(device)
+
+    def stop(self) -> None:
+        self._invalidate_devices()
         if self._current is not None:
             try:
                 self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
@@ -49,13 +53,22 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             except Exception:
                 pass
 
+    def _deactivate_device(self, device: MoonrakerOutputDevice) -> None:
+        """Invalidate Monitor and upload work before an output device loses ownership."""
+        self._set_monitor_active(device, False)
+        deactivate = getattr(device, "deactivate", None)
+        if callable(deactivate):
+            try:
+                deactivate()
+            except Exception as error:
+                Logger.logException("e", "Moonraker output deactivation failed: %s", error)
+
     @staticmethod
     def _usable_url(value: str) -> bool:
         url = QUrl(str(value or ""))
         return url.isValid() and url.scheme() in ("http", "https") and bool(url.host())
 
     def _install_monitor(self, device: MoonrakerOutputDevice, stack: Any) -> None:
-        """Attach the unified Moonraker model and Cura Monitor QML to a device."""
         monitor = getattr(device, "activePrinter", None)
         if not isinstance(monitor, MoonrakerMonitorModel):
             try:
@@ -63,7 +76,12 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             except Exception:
                 extruders = 1
             monitor = MoonrakerMonitorModel(
-                MoonrakerOutputController(device), extruders, self._follower
+                MoonrakerOutputController(device), extruders,
+                client=self._follower.client,
+                print_state=lambda: self._follower.print_state,
+                config=self._follower.current_printer_config,
+                apply_config=self._follower.apply_printer_config,
+                bed_mesh=self._follower.bed_mesh,
             )
             try:
                 monitor.updateName(stack.getName())
@@ -71,13 +89,9 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 monitor.updateBuildplate(stack.getProperty("machine_buildplate_type", "value"))
             except Exception:
                 pass
-            # PrinterOutputDevice exposes activePrinter from this model list.
             device._printers = [monitor]
 
         self._set_monitor_active(device, True)
-
-        # Bed-mesh wrapper composes the established typed dashboard and adds the
-        # live Klipper height-map panel without replacing the existing Monitor UI.
         device._monitor_view_qml_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitorBedMesh.qml"
         )
@@ -91,7 +105,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             stack = self._application.getGlobalContainerStack()
             if stack is None:
                 if self._current is not None:
-                    self._set_monitor_active(self._current, False)
+                    self._deactivate_device(self._current)
                     try:
                         self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
                     except Exception:
@@ -103,20 +117,24 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             usable = self._usable_url(str(config.url or "").strip())
 
             if self._current is not None and self._current.getId() != MoonrakerOutputDevice.DEVICE_PREFIX + machine_id:
-                self._set_monitor_active(self._current, False)
+                self._deactivate_device(self._current)
                 self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
                 self._current = None
 
             if not usable:
                 if self._current is not None:
-                    self._set_monitor_active(self._current, False)
+                    self._deactivate_device(self._current)
                     self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
                     self._current = None
                 return
 
             device = self._devices.get(machine_id)
             if device is None:
-                device = MoonrakerOutputDevice(self._application, self._follower, machine_id)
+                device = MoonrakerOutputDevice(self._application, machine_id,
+                    client=self._follower.client,
+                    config=self._follower.current_printer_config,
+                    apply_config=self._follower.apply_printer_config,
+                    active_identity=self._follower.current_printer_identity)
                 self._install_monitor(device, stack)
                 self._devices[machine_id] = device
             else:
@@ -125,7 +143,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
 
             if self._current is not device:
                 if self._current is not None:
-                    self._set_monitor_active(self._current, False)
+                    self._deactivate_device(self._current)
                     try:
                         self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
                     except Exception:
