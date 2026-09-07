@@ -13,6 +13,7 @@ start exactly as the unsmoothed follower would.
 """
 from __future__ import annotations
 
+import math
 import time
 
 from PyQt6.QtCore import QObject, QTimer
@@ -20,11 +21,12 @@ from PyQt6.QtCore import QObject, QTimer
 from .CuraAdapter import preview_max_paths, set_preview_minimum_path, set_preview_path
 from .PreviewSmoothing import advance_display
 
-TICK_MS = 20
-# Velocity-EMA weight applied per observation; ~5 s time constant at the
-# normal 750 ms polling cadence, so travel-move spikes cannot inflate the
-# glide speed.
-VELOCITY_EMA = 0.15
+TICK_MS = 33
+# Velocity smoothing time constant, in seconds. Sized in time (not per
+# observation) so the behaviour is identical at any polling rate; long
+# slow moves produce tiny quantised per-poll deltas, and a faster
+# response would make the glide speed wobble visibly between polls.
+VELOCITY_TAU = 8.0
 # Floor for the observation interval so an immediate second observation
 # cannot produce a huge instantaneous velocity.
 MIN_OBSERVATION_DT = 0.05
@@ -70,7 +72,8 @@ class PreviewMotion(QObject):
         if self._prev_fraction is not None:
             dt = max(MIN_OBSERVATION_DT, now - self._prev_time)
             instant = max(0.0, min(MAX_VELOCITY, (fraction - self._prev_fraction) / dt))
-            self._velocity += (instant - self._velocity) * VELOCITY_EMA
+            alpha = 1.0 - math.exp(-dt / VELOCITY_TAU)
+            self._velocity += (instant - self._velocity) * alpha
         self._prev_fraction = fraction
         self._prev_time = now
         self._target = fraction
