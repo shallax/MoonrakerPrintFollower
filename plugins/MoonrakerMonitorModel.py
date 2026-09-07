@@ -1,30 +1,25 @@
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote, urljoin
 
-from PyQt6.QtCore import QByteArray, QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from UM.Logger import Logger
 
-from .MoonrakerProtocol import status_endpoint
+from .MoonrakerSession import RequestCategory
 
 
 class MoonrakerMonitorModel(PrinterOutputModel):
     """Unified Cura Monitor model for Moonraker/Klipper.
 
-    Core print state is reused from MoonrakerPrintFollower while automatic
-    Preview following is enabled. If following is disabled, Monitor owns a
-    lightweight one-second core-status poll so monitoring remains independent
-    from the Preview preference. Peripheral Klipper objects are capability-
-    discovered and queried separately because the set of heaters, fans,
-    filament sensors, MCUs and exclude-object support varies by printer.
+    Core printer state comes from the follower's one shared MoonrakerClient.
+    Monitor-only peripheral, discovery, power and system requests use the same
+    MoonrakerHttpTransport and connection pool with category-aware cadences.
     """
 
     monitorChanged = pyqtSignal()
@@ -36,20 +31,23 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     systemChanged = pyqtSignal()
     actionChanged = pyqtSignal()
 
-    CORE_POLL_MS = 1000
     AUX_POLL_MS = 1000
     POWER_POLL_MS = 5000
     SYSTEM_POLL_MS = 10000
     DISCOVERY_POLL_MS = 30000
 
+    _PRINT_COMMAND_STATES = {
+        "Pause": {"paused"},
+        "Resume": {"printing"},
+        "Cancel": {"cancelled", "complete", "standby"},
+    }
+
     def __init__(self, output_controller: Any, number_of_extruders: int, follower: Any) -> None:
         super().__init__(output_controller, number_of_extruders)
         self._follower = follower
-        self._network = QNetworkAccessManager(self)
-        self._requests: Dict[str, QNetworkReply] = {}
         self._request_generation = 0
-        self._request_identity: Optional[tuple[str, str]] = None
         self._monitoring_active = True
+        self._tracked_control_label = ""
 
         self._webcams: List[Dict[str, Any]] = []
         self._active_webcam_index = -1
@@ -96,10 +94,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._action_busy = False
         self._action_status = ""
 
-        self._core_timer = QTimer(self)
-        self._core_timer.setInterval(self.CORE_POLL_MS)
-        self._core_timer.timeout.connect(self._poll_core_fallback)
-
         self._aux_timer = QTimer(self)
         self._aux_timer.setInterval(self.AUX_POLL_MS)
         self._aux_timer.timeout.connect(self._poll_aux_status)
@@ -116,16 +110,28 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._discovery_timer.setInterval(self.DISCOVERY_POLL_MS)
         self._discovery_timer.timeout.connect(self.refreshCapabilities)
 
-        client = getattr(follower, "_client", None)
+        client = self._shared_client()
         status_signal = getattr(client, "statusReceived", None)
         if status_signal is not None:
             try:
                 status_signal.connect(self.updateMoonrakerStatus)
             except Exception as exc:
                 Logger.log("w", "Moonraker Print Follower: could not bind Monitor status: %s", exc)
+        command_signal = getattr(client, "commandChanged", None)
+        if command_signal is not None:
+            try:
+                command_signal.connect(self._on_shared_command_changed)
+            except Exception:
+                pass
 
         self._start_background_timers()
         self.refreshAll()
+
+    def _shared_client(self):
+        return self._follower.client
+
+    def _shared_transport(self):
+        return self._follower.transport
 
     def _start_background_timers(self) -> None:
         for timer in (self._aux_timer, self._power_timer, self._system_timer, self._discovery_timer):
@@ -133,29 +139,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 timer.start()
 
     def _stop_background_timers(self) -> None:
-        for timer in (self._core_timer, self._aux_timer, self._power_timer, self._system_timer, self._discovery_timer):
+        for timer in (self._aux_timer, self._power_timer, self._system_timer, self._discovery_timer):
             timer.stop()
-
-    def _current_request_identity(self) -> tuple[str, str]:
-        config = self._follower.current_printer_config()
-        return (str(config.url or "").strip().rstrip("/"), str(config.api_key or ""))
 
     def _invalidate_request_session(self) -> None:
         self._request_generation += 1
-        for channel in list(self._requests):
-            self._cancel_channel(channel)
-
-    def _ensure_request_session(self) -> None:
-        identity = self._current_request_identity()
-        if identity != self._request_identity:
-            self._request_identity = identity
-            self._invalidate_request_session()
+        transport = self._shared_transport()
+        if transport is not None:
+            transport.cancel_owner("monitor")
 
     def setMonitoringActive(self, active: bool) -> None:
         active = bool(active)
         if active == self._monitoring_active:
-            if active:
-                self._ensure_request_session()
             return
         self._monitoring_active = active
         if not active:
@@ -163,15 +158,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._invalidate_request_session()
             self._action_busy = False
             self._action_status = ""
+            self._tracked_control_label = ""
             self.actionChanged.emit()
             return
-        self._request_identity = None
         self._start_background_timers()
         self.refreshAll()
-
-    # ------------------------------------------------------------------
-    # Generic Moonraker HTTP helpers
-    # ------------------------------------------------------------------
 
     @property
     def _base_url(self) -> str:
@@ -182,30 +173,23 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         url = QUrl(self._base_url)
         return url.isValid() and url.scheme() in ("http", "https") and bool(url.host())
 
-    def _request(self, path: str) -> QNetworkRequest:
-        request = QNetworkRequest(QUrl(self._base_url + "/" + path.lstrip("/")))
-        request.setRawHeader(b"Accept", b"application/json")
-        request.setRawHeader(b"User-Agent", b"Cura Moonraker Print Follower")
-        config = self._follower.current_printer_config()
-        if config.api_key:
-            request.setRawHeader(b"X-Api-Key", str(config.api_key).encode("utf-8"))
-        if hasattr(request, "setTransferTimeout"):
-            request.setTransferTimeout(5000)
-        return request
+    @staticmethod
+    def _request_category(channel: str) -> RequestCategory:
+        channel = str(channel or "")
+        if channel.startswith("power"):
+            return RequestCategory.POWER
+        if channel in {"server-info", "printer-info"} or channel.startswith("mcu"):
+            return RequestCategory.SYSTEM
+        if channel in {"objects", "config-static", "webcams", "temperature-presets"}:
+            return RequestCategory.DISCOVERY
+        if channel in {"control", "power-action", "emergency-stop"} or channel.startswith("quick-"):
+            return RequestCategory.COMMAND
+        return RequestCategory.AUXILIARY
 
     def _cancel_channel(self, channel: str) -> None:
-        reply = self._requests.pop(channel, None)
-        if reply is None:
-            return
-        try:
-            if reply.isRunning():
-                reply.abort()
-        except Exception:
-            pass
-        try:
-            reply.deleteLater()
-        except Exception:
-            pass
+        transport = self._shared_transport()
+        if transport is not None:
+            transport.cancel("monitor", channel)
 
     def _json_request(
         self,
@@ -217,92 +201,33 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         body: Optional[Dict[str, Any]] = None,
         replace: bool = False,
     ) -> bool:
-        if not self._monitoring_active:
+        if not self._monitoring_active or not self._usable_base_url():
             return False
-        self._ensure_request_session()
-        if not self._usable_base_url():
+        transport = self._shared_transport()
+        if transport is None:
             return False
-
-        previous = self._requests.get(channel)
-        if previous is not None:
-            try:
-                running = previous.isRunning()
-            except Exception:
-                running = False
-            if running and not replace:
-                return False
-            self._cancel_channel(channel)
-
-        request = self._request(path)
-        method = str(method or "GET").upper()
-        if body is not None:
-            request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
-            data = QByteArray(json.dumps(body, separators=(",", ":")).encode("utf-8"))
-        else:
-            data = QByteArray()
-
-        if method == "POST":
-            reply = self._network.post(request, data)
-        else:
-            reply = self._network.get(request)
-        self._requests[channel] = reply
         generation = self._request_generation
-        reply.finished.connect(
-            lambda r=reply, c=channel, cb=callback, g=generation: self._finish_json_request(c, r, cb, g)
+
+        def finished(payload: Optional[Dict[str, Any]], error: Optional[str]) -> None:
+            if generation != self._request_generation:
+                return
+            try:
+                callback(payload, error)
+            except Exception as exc:
+                Logger.log("w", "Moonraker Print Follower: Monitor callback failed: %s", exc)
+
+        return bool(
+            transport.send_json(
+                "monitor",
+                channel,
+                method,
+                path,
+                finished,
+                body=body,
+                replace=replace,
+                category=self._request_category(channel).value,
+            )
         )
-        return True
-
-    def _finish_json_request(
-        self,
-        channel: str,
-        reply: QNetworkReply,
-        callback: Callable[[Optional[Dict[str, Any]], Optional[str]], None],
-        generation: int,
-    ) -> None:
-        if generation != self._request_generation:
-            if self._requests.get(channel) is reply:
-                self._requests.pop(channel, None)
-            try:
-                reply.deleteLater()
-            except Exception:
-                pass
-            return
-        if self._requests.get(channel) is not reply:
-            try:
-                reply.deleteLater()
-            except Exception:
-                pass
-            return
-        self._requests.pop(channel, None)
-
-        error: Optional[str] = None
-        payload: Optional[Dict[str, Any]] = None
-        try:
-            if reply.error() != QNetworkReply.NetworkError.NoError:
-                error = reply.errorString()
-            else:
-                raw = bytes(reply.readAll()).decode("utf-8", errors="replace")
-                if raw.strip():
-                    decoded = json.loads(raw)
-                    if not isinstance(decoded, dict):
-                        raise ValueError("Moonraker returned a non-object JSON response")
-                    if decoded.get("error"):
-                        raise ValueError(str(decoded.get("error")))
-                    payload = decoded
-                else:
-                    payload = {}
-        except Exception as exc:
-            error = str(exc)
-        finally:
-            try:
-                reply.deleteLater()
-            except Exception:
-                pass
-
-        try:
-            callback(payload, error)
-        except Exception as exc:
-            Logger.log("w", "Moonraker Print Follower: Monitor callback failed: %s", exc)
 
     @staticmethod
     def _status_object(status: Any, name: str) -> Dict[str, Any]:
@@ -317,10 +242,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return None
         return payload.get("result", payload)
 
-    # ------------------------------------------------------------------
-    # Lifecycle / refresh
-    # ------------------------------------------------------------------
-
     @pyqtSlot()
     def refreshAll(self) -> None:
         if not self._monitoring_active:
@@ -334,55 +255,22 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot()
     def refreshTransport(self) -> None:
         if not self._monitoring_active:
-            self._core_timer.stop()
-            self._cancel_channel("core")
             return
-        self._ensure_request_session()
-        config = self._follower.current_printer_config()
-        if bool(config.enabled):
-            self._core_timer.stop()
-            self._cancel_channel("core")
+        client = self._shared_client()
+        if client is None or not self._usable_base_url():
             return
-        if not self._usable_base_url():
-            self._core_timer.stop()
-            self._cancel_channel("core")
-            return
-        if not self._core_timer.isActive():
-            self._core_timer.start()
-        self._poll_core_fallback()
+        try:
+            client.start()
+            if not getattr(client, "status", {}):
+                client.force_refresh()
+        except Exception:
+            pass
 
     def _refresh_core_now(self) -> None:
-        config = self._follower.current_printer_config()
-        if bool(config.enabled):
-            client = getattr(self._follower, "_client", None)
-            refresh = getattr(client, "force_refresh", None)
-            if callable(refresh):
-                refresh()
-        else:
-            self._poll_core_fallback()
-
-    def _poll_core_fallback(self) -> None:
-        config = self._follower.current_printer_config()
-        if bool(config.enabled):
-            self.refreshTransport()
-            return
-        self._json_request("core", "GET", status_endpoint(self._base_url), self._on_core_finished)
-
-    def _on_core_finished(self, payload: Optional[Dict[str, Any]], error: Optional[str]) -> None:
-        if error:
-            self._monitor_state = "Disconnected"
-            self._monitor_state_raw = ""
-            self.monitorChanged.emit()
-            self.actionChanged.emit()
-            return
-        result = self._result(payload)
-        status = result.get("status") if isinstance(result, dict) else None
-        if isinstance(status, dict):
-            self.updateMoonrakerStatus(status)
-
-    # ------------------------------------------------------------------
-    # Core print status, ETA and controls
-    # ------------------------------------------------------------------
+        client = self._shared_client()
+        refresh = getattr(client, "force_refresh", None)
+        if callable(refresh):
+            refresh()
 
     @pyqtSlot(object)
     def updateMoonrakerStatus(self, status: Any) -> None:
@@ -469,7 +357,21 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self.powerDevicesChanged.emit()
 
     def _after_core_status(self, _status: Any) -> None:
-        """Subclass hook run after core fields are coherent, before UI notification."""
+        client = self._shared_client()
+        session = getattr(client, "session", None)
+        policy = getattr(session, "poll_policy", None)
+        if policy is None:
+            return
+        configured = 1000
+        try:
+            configured = int(self._follower.current_printer_config().poll_interval_ms)
+        except Exception:
+            pass
+        state = self._monitor_state_raw
+        self._aux_timer.setInterval(policy.interval_ms(RequestCategory.AUXILIARY, configured, state))
+        self._power_timer.setInterval(policy.interval_ms(RequestCategory.POWER, configured, state))
+        self._system_timer.setInterval(policy.interval_ms(RequestCategory.SYSTEM, configured, state))
+        self._discovery_timer.setInterval(policy.interval_ms(RequestCategory.DISCOVERY, configured, state))
 
     def _fetch_metadata(self, filename: str) -> None:
         encoded = quote(filename, safe="/")
@@ -518,14 +420,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         slicer_estimated_time: Optional[float],
         metadata_lookup_complete: bool,
     ) -> Optional[float]:
-        """Estimate remaining print time without treating G-code bytes as time.
-
-        Moonraker's virtual_sdcard.progress is a byte-position fraction. Cura can
-        emit very different amounts of G-code per unit of print time, so using
-        elapsed/progress as the primary ETA can turn a seven-hour job into an
-        absurd multi-day estimate. File progress is retained only as a fallback
-        and as a small correction when it broadly agrees with slicer metadata.
-        """
+        """Estimate remaining print time without treating G-code bytes as time."""
         try:
             elapsed = max(0.0, float(print_duration))
         except (TypeError, ValueError):
@@ -555,8 +450,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 return slicer_remaining
             return file_remaining if file_remaining is not None else 0.0
 
-        # Avoid flashing a bad byte-based ETA while the reliable metadata request
-        # is still in flight. If metadata is unavailable, fall back gracefully.
         if not metadata_lookup_complete:
             return None
         return file_remaining
@@ -682,6 +575,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def _send_print_action(self, label: str, path: str) -> None:
         if self._action_busy:
             return
+        expected = self._PRINT_COMMAND_STATES.get(str(label))
+        client = self._shared_client()
+        if expected and client is not None:
+            self._tracked_control_label = str(label)
+            try:
+                client.track_command(label, expected, timeout_s=10.0)
+            except Exception:
+                self._tracked_control_label = ""
         self._action_busy = True
         self._action_status = f"{label} requested…"
         self.actionChanged.emit()
@@ -694,6 +595,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if not started:
             self._action_busy = False
             self._action_status = "Moonraker is not available"
+            if self._tracked_control_label == label and client is not None:
+                try:
+                    client.fail_command(label, "Moonraker is not available")
+                except Exception:
+                    pass
+                self._tracked_control_label = ""
             self.actionChanged.emit()
 
     def _on_control_finished(
@@ -702,17 +609,53 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         _payload: Optional[Dict[str, Any]],
         error: Optional[str],
     ) -> None:
-        self._action_busy = False
+        tracked = label == self._tracked_control_label
+        client = self._shared_client()
         if error:
+            self._action_busy = False
             self._action_status = f"{label} failed: {error}"
+            if tracked and client is not None:
+                try:
+                    client.fail_command(label, error)
+                except Exception:
+                    pass
+                self._tracked_control_label = ""
+            self.actionChanged.emit()
+            return
+
+        if tracked and client is not None:
+            self._action_status = f"{label} accepted; waiting for printer confirmation…"
+            try:
+                client.accept_command(label)
+            except Exception:
+                pass
+            QTimer.singleShot(10250, getattr(client, "expire_commands", lambda: None))
+            QTimer.singleShot(150, self._refresh_core_now)
         else:
+            self._action_busy = False
             self._action_status = f"{label} accepted"
             QTimer.singleShot(150, self._refresh_core_now)
         self.actionChanged.emit()
 
-    # ------------------------------------------------------------------
-    # Dynamic Klipper object discovery and peripheral status
-    # ------------------------------------------------------------------
+    def _on_shared_command_changed(self, event: Any) -> None:
+        if not isinstance(event, dict):
+            return
+        label = str(event.get("name") or "")
+        if not label or label != self._tracked_control_label:
+            return
+        outcome = str(event.get("outcome") or "")
+        if outcome == "accepted":
+            self._action_status = f"{label} accepted; waiting for printer confirmation…"
+        elif outcome == "confirmed":
+            self._action_busy = False
+            self._action_status = f"{label} confirmed"
+            self._tracked_control_label = ""
+        elif outcome in {"failed", "timed_out"}:
+            self._action_busy = False
+            detail = str(event.get("detail") or outcome.replace("_", " "))
+            self._action_status = f"{label}: {detail}"
+            self._tracked_control_label = ""
+        self.actionChanged.emit()
 
     @pyqtSlot()
     def refreshCapabilities(self) -> None:
@@ -762,9 +705,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @staticmethod
     def _aux_query_fields(name: str):
-        # configfile.config/settings can be very large. Only the two volatile
-        # SAVE_CONFIG fields belong in the one-second poll; the full config is
-        # refreshed with capability discovery instead.
         if str(name or "").lower() == "configfile":
             return ["save_config_pending", "save_config_pending_items"]
         return None
@@ -1024,10 +964,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             body={"script": script},
         )
 
-    # ------------------------------------------------------------------
-    # Moonraker power devices
-    # ------------------------------------------------------------------
-
     @pyqtSlot()
     def refreshPowerDevices(self) -> None:
         self._json_request("power-list", "GET", "machine/device_power/devices", self._on_power_devices)
@@ -1112,10 +1048,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             QTimer.singleShot(500, self.refreshSystemInfo)
         self.actionChanged.emit()
 
-    # ------------------------------------------------------------------
-    # System / firmware health
-    # ------------------------------------------------------------------
-
     @pyqtSlot()
     def refreshSystemInfo(self) -> None:
         self._json_request("server-info", "GET", "server/info", self._on_server_info)
@@ -1175,10 +1107,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def mcuSummary(self) -> str:
         return self._mcu_summary
 
-    # ------------------------------------------------------------------
-    # Moonraker webcam discovery
-    # ------------------------------------------------------------------
-
     @pyqtSlot()
     def refreshWebcams(self) -> None:
         self.refreshTransport()
@@ -1197,10 +1125,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             result = self._result(payload)
             raw_cameras = result.get("webcams") if isinstance(result, dict) else None
             if isinstance(raw_cameras, list):
-                cameras = [
-                    item for item in raw_cameras
-                    if isinstance(item, dict) and bool(item.get("enabled", True))
-                ]
+                cameras = [item for item in raw_cameras if isinstance(item, dict) and bool(item.get("enabled", True))]
 
         self._webcams = cameras
         if self._webcams:

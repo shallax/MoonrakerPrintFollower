@@ -9,9 +9,7 @@ TRANSPORT = (PLUGINS / "FollowerTransport.py").read_text(encoding="utf-8")
 FOLLOW_ENGINE = (PLUGINS / "PreviewFollowEngine.py").read_text(encoding="utf-8")
 PREVIEW_STATUS = (PLUGINS / "PreviewStatus.py").read_text(encoding="utf-8")
 SCHEDULER = (PLUGINS / "PauseScheduleService.py").read_text(encoding="utf-8")
-FOLLOWER = "\n".join(
-    [RUNTIME, COORDINATOR, TRANSPORT, FOLLOW_ENGINE, PREVIEW_STATUS]
-)
+FOLLOWER = "\n".join([RUNTIME, COORDINATOR, TRANSPORT, FOLLOW_ENGINE, PREVIEW_STATUS])
 QML = (PLUGINS / "PreviewActionPanelControls.qml").read_text(encoding="utf-8")
 CONFIG = (PLUGINS / "PrinterConfig.py").read_text(encoding="utf-8")
 PROTOCOL = (PLUGINS / "MoonrakerProtocol.py").read_text(encoding="utf-8")
@@ -48,6 +46,7 @@ class PauseAtLayerTests(unittest.TestCase):
         self.assertIn("self._client.transport.send_json", TRANSPORT)
         self.assertIn("RequestCategory.COMMAND.value", TRANSPORT)
         self.assertNotIn("self._pause_network.post", TRANSPORT)
+        self.assertNotIn("self._pause_network =", TRANSPORT)
 
     def test_pause_occurs_only_after_target_layer_has_finished(self):
         self.assertIn("due_end_of_layer_pauses", SCHEDULER)
@@ -65,33 +64,25 @@ class PauseAtLayerTests(unittest.TestCase):
         self.assertIn("if urgent and active:", session)
 
     def test_layer_observation_continues_while_preview_following_is_paused(self):
-        observation = FOLLOW_ENGINE.index(
-            "observed_layer, observed_source = self._resolve_remote_layer_index"
-        )
-        paused = FOLLOW_ENGINE.index("if self._following_paused:", observation)
-        trigger = FOLLOW_ENGINE.index(
-            "self._maybe_trigger_scheduled_pause(observed_layer)", observation
-        )
+        observation = FOLLOW_ENGINE.index("observed_layer, observed_source = self._resolve_remote_layer_index")
+        paused = FOLLOW_ENGINE.index("if self._preview_follower_service.following_paused:", observation)
+        trigger = FOLLOW_ENGINE.index("self._maybe_trigger_scheduled_pause(observed_layer)", observation)
         self.assertLess(observation, paused)
         self.assertLess(trigger, paused)
-        self.assertIn(
-            "self._update_selected_layer_eta(view)",
-            FOLLOW_ENGINE[paused : paused + 1400],
-        )
+        self.assertIn("self._update_selected_layer_eta(view)", FOLLOW_ENGINE[paused : paused + 1400])
 
     def test_pause_command_is_guarded_and_requires_observed_paused_state(self):
-        self.assertIn("lifecycle_generation != self._lifecycle_generation", TRANSPORT)
-        self.assertIn("job_key != self._remote_job_key", TRANSPORT)
         self.assertIn(
-            "request_generation != self._scheduled_pause_request_generation", TRANSPORT
+            "lifecycle_generation != self._cura_lifecycle_bridge.generation",
+            TRANSPORT,
         )
-        self.assertIn(
-            'track_command(self.SCHEDULED_PAUSE_COMMAND, {"paused"}', TRANSPORT
-        )
-        self.assertIn(
-            "self._client.accept_command(self.SCHEDULED_PAUSE_COMMAND)", TRANSPORT
-        )
+        self.assertIn("job_key != self._remote_job_service.key", TRANSPORT)
+        self.assertIn("request_generation != self._scheduled_pause_request_generation", TRANSPORT)
+        self.assertIn('track_command(\n            self.SCHEDULED_PAUSE_COMMAND, {"paused"}', TRANSPORT)
+        self.assertIn("self._client.accept_command(self.SCHEDULED_PAUSE_COMMAND)", TRANSPORT)
         self.assertIn('outcome == "confirmed"', TRANSPORT)
+        self.assertNotIn("self._lifecycle_generation", TRANSPORT)
+        self.assertNotIn("self._remote_job_key", TRANSPORT)
 
 
 if __name__ == "__main__":

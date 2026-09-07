@@ -30,7 +30,6 @@ class FollowerCoordinator(FollowerTransportMixin, _FollowerRuntime):
         self._pause_schedule_service = PauseScheduleService()
         self._cura_lifecycle_bridge = CuraLifecycleBridge()
         super().__init__(application)
-        self._init_follower_transport()
 
     @property
     def client(self):

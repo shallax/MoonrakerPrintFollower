@@ -1,18 +1,13 @@
 import os
 import random
 import re
-import sys
 import tempfile
 import threading
 import unittest
 from bisect import bisect_right
 
-PLUGIN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plugins"))
-if PLUGIN_DIR not in sys.path:
-    sys.path.insert(0, PLUGIN_DIR)
-
-from Core import RemoteFileIdentity
-from GCodeIndex import (
+from plugins.Core import RemoteFileIdentity
+from plugins.GCodeIndex import (
     LayerMotionIndex,
     PersistentIndexCache,
     build_index_from_bytes,

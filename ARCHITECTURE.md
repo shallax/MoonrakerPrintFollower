@@ -1,10 +1,10 @@
 # Moonraker Print Follower architecture
 
-This document is the architectural source of truth for Moonraker Print Follower. It describes the architecture that exists now, the boundaries that maintainers must preserve, and the decisions that explain why the system is shaped this way.
+This document is the architectural source of truth for Moonraker Print Follower. It is written for both human maintainers and AI agents: it explains what owns each piece of state, how the major flows work, which boundaries are intentional, and how to add functionality without recreating the coupling that the current architecture removed.
 
-It is intentionally **not** a release-history document. Release numbers, migration narratives and implementation milestones belong in the changelog, Git history and release notes. Compatibility ranges and package metadata belong in the package metadata and CI configuration. This document should evolve whenever the architecture or an architectural decision changes.
+It is deliberately not a release-history document. Release numbers, migrations and implementation milestones belong in the changelog and Git history. Exact Cura/SDK compatibility ranges and package metadata belong in `package.json`, `plugin.json` and CI tests. Architecture should change only when responsibilities, data flow or architectural decisions change.
 
-If implementation and this document disagree, treat the disagreement as a defect: update the code or update this document in the same change.
+If the implementation and this document disagree, treat that as a defect. The correct change is to bring them back into agreement in the same branch, not to add a compatibility shim between the two models.
 
 ---
 
@@ -12,41 +12,46 @@ If implementation and this document disagree, treat the disagreement as a defect
 
 Before changing the project, answer these questions:
 
-1. **Who owns the state I need to change?**
-2. **Which layer should perform the operation?**
+1. **Who owns the state I need?**
+2. **Which existing layer performs this kind of operation?**
 3. **Which identity or generation makes an asynchronous result safe to apply?**
-4. **Which existing request/data path should I extend instead of creating another one?**
-5. **Does the change alter an architectural decision?** If so, update the decision register and the detailed decision entry.
+4. **Which shared request/data path should be extended instead of duplicated?**
+5. **Is the change pure policy, Cura orchestration, Moonraker I/O, or presentation?**
+6. **Does the change alter an accepted architectural decision?**
 
-Architectural rules in this document are stronger than naming conventions. A file name alone does not define ownership; follow the actual composition/inheritance chain and the ownership tables below.
+Do not infer ownership from a filename alone. Follow the composition/inheritance chain and the ownership tables below.
+
+When modifying code, prefer the shortest path from a consumer to the authoritative owner. Production code must not recreate removed private aliases merely to preserve an old internal access pattern.
 
 ---
 
-## 2. Architecture at a glance
+## 2. System responsibilities
 
-Moonraker Print Follower integrates three closely related capabilities into Cura:
+Moonraker Print Follower integrates three closely related Cura capabilities:
 
-- **Live Preview following** — Cura Preview follows the print currently running through Klipper/Moonraker.
-- **Moonraker output** — Cura uploads generated G-code/UFP and can optionally start the print.
-- **Live Monitor** — Cura exposes job state, temperatures, fans, sensors, macros, power, webcams and print controls.
+- **Live Preview following** — Cura Preview follows the physical print running through Klipper/Moonraker.
+- **Moonraker output** — Cura can upload generated G-code/UFP and optionally start the print.
+- **Live Monitor** — Cura displays job state, temperatures, fans, sensors, macros, power, webcams, bed mesh and print controls.
 
-They deliberately share one live active-printer session and transport rather than behaving like three independent plugins.
+The three capabilities share one active-printer Moonraker session. They are not separate networking plugins.
 
-The main architectural commitments are:
+The primary architectural commitments are:
 
 - HTTP-only Moonraker integration;
-- one live active-printer Moonraker session;
-- one production core printer-status poller;
+- one live Moonraker binding for the active Cura printer;
+- one production core status poller;
 - one production active-printer HTTP connection pool;
 - category-aware/adaptive polling;
-- request coalescing and de-duplication;
-- one authoritative owner per mutable domain;
-- HTTP command acceptance separated from observed printer-state confirmation;
-- stale asynchronous work rejected through identity/generation guards;
-- large G-code streamed to disk rather than buffered wholly in memory;
-- heavy indexing/hydration kept off Cura's UI thread;
-- deterministic tests for state transitions, races and long-running prints;
-- packaging and compatibility enforced by metadata and CI rather than duplicated in this document.
+- request coalescing/de-duplication;
+- one authoritative owner for each mutable domain;
+- direct service access rather than mirrored private aliases;
+- HTTP acceptance separated from observed command completion;
+- explicit identity/generation guards for asynchronous work;
+- streamed remote G-code rather than whole-file buffering;
+- asynchronous indexing/hydration for heavy work;
+- presentation-only QML;
+- deterministic behavioural tests plus source-level architectural contracts;
+- package/source parity verified in CI.
 
 ---
 
@@ -68,14 +73,15 @@ flowchart TD
     Coordinator --> Pause[PauseScheduleService]
     Coordinator --> Lifecycle[CuraLifecycleBridge]
 
+    Runtime --> Operation[OperationContext]
     Runtime --> Client[MoonrakerClient]
     Client --> Session[MoonrakerSession]
-    Session --> State[MoonrakerSessionState]
+    Session --> SessionState[MoonrakerSessionState]
     Session --> Transport[MoonrakerHttpTransport]
 
     Register --> OutputPlugin[MoonrakerOutputDevicePlugin]
-    OutputPlugin --> Output[Moonraker output chain]
-    OutputPlugin --> Monitor[Moonraker Monitor chain]
+    OutputPlugin --> Output[MoonrakerOutputDeviceLifecycle]
+    OutputPlugin --> Monitor[Moonraker Monitor model chain]
 
     FollowerTransport --> Transport
     Monitor --> Client
@@ -86,108 +92,135 @@ flowchart TD
     MachineAction --> Probe[isolated MoonrakerHttpTransport]
 
     Transport --> Moonraker[Moonraker HTTP API]
+    Probe --> Moonraker
 ```
 
-The application is event-driven and runs inside Cura's Qt process. A small amount of background Python threading is used for G-code indexing, compact-index hydration and persistent-cache writes.
+The plugin is event-driven inside Cura's Qt process. Background Python threads are used only for heavy G-code indexing, compact-index hydration and persistent-cache writes.
 
 ---
 
-## 4. Architectural invariants
+## 4. Architectural laws
+
+These are invariants, not suggestions.
 
 ### 4.1 One authoritative owner per mutable domain
 
-Do not create two classes that both remember the same concept.
-
 | Domain | Authoritative owner |
 | --- | --- |
-| Moonraker endpoint/API-key identity, connection state, core status snapshot, poll policy, request coalescer, command acknowledgements | `MoonrakerSession` / `MoonrakerSessionState` |
-| core status poll loop | `MoonrakerClient` |
-| active-printer HTTP request construction, authentication, cancellation and metrics | `MoonrakerHttpTransport` |
-| remote print-run identity and restart detection | `RemoteJobService` |
-| remote file identity and local cached G-code identity | `RemoteFileService` |
-| active G-code index/build/hydration state | `GCodeIndexService` |
-| Preview attachment and expected follower-written Preview position | `PreviewFollowerService` |
-| scheduled end-of-layer pause layers | `PauseScheduleService` |
-| Cura scene/lifecycle generation token | `CuraLifecycleBridge` |
-| follower-specific metadata/download/PAUSE request orchestration | `FollowerTransportMixin` |
-| streaming G-code reply and temporary-file lifecycle | `RemoteFileTransferMixin` |
+| active Moonraker endpoint/API-key identity | `MoonrakerSession` / `MoonrakerHttpTransport` |
+| connection state, merged core status snapshot, poll policy, coalescer, command acknowledgements | `MoonrakerSessionState` |
+| core status poll loop and retry/backoff | `MoonrakerClient` |
+| active-printer request construction, authentication, cancellation and transport metrics | `MoonrakerHttpTransport` |
+| remote print-run identity/restart detection | `RemoteJobService` |
+| remote file identity and cached local G-code identity | `RemoteFileService` |
+| G-code index/build/hydration lifecycle state | `GCodeIndexService` |
+| Preview detached/attached state and expected follower-written Preview position | `PreviewFollowerService` |
+| scheduled end-of-layer pause targets | `PauseScheduleService` |
+| Cura lifecycle generation | `CuraLifecycleBridge` |
+| current force-load/download/Cura-load/index operation phase | `OperationContext` |
+| follower metadata/download/scheduled-PAUSE request orchestration | `FollowerTransportMixin` |
+| streaming file reply/temp-file lifecycle | `RemoteFileTransferMixin` |
 
-Coordinator compatibility properties redirect historical private attribute names into these owners. They are access shims, not duplicate state.
+Consumers access these owners directly through the concrete follower. Production compatibility properties that mirror these values under historical private names are forbidden.
 
 ### 4.2 One live active-printer session
 
-The plugin may store configuration for many Cura printers, but only Cura's currently active printer owns the live Moonraker binding.
+The project stores settings for multiple Cura machines, but only the currently active Cura machine owns the live Moonraker binding.
 
-Preview, Monitor and output all reach the same follower instance and therefore the same `MoonrakerClient`, `MoonrakerSession` and `MoonrakerHttpTransport`.
+Preview, Monitor and output all receive the same follower instance and therefore share the same:
 
-A Cura machine switch is an identity boundary. Old shared status, pending commands, file/index state, scheduled pauses and delayed callbacks must not become authoritative for the newly active printer.
+- `MoonrakerClient`;
+- `MoonrakerSession`;
+- `MoonrakerHttpTransport`.
+
+A Cura-machine switch is an ownership boundary even when two Cura machine definitions point at the same network endpoint.
 
 ### 4.3 One production core poller
 
-`MoonrakerClient` is the only production poller for the core object query. The shared query contains the printer state needed by Preview and Monitor, including:
+`MoonrakerClient` is the only production core printer-status poller.
+
+The shared core snapshot contains high-frequency state required by Preview and Monitor, including the important objects around:
 
 - `print_stats`;
-- `gcode_move`;
 - `virtual_sdcard`;
+- `gcode_move`;
 - `motion_report`.
 
-Preview consumes this stream. Monitor consumes this stream. Output may use the resulting connected/status state as readiness evidence.
-
-If another high-frequency field is required, extend the shared core query deliberately rather than adding another poller.
+Do not add a second core poller to Monitor, output or a new feature.
 
 ### 4.4 One production active-printer HTTP pool
 
-Ordinary Moonraker traffic for the active printer uses `MoonrakerHttpTransport` and its `QNetworkAccessManager`.
+Ordinary active-printer Moonraker traffic uses `MoonrakerHttpTransport` and its single `QNetworkAccessManager`.
 
-Large downloads and multipart uploads may manage their own `QNetworkReply` lifecycle, but they still use the shared transport's request builder and network manager.
+Streaming downloads and multipart uploads may manage their own `QNetworkReply` lifecycle, but must use the shared transport's request builder and network manager.
 
-Isolated transports are allowed only when deliberately testing or probing credentials/identity that must not rebind the live session.
+An isolated transport is allowed only for candidate/unsaved credentials or another intentionally isolated identity that must not rebind the live session.
 
-### 4.5 HTTP acceptance is not command completion
+### 4.5 HTTP acceptance is not stateful command completion
 
-For commands with an observable printer-state result, the lifecycle is:
+For commands whose effect can be observed in printer state:
 
 ```text
-issued -> HTTP accepted -> expected state observed
-                    \-> failed / timed out
+issued -> HTTP accepted -> expected printer state observed -> confirmed
+                    \-> HTTP/command failure
+                    \-> timeout waiting for state
 ```
 
-A successful HTTP response means Moonraker accepted the command. It does not prove that the printer reached the requested state.
+The HTTP callback is not the terminal success signal.
 
-### 4.6 Every asynchronous result needs a validity identity
+### 4.6 Every asynchronous result needs validity guards
 
-An asynchronous result can become stale because:
+An asynchronous result may be invalidated by:
 
-- the active Cura printer changed;
-- URL or API key changed;
-- the same filename began a new print run;
-- remote file identity changed;
-- Cura replaced or rebuilt the scene;
-- a newer request superseded an older request;
-- G-code index work was cancelled or replaced.
+- active Cura machine change;
+- endpoint/API-key change;
+- client stop/restart;
+- transport reconfiguration;
+- Cura scene/slicing/load lifecycle change;
+- a new print run using the same filename;
+- a changed remote file;
+- a replacement index build;
+- a superseding request.
 
-Before applying an asynchronous result, validate every relevant identity/generation dimension described later in this document.
+Validate every identity relevant to the work before mutating current state.
 
 ### 4.7 Never block Cura's UI thread
 
-Do not add synchronous HTTP, `sleep()`, busy waits, or large synchronous file processing to Cura/Qt callbacks.
+Do not add:
 
-Use:
+- synchronous HTTP;
+- `sleep()` in interactive callbacks;
+- busy waits;
+- large synchronous parsing/indexing operations.
 
-- Qt network replies for HTTP;
-- `QTimer` for event-loop scheduling and retries;
-- worker threads for heavy G-code indexing/hydration/cache writes;
-- Qt signals or lifecycle-guarded callbacks when returning to UI state.
+Use Qt network replies, `QTimer`, worker threads and generation-guarded callbacks/signals.
 
 ### 4.8 QML is presentation
 
-QML may display Python model state and invoke exposed actions. It must not own Moonraker polling, protocol construction, hidden command state machines or durable business state.
+QML can bind properties and invoke actions. It must not own:
 
-### 4.9 Runtime mixins must not shadow one another
+- polling;
+- protocol URL construction;
+- print-run identity;
+- command state machines;
+- hidden durable state.
 
-`FollowerRuntime.py` composes focused mixins. A method belongs to one runtime mixin. Do not implement the same method in multiple mixins and rely on MRO precedence.
+### 4.9 Runtime mixins do not shadow each other
 
-Architecture contract tests enforce this rule.
+`FollowerRuntime.py` composes focused mixins. A runtime method has one implementation owner. Do not rely on MRO to choose between duplicate implementations.
+
+### 4.10 Production modules are package modules
+
+Production modules use normal package-relative imports. Do not add test-convenience fallbacks such as:
+
+```python
+try:
+    from .Core import Thing
+except ImportError:
+    from Core import Thing
+```
+
+Tests must import production code through the package, not force production modules to support a second import topology.
 
 ---
 
@@ -195,61 +228,84 @@ Architecture contract tests enforce this rule.
 
 Cura enters through `plugins/__init__.py`.
 
-`register(app)` creates one follower and injects it into the other feature areas:
+Conceptually:
 
 ```text
 register(app)
  ├─ MoonrakerPrintFollower(app)
  │   └─ FollowerCoordinator
- │       ├─ domain services
+ │       ├─ RemoteJobService
+ │       ├─ RemoteFileService
+ │       ├─ GCodeIndexService
+ │       ├─ PreviewFollowerService
+ │       ├─ PauseScheduleService
+ │       ├─ CuraLifecycleBridge
  │       ├─ focused follower runtime
+ │       │   └─ OperationContext
  │       └─ MoonrakerClient
  │           └─ MoonrakerSession
  │               └─ MoonrakerHttpTransport
  ├─ MoonrakerOutputDevicePlugin(app, follower)
- │   ├─ output device
+ │   ├─ Moonraker output device
  │   └─ Monitor model
  └─ MoonrakerFollowerMachineAction(app, follower, output_plugin)
 ```
 
-The same follower instance is deliberately injected into output and Monitor. They must not rediscover or recreate an independent session from global state.
+The coordinator creates authoritative domain services before the runtime bootstrap runs. That ordering allows runtime mixins to use services from their first initialisation callback without creating temporary shadow fields.
+
+`FollowerTransportMixin` participates cooperatively in construction. It initializes its plain transient request/download state before calling `super().__init__(application)`, then creates its QObject-dependent isolated probe transport after the runtime/bootstrap has initialized QObject. Do not move transport-owned reply/request fields back into `FollowerBootstrap.py` or restore a post-construction `_init_follower_transport()` phase.
+
+The same follower is injected into Monitor and output. They must not rediscover the active connection from preferences and create independent clients.
 
 ---
 
-## 6. Configuration and multi-printer ownership
+## 6. Configuration and active-printer ownership
 
-`PrinterConfig` is the typed persisted configuration for one Cura machine. `PrinterConfigStore` persists configuration keyed by Cura machine ID.
+### `PrinterConfig`
 
-Configuration belongs to a Cura printer, not globally to the plugin.
+Typed persisted configuration for one Cura machine. It contains follower, upload, Monitor/webcam and related options.
 
-The active Cura machine ID/name are maintained by the Cura-facing configuration/orchestration layer. The active Moonraker connection identity is `(base_url, api_key)` and belongs to the session/transport layer.
+### `PrinterConfigStore`
 
-### Active machine switch
+Persists per-machine configuration keyed by Cura machine ID and normalises/deserialises older stored dictionaries through typed defaults.
 
-Conceptually:
+Configuration belongs to a Cura machine, not globally to the plugin.
 
-1. detect a changed Cura machine ID;
+### Two distinct identities
+
+Do not conflate:
+
+- **Cura machine identity** — selects persisted Cura/follower configuration;
+- **Moonraker connection identity** — `(base_url, api_key)` for the live transport/session.
+
+Two Cura machines can point at the same Moonraker endpoint and still require a full active-machine ownership transition.
+
+### Active-machine switch ordering
+
+The safe conceptual order is:
+
+1. detect changed Cura machine ID;
 2. stop the old `MoonrakerClient`;
-3. stopping resets the shared session by default;
-4. invalidate Cura lifecycle work;
-5. change active Cura machine identity;
+3. reset old session state;
+4. invalidate Cura lifecycle generation;
+5. update active Cura machine identity;
 6. clear print/file/index/pause/Preview transient state;
-7. load/migrate the new machine's configuration;
+7. load the new machine configuration;
 8. configure the shared client/session for the new Moonraker identity;
-9. restart polling if the new endpoint is usable.
+9. restart polling if the endpoint is usable.
 
-The reset occurs before the new binding is applied. This remains necessary even when two Cura machine definitions point to the same Moonraker endpoint because their Cura-side configuration can differ.
+Old callbacks must become harmless before the new binding becomes authoritative.
 
-### Adding a persisted setting
+### Adding a persisted option
 
-1. add a typed/defaulted field to `PrinterConfig`;
-2. update deserialisation/normalisation;
-3. expose it through Machine Action/QML if user-configurable;
-4. preserve old stored dictionaries through defaults;
-5. migrate only when a semantically equivalent older setting exists;
-6. add persistence/per-printer tests.
+1. add the typed/defaulted field to `PrinterConfig`;
+2. normalise it in deserialisation;
+3. expose it via Machine Action/QML if user-facing;
+4. preserve absent old values through defaults;
+5. migrate only when an older semantically equivalent setting exists;
+6. test per-printer persistence and switching.
 
-Do not create a parallel global preference for data that belongs to `PrinterConfig`.
+Do not create a parallel global preference for per-printer data.
 
 ---
 
@@ -257,52 +313,54 @@ Do not create a parallel global preference for data that belongs to `PrinterConf
 
 ### `MoonrakerSessionState`
 
-Qt-independent state and policy:
+Qt-independent state/policy owner containing:
 
 - `PollPolicy`;
 - `RequestCoalescer`;
 - `SessionSnapshot`;
 - `CommandTracker`;
-- generation;
+- session generation;
 - base URL;
 - connected state;
 - scheduled-pause precision guard.
 
-Keeping this state pure allows deterministic tests without a network or Qt event loop.
+Keeping this layer pure enables deterministic tests without Cura or a Qt event loop.
 
 ### `MoonrakerSession`
 
-Binds session state to:
+Binds `MoonrakerSessionState` to one `MoonrakerHttpTransport` and API key.
 
-- base URL;
-- API key;
-- one `MoonrakerHttpTransport`.
+Changing endpoint or credentials is a rebind. Rebind must invalidate/cancel work from the previous authenticated identity and reset:
 
-Changing URL **or** API key is a rebind. Rebind cancels old transport work and resets shared status, command state, coalescing state, connection state and the pause guard so data obtained under the previous identity cannot remain authoritative.
+- shared status;
+- connection state;
+- coalescer state;
+- command tracker;
+- pause precision guard.
 
 ### `MoonrakerClient`
 
-Owns the Qt core poll loop and adapts the shared session to signals used elsewhere.
+Qt core-poll adapter around the session.
 
 Responsibilities:
 
 - configure/start/stop;
-- issue the core status query;
-- core request coalescing;
-- retry/backoff;
-- merge successful status into `SessionSnapshot`;
+- issue the shared core object query;
+- coalesce overlapping core refreshes;
+- retry/back off after failures;
+- merge successful status into the session snapshot;
 - derive capabilities;
-- emit status/connection/capability/command changes;
-- apply adaptive core polling intervals;
-- force immediate refreshes when requested.
+- emit status/connection/capability/command signals;
+- adjust core cadence using `PollPolicy`;
+- force immediate refresh on demand.
 
-`MoonrakerClient` is not a second state owner. Its duplicated-looking connection/timer flags exist only to control the Qt poll lifecycle; shared connection/status/command policy belongs to the session.
+`MoonrakerClient` is not a duplicate state owner. Its timer/request flags control the poll lifecycle only.
 
 ---
 
-## 8. Polling policy and request de-duplication
+## 8. Polling model
 
-`RequestCategory` classifies requests as:
+`RequestCategory` separates traffic by freshness requirement:
 
 - `CORE`;
 - `AUXILIARY`;
@@ -312,162 +370,230 @@ Responsibilities:
 - `COMMAND`;
 - `STATIC`.
 
-The policy intentionally varies freshness by printer state and request type:
+The policy is adaptive:
 
-- core status follows the configured cadence while actively printing;
-- imminent scheduled pauses temporarily tighten core polling;
-- paused/idle printers are polled less aggressively;
-- Monitor peripheral, power, system and discovery data use slower category-specific cadences;
-- commands and static lookups are event-driven.
+- active print core state follows the configured cadence;
+- imminent scheduled pauses may temporarily tighten the core cadence;
+- paused/idle core state can be slower;
+- auxiliary Monitor data uses its own cadence;
+- power/system/discovery data are intentionally slower;
+- commands/static lookups are event-driven.
 
-Exact timing values are implementation policy in `PollPolicy`, not architectural constants. Change them there with tests rather than duplicating timing values in additional timers.
+Exact milliseconds are implementation policy in `PollPolicy`, not architecture prose.
 
 ### Core coalescing
 
-`RequestCoalescer` permits one core request in flight and at most one queued forced follow-up. Repeated refresh requests while one is in flight collapse into one additional poll.
+`RequestCoalescer` permits one in-flight core request and at most one pending forced follow-up. Multiple refresh requests collapse rather than queueing unbounded network traffic.
 
-### Non-core de-duplication
+### Non-core request lanes
 
-`MoonrakerHttpTransport` keys ordinary JSON requests by `(owner, channel)`. A running request on the same channel is rejected unless replacement is explicitly requested.
+`MoonrakerHttpTransport.send_json()` identifies ordinary JSON traffic by `(owner, channel)`.
 
-This prevents timer-driven Monitor calls and repeated UI actions from stacking duplicate requests.
+A lane can have one running request. A caller must explicitly choose replacement if newer data supersedes the old request.
 
 ---
 
-## 9. Shared HTTP transport and observability
+## 9. Shared HTTP transport
 
 `MoonrakerHttpTransport` owns:
 
-- the active-printer `QNetworkAccessManager` / HTTP connection pool;
-- endpoint/API-key identity;
-- standard request headers;
-- transfer timeout where supported by the bundled Qt API;
+- one active-printer `QNetworkAccessManager`;
+- base URL and API key;
+- standard headers;
+- request construction;
+- supported transfer timeout handling;
 - JSON encoding/decoding;
 - Moonraker error conversion;
-- request IDs;
+- owner/channel request tracking;
+- cancellation by lane/owner/all;
 - transport generation;
-- owner/channel pending-request tracking;
-- request/channel/owner cancellation;
-- per-category request metrics.
+- request IDs;
+- per-category metrics.
 
-### Owner/channel convention
-
-Ordinary JSON traffic uses stable logical request identities such as:
+Example logical lanes:
 
 ```text
 core::status
 follower::metadata
 follower::scheduled-pause
-monitor::<channel>
+monitor::aux
+monitor::power-list
 output:<machine-id>::json
 ```
 
-Choose a stable owner/channel pair for new JSON operations so replacement and cancellation semantics are explicit.
+Choose stable owner/channel names for new operations so cancellation/replacement semantics remain obvious.
 
-### Metrics
+### Streaming and multipart exception
 
-For JSON traffic sent through `send_json()`, the transport records:
+`send_json()` is for ordinary JSON calls. Two operations legitimately manage reply objects directly:
+
+- streamed G-code downloads;
+- multipart uploads.
+
+They still build requests through `transport.request()` and send through `transport.network`. They do not create another manager.
+
+---
+
+## 10. Transport observability
+
+For JSON traffic, `MoonrakerHttpTransport` records per-category:
 
 - started count;
 - completed count;
 - failed count;
 - average elapsed time.
 
-Each completion is also debug-logged with request ID, category, channel, method, elapsed time and outcome. `MoonrakerClient.transport_metrics` exposes the aggregate metrics.
+Debug logging includes request ID, category, logical lane, HTTP method, elapsed time and outcome.
 
-Streaming downloads and multipart uploads share the same request builder/network pool but manage their own reply lifecycle and are not counted through the JSON metrics path.
+When diagnosing network load:
+
+1. identify which category is producing requests;
+2. identify owner/channel;
+3. check whether replacement/coalescing is expected;
+4. check whether printer state changed the cadence;
+5. confirm there is still only one core poll path.
+
+Do not add a second instrumentation layer that independently tracks connection state.
 
 ---
 
-## 10. Command acknowledgement model
+## 11. Command acknowledgement
 
-`CommandTracker` records:
+`CommandTracker` owns the lifecycle of commands whose completion is visible in shared printer state.
 
-- command name;
+A tracked command includes:
+
+- logical name;
 - expected printer states;
-- issue timestamp and timeout;
-- whether HTTP acceptance occurred;
-- terminal state;
-- outcome/detail.
+- issue time;
+- timeout;
+- accepted state;
+- terminal outcome/detail.
 
-Print controls such as Pause, Resume and Cancel define the printer states that confirm them. Scheduled PAUSE likewise expects an observed paused state.
+Typical flow:
 
-The UI may show an accepted/waiting state after HTTP success. Only a later shared core-status update produces confirmation.
+```mermaid
+sequenceDiagram
+    participant UI
+    participant Adapter
+    participant HTTP as Shared transport
+    participant Tracker as CommandTracker
+    participant Core as MoonrakerClient core poll
 
-When adding a command whose result is visible in shared printer state, use `CommandTracker`; do not declare success inside the HTTP callback.
+    UI->>Adapter: request Pause/Resume/Cancel/etc.
+    Adapter->>Tracker: issue(expected states)
+    Adapter->>HTTP: POST
+    HTTP-->>Adapter: accepted
+    Adapter->>Tracker: accepted
+    Note over UI,Tracker: UI may show "accepted; waiting..."
+    Core->>Tracker: observe printer state
+    Tracker-->>UI: confirmed / timed out / failed
+```
+
+If a new command has an observable state transition, use this model rather than inventing a local busy flag that calls HTTP success “done”.
 
 ---
 
-## 11. Public follower architecture
+## 12. `OperationContext`
+
+`OperationContext` is the authoritative lifecycle state for a current follower operation that spans remote resolution/download and Cura loading/indexing.
+
+Its phases are:
+
+- `IDLE`;
+- `RESOLVING`;
+- `DOWNLOADING`;
+- `CURA_LOADING`;
+- `INDEXING`;
+- `READY`;
+- `ERROR`.
+
+It also carries the relevant filename/job/local-path/start-time/message context.
+
+Use it for questions such as:
+
+- is a forced current-print load in progress?;
+- which file is being loaded into Cura?;
+- may a temporary cache directory be deleted now?;
+- did a download failure terminate the forced-load operation?;
+- which phase should Preview status expose?
+
+Do not recreate old boolean fields for force-load or Cura-load state alongside `OperationContext`.
+
+---
+
+## 13. Public follower and composition
 
 ### `MoonrakerPrintFollower.py`
 
-Tiny Cura-facing facade. It subclasses `FollowerCoordinator` and should remain intentionally small.
+Tiny public Cura-facing facade over `FollowerCoordinator`.
 
-Do not place implementation logic here.
+Keep it tiny. Do not put feature implementation here.
 
 ### `FollowerCoordinator.py`
 
-Composition/orchestration layer. It creates the authoritative domain services before runtime initialisation and exposes compatibility properties that redirect historical private attributes into those services.
+Cross-domain composition/orchestration layer.
 
-It coordinates cross-domain transitions such as:
+It creates the authoritative services and coordinates transitions that genuinely span domains, such as:
 
-- new print run -> clear old index/cache/pause state;
-- active printer change -> reset job/file state;
+- new print run -> invalidate old index/cache/pause state;
+- cache adoption/discard -> filesystem cleanup;
 - manual Preview movement -> detach following;
-- scheduled-pause state -> tighten/relax the core poll guard;
-- delayed Cura callbacks -> capture/check lifecycle token.
+- scheduled-pause proximity -> toggle shared core precision guard;
+- delayed Cura callback -> capture/check lifecycle token;
+- active session status -> route into follower observation when enabled.
 
-Do not turn the coordinator into a general implementation class. Policy that belongs to one domain should live in that domain's service.
+The coordinator does **not** expose historical service-state aliases. Runtime and transport code access the authoritative services directly.
+
+Do not turn the coordinator into a replacement monolith. Domain policy belongs in the relevant service or pure helper.
 
 ### `FollowerRuntime.py`
 
-Small concrete multiple-inheritance composition class. It declares follower signals/constants and combines focused runtime mixins.
+Small multiple-inheritance composition class. It declares the concrete follower's signals/constants and combines focused Cura-facing mixins.
 
-It is a composition boundary, not a place for networking or unrelated feature logic.
+It is a composition boundary, not an implementation dumping ground.
 
 ---
 
-## 12. Focused follower runtime mixins
+## 14. Focused follower runtime mixins
 
 | File | Primary responsibility |
 | --- | --- |
-| `FollowerBootstrap.py` | QObject/Extension setup, config/client construction, transient state, Cura signal wiring, timers, cache/temp roots |
-| `FollowerConfiguration.py` | per-printer configuration, active-machine transfer, Preview attach/detach, URL/preference/status helpers |
-| `CuraLifecycleRuntime.py` | scene/slicing lifecycle and lifecycle invalidation cleanup |
-| `CuraViewBridge.py` | bind/rebind `SimulationView` and Preview layer/path signals |
+| `FollowerBootstrap.py` | QObject/Extension setup, config/client creation, transient UI state, signals/timers/cache/temp roots |
+| `FollowerConfiguration.py` | per-printer configuration, active-machine switching, attach/detach, URL/preference/status helpers |
+| `CuraLifecycleRuntime.py` | scene/slicing lifecycle invalidation and cleanup |
+| `CuraViewBridge.py` | SimulationView binding/rebinding and layer/path signals |
 | `CuraFileLifecycle.py` | Cura `fileCompleted`, shutdown/deinitialisation, worker/signal/temp cleanup |
 | `PreviewFollowerRuntime.py` | Preview/toolhead behaviour and manual-view watch integration |
-| `PreviewStatus.py` | Preview/QML status-property publication |
-| `PreviewEta.py` | selected-layer/end-of-layer ETA calculation |
+| `PreviewStatus.py` | Preview/QML status property publication |
+| `PreviewEta.py` | selected-layer/end-of-layer ETA |
 | `PreviewControls.py` | Preview QML control creation/visibility/reparenting |
-| `PreviewLoad.py` | destructive current-print load confirmation and Cura load handoff |
-| `PreviewFollowEngine.py` | shared Moonraker status -> layer-follow orchestration |
-| `PathFollowEngine.py` | within-layer path progress and Z fallback |
+| `PreviewLoad.py` | destructive current-print load confirmation and Cura handoff |
+| `PreviewFollowEngine.py` | shared status -> remote-layer -> Preview orchestration |
+| `PathFollowEngine.py` | within-layer path application and Z fallback |
 | `GCodeIndexRuntime.py` | index/hydration worker mechanics around service-owned state |
-| `RemoteFileTransfer.py` | streaming reply/temp-file lifecycle |
+| `RemoteFileTransfer.py` | streamed reply and temporary-file lifecycle |
 
 ### Placement rule
 
-When adding follower behaviour, choose the mixin whose responsibility matches the change. If none fits, decide whether the new responsibility deserves a new focused mixin or a domain service.
+Put new behaviour in the mixin matching its responsibility. If no current responsibility fits, decide whether the change deserves:
 
-Do not place code in an arbitrary mixin simply because that mixin already has access to `self`.
+- a new focused mixin for Cura-facing orchestration; or
+- a new/purer domain service/helper.
+
+Do not put a method somewhere merely because that class has `self` access to everything.
 
 ### MRO rule
 
-A runtime method belongs to one focused mixin. Cross-mixin shadow implementations are architecture violations.
-
-### Import-closure rule
-
-Every relative mixin import declared by `FollowerRuntime.py` must correspond to a real packaged source file. Architecture tests protect this because byte-compilation alone does not prove imports exist.
+A method has one runtime-mixin implementation owner. Source tests enforce this.
 
 ---
 
-## 13. Domain services
+## 15. Domain services
 
 ### `RemoteJobService`
 
-Owns remote print-run identity and restart detection.
+Owns remote print-run identity and same-file restart detection.
 
 A job key is:
 
@@ -475,7 +601,7 @@ A job key is:
 (filename, file_size, serial)
 ```
 
-A new serial is produced when evidence indicates a new run, including transitions into active printing, filename/size changes, file-position rewind or significant print-duration rewind.
+The serial advances when evidence indicates a new run, including transitions into active printing, filename/size change, significant file-position rewind or print-duration rewind.
 
 Never use filename alone as print identity.
 
@@ -484,400 +610,523 @@ Never use filename alone as print identity.
 Owns:
 
 - `RemoteFileIdentity`;
-- which job metadata belongs to;
-- cached local G-code filename/path/job key.
+- which job the metadata identity belongs to;
+- cached local G-code filename;
+- cached local G-code path;
+- cached job key.
 
-It does not perform HTTP.
+It does not perform HTTP or filesystem deletion.
 
 ### `GCodeIndexService`
 
-Owns mutable index lifecycle state:
+Owns live mutable index lifecycle state:
 
 - generation;
 - installed filename/job key;
-- ranges;
+- layer ranges;
 - motion offsets;
 - current-layer map;
-- index data;
-- active build filename/job key/cancel event/thread;
-- hydrating-layer set/thread references.
+- `LayerMotionIndex` data;
+- current build filename/job/cancel event/thread;
+- active hydration layers/threads.
 
-`GCodeIndexRuntimeMixin` performs worker-thread mechanics, but lifecycle policy goes through `GCodeIndexService` methods.
-
-`GCodeIndex.py` is separate: it contains index algorithms, data structures, timing/motion helpers and persistent-cache logic rather than live Cura state.
+`GCodeIndexRuntimeMixin` performs worker mechanics but goes through service state/methods.
 
 ### `PreviewFollowerService`
 
 Owns:
 
-- whether Preview following is detached;
+- attached/detached following state;
 - expected current/minimum layer;
 - expected current/minimum path;
-- manual-override classification;
+- classification of manual Preview override;
 - the layer-decision write boundary into Cura.
-
-Preview orchestration routes follower layer decisions through this service rather than bypassing it.
 
 ### `PauseScheduleService`
 
-Owns the zero-based set of print-local end-of-layer pause targets and the add/remove/clear/due/imminent policy.
+Owns zero-based print-local pause targets and schedule/remove/clear/due/imminent policy.
 
-Pause targets are deliberately transient and are not part of persisted printer configuration.
+Targets are transient. They are not persisted in `PrinterConfig`.
 
 ### `CuraLifecycleBridge`
 
-Owns the Cura lifecycle generation and last invalidation reason.
+Owns Cura lifecycle generation and last invalidation reason.
 
-A delayed callback captures a token. If lifecycle invalidation occurs before execution, the token is stale and the callback is discarded.
+Delayed work captures a token; invalidation makes old tokens stale.
 
 ---
 
-## 14. Identity and stale-work model
+## 16. Identity and race-safety model
 
-There are several independent identity dimensions. Do not substitute one for another.
+Different identities solve different races.
 
-| Identity | Protects against | Owner |
+| Identity/generation | Protects against | Owner |
 | --- | --- | --- |
-| Cura machine ID | applying one Cura machine's configuration/state to another | configuration/orchestration layer |
-| `(base_url, api_key)` | stale authenticated state after endpoint/credential change | session/transport |
-| client generation | late core HTTP callback after client stop/restart | `MoonrakerClient` |
-| transport generation | late transport callback after reconfigure | `MoonrakerHttpTransport` |
-| lifecycle generation | late work after Cura scene/slicing/load replacement | `CuraLifecycleBridge` |
-| print job key `(filename, size, serial)` | same-filename reprints and old print callbacks | `RemoteJobService` |
-| `RemoteFileIdentity` | persistent index/cache reuse for a changed remote file | `RemoteFileService` / index cache |
-| index generation | cancelled/replaced build/hydration results | `GCodeIndexService` |
-| specialised request generation | superseded status/pause/Monitor callbacks | relevant adapter |
+| Cura machine ID | old machine config/state applied to newly selected machine | configuration/orchestration |
+| `(base_url, api_key)` | results obtained under old endpoint/credentials | session/transport |
+| client generation | late core HTTP result after client restart | `MoonrakerClient` |
+| transport generation | late request after transport reconfigure | `MoonrakerHttpTransport` |
+| Cura lifecycle generation | late scene/slicing/load callback | `CuraLifecycleBridge` |
+| print job key | same-file reprint / old print work | `RemoteJobService` |
+| remote file identity | persistent cache/index reuse for changed file | `RemoteFileService` + cache |
+| index generation | cancelled/replaced index work | `GCodeIndexService` |
+| specialised request generation | superseded pause/probe/Monitor request | relevant adapter |
 
-Most concurrency bugs in this project are identity mismatches. Before mutating live state from an asynchronous result, explicitly identify which rows are relevant.
+A callback often needs more than one guard. For example, scheduled PAUSE completion validates request generation, Cura lifecycle generation and print job key.
+
+Never replace a strong identity with a weaker one for convenience.
 
 ---
 
-## 15. Follower-specific Moonraker transport
+## 17. Follower-specific Moonraker I/O
 
 `FollowerTransportMixin` owns follower I/O that is not the generic core poll:
 
-- explicit status load/test resolution;
-- file metadata lookup;
-- streaming G-code request startup;
-- scheduled PAUSE request and acknowledgement bridge.
+- explicit status test/force-load resolution;
+- metadata lookup and its in-flight filename identity;
+- streamed G-code request startup plus its transient reply/download handles;
+- scheduled PAUSE HTTP/acknowledgement bridge.
 
-For the active connection it uses `self._client.transport`.
+It initializes those transient request/download fields itself through cooperative MRO construction. `FollowerBootstrapMixin` must not become a shadow owner for them. `RemoteFileTransferMixin` owns the streamed reply processing/cleanup behaviour while operating on the transfer state initialized by `FollowerTransportMixin`.
 
-When an explicit probe targets a different unsaved identity, it uses an isolated transport so the live session is not reconfigured.
+For the active identity it always uses `self._client.transport`.
 
-Specialised replies carry lifecycle/job/request identity guards before applying results.
+For candidate/alternate credentials it may use a dedicated isolated `MoonrakerHttpTransport` so the live session is not rebound.
 
----
+The mixin reads authoritative state directly from:
 
-## 16. Remote file download and cache flow
+- `RemoteJobService`;
+- `RemoteFileService`;
+- `GCodeIndexService`;
+- `PreviewFollowerService`;
+- `CuraLifecycleBridge`;
+- `OperationContext`.
 
-Large remote G-code must not be accumulated in Python memory.
-
-`FollowerTransportMixin._begin_gcode_download()`:
-
-1. creates a per-job temporary file target;
-2. builds the request through shared `MoonrakerHttpTransport.request()`;
-3. sends it through shared `transport.network`;
-4. applies a bounded reply buffer;
-5. connects `readyRead` for streaming writes;
-6. captures Cura lifecycle generation and print job key.
-
-`RemoteFileTransferMixin`:
-
-- drains bytes incrementally;
-- rejects stale lifecycle/job replies;
-- verifies downloaded size when metadata provides one;
-- adopts cached file identity through `RemoteFileService`;
-- cleans or defers cleanup of per-job temp directories;
-- hands the file to forced Cura load or index build.
+Do not reintroduce `_remote_job_key`, `_remote_file_identity`, `_following_paused`, `_lifecycle_generation` or equivalent mirrored aliases.
 
 ---
 
-## 17. G-code indexing and persistent cache
+## 18. Remote metadata and file identity
 
-`GCodeIndex.py` provides parsing/index algorithms, layer timing information, motion offsets, compact indexes and persistent-cache serialization.
+Metadata is used to strengthen `RemoteFileIdentity` for safe cache/index reuse.
 
-`GCodeIndexRuntimeMixin` runs heavy builds/hydration in worker threads while `GCodeIndexService` owns which generation/build/hydration is current.
+Flow:
 
-### Index validity
+1. observe current filename/size from shared status;
+2. check whether `RemoteFileService` already has suitable identity for the current job;
+3. request metadata through shared transport if needed;
+4. validate lifecycle generation and job key on completion;
+5. parse/set strong identity on success;
+6. on metadata failure, fall back to weaker non-persistable identity where safe;
+7. continue live following rather than making metadata an availability dependency.
 
-An index is tied to the identities relevant to its creation and reuse, including:
+The shared transport owns the real JSON request/reply lane. Follower metadata keeps only the logical pending filename needed for de-duplication; it does not fabricate a second reply object or mirror transport request state.
 
-- index generation;
-- filename;
-- print job key;
-- remote file identity for persistent reuse;
-- Cura lifecycle generation for worker completion.
+Metadata is an optimisation and identity-strengthening mechanism, not a prerequisite for basic printing/monitoring.
 
-### Compact indexes
+---
 
-Large persistent indexes may store compact layer ranges. The active layer is hydrated on demand and nearby work may be pre-hydrated.
+## 19. Remote G-code streaming
 
-While a compact layer is not hydrated, path progress is held at the layer start rather than using a coarse estimate that could later visibly rewind when exact offsets arrive.
+Large G-code must never be buffered as one Python response body.
+
+### Request startup (`FollowerTransportMixin`)
+
+1. create a per-job temporary target;
+2. build the download request with shared `transport.request()`;
+3. send with shared `transport.network`;
+4. set a bounded network read buffer where supported;
+5. capture lifecycle generation and job key locally for the completion callback;
+6. connect `readyRead` and `finished`.
+
+### Reply lifecycle (`RemoteFileTransferMixin`)
+
+- drain chunks incrementally to disk;
+- reject stale lifecycle/job results;
+- close/flush the target;
+- verify byte size when metadata supplies one;
+- adopt the cache through `RemoteFileService`;
+- hand off to forced Cura load or index build;
+- clean the job temp directory when safe;
+- defer deletion while Cura is still parsing that path.
+
+`RemoteFileTransferMixin` uses `OperationContext` to determine whether a file is part of an active force-load/Cura-load operation.
+
+---
+
+## 20. G-code indexing architecture
+
+### `GCodeIndex.py`
+
+Pure/data-heavy indexing layer containing:
+
+- `LayerMotionIndex`;
+- slicer layer-marker parsing;
+- current-layer mapping;
+- motion offsets/coordinates;
+- file-position fraction;
+- live-position refinement;
+- monotonic progress floor support;
+- compact large-file indexes;
+- layer hydration;
+- persistent cache serialization/pruning.
+
+It is a normal package module and uses package-relative imports. Tests import it as `plugins.GCodeIndex`.
+
+### `GCodeIndexService.py`
+
+Live authoritative index lifecycle state.
+
+### `GCodeIndexRuntime.py`
+
+Worker/thread orchestration:
+
+- start/cancel index builds;
+- emit/consume completion signals;
+- hydrate compact layers;
+- persist cache asynchronously;
+- guard completion with lifecycle/job/index identities.
+
+### Compact large-file behaviour
+
+For large files, boundary/index data can be kept compact and exact motion data hydrated only for active/nearby layers.
+
+While a compact layer is awaiting hydration, visible path progress is held at a safe position rather than using a coarse estimate that could later rewind when exact offsets arrive.
 
 ### Persistent cache
 
-Persistent reuse requires a sufficiently strong `RemoteFileIdentity`. Cache writes happen off the UI thread.
+Persistent reuse requires a sufficiently strong `RemoteFileIdentity`. Cache writes are off the UI thread and atomic replacement is used where applicable.
 
 ---
 
-## 18. Preview following pipeline
+## 21. Shared core-status data flow
+
+```mermaid
+sequenceDiagram
+    participant Timer as MoonrakerClient timer
+    participant Client as MoonrakerClient
+    participant Session as MoonrakerSession
+    participant HTTP as MoonrakerHttpTransport
+    participant Coordinator as FollowerCoordinator
+    participant Monitor as Monitor model
+
+    Timer->>Client: poll
+    Client->>Session: coalescer.begin(core)
+    Client->>HTTP: shared core query
+    HTTP-->>Client: JSON status
+    Client->>Session: merge status snapshot
+    Client-->>Coordinator: statusReceived(status)
+    Client-->>Monitor: statusReceived(status)
+    Coordinator->>Coordinator: print/layer/path/pause observation
+    Monitor->>Monitor: display/update core fields
+    Client->>Session: coalescer.complete(core)
+```
+
+Preview/Monitor see the same logical core observation. They do not independently ask “what is the printer doing now?”
+
+---
+
+## 22. Preview following pipeline
 
 High-level flow:
 
 ```text
 shared core status
- -> update remote print-run identity
- -> resolve metadata/cache/index requirements
+ -> identify print run
+ -> establish metadata/file/index needs
  -> resolve physical remote layer
- -> evaluate scheduled PAUSE state
- -> if detached: stop Preview movement but keep printer observation
- -> defer while Cura is slicing/rebuilding
- -> map remote layer to Cura layer
- -> FollowController decides visible layer window/mode
- -> PreviewFollowerService writes layer decision
- -> PathFollowEngine refines within-layer progress
- -> remember expected follower-written Preview position
+ -> observe scheduled-pause crossing
+ -> if detached, stop Preview writes but continue observation
+ -> defer while Cura is rebuilding/slicing
+ -> FollowController decides visible layer range/mode
+ -> PreviewFollowerService writes the layer decision
+ -> PathFollowEngine applies within-layer progress
+ -> remember follower-written expected Preview position
  -> update ETA/toolhead/status
 ```
 
 ### Layer resolution priority
 
-1. Moonraker explicit current-layer state;
-2. G-code current-layer mapping if available;
-3. configured layer-number conversion;
-4. optional Z-height fallback when needed.
+1. explicit Moonraker layer information;
+2. G-code current-layer map when available;
+3. configured one-based/zero-based conversion;
+4. optional Z-height fallback.
 
-### Manual Preview override
+### `FollowController`
 
-Follower-written Preview positions are remembered. If Cura's actual layer/path later diverges outside the expected follower update, the user is considered to have manually changed Preview and following detaches.
+Pure follower intent state machine. It decides whether following may write Preview and how layer visibility behaves for exact/completed/lookahead/window modes.
 
-Detaching does **not** stop Moonraker polling or physical layer observation. Scheduled PAUSE and remote timing state continue to operate.
+Do not bury these pure policy decisions in QML or transport callbacks.
 
-### Within-layer path following
+---
 
-`PathFollowEngineMixin` combines:
+## 23. Within-layer path following
+
+`PathFollowEngineMixin` uses service-owned state directly.
+
+Inputs can include:
 
 - `virtual_sdcard.file_position`;
 - indexed motion offsets;
-- optional `motion_report.live_position` converted into G-code coordinate space;
-- Cura path count.
+- live physical tool position from `motion_report` converted into G-code space;
+- Cura's number of visible paths.
 
-Within one layer the displayed path fraction is monotonic. This prevents repeated or closed geometry from making Cura visibly rewind and retrace.
+The visible fraction is monotonic within a layer. This matters because closed/repeated geometry can make the physical XYZ position match an earlier segment; without a monotonic floor, Preview can visibly jump backwards and retrace.
+
+If exact compact-layer motion data is not hydrated yet, path application waits/holds rather than guessing ahead and later rewinding.
 
 ---
 
-## 19. Scheduled end-of-layer PAUSE
+## 24. Preview attachment and manual override
 
-Pause targets are zero-based internally and belong only to the current print.
+`PreviewFollowerService` remembers the Preview layer/path values written by the follower.
 
-A target becomes due only after Moonraker advances to a strictly later layer. Reaching the target layer itself must never pause at its beginning.
+A manual override is detected when Cura's observed Preview values diverge from the expected follower-written state outside a follower update.
 
-If polling skips across multiple scheduled targets, the crossed targets are consumed together and one PAUSE command is sufficient.
+On manual change:
 
-### Precision polling
+1. mark following detached;
+2. invalidate toolhead path display as appropriate;
+3. update `FollowController` to user-override state;
+4. remember the user's current Preview state;
+5. update Preview controls/status.
 
-When a target is imminent, `PauseScheduleService.is_imminent()` enables the shared session pause guard. `PollPolicy` temporarily tightens core polling without permanently increasing normal request load.
+Detaching Preview does **not** stop shared polling, print-run observation, ETA state or scheduled-PAUSE evaluation.
+
+This separation is important: “do not move Cura Preview” is not the same as “stop observing the printer.”
+
+---
+
+## 25. Scheduled end-of-layer PAUSE
+
+Targets are zero-based internally and scoped to the current print run.
+
+A pause becomes due only when Moonraker has advanced to a layer strictly greater than the target. Reaching the target layer itself must never pause at its beginning.
+
+If polling jumps across more than one scheduled target, crossed targets can be consumed together; one PAUSE is sufficient because the printer will already stop.
+
+### Precision guard
+
+When a target is imminent, `PauseScheduleService.is_imminent()` enables the shared session pause guard. `PollPolicy` temporarily tightens the **existing core poller**.
+
+It does not create a dedicated pause poll loop.
 
 ### Command path
 
-The command is sent as normal Klipper G-code through the shared transport's command category.
+The adapter sends normal Klipper `PAUSE` through the shared command transport.
 
-Its HTTP completion callback validates:
+The HTTP completion validates:
 
-- scheduled-pause request generation;
-- Cura lifecycle generation;
-- print job key.
+- scheduled request generation;
+- current Cura lifecycle generation;
+- current print job key.
 
-HTTP success marks the command accepted. Shared status must subsequently observe the paused state before it is confirmed.
-
----
-
-## 20. Force-load current print
-
-Force-load is deliberately destructive and follows Cura's supported load lifecycle.
-
-1. ensure/switch to Preview;
-2. ask the user for confirmation through Cura/Qt UI;
-3. defer destructive work to the event loop;
-4. use shared active status when the requested credentials match the active session;
-5. reuse cached or in-flight G-code when possible;
-6. stream the file if needed;
-7. suspend follower Preview writes while Cura parses;
-8. call Cura's public local-file load path without adding the temporary file to recent files;
-9. complete on Cura `fileCompleted`;
-10. then rebuild/restore path-index work.
-
-Do not manipulate Cura's scene directly to bypass its file-loading lifecycle.
+HTTP success marks acceptance. Only shared status observing `paused` confirms the command.
 
 ---
 
-## 21. Cura lifecycle and shutdown
+## 26. Force-load current print
 
-`CuraLifecycleRuntimeMixin` reacts to structural lifecycle events such as:
+Force-loading the running G-code into Cura is intentionally treated as a destructive Cura file-load operation.
 
-- scene-root child changes;
+Conceptual flow:
+
+1. ensure/switch to Preview where appropriate;
+2. ask user confirmation;
+3. defer destructive work to the Qt event loop;
+4. resolve active print from shared status (or isolated probe for a different candidate identity);
+5. use compatible cached/in-flight G-code when available;
+6. stream the file if required;
+7. update `OperationContext` to Cura-loading state;
+8. suspend follower Preview writes while Cura parses;
+9. call Cura's supported local-file load API with `add_to_recent_files=False`;
+10. complete from Cura's `fileCompleted` lifecycle;
+11. restore/rebuild index/follow state as appropriate.
+
+Do not mutate Cura's scene manually to bypass its supported file lifecycle.
+
+---
+
+## 27. Cura lifecycle and stale callback protection
+
+`CuraLifecycleRuntimeMixin` handles structural events such as:
+
+- scene structure replacement;
 - slicing start/cancel/finish;
-- active view/main-window replacement;
-- active-printer change through configuration orchestration.
+- load-related transitions;
+- other Cura events that invalidate assumptions held by delayed work.
 
-`CuraLifecycleBridge.invalidate()` increments the lifecycle generation before stale delayed work can mutate the new scene.
+`CuraLifecycleBridge.invalidate(reason)` increments the generation first. Work captured under the old token becomes stale.
 
-`CuraFileLifecycleMixin` owns shutdown/deinitialisation. Core polling is stopped through `MoonrakerClient`.
+`FollowerCoordinator._queue_lifecycle_callback()` captures the bridge token and discards the callback if lifecycle changed before execution.
 
-Shutdown cleans or disconnects:
+### Shutdown
+
+`CuraFileLifecycleMixin` owns deinitialisation and cleans/disconnects:
 
 - manual Preview watch timer;
-- lifecycle/network work;
-- index/hydration/cache worker references;
 - shared client;
+- network/request work;
 - SimulationView signals;
 - scene/backend/application signals;
+- worker references;
 - Preview controls;
-- temporary files/directories.
+- temp files/directories.
 
-Blocking thread joins are reserved for shutdown rather than ordinary interactive lifecycle changes.
+Blocking thread joins are acceptable during final shutdown, not normal interactive state transitions.
 
 ---
 
-## 22. Monitor architecture
+## 28. Monitor architecture
 
-The Monitor is layered:
+The production Monitor inheritance chain is:
 
 ```text
 MoonrakerMonitorModel.py
-  -> MoonrakerMonitorSession.py
-    -> MoonrakerMonitorRuntime.py
-      -> MoonrakerMonitorControls.py
-        -> MoonrakerMonitorTypedControls.py
+  -> MoonrakerMonitorRuntime.py
+    -> MoonrakerMonitorControls.py
+      -> MoonrakerMonitorTypedControls.py
 ```
 
-### Base model
+There is no separate Monitor session-wrapper layer.
 
-The base model contains presentation/parsing and generic fallback HTTP helpers. It is not the production shared-session boundary by itself.
+### `MoonrakerMonitorModel.py`
 
-### `MoonrakerMonitorSession.py`
+The base Monitor model is itself shared-session-native. It owns:
 
-Production networking adapter. It:
+- generic Monitor presentation/parsing;
+- consumption of `follower.client.statusReceived` for core printer state;
+- Monitor request-generation invalidation;
+- shared-transport JSON helper for peripheral channels;
+- mapping channels to `RequestCategory`;
+- adaptive auxiliary/power/system/discovery timers using shared `PollPolicy`;
+- metadata-based Monitor ETA fallback;
+- webcams/power/system/peripheral parsing;
+- shared command acknowledgement for Pause/Resume/Cancel.
 
-- keeps the base core timer inactive;
-- consumes the shared `MoonrakerClient.statusReceived` stream;
-- routes peripheral JSON through `MoonrakerHttpTransport`;
-- maps Monitor channels to `RequestCategory`;
-- cancels requests by Monitor owner;
-- adapts peripheral timer intervals through `PollPolicy`;
-- uses shared `CommandTracker` for stateful print controls;
-- binds the base network reference to the shared transport manager.
+It has no private `QNetworkAccessManager` and no independent core status endpoint poller.
 
-### Higher Monitor layers
+### `MoonrakerMonitorRuntime.py`
 
-- `MoonrakerMonitorRuntime.py`: follower-aware layer interpretation;
-- `MoonrakerMonitorControls.py`: advanced live controls/runtime metadata;
-- `MoonrakerMonitorTypedControls.py`: typed macro parameters, PWM, MCU, bed mesh and higher-level controls.
+Adds follower-aware physical/current-layer interpretation. It reads the public `follower.gcode_index` service boundary instead of follower-private index aliases.
+
+### `MoonrakerMonitorControls.py`
+
+Adds richer live controls, runtime state and control behaviour.
+
+### `MoonrakerMonitorTypedControls.py`
+
+Adds typed macros, PWM, MCU statistics, remembered webcams, bed mesh and higher-level typed controls.
 
 ### Adding Monitor data
 
-- core/high-frequency printer state -> extend the shared core query deliberately;
-- Monitor-only peripheral/discovery data -> shared-transport Monitor channel with the correct category;
-- presentation only -> appropriate higher Monitor layer/QML.
+- high-frequency/core printer state -> extend shared core query deliberately;
+- Monitor-only peripheral/discovery -> add a Monitor shared-transport channel with correct category;
+- derived display state -> appropriate Monitor model layer;
+- presentation -> QML.
 
-Do not activate an independent core poller.
+Never create another core timer/network manager.
 
 ---
 
-## 23. Output/upload architecture
+## 29. Output/upload architecture
 
-The output path is layered:
+The production output inheritance chain is:
 
 ```text
 MoonrakerOutputDevice.py
   -> MoonrakerOutputDeviceLifecycle.py
-    -> MoonrakerOutputSession.py
 ```
 
-`MoonrakerOutputDevicePlugin.py` instantiates the final session-aware output class and installs the final Monitor model.
+`MoonrakerOutputDevicePlugin.py` instantiates the lifecycle-enhanced class directly. There is no output session-wrapper layer.
 
-### Base output device
+### `MoonrakerOutputDevice.py`
 
-Owns Cura writer/output mechanics, multipart upload, basic output operations and output presentation.
+Owns:
 
-### Lifecycle layer
+- Cura output-device integration;
+- G-code/UFP writer selection;
+- upload naming/path options;
+- power-on/readiness orchestration;
+- ordinary output JSON requests through `follower.transport.send_json()`;
+- request construction through shared transport;
+- multipart upload through `transport.network.post()`;
+- upload progress/result UI;
+- reuse of shared client status as readiness evidence;
+- output transport-owner cancellation during cleanup.
 
-Adds re-entrancy-safe dialog/write completion and remote upload-directory discovery.
+It does not create its own `QNetworkAccessManager`.
 
-### `MoonrakerOutputSession.py`
+### `MoonrakerOutputDeviceLifecycle.py`
 
-Shared-session adapter. It:
+Adds:
 
-- routes ordinary JSON through the shared transport;
-- builds multipart requests using shared transport request construction;
-- uses the shared network manager for multipart traffic;
-- may treat existing shared connected/status state as readiness evidence;
-- uses the established readiness flow through its shared `_json_request` override when additional checks are required;
-- cancels its transport owner during cleanup;
-- binds the base network reference to the shared transport manager.
+- re-entrancy-safe Cura write completion;
+- deferred upload-dialog teardown;
+- exactly-once terminal write signalling;
+- remote writable upload-directory discovery;
+- folder option publication.
 
-New output functionality must use this shared path rather than creating another Moonraker client/session.
+### Output rule
+
+New output functionality extends this chain and shared transport. It does not create another Moonraker session, client or compatibility subclass.
 
 ---
 
-## 24. Connection testing and isolated probes
+## 30. Connection tests and isolated probes
 
-Testing unsaved endpoint/API-key values is intentionally isolated.
+Candidate credentials cannot safely reuse the **identity** of the live transport because testing them would rebind/cancel the current printer.
 
-`MoonrakerFollowerMachineAction` uses a separate `MoonrakerHttpTransport` instance for candidate credentials. The live session is not rebound.
+`MoonrakerFollowerMachineAction` therefore uses an isolated `MoonrakerHttpTransport` for candidate endpoint/API-key tests.
 
-The follower may also use an isolated status probe when explicit requested credentials differ from the active transport identity.
+Follower explicit probing can use the same pattern when requested credentials differ from the active transport identity.
 
 The rule is:
 
-> Reuse the transport implementation, not the live connection identity.
+> Reuse the transport implementation; isolate the candidate identity.
+
+An isolated probe is not a second production poller and must not become a source of live session state.
 
 ---
 
-## 25. QML and Cura API boundaries
+## 31. QML and Cura API boundary
 
-QML is a presentation/interaction adapter.
-
-Important surfaces include:
+QML surfaces include:
 
 - follower configuration;
 - Preview action controls;
 - empty-Preview controls;
-- Monitor dashboard and bed-mesh views;
+- Monitor views/dashboard/bed mesh;
 - upload dialog.
 
-QML may bind Python properties and invoke exposed actions. It must not own polling, construct Moonraker request URLs, retain hidden command state or implement print-run identity.
+QML may:
 
-Compatibility with the supported Cura/Qt/SDK range is defined by package/plugin metadata and guarded by source/CI compatibility tests. When compatibility policy changes, update those authoritative declarations and tests rather than duplicating numeric ranges here.
+- bind Python properties;
+- render models;
+- invoke exposed slots/actions;
+- manage presentation-local temporary values.
 
----
+QML must not:
 
-## 26. Error handling and graceful degradation
+- poll Moonraker;
+- own command acknowledgement;
+- construct transport URLs for business logic;
+- identify print runs;
+- maintain domain state independently from Python.
 
-Moonraker/Klipper installations differ. Optional capabilities must fail soft.
-
-Examples:
-
-- metadata lookup failure -> weaker non-persistent file identity;
-- missing motion-report data -> less precise path refinement, not broken layer following;
-- missing explicit current-layer state -> optional Z fallback;
-- missing heater/fan/sensor/macro/webcam objects -> omit those capabilities rather than failing Monitor;
-- failed automatic Preview-stage switching -> connection/following state remains usable.
-
-An optimisation failure must not destabilise Cura.
+Cura/Qt compatibility constraints are enforced by metadata and tests. Optional newer APIs must remain capability-guarded where required by supported SDK versions.
 
 ---
 
-## 27. Threading model
+## 32. Threading model
 
 ### Qt/UI thread
 
 Owns:
 
 - QObject/QML manipulation;
-- network reply callbacks;
-- shared session orchestration;
+- normal network callbacks;
+- session/client orchestration;
 - Preview writes;
 - user-visible state.
 
@@ -885,455 +1134,613 @@ Owns:
 
 Used for:
 
-- G-code index builds;
+- G-code index building;
 - compact layer hydration;
 - persistent index-cache writes.
 
-Workers must never mutate Cura/QML objects directly. Return through signals or lifecycle/identity-guarded callbacks.
+Workers must not mutate Cura/QML objects directly.
 
-### Cancellation
+### Worker return path
 
-Ordinary lifecycle changes use cooperative cancellation plus generation invalidation. Shutdown may briefly join workers because the plugin object is being destroyed.
+A worker result must be applied only after validating relevant:
+
+- lifecycle generation;
+- job/file identity;
+- index generation/build identity.
+
+Generation invalidation is preferred to blocking cancellation during normal interaction.
 
 ---
 
-## 28. Extension guide
+## 33. Graceful degradation
 
-### Need another core printer field?
+Moonraker/Klipper installations differ. Optional features must fail soft.
 
-Extend the shared status endpoint/query and consume the new field from `MoonrakerClient`'s shared status stream.
+Examples:
 
-### Need Monitor-only peripheral data?
+- metadata failure -> weaker non-persistent file identity;
+- missing `motion_report` -> less precise path refinement;
+- missing explicit layer -> configured conversion/Z fallback where possible;
+- absent optional heaters/fans/sensors/macros/webcams -> omit those capabilities;
+- failed automatic Preview switching -> keep core connection usable;
+- unavailable persistent index -> build from streamed file;
+- unavailable exact compact-layer motions -> hold safe path position while hydrating.
 
-Add a shared-transport Monitor channel and classify it with `RequestCategory`.
+An optimisation failure must not destabilise Cura or stop unrelated monitoring.
 
-### Need a new printer command?
+---
 
-If completion is observable in shared status:
+## 34. Module ownership map
 
-1. issue through shared transport;
-2. register expected states in `CommandTracker`;
+### Core/session/protocol
+
+| File | Role |
+| --- | --- |
+| `Core.py` | small pure shared primitives including `OperationContext`, `RemoteFileIdentity`, pause/Preview helpers |
+| `MoonrakerProtocol.py` | Moonraker endpoint/payload/coordinate helpers |
+| `MoonrakerSession.py` | pure session state/policy plus transport binding |
+| `MoonrakerTransport.py` | shared Qt HTTP transport/pool |
+| `MoonrakerClient.py` | shared core poll loop and signals |
+| `FollowController.py` | pure follower intent state machine |
+
+### Follower composition and services
+
+| File | Role |
+| --- | --- |
+| `MoonrakerPrintFollower.py` | tiny public facade |
+| `FollowerCoordinator.py` | service composition/cross-domain orchestration |
+| `FollowerRuntime.py` | focused runtime-mixin composition |
+| `FollowerTransport.py` | follower-specific Moonraker I/O adapter and transient request/download state initialization |
+| `RemoteJobService.py` | print-run identity |
+| `RemoteFileService.py` | file/cache identity |
+| `GCodeIndexService.py` | live index lifecycle state |
+| `PreviewFollowerService.py` | Preview attachment/expected writes |
+| `PauseScheduleService.py` | print-local pause schedule |
+| `CuraLifecycleBridge.py` | lifecycle generation |
+
+### Follower runtime
+
+Use the responsibility table in section 14. Runtime mixins orchestrate Cura-facing work but must not become alternate owners of the service state above.
+
+### G-code/index/data
+
+| File | Role |
+| --- | --- |
+| `GCodeIndex.py` | parsing/index algorithms and persistent index cache |
+| `GCodeIndexRuntime.py` | worker mechanics |
+| `DownloadStream.py` | incremental download target abstraction |
+| `RemoteFileTransfer.py` | streamed reply/temp lifecycle |
+| `PathFollowEngine.py` | live within-layer mapping |
+
+### Monitor
+
+| File | Role |
+| --- | --- |
+| `MoonrakerMonitorModel.py` | shared-session-native base Monitor model + peripheral transport |
+| `MoonrakerMonitorRuntime.py` | follower-aware layer mapping |
+| `MoonrakerMonitorControls.py` | live control layer |
+| `MoonrakerMonitorTypedControls.py` | typed/advanced control layer |
+| Monitor QML files | presentation |
+
+### Output
+
+| File | Role |
+| --- | --- |
+| `MoonrakerOutputDevice.py` | shared-transport-native Cura output/upload implementation |
+| `MoonrakerOutputDeviceLifecycle.py` | safe write/dialog/folder lifecycle extension |
+| `MoonrakerOutputDevicePlugin.py` | active-machine output/Monitor installation |
+| `MoonrakerUploadDialog.qml` | presentation |
+
+### Configuration/UI
+
+| File | Role |
+| --- | --- |
+| `PrinterConfig.py` | typed per-printer persisted configuration |
+| `MoonrakerFollowerMachineAction.py` | settings backend + isolated connection test |
+| `MoonrakerFollowerConfiguration.qml` | settings presentation |
+| Preview QML files | Preview controls presentation |
+
+---
+
+## 35. Adding functionality: decision guide
+
+### Need another high-frequency printer field?
+
+Extend the shared core query and consume it from the shared status snapshot. Do not create a new poller.
+
+### Need Monitor-only data?
+
+Use `MoonrakerMonitorModel._json_request()`/shared transport with an appropriate `RequestCategory` and cadence.
+
+### Need a new stateful printer command?
+
+1. issue via shared transport;
+2. register expected state(s) in `CommandTracker`;
 3. mark HTTP acceptance separately;
-4. confirm from shared status;
-5. expose accepted/confirmed/failed/timed-out UI states.
+4. confirm from shared core status;
+5. surface pending/confirmed/failure states.
 
-### Need new Preview-follow policy?
+### Need a stateless command?
 
-Pure layer/window decisions belong in `FollowController` or another pure helper. Live orchestration belongs in `PreviewFollowEngineMixin`. Attachment/expected-position state belongs in `PreviewFollowerService`.
+Use the shared transport command category. If there is no observable completion state, HTTP result may be the terminal protocol result, but do not invent a fake confirmation.
 
-### Need another path estimator?
+### Need new print-run state?
 
-Pure motion/index math belongs in `GCodeIndex.py`; live Cura path application belongs in `PathFollowEngineMixin`. Preserve monotonic within-layer progress.
+First ask whether it belongs inside `RemoteJobService`. Do not store another filename/serial tuple in a runtime mixin.
 
-### Need remote file behaviour?
+### Need new remote file/cache state?
 
-- Moonraker request orchestration -> `FollowerTransportMixin`;
-- file/cache identity -> `RemoteFileService`;
-- streaming reply/temp-file lifecycle -> `RemoteFileTransferMixin`;
-- index lifecycle -> `GCodeIndexService` + `GCodeIndexRuntimeMixin`.
+Use/extend `RemoteFileService`. Network work remains in `FollowerTransportMixin`; filesystem/reply mechanics remain in `RemoteFileTransferMixin`.
 
-### Need another background index operation?
+### Need new indexing policy/math?
 
-Make `GCodeIndexService` own its active state/generation. Keep worker mechanics in `GCodeIndexRuntimeMixin` unless the work can be made fully pure.
+- pure parsing/math -> `GCodeIndex.py`;
+- live index state -> `GCodeIndexService`;
+- thread orchestration -> `GCodeIndexRuntimeMixin`.
+
+### Need new Preview follow policy?
+
+- pure layer/mode decision -> `FollowController` or another pure helper;
+- attachment/expected-position state -> `PreviewFollowerService`;
+- live status orchestration -> `PreviewFollowEngineMixin`;
+- within-layer path application -> `PathFollowEngineMixin`.
+
+### Need a new long-running follower operation?
+
+Consider whether it should be represented as an `OperationContext` phase/field instead of adding boolean flags.
 
 ### Need a Cura lifecycle hook?
 
-Put structural lifecycle handling in `CuraLifecycleRuntimeMixin` and invalidate/guard with `CuraLifecycleBridge` whenever old callbacks could become unsafe.
+Use the appropriate Cura runtime mixin and invalidate/capture `CuraLifecycleBridge` whenever old callbacks could become unsafe.
 
-### Need upload behaviour?
+### Need output/upload behaviour?
 
-Use the output chain and shared transport. Do not create another Moonraker client.
+Extend the output chain and shared transport.
 
-### Need a new persisted option?
+### Need a new persisted setting?
 
-Use `PrinterConfig` / `PrinterConfigStore`.
+Use `PrinterConfig`/`PrinterConfigStore`.
+
+### Need to test unsaved credentials?
+
+Use an isolated instance of `MoonrakerHttpTransport`; do not rebind the live session.
 
 ---
 
-## 29. Anti-patterns
+## 36. Anti-patterns rejected by architecture
 
-Do not introduce any of the following without an explicit architecture decision:
+Do not introduce:
 
-- WebSockets beside the HTTP model;
+- WebSockets alongside the HTTP live-state model;
 - a second production core poller;
-- a second active-printer HTTP manager for ordinary Moonraker traffic;
-- direct Moonraker request construction inside focused follower runtime mixins;
-- duplicate mutable domain state outside its authoritative owner;
+- another active-printer `QNetworkAccessManager` for ordinary Moonraker traffic;
+- Monitor/output session-wrapper subclasses whose only purpose is to redirect to the shared transport;
+- duplicated service state under private compatibility properties;
+- top-level/relative dual-import fallback shims in production modules;
+- follower transport request/reply fields initialized in `FollowerBootstrap.py` or a second post-construction transport initializer;
 - filename-only print identity;
 - service wrappers that own the same state as another service;
-- declaring stateful commands successful on HTTP acceptance alone;
-- blocking waits or sleeps in Cura callbacks;
-- worker threads mutating Cura/QML objects;
-- async callbacks without relevant identity/generation checks;
-- the same runtime method implemented by multiple follower mixins;
-- implementation logic in the public facade;
-- concentrating unrelated follower behaviour back into `FollowerRuntime.py`;
-- persistent scheduled-pause layer numbers;
+- direct success for stateful commands on HTTP acceptance;
+- blocking waits/sleeps in Cura callbacks;
+- worker-thread Cura/QML mutation;
+- asynchronous mutation without relevant identity checks;
+- duplicate runtime-mixin method implementations;
+- domain/business logic in the public facade;
+- unrelated behaviour accumulated in `FollowerRuntime.py` or the coordinator;
+- persisted scheduled-pause layer numbers;
 - whole-file remote G-code buffering;
-- QML transport/protocol state machines.
+- QML-owned transport/business state machines.
+
+When a source architecture test fails on one of these, assume it found a real problem until proven otherwise.
 
 ---
 
-## 30. Testing strategy
+## 37. Testing architecture
 
-The test suite deliberately combines pure behavioural tests and source-architecture contracts.
+The suite combines behavioural tests and source contracts because Cura/Qt integration boundaries are not all practical to instantiate in a headless unit test.
 
-### Deterministic Moonraker model
+### Pure behavioural tests
 
-`tests/fake_moonraker.py` provides an in-process scripted Moonraker model with no sockets, threads or wall clock. It is used for state progression, command acknowledgement, scheduled PAUSE and long-running-print behaviour.
+Prefer pure tests for:
 
-### Behavioural architecture coverage
+- polling policy;
+- request coalescing;
+- command tracker;
+- remote job identity/restart detection;
+- pause scheduling/due semantics;
+- `OperationContext` transitions;
+- G-code parsing/indexing;
+- path-refinement math;
+- persistent index cache.
 
-Tests cover:
+### Deterministic fake Moonraker
 
-- category/state-aware polling;
-- pause precision guard;
-- core coalescing;
-- endpoint/API-key rebind reset;
-- command acceptance vs observed confirmation;
-- deterministic command timeout;
-- scheduled PAUSE progression;
-- same-filename restart identity;
-- long-print shared snapshot progression;
-- stale lifecycle callback rejection;
-- session generation/state invalidation;
+`tests/fake_moonraker.py` models scripted status progression without sockets, threads or wall clock.
+
+It is used for:
+
+- shared snapshot progression;
+- command acceptance/confirmation;
+- scheduled PAUSE behaviour;
+- long-running print simulations.
+
+### Race/lifecycle tests
+
+Tests should cover:
+
+- endpoint/API-key rebind invalidation;
 - active Cura machine switch ordering;
-- lifecycle/job/request guards on specialised follower replies.
+- stale lifecycle callback rejection;
+- same-filename print restart;
+- stale metadata/download/pause callback rejection;
+- index generation replacement;
+- Monitor request-generation invalidation.
 
 ### Source architecture contracts
 
-Source-focused tests protect properties that are difficult to instantiate outside Cura, including:
+Source contracts enforce properties that are architectural even when full Cura instantiation is impractical:
 
-- runtime import closure;
-- no cross-mixin method shadowing;
-- authoritative service use;
-- absence of private Moonraker HTTP stacks in focused runtime code;
-- shared Monitor/output transport use;
-- shutdown ownership;
-- QML/Cura API compatibility;
-- package/Marketplace structure.
+- thin facade;
+- expected runtime composition;
+- no cross-mixin shadowing;
+- required authoritative services;
+- absence of removed duplicate wrappers;
+- no private active-printer HTTP stack in focused runtime/Monitor/output;
+- direct service access rather than historical aliases;
+- follower transport ownership of transient request/download state;
+- no production dual-import fallbacks;
+- shared Monitor/output transport;
+- QML/Cura API compatibility patterns;
+- package/Marketplace invariants.
 
-A source contract should supplement, not replace, a pure behavioural test when the relevant behaviour can be modelled cleanly.
+Do not weaken a source contract solely because a refactor made it fail. First determine whether the failure identified architecture drift.
 
 ---
 
-## 31. CI and packaging definition of done
+## 38. CI and packaging definition of done
 
-An architectural change is not complete merely because Python parses.
+An architectural change is not complete because Python parses locally.
 
 CI is expected to verify:
 
 - QML structural sanity;
-- the complete discovered test suite;
-- Python source compilation across the supported CI runtimes;
+- all discovered tests;
+- Python source compilation across supported CI runtimes;
 - package/plugin metadata consistency;
 - Cura package construction;
-- exact source/package parity;
-- Marketplace source archive construction and layout;
-- CI artifact creation.
+- exact source/package projection;
+- Marketplace source ZIP construction/layout;
+- CI artifacts.
 
-The source tree is the package source of truth. Generated package files, Python bytecode caches and other build artefacts do not belong in source control.
+The source tree is the package source of truth.
 
-Package identity, release number and supported SDK declarations are authoritative in the package/plugin metadata and CI contracts. Do not duplicate their current numeric values in this architecture document.
+Do not track:
 
----
+- generated `.curapackage` files;
+- `__pycache__`;
+- `.pyc`/`.pyo` files;
+- other generated release artefacts.
 
-## 32. Current compatibility seams
-
-These are current implementation seams, not alternate architectural authorities.
-
-### Coordinator property bridges
-
-Some Cura-facing call sites still use historical private attribute names. `FollowerCoordinator` maps those names directly onto authoritative service state.
-
-Future cleanup may reduce these bridges as call sites become service-native, but do not replace them with another state-bridge class or duplicate fields.
-
-### Runtime multiple inheritance
-
-Focused runtime mixins share the concrete follower object. This keeps Cura-facing responsibilities separated without introducing a large graph of proxy objects.
-
-The cost is MRO discipline: each method must have one focused runtime owner, and shared mutable domain state must remain in services rather than mixins.
-
-### Monitor/output base fallback helpers
-
-Base Monitor/output classes contain generic fallback HTTP helpers for their standalone mechanics. Production session-aware subclasses route active-printer traffic through the shared session/transport and bind their network reference to the shared manager.
-
-New features must target the session-aware production path rather than expanding a parallel fallback architecture.
+Package ID/version/support declarations are authoritative in package/plugin metadata and CI tests rather than duplicated here.
 
 ---
 
-## 33. Architectural decision register
+## 39. Debugging by subsystem
 
-This register records decisions that constrain future design. Detailed entries follow the table.
+### Printer appears disconnected
+
+Check:
+
+1. active Cura machine configuration;
+2. session/transport identity;
+3. shared client running state;
+4. core request outcome/backoff;
+5. transport generation/rebind logs.
+
+### Monitor data stale
+
+Check whether the field is:
+
+- core shared status; or
+- Monitor auxiliary/power/system/discovery data.
+
+Then check the corresponding category cadence and Monitor request lane. Do not add a faster duplicate poller as a diagnostic workaround.
+
+### Preview follows wrong layer
+
+Inspect:
+
+1. remote job identity;
+2. explicit Moonraker current layer;
+3. `GCodeIndexService.current_layer_map`;
+4. one-based conversion setting;
+5. optional Z fallback;
+6. detached state;
+7. Cura lifecycle/slicing suppression.
+
+### Preview jumps backwards within a layer
+
+Inspect:
+
+- file-position vs live-position refinement;
+- hydrated motion data;
+- monotonic path floor;
+- whether a new layer/job legitimately reset progress.
+
+Do not remove monotonic protection to make one trace look closer to parser position.
+
+### Scheduled PAUSE misses target
+
+Inspect:
+
+- zero-based target;
+- observed physical layer progression;
+- pause precision guard;
+- core poll cadence;
+- job identity;
+- scheduled-pause request generation;
+- command acceptance vs observed paused confirmation.
+
+### Wrong/stale G-code used
+
+Inspect:
+
+- current `RemoteJobService.key`;
+- `RemoteFileService.identity`;
+- cached job key/path;
+- lifecycle generation;
+- download size validation;
+- index filename/job key/generation.
+
+---
+
+## 40. Architectural decision register
 
 Status meanings:
 
-- **Proposed** — under consideration; not yet an architectural rule.
-- **Accepted** — current architectural rule.
-- **Deprecated** — retained temporarily but should not receive new dependants.
-- **Superseded** — replaced by another decision; retained for rationale/history.
+- **Proposed** — under consideration;
+- **Accepted** — current rule;
+- **Deprecated** — temporarily retained, no new dependants;
+- **Superseded** — replaced by a later decision.
 
 | ID | Decision | Status | Primary consequence |
 | --- | --- | --- | --- |
-| ADR-001 | Moonraker integration is HTTP-only | Accepted | Improve polling/coalescing rather than adding a parallel WebSocket lifecycle |
-| ADR-002 | Core printer state has one shared poller | Accepted | Preview and Monitor consume the same snapshot |
-| ADR-003 | Session state is separated from Qt poll-loop orchestration | Accepted | Pure state remains deterministically testable |
-| ADR-004 | Active-printer HTTP traffic shares one transport/pool | Accepted | Follower, Monitor and output reuse authentication, cancellation and connections |
-| ADR-005 | Unsaved/alternate credential probes are isolated | Accepted | Probes must never rebind the live session |
-| ADR-006 | Mutable domains have explicit authoritative services | Accepted | No overlapping state-wrapper classes |
-| ADR-007 | Cura-facing follower behaviour is composed from focused runtime mixins | Accepted | `FollowerRuntime.py` stays a composition boundary |
-| ADR-008 | Remote G-code is streamed to disk | Accepted | Large prints do not require whole-file memory buffering |
-| ADR-009 | Stateful commands require observed-state confirmation | Accepted | HTTP success is an intermediate acknowledgement only |
-| ADR-010 | Scheduled layer pauses are print-local transient state | Accepted | Pause layer numbers are never persisted as printer config |
-| ADR-011 | Filename alone does not identify a print run | Accepted | Job-bound work validates `(filename, size, serial)` |
-| ADR-012 | Cura machine identity and Moonraker connection identity are distinct | Accepted | Cura machine switches reset/rebind even when endpoints coincide |
-| ADR-013 | Asynchronous work is guarded by explicit identities/generations | Accepted | Stale callbacks are discarded rather than trying to repair state afterward |
-| ADR-014 | QML remains presentation-only | Accepted | Transport and domain state stay in Python owners |
-| ADR-015 | Compatibility/support ranges live in metadata and CI, not architecture prose | Accepted | Architecture stays timeless as supported ranges evolve |
-
-### Adding or changing a decision
-
-When a change alters one of these constraints:
-
-1. update the register;
-2. add or amend the detailed ADR entry;
-3. explain the context, decision, rationale, consequences and alternatives;
-4. update implementation/tests in the same change;
-5. mark the old ADR **Superseded** rather than silently rewriting history when the old rationale remains useful.
+| ADR-001 | Moonraker live integration is HTTP-only | Accepted | Improve polling/coalescing rather than adding WebSocket lifecycle |
+| ADR-002 | Core printer state has one shared poller | Accepted | Preview and Monitor consume one logical snapshot |
+| ADR-003 | Session policy/state is separated from Qt poll orchestration | Accepted | Deterministic session tests |
+| ADR-004 | Active-printer traffic shares one HTTP transport/pool | Accepted | Follower, Monitor and output reuse connections/auth/cancellation |
+| ADR-005 | Candidate/alternate credential probes are isolated | Accepted | Probe identity never rebinds live session |
+| ADR-006 | Mutable domains have explicit authoritative owners | Accepted | No overlapping state-wrapper classes |
+| ADR-007 | Cura-facing follower behaviour uses focused runtime composition | Accepted | `FollowerRuntime.py` remains a composition boundary |
+| ADR-008 | Remote G-code is streamed to disk | Accepted | Large prints do not require whole-file memory |
+| ADR-009 | Stateful commands require observed-state confirmation | Accepted | HTTP success is intermediate |
+| ADR-010 | Scheduled layer pauses are print-local transient state | Accepted | No persisted layer targets |
+| ADR-011 | Filename alone does not identify a print run | Accepted | Job-bound work validates `(filename,size,serial)` |
+| ADR-012 | Cura machine identity and Moonraker connection identity are distinct | Accepted | Machine switch resets ownership even for same endpoint |
+| ADR-013 | Async work uses explicit identities/generations | Accepted | Stale results are discarded |
+| ADR-014 | QML is presentation-only | Accepted | Protocol/domain state stays in Python |
+| ADR-015 | Exact compatibility ranges live in metadata/CI | Accepted | Architecture prose remains range-independent |
+| ADR-016 | Production code accesses authoritative services directly | Accepted | No service-state compatibility aliases/wrapper layers |
+| ADR-017 | Production modules have one package import topology | Accepted | Tests import `plugins.*`; no dual-import fallbacks |
 
 ---
 
-## 34. Detailed architectural decisions
+## 41. Detailed architectural decisions
 
 ### ADR-001 — HTTP-only Moonraker integration
 
-**Status:** Accepted
+**Decision:** Moonraker live state and commands use HTTP. Do not add WebSockets as a parallel state path.
 
-**Context:** Cura needs current Moonraker state and commands, but multiple transport models would create separate connection, reconnection and consistency lifecycles.
-
-**Decision:** Use HTTP for Moonraker state and commands. Do not introduce WebSockets as a parallel live-state path.
-
-**Rationale:** Adaptive polling provides the required responsiveness while keeping transport, authentication, cancellation, observability and failure behaviour in one model.
-
-**Consequences:** Optimise polling policy and request coalescing when responsiveness/load needs change. A future move to another transport model requires an explicit new ADR rather than an incremental side path.
+**Rationale:** One transport model keeps authentication, cancellation, retry, observability and consistency understandable. Responsiveness is achieved through adaptive polling and coalescing.
 
 ### ADR-002 — One shared core status poller
 
-**Status:** Accepted
+**Decision:** `MoonrakerClient` owns the core object poller; Preview and Monitor consume its status.
 
-**Context:** Preview and Monitor both need current print state. Independent polling produces duplicate traffic and potentially inconsistent snapshots of “now”.
+**Consequence:** New high-frequency core fields extend the shared query rather than creating consumer poll loops.
 
-**Decision:** `MoonrakerClient` owns the one core object poller. Consumers share its status snapshot.
+### ADR-003 — Pure session state separated from Qt polling
 
-**Consequences:** New core fields extend the shared query. Consumer-specific peripheral data uses slower separate categories rather than another core loop.
+**Decision:** policy/state lives in `MoonrakerSessionState`, transport binding in `MoonrakerSession`, timers/signals in `MoonrakerClient`.
 
-### ADR-003 — Separate pure session state from Qt poll orchestration
+**Consequence:** connection/poll/command policy remains deterministic and testable without Qt networking.
 
-**Status:** Accepted
+### ADR-004 — One active-printer HTTP transport/pool
 
-**Context:** Connection/status/command policy should be testable without requiring Cura or a Qt network event loop.
+**Decision:** active-printer Follower, Monitor and output share `MoonrakerHttpTransport`.
 
-**Decision:** Keep policy/state in `MoonrakerSessionState`, bind it to transport through `MoonrakerSession`, and keep timer/signal orchestration in `MoonrakerClient`.
+**Consequence:** direct streaming/multipart replies are permitted only through the shared request builder/network manager.
 
-**Consequences:** Domain/session tests can be deterministic. `MoonrakerClient` must not become a shadow state owner.
+### ADR-005 — Isolated candidate credential probes
 
-### ADR-004 — One active-printer HTTP transport and connection pool
+**Decision:** candidate credentials use a separate transport instance.
 
-**Status:** Accepted
+**Consequence:** connection testing cannot cancel/reconfigure the live printer session.
 
-**Context:** Preview, Monitor and output all communicate with the same active printer.
+### ADR-006 — Explicit domain ownership
 
-**Decision:** Share `MoonrakerHttpTransport` and its network manager across active-printer traffic.
+**Decision:** print identity, file identity, index state, Preview attachment, pause schedule and Cura lifecycle each have one service owner; `OperationContext` owns long-running operation phase.
 
-**Rationale:** This centralises authentication, request creation, connection reuse, cancellation and observability.
+**Consequence:** a new class may orchestrate these owners but may not mirror their mutable state.
 
-**Consequences:** Streaming/multipart operations may manage replies directly only if they still use the shared request builder and manager.
+### ADR-007 — Focused follower runtime composition
 
-### ADR-005 — Isolated probes for unsaved or alternate credentials
+**Decision:** Cura-facing responsibilities are split into focused mixins composed by `FollowerRuntime.py`.
 
-**Status:** Accepted
+**Consequence:** each runtime method has one mixin owner; stateful domains remain services rather than mixin fields.
 
-**Context:** A user may test credentials that are not yet the active configuration.
+### ADR-008 — Stream remote G-code
 
-**Decision:** Use a separate transport instance for candidate credentials rather than reconfiguring the live transport.
+**Decision:** download incrementally to temporary files and index asynchronously.
 
-**Consequences:** Probe transports are allowed exceptions to the single live transport instance, but they are not production pollers and must not mutate live-session identity.
+**Consequence:** do not replace streaming with whole-response buffering.
 
-### ADR-006 — Explicit authoritative domain services
+### ADR-009 — Observed command completion
 
-**Status:** Accepted
+**Decision:** a stateful command is confirmed only after shared status observes an expected state.
 
-**Context:** Job identity, file identity, index lifecycle, Preview attachment, scheduled pauses and Cura lifecycle are independently mutable domains.
+**Consequence:** UI distinguishes requested/accepted/confirmed/failure/timeout.
 
-**Decision:** Each domain has one explicit state owner (`RemoteJobService`, `RemoteFileService`, `GCodeIndexService`, `PreviewFollowerService`, `PauseScheduleService`, `CuraLifecycleBridge`).
+### ADR-010 — Print-local scheduled pauses
 
-**Consequences:** Do not introduce wrapper classes that own the same state under different names. Coordinator property bridges may expose old access patterns but may not duplicate state.
+**Decision:** pause targets are transient current-print state.
 
-### ADR-007 — Focused runtime composition
+**Consequence:** clear on print identity changes; never persist target layers as printer settings.
 
-**Status:** Accepted
+### ADR-011 — Strong print-run identity
 
-**Context:** Cura-facing behaviour spans scene lifecycle, Preview controls, file loading, ETA, path following, indexing and shutdown. Concentrating these responsibilities in one class makes ownership and testing difficult.
+**Decision:** use `(filename, file_size, serial)` rather than filename alone.
 
-**Decision:** Compose the concrete follower from focused runtime mixins while keeping mutable domain state in services.
+**Consequence:** same-file reprints cannot inherit mutable job-bound state.
 
-**Consequences:** `FollowerRuntime.py` remains small. Each runtime method belongs to one mixin. Cross-mixin shadow implementations are forbidden.
+### ADR-012 — Cura identity differs from Moonraker identity
 
-### ADR-008 — Stream remote G-code to disk
+**Decision:** Cura machine ID selects configuration; `(base_url,api_key)` identifies live network binding.
 
-**Status:** Accepted
-
-**Context:** Remote G-code can be large, and Cura must remain responsive while files are downloaded and indexed.
-
-**Decision:** Stream network data incrementally into temporary files and build indexes asynchronously.
-
-**Consequences:** Do not replace streaming with whole-response buffering. Temporary-file identity and cleanup are part of the download lifecycle.
-
-### ADR-009 — Command completion is observed state, not HTTP success
-
-**Status:** Accepted
-
-**Context:** Moonraker can accept a command before the printer reaches the requested state.
-
-**Decision:** Track HTTP acceptance separately from printer-state confirmation through `CommandTracker`.
-
-**Consequences:** Stateful commands expose pending/accepted/confirmed/failed/timed-out states. New commands should define their expected state where observable.
-
-### ADR-010 — Scheduled pauses are print-local
-
-**Status:** Accepted
-
-**Context:** A layer number has meaning only in the context of a particular print.
-
-**Decision:** Scheduled end-of-layer pause targets are transient state tied to the current print run.
-
-**Consequences:** They are cleared when print identity/lifecycle changes and are not persisted in `PrinterConfig`.
-
-### ADR-011 — Print-run identity is stronger than filename
-
-**Status:** Accepted
-
-**Context:** The same G-code file can be printed repeatedly.
-
-**Decision:** Use a job key containing filename, file size and a run serial. Restart evidence advances the serial.
-
-**Consequences:** Job-bound cache/index/request work validates the full job key so a same-file reprint cannot inherit mutable state from an earlier run.
-
-### ADR-012 — Cura machine identity is distinct from Moonraker connection identity
-
-**Status:** Accepted
-
-**Context:** Two Cura machine definitions may point to the same Moonraker endpoint yet have different follower/slicer configuration.
-
-**Decision:** Cura machine ID selects persisted configuration; `(base_url, api_key)` identifies the live Moonraker connection.
-
-**Consequences:** A Cura machine switch is a full ownership boundary and resets/rebinds the live session even if the network endpoint happens to be unchanged.
+**Consequence:** switching Cura machine is a full ownership transition even if endpoints match.
 
 ### ADR-013 — Explicit stale-work guards
 
-**Status:** Accepted
+**Decision:** async work captures and validates relevant lifecycle/client/transport/job/file/index/request identity.
 
-**Context:** Network callbacks, delayed Qt callbacks and worker-thread results can complete after the state they were created for no longer exists.
+**Consequence:** stale work is discarded rather than merged into newer state.
 
-**Decision:** Capture and validate the relevant lifecycle, client, transport, job, file, index and/or request identity before applying asynchronous results.
+### ADR-014 — QML presentation-only
 
-**Consequences:** Stale work is discarded. Do not attempt to “merge” late results into newer state unless the operation was explicitly designed to be identity-independent.
+**Decision:** polling/protocol/business state stays in Python owners.
 
-### ADR-014 — QML is presentation-only
+**Consequence:** expose Python properties/actions first, then bind QML.
 
-**Status:** Accepted
+### ADR-015 — Compatibility policy outside architecture prose
 
-**Context:** Transport/business state hidden in QML is difficult to test, reason about and share across Preview/Monitor/output.
+**Decision:** exact package/SDK/runtime support values live in metadata and tests.
 
-**Decision:** Keep protocol, polling, domain state and command state machines in Python. QML binds to typed properties/actions.
+**Consequence:** routine compatibility-range updates do not make architecture prose stale.
 
-**Consequences:** New UI features first expose Python state/actions, then bind presentation in QML.
+### ADR-016 — Direct authoritative-service access
 
-### ADR-015 — Compatibility policy is declared outside architecture prose
+**Context:** Transitional refactors can leave old private names mapped onto new services, making the system look cleaner while preserving two mental models and encouraging new code to use obsolete names.
 
-**Status:** Accepted
+**Decision:** production code accesses `RemoteJobService`, `RemoteFileService`, `GCodeIndexService`, `PreviewFollowerService`, `PauseScheduleService`, `CuraLifecycleBridge` and `OperationContext` directly. Dedicated Monitor/output compatibility session wrappers are not part of the production architecture.
 
-**Context:** Supported runtime/SDK/package ranges evolve independently of the architecture.
+**Consequences:** source contracts reject the historical aliases and removed wrapper modules. When a call site moves to a service, tests move with it rather than adding an access shim.
 
-**Decision:** Keep exact compatibility and release values in package/plugin metadata and CI tests. Architecture describes the responsibility and enforcement mechanism, not current numbers.
+### ADR-017 — One production package import topology
 
-**Consequences:** Updating supported ranges does not require editing architecture unless the compatibility change alters an architectural decision or API boundary.
+**Context:** Test-convenience `except ImportError` fallbacks made production modules support both package-relative and top-level import modes.
+
+**Decision:** production modules use normal package-relative imports. Tests import production code through `plugins.*`.
+
+**Consequences:** source contracts reject dual-import fallbacks. Test harnesses adapt to production packaging, not vice versa.
 
 ---
 
-## 35. Maintainer checklist
+## 42. Maintainer checklist
 
-Before implementation:
+### Before implementation
 
 - identify the authoritative state owner;
-- classify the data/request as core, peripheral, command, static, streaming file, upload or Cura-only;
-- identify every lifecycle/identity that can invalidate the work;
-- find the existing transport/session path to extend;
-- check whether the change affects a registered architectural decision;
-- check Cura/QML compatibility constraints through metadata and tests.
+- classify the operation as core state, peripheral data, command, static lookup, stream, upload, Cura lifecycle, pure policy or presentation;
+- list every identity/generation that can invalidate asynchronous work;
+- find the existing shared transport owner/channel;
+- inspect the concrete inheritance/composition path;
+- decide whether an architectural ADR changes.
 
-During implementation:
+### During implementation
 
-- keep state in one owner;
-- use the shared transport;
-- use `CommandTracker` where state confirmation exists;
-- add generation/job/file/request guards before applying async results;
+- keep mutable state in one owner;
+- access services directly;
+- use shared transport/session;
+- use `CommandTracker` for observable stateful commands;
+- use `OperationContext` instead of parallel operation booleans;
+- apply lifecycle/job/file/index/request guards before async mutation;
 - keep heavy work off the UI thread;
-- avoid cross-mixin method duplication;
-- add behavioural tests when the state can be modelled without Cura;
-- update source contracts when ownership legitimately moves.
+- avoid runtime-mixin shadowing;
+- import production modules through the package;
+- add behavioural tests where practical;
+- strengthen source contracts when an architectural invariant matters.
 
-Before considering the change complete:
+### Before completion
 
-- run the complete test and QML checks;
+- run all discovered tests;
+- run QML structural checks;
 - compile all CI-supported Python runtimes;
-- build and verify package outputs;
-- re-read this document for architectural drift;
-- update the decision register if the design changed.
+- build/verify Cura package;
+- verify Marketplace archive/source parity;
+- inspect transport/state ownership for duplication;
+- re-read this document for drift;
+- update ADRs if the decision changed.
 
 ---
 
-## 36. Instructions for AI maintainers
+## 43. Instructions for AI maintainers
 
-1. Read this document before making architectural changes.
-2. Inspect the actual inheritance/composition chain; do not infer responsibility from filenames alone.
-3. Search for an existing state owner before creating a class or field.
-4. Search for an existing transport owner/channel before adding a request.
-5. Preserve the registered architectural decisions unless the task explicitly changes one.
-6. Treat HTTP acceptance and observed printer-state completion separately.
-7. Preserve active-machine, connection, Cura-lifecycle, job, file, index and request guards as applicable.
-8. Do not recreate removed overlapping state wrappers under different names.
-9. Do not put missing behaviour into `FollowerRuntime.py`; select the correct focused mixin/service.
-10. When moving a method, update tests to follow the new owner and retain import-closure/ownership protection.
-11. Do not weaken a failing architecture test merely to make CI green without first determining whether it exposed a real defect.
-12. Update this document and the ADR register whenever an architectural responsibility or decision changes.
+1. Read this document before architectural work.
+2. Inspect actual code and inheritance; do not infer ownership from names alone.
+3. Search for an existing state owner before adding a field/class.
+4. Search for an existing owner/channel before adding a Moonraker request.
+5. Never create a second core poller to make a feature easier.
+6. Never recreate historical private service aliases to avoid editing call sites.
+7. Never add a compatibility wrapper merely to preserve a removed internal inheritance layer.
+8. Tests must import production modules through the package; do not modify production import topology for test convenience.
+9. Distinguish HTTP acceptance from state confirmation.
+10. Preserve all relevant machine/connection/lifecycle/job/file/index/request guards.
+11. Keep `MoonrakerPrintFollower.py` and `FollowerRuntime.py` small.
+12. Put new domain state in the appropriate service; put pure policy in pure helpers.
+13. Keep follower transport request/download state with `FollowerTransportMixin`; do not move it into bootstrap or restore a second transport initializer.
+14. Treat an architecture-test failure as a potential production defect first.
+15. When moving ownership, update code, tests and this document in the same architectural change.
+16. Do not silently weaken an ADR. If a decision needs changing, document the new decision and consequences explicitly.
 
 ---
 
-## 37. Glossary
+## 44. Glossary
 
-**Active Cura printer** — the Cura machine currently owning the one live follower/session binding.
+**Active Cura printer** — Cura machine currently owning the one live session binding.
 
-**Connection identity** — active Moonraker `(base_url, api_key)`.
+**Connection identity** — `(base_url, api_key)` used by the active Moonraker session/transport.
 
-**Core status** — the one shared fast Moonraker object query consumed by Preview and Monitor.
+**Core status** — the shared high-frequency Moonraker object snapshot emitted by `MoonrakerClient`.
 
-**Peripheral status** — slower Monitor-specific status/discovery outside the core query.
+**Peripheral status** — slower Monitor-only status/discovery outside the core query.
 
-**Job key** — print-run identity `(filename, file_size, serial)`.
+**Job key** — `(filename, file_size, serial)` identifying one print run.
 
-**File identity** — metadata-backed identity used for safe persistent cache/index reuse.
+**Remote file identity** — metadata-backed identity used to decide whether persistent cache/index data is reusable.
 
-**Lifecycle generation** — token invalidated when Cura scene/slicing/load assumptions change.
+**Lifecycle generation** — `CuraLifecycleBridge` token invalidated when old Cura scene/slicing/load assumptions are no longer safe.
 
-**Index generation** — token invalidated when index build/hydration work is cancelled or replaced.
+**Index generation** — token invalidated when index build/hydration work is replaced/cancelled.
 
-**Owner/channel** — shared transport key for one logical JSON request stream.
+**Request generation** — adapter-local serial used when a newer request supersedes an older one.
 
-**Accepted command** — Moonraker accepted the HTTP request but expected printer state has not necessarily been observed.
+**Owner/channel** — logical lane used by `MoonrakerHttpTransport` for de-duplication/cancellation.
 
-**Confirmed command** — shared status observed an expected state for the command.
+**Accepted command** — Moonraker accepted the HTTP request; target state has not necessarily been observed.
 
-**Detached following** — Moonraker remains connected/polled, but follower does not move Cura Preview because the user detached or manually moved Preview.
+**Confirmed command** — shared status observed an expected state for a tracked command.
 
-**Compatibility seam** — current glue that redirects into the authoritative architecture and must not become a second state/transport owner.
+**Detached following** — printer observation continues but the follower stops changing Cura Preview because the user detached/manually moved it.
+
+**Compact index** — layer-boundary index that hydrates exact motion data on demand for large files.
+
+**Operation context** — authoritative state describing a current resolving/downloading/Cura-loading/indexing workflow.
+
+---
+
+## 45. Architectural summary
+
+The architecture can be reduced to a few rules:
+
+- **One active printer, one shared session, one core poller, one active HTTP pool.**
+- **One mutable owner for each domain.**
+- **Consumers talk directly to those owners; internal compatibility aliases are not architecture.**
+- **HTTP acceptance and physical printer-state completion are different events.**
+- **Asynchronous work is valid only for the identities/generations it was created for.**
+- **Cura stays responsive: stream files, use worker threads for heavy indexing, never block UI callbacks.**
+- **Monitor and output are natively shared-session-aware; there are no session-wrapper compatibility layers.**
+- **Production code has one package import topology; tests adapt to it.**
+- **QML presents state rather than owning it.**
+- **Architecture tests exist to prevent the system from drifting back toward duplicate state, duplicate networking and shadow abstractions.**
+
+When adding functionality, preserve those rules first. The rest of the design becomes substantially easier to reason about.

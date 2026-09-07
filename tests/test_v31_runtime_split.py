@@ -51,12 +51,7 @@ class V31RuntimeSplitTests(unittest.TestCase):
                         continue
                     previous = owners.get(item.name)
                     if previous is not None and previous != filename:
-                        self.fail(
-                            f"{item.name} is implemented by both {previous} and {filename}"
-                        )
-                    # A property getter/setter/deleter intentionally repeats the
-                    # method name inside one class; only cross-mixin duplicates
-                    # are architecture shadowing.
+                        self.fail(f"{item.name} is implemented by both {previous} and {filename}")
                     owners.setdefault(item.name, filename)
 
     def test_extracted_services_are_used_as_policy_owners(self):
@@ -80,12 +75,18 @@ class V31RuntimeSplitTests(unittest.TestCase):
         self.assertNotIn("self._timer.stop()", lifecycle)
         self.assertIn("self._client.stop()", lifecycle)
 
-    def test_active_monitor_and_output_release_legacy_network_pool(self):
-        monitor = (PLUGINS / "MoonrakerMonitorSession.py").read_text(encoding="utf-8")
-        output = (PLUGINS / "MoonrakerOutputSession.py").read_text(encoding="utf-8")
-        for source in (monitor, output):
-            self.assertIn("shared_network = transport.network", source)
-            self.assertIn("legacy_network.deleteLater()", source)
+    def test_monitor_and_output_are_natively_shared_transport(self):
+        monitor = (PLUGINS / "MoonrakerMonitorModel.py").read_text(encoding="utf-8")
+        output = (PLUGINS / "MoonrakerOutputDevice.py").read_text(encoding="utf-8")
+        transport = (PLUGINS / "MoonrakerTransport.py").read_text(encoding="utf-8")
+        self.assertFalse((PLUGINS / "MoonrakerMonitorSession.py").exists())
+        self.assertFalse((PLUGINS / "MoonrakerOutputSession.py").exists())
+        self.assertNotIn("QNetworkAccessManager", monitor)
+        self.assertNotIn("QNetworkAccessManager", output)
+        self.assertIn("transport.send_json", monitor)
+        self.assertIn("transport.send_json", output)
+        self.assertIn("transport.network.post", output)
+        self.assertIn("QNetworkAccessManager", transport)
 
     def test_focused_runtime_cannot_own_moonraker_http_requests(self):
         source = "\n".join(

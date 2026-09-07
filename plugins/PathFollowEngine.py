@@ -20,13 +20,13 @@ class PathFollowEngineMixin:
         if not hasattr(view, "setPath") or not hasattr(view, "getMaxPaths"):
             return "within-layer tracking unavailable in this Cura build"
 
-        if self._path_progress_layer != target_layer:
-            self._path_progress_layer = target_layer
-            self._path_progress_fraction = None
+        self._preview_follower_service.begin_path_layer(target_layer)
+        tracking = self._preview_follower_service.tracking
 
+        current_job = self._remote_job_service.key
         if (
-            self._remote_index_filename != self._last_remote_filename
-            or self._remote_index_job_key != self._remote_job_key
+            self._gcode_index_service.filename != self._last_remote_filename
+            or self._gcode_index_service.job_key != current_job
         ):
             try:
                 view.setPath(0.0)
@@ -34,12 +34,12 @@ class PathFollowEngineMixin:
                 pass
             if (
                 (self._file_reply is not None and self._file_reply.isRunning())
-                or self._remote_index_build_filename == self._last_remote_filename
+                or self._gcode_index_service.build_filename == self._last_remote_filename
             ):
                 return "indexing remote G-code"
             return "waiting for remote G-code index"
 
-        if target_layer < 0 or target_layer >= len(self._remote_layer_ranges):
+        if target_layer < 0 or target_layer >= len(self._gcode_index_service.ranges):
             return "no remote path index for this layer"
 
         try:
@@ -54,7 +54,7 @@ class PathFollowEngineMixin:
         if max_paths <= 0:
             return "layer has no toolpaths"
 
-        index = self._remote_index_data
+        index = self._gcode_index_service.data
         if index is None:
             return "remote path index unavailable"
 
@@ -62,16 +62,17 @@ class PathFollowEngineMixin:
         # from raw byte position while hydration is still in flight: that can
         # race ahead and then visually rewind once exact motion offsets arrive.
         if getattr(index, "compact", False):
+            cached_path = self._remote_file_service.cached_path
             if not (
-                self._cached_gcode_filename == self._last_remote_filename
-                and self._cached_gcode_path
-                and self._cached_gcode_job_key == self._remote_job_key
-                and os.path.isfile(self._cached_gcode_path)
+                self._remote_file_service.cached_filename == self._last_remote_filename
+                and cached_path
+                and self._remote_file_service.cached_job_key == current_job
+                and os.path.isfile(cached_path)
             ):
                 self._ensure_remote_gcode_cached(self._last_remote_filename or "")
             self._ensure_remote_layer_hydrated(target_layer)
             if target_layer not in getattr(index, "hydrated_layers", set()):
-                self._path_progress_fraction = 0.0
+                tracking.path_fraction = 0.0
                 try:
                     if abs(float(view.getCurrentPath())) >= 0.5:
                         view.setPath(0.0)
@@ -89,12 +90,9 @@ class PathFollowEngineMixin:
             target_layer,
             file_position,
             live_position,
-            minimum_fraction=self._path_progress_fraction,
+            minimum_fraction=tracking.path_fraction,
         )
-        fraction = max(0.0, min(1.0, float(fraction)))
-        if self._path_progress_fraction is not None:
-            fraction = max(float(self._path_progress_fraction), fraction)
-        self._path_progress_fraction = fraction
+        fraction = self._preview_follower_service.update_path_fraction(fraction)
         target_path = fraction * max_paths
 
         if getattr(index, "compact", False) and target_layer + 1 < len(index.ranges):

@@ -36,7 +36,7 @@ MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 UPLOAD_QML = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
 ACTION_QML = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
 EMPTY_QML = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
-NOZZLE_FALLBACK = (PLUGINS / "NativeNozzleFallback.py").read_text()
+NOZZLE_LIFECYCLE = (PLUGINS / "NativeNozzleLifecycle.py").read_text()
 README = (ROOT / "README.md").read_text()
 
 
@@ -89,9 +89,9 @@ class SdkCompatibilityTests(unittest.TestCase):
         ):
             self.assertIn(token, PLUGIN)
         self.assertIn(
-            'getattr(simulation_view, "getSimulationPass", None)', NOZZLE_FALLBACK
+            'getattr(simulation_view, "getSimulationPass", None)', NOZZLE_LIFECYCLE
         )
-        self.assertIn('getattr(simulation_view, "getNozzleNode", None)', NOZZLE_FALLBACK)
+        self.assertIn('getattr(simulation_view, "getNozzleNode", None)', NOZZLE_LIFECYCLE)
 
     def test_optional_qt_timeout_api_is_capability_guarded(self):
         for source in (PLUGIN, CLIENT, MACHINE_ACTION, MONITOR_MODEL):

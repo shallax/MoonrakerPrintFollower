@@ -10,13 +10,7 @@ from urllib.parse import urlencode
 
 from PyQt6.QtCore import QByteArray, QTimer, QUrl, QVariant, pyqtProperty, pyqtSlot
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtNetwork import (
-    QHttpMultiPart,
-    QHttpPart,
-    QNetworkAccessManager,
-    QNetworkReply,
-    QNetworkRequest,
-)
+from PyQt6.QtNetwork import QHttpMultiPart, QHttpPart, QNetworkReply, QNetworkRequest
 
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from cura.PrinterOutput.PrinterOutputController import PrinterOutputController
@@ -26,6 +20,7 @@ from UM.Mesh.MeshWriter import MeshWriter
 from UM.Message import Message
 from UM.OutputDevice import OutputDeviceError
 
+from .MoonrakerSession import RequestCategory
 from .PrinterConfig import PrinterConfig
 
 
@@ -34,9 +29,6 @@ class MoonrakerOutputController(PrinterOutputController):
 
     def __init__(self, output_device: PrinterOutputDevice) -> None:
         super().__init__(output_device)
-        # Upload/start-print is implemented here. These flags are deliberately
-        # conservative: Cura must not display controls that are not wired to a
-        # Moonraker command yet.
         self.can_pause = False
         self.can_abort = False
         self.can_pre_heat_bed = False
@@ -47,13 +39,7 @@ class MoonrakerOutputController(PrinterOutputController):
 
 
 class MoonrakerOutputDevice(PrinterOutputDevice):
-    """Cura output device backed by Moonraker's file and power APIs.
-
-    This replaces the separate Moonraker Connection plugin for the normal Cura
-    workflow: write G-code/UFP, optionally choose a remote path/name, optionally
-    power the printer, wait for Klippy to become ready without blocking Cura,
-    upload to Moonraker and optionally start the print immediately.
-    """
+    """Cura output device using the follower's shared Moonraker transport."""
 
     DEVICE_PREFIX = "MoonrakerPrintFollower@"
     MAX_READY_ATTEMPTS = 21
@@ -66,7 +52,6 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         self._application = application
         self._follower = follower
         self._machine_id = str(machine_id)
-        self._network = QNetworkAccessManager(self)
 
         self._config = PrinterConfig()
         self._stream: Optional[Any] = None
@@ -78,7 +63,6 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         self._ready_attempts = 0
         self._power_devices: list[str] = []
         self._power_index = 0
-        self._active_reply: Optional[QNetworkReply] = None
         self._upload_reply: Optional[QNetworkReply] = None
         self._upload_multipart: Optional[QHttpMultiPart] = None
         self._dialog = None
@@ -102,10 +86,6 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         self._printers = [model]
         self.updateConfig(follower.current_printer_config())
 
-    # ------------------------------------------------------------------
-    # Cura output-device presentation
-    # ------------------------------------------------------------------
-
     def updateConfig(self, config: PrinterConfig) -> None:
         self._config = PrinterConfig.from_dict(asdict(config))
         stack = self._application.getGlobalContainerStack()
@@ -121,6 +101,15 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
     @property
     def _base_url(self) -> str:
         return str(self._config.url or "").strip().rstrip("/")
+
+    def _shared_client(self):
+        return self._follower.client
+
+    def _shared_transport(self):
+        return self._follower.transport
+
+    def _transport_owner(self) -> str:
+        return "output:" + self._machine_id
 
     @pyqtProperty(str, constant=False)
     def initialUploadPath(self) -> str:
@@ -145,10 +134,6 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         if current and current not in options:
             options.append(current)
         return QVariant(sorted(options))
-
-    # ------------------------------------------------------------------
-    # Cura write lifecycle
-    # ------------------------------------------------------------------
 
     def requestWrite(self, node: Any, fileName: str = None, *args: Any, **kwargs: Any) -> None:
         if self._busy:
@@ -225,7 +210,6 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
             return
         self._dialog = None
         self._cleanup()
-        # Cura expects a terminal write signal once writeStarted was emitted.
         self.writeError.emit(self)
 
     def _show_upload_dialog(self) -> None:
@@ -235,13 +219,8 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
             self._dialog.show()
         except Exception as exc:
             Logger.log("w", "Moonraker Print Follower: upload dialog unavailable: %s", exc)
-            # A UI failure should not lose the print; use the saved defaults.
             self._dialog = None
             self._begin_upload()
-
-    # ------------------------------------------------------------------
-    # Upload orchestration
-    # ------------------------------------------------------------------
 
     def _begin_upload(self) -> None:
         self._ready_attempts = 0
@@ -261,8 +240,6 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         elif self._start_print:
             self._wait_for_ready()
         else:
-            # Upload-only mode does not require Klippy to be ready. Moonraker's
-            # file service remains useful while the printer MCU is disconnected.
             self._upload_now()
 
     def _on_power_status(self, payload: Optional[Dict[str, Any]], error: Optional[str]) -> None:
@@ -296,10 +273,24 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         if error:
             self._fail(f"Could not turn on Moonraker power device '{device}': {error}")
             return
+        client = self._shared_client()
+        refresh = getattr(client, "force_refresh", None)
+        if callable(refresh):
+            refresh()
         self._turn_on_next_power_device()
+
+    def _shared_client_ready(self) -> bool:
+        client = self._shared_client()
+        if client is None or not bool(getattr(client, "connected", False)):
+            return False
+        status = getattr(client, "status", {})
+        return isinstance(status, dict) and isinstance(status.get("print_stats"), dict)
 
     def _wait_for_ready(self) -> None:
         if not self._busy:
+            return
+        if self._shared_client_ready():
+            self._upload_now()
             return
         if self._ready_attempts >= self.MAX_READY_ATTEMPTS:
             self._fail("Moonraker is reachable, but Klippy did not become ready in time.")
@@ -327,6 +318,10 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
 
     def _upload_now(self) -> None:
         if not self._busy or self._stream is None:
+            return
+        transport = self._shared_transport()
+        if transport is None:
+            self._fail("Moonraker transport is unavailable.")
             return
         try:
             self._stream.seek(0)
@@ -382,7 +377,7 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
             multipart.append(print_part)
 
         request = self._request("server/files/upload")
-        reply = self._network.post(request, multipart)
+        reply = transport.network.post(request, multipart)
         multipart.setParent(reply)
         self._upload_reply = reply
         reply.uploadProgress.connect(self._on_upload_progress)
@@ -418,8 +413,6 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
                 if isinstance(payload, dict) and payload.get("error"):
                     raise ValueError(str(payload.get("error")))
         except json.JSONDecodeError:
-            # A successful HTTP response is sufficient; older Moonraker/proxy
-            # combinations are not guaranteed to return JSON for every upload.
             pass
         except Exception as exc:
             reply.deleteLater()
@@ -442,19 +435,22 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         self.writeSuccess.emit(self)
         self._cleanup(keep_message=True)
 
-    # ------------------------------------------------------------------
-    # HTTP helpers
-    # ------------------------------------------------------------------
-
     def _request(self, path: str) -> QNetworkRequest:
-        request = QNetworkRequest(QUrl(self._base_url + "/" + path.lstrip("/")))
-        request.setRawHeader(b"Accept", b"application/json")
-        request.setRawHeader(b"User-Agent", b"Cura Moonraker Print Follower")
-        if self._config.api_key:
-            request.setRawHeader(b"X-Api-Key", self._config.api_key.encode("utf-8"))
-        if hasattr(request, "setTransferTimeout"):
-            request.setTransferTimeout(15000)
-        return request
+        transport = self._shared_transport()
+        if transport is None:
+            raise RuntimeError("Moonraker transport is unavailable")
+        return transport.request(path, timeout_ms=15000)
+
+    @staticmethod
+    def _category_for(path: str, method: str) -> RequestCategory:
+        path = str(path or "")
+        if "device_power" in path:
+            return RequestCategory.POWER if method.upper() == "GET" else RequestCategory.COMMAND
+        if path.startswith("server/files/directory"):
+            return RequestCategory.DISCOVERY
+        if path in {"server/info", "printer/info"}:
+            return RequestCategory.SYSTEM
+        return RequestCategory.COMMAND if method.upper() == "POST" else RequestCategory.AUXILIARY
 
     def _json_request(
         self,
@@ -466,49 +462,21 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
     ) -> None:
         if not self._busy:
             return
-        if self._active_reply is not None:
-            try:
-                if self._active_reply.isRunning():
-                    self._active_reply.abort()
-            except Exception:
-                pass
-        request = self._request(path)
-        if body is not None:
-            request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
-        reply = self._network.get(request) if method.upper() == "GET" else self._network.post(request, QByteArray(body or b"{}"))
-        self._active_reply = reply
-        reply.finished.connect(lambda r=reply, cb=callback: self._finish_json_request(r, cb))
-
-    def _finish_json_request(
-        self,
-        reply: QNetworkReply,
-        callback: Callable[[Optional[Dict[str, Any]], Optional[str]], None],
-    ) -> None:
-        if reply is not self._active_reply:
-            reply.deleteLater()
+        transport = self._shared_transport()
+        if transport is None:
+            callback(None, "Moonraker transport is unavailable")
             return
-        self._active_reply = None
-        if reply.error() != QNetworkReply.NetworkError.NoError:
-            error = reply.errorString()
-            reply.deleteLater()
-            callback(None, error)
-            return
-        try:
-            payload = json.loads(bytes(reply.readAll()).decode("utf-8", errors="replace"))
-            if not isinstance(payload, dict):
-                raise ValueError("Moonraker returned a non-object JSON response")
-            if payload.get("error"):
-                raise ValueError(str(payload.get("error")))
-        except Exception as exc:
-            reply.deleteLater()
-            callback(None, str(exc))
-            return
-        reply.deleteLater()
-        callback(payload, None)
-
-    # ------------------------------------------------------------------
-    # State / validation / UI helpers
-    # ------------------------------------------------------------------
+        transport.send_json(
+            self._transport_owner(),
+            "json",
+            method,
+            path,
+            callback,
+            body=body,
+            replace=True,
+            timeout_ms=15000,
+            category=self._category_for(path, method).value,
+        )
 
     def _remember_upload_choices(self, path: str, start_print: bool) -> None:
         try:
@@ -600,17 +568,13 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         self._cleanup()
 
     def _cleanup(self, *, keep_message: bool = False) -> None:
+        transport = self._shared_transport()
+        if transport is not None:
+            transport.cancel_owner(self._transport_owner())
         self._busy = False
         self._ready_attempts = 0
         self._power_devices = []
         self._power_index = 0
-        if self._active_reply is not None:
-            try:
-                if self._active_reply.isRunning():
-                    self._active_reply.abort()
-            except Exception:
-                pass
-            self._active_reply = None
         if self._upload_reply is not None:
             try:
                 if self._upload_reply.isRunning():

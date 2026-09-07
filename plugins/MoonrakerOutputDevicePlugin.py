@@ -9,7 +9,7 @@ from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
 
 from .MoonrakerMonitorTypedControls import MoonrakerMonitorModel
 from .MoonrakerOutputDevice import MoonrakerOutputController
-from .MoonrakerOutputSession import MoonrakerOutputDevice
+from .MoonrakerOutputDeviceLifecycle import MoonrakerOutputDevice
 
 
 class MoonrakerOutputDevicePlugin(OutputDevicePlugin):

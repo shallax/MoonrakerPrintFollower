@@ -60,14 +60,10 @@ class RemoteFileTransferMixin:
             if chunk:
                 target.write(chunk)
         except Exception as error:
-            filename = (
-                self._file_reply_filename
-                or self._force_load_pending_filename
-                or "current print"
-            )
+            filename = self._file_reply_filename or self._operation.filename or "current print"
             forced = bool(
-                self._force_load_requested
-                and self._force_load_pending_filename == self._file_reply_filename
+                self._operation.is_force_load
+                and self._operation.filename == self._file_reply_filename
             )
             Logger.log(
                 "w",
@@ -76,11 +72,8 @@ class RemoteFileTransferMixin:
             )
             self._abort_file_reply()
             if forced:
-                self._force_load_requested = False
-                self._force_load_pending_filename = None
-                self._set_operation_phase(
-                    OperationPhase.ERROR, filename=str(filename)
-                )
+                self._operation.cancel_force_load()
+                self._set_operation_phase(OperationPhase.ERROR, filename=str(filename))
                 self._set_status(f"Could not write downloaded G-code: {error}")
 
     def _handle_gcode_reply(
@@ -111,8 +104,8 @@ class RemoteFileTransferMixin:
                     target.abort(remove=True)
                 return
             if (
-                reply_generation != self._lifecycle_generation
-                or reply_job_key != self._remote_job_key
+                reply_generation != self._cura_lifecycle_bridge.generation
+                or reply_job_key != self._remote_job_service.key
             ):
                 target.abort(remove=True)
                 self._cleanup_cached_job_dir(target.path)
@@ -126,21 +119,18 @@ class RemoteFileTransferMixin:
                     filename,
                     reply.errorString(),
                 )
-                if self._force_load_pending_filename == filename:
-                    self._set_operation_phase(
-                        OperationPhase.ERROR, filename=filename
-                    )
+                if self._operation.is_force_load and self._operation.filename == filename:
+                    self._set_operation_phase(OperationPhase.ERROR, filename=filename)
                     self._set_status(
                         "Could not download current print from Moonraker: "
                         + reply.errorString()
                     )
-                    self._force_load_requested = False
-                    self._force_load_pending_filename = None
+                    self._operation.cancel_force_load()
                 return
 
             target.flush_close()
             self._adopt_cached_gcode_path(filename, target.path, reply_job_key)
-            identity = self._remote_file_identity
+            identity = self._remote_file_service.identity
             if (
                 identity is not None
                 and identity.size > 0
@@ -156,33 +146,28 @@ class RemoteFileTransferMixin:
                 bad_path = target.path
                 self._discard_cached_gcode()
                 self._cleanup_cached_job_dir(bad_path)
-                if self._force_load_pending_filename == filename:
-                    self._force_load_requested = False
-                    self._force_load_pending_filename = None
-                    self._set_operation_phase(
-                        OperationPhase.ERROR, filename=filename
-                    )
+                if self._operation.is_force_load and self._operation.filename == filename:
+                    self._operation.cancel_force_load()
+                    self._set_operation_phase(OperationPhase.ERROR, filename=filename)
                     self._set_status(
                         f"Downloaded G-code size mismatch for {filename}; "
                         "refusing to load a partial file"
                     )
                 return
 
-            forced_load = self._force_load_pending_filename == filename
+            forced_load = bool(
+                self._operation.is_force_load and self._operation.filename == filename
+            )
             if forced_load:
                 self._load_cached_remote_gcode_forced(filename)
             elif (
                 self._pref_bool(self.PREF_PATH_FOLLOW)
                 and self._cura_has_toolpath()
-                and not self._cura_load_in_progress
+                and not self._operation.is_cura_loading
             ):
-                self._start_remote_gcode_index_build_from_file(
-                    filename, target.path
-                )
+                self._start_remote_gcode_index_build_from_file(filename, target.path)
             else:
-                self._set_operation_phase(
-                    OperationPhase.READY, filename=filename
-                )
+                self._set_operation_phase(OperationPhase.READY, filename=filename)
         except Exception as error:
             Logger.logException(
                 "w",
@@ -206,8 +191,8 @@ class RemoteFileTransferMixin:
             temp_root = os.path.abspath(self._temp_gcode_dir.name)
             if os.path.commonpath((job_dir, temp_root)) != temp_root:
                 return
-            if self._cura_load_in_progress and self._cura_load_path:
-                if os.path.abspath(path) == os.path.abspath(self._cura_load_path):
+            if self._operation.is_cura_loading and self._operation.local_path:
+                if os.path.abspath(path) == os.path.abspath(self._operation.local_path):
                     self._deferred_cache_dirs.add(job_dir)
                     return
             shutil.rmtree(job_dir, ignore_errors=True)
@@ -223,9 +208,9 @@ class RemoteFileTransferMixin:
         if not self._deferred_cache_dirs:
             return
         active_dir = None
-        if self._cura_load_in_progress and self._cura_load_path:
+        if self._operation.is_cura_loading and self._operation.local_path:
             try:
-                active_dir = os.path.dirname(os.path.abspath(self._cura_load_path))
+                active_dir = os.path.dirname(os.path.abspath(self._operation.local_path))
             except Exception:
                 active_dir = None
         for job_dir in tuple(self._deferred_cache_dirs):

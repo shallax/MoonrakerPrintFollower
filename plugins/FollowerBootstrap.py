@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import threading
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import QObject, QTimer
 from UM.Extension import Extension
@@ -54,30 +54,9 @@ class FollowerBootstrapMixin:
         self._client.connectionChanged.connect(self._on_client_connection_changed)
         self._client.capabilitiesChanged.connect(self._on_client_capabilities_changed)
 
-        # Explicit status probes use a separate request lane only when testing an
-        # identity other than the active shared session.
-        self._reply = None
-        self._reply_purpose: Optional[str] = None
-
-        # Scheduled PAUSE request lifecycle. The schedule itself is owned by
-        # PauseScheduleService and is intentionally print-local.
-        self._pause_reply = None
-        self._pause_reply_generation = 0
-        self._pause_reply_job_key: Optional[Tuple[str, int, int]] = None
+        # Scheduled PAUSE state is owned by PauseScheduleService plus the
+        # request-generation fields in FollowerTransport.
         self._last_observed_remote_layer: Optional[int] = None
-
-        # Large G-code downloads use the shared transport connection pool while
-        # retaining their own streaming QNetworkReply lifecycle.
-        self._file_reply = None
-        self._file_reply_filename: Optional[str] = None
-        self._file_reply_generation = 0
-        self._file_reply_job_key: Optional[Tuple[str, int, int]] = None
-        self._file_download_target = None
-
-        self._metadata_reply = None
-        self._metadata_filename: Optional[str] = None
-        self._metadata_reply_generation = 0
-        self._metadata_reply_job_key: Optional[Tuple[str, int, int]] = None
 
         cache_dir = os.path.join(Resources.getCacheStoragePath(), self.PLUGIN_ID, "indexes")
         self._persistent_index_cache = PersistentIndexCache(cache_dir)

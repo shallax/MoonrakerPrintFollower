@@ -16,10 +16,7 @@ from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import BinaryIO, Dict, List, Optional, Sequence, Tuple
 
-try:
-    from .Core import RemoteFileIdentity
-except ImportError:  # test/import convenience
-    from Core import RemoteFileIdentity
+from .Core import RemoteFileIdentity
 
 
 _LAYER_COMMENT = re.compile(rb"^\s*;LAYER:\s*-?\d+\s*$", re.IGNORECASE)

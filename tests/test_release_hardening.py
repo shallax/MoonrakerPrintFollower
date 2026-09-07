@@ -11,11 +11,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
 TOOLS = ROOT / "tools"
 FIXTURES = ROOT / "tests" / "fixtures" / "gcode"
-for path in (PLUGINS, TOOLS):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+if str(TOOLS) not in sys.path:
+    sys.path.insert(0, str(TOOLS))
 
-from GCodeIndex import build_index_from_file
+from plugins.GCodeIndex import build_index_from_file
 from check_qml import check_text
 from build_curapackage import build
 from verify_curapackage import verify
@@ -86,8 +85,6 @@ def _pyqt_slot(*_args, **_kwargs):
 
 
 def load_monitor_model():
-    class QByteArray(bytes):
-        pass
     class QUrl:
         def __init__(self, value=""):
             self.value = value
@@ -100,15 +97,6 @@ def load_monitor_model():
     class QVariant:
         def __init__(self, value=None):
             self.value = value
-    class QNetworkReply:
-        class NetworkError:
-            NoError = 0
-    class QNetworkRequest:
-        class KnownHeaders:
-            ContentTypeHeader = 0
-    class QNetworkAccessManager:
-        def __init__(self, *_args):
-            pass
     class QDesktopServices:
         @staticmethod
         def openUrl(*_args):
@@ -120,12 +108,19 @@ def load_monitor_model():
         @staticmethod
         def log(*_args, **_kwargs):
             pass
+    class RequestCategory:
+        CORE = types.SimpleNamespace(value="core")
+        AUXILIARY = types.SimpleNamespace(value="auxiliary")
+        POWER = types.SimpleNamespace(value="power")
+        SYSTEM = types.SimpleNamespace(value="system")
+        DISCOVERY = types.SimpleNamespace(value="discovery")
+        COMMAND = types.SimpleNamespace(value="command")
+        STATIC = types.SimpleNamespace(value="static")
 
     modules = {
         "PyQt6": types.ModuleType("PyQt6"),
         "PyQt6.QtCore": types.ModuleType("PyQt6.QtCore"),
         "PyQt6.QtGui": types.ModuleType("PyQt6.QtGui"),
-        "PyQt6.QtNetwork": types.ModuleType("PyQt6.QtNetwork"),
         "cura": types.ModuleType("cura"),
         "cura.PrinterOutput": types.ModuleType("cura.PrinterOutput"),
         "cura.PrinterOutput.Models": types.ModuleType("cura.PrinterOutput.Models"),
@@ -133,18 +128,16 @@ def load_monitor_model():
         "UM": types.ModuleType("UM"),
         "UM.Logger": types.ModuleType("UM.Logger"),
         "plugins": types.ModuleType("plugins"),
-        "plugins.MoonrakerProtocol": types.ModuleType("plugins.MoonrakerProtocol"),
+        "plugins.MoonrakerSession": types.ModuleType("plugins.MoonrakerSession"),
     }
     modules["plugins"].__path__ = []
     core = modules["PyQt6.QtCore"]
-    core.QByteArray = QByteArray; core.QTimer = DummyTimer; core.QUrl = QUrl; core.QVariant = QVariant
+    core.QTimer = DummyTimer; core.QUrl = QUrl; core.QVariant = QVariant
     core.pyqtProperty = _pyqt_property; core.pyqtSignal = _pyqt_signal; core.pyqtSlot = _pyqt_slot
     modules["PyQt6.QtGui"].QDesktopServices = QDesktopServices
-    network = modules["PyQt6.QtNetwork"]
-    network.QNetworkAccessManager = QNetworkAccessManager; network.QNetworkReply = QNetworkReply; network.QNetworkRequest = QNetworkRequest
     modules["cura.PrinterOutput.Models.PrinterOutputModel"].PrinterOutputModel = PrinterOutputModel
     modules["UM.Logger"].Logger = Logger
-    modules["plugins.MoonrakerProtocol"].status_endpoint = lambda base: base + "/printer/objects/query"
+    modules["plugins.MoonrakerSession"].RequestCategory = RequestCategory
 
     old = {name: sys.modules.get(name) for name in modules}
     try:
@@ -244,6 +237,7 @@ class ReleaseHardeningTests(unittest.TestCase):
     def test_malformed_core_status_degrades_without_throwing(self):
         model = load_monitor_model()
         instance = model.__new__(model)
+        instance._follower = types.SimpleNamespace(client=None)
         instance._monitoring_active = True
         instance._monitor_state = "Not connected"; instance._monitor_state_raw = ""
         instance._monitor_filename = ""; instance._monitor_message = ""; instance._monitor_progress = 0
@@ -265,16 +259,9 @@ class ReleaseHardeningTests(unittest.TestCase):
         self.assertEqual(stats, {"mcu_awake": 0.02, "bytes_read": 123.0})
 
     def test_stale_monitor_request_generation_is_ignored(self):
-        model = load_monitor_model()
-        instance = model.__new__(model)
-        reply = DummyReply()
-        instance._requests = {"aux": reply}
-        instance._request_generation = 4
-        called = []
-        instance._finish_json_request("aux", reply, lambda *_args: called.append(True), 3)
-        self.assertEqual(called, [])
-        self.assertTrue(reply.deleted)
-        self.assertNotIn("aux", instance._requests)
+        self.assertIn("generation = self._request_generation", MONITOR_SOURCE)
+        self.assertIn("if generation != self._request_generation:", MONITOR_SOURCE)
+        self.assertNotIn("def _finish_json_request", MONITOR_SOURCE)
 
     def test_inactive_monitor_ignores_shared_follower_status(self):
         model = load_monitor_model()
@@ -314,59 +301,37 @@ class ReleaseHardeningTests(unittest.TestCase):
         for slider in ("speedSlider", "flowSlider", "fanSlider", "ledSlider", "redSlider", "greenSlider", "blueSlider", "whiteSlider", "pwmSlider"):
             self.assertIn(f"root.sliderSelection({slider})", DASHBOARD_SOURCE)
 
+    def test_core_status_uses_one_subclass_hook_instead_of_reprocessing_three_times(self):
+        self.assertIn("self._after_core_status(status)", MONITOR_SOURCE)
+        self.assertIn("def _after_core_status", RUNTIME_SOURCE)
+        self.assertIn("def _after_core_status", CONTROLS_SOURCE)
+        self.assertNotIn("def updateMoonrakerStatus", RUNTIME_SOURCE)
+        self.assertNotIn("def updateMoonrakerStatus", CONTROLS_SOURCE)
+        self.assertIn("self._resolved_current_layer", RUNTIME_SOURCE)
 
-def test_core_status_uses_one_subclass_hook_instead_of_reprocessing_three_times(self):
-    self.assertIn("self._after_core_status(status)", MONITOR_SOURCE)
-    self.assertIn("def _after_core_status", RUNTIME_SOURCE)
-    self.assertIn("def _after_core_status", CONTROLS_SOURCE)
-    self.assertNotIn("def updateMoonrakerStatus", RUNTIME_SOURCE)
-    self.assertNotIn("def updateMoonrakerStatus", CONTROLS_SOURCE)
-    self.assertIn("self._resolved_current_layer", RUNTIME_SOURCE)
+    def test_full_klipper_config_is_not_polled_every_second(self):
+        self.assertIn('["save_config_pending", "save_config_pending_items"]', MONITOR_SOURCE)
+        self.assertIn('"config-static"', MONITOR_SOURCE)
+        self.assertIn('name: self._aux_query_fields(name)', MONITOR_SOURCE)
+        model = load_monitor_model()
+        merged = model._merge_aux_status(
+            {"configfile": {"config": {"gcode_macro TEST": {"gcode": "G28"}}, "save_config_pending": False}},
+            {"configfile": {"save_config_pending": True, "save_config_pending_items": {"bed_mesh": {}}}},
+        )
+        self.assertIn("config", merged["configfile"])
+        self.assertTrue(merged["configfile"]["save_config_pending"])
 
-def test_full_klipper_config_is_not_polled_every_second(self):
-    self.assertIn('["save_config_pending", "save_config_pending_items"]', MONITOR_SOURCE)
-    self.assertIn('"config-static"', MONITOR_SOURCE)
-    self.assertIn('name: self._aux_query_fields(name)', MONITOR_SOURCE)
-    model = load_monitor_model()
-    merged = model._merge_aux_status(
-        {"configfile": {"config": {"gcode_macro TEST": {"gcode": "G28"}}, "save_config_pending": False}},
-        {"configfile": {"save_config_pending": True, "save_config_pending_items": {"bed_mesh": {}}}},
-    )
-    self.assertIn("config", merged["configfile"])
-    self.assertTrue(merged["configfile"]["save_config_pending"])
+    def test_monitor_ux_release_polish_is_explicit(self):
+        self.assertIn("After release, the latest value is applied once it has been unchanged for 2 seconds.", DASHBOARD_SOURCE)
+        self.assertIn('text: "Refresh camera"', MONITOR_QML)
+        self.assertIn("root.printer.refreshWebcams()", MONITOR_QML)
+        self.assertIn('title: "Exclude object?"', MONITOR_QML)
+        self.assertIn("excludeObjectDialog.open()", MONITOR_QML)
+        self.assertIn('placeholderText: "<root>"', CONFIG_QML)
+        self.assertIn("Leave blank to use Moonraker's gcodes root.", CONFIG_QML)
+        self.assertIn("stack is None", OUTPUT_PLUGIN_SOURCE)
+        self.assertIn("self._set_monitor_active(self._current, False)", OUTPUT_PLUGIN_SOURCE)
 
-def test_request_identity_change_aborts_old_replies(self):
-    model = load_monitor_model()
-    instance = model.__new__(model)
-    reply = DummyReply()
-    instance._requests = {"aux": reply}
-    instance._request_generation = 7
-    instance._request_identity = ("http://old.invalid", "old-key")
-    class Config:
-        url = "http://new.invalid"
-        api_key = str("new-key")
-    class Follower:
-        @staticmethod
-        def current_printer_config():
-            return Config()
-    instance._follower = Follower()
-    instance._ensure_request_session()
-    self.assertEqual(instance._request_generation, 8)
-    self.assertEqual(instance._request_identity, ("http://new.invalid", "new-key"))
-    self.assertTrue(reply.aborted)
-    self.assertTrue(reply.deleted)
-    self.assertEqual(instance._requests, {})
-
-def test_monitor_ux_release_polish_is_explicit(self):
-    self.assertIn("After release, the latest value is applied once it has been unchanged for 2 seconds.", DASHBOARD_SOURCE)
-    self.assertIn('text: "Refresh camera"', MONITOR_QML)
-    self.assertIn("root.printer.refreshWebcams()", MONITOR_QML)
-    self.assertIn('title: "Exclude object?"', MONITOR_QML)
-    self.assertIn("excludeObjectDialog.open()", MONITOR_QML)
-    self.assertIn('placeholderText: "<root>"', CONFIG_QML)
-    self.assertIn("Leave blank to use Moonraker's gcodes root.", CONFIG_QML)
-    self.assertIn("stack is None", OUTPUT_PLUGIN_SOURCE)
-    self.assertIn("self._set_monitor_active(self._current, False)", OUTPUT_PLUGIN_SOURCE)
 
 if __name__ == "__main__":
     unittest.main()

@@ -35,7 +35,6 @@ class CuraLifecycleRuntimeMixin:
             self._abort_status_reply()
             self._abort_metadata_reply()
             self._abort_file_reply()
-            self._file_reply_generation = self._cura_lifecycle_bridge.generation
 
         was_loading = self._operation.is_cura_loading
         self._operation.reset(OperationPhase.IDLE)

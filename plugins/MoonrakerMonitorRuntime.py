@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional, Tuple
 
-from .MoonrakerMonitorSession import MoonrakerMonitorModel as _BaseMoonrakerMonitorModel
+from .MoonrakerMonitorModel import MoonrakerMonitorModel as _BaseMoonrakerMonitorModel
 
 
 class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
@@ -42,14 +42,13 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
         raw_remote_layer = info.get("current_layer")
         total_layer = self._as_positive_int(info.get("total_layer"))
         target_layer: Optional[int] = None
+        index = self._follower.gcode_index
 
         if raw_remote_layer is not None:
             try:
                 raw = int(raw_remote_layer)
-                layer_map = getattr(self._follower, "_remote_current_layer_map", {})
-                indexed_filename = getattr(self._follower, "_remote_index_filename", None)
-                if indexed_filename == filename and raw in layer_map:
-                    target_layer = int(layer_map[raw])
+                if index.filename == filename and raw in index.current_layer_map:
+                    target_layer = int(index.current_layer_map[raw])
                 else:
                     target_layer = raw
                     config = self._follower.current_printer_config()
@@ -60,9 +59,8 @@ class MoonrakerMonitorModel(_BaseMoonrakerMonitorModel):
 
         if target_layer is None:
             try:
-                indexed_filename = getattr(self._follower, "_remote_index_filename", None)
-                ranges = list(getattr(self._follower, "_remote_layer_ranges", []) or [])
-                if indexed_filename == filename and ranges:
+                ranges = list(index.ranges or [])
+                if index.filename == filename and ranges:
                     if total_layer is None:
                         total_layer = len(ranges)
                     try:

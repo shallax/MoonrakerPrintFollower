@@ -21,10 +21,11 @@ class PreviewEtaMixin:
             return None
         index = self._gcode_index_service.data
         times = list(getattr(index, "layer_elapsed_times", []) or []) if index is not None else []
+        tracking = self._preview_follower_service.tracking
         current_layer = (
             self._last_observed_remote_layer
             if self._last_observed_remote_layer is not None
-            else self._last_resolved_remote_layer
+            else tracking.resolved_remote_layer
         )
         if current_layer is None or not times:
             return None
@@ -61,23 +62,24 @@ class PreviewEtaMixin:
             except (TypeError, ValueError):
                 current_end = None
 
-        speed = max(0.05, float(self._last_speed_factor or 1.0))
+        speed = max(0.05, float(tracking.speed_factor or 1.0))
         fractions: List[float] = []
-        if self._path_progress_layer == current_layer and self._path_progress_fraction is not None:
+        if tracking.path_layer == current_layer and tracking.path_fraction is not None:
             try:
-                fractions.append(max(0.0, min(1.0, float(self._path_progress_fraction))))
+                fractions.append(max(0.0, min(1.0, float(tracking.path_fraction))))
             except (TypeError, ValueError):
                 pass
         if (
-            self._eta_anchor_layer == current_layer
-            and self._eta_anchor_print_duration is not None
-            and self._eta_current_print_duration is not None
+            tracking.eta_anchor_layer == current_layer
+            and tracking.eta_anchor_print_duration is not None
+            and tracking.eta_current_print_duration is not None
             and current_end is not None
             and current_end > current_start
         ):
             actual_into_layer = max(
                 0.0,
-                float(self._eta_current_print_duration) - float(self._eta_anchor_print_duration),
+                float(tracking.eta_current_print_duration)
+                - float(tracking.eta_anchor_print_duration),
             )
             planned_layer_duration = current_end - current_start
             fractions.append(
@@ -92,13 +94,14 @@ class PreviewEtaMixin:
 
     def _update_selected_layer_eta(self, view=None) -> None:
         text = ""
+        tracking = self._preview_follower_service.tracking
         if self._last_remote_state in self.ACTIVE_STATES:
             if view is None:
                 view = self._simulation_view()
             current_layer = (
                 self._last_observed_remote_layer
                 if self._last_observed_remote_layer is not None
-                else self._last_resolved_remote_layer
+                else tracking.resolved_remote_layer
             )
             if view is not None and current_layer is not None:
                 try:
@@ -125,7 +128,6 @@ class PreviewEtaMixin:
                                 f"Selected layer {human_layer} — in {self._format_preview_duration(remaining)} "
                                 f"· ~{clock}"
                             )
-        if text == self._selected_layer_eta_text:
+        if not self._preview_follower_service.set_selected_layer_eta_text(text):
             return
-        self._selected_layer_eta_text = text
         self._sync_preview_button_state()

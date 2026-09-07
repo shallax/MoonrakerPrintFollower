@@ -198,8 +198,6 @@ class GCodeIndexRuntimeMixin:
             return
         if (
             self._remote_file_service.metadata_job_key != self._remote_job_service.key
-            and self._metadata_reply is not None
-            and self._metadata_reply.isRunning()
             and self._metadata_filename == filename
         ):
             return

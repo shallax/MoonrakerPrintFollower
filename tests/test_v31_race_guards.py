@@ -5,12 +5,12 @@ import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 PLUGINS = ROOT / "plugins"
-if str(PLUGINS) not in sys.path:
-    sys.path.insert(0, str(PLUGINS))
 
-from CuraLifecycleBridge import CuraLifecycleBridge
-from MoonrakerSession import MoonrakerSessionState
+from plugins.CuraLifecycleBridge import CuraLifecycleBridge
+from plugins.MoonrakerSession import MoonrakerSessionState
 
 
 class V31RaceGuardTests(unittest.TestCase):
@@ -75,19 +75,42 @@ class V31RaceGuardTests(unittest.TestCase):
         transfer = (PLUGINS / "RemoteFileTransfer.py").read_text(encoding="utf-8")
 
         self.assertIn(
-            "reply_generation != self._lifecycle_generation or reply_job_key != self._remote_job_key",
+            "reply_generation != self._cura_lifecycle_bridge.generation",
             transport,
         )
+        self.assertIn("reply_job_key != current_job", transport)
         self.assertIn(
-            "reply_generation != self._lifecycle_generation\n                or reply_job_key != self._remote_job_key",
+            "reply_generation != self._cura_lifecycle_bridge.generation",
             transfer,
         )
+        self.assertIn("reply_job_key != self._remote_job_service.key", transfer)
         self.assertIn(
             "request_generation != self._scheduled_pause_request_generation",
             transport,
         )
-        self.assertIn("lifecycle_generation != self._lifecycle_generation", transport)
-        self.assertIn("job_key != self._remote_job_key", transport)
+        self.assertIn(
+            "lifecycle_generation != self._cura_lifecycle_bridge.generation",
+            transport,
+        )
+        self.assertIn("job_key != self._remote_job_service.key", transport)
+        for legacy_alias in (
+            "self._lifecycle_generation",
+            "self._remote_job_key",
+            "self._remote_file_identity",
+            "self._metadata_job_key",
+            "self._following_paused",
+        ):
+            self.assertNotIn(legacy_alias, transport)
+        for legacy_alias in (
+            "self._lifecycle_generation",
+            "self._remote_job_key",
+            "self._remote_file_identity",
+            "self._force_load_requested",
+            "self._force_load_pending_filename",
+            "self._cura_load_in_progress",
+            "self._cura_load_path",
+        ):
+            self.assertNotIn(legacy_alias, transfer)
 
 
 if __name__ == "__main__":

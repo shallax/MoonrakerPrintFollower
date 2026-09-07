@@ -15,18 +15,65 @@ class PreviewExpectation:
     minimum_path: Optional[int] = None
 
 
+@dataclass
+class PreviewTrackingState:
+    """Transient live-follow state associated with the current print/Preview."""
+
+    path_layer: Optional[int] = None
+    path_fraction: Optional[float] = None
+    resolved_remote_layer: Optional[int] = None
+    selected_layer_eta_text: str = ""
+    speed_factor: float = 1.0
+    eta_anchor_layer: Optional[int] = None
+    eta_anchor_print_duration: Optional[float] = None
+    eta_current_print_duration: Optional[float] = None
+
+
 class PreviewFollowerService:
-    """Authoritative owner of Preview attachment and follower-written position."""
+    """Authoritative owner of Preview attachment, expected position and tracking state."""
 
     def __init__(self) -> None:
         self.expected = PreviewExpectation()
+        self.tracking = PreviewTrackingState()
         self.following_paused = False
 
     def clear(self) -> None:
         self.expected = PreviewExpectation()
 
+    def reset_tracking(self) -> None:
+        self.tracking = PreviewTrackingState()
+
     def set_paused(self, paused: bool) -> None:
         self.following_paused = bool(paused)
+
+    def begin_path_layer(self, layer: int) -> None:
+        layer = int(layer)
+        if self.tracking.path_layer == layer:
+            return
+        self.tracking.path_layer = layer
+        self.tracking.path_fraction = None
+
+    def update_path_fraction(self, fraction: float) -> float:
+        fraction = max(0.0, min(1.0, float(fraction)))
+        current = self.tracking.path_fraction
+        if current is not None:
+            fraction = max(float(current), fraction)
+        self.tracking.path_fraction = fraction
+        return fraction
+
+    def observe_eta_layer(self, layer: int) -> None:
+        layer = int(layer)
+        if self.tracking.eta_anchor_layer == layer:
+            return
+        self.tracking.eta_anchor_layer = layer
+        self.tracking.eta_anchor_print_duration = self.tracking.eta_current_print_duration
+
+    def set_selected_layer_eta_text(self, text: str) -> bool:
+        text = str(text or "")
+        if text == self.tracking.selected_layer_eta_text:
+            return False
+        self.tracking.selected_layer_eta_text = text
+        return True
 
     def remember(self, view) -> None:
         try:
