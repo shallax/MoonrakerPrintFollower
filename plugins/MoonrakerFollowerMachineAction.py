@@ -120,6 +120,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return self._config().path_follow
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def settingsPathSmoothing(self) -> bool:
+        return self._config().path_smoothing
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def settingsAutoPreview(self) -> bool:
         return self._config().auto_preview
 
@@ -275,6 +279,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "z_fallback": bool(raw.get("z_fallback", True)),
                 "z_tolerance": tolerance,
                 "path_follow": bool(raw.get("path_follow", True)),
+                "path_smoothing": bool(raw.get("path_smoothing", True)),
                 "show_toolhead_indicator": bool(raw.get("show_toolhead_indicator", True)),
                 "follow_mode": mode,
                 "frontend_url": str(raw.get("frontend_url") or "").strip(),

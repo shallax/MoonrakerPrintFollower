@@ -2,6 +2,22 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 3.3.0
+
+Version 3.3.0 is the first feature release after the debt payoff: follower
+quality.
+
+### Highlights
+- Smooths the Preview path head: the displayed position converges toward the
+  newest physical observation with exponential easing and a bounded catch-up,
+  never getting ahead of the observed position and never snapping back within
+  a layer. Layer transitions are jumped, not animated.
+- The smoothing is display-only: the physical path fraction used for ETA is
+  unchanged, and animated writes re-remember the plugin-written position so
+  manual-override detection is unaffected.
+- Adds a **Smooth path progress** option (enabled by default) in the
+  Following tab.
+
 ## 3.2.0
 
 Version 3.2.0 closes the remaining 3.1.0 architecture gaps and codifies how the repository changes. User-facing behaviour is unchanged.

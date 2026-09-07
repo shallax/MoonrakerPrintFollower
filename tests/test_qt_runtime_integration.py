@@ -528,6 +528,70 @@ class MonitorDataAuxTests(unittest.TestCase):
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
+class PreviewMotionTests(unittest.TestCase):
+    def setUp(self):
+        from contextlib import contextmanager
+
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+        self.view = SimpleNamespace(path=0.0, minimum=0)
+        def set_path(value): self.view.path = value
+        def set_minimum(value): self.view.minimum = value
+        self.view.setPath = set_path
+        self.view.setMinimumPath = set_minimum
+        self.view.getCurrentPath = lambda: self.view.path
+        self.view.getMinimumPath = lambda: self.view.minimum
+        self.view.getMaxPaths = lambda: 100
+
+        @contextmanager
+        def writing_preview():
+            yield self.view
+
+        self.cura = SimpleNamespace(view=self.view, writing_preview=writing_preview)
+        self.remembers = 0
+        def remembered():
+            self.remembers += 1
+        self.motion = self.qt.load("PreviewMotion").PreviewMotion(self.cura, remembered)
+        self.addCleanup(self.motion.close)
+
+    def test_layer_change_jumps_and_same_layer_animates(self):
+        self.motion.write(0, 0.8)
+        self.assertEqual(self.view.path, 0.8)  # first observation jumps
+        self.motion.write(0, 0.9)
+        self.qt.events(120)
+        self.assertGreater(self.view.path, 0.8)
+        self.assertLessEqual(self.view.path, 0.9)
+        # A new layer jumps straight to its target; no cross-layer animation.
+        self.motion.write(1, 0.05)
+        self.assertEqual(self.view.path, 0.05)
+
+    def test_target_behind_display_never_moves_backwards(self):
+        self.motion.write(0, 0.9)
+        self.qt.events(200)
+        reached = self.view.path
+        self.motion.write(0, 0.3)  # stale/ambiguous observation behind us
+        self.qt.events(200)
+        self.assertGreaterEqual(self.view.path, reached)
+        self.assertLessEqual(self.view.path, 0.9)
+
+    def test_writes_are_remembered(self):
+        self.motion.write(0, 0.5)
+        self.qt.events(60)
+        self.assertGreater(self.remembers, 0)
+
+    def test_reset_stops_animation_until_next_observation(self):
+        self.motion.write(0, 0.7)
+        self.qt.events(60)
+        moving = self.view.path
+        self.motion.reset()
+        self.qt.events(120)
+        self.assertEqual(self.view.path, moving)
+        self.motion.write(0, 0.75)
+        self.assertEqual(self.view.path, 0.75)  # re-synchronises with a jump
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
 class RemoteFileServiceMetadataTests(unittest.TestCase):
     def setUp(self):
         self.context = runtime()

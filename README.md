@@ -5,12 +5,18 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 3.2.0
+- **Release:** 3.3.0
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
 
-## What changed in 3.2.0
+## What changed in 3.3.0
 
-Version 3.2.0 preserves the 3.0 workflow while paying down architecture debt. The test suite was reorganised by domain, change procedures were codified in `INSTRUCTIONS.md`, the mixed-domain `Core` module was dissolved, Preview presentation was extracted into pure formatting, session snapshots became fully immutable at their boundary, failed metadata requests now retry with backoff, Monitor classification uses one shared object-policy table, and the bed-mesh observation is owned by the print coordinator. Full details are in `CHANGELOG.md`.
+Version 3.3.0 smooths the Preview path head: the displayed position converges
+toward the newest physical observation without ever getting ahead of it or
+snapping back, and layer transitions are jumped rather than animated. The
+smoothing is display-only — ETA still uses the physical path fraction — and
+can be turned off with **Smooth path progress** in the Following tab. The 3.2.0
+release paid down the architecture debt; full details for both are in
+`CHANGELOG.md`.
 
 Version 3.0.0 combined Preview following, Cura-to-Moonraker upload/print support and live monitoring into one plugin and one per-printer configuration.
 
@@ -91,6 +97,7 @@ Settings include:
 - enable or disable automatic following
 - follow mode
 - within-layer path following
+- smoothed path display (display-only; can be disabled)
 - native Cura live printhead fallback
 - fallback layer-number convention
 - automatic switching to Preview

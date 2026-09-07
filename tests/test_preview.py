@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import unittest
 
 from plugins.PreviewFollower import PreviewFollower, preview_override_kind
+from plugins.PreviewSmoothing import advance_display
 from plugins.PreviewFormatting import (
     pause_can_toggle,
     pause_eta,
@@ -231,6 +232,44 @@ class PreviewFormattingTests(unittest.TestCase):
         self.assertEqual(pause_eta(None, lambda s: "x"), "ETA unavailable")
         self.assertEqual(pause_summary([]), "")
         self.assertEqual(pause_summary([{"layer": 4}, {"layer": 7}]), "End-of-layer PAUSE: 4, 7")
+
+
+class PreviewSmoothingTests(unittest.TestCase):
+    """The displayed head converges to the target without exceeding it or snapping back."""
+
+    def test_never_exceeds_target_and_converges(self):
+        displayed = 0.0
+        for _ in range(400):
+            displayed = advance_display(displayed=displayed, target=0.5, dt=0.033)
+            self.assertLessEqual(displayed, 0.5)
+        self.assertAlmostEqual(displayed, 0.5, places=4)
+
+    def test_never_decreases_when_target_moves_behind(self):
+        displayed = 0.6
+        displayed = advance_display(displayed=displayed, target=0.3, dt=0.033)
+        self.assertEqual(displayed, 0.6)
+        # A later target ahead still resumes convergence from where we were.
+        self.assertGreater(advance_display(displayed=displayed, target=0.9, dt=0.033), 0.6)
+
+    def test_moves_toward_moving_target_without_jumping(self):
+        displayed = 0.0
+        for tick, target in enumerate((0.4, 0.45, 0.5, 0.55)):
+            for _ in range(10):
+                displayed = advance_display(displayed=displayed, target=target, dt=0.033)
+        self.assertLessEqual(displayed, 0.55)
+        self.assertGreater(displayed, 0.0)
+
+    def test_large_gap_catches_up_linearly(self):
+        # A full-layer gap must not lag arbitrarily: the catch-up floor is
+        # 1.5 layer-fractions per second.
+        displayed = advance_display(displayed=0.0, target=1.0, dt=0.25)
+        self.assertGreaterEqual(displayed, 0.25)
+
+    def test_clamps_target_to_unit_range(self):
+        value = advance_display(displayed=0.5, target=2.0, dt=0.033)
+        self.assertTrue(0.5 < value <= 1.0)
+        # A negative displayed value is pathological but must not decrease.
+        self.assertLessEqual(advance_display(displayed=-0.1, target=0.0, dt=0.033), 0.0)
 
 
 class PreviewPresentationContractTests(unittest.TestCase):

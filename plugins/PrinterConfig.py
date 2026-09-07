@@ -35,6 +35,7 @@ class PrinterConfig:
     z_fallback: bool = True
     z_tolerance: float = 0.04
     path_follow: bool = True
+    path_smoothing: bool = True
     show_toolhead_indicator: bool = True
     follow_mode: str = "exact"
 
@@ -117,7 +118,7 @@ class PrinterConfig:
 
         for key in (
             "enabled", "moonraker_layer_is_one_based", "auto_preview",
-            "z_fallback", "path_follow", "show_toolhead_indicator",
+            "z_fallback", "path_follow", "path_smoothing", "show_toolhead_indicator",
             "upload_dialog", "upload_start_print", "upload_remember_state",
             "upload_autohide_message", "camera_mirror",
         ):
