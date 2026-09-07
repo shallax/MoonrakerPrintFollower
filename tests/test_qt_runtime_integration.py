@@ -555,14 +555,20 @@ class PreviewMotionTests(unittest.TestCase):
         self.motion = self.qt.load("PreviewMotion").PreviewMotion(self.cura, remembered)
         self.addCleanup(self.motion.close)
 
-    def test_layer_change_jumps_and_same_layer_animates(self):
+    def test_layer_change_jumps_and_same_layer_cruises(self):
         # The fake view exposes 100 max paths; the driver works in fractions.
-        self.motion.write(0, 0.8)
-        self.assertEqual(self.view.path, 80.0)  # first observation jumps
-        self.motion.write(0, 0.9)
-        self.qt.events(120)
-        self.assertGreater(self.view.path, 80.0)
-        self.assertLessEqual(self.view.path, 90.0)
+        self.motion.write(0, 0.5)
+        self.assertEqual(self.view.path, 50.0)  # first observation jumps
+        # Build a filled observation window so the cruise rate is estimated.
+        self.qt.events(300)
+        self.motion.write(0, 0.55)
+        self.qt.events(300)
+        self.motion.write(0, 0.6)
+        self.qt.events(400)
+        # The head cruises at the windowed rate: it has advanced past the
+        # first observation's position and never exceeds the newest target.
+        self.assertGreater(self.view.path, 50.0)
+        self.assertLessEqual(self.view.path, 60.0)
         # A new layer jumps straight to its target; no cross-layer animation.
         self.motion.write(1, 0.05)
         self.assertEqual(self.view.path, 5.0)

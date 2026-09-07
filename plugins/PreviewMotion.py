@@ -40,8 +40,6 @@ MAX_VELOCITY = 0.5
 # Fraction of the previous layer's velocity kept when a new layer starts,
 # so the head does not begin every layer from a standstill.
 VELOCITY_WARM_START = 0.8
-
-
 class PreviewMotion(QObject):
     def __init__(self, cura, remember, parent=None):
         super().__init__(parent)
@@ -81,8 +79,13 @@ class PreviewMotion(QObject):
         span = now - self._history[0][0]
         if span >= MIN_RATE_SPAN:
             instant = max(0.0, min(MAX_VELOCITY, (fraction - self._history[0][1]) / span))
-            alpha = 1.0 - math.exp(-span / VELOCITY_TAU)
-            self._velocity += (instant - self._velocity) * alpha
+            if instant > 0.0:
+                alpha = 1.0 - math.exp(-span / VELOCITY_TAU)
+                self._velocity += (instant - self._velocity) * alpha
+            # A flat stretch (corner dwell, a pause, an ambiguous poll) carries
+            # no rate information. Keep the previous estimate instead of letting
+            # it decay toward zero: collapsing it here makes the head lag at
+            # every path end and then surge to catch up.
         self._target = fraction
         self._last = now
         if self._displayed < fraction:

@@ -235,11 +235,16 @@ class PreviewFormattingTests(unittest.TestCase):
 
 
 class PreviewSmoothingTests(unittest.TestCase):
-    """The displayed head glides at the physical rate without exceeding it or snapping back."""
+    """The displayed head cruises at the physical rate without exceeding it or snapping back."""
+
+    def test_advances_at_constant_velocity(self):
+        # No easing: the displayed value moves at exactly the given rate.
+        displayed = advance_display(displayed=0.0, target=1.0, velocity=0.1, dt=0.25)
+        self.assertAlmostEqual(displayed, 0.025)
 
     def test_tracks_moving_target_with_bounded_lag(self):
         # A target advancing at the estimated velocity is tracked with a
-        # bounded lag (equilibrium lag ≈ velocity / lag decay).
+        # constant small lag and no easing either side of observations.
         displayed = 0.0
         velocity = 0.1
         lags = []
@@ -247,7 +252,7 @@ class PreviewSmoothingTests(unittest.TestCase):
             target = min(1.0, 0.02 + tick * velocity * 0.033)
             displayed = advance_display(displayed=displayed, target=target, velocity=velocity, dt=0.033)
             lags.append(target - displayed)
-        self.assertLessEqual(max(lags), 0.15)
+        self.assertLessEqual(max(lags), 0.05)
         self.assertGreaterEqual(displayed, 0.9)
 
     def test_never_exceeds_target_and_never_decreases(self):
@@ -263,13 +268,9 @@ class PreviewSmoothingTests(unittest.TestCase):
         displayed = 0.6
         self.assertEqual(advance_display(displayed=displayed, target=0.3, velocity=0.1, dt=0.033), 0.6)
 
-    def test_zero_velocity_eases_into_a_static_target(self):
-        # With no velocity estimate the gap decay (0.8/s) closes large gaps
-        # promptly instead of leaving the head stranded: after 0.25 s the
-        # head has covered about 1 - e^-0.2 of a full-layer gap.
-        displayed = advance_display(displayed=0.0, target=1.0, velocity=0.0, dt=0.25)
-        self.assertGreaterEqual(displayed, 0.15)
-        self.assertLessEqual(displayed, 0.25)
+    def test_zero_velocity_holds(self):
+        # No fake easing: with no rate estimate the head simply waits.
+        self.assertEqual(advance_display(displayed=0.0, target=1.0, velocity=0.0, dt=0.25), 0.0)
 
     def test_clamps_target_to_unit_range(self):
         value = advance_display(displayed=0.5, target=2.0, velocity=1.0, dt=0.033)
