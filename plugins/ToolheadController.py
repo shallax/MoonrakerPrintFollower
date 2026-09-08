@@ -48,6 +48,7 @@ class ToolheadController(QObject):
         self._pause_waiting = False
         self._pause_in_flight = False
         self._draining = False
+        self._pumping = False
         self._status = ""
         self._values = {}
         self._deadline = QTimer(self)
@@ -134,6 +135,20 @@ class ToolheadController(QObject):
         self._pump()
 
     def _pump(self):
+        # Sending a command can synchronously deliver its own terminal
+        # event (a refused Pause completes with "failed" inside send()).
+        # The nested dispatch must not re-run the pump before this frame's
+        # handlers have finished; the commandChanged handler drops the
+        # queue on the failure, which is the only correct follow-up.
+        if self._pumping:
+            return
+        self._pumping = True
+        try:
+            self._pump_dispatch()
+        finally:
+            self._pumping = False
+
+    def _pump_dispatch(self):
         gate = jog_gate(self._state())
         if not self._pending:
             self._pause_waiting = self._pause_in_flight = self._draining = False

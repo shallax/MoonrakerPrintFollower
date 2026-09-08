@@ -776,9 +776,20 @@ class ToolheadControllerTests(unittest.TestCase):
             def __init__(self):
                 super().__init__()
                 self.busy = False
+                self.fail_next = False
                 self.sent = []
             def send(self, label, path, body=None):
                 if self.busy:
+                    return False
+                if self.fail_next:
+                    # A refused send completes synchronously: the real
+                    # MonitorCommands clears busy, emits changed (re-entering
+                    # the controller's pump), then the tracker emits the
+                    # terminal failed event.
+                    self.fail_next = False
+                    self.changed.emit()
+                    self.owner.commandChanged.emit(
+                        {"name": label, "outcome": "failed", "terminal": True, "detail": "unavailable"})
                     return False
                 self.sent.append((label, path, body))
                 self.busy = True
@@ -789,6 +800,7 @@ class ToolheadControllerTests(unittest.TestCase):
 
         self.data = Data()
         self.commands = Commands()
+        self.commands.owner = self.data
         module = self.qt.load("ToolheadController")
         self.controller = module.ToolheadController(self.data, self.commands)
         self.addCleanup(self.controller.close)
@@ -826,6 +838,16 @@ class ToolheadControllerTests(unittest.TestCase):
         # The fresh paused state drains the queue.
         self.data.set_state("paused")
         self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+
+    def test_refused_pause_send_drops_the_queue_without_re_sending(self):
+        # A refused Pause completes synchronously with a terminal failed
+        # event inside send(); the re-entrant pump must not re-send it.
+        self.data.set_state("printing")
+        self.commands.fail_next = True
+        self.controller.jog("x", 1)
+        self.assertEqual(len(self.pauses()), 0)
+        self.assertEqual(self.controller._pending, ())
+        self.assertIn("did not pause", self.controller.values["jogStatus"])
 
     def test_pause_timeout_drops_the_queue(self):
         controller = self.qt.load("ToolheadController")

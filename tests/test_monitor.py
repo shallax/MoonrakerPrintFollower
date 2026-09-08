@@ -454,6 +454,9 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(len(pauses), 1)
         self.assertEqual(self.scripts(), [])
         self.assertIn("Waiting for the printer to pause", model.jogStatus)
+        # The harness must ack the pause HTTP request: acceptance precedes
+        # state confirmation, exactly as in production.
+        pauses[0].callback({}, None)
         self.deliver_state("paused")
         self.qt.events(20)
         scripts = self.scripts()
@@ -476,6 +479,8 @@ class MonitorQtTests(unittest.TestCase):
         self.deliver_state("printing")
         model.jog("x", 1)
         model.jog("y", 1)  # different axis: two distinct ops
+        pauses = [r for r in self.transport.requests if r.path == "printer/print/pause"]
+        pauses[0].callback({}, None)  # HTTP acceptance before state confirmation
         self.deliver_state("paused")
         scripts = self.scripts()
         self.assertEqual(len(scripts), 1)  # the first op drains
