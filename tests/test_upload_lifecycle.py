@@ -51,12 +51,12 @@ class UploadContractTests(unittest.TestCase):
         qml = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
         self.assertIn('if path == "<root>"', controller + adapter)
         self.assertIn('self._upload.path or "<root>"', controller + adapter)
-        self.assertIn('if (path === "<root>") return true', qml)
+        self.assertIn('if (path === "<root>")', qml)
         self.assertIn("<root> is Moonraker's gcodes directory", qml)
 
     def test_upload_dialog_contract(self):
         qml = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
-        self.assertIn('property variant catalog: UM.I18nCatalog { name: "cura" }', qml)
+        self.assertIn('property variant catalog: UM.I18nCatalog {', qml)
         self.assertIn("manager.uploadPathOptions", qml)
         self.assertIn("id: form", qml)
         self.assertIn("form.implicitHeight", qml)

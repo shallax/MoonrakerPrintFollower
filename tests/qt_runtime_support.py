@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import importlib
 import importlib.util
+import os
 import pathlib
 import sys
 import tempfile
@@ -72,23 +73,59 @@ class ScriptedTransport:
 
 @contextmanager
 def runtime():
-    from PyQt6.QtCore import QCoreApplication, QEventLoop, QObject, QTimer, pyqtSignal
+    from PyQt6.QtCore import QCoreApplication, QEventLoop, QObject, QTimer, pyqtProperty, pyqtSignal
 
     app = QCoreApplication.instance() or QCoreApplication([])
 
     class PrinterModel(QObject):
+        # Mirror the real PrinterOutputModel surface: the monitor QML binds
+        # to these properties, so they must be Q_PROPERTYs, not plain
+        # Python attributes (QML cannot see plain attributes, and the
+        # binding then fails with "Unable to assign [undefined]").
+        nameChanged = pyqtSignal()
+        uniqueNameChanged = pyqtSignal()
+        buildplateChanged = pyqtSignal()
+        cameraUrlChanged = pyqtSignal()
+
         def __init__(self, *_args):
             super().__init__()
             self._extruders = []
+            self._name = ""
+            self._unique_name = ""
+            self._buildplate = ""
+            self._camera_url = ""
+
+        @pyqtProperty(str, notify=nameChanged)
+        def name(self):
+            return self._name
+
+        @pyqtProperty(str, notify=uniqueNameChanged)
+        def uniqueName(self):
+            return self._unique_name
+
+        @pyqtProperty(str, notify=buildplateChanged)
+        def buildplate(self):
+            return self._buildplate
+
+        @pyqtProperty(str, notify=cameraUrlChanged)
+        def cameraUrl(self):
+            return self._camera_url
 
         def updateName(self, value):
-            self.name = value
+            self._name = value
+            self.nameChanged.emit()
 
         def updateUniqueName(self, value):
-            self.unique_name = value
+            self._unique_name = value
+            self.uniqueNameChanged.emit()
 
         def updateBuildplate(self, value):
-            self.buildplate = value
+            self._buildplate = value
+            self.buildplateChanged.emit()
+
+        def setCameraUrl(self, value):
+            self._camera_url = str(value or "")
+            self.cameraUrlChanged.emit()
 
     class OutputDevice(QObject):
         writeStarted = pyqtSignal(object)
@@ -155,15 +192,17 @@ def runtime():
             super().__init__()
             self.scene = Scene()
             self.view = None
+            self.stage = None
         def getScene(self): return self.scene
         def getView(self, _name): return self.view
-        def getActiveStage(self): return None
+        def getActiveStage(self): return self.stage
 
     class Machine:
-        def __init__(self, machine_id="A"):
+        def __init__(self, machine_id="A", name=None):
             self.machine_id = machine_id
+            self._name = name if name is not None else machine_id
         def getId(self): return self.machine_id
-        def getName(self): return self.machine_id
+        def getName(self): return self._name
         def getProperty(self, name, role):
             return {"machine_extruder_count": 1, "machine_width": 200,
                     "machine_depth": 200, "machine_center_is_zero": False}.get(name, "glass")
@@ -173,10 +212,10 @@ def runtime():
         mainWindowChanged = pyqtSignal()
         fileCompleted = pyqtSignal(str)
         additionalComponentsChanged = pyqtSignal(str)
-        def __init__(self, preferences=None, machine=True):
+        def __init__(self, preferences=None, machine=True, machine_name=None):
             super().__init__()
             self.preferences = preferences or Preferences()
-            self.stack = Machine() if machine else None
+            self.stack = Machine(name=machine_name) if machine else None
             self.controller = Controller()
             self.loaded_paths = []
             self.writer = SimpleNamespace(write=lambda stream, node: bool(stream.write("G1 X0\n")))
@@ -202,8 +241,39 @@ def runtime():
 
     with tempfile.TemporaryDirectory(prefix="moonraker-test-cache-") as cache:
         module("UM.Logger", Logger=SimpleNamespace(log=Mock(), logException=Mock()))
+
+        class _PreferencesStore:
+            # Mirrors Uranium's Preferences contract: reads and writes on
+            # keys that were never registered are dropped (getValue returns
+            # None, setValue is a no-op), so consumers must addPreference
+            # first. Key format: exactly one "/" as in real Uranium.
+            def __init__(self):
+                self.values = {}
+                self.defaults = {}
+                self.registered = set()
+            def addPreference(self, key, default):
+                if str(key).count("/") != 1:
+                    raise Exception("Preferences must be in the [CATEGORY]/[KEY] format")
+                self.registered.add(key)
+                self.defaults.setdefault(key, default)
+            def getValue(self, key):
+                if key not in self.registered:
+                    return None
+                return self.values.get(key, self.defaults.get(key))
+            def setValue(self, key, value):
+                if key not in self.registered:
+                    return
+                self.values[key] = value
+
+        _preferences = _PreferencesStore()
+        module("UM.Preferences", Preferences=SimpleNamespace(getInstance=lambda: _preferences))
+        module("UM.Application", Application=SimpleNamespace(
+            getInstance=lambda: SimpleNamespace(getPreferences=lambda: _preferences)))
         module("UM.Extension", Extension=type("Extension", (), {}))
-        module("UM.Resources", Resources=SimpleNamespace(getCacheStoragePath=lambda: cache))
+        module("UM.Resources", Resources=SimpleNamespace(
+            Preferences="preferences",
+            getCacheStoragePath=lambda: cache,
+            getStoragePath=lambda kind, name: os.path.join(cache, name)))
         module("UM.Backend.Backend", BackendState=SimpleNamespace(Done=1))
         module("UM.Mesh.MeshWriter", MeshWriter=type("MeshWriter", (), {}))
         module("UM.Message", Message=Message)

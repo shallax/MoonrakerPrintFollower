@@ -59,6 +59,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
             "MonitorControls.py", "MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py",
             "BedMeshSceneNode.py", "MoonrakerMonitorModel.py", "MoonrakerFollowerMachineAction.py",
             "MoonrakerProtocol.py", "UploadController.py", "CuraOutputWriter.py",
+            "ToolheadPolicy.py", "ToolheadController.py",
         ):
             self.assertIn(f"`{module}`", ARCH)
 
@@ -139,7 +140,9 @@ class SourceContractTests(unittest.TestCase):
             "MonitorTuning": set(),
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
             "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
-            "MoonrakerMonitorModel": {"MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTuning"},
+            "MoonrakerMonitorModel": {"MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTuning", "ToolheadController"},
+            "ToolheadController": {"ToolheadPolicy"},
+            "ToolheadPolicy": set(),
             "MoonrakerOutputDevice": {"CuraOutputWriter", "UploadController"},
             "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice"},
             "MoonrakerPrintFollower": {"FollowerRuntime"},
@@ -167,7 +170,8 @@ class SourceContractTests(unittest.TestCase):
         # The output plugin and Machine Action receive the follower at the
         # documented composition boundary; PrinterConfig and BedMeshPresenter
         # only contain the string inside preference-key literals.
-        follower_exceptions = {"BedMeshPresenter", "MoonrakerFollowerMachineAction", "MoonrakerOutputDevicePlugin", "PrinterConfig"}
+        follower_exceptions = {"BedMeshPresenter", "MoonrakerFollowerMachineAction", "MoonrakerOutputDevicePlugin",
+                               "PrinterConfig", "MoonrakerMonitorModel"}  # plugin-namespaced preference keys / file names
         for module, dependencies in allowed.items():
             source = (PLUGINS / (module + ".py")).read_text()
             imported = {node.module for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ImportFrom) and node.level}
@@ -295,7 +299,7 @@ class CompositionStructureTests(unittest.TestCase):
                      "PauseController", "PauseScheduleService", "PreviewFollower", "PreviewFormatting",
                      "PreviewMotion", "PreviewPresentation", "PreviewSmoothing", "PrintCoordinator",
                      "PrinterBinding", "PrinterConfig", "PrintState",
-                     "RemoteFileService", "RemoteJobService", "UploadController"):
+                     "RemoteFileService", "RemoteJobService", "ToolheadController", "ToolheadPolicy", "UploadController"):
             source = (PLUGINS / (name + ".py")).read_text()
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.FunctionDef) and node.name == "__init__":

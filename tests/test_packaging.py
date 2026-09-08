@@ -43,6 +43,12 @@ class QmlCheckerTests(unittest.TestCase):
         failures = check_text("// Moonraker settings panel\nimport QtQuick 2.15\nItem { width: 1 }\n", "commented.qml")
         self.assertEqual(failures, [])
 
+    def test_qml_checker_rejects_bare_type_without_object_body(self):
+        # A removal gone wrong left `Column` behind with no braces; the
+        # brace scanner cannot see it, but the real QML compiler fails on it.
+        failures = check_text("import QtQuick 2.15\nItem\n{\n    Column\n\n\n}\n", "bare.qml")
+        self.assertTrue(any("bare QML type 'Column'" in item for item in failures))
+
 
 class PackageSourceTests(unittest.TestCase):
     def test_repository_has_no_tracked_python_cache_or_legacy_dashboard(self):

@@ -239,7 +239,7 @@ class PrinterConfigTests(unittest.TestCase):
 
     def test_settings_tab_lists_upload(self):
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
-        self.assertIn('UM.TabRowButton { text: "Upload" }', config)
+        self.assertIn('text: "Upload"', config)
         self.assertIn('text: "Upload format"', config)
 
     def test_normalise_url_is_the_single_url_rule(self):

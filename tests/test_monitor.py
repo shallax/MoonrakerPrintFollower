@@ -48,6 +48,51 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("class MoonrakerMonitorModel(PrinterOutputModel)", MONITOR_MODEL)
         self.assertNotIn("_BaseMoonrakerMonitorModel", MONITOR_MODEL)
 
+    def test_toolhead_control_surface(self):
+        policy = (PLUGINS / "ToolheadPolicy.py").read_text()
+        for token in ("G91", "G28", "M18", "jog_gate", "push_op", "JogOp",
+                      "JOG_DISTANCE_DEFAULT", "EXTRUDE_SPEEDS_MM_PER_MIN", "extrude_distance_ok"):
+            self.assertIn(token, policy)
+        # Motion scripts have exactly one owner: MonitorControls gains none.
+        self.assertNotIn("G91", CONTROLS)
+        self.assertNotIn("M18", CONTROLS)
+        for token in ("jogEnabled", "jogDistance", "extrudeDistance", "extrudeSpeed", "homedAxes",
+                      "positionMode", "jogStatus", "toolheadChanged", "def jog(",
+                      "def setJogDistance(", "def setExtrudeDistance(", "def setExtrudeSpeed(",
+                      "def home(", "def motorsOff(", "def extrude(", "def heatersOff(",
+                      "def centerToolhead(", "def zToZero("):
+            self.assertIn(token, MONITOR_MODEL)
+        for token in ("id: toolheadSection", 'title: "Toolhead"', 'jog("x", -1)', 'jog("z", 1)',
+                      "setJogDistance(", 'home("x")', 'home("y")', 'home("z")', '"Motors off"',
+                      '"Extrude"', '"Retract"', "setExtrudeDistance(", "setExtrudeSpeed(",
+                      '"Cooldown"', "heatersOff",
+                      'text: "↑ Y"', 'text: "← X"', 'text: "→ X"', 'text: "↓ Y"',
+                      'text: "↑ Z"', 'text: "↓ Z"', 'text: "Centre toolhead"', 'text: "Z to 0"',
+                      "Toolhead moves are disabled during a print", "root.printer.monitorPosition"):
+            self.assertIn(token, DASHBOARD_QML)
+        # The six directional buttons carry no +/- signs (the arrows are the
+        # direction) and use the PreviewSecondaryButton idiom: Cura's
+        # native button underneath (hover/tooltip), a centred theme-coloured
+        # label on top — Cura's own label does not vertically centre.
+        # Home-all lives in the Setup section only: the toolhead section
+        # keeps per-axis home buttons, so no duplicate home-all controls.
+        self.assertNotIn('home("")', DASHBOARD_QML[DASHBOARD_QML.index("id: toolheadSection"):DASHBOARD_QML.index("id: macroSection")])
+        start = DASHBOARD_QML.index("id: toolheadSection")
+        end = DASHBOARD_QML.index("id: macroSection", start)
+        self.assertEqual(DASHBOARD_QML[start:end].count("PreviewSecondaryButton"), 6)
+        self.assertNotIn("contentItem", DASHBOARD_QML[start:end])
+        # The Z-offset nudges carry direction glyphs, up row first, and no
+        # +/- signs: the arrows carry the direction.
+        self.assertIn('"↓ " + Math.abs(modelData)', DASHBOARD_QML)
+        self.assertIn('"↑ " + modelData', DASHBOARD_QML)
+        self.assertLess(DASHBOARD_QML.index("model: [0.005"), DASHBOARD_QML.index("model: [-0.005"))
+        # The toolhead block is gated by jogEnabled alone, never actionBusy:
+        # taps must keep working while the queue drains.
+        start = DASHBOARD_QML.index("id: toolheadSection")
+        end = DASHBOARD_QML.index("id: macroSection", start)
+        self.assertIn("jogEnabled", DASHBOARD_QML[start:end])
+        self.assertNotIn("actionBusy", DASHBOARD_QML[start:end])
+
     def test_same_dashboard_chain_and_power_lock_explanation(self):
         self.assertIn('"MoonrakerMonitorBedMesh.qml"', OUTPUT_PLUGIN)
         self.assertIn("MoonrakerMonitorDashboard", BED_MESH_QML)
@@ -65,19 +110,101 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("self._commands.setup_allowed", CONTROLS)
         self.assertIn("configfile.get(\"save_config_pending\")", CONTROLS)
 
-    def test_emergency_stop_remains_three_clicks_with_progress(self):
+    def test_emergency_stop_requires_two_clicks_and_a_held_third_press(self):
         source = (PLUGINS / "MonitorCommands.py").read_text()
-        self.assertIn("self._clicks == 3", source)
+        self.assertIn("HOLD_MS = 600", source)
         self.assertIn("self._reset_timer.setInterval(1000)", source)
         self.assertIn('"printer/emergency_stop"', source)
-        self.assertIn("emergencyButton.clicks / 3.0", DASHBOARD_QML)
+        self.assertIn("def emergency_hold_started", source)
+        self.assertIn("def emergency_hold_released", source)
+        # Firing the stop clears every pending item and releases busy.
+        self.assertIn("emergencyStopped.emit()", source)
+        self.assertIn("self.reset()", source)
+        self.assertIn("emergencyButton.clicks +", DASHBOARD_QML)
+        self.assertIn('"EMERGENCY STOP — press and hold to fire"', DASHBOARD_QML)
         self.assertIn("EMERGENCY STOP", DASHBOARD_QML)
         self.assertNotIn("Emergency stop?", DASHBOARD_QML)
 
+    def test_controls_live_in_the_collapsible_column_and_the_left_is_read_only(self):
+        # The left panel carries no printer commands: only the camera list,
+        # the read-outs and view configuration remain there.
+        self.assertNotIn("root.printer.pausePrint", MONITOR_QML)
+        self.assertNotIn("root.printer.setPowerDevice", MONITOR_QML)
+        self.assertIn("root.printer.emergencyStopClick", DASHBOARD_QML)  # the one permitted command
+        # The information pane sits left of the webcam with the mesh map.
+        self.assertIn("id: infoPanel", MONITOR_QML)
+        self.assertIn('"Bed mesh map"', MONITOR_QML)
+        # Cura-style collapsible sections, persisted per section, sharing
+        # the CollapsibleSectionHeader type across all three panes.
+        self.assertIn("sectionExpandedMap", DASHBOARD_QML)
+        self.assertIn("setSectionExpanded", MONITOR_MODEL)
+        self.assertIn('sectionId: "toolhead"', DASHBOARD_QML)
+        # Direct instantiations must ASSIGN the type's properties: the old
+        # Loader syntax ('property string sectionId: ...') declares a local
+        # property instead, which silently un-wires every header.
+        self.assertNotIn("property string sectionId:", DASHBOARD_QML)
+        self.assertNotIn("property string title:", DASHBOARD_QML)
+        self.assertNotIn("property string sectionIcon:", DASHBOARD_QML)
+        self.assertIn('sectionIcon: "Nozzle"', DASHBOARD_QML)
+        self.assertIn('sectionIcon: "Printer"', DASHBOARD_QML)
+        self.assertIn('sectionId: "meshmap"', MONITOR_QML)
+        self.assertIn('sectionId: "systeminfo"', MONITOR_QML)
+        # Plugin-drawn glyphs feed the header through a url, and the
+        # frontend launcher lives in the Printer status title row.
+        self.assertIn('sectionIcon: "Fan"', MONITOR_QML)
+        self.assertIn('sectionIconUrl: Qt.resolvedUrl("Power.svg")', DASHBOARD_QML)
+        self.assertIn('text: "Open the Moonraker frontend."', MONITOR_QML)
+        self.assertNotIn('text: "Open Moonraker frontend"', MONITOR_QML)
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 12)
+        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 8)
+        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 11)
+        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)
+        # Filament state is colour-coded: green detected, orange runout.
+        self.assertIn('"#43a047"', MONITOR_QML)
+        self.assertIn('"#fb8c00"', MONITOR_QML)
+        self.assertNotIn('id: powerOffDialog', MONITOR_QML)
+        self.assertNotIn('id: cancelPrintDialog', MONITOR_QML)
+        # The right column hosts the print actions, power and the lock.
+        for token in ('text: "Pause"', 'text: "Resume"', 'text: "Cancel"', "cancelPrintDialog.open()",
+                      'title: "Power"', "powerOffDialog.open()", "controlsCollapsed",
+                      "id: collapsedTitle", "rotation: 90",
+                      '"Lock all controls."', '"Unlock all controls."', "PadlockLocked.svg", "PadlockUnlocked.svg",
+                      "setControlsLocked", "setControlsCollapsed"):
+            self.assertIn(token, DASHBOARD_QML)
+        self.assertIn("controlsLocked", MONITOR_MODEL)
+        self.assertIn("controlsCollapsed", MONITOR_MODEL)
+        # The Information and Printer status panes collapse and persist too.
+        # Collapsed titles must anchor to their header ROW: anchoring to
+        # the toggle inside it is illegal in QML and silently drops the
+        # anchor, which is what un-pinned the titles for so long.
+        self.assertIn("anchors.top: controlHeader.bottom", DASHBOARD_QML)
+        self.assertIn("anchors.top: infoHeader.bottom", MONITOR_QML)
+        self.assertIn("anchors.top: statusHeader.bottom", MONITOR_QML)
+        for token in ('text: "Printer status"', 'title: "Print job"', 'title: "Bed mesh"',
+                      "id: infoCollapseButton", "id: statusCollapseButton",
+                      "id: infoCollapsedTitle", "id: statusCollapsedTitle",
+                      "setInfoCollapsed", "setStatusCollapsed"):
+            self.assertIn(token, MONITOR_QML + MONITOR_MODEL)
+        self.assertIn("infoCollapsed", MONITOR_MODEL)
+        self.assertIn("statusCollapsed", MONITOR_MODEL)
+        self.assertIn("cameraRefreshNonce", MONITOR_MODEL)
+        self.assertIn("mpf_reload", MONITOR_QML)  # Refresh camera restarts the stream
+
+    def test_system_restart_surface(self):
+        for token in ("firmwareRestart", "hostRestart", "FIRMWARE_RESTART", "machine/reboot"):
+            self.assertIn(token, MONITOR_MODEL + CONTROLS)
+        for token in ('text: "Firmware restart"', 'text: "Host restart"',
+                      "System restarts are disabled during a print."):
+            self.assertIn(token, DASHBOARD_QML)
+
     def test_emergency_stop_is_pinned_outside_scrollable_controls(self):
+        # The dock lives at the bottom of the dashboard, spanning the whole
+        # window width (including under the controls pane), outside the
+        # scrollable panes, so it stays visible in every collapse state.
         self.assertIn("anchors.bottom: emergencyDock.top", DASHBOARD_QML)
         self.assertIn("id: emergencyDock", DASHBOARD_QML)
-        self.assertEqual(DASHBOARD_QML.count("id: emergencyButton"), 1)
+        self.assertNotIn("id: emergencyDock", MONITOR_QML)
+        self.assertEqual(DASHBOARD_QML.count("id: emergencyButton\n"), 1)
 
     def test_emergency_stop_text_stays_black_during_click_sequence(self):
         self.assertIn('color: "black"', DASHBOARD_QML)
@@ -104,7 +231,7 @@ class MonitorModelContractTests(unittest.TestCase):
     def test_pwm_controls_remain_in_dashboard(self):
         self.assertIn("pwmOutputItems", DASHBOARD_QML)
         self.assertIn("setPwmOutput", DASHBOARD_QML)
-        self.assertIn('text: "PWM outputs"', DASHBOARD_QML)
+        self.assertIn('title: "PWM outputs"', DASHBOARD_QML)
 
     def test_monitor_layer_tracks_remote_print_not_cura_slider(self):
         resolver = (PLUGINS / "PrintState.py").read_text()
@@ -146,7 +273,7 @@ class MonitorModelContractTests(unittest.TestCase):
         ):
             self.assertIn(token, CONTROLS + MONITOR_MODEL)
         self.assertIn("function applyLedColour()", DASHBOARD_QML)
-        self.assertGreaterEqual(DASHBOARD_QML.count("if (!pressed) applyLedColour()"), 4)
+        self.assertGreaterEqual(DASHBOARD_QML.count("applyLedColour()"), 4)
         self.assertIn("root.tuningSliderPressed = pressed", DASHBOARD_QML)
         self.assertNotIn('text: "Set colour"', DASHBOARD_QML)
         self.assertIn("root.printer.setLedColor", DASHBOARD_QML)
@@ -202,7 +329,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertGreaterEqual(DASHBOARD_QML.count("onMoved:"), 9)
         self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
         self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", DASHBOARD_QML)
-        self.assertIn('text: "Refresh camera"', MONITOR_QML)
+        self.assertIn('text: "Refresh Moonraker\'s webcam list."', MONITOR_QML)
         self.assertIn('title: "Exclude object?"', MONITOR_QML)
         tuning = (PLUGINS / "MonitorTuning.py").read_text()
         self.assertIn("DEBOUNCE_MS = 250", tuning)
@@ -236,10 +363,10 @@ class MonitorModelContractTests(unittest.TestCase):
     def test_camera_identity_and_selection_are_typed_and_sized(self):
         self.assertIn("def identity(camera", TYPED)
         self.assertIn("camera_selected", TYPED)
-        self.assertIn("Layout.preferredWidth: 260 * screenScaleFactor", MONITOR_QML)
+        self.assertIn("Layout.preferredWidth: 180 * screenScaleFactor", MONITOR_QML)
 
     def test_camera_qml_uses_the_activated_signal_index_not_bound_current_index(self):
-        self.assertIn("onActivated: function(index)", MONITOR_QML)
+        self.assertIn("onActivated: function (index)", MONITOR_QML)
         self.assertIn("selectWebcam(index)", MONITOR_QML)
         self.assertNotIn("selectWebcam(cameraSelector.currentIndex)", MONITOR_QML)
 
@@ -313,7 +440,7 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         commands = (PLUGINS / "MonitorCommands.py").read_text()
         click_window = int(_re.search(r"_reset_timer\.setInterval\((\d+)\)", commands).group(1))
         self.assertEqual(click_window, 1000)
-        self.assertIn(f"within {click_window // 1000} second", DASHBOARD_QML)
+        self.assertIn(f"after {click_window // 1000} second", DASHBOARD_QML)
 
         follow = (PLUGINS / "FollowController.py").read_text()
         radius = int(_re.search(r"window_radius: int = (\d+)", follow).group(1))
@@ -381,6 +508,386 @@ class MonitorQtTests(unittest.TestCase):
             "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1},
         }
         client._handle_http_status({"result": {"status": status}}, None, client._generation)
+
+    def deliver_state(self, state):
+        client = self.follower.client
+        status = {
+            "print_stats": {"filename": "part.gcode", "state": state, "print_duration": 30,
+                            "info": {"current_layer": 2, "total_layer": 20}},
+            "virtual_sdcard": {"file_size": 100, "file_position": 20},
+            "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1,
+                           "absolute_coordinates": True},
+            "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
+        }
+        client._handle_http_status({"result": {"status": status}}, None, client._generation)
+
+    def scripts(self):
+        return [r for r in self.transport.requests if r.path == "printer/gcode/script"]
+
+    def test_toolhead_slots_send_exact_scripts(self):
+        model = self.monitor()
+        self.deliver_state("standby")
+        self.assertTrue(model.jogEnabled)
+        self.assertEqual(model.positionMode, "Absolute")
+        model.setJogDistance(10)
+        self.assertEqual(model.jogDistance, 10.0)
+
+        def next_script(action, *args):
+            before = len(self.scripts())
+            action(*args)
+            self.qt.events(10)
+            scripts = self.scripts()
+            self.assertEqual(len(scripts), before + 1)
+            scripts[-1].callback({}, None)
+            self.qt.events(10)
+            return scripts[-1].options["body"]
+        self.assertEqual(next_script(model.jog, "x", 1), {"script": "G91\nG1 X10 F3000\nG90"})
+        self.assertEqual(next_script(model.jog, "z", -1), {"script": "G91\nG1 Z-10 F600\nG90"})
+        self.assertEqual(next_script(model.home, "y"), {"script": "G28 Y"})
+        self.assertEqual(next_script(model.home, ""), {"script": "G28"})
+        self.assertEqual(next_script(model.motorsOff), {"script": "M18"})
+        # Extrude uses the configured distance and speed (defaults 5 mm, 5 mm/s).
+        self.assertEqual(next_script(model.extrude, 1), {"script": "G91\nG1 E5 F300\nG90"})
+        self.assertEqual(next_script(model.extrude, -1), {"script": "G91\nG1 E-5 F300\nG90"})
+        model.setExtrudeDistance(10)
+        model.setExtrudeSpeed(120)
+        self.assertEqual(next_script(model.extrude, 1), {"script": "G91\nG1 E10 F120\nG90"})
+        model.setExtrudeDistance(10)
+        model.setExtrudeSpeed(300)
+        model.setJogDistance(42.5)
+        self.assertEqual(next_script(model.jog, "x", 1), {"script": "G91\nG1 X42.5 F3000\nG90"})
+        model.setJogDistance(10)
+
+    def test_negative_free_text_distances_are_rejected(self):
+        # The free-text fields hold magnitudes; the buttons carry the
+        # direction. A negative entry must never invert the arrows.
+        model = self.monitor()
+        self.deliver_state("standby")
+        model.setJogDistance(10)
+        model.setJogDistance(-25)
+        self.assertEqual(model.jogDistance, 10.0)
+        model.setExtrudeDistance(-5)
+        self.assertEqual(model.extrudeDistance, 5.0)
+        model.setExtrudeSpeed(-120)
+        self.assertEqual(model.extrudeSpeed, 300.0)
+        model.jog("x", 1)
+        self.qt.events(10)
+        scripts = [r for r in self.transport.requests if r.path == "printer/gcode/script"]
+        self.assertEqual(scripts[0].options["body"], {"script": "G91\nG1 X10 F3000\nG90"})
+
+    def test_toolhead_guard_releases_and_polls_do_not_rearm_it(self):
+        # The guard drops the poll floor while moves run and for a short
+        # settle afterwards. Polls arriving during the settle must NOT
+        # re-arm the cooldown — at poll cadence that would make the
+        # release unreachable and hold the urgent floor forever.
+        model = self.monitor()
+        self.deliver_state("standby")
+        model._toolhead._guard_cooldown.setInterval(500)
+        model.setJogDistance(1)
+        model.jog("x", 1)
+        client = self.follower.client
+        self.assertTrue(client._session.toolhead_guard)
+        scripts = [r for r in self.transport.requests if r.path == "printer/gcode/script"]
+        scripts[0].callback({}, None)
+        self.qt.events(10)
+        for _ in range(3):
+            self.deliver_state("standby")
+            self.qt.events(10)
+        self.assertTrue(client._session.toolhead_guard)  # settling, not re-armed
+        self.qt.events(700)
+        self.assertFalse(client._session.toolhead_guard)  # released on schedule
+
+    def test_jog_keeps_its_place_behind_queued_one_shots(self):
+        # The toolhead sends on the shared command lane. A jog tapped
+        # while one-shots are queued must run AFTER them, not jump the
+        # queue when the in-flight command completes.
+        model = self.monitor()
+        self.deliver_state("standby")
+        model.setJogDistance(1)
+        model.jog("x", 1)          # in flight on the lane
+        model.homeAll()            # queues behind the in-flight jog
+        model.jog("y", 1)          # waits in the toolhead queue
+        scripts = [r for r in self.transport.requests if r.path == "printer/gcode/script"]
+        self.assertEqual(len(scripts), 1)
+        scripts[0].callback({}, None)  # jog X completes; Home must go next
+        self.qt.events(10)
+        scripts = [r for r in self.transport.requests if r.path == "printer/gcode/script"]
+        self.assertEqual([s.options["body"]["script"] for s in scripts[-2:]],
+                         ["G91\nG1 X1 F3000\nG90", "G28"])
+        scripts[-1].callback({}, None)  # Home completes; now the Y jog runs
+        self.qt.events(10)
+        scripts = [r for r in self.transport.requests if r.path == "printer/gcode/script"]
+        self.assertEqual(scripts[-1].options["body"],
+                         {"script": "G91\nG1 Y1 F3000\nG90"})
+
+    def test_endpoint_change_invalidates_subscribers_once(self):
+        # PrinterBinding tears the poller down silently before the rebind;
+        # the client's configure emits exactly one invalidation wave on
+        # the old identity.
+        client = self.follower.client
+        waves = []
+        client.sessionInvalidated.connect(lambda: waves.append(True))
+        self.follower.apply_printer_config(
+            self.config_type(url="http://printer-b", api_key="new-key", path_follow=False))
+        self.qt.events(10)
+        self.assertEqual(len(waves), 1)
+
+    def test_pause_first_jog_waits_for_paused_confirmation_then_drains(self):
+        model = self.monitor()
+        self.deliver_state("printing")
+        self.assertFalse(model.jogEnabled)  # moves need an explicit pause first
+        model.setJogDistance(1)
+        model.jog("x", 1)
+        model.jog("x", 1)  # merges into the queued move
+        pauses = [r for r in self.transport.requests if r.path == "printer/print/pause"]
+        self.assertEqual(len(pauses), 1)
+        self.assertEqual(self.scripts(), [])
+        self.assertIn("Waiting for the printer to pause", model.jogStatus)
+        # The harness must ack the pause HTTP request: acceptance precedes
+        # state confirmation, exactly as in production.
+        pauses[0].callback({}, None)
+        self.deliver_state("paused")
+        self.qt.events(20)
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)
+        self.assertEqual(scripts[0].options["body"], {"script": "G91\nG1 X2 F3000\nG90"})
+        self.assertEqual(model.jogStatus, "")
+
+    def test_pause_timeout_drops_queued_jogs(self):
+        controller = self.qt.load("ToolheadController")
+        with patch.object(controller, "PAUSE_WAIT_TIMEOUT_S", 0.05):
+            model = self.monitor()
+            self.deliver_state("printing")
+            model.jog("x", 1)
+            self.qt.events(200)
+        self.assertEqual(self.scripts(), [])
+        self.assertIn("did not pause", model.jogStatus)
+
+    def test_resume_during_drain_drops_remaining_moves(self):
+        model = self.monitor()
+        self.deliver_state("printing")
+        model.setJogDistance(1)
+        model.jog("x", 1)
+        model.jog("y", 1)  # different axis: two distinct ops
+        pauses = [r for r in self.transport.requests if r.path == "printer/print/pause"]
+        pauses[0].callback({}, None)  # HTTP acceptance before state confirmation
+        self.deliver_state("paused")
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)  # the first op drains
+        self.assertEqual(scripts[0].options["body"], {"script": "G91\nG1 X1 F3000\nG90"})
+        # The print resumes before the first move completes: the remaining
+        # move must be dropped, never force-executed mid-print.
+        self.deliver_state("printing")
+        self.assertEqual(self.scripts(), scripts)
+        self.assertIn("resumed", model.jogStatus)
+
+    def test_emergency_stop_clears_queued_scripts_and_busy(self):
+        model = self.monitor()
+        self.deliver_state("standby")
+        commands = model._commands
+        commands.script("Home", "G28")
+        commands.script("QGL", "QUAD_GANTRY_LEVEL")  # queued behind the in-flight send
+        self.assertEqual(len(commands._queue), 1)
+        model.emergencyStopClick()
+        model.emergencyStopClick()
+        model._commands._hold_timer.setInterval(30)
+        model.emergencyHoldStarted()
+        self.qt.events(100)
+        self.assertEqual(commands._queue, [])
+        self.assertFalse(commands.busy)
+        self.assertFalse(model.actionBusy)  # power toggles and restarts unlock
+
+    def test_early_release_cancels_the_hold(self):
+        model = self.monitor()
+        self.deliver_state("standby")
+        model.emergencyStopClick()
+        model.emergencyStopClick()
+        model.emergencyHoldStarted()
+        model.emergencyHoldReleased()
+        self.qt.events(200)
+        self.assertEqual([r for r in self.transport.requests if r.channel == "emergency-stop"], [])
+        # The arm persists: a second, completed hold fires.
+        model._commands._hold_timer.setInterval(30)
+        model.emergencyHoldStarted()
+        self.qt.events(100)
+        self.assertEqual(sum(r.channel == "emergency-stop" for r in self.transport.requests), 1)
+
+    def test_emergency_stop_clears_pending_jog_queue(self):
+        model = self.monitor()
+        self.deliver_state("printing")
+        model.jog("x", 1)  # pause-first cycle starts; the pause holds busy
+        model.emergencyStopClick()
+        model.emergencyStopClick()
+        model._commands._hold_timer.setInterval(30)
+        model.emergencyHoldStarted()
+        self.qt.events(100)
+        self.assertEqual(model._toolhead._pending, ())
+        self.assertFalse(model._toolhead._pause_waiting)
+        self.assertFalse(model._toolhead._pause_in_flight)
+        self.assertFalse(model.actionBusy)
+
+    def test_command_reply_errors_are_reported_as_outcome_unknown(self):
+        model = self.monitor()
+        self.deliver_state("standby")
+        model._controls._macros = {"TEST_MACRO": "macro-name"}
+        model.runMacro("TEST_MACRO", "")
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)
+        # A timed-out reply must not claim the command failed: the printer
+        # may well have executed it.
+        scripts[0].callback(None, "Operation canceled")
+        self.assertIn("outcome unknown", model.actionStatus)
+
+    def test_macros_refuse_while_printing(self):
+        model = self.monitor()
+        # observe() rebuilds the macro table from the snapshot on every
+        # delivery, so re-seed it after each state change.
+        self.deliver_state("printing")
+        model._controls._macros = {"TEST_MACRO": "macro-name"}
+        model.runMacro("TEST_MACRO", "")
+        self.assertEqual(self.scripts(), [])
+        self.deliver_state("standby")
+        model._controls._macros = {"TEST_MACRO": "macro-name"}
+        model.runMacro("TEST_MACRO", "")
+        self.assertEqual([r.options["body"] for r in self.scripts()], [{"script": "TEST_MACRO"}])
+        # The Run button carries the same gate in the UI.
+        self.assertIn("!root.printer.printActive", DASHBOARD_QML)
+
+    def test_system_restarts_are_queued_one_shot_commands(self):
+        model = self.monitor()
+        self.deliver_state("standby")
+        model.firmwareRestart()
+        self.assertEqual([r.options["body"] for r in self.scripts()], [{"script": "FIRMWARE_RESTART"}])
+        self.scripts()[0].callback({}, None)
+        self.qt.events(10)
+        model.hostRestart()
+        reboot = [r for r in self.transport.requests if r.path == "machine/reboot"]
+        self.assertEqual(len(reboot), 1)
+        # Restarts refuse while a print is active.
+        self.deliver_state("printing")
+        model.firmwareRestart()
+        model.hostRestart()
+        self.assertEqual(len([r for r in self.scripts() if "FIRMWARE_RESTART" in str(r.options["body"])]), 1)
+        self.assertEqual(len([r for r in self.transport.requests if r.path == "machine/reboot"]), 1)
+
+    def test_panel_state_persists_across_model_instances(self):
+        model = self.monitor()
+        self.assertNotEqual(model._sections.get("toolhead"), False)  # default expanded
+        model.setSectionExpanded("toolhead", False)
+        model.setControlsCollapsed(True)
+        model.setControlsLocked(True)
+        model.setInfoCollapsed(True)
+        model.setStatusCollapsed(True)
+        # The write really lands in the plugin-owned JSON file, so a Cura
+        # restart round-trips through the file rather than any model state
+        # or Uranium preference-store behaviour.
+        import UM.Resources as UMResourcesModule
+        section_path = UMResourcesModule.Resources.getStoragePath(
+            UMResourcesModule.Resources.Preferences,
+            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        with open(section_path, "r", encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), {
+                "sections": {"toolhead": False},
+                "controlsCollapsed": True,
+                "controlsLocked": True,
+                "infoCollapsed": True,
+                "statusCollapsed": True,
+            })
+        # A fresh model reads the stored file back.
+        second = self.monitor()
+        self.assertEqual(second._sections["toolhead"], False)
+        self.assertTrue(second.controlsCollapsed)
+        self.assertTrue(second.controlsLocked)
+        self.assertTrue(second.infoCollapsed)
+        self.assertTrue(second.statusCollapsed)
+        second.setSectionExpanded("toolhead", True)
+        self.assertEqual(second._sections["toolhead"], True)
+
+    def test_panel_state_migrates_the_legacy_flat_section_file(self):
+        # The first shipped format stored the bare section map; it must
+        # still hydrate into sections with default panel toggles.
+        import UM.Resources as UMResourcesModule
+        section_path = UMResourcesModule.Resources.getStoragePath(
+            UMResourcesModule.Resources.Preferences,
+            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        with open(section_path, "w", encoding="utf-8") as handle:
+            json.dump({"setup": False, "toolhead": True}, handle)
+        model = self.monitor()
+        self.assertEqual(model._sections, {"setup": False, "toolhead": True})
+        self.assertFalse(model.controlsCollapsed)
+        self.assertFalse(model.controlsLocked)
+
+    def test_corrupt_panel_state_file_degrades_to_defaults(self):
+        # A truncated or hand-edited file must never raise or hydrate
+        # inverted: unreadable JSON yields defaults, and string flags like
+        # 'false' must collapse (bool('false') is True).
+        import UM.Resources as UMResourcesModule
+        section_path = UMResourcesModule.Resources.getStoragePath(
+            UMResourcesModule.Resources.Preferences,
+            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        with open(section_path, "w", encoding="utf-8") as handle:
+            handle.write("{not json")
+        model = self.monitor()
+        self.assertEqual(model._sections, {})
+        self.assertFalse(model.controlsCollapsed)
+        with open(section_path, "w", encoding="utf-8") as handle:
+            json.dump({"sections": {"setup": "false", "toolhead": 0},
+                       "controlsLocked": "true"}, handle)
+        model = self.monitor()
+        self.assertIs(model._sections["setup"], False)
+        self.assertIs(model._sections["toolhead"], False)
+        self.assertIs(model.controlsLocked, True)
+
+    def test_controls_lock_and_camera_refresh_nonce(self):
+        model = self.monitor()
+        self.assertFalse(model.controlsLocked)
+        model.setControlsLocked(True)
+        self.assertTrue(model.controlsLocked)
+        model.setControlsLocked(False)
+        self.assertFalse(model.controlsLocked)
+        before = model.cameraRefreshNonce
+        model.refreshWebcams()
+        self.assertEqual(model.cameraRefreshNonce, before + 1)
+
+    def test_setup_scripts_queue_behind_the_in_flight_command(self):
+        model = self.monitor()
+        self.deliver_state("standby")
+        commands = model._commands
+        model.homeAll()  # the real setup path
+        # While the first script is in flight, further one-shot scripts
+        # queue instead of being dropped.
+        self.assertTrue(commands.script("QGL", "QUAD_GANTRY_LEVEL"))
+        self.assertTrue(commands.script("Mesh", "BED_MESH_CALIBRATE"))
+        self.assertTrue(model.canRunSetup)  # the gate stays open for queueing
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)
+        # Stateful commands still refuse while busy: they never queue.
+        self.assertFalse(commands.send("Pause", "printer/print/pause"))
+        self.assertEqual([r for r in self.transport.requests if r.path == "printer/print/pause"], [])
+        scripts[0].callback({}, None)
+        self.qt.events(10)
+        self.assertEqual(len(self.scripts()), 2)  # the next queued script drains automatically
+        self.scripts()[1].callback({}, None)
+        self.qt.events(10)
+        bodies = [r.options["body"] for r in self.scripts()]
+        self.assertEqual(bodies, [{"script": "G28"}, {"script": "QUAD_GANTRY_LEVEL"}, {"script": "BED_MESH_CALIBRATE"}])
+        self.assertEqual(model._commands._queue, [])
+
+    def test_rapid_jogs_while_paused_coalesce(self):
+        model = self.monitor()
+        self.deliver_state("paused")
+        model.setJogDistance(1)
+        model.jog("x", 1)  # sent immediately
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)
+        model.jog("x", 1)  # queued behind the in-flight send
+        model.jog("x", 1)  # merges into the queued move
+        self.assertEqual(self.scripts(), scripts)  # nothing new in flight
+        scripts[0].callback({}, None)
+        self.qt.events(20)
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 2)
+        self.assertEqual(scripts[1].options["body"], {"script": "G91\nG1 X2 F3000\nG90"})
 
     def test_monitor_device_is_registered_with_output_manager(self):
         # The Monitor stage shows Cura's "connect the printer" placeholder when

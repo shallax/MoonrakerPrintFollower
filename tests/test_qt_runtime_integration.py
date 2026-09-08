@@ -152,10 +152,26 @@ class QtRuntimeTests(unittest.TestCase):
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
         follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, path_follow=False))
+        # The metadata pull serves the Preview, so it only runs once the
+        # print's G-code is loaded in Cura.
+        app.controller.view = SimpleNamespace(getActivity=lambda: True)
+        app.controller.activeViewChanged.emit()
+        self.qt.events()
         follower.client.statusReceived.emit({"print_stats": {"state": "printing", "filename": "part.gcode",
             "info": {"current_layer": 2}}, "virtual_sdcard": {"file_size": 100}})
         self.assertEqual(follower.print_state.observation.filename, "part.gcode")
         self.assertTrue(any(r.channel == "metadata" for r in transport.requests))
+
+    def test_unloaded_print_does_not_pull_metadata_or_index(self):
+        # A print that is active on Moonraker but not loaded in Cura must
+        # not download its metadata or G-code: the status stays quiet
+        # until the user loads the print.
+        app, follower, transport = self.follower()
+        config_type = self.qt.load("PrinterConfig").PrinterConfig
+        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True))
+        follower.client.statusReceived.emit({"print_stats": {"state": "printing", "filename": "part.gcode",
+            "info": {"current_layer": 2}}, "virtual_sdcard": {"file_size": 100}})
+        self.assertFalse(any(r.channel == "metadata" for r in transport.requests))
 
     def test_stale_index_completion_does_not_install_into_new_job(self):
         app, follower, transport = self.follower()
@@ -453,6 +469,76 @@ class QtRuntimeTests(unittest.TestCase):
         cancelled.assert_not_called()
 
 
+    def test_stage_switch_echoes_do_not_detach_the_follower(self):
+        # Rapid Preview <-> Monitor switching (or merely re-activating
+        # Cura's window) recreates the SimulationView and Cura can hang,
+        # applying its restoration of the new view seconds later. Neither
+        # the swap echo nor the late restore may stick a detach: the view
+        # swap re-attaches, the echo window absorbs the restoration, and
+        # the watchdog re-attaches any detach that outlives both.
+        from PyQt6.QtCore import QObject, pyqtSignal
+        app, follower, transport = self.follower()
+        config_type = self.qt.load("PrinterConfig").PrinterConfig
+        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True))
+        follower.client._handle_http_status({"result": {"status": {
+            "print_stats": {"state": "printing", "filename": "part.gcode"},
+            "virtual_sdcard": {"file_size": 10, "file_position": 2}}}},
+            None, follower.client._generation)
+        self.qt.events()
+        app.controller.stage = SimpleNamespace(getId=lambda: "PreviewStage")
+        preview = follower._runtime.coordinator._preview
+        preview.attach(True)
+
+        def fake_view(layer):
+            class FakeView(QObject):
+                currentLayerNumChanged = pyqtSignal()
+            view = FakeView()
+            view.layer = layer
+            view.getCurrentLayer = lambda: view.layer
+            view.setLayer = lambda value: setattr(view, "layer", value)
+            view.getCurrentPath = lambda: 0.0
+            view.getMinimumPath = lambda: 0
+            view.getActivity = lambda: True
+            return view
+
+        first = fake_view(40)
+        app.controller.view = first
+        app.controller.activeViewChanged.emit()
+        self.qt.events()
+        preview.remember()  # armed: the follower expects layer 40
+        self.assertEqual(preview.state.expected_layer, 40)
+
+        second = fake_view(0)
+        app.controller.view = second
+        app.controller.activeViewChanged.emit()
+        self.qt.events()
+        # The swap re-attaches and re-arms on whatever the new view shows.
+        self.assertTrue(preview.state.attached)
+        self.assertEqual(preview.state.expected_layer, 0)
+
+        # Cura's late restoration moves the view: within the echo window
+        # (but past the settle grace, which would otherwise mask it) the
+        # mismatch is absorbed instead of detaching.
+        self.qt.events(2400)
+        second.layer = 10
+        second.currentLayerNumChanged.emit()
+        self.qt.events()
+        self.assertTrue(preview.state.attached)
+        self.assertIsNone(preview.state.expected_layer)
+
+        # A restoration landing outside every window still detaches — but
+        # the watchdog re-attaches after the view has been quiet and the
+        # user is still in the Preview stage.
+        preview.remember()  # the follower re-arms on the settled view
+        self.assertEqual(preview.state.expected_layer, 10)
+        preview._echo_until = 0.0
+        second.layer = 42
+        second.currentLayerNumChanged.emit()
+        self.qt.events()
+        self.assertFalse(preview.state.attached)
+        self.qt.events(3100)
+        self.assertTrue(preview.state.attached)
+
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
 class MonitorDataAuxTests(unittest.TestCase):
     def setUp(self):
@@ -527,7 +613,6 @@ class MonitorDataAuxTests(unittest.TestCase):
         self.assertFalse(camera._restore_pending)
         self.assertEqual(camera.values["activeWebcamIndex"], 0)
         self.assertEqual(camera.values["cameraName"], "Rear")
-
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
 class PreviewMotionTests(unittest.TestCase):
@@ -742,6 +827,271 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         self.assertEqual(self.files.phase, "error")
         self.assertEqual(self.files._download_attempts, 1)
         self.assertGreater(self.files._download_retry_at, time.monotonic())
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
+class ToolheadControllerTests(unittest.TestCase):
+    """The jog queue and pause-first sequencing against scripted doubles."""
+
+    def setUp(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+
+        class Data(QObject):
+            changed = pyqtSignal()
+            invalidated = pyqtSignal()
+            commandChanged = pyqtSignal(object)
+            def __init__(self):
+                super().__init__()
+                self.active = True
+                self.connected = True
+                self.guard_calls = []
+                self.snapshot = SimpleNamespace(core={}, auxiliary={})
+            def set_toolhead_guard(self, active):
+                self.guard_calls.append(active)
+            def set_state(self, state):
+                self.snapshot = SimpleNamespace(
+                    core={"print_stats": {"state": state},
+                          "gcode_move": {"absolute_coordinates": True},
+                          "motion_report": {"live_position": [10.0, 10.0, 10.0, 0.0]}},
+                    auxiliary={"toolhead": {"homed_axes": "xyz",
+                                             "axis_minimum": [0, 0, 0],
+                                             "axis_maximum": [200, 200, 200]}})
+                self.changed.emit()
+
+        class Commands(QObject):
+            changed = pyqtSignal()
+            emergencyStopped = pyqtSignal()
+            def __init__(self):
+                super().__init__()
+                self.busy = False
+                self.fail_next = False
+                self.sent = []
+            def send(self, label, path, body=None):
+                if self.busy:
+                    return False
+                if self.fail_next:
+                    # A refused send completes synchronously: the real
+                    # MonitorCommands clears busy, emits changed (re-entering
+                    # the controller's pump), then the tracker emits the
+                    # terminal failed event.
+                    self.fail_next = False
+                    self.changed.emit()
+                    self.owner.commandChanged.emit(
+                        {"name": label, "outcome": "failed", "terminal": True, "detail": "unavailable"})
+                    return False
+                self.sent.append((label, path, body))
+                self.busy = True
+                return True
+            def complete(self):
+                self.busy = False
+                self.changed.emit()
+
+        self.data = Data()
+        self.commands = Commands()
+        self.commands.owner = self.data
+        module = self.qt.load("ToolheadController")
+        self.controller = module.ToolheadController(self.data, self.commands)
+        self.addCleanup(self.controller.close)
+
+    def scripts(self):
+        return [body["script"] for label, path, body in self.commands.sent if path == "printer/gcode/script"]
+
+    def pauses(self):
+        return [1 for label, path, body in self.commands.sent if path == "printer/print/pause"]
+
+    def test_toolhead_guard_speeds_the_poll_floor_while_moving(self):
+        self.data.set_state("paused")
+        self.controller.set_distance(1)
+        self.controller.jog("x", 1)
+        self.assertEqual(self.data.guard_calls[-1], True)  # moving: fast floor
+        self.commands.complete()
+        self.assertEqual(self.data.guard_calls[-1], True)  # cooldown still holds it
+        self.controller._guard_cooldown.timeout.emit()
+        self.assertEqual(self.data.guard_calls[-1], False)  # settled: release
+        # A reset releases the guard immediately.
+        self.controller.jog("x", 1)
+        self.assertEqual(self.data.guard_calls[-1], True)
+        self.controller._reset()
+        self.assertEqual(self.data.guard_calls[-1], False)
+
+    def test_paused_jogs_send_immediately_and_drain_in_order(self):
+        self.data.set_state("paused")
+        self.assertTrue(self.controller.values["jogEnabled"])
+        self.assertEqual(self.controller.values["homedAxes"], "xyz")
+        self.assertEqual(self.controller.values["positionMode"], "Absolute")
+        # Defaults: 25 mm jogs, 5 mm extrusion at 5 mm/s.
+        self.assertEqual(self.controller.values["jogDistance"], 25.0)
+        self.assertEqual(self.controller.values["extrudeDistance"], 5.0)
+        self.assertEqual(self.controller.values["extrudeSpeed"], 300.0)
+        self.controller.set_distance(1)
+        self.controller.jog("x", 1)
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        self.controller.jog("y", 1)
+        self.commands.complete()
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90", "G91\nG1 Y1 F3000\nG90"])
+
+    def test_printing_jog_pauses_first_and_never_double_sends(self):
+        self.data.set_state("printing")
+        self.assertFalse(self.controller.values["jogEnabled"])  # UI gate: pause first
+        self.controller.set_distance(1)
+        self.controller.jog("x", 1)
+        self.assertEqual(self.scripts(), [])
+        self.assertEqual(len(self.pauses()), 1)
+        self.assertIn("Waiting for the printer to pause", self.controller.values["jogStatus"])
+        # The pause is confirmed (event) before the fresh state arrives; the
+        # flags stay armed so no redundant Pause is sent against the stale
+        # "printing" state.
+        self.commands.busy = False
+        self.commands.changed.emit()
+        self.data.commandChanged.emit({"name": "Pause", "outcome": "confirmed", "terminal": True, "detail": "paused"})
+        self.assertEqual(len(self.pauses()), 1)
+        # The fresh paused state drains the queue.
+        self.data.set_state("paused")
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+
+    def test_jogs_clamp_to_the_axis_limits(self):
+        self.data.set_state("paused")
+        self.controller.set_distance(25)
+        # 10 - 25 would cross the minimum: the move is forbidden outright.
+        self.controller.jog("x", -1)
+        self.assertEqual(self.scripts(), [])
+        self.assertEqual(self.controller._pending, ())
+        # 195 + 25 would cross the maximum: the jog lands exactly on 200.
+        self.data.snapshot.core["motion_report"]["live_position"][0] = 195.0
+        self.data.changed.emit()
+        self.controller.jog("x", 1)
+        self.assertEqual(self.scripts(), ["G91\nG1 X5 F3000\nG90"])
+        self.commands.complete()
+        # At the boundary the tap is a no-op.
+        self.data.snapshot.core["motion_report"]["live_position"][0] = 200.0
+        self.data.changed.emit()
+        self.controller.jog("x", 1)
+        self.assertEqual(self.scripts()[-1], "G91\nG1 X5 F3000\nG90")
+
+    def test_merged_jog_tails_never_overshoot_the_axis_limits(self):
+        self.data.set_state("paused")
+        self.controller.set_distance(25)
+        # Two rapid Z- taps at z=10 would cross the minimum: forbidden.
+        self.controller.jog("z", -1)
+        self.controller.jog("z", -1)
+        self.assertEqual(self.controller._pending, ())
+        # On the maximum side, rapid taps merge and the tail re-clamps so
+        # the executed move lands exactly on the boundary.
+        self.data.snapshot.core["motion_report"]["live_position"][2] = 195.0
+        self.data.changed.emit()
+        self.controller.jog("z", 1)
+        self.controller.jog("z", 1)
+        self.assertEqual(self.controller._pending[-1].distance, 5.0)
+        self.assertEqual(self.controller._pending[-1].script, "G91\nG1 Z5 F600\nG90")
+        self.commands.complete()
+        # At the boundary the tap becomes a no-op.
+        self.data.snapshot.core["motion_report"]["live_position"][2] = 200.0
+        self.data.changed.emit()
+        self.controller.jog("z", 1)
+        self.assertEqual(self.controller._pending, ())
+
+    def test_center_and_z0_moves(self):
+        self.data.set_state("paused")
+        self.controller.center_toolhead()
+        self.assertEqual(self.scripts(), ["G1 X100 Y100 Z50 F3000"])
+        self.commands.complete()
+        self.controller.z_to_zero()
+        self.assertEqual(self.scripts()[-1], "G1 Z0 F600")
+        self.commands.complete()
+        # Without axis data the centre move is a no-op.
+        self.data.snapshot = SimpleNamespace(
+            core={"print_stats": {"state": "paused"},
+                  "gcode_move": {"absolute_coordinates": True}},
+            auxiliary={"toolhead": {"homed_axes": "xyz"}})
+        self.data.changed.emit()
+        self.controller.center_toolhead()
+        self.assertEqual(self.scripts()[-1], "G1 Z0 F600")
+
+    def test_moves_toward_the_minimum_are_forbidden_without_position_data(self):
+        self.data.set_state("paused")
+        self.controller.set_distance(25)
+        self.data.snapshot = SimpleNamespace(
+            core={"print_stats": {"state": "paused"},
+                  "gcode_move": {"absolute_coordinates": True}},
+            auxiliary={"toolhead": {"homed_axes": "xyz"}})
+        self.data.changed.emit()
+        self.controller.jog("z", -1)
+        self.assertEqual(self.controller._pending, ())
+        self.controller.jog("z", 1)  # away from the minimum is safe
+        self.assertEqual(self.scripts(), ["G91\nG1 Z25 F600\nG90"])
+
+    def test_custom_distance_and_extrusion_controls(self):
+        self.data.set_state("paused")
+        self.controller.set_distance(42.5)
+        self.controller.jog("x", 1)
+        self.assertEqual(self.scripts(), ["G91\nG1 X42.5 F3000\nG90"])
+        self.commands.complete()
+        # Out-of-range distances are ignored.
+        self.controller.set_distance(0.001)
+        self.controller.set_distance(500)
+        self.assertEqual(self.controller.values["jogDistance"], 42.5)
+        self.controller.set_extrude_distance(10)
+        self.controller.set_extrude_speed(120)
+        self.controller.extrude(1)
+        self.assertEqual(self.scripts()[-1], "G91\nG1 E10 F120\nG90")
+        self.commands.complete()
+        self.controller.extrude(-1)
+        self.assertEqual(self.scripts()[-1], "G91\nG1 E-10 F120\nG90")
+        self.commands.complete()
+        self.assertEqual(self.controller.values["extrudeDistance"], 10.0)
+        self.assertEqual(self.controller.values["extrudeSpeed"], 120.0)
+
+    def test_refused_pause_send_drops_the_queue_without_re_sending(self):
+        # A refused Pause completes synchronously with a terminal failed
+        # event inside send(); the re-entrant pump must not re-send it.
+        self.data.set_state("printing")
+        self.commands.fail_next = True
+        self.controller.jog("x", 1)
+        self.assertEqual(len(self.pauses()), 0)
+        self.assertEqual(self.controller._pending, ())
+        self.assertIn("did not pause", self.controller.values["jogStatus"])
+
+    def test_pause_timeout_drops_the_queue(self):
+        controller = self.qt.load("ToolheadController")
+        with patch.object(controller, "PAUSE_WAIT_TIMEOUT_S", 0.05):
+            timed = controller.ToolheadController(self.data, self.commands)
+            self.addCleanup(timed.close)
+            self.data.set_state("printing")
+            timed.jog("x", 1)
+            self.qt.events(200)
+        self.assertEqual(self.scripts(), [])
+        self.assertIn("did not pause", timed.values["jogStatus"])
+
+    def test_resume_mid_drain_drops_remaining_moves(self):
+        self.data.set_state("printing")
+        self.controller.set_distance(1)
+        self.controller.jog("x", 1)
+        self.controller.jog("y", 1)
+        self.data.set_state("paused")
+        # The tracked pause reaches terminal confirmation, clearing busy.
+        self.commands.busy = False
+        self.commands.changed.emit()
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        # The print resumes before the first move completes; the remaining
+        # move must never run mid-print.
+        self.data.set_state("printing")
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        self.assertIn("resumed", self.controller.values["jogStatus"])
+
+    def test_taps_coalesce_while_a_move_is_in_flight(self):
+        self.data.set_state("paused")
+        self.controller.set_distance(1)
+        self.controller.jog("x", 1)
+        self.controller.jog("x", 1)
+        self.controller.jog("x", 1)
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        self.commands.complete()
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90", "G91\nG1 X2 F3000\nG90"])
+        self.assertEqual(self.controller.values["jogStatus"], "")
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")

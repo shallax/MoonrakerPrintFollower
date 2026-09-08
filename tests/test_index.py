@@ -5,11 +5,9 @@ import re
 import tempfile
 import threading
 import unittest
-from bisect import bisect_right
 
 from plugins.MoonrakerProtocol import RemoteFileIdentity
 from plugins.GCodeIndex import (
-    LayerMotionIndex,
     PersistentIndexCache,
     build_index_from_bytes,
     build_index_from_file,

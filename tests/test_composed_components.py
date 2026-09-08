@@ -1,7 +1,6 @@
 """Executable contracts for the completed component boundaries."""
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -9,9 +8,10 @@ import os
 import pathlib
 import tempfile
 import threading
-from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
+
+from types import SimpleNamespace
 
 from qt_runtime_support import QT_AVAILABLE, ScriptedTransport, runtime
 
@@ -75,7 +75,6 @@ class ComposedComponentTests(unittest.TestCase):
         with self.assertRaises(TypeError): snapshot.core["print_stats"] = {}
 
     def test_no_borrowed_cura_file_released_by_unrelated_completion_or_shutdown(self):
-        files = self.parts.files
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "print.gcode")
             pathlib.Path(path).write_text("G1 X0")
@@ -243,14 +242,23 @@ class ComposedComponentTests(unittest.TestCase):
         commands[0].callback({}, None)
         self.assertFalse(tuning._pending)
 
-    def test_emergency_stop_bypasses_busy_command_but_requires_three_clicks(self):
+    def test_emergency_stop_bypasses_busy_command_but_requires_the_held_third_press(self):
         model = self.monitor()
         model._commands._busy = True
         model.emergencyStopClick()
         model.emergencyStopClick()
         self.assertFalse(any(r.channel == "emergency-stop" for r in self.transport.requests))
-        model.emergencyStopClick()
+        # The third press must be held; the test shortens the hold window.
+        model._commands._hold_timer.setInterval(30)
+        model.emergencyHoldStarted()
+        self.qt.events(100)
         self.assertEqual(sum(r.channel == "emergency-stop" for r in self.transport.requests), 1)
+        # Releasing the fired hold delivers a click that must not arm anew.
+        model.emergencyStopClick()
+        self.assertEqual(model.emergencyStopClicks, 0)
+        # A genuinely new click starts a fresh arm sequence.
+        model.emergencyStopClick()
+        self.assertEqual(model.emergencyStopClicks, 1)
 
     def test_power_lock_blocks_mutation_during_print(self):
         model = self.monitor()
@@ -375,18 +383,24 @@ class ComposedComponentTests(unittest.TestCase):
         self.addCleanup(follower.deinitialize)
         follower.apply_printer_config(self.config_type(url="http://127.0.0.1:" + str(server.server_port), enabled=True, path_follow=True))
         parts = follower._runtime
-        for _ in range(300):
-            if parts.index.view is not None: break
-            self.qt.events(10)
-        self.assertIsNotNone(parts.index.view)
-        self.assertEqual(len(parts.index.view.ranges), 3)
-        self.assertEqual(pathlib.Path(parts.files.path).read_bytes(), content)
+        # An active-but-unloaded print pulls nothing: the metadata and
+        # index serve the Preview, which needs the print loaded in Cura.
         parts.coordinator.request_load()
         for _ in range(100):
             if app.loaded_paths: break
             self.qt.events(10)
         self.assertEqual(app.loaded_paths, [parts.files.path])
         self.assertTrue(parts.cura.loading)
+        # The load gives Cura the toolpath; only then does the
+        # metadata/index pull start and the index build.
+        app.controller.view = SimpleNamespace(getActivity=lambda: True)
+        app.controller.activeViewChanged.emit()
+        for _ in range(300):
+            if parts.index.view is not None: break
+            self.qt.events(10)
+        self.assertIsNotNone(parts.index.view)
+        self.assertEqual(len(parts.index.view.ranges), 3)
+        self.assertEqual(pathlib.Path(parts.files.path).read_bytes(), content)
         app.fileCompleted.emit(parts.files.path)
         self.assertFalse(parts.cura.loading)
 
@@ -406,10 +420,10 @@ class ComposedComponentTests(unittest.TestCase):
 
     def test_qml_public_api_is_present_without_model_subclasses(self):
         model = self.monitor()
-        properties = "monitorState monitorFilename monitorProgress monitorLayer monitorElapsed monitorEta monitorFinish monitorSpeed monitorFlow monitorPosition monitorMessage printActive canPausePrint canResumePrint canCancelPrint actionBusy actionStatus temperatureItems fanItems filamentSensorItems excludeObjectItems powerDevices klippyState moonrakerVersion klipperVersion hostLoad memoryAvailable cpuTemperature mcuSummary mcuItems webcamNames activeWebcamIndex cameraName cameraRotation cameraFlipHorizontal cameraFlipVertical monitorLayerHeight macroNames hasQuadGantryLevel hasBedMesh canRunSetup temperaturePresetNames temperaturePresetItems canApplyTemperaturePreset speedFactorPercent flowFactorPercent zOffset zOffsetText fanControlItems ledItems pwmOutputItems saveConfigPending saveConfigSummary canSaveConfig emergencyStopClicks bedMeshAvailable bedMeshProfile bedMeshProfileNames bedMeshRows bedMeshColumns bedMeshValues bedMeshMinimum bedMeshMaximum bedMeshRange bedMeshXMin bedMeshXMax bedMeshYMin bedMeshYMax bedMeshRangeText bedMeshPreviewVisible".split()
+        properties = "monitorState monitorFilename monitorProgress monitorLayer monitorElapsed monitorEta monitorFinish monitorSpeed monitorFlow monitorPosition monitorMessage printActive canPausePrint canResumePrint canCancelPrint actionBusy actionStatus temperatureItems fanItems filamentSensorItems excludeObjectItems powerDevices klippyState moonrakerVersion klipperVersion hostLoad memoryAvailable cpuTemperature mcuSummary mcuItems webcamNames activeWebcamIndex cameraName cameraRotation cameraFlipHorizontal cameraFlipVertical monitorLayerHeight macroNames hasQuadGantryLevel hasBedMesh canRunSetup temperaturePresetNames temperaturePresetItems canApplyTemperaturePreset speedFactorPercent flowFactorPercent zOffset zOffsetText fanControlItems ledItems pwmOutputItems saveConfigPending saveConfigSummary canSaveConfig emergencyStopClicks bedMeshAvailable bedMeshProfile bedMeshProfileNames bedMeshRows bedMeshColumns bedMeshValues bedMeshMinimum bedMeshMaximum bedMeshRange bedMeshXMin bedMeshXMax bedMeshYMin bedMeshYMax bedMeshRangeText bedMeshPreviewVisible jogEnabled jogDistance extrudeDistance extrudeSpeed homedAxes positionMode jogStatus controlsLocked controlsCollapsed infoCollapsed statusCollapsed cameraRefreshNonce emergencyHoldProgress".split()
         meta = model.metaObject()
         for name in properties: self.assertGreaterEqual(meta.indexOfProperty(name), 0, name)
-        for name in "pausePrint resumePrint cancelPrint refreshAll refreshWebcams selectWebcam runMacro homeAll runQuadGantryLevel calibrateBedMesh applyTemperaturePreset setSpeedFactor setFlowFactor adjustZOffset clearZOffset setFanSpeed setLedBrightness setLedColor setPwmOutput saveConfig emergencyStopClick loadBedMeshProfile clearBedMesh setBedMeshPreviewVisible macroParameterDefinitions".split():
+        for name in "pausePrint resumePrint cancelPrint refreshAll refreshWebcams selectWebcam runMacro homeAll runQuadGantryLevel calibrateBedMesh applyTemperaturePreset setSpeedFactor setFlowFactor adjustZOffset clearZOffset setFanSpeed setLedBrightness setLedColor setPwmOutput saveConfig emergencyStopClick emergencyHoldStarted emergencyHoldReleased loadBedMeshProfile clearBedMesh setBedMeshPreviewVisible macroParameterDefinitions jog setJogDistance setExtrudeDistance setExtrudeSpeed home motorsOff centerToolhead zToZero extrude heatersOff firmwareRestart hostRestart setControlsLocked setControlsCollapsed setInfoCollapsed setStatusCollapsed".split():
             self.assertTrue(any(bytes(meta.method(i).name()).decode() == name for i in range(meta.methodCount())), name)
         self.assertEqual(type(model).__bases__[0].__name__, "PrinterModel")
 
