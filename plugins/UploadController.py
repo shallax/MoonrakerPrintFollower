@@ -187,24 +187,34 @@ class UploadController(QObject):
         self._attempts = 0
         self._power = [name.strip() for name in self._config.power_devices.split(",") if name.strip()]
         if self._start_print and self._power:
-            name = self._power[0]
-            def received(payload, error):
-                if error: self.fail("Could not query power device: " + error); return
-                result = (payload or {}).get("result") or {}
-                if str(next(iter(result.values()), "")).lower() == "off": self._power_on()
-                else: self._ready()
-            self._request("GET", "machine/device_power/device?" + urlencode({"device": name}), received)
+            # Probe every configured device, not just the first: a powered
+            # socket ahead of a powered-down PSU must not skip the PSU.
+            self._power_off = []
+            self._probe_power(list(self._power))
         elif self._start_print: self._ready()
         else: self._upload()
 
-    def _power_on(self):
-        if not self._power:
+    def _probe_power(self, devices):
+        if not devices:
+            self._power_on_devices()
+            return
+        name = devices.pop(0)
+        def received(payload, error):
+            if error: self.fail("Could not query power device: " + error); return
+            result = (payload or {}).get("result") or {}
+            if str(next(iter(result.values()), "")).lower() == "off":
+                self._power_off.append(name)
+            self._probe_power(devices)
+        self._request("GET", "machine/device_power/device?" + urlencode({"device": name}), received)
+
+    def _power_on_devices(self):
+        if not self._power_off:
             self._client.force_refresh()
             self._ready()
             return
-        name = self._power.pop(0)
+        name = self._power_off.pop(0)
         self._request("POST", "machine/device_power/device?" + urlencode({"device": name, "action": "on"}),
-            lambda payload, error: self.fail("Could not turn on power: " + error) if error else self._power_on(), body={})
+            lambda payload, error: self.fail("Could not turn on power: " + error) if error else self._power_on_devices(), body={})
 
     def _ready(self):
         if not self._current(): return

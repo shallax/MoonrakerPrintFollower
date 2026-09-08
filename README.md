@@ -5,7 +5,7 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 3.3.0
+- **Release:** 3.3.1
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
 
 ## What changed in 3.3.0
@@ -52,6 +52,20 @@ On startup, Moonraker Print Follower looks for the standalone plugin's existing 
 Existing Moonraker Print Follower URL/API-key values take precedence when already configured. Upload-specific settings such as format/path, start-print behaviour, power devices, retry interval, frontend URL and filename translation are imported from Moonraker Connection. Its legacy camera URL, rotation and mirror settings are also imported as a fallback for Moonraker installations that do not expose webcam configuration through the webcam API. The old preference data is left untouched so rollback remains possible.
 
 After verifying the integrated plugin with your printers, the separate Moonraker Connection plugin can be removed.
+
+## What changed in 3.3.1
+
+Version 3.3.1 is an audit-driven hardening pass over 3.3.0. An adversarial multi-agent review against the architecture contract fixed the following:
+
+- The smoothing CSV trace is now opt-in via the `MOONRAKER_FOLLOWER_SMOOTHING_TRACE` environment variable (see `INSTRUCTIONS.md`) instead of writing to Cura's cache on every smoothed print.
+- The display timer now snaps to the target and stops when pure gap decay converges, instead of ticking at 30 Hz for the whole duration of a pause.
+- Failed G-code downloads retry on a backoff ladder (2 s → 60 s) instead of wedging the file service for the rest of the print.
+- Start-print power-on probes every configured power device; a powered socket can no longer mask a powered-down PSU.
+- Failed layer hydration is latched until a new file or index arrives, so a broken file is not re-read in full on every poll.
+- While a compact layer hydrates, the animation driver is reset so a stale target cannot fight the follower's own writes.
+- The velocity window scales with the measured poll interval, keeping the glide honest at slow polling rates.
+- Service failure messages are logged instead of being emitted with no listener.
+- Corrected documentation that still described the removed lookahead and the old fallback behaviour, plus regression tests for every fix above.
 
 ## Cura / SDK compatibility
 

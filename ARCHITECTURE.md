@@ -170,14 +170,19 @@ toward the newest physical observation using the pure `PreviewSmoothing`
 policy: the head cruises at the estimated physical velocity, never exceeds
 the newest observation and never decreases within a layer. The target itself
 is reconstructed between consecutive observations by linear interpolation
-over the measured poll interval, so the glide is continuous at any polling
-rate; the newest observation remains the hard ceiling. The refinement
-itself now produces a smooth sub-segment observation (a widened search
-window plus a hold-on-ambiguity fallback that never inflates the monotonic
-floor). Layer transitions are jumped, never animated. The physical
-`path_fraction` that ETA consumes is unchanged, and each animated write
-re-remembers the plugin-written position so the override detector cannot
-mistake the animation for a manual grab.
+over the measured poll interval, and the velocity window scales with that
+interval, so the glide is continuous at any polling rate the poller actually
+delivers (beyond ~5 s between polls the target saturates at the newest
+observation until the next poll); the newest observation remains the hard
+ceiling. While a compact layer hydrates, the driver is reset so a stale
+animation cannot fight the follower's writes. The refinement itself now
+produces a smooth sub-segment observation (a widened search window plus a
+hold-on-ambiguity fallback that never inflates the monotonic floor once a
+refined value exists; the first observation of a layer seeds the floor from
+the parser-position estimate). Layer transitions are jumped, never animated.
+The physical `path_fraction` that ETA consumes is unchanged, and each
+animated write re-remembers the plugin-written position so the override
+detector cannot mistake the animation for a manual grab.
 
 ## 6. Remote files, leases and bounded indexing
 
@@ -189,6 +194,10 @@ size before publication.
 Metadata completeness is separate from download identity: a failed metadata
 request installs a fallback identity so downloads proceed, then retries with
 backoff; only a successful response marks the run's metadata complete.
+Failed downloads retry on their own backoff ladder, driven by consumer
+re-requests; a failed layer hydration is latched until a new file arrives
+or the index is rebuilt, so a broken file is never re-read in full on every
+poll.
 
 A `FileLease` explicitly keeps that file alive for an index worker or Cura parse
 job. Rebinding retires old files; deletion waits for all leases to close. An unrelated
@@ -249,8 +258,9 @@ The prepared file and Qt body device outlive the network operation.
 
 Each operation captures its generation, session and active machine identity.
 Folder scans, readiness retries, dialog accept/cancel and replies validate that
-ownership before further I/O. Cleanup clears reply ownership before `abort()`, which
-may emit a completion synchronously.
+ownership before further I/O. Start-print power-on probes every configured
+power device, never just the first. Cleanup clears reply ownership before
+`abort()`, which may emit a completion synchronously.
 
 Dialog teardown and terminal delivery occur after the initiating QML handler returns.
 The controller remains busy through success/error delivery; the adapter acknowledges

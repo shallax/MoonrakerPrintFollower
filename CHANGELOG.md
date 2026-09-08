@@ -2,6 +2,39 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 3.3.1
+
+Version 3.3.1 is an audit-driven hardening pass over 3.3.0: an adversarial
+multi-agent review against the architecture contract confirmed and fixed the
+following.
+
+### Highlights
+- The smoothing CSV trace is now opt-in via the
+  `MOONRAKER_FOLLOWER_SMOOTHING_TRACE` environment variable (documented in
+  `INSTRUCTIONS.md`) instead of writing to Cura's cache on every smoothed
+  print.
+- The display timer snaps to the target and stops when pure gap decay
+  converges, instead of ticking at 30 Hz for the whole duration of a pause.
+- Failed G-code downloads retry on a backoff ladder (2 s → 60 s) instead of
+  wedging the file service for the rest of the print.
+- Start-print power-on probes every configured power device; a powered
+  socket can no longer mask a powered-down PSU.
+- Lease lifetime was reviewed against the documented contract: an unrelated
+  Cura file completion still must not release the current remote file
+  (`ARCHITECTURE.md` section 6), so a superseded read intentionally retains
+  its lease until shutdown.
+- Failed layer hydration is latched until a new file or index arrives, so a
+  broken file is not re-read in full on every poll.
+- While a compact layer hydrates, the animation driver is reset so a stale
+  target cannot fight the follower's own writes.
+- The velocity window scales with the measured poll interval, keeping the
+  glide honest at slow polling rates instead of degrading silently.
+- Service failure messages are logged instead of being emitted with no
+  listener.
+- Corrected documentation that still described the removed lookahead and
+  the old fallback behaviour, and added regression tests for every fix
+  above.
+
 ## 3.3.0
 
 Version 3.3.0 is the first feature release after the debt payoff: follower

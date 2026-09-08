@@ -45,6 +45,15 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
 - New components are constructed in `FollowerRuntime.py` and wired by
   `PrintCoordinator.py`; add them to the ownership map in `ARCHITECTURE.md`.
 
+## Diagnostics
+
+`PreviewMotion` can write a CSV trace of observations and display ticks for
+smoothing analysis. It is off by default; set the
+`MOONRAKER_FOLLOWER_SMOOTHING_TRACE` environment variable to a file name
+(written inside Cura's cache directory, rolling at 512 KB) to enable it on
+the next plugin start. Used to diagnose path-end stalls and smoothing
+regressions on real printers; not needed in ordinary operation.
+
 ## Release gates
 
 Local:

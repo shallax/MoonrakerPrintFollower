@@ -32,12 +32,14 @@ class RemoteFileService(QObject):
     Download identity and metadata completeness are separate: a failed metadata
     request installs a fallback identity so downloads can proceed, but retries
     with backoff until a real response arrives. Only a successful response
-    marks the run's metadata complete.
+    marks the run's metadata complete. A failed download retries on its own
+    backoff ladder, driven by consumers re-requesting the file.
     """
     changed = pyqtSignal()
     failed = pyqtSignal(str)
 
     METADATA_RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)
+    DOWNLOAD_RETRY_DELAYS_MS = (2000, 5000, 15000, 60000)
 
     def __init__(self, transport, parent=None):
         super().__init__(parent)
@@ -58,6 +60,8 @@ class RemoteFileService(QObject):
         self._retired = set()
         self._closed = False
         self._error = ""
+        self._download_attempts = 0
+        self._download_retry_at = 0.0
 
     @property
     def job_key(self): return self._job
@@ -93,6 +97,8 @@ class RemoteFileService(QObject):
         self._metadata_attempts = 0
         self._metadata_retry_at = 0.0
         self._error = ""
+        self._download_attempts = 0
+        self._download_retry_at = 0.0
         self.changed.emit()
 
     def request_metadata(self):
@@ -132,11 +138,21 @@ class RemoteFileService(QObject):
 
     def request_file(self, *, retry=False):
         self._want_file = True
-        if retry: self._error = ""
+        if retry:
+            self._error = ""
+            self._download_attempts = 0
+            self._download_retry_at = 0.0
         self._advance()
 
     def _advance(self):
-        if self._closed or not self._job or self._error: return
+        if self._closed or not self._job: return
+        if self._error and self._want_file and time.monotonic() >= self._download_retry_at:
+            # Inside the download backoff window the error stays latched so
+            # every consumer re-request does not hammer the network; once the
+            # window passes, the next request restarts the download.
+            self._error = ""
+            self.changed.emit()
+        if self._error: return
         if self._identity is None:
             self.request_metadata()
         elif self._want_file and not self._path and self._reply is None:
@@ -190,6 +206,8 @@ class RemoteFileService(QObject):
             if size > 0 and target.bytes_written != size:
                 raise OSError("Downloaded G-code size mismatch; refusing partial file")
             self._path = target.path
+            self._download_attempts = 0
+            self._download_retry_at = 0.0
             self.changed.emit()
         except Exception as error:
             target.abort()
@@ -210,6 +228,9 @@ class RemoteFileService(QObject):
 
     def _fail(self, message):
         self._error = str(message)
+        self._download_attempts += 1
+        delay = self.DOWNLOAD_RETRY_DELAYS_MS[min(self._download_attempts - 1, len(self.DOWNLOAD_RETRY_DELAYS_MS) - 1)]
+        self._download_retry_at = time.monotonic() + delay / 1000.0
         self.failed.emit(self._error)
         self.changed.emit()
 
