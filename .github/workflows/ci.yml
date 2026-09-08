@@ -172,7 +172,7 @@ jobs:
           QT_QPA_PLATFORM=offscreen python tools/capture_upload.py dist/screenshots
 
       - name: Upload CI artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.build_meta.outputs.artifact_name }}
           path: |
