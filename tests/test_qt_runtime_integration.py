@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 from types import SimpleNamespace
@@ -566,10 +568,10 @@ class PreviewMotionTests(unittest.TestCase):
         self.motion.write(0, 0.6)
         self.qt.events(400)
         # The head cruises at the windowed rate: it has advanced past the
-        # first observation's position and never exceeds the newest target
-        # by more than the bounded lookahead.
+        # first observation's position and never exceeds the newest
+        # observation (the hard ceiling).
         self.assertGreater(self.view.path, 50.0)
-        self.assertLessEqual(self.view.path, 62.0)
+        self.assertLessEqual(self.view.path, 60.0)
         # A new layer jumps straight to its target; no cross-layer animation.
         self.motion.write(1, 0.05)
         self.assertEqual(self.view.path, 5.0)
@@ -591,6 +593,64 @@ class PreviewMotionTests(unittest.TestCase):
         # observation, never through it and never backwards.
         self.qt.events(700)
         self.assertLessEqual(self.view.path, 80.0)
+
+    def test_timer_snaps_and_stops_when_decay_converges(self):
+        # With no velocity estimate, gap decay approaches the target
+        # asymptotically; the last invisible sliver must snap so the timer
+        # does not tick at 30 Hz for the whole duration of a pause.
+        self.motion.write(0, 0.5)
+        self.motion._history.clear()  # a single sample carries no rate
+        self.motion.write(0, 0.6)
+        self.motion._displayed = 0.6 - 1e-7
+        self.motion._tick()
+        self.assertEqual(self.motion._displayed, 0.6)
+        self.assertFalse(self.motion._timer.isActive())
+        self.assertEqual(self.view.path, 60.0)
+
+    def test_slow_poll_interval_scales_the_velocity_window(self):
+        # A 5 s poll interval would prune a fixed 2 s window to a single
+        # sample and freeze the rate estimate; the window must scale with
+        # the measured interval.
+        time_module = self.qt.load("PreviewMotion").time
+        with patch.object(time_module, "monotonic", side_effect=[0.0, 5.0, 10.0]):
+            self.motion._inter_poll = 5.0
+            self.motion.write(0, 0.5)
+            self.motion.write(0, 0.8)
+            self.motion.write(0, 0.9)
+        self.assertGreater(self.motion._velocity, 0.0)
+
+    def test_ramp_chains_from_reached_position_and_reset_clears_it(self):
+        time_module = self.qt.load("PreviewMotion").time
+        with patch.object(time_module, "monotonic", side_effect=[0.0, 0.5, 1.0, 1.25]):
+            self.motion.write(0, 0.5)
+            self.motion.write(0, 0.8)
+            self.motion.write(0, 0.9)
+            # The previous ramp (0.5 -> 0.8 over 0.5 s) had saturated by the
+            # time the next observation arrived, so the new ramp continues
+            # from the reached position without a jump.
+            self.assertAlmostEqual(self.motion._ramp_from, 0.8)
+            self.assertEqual(self.motion._ramp_to, 0.9)
+            self.assertAlmostEqual(self.motion._inter_poll, 0.5)
+            # Mid-ramp the reconstructed target is linearly between the two.
+            self.assertAlmostEqual(self.motion._current_target(1.25), 0.85)
+        self.motion.reset()
+        self.assertIsNone(self.motion._ramp_from)
+        self.assertIsNone(self.motion._ramp_to)
+        self.assertIsNone(self.motion._obs_time)
+        self.assertEqual(self.motion._inter_poll, 0.5)  # survives a reset
+
+    def test_trace_writes_only_when_a_path_is_provided(self):
+        with tempfile.TemporaryDirectory() as directory:
+            traced = self.qt.load("PreviewMotion").PreviewMotion(
+                self.cura, lambda: None, trace_path=os.path.join(directory, "trace.csv"))
+            self.addCleanup(traced.close)
+            traced.write(0, 0.5)
+            traced.write(0, 0.55)
+            path = os.path.join(directory, "trace.csv")
+            self.assertTrue(os.path.exists(path))
+            content = open(path, encoding="utf-8").read()
+            # The header is written on rollover; observation rows always are.
+            self.assertIn(",obs,0,0.500000,", content)
 
     def test_target_behind_display_never_moves_backwards(self):
         self.motion.write(0, 0.9)
@@ -615,6 +675,73 @@ class PreviewMotionTests(unittest.TestCase):
         self.assertEqual(self.view.path, moving)
         self.motion.write(0, 0.75)
         self.assertEqual(self.view.path, 75.0)  # re-synchronises with a jump
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
+class RemoteFileServiceDownloadTests(unittest.TestCase):
+    """The streamed-download state machine: failure latch and backoff retry."""
+
+    def setUp(self):
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+        self.transport = ScriptedTransport()
+        self.transport.configure("http://printer-a", "test-key")
+        module = self.qt.load("RemoteFileService")
+        self.files = module.RemoteFileService(self.transport, None)
+        self.addCleanup(self.files.close)
+        self.files.bind(("part.gcode", 100, 1))
+        self.files._identity = self.qt.load("MoonrakerProtocol").RemoteFileIdentity("part.gcode", 0, modified=1)
+        self.files._want_file = True
+
+    def _reply_double(self, error=False):
+        from PyQt6.QtCore import QObject, pyqtSignal
+        from PyQt6.QtNetwork import QNetworkReply
+
+        class FakeReply(QObject):
+            readyRead = pyqtSignal()
+            finished = pyqtSignal()
+            def __init__(self, error):
+                super().__init__()
+                self._error = QNetworkReply.NetworkError.ContentNotFoundError if error else QNetworkReply.NetworkError.NoError
+            def setReadBufferSize(self, size): pass
+            def readAll(self): return b"G1 X0 Y0\n"
+            def error(self): return self._error
+            def errorString(self): return "simulated"
+            def abort(self): pass
+            def deleteLater(self): pass
+        return FakeReply(error)
+
+    def test_failure_latches_until_the_backoff_window_passes(self):
+        failures = []
+        self.files.failed.connect(failures.append)
+        self.files._fail("Connection refused")
+        self.assertEqual(failures, ["Connection refused"])
+        self.assertEqual(self.files.phase, "error")
+        # Inside the window a consumer re-request must not hit the network.
+        self.files.request_file()
+        self.assertEqual(self.files.phase, "error")
+        self.assertEqual(len(self.transport.requests), 0)
+        # Past the window the next re-request restarts the download and a
+        # successful reply completes it.
+        self.files._download_retry_at = 0.0
+        reply = self._reply_double()
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        self.files.request_file()
+        self.assertEqual(self.files.phase, "downloading")
+        reply.finished.emit()
+        self.assertEqual(self.files.phase, "ready")
+        self.assertEqual(self.files._error, "")
+        self.assertTrue(self.files.path and self.files.path.endswith("part.gcode"))
+
+    def test_errored_reply_fails_and_schedules_a_retry(self):
+        reply = self._reply_double(error=True)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        self.files.request_file()
+        reply.finished.emit()
+        self.assertEqual(self.files.phase, "error")
+        self.assertEqual(self.files._download_attempts, 1)
+        self.assertGreater(self.files._download_retry_at, time.monotonic())
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")

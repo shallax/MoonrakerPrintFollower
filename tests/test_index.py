@@ -171,6 +171,32 @@ G1 X5 Y0 Z0.2
         # monotonic clamp then labels the result honestly.
         self.assertTrue(method.startswith("live position"))
 
+    def test_floor_dip_lets_refinement_recover_an_inflated_floor(self):
+        # 1000 motions along X. The floor claims progress at motion ~500
+        # while the live position is on the true segment 399. The bounded
+        # floor lookback must let the search reach the true segment instead
+        # of tripping the distance guard (the pre-8f56bbe floor cascade).
+        lines = [b"G90\n", b";LAYER:0\n"]
+        for x in range(1, 1001):
+            lines.append(f"G1 X{x} Y0 Z0.2\n".encode())
+        index = build_index_from_bytes(b"".join(lines))
+        parser_pos = int(index.motion_offsets[0][500])
+        fraction, method = index.refined_fraction(
+            0, parser_pos, (400.0, 0.0, 0.2), minimum_fraction=0.5
+        )
+        self.assertEqual(fraction, 0.5)  # the monotonic clamp, never a rewind
+        self.assertEqual(method, "live position (monotonic)")
+
+    def test_off_model_position_with_floor_holds_the_last_value(self):
+        data = b";LAYER:0\nG1 X1 Y0 Z0.2\nG1 X2 Y0 Z0.2\nG1 X3 Y0 Z0.2\n"
+        index = build_index_from_bytes(data)
+        pos = int(index.motion_offsets[0][0])
+        fraction, method = index.refined_fraction(
+            0, pos, (1000.0, 1000.0, 1000.0), minimum_fraction=0.3
+        )
+        self.assertEqual(fraction, 0.3)
+        self.assertEqual(method, "held (refined unavailable)")
+
     def test_refined_fraction_never_drops_below_visible_progress_floor(self):
         data = b";LAYER:0\nG1 X1 Y0 Z0.2\nG1 X2 Y0 Z0.2\nG1 X3 Y0 Z0.2\n"
         index = build_index_from_bytes(data)

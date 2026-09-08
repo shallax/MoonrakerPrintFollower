@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QObject
+from UM.Logger import Logger
 
 from .MonitorFormatting import parse_bed_mesh
 from .PreviewFormatting import (
@@ -37,7 +38,11 @@ class PrintCoordinator(QObject):
         client.sessionInvalidated.connect(self.reset_binding)
         binding.changed.connect(self.refresh)
         files.changed.connect(self.refresh)
+        # Service failures are surfaced to the log; the preview status text
+        # stays terse on purpose.
+        files.failed.connect(lambda message: Logger.log("w", "Remote file service: %s", message))
         index.changed.connect(self._index_changed)
+        index.failed.connect(lambda message: Logger.log("w", "G-code index service: %s", message))
         cura.changed.connect(self.refresh)
         cura.positionChanged.connect(self._position_changed)
         cura.invalidated.connect(self._scene_invalidated)

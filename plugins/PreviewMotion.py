@@ -49,7 +49,11 @@ VELOCITY_WARM_START = 0.8
 # The clamps absorb one-off scheduling jitter without stretching a ramp.
 INTER_POLL_TAU = 4.0
 INTER_POLL_MIN = 0.1
-INTER_POLL_MAX = 3.0
+INTER_POLL_MAX = 5.0
+# When pure gap decay converges, the remaining gap shrinks asymptotically and
+# the stop condition would never trigger; snap the last invisible sliver so
+# the timer does not tick forever through a pause.
+TICK_EPSILON = 1e-6
 class PreviewMotion(QObject):
     def __init__(self, cura, remember, parent=None, trace_path=None):
         super().__init__(parent)
@@ -98,7 +102,12 @@ class PreviewMotion(QObject):
             self._write(fraction)
             return
         self._history.append((now, fraction))
-        while self._history and now - self._history[0][0] > VELOCITY_WINDOW:
+        # A window sized purely in time prunes to a single sample once the
+        # poll interval approaches the window, and the rate estimate then can
+        # never refresh. Scale the window so it always holds several samples
+        # at whatever interval the poller actually delivers.
+        window = max(VELOCITY_WINDOW, 4.0 * (self._inter_poll or 0.0))
+        while self._history and now - self._history[0][0] > window:
             self._history.popleft()
         span = now - self._history[0][0]
         if span >= MIN_RATE_SPAN:
@@ -161,6 +170,8 @@ class PreviewMotion(QObject):
             return
         displayed = advance_display(displayed=self._displayed, target=self._current_target(now),
                                     velocity=self._velocity, dt=dt)
+        if displayed < self._target and self._target - displayed <= TICK_EPSILON:
+            displayed = self._target
         self._displayed = displayed
         self._trace("tick", now, self._layer, displayed)
         self._write(displayed)

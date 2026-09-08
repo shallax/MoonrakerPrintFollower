@@ -98,7 +98,10 @@ class LayerMotionIndex:
         search a bounded neighbourhood around that location, biased backwards
         because Klipper's parser/lookahead is normally ahead of the physical
         nozzle.  If no nearby motion segment plausibly matches the live tool
-        position, the exact legacy file-position fraction is returned.
+        position, the last refined value is held when one exists, so the
+        monotonic floor is never inflated by the parser-position fraction;
+        on the first observation of a layer there is nothing to hold and the
+        parser-position fraction is the only estimate available.
         """
 
         base_fraction, base_method = self.file_fraction(layer, file_position)
@@ -179,7 +182,9 @@ class LayerMotionIndex:
             # The live position is off-model (Z-lift, off-path movement) or
             # ambiguous. Hold the last refined value instead of jumping to the
             # parser-position fraction, which sits ahead of the nozzle and
-            # inflates the monotonic floor into a cm-apart staircase.
+            # inflates the monotonic floor into a cm-apart staircase. Without
+            # a prior value (the first observation of a layer) the coarse
+            # fraction is the only estimate available and seeds the floor.
             if floor_fraction is not None:
                 return floor_fraction, "held (refined unavailable)"
             return with_floor(base_fraction, base_method)

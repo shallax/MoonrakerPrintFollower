@@ -63,10 +63,12 @@ class GCodeIndexService(QObject):
         self._busy = ""
         self._wanted = self._restored = self._save = False
         self._hydrate = set()
+        self._hydrating = None
+        self._failed_hydrate = set()
         self._closed = False
         self._error = ""
         self._completed.connect(self._finish)
-        files.changed.connect(self._advance)
+        files.changed.connect(self._on_files_changed)
 
     @property
     def view(self): return self._view
@@ -86,6 +88,8 @@ class GCodeIndexService(QObject):
         self._job, self._view = job_key, None
         self._wanted = self._restored = self._save = False
         self._hydrate.clear()
+        self._hydrating = None
+        self._failed_hydrate.clear()
         self._error = ""
         # Keep _busy until the submitted worker actually completes. No new task
         # is submitted while a stale job is still executing.
@@ -101,6 +105,12 @@ class GCodeIndexService(QObject):
             # Only the current and next layer are useful; never grow a work queue.
             self._hydrate = {int(layer), int(layer) + 1}
             self._advance()
+
+    def _on_files_changed(self):
+        # A new file (or a re-downloaded one) invalidates failed hydration
+        # attempts: the bytes the latch was based on no longer exist.
+        self._failed_hydrate.clear()
+        self._advance()
 
     def _advance(self):
         if self._closed or self._busy or not self._job or not self._wanted or self._error:
@@ -124,7 +134,8 @@ class GCodeIndexService(QObject):
             cancel = self._cancel
             self._submit("build", lambda: build_index_from_file(lease.path, cancel), lease)
             return
-        self._hydrate = {n for n in self._hydrate if n < len(self._view.ranges) and not self._view.hydrated(n)}
+        self._hydrate = {n for n in self._hydrate if n < len(self._view.ranges) and not self._view.hydrated(n)
+                         and n not in self._failed_hydrate}
         if self._hydrate:
             lease = self._files.lease()
             if lease is None:
@@ -132,6 +143,7 @@ class GCodeIndexService(QObject):
                 return
             layer = min(self._hydrate)
             self._hydrate.remove(layer)
+            self._hydrating = layer
             index = self._view._index
             self._submit("hydrate", lambda: hydrate_layer_from_file(index, lease.path, layer), lease)
         elif self._save and strong:
@@ -162,11 +174,20 @@ class GCodeIndexService(QObject):
                 if isinstance(value, LayerMotionIndex) and value:
                     self._view = IndexView(self._job, value)
                     self._save = kind == "build"
+                    self._failed_hydrate.clear()
                 elif kind == "build":
                     self._error = error or "Remote G-code contains no supported layer markers"
                     self.failed.emit(self._error)
-            elif kind == "hydrate" and value:
-                self._save = True
+            elif kind == "hydrate":
+                if value:
+                    self._save = True
+                else:
+                    # A failed hydration must not be re-attempted on every
+                    # poll — each attempt re-reads the whole file. The latch
+                    # clears when a new file arrives or the index is rebuilt.
+                    if self._hydrating is not None:
+                        self._failed_hydrate.add(self._hydrating)
+                self._hydrating = None
             self.changed.emit()
         self._advance()
 

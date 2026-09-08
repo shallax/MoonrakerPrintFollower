@@ -247,6 +247,11 @@ class CuraIntegration(QObject):
         if expected:
             self._load_lease = None
             lease.close()
+        elif lease is not None:
+            # A different file superseded the pending read; the leased file's
+            # own fileCompleted will never arrive, so release it now.
+            self._load_lease = None
+            lease.close()
         self._heights = None
         self._settle_until = time.monotonic() + 0.25
         if not expected: self.invalidate("Cura file replaced")

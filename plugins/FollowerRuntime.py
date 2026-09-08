@@ -29,8 +29,11 @@ class FollowerRuntime:
         cache = PersistentIndexCache(os.path.join(cache_dir, "indexes"))
         self.index = GCodeIndexService(self.files, cache, parent)
         self.preview = PreviewFollower(self.cura)
-        self.motion = PreviewMotion(self.cura, self.preview.remember, parent,
-                                    trace_path=os.path.join(cache_dir, "smoothing_trace.csv"))
+        # The smoothing CSV trace is an opt-in diagnostic (see INSTRUCTIONS.md
+        # "Diagnostics"); it is never written in ordinary operation.
+        trace_name = os.environ.get("MOONRAKER_FOLLOWER_SMOOTHING_TRACE")
+        trace_path = os.path.join(cache_dir, trace_name) if trace_name else None
+        self.motion = PreviewMotion(self.cura, self.preview.remember, parent, trace_path=trace_path)
         self.preview.bind_motion(self.motion)
         self.pauses = PauseController(self.client, parent)
         self.presentation = PreviewPresentation(application, self.cura, parent)

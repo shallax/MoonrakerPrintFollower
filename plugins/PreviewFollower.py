@@ -204,9 +204,15 @@ class PreviewFollower:
             state = replace(state, path_layer=layer, path_fraction=None)
             self._state = state
         if index is None or layer >= len(index.ranges):
+            if self._motion is not None:
+                self._motion.reset()
             set_preview_path(view, 0.0)
             return "Waiting for index", ()
         if not index.hydrated(layer):
+            # Stop the animation too: a stale target must not fight the
+            # follower's own writes while the layer hydrates.
+            if self._motion is not None:
+                self._motion.reset()
             self._state = replace(state, path_fraction=0.0)
             set_preview_path(view, 0.0)
             return "Hydrating layer", (layer,)

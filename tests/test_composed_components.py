@@ -140,6 +140,95 @@ class ComposedComponentTests(unittest.TestCase):
         with self.assertRaises(TypeError): view.current_layer_map[2] = 1
         self.assertFalse(hasattr(view, "motion_offsets"))
 
+    def test_start_print_power_probe_checks_every_device(self):
+        config = self.config_type(url="http://printer-a", power_devices="socket,psu")
+        upload = self.qt.load("UploadController").UploadController(
+            self.follower.client, "A", self.follower.current_printer_identity)
+        self.addCleanup(upload.abort)
+        upload.begin(config, "part.gcode")
+        upload._source = SimpleNamespace()
+        upload._power = ["socket", "psu"]
+        upload._power_off = []
+        upload._probe_power(list(upload._power))
+
+        def gets():
+            return [r for r in self.transport.requests if r.method == "GET" and "device_power" in r.path]
+        self.assertEqual(len(gets()), 1)
+        gets()[0].callback({"result": {"socket": "on"}}, None)
+        # The probe continues past an already-on device instead of assuming
+        # the whole chain is powered.
+        self.assertEqual(len(gets()), 2)
+        gets()[1].callback({"result": {"psu": "off"}}, None)
+        posts = [r for r in self.transport.requests if r.method == "POST" and "device_power" in r.path]
+        self.assertEqual(len(posts), 1)
+        self.assertIn("device=psu", posts[0].path)
+        self.assertIn("action=on", posts[0].path)
+
+    def test_superseded_load_releases_the_pending_lease(self):
+        cura = self.parts.cura
+        released = []
+
+        class Lease:
+            path = os.path.abspath(os.path.join(tempfile.gettempdir(), "remote-part.gcode"))
+            def close(self): released.append(True)
+        self.assertTrue(cura.load(Lease()))
+        self.assertTrue(cura.loading)
+        # A different file completes first: the superseded read's lease must
+        # be released instead of leaking until shutdown.
+        cura.application.fileCompleted.emit(os.path.join(tempfile.gettempdir(), "other.gcode"))
+        self.assertTrue(released)
+        self.assertFalse(cura.loading)
+
+    def test_failed_hydration_is_latched_until_a_new_file_arrives(self):
+        service, files = self.parts.index, self.parts.files
+        files.bind(("part.gcode", 100, 1))
+        files._identity = self.qt.load("MoonrakerProtocol").RemoteFileIdentity("part.gcode", 100, modified=1)
+        service.bind(("part.gcode", 100, 1))
+        service._restored = True
+        service._wanted = True
+        handle = tempfile.NamedTemporaryFile(suffix=".gcode", delete=False)
+        handle.write(b";LAYER:0\nG1 X1\nG1 X2\n")
+        handle.close()
+        self.addCleanup(os.remove, handle.name)
+        gci = self.qt.load("GCodeIndex")
+        index = gci.build_index_from_file(handle.name, compact=True)
+        module = self.qt.load("GCodeIndexService")
+        service._view = module.IndexView(("part.gcode", 100, 1), index)
+        files._path = os.path.join(files._root, "job-1", "part.gcode")
+        files._want_file = True
+
+        def wait_idle():
+            for _ in range(200):
+                self.qt.events(5)
+                if not service._busy and not service._hydrate: break
+        with patch.object(module, "hydrate_layer_from_file", return_value=False) as hydrate:
+            service.request_hydration(0)
+            wait_idle()
+            # A second poll re-requests the same layer; the latch must stop
+            # the whole-file re-read.
+            service.request_hydration(0)
+            wait_idle()
+        self.assertEqual(hydrate.call_count, 2)  # layers 0 and 1, once each
+        self.assertEqual(service._failed_hydrate, {0, 1})
+        self.assertEqual(service._busy, "")
+        # A new file invalidates the latch: hydration is attempted again.
+        files.changed.emit()
+        with patch.object(module, "hydrate_layer_from_file", return_value=True) as hydrate2:
+            service.request_hydration(0)
+            wait_idle()
+        self.assertEqual(hydrate2.call_count, 2)
+        self.assertEqual(service._failed_hydrate, set())
+
+    def test_service_failure_signals_are_logged(self):
+        source = (pathlib.Path(__file__).resolve().parents[1] / "plugins" / "PrintCoordinator.py").read_text(encoding="utf-8")
+        self.assertIn("files.failed.connect", source)
+        self.assertIn("index.failed.connect", source)
+
+    def test_smoothing_trace_is_opt_in(self):
+        source = (pathlib.Path(__file__).resolve().parents[1] / "plugins" / "FollowerRuntime.py").read_text(encoding="utf-8")
+        self.assertIn("MOONRAKER_FOLLOWER_SMOOTHING_TRACE", source)
+        self.assertIn("os.environ.get", source)
+
     def test_file_backed_writer_and_duplicate_preparation_ownership(self):
         module = self.qt.load("CuraOutputWriter")
         config = self.config_type(url="http://printer-a", upload_dialog=True)

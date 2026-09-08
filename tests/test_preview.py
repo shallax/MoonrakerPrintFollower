@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
 import pathlib
 from types import SimpleNamespace
+from unittest.mock import Mock
 import unittest
 
 from plugins.PreviewFollower import PreviewFollower, preview_override_kind
@@ -76,6 +77,27 @@ class PreviewFollowerServiceTests(unittest.TestCase):
         self.fraction = 1.2
         self.observe(5)
         self.assertEqual(self.service.state.path_fraction, 1.0)
+
+    def test_smooth_delegation_uses_motion_and_resets_while_hydrating(self):
+        motion = Mock()
+        self.service.bind_motion(motion)
+        self.index.hydrated = lambda layer: False
+        self.observe()
+        motion.reset.assert_called_once()
+        motion.write.assert_not_called()
+        self.assertEqual(self.cura.view.path, 0.0)
+        self.index.hydrated = lambda layer: True
+        self.observe()
+        motion.write.assert_called_once_with(4, 0.6, "test")
+
+    def test_unsmoothed_following_resets_motion_and_writes_directly(self):
+        motion = Mock()
+        self.service.bind_motion(motion)
+        self.config = PrinterConfig(enabled=True, path_follow=True, path_smoothing=False)
+        self.observe()
+        motion.reset.assert_called_once()
+        motion.write.assert_not_called()
+        self.assertEqual(self.cura.view.path, 60.0)
 
     def test_eta_anchor_captures_layer_entry_duration_once(self):
         self.observe(3, 12.5)
