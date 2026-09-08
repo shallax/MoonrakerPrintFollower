@@ -169,7 +169,18 @@ def check_text(text: str, name: str = "<qml>") -> List[str]:
 
     for frame in reversed(stack):
         errors.append(f"line {frame.line}: unclosed '{frame.opener}'")
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    # A capitalized word alone on a line whose next line is not an object
+    # brace is a bare type declaration with no body — invalid QML that the
+    # brace scanner above cannot see.
+    raw_lines = text.splitlines()
+    for lineno, raw in enumerate(raw_lines, 1):
+        stripped = raw.strip()
+        if not re.fullmatch(r"[A-Z][A-Za-z0-9_.]*", stripped):
+            continue
+        following = next((line.strip() for line in raw_lines[lineno:] if line.strip()), "")
+        if not following.startswith("{"):
+            errors.append(f"line {lineno}: bare QML type '{stripped}' has no object body")
+    lines = [line.strip() for line in raw_lines if line.strip()]
     first = next((line for line in lines if not line.startswith("//")), "")
     if first and not first.startswith("import "):
         errors.append("line 1: QML file should begin with imports")

@@ -1,0 +1,9 @@
+# The image only COPYs one helper script; keep the build context small
+# (the CI Screenshot sync job and docker_gates.sh both build from ".").
+.git
+dist
+screenshots
+**/__pycache__
+*.pyc
+*~
+.venv

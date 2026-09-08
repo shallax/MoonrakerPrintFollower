@@ -1,0 +1,10 @@
+# Ruff configuration: the correctness core only. The codebase predates
+# ruff and intentionally keeps its own style; linting targets real
+# defects, not stylistic refactors. Bandit (S) is deliberately absent:
+# its only findings are try-except-pass blocks, which are the chosen
+# degradation paths of this plugin.
+line-length = 120
+target-version = "py310"
+
+[lint]
+select = ["E9", "F", "A", "B"]

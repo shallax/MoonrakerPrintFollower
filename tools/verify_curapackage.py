@@ -6,13 +6,9 @@ import pathlib
 import zipfile
 
 from build_curapackage import (
-    CHANGELOG_FILE,
-    LICENSE_FILE,
     PACKAGE_JSON,
-    PLUGIN_ROOT,
     archive_name,
     expected_archive_entries,
-    iter_plugin_sources,
 )
 
 
