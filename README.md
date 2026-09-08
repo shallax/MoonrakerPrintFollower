@@ -61,7 +61,6 @@ Version 3.3.1 is an audit-driven hardening pass over 3.3.0. An adversarial multi
 - The display timer now snaps to the target and stops when pure gap decay converges, instead of ticking at 30 Hz for the whole duration of a pause.
 - Failed G-code downloads retry on a backoff ladder (2 s → 60 s) instead of wedging the file service for the rest of the print.
 - Start-print power-on probes every configured power device; a powered socket can no longer mask a powered-down PSU.
-- A superseded Cura load releases the pending file lease instead of leaking the cached file until shutdown.
 - Failed layer hydration is latched until a new file or index arrives, so a broken file is not re-read in full on every poll.
 - While a compact layer hydrates, the animation driver is reset so a stale target cannot fight the follower's own writes.
 - The velocity window scales with the measured poll interval, keeping the glide honest at slow polling rates.

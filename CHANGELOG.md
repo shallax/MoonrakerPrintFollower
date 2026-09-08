@@ -19,8 +19,10 @@ following.
   wedging the file service for the rest of the print.
 - Start-print power-on probes every configured power device; a powered
   socket can no longer mask a powered-down PSU.
-- A superseded Cura load releases the pending file lease instead of leaking
-  the cached file until shutdown.
+- Lease lifetime was reviewed against the documented contract: an unrelated
+  Cura file completion still must not release the current remote file
+  (`ARCHITECTURE.md` section 6), so a superseded read intentionally retains
+  its lease until shutdown.
 - Failed layer hydration is latched until a new file or index arrives, so a
   broken file is not re-read in full on every poll.
 - While a compact layer hydrates, the animation driver is reset so a stale

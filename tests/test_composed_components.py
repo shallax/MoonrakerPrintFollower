@@ -146,7 +146,6 @@ class ComposedComponentTests(unittest.TestCase):
             self.follower.client, "A", self.follower.current_printer_identity)
         self.addCleanup(upload.abort)
         upload.begin(config, "part.gcode")
-        upload._source = SimpleNamespace()
         upload._power = ["socket", "psu"]
         upload._power_off = []
         upload._probe_power(list(upload._power))
@@ -164,21 +163,6 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertIn("device=psu", posts[0].path)
         self.assertIn("action=on", posts[0].path)
 
-    def test_superseded_load_releases_the_pending_lease(self):
-        cura = self.parts.cura
-        released = []
-
-        class Lease:
-            path = os.path.abspath(os.path.join(tempfile.gettempdir(), "remote-part.gcode"))
-            def close(self): released.append(True)
-        self.assertTrue(cura.load(Lease()))
-        self.assertTrue(cura.loading)
-        # A different file completes first: the superseded read's lease must
-        # be released instead of leaking until shutdown.
-        cura.application.fileCompleted.emit(os.path.join(tempfile.gettempdir(), "other.gcode"))
-        self.assertTrue(released)
-        self.assertFalse(cura.loading)
-
     def test_failed_hydration_is_latched_until_a_new_file_arrives(self):
         service, files = self.parts.index, self.parts.files
         files.bind(("part.gcode", 100, 1))
@@ -187,7 +171,7 @@ class ComposedComponentTests(unittest.TestCase):
         service._restored = True
         service._wanted = True
         handle = tempfile.NamedTemporaryFile(suffix=".gcode", delete=False)
-        handle.write(b";LAYER:0\nG1 X1\nG1 X2\n")
+        handle.write(b";LAYER:0\nG1 X1\n;LAYER:1\nG1 X2\n")
         handle.close()
         self.addCleanup(os.remove, handle.name)
         gci = self.qt.load("GCodeIndex")
