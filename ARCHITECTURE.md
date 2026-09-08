@@ -74,6 +74,8 @@ private follower state to either integration.
 | `MonitorCommands.py` | Monitor action acknowledgement and emergency-stop click sequence | Sliders or discovery |
 | `MonitorTuning.py` | Debounce, pending tuning values, revision/confirmation timers | QML or printer discovery |
 | `MonitorControls.py` | Macro, preset, fan/LED/PWM, setup and power/exclusion policy | Qt model inheritance |
+| `ToolheadPolicy.py` | Pure jog/home/extrude G-code, the print-state safety gate and jog-queue coalescing | Qt, timers or networking |
+| `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
 | `MonitorCamera.py` | Camera selection, transforms and per-printer selection persistence | Private configuration store |
@@ -243,6 +245,35 @@ capabilities, not the model or follower. Tuning owns its revisions and debounce
 lifetimes. Macro argument parsing is cached until static configuration changes.
 Camera selection is persisted through the public configuration operation.
 
+Manual toolhead control is pure policy plus one queue owner: `ToolheadPolicy`
+generates every G-code string, classifies the print state (disabled in
+unknown/error states, allowed while idle or paused) and coalesces
+adjacent same-axis jog taps. The motion controls are exposed only when
+moves are immediately allowed — while printing the user must pause
+explicitly first. `ToolheadController` owns the pending queue and the
+pause-first safety net: anything queued while the state was allowed drops
+if the print resumes mid-drain or the pause is not confirmed within ten
+seconds. One-shot control scripts (Home, QGL, mesh calibration, Save,
+Cooldown, macros, firmware/host restarts) queue behind the in-flight
+command on the `monitor::control` lane so setup actions can be lined up in
+succession — stateful commands never queue, and macros refuse while a
+print is active — and jog scripts travel the same lane. Firing the
+emergency stop clears the script queue, the jog queue and the busy gate
+so power toggles and restart controls respond immediately. The
+transport's replace lane is never used for motion because replacement
+aborts an in-flight request whose G-code may or may not have executed.
+Live Z-offset nudges stay enabled during prints by design.
+
+The Monitor's three panes and their accordion sections are presentation
+owned by the model's published state: the expanded-section map, the pane
+collapse flags and the lock toggle live in the model, persisted through
+the plugin-owned JSON state file, and QML binds to them through declared
+properties and setter slots. `CollapsibleSectionHeader` is the single
+header implementation shared by every pane; pane chrome (toggles,
+collapsed strips, plugin-drawn glyphs) is UI-only state in the QML files
+and never mutates printer state directly. The recipes for extending the
+panes are in `INSTRUCTIONS.md`, not here.
+
 `BedMeshPresenter` alone owns the active scene node and Preview mesh UI. It uses
 `CuraIntegration.decorating_scene()` to distinguish its non-sliceable visual changes
 from user scene changes. Inactive Monitor instances cannot overwrite the active mesh.
@@ -276,7 +307,9 @@ an earlier write's terminal notification.
 - New display behaviour: keep policy pure (like `PreviewSmoothing`) and put
   the Qt tick/writes in `PreviewMotion`; never let displayed state feed back
   into physical observations.
-- New controls: add policy to a focused controller and declare the Qt property/slot.
+- New controls: add policy to a focused controller and declare the Qt property/slot
+  (toolhead control keeps script text and safety gates pure in `ToolheadPolicy`;
+  the controller owns the queue and pause sequencing).
 - New file operations: consume `FileLease`, never infer lifetime from Preview flags.
 - New index work: use the bounded index owner and generation-valid publication.
 - New Cura APIs: isolate them in Cura integration/presentation or the writer adapter.

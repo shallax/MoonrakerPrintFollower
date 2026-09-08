@@ -7,6 +7,13 @@ import math
 import re
 
 
+def factor_percent(value) -> str:
+    """A speed/flow factor as a percentage, or '—' when the printer did
+    not report one (empty snapshot, reconnect, unsupported Klipper)."""
+    factor = number(value, None)
+    return "—" if factor is None else f"{round(factor * 100)}%"
+
+
 def number(value, default=0.0):
     try:
         result = float(value)
@@ -106,8 +113,8 @@ def core_values(snapshot, physical, connected):
         "monitorProgress": max(0, min(100, round(number(sd.get("progress")) * 100))),
         "monitorLayer": layer_text, "monitorLayerHeight": f"{layer.thickness:.3f} mm" if layer.thickness is not None else "—",
         "monitorElapsed": duration(stats.get("print_duration")), "monitorEta": eta, "monitorFinish": finish,
-        "monitorSpeed": f"{round(number(move.get('speed_factor'), 1) * 100)}%",
-        "monitorFlow": f"{round(number(move.get('extrude_factor'), 1) * 100)}%",
+        "monitorSpeed": factor_percent(move.get("speed_factor")),
+        "monitorFlow": factor_percent(move.get("extrude_factor")),
         "monitorPosition": f"X {number(position[0]):.1f}   Y {number(position[1]):.1f}   Z {number(position[2]):.2f}" if len(position) >= 3 else "—",
         "monitorMessage": str(stats.get("message") or ""),
     }

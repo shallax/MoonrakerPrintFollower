@@ -1,0 +1,8 @@
+module UM
+singleton Theme 1.5 Theme.qml
+Label 1.5 Label.qml
+ColorImage 1.5 ColorImage.qml
+SimpleButton 1.5 SimpleButton.qml
+ScrollBar 1.5 ScrollBar.qml
+TooltipArea 1.5 TooltipArea.qml
+I18nCatalog 1.5 I18nCatalog.qml

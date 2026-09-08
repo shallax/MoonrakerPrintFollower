@@ -1,12 +1,10 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3
-
 import UM 1.5 as UM
 import Cura 1.1 as Cura
 
-UM.Dialog
-{
+UM.Dialog {
     id: base
     title: "Upload to Moonraker"
 
@@ -18,64 +16,63 @@ UM.Dialog
 
     // Cura.ComboBox expects a catalog in the creation context.  Supplying it here
     // avoids the undefined-catalog QML error seen in Cura 5.13's upload dialog.
-    property variant catalog: UM.I18nCatalog { name: "cura" }
+    property variant catalog: UM.I18nCatalog {
+        name: "cura"
+    }
     property string forbiddenCharacters: ":*?\"<>|"
 
-    function validFilename(value)
-    {
-        var name = value.trim()
-        if (name.length === 0 || name === "." || name === "..") return false
-        for (var i = 0; i < forbiddenCharacters.length; ++i)
-        {
-            if (name.indexOf(forbiddenCharacters.charAt(i)) !== -1) return false
+    function validFilename(value) {
+        var name = value.trim();
+        if (name.length === 0 || name === "." || name === "..")
+            return false;
+        for (var i = 0; i < forbiddenCharacters.length; ++i) {
+            if (name.indexOf(forbiddenCharacters.charAt(i)) !== -1)
+                return false;
         }
-        return true
+        return true;
     }
 
-    function validPath(value)
-    {
-        var path = value.trim()
-        if (path === "<root>") return true
-        if (path === "." || path === "..") return false
-        for (var i = 0; i < forbiddenCharacters.length; ++i)
-        {
-            if (path.indexOf(forbiddenCharacters.charAt(i)) !== -1) return false
+    function validPath(value) {
+        var path = value.trim();
+        if (path === "<root>")
+            return true;
+        if (path === "." || path === "..")
+            return false;
+        for (var i = 0; i < forbiddenCharacters.length; ++i) {
+            if (path.indexOf(forbiddenCharacters.charAt(i)) !== -1)
+                return false;
         }
-        return true
+        return true;
     }
 
     onRejected: manager.cancelUpload()
 
-    ColumnLayout
-    {
+    ColumnLayout {
         id: form
         anchors.fill: parent
         anchors.margins: base.dialogMargin
         spacing: UM.Theme.getSize("default_margin").height
 
-        UM.Label
-        {
+        UM.Label {
             text: "Remote folder"
             font: UM.Theme.getFont("medium_bold")
         }
 
-        Cura.ComboBox
-        {
+        Cura.ComboBox {
             id: pathField
             Layout.fillWidth: true
             Layout.minimumWidth: 360 * screenScaleFactor
             editable: true
             model: manager.uploadPathOptions
-            Component.onCompleted:
-            {
-                var index = find(manager.initialUploadPath)
-                if (index >= 0) currentIndex = index
-                editText = manager.initialUploadPath
+            Component.onCompleted: {
+                var index = find(manager.initialUploadPath);
+                if (index >= 0)
+                    currentIndex = index;
+                editText = manager.initialUploadPath;
             }
         }
 
-        UM.Label
-        {
+        UM.Label {
             text: "<root> is Moonraker's gcodes directory. Other folders are discovered from the printer, or you can type a path."
             color: UM.Theme.getColor("text_inactive")
             font: UM.Theme.getFont("default_italic")
@@ -83,22 +80,19 @@ UM.Dialog
             wrapMode: Text.WordWrap
         }
 
-        UM.Label
-        {
+        UM.Label {
             visible: !base.validPath(pathField.editText)
             text: "The remote folder contains characters Moonraker cannot use."
             color: UM.Theme.getColor("error")
             font: UM.Theme.getFont("default_italic")
         }
 
-        UM.Label
-        {
+        UM.Label {
             text: "Filename"
             font: UM.Theme.getFont("medium_bold")
         }
 
-        Cura.TextField
-        {
+        Cura.TextField {
             id: filenameField
             Layout.fillWidth: true
             text: manager.initialUploadFilename
@@ -106,42 +100,38 @@ UM.Dialog
             selectByMouse: true
         }
 
-        UM.Label
-        {
+        UM.Label {
             visible: !base.validFilename(filenameField.text)
             text: "Enter a valid filename. Characters : * ? \" < > | are not allowed."
             color: UM.Theme.getColor("error")
             font: UM.Theme.getFont("default_italic")
         }
 
-        UM.CheckBox
-        {
+        UM.CheckBox {
             id: printField
             text: "Start printing after upload"
             checked: manager.initialStartPrint
         }
 
-        Item { Layout.fillHeight: true }
+        Item {
+            Layout.fillHeight: true
+        }
 
-        RowLayout
-        {
+        RowLayout {
             Layout.fillWidth: true
             layoutDirection: Qt.RightToLeft
             spacing: UM.Theme.getSize("default_margin").width
 
-            Cura.PrimaryButton
-            {
+            Cura.PrimaryButton {
                 text: printField.checked ? "Upload and print" : "Upload"
                 enabled: base.validFilename(filenameField.text) && base.validPath(pathField.editText)
-                onClicked:
-                {
-                    manager.acceptUpload(pathField.editText, filenameField.text, printField.checked)
-                    base.accept()
+                onClicked: {
+                    manager.acceptUpload(pathField.editText, filenameField.text, printField.checked);
+                    base.accept();
                 }
             }
 
-            Cura.SecondaryButton
-            {
+            Cura.SecondaryButton {
                 text: "Cancel"
                 onClicked: base.reject()
             }

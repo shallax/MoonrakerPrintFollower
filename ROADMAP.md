@@ -6,8 +6,8 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release: **3.3.0** (smoothed Preview path head and the observation-pipeline
-fixes underneath it).
+Current release: **3.4.0** (manual toolhead control on the Monitor tab: jog,
+homing, motors off and extrude/retract with a pause-first safety model).
 
 ## Direction
 
@@ -18,15 +18,24 @@ waits until the feature surface actually needs it.
 
 ## 3.4.0 — Toolhead control
 
-The most-missed Monitor capability: manual control of the physical toolhead.
+Shipped in 3.4.0: a **Toolhead** section on the Monitor tab with an X/Y/Z
+compass, distance presets from 0.1 to 125 mm plus free-text entry, per-axis
+home and home-all, motors off, centre/Z-to-0 parking moves, KlipperScreen-
+style extrusion controls and a homed-axes/move-mode/position readout. Moves
+run while idle or paused; while printing, a jog request pauses first and
+queued moves run only on the paused confirmation — never a force-move
+mid-print, and never a move past the axis limits. Pure `ToolheadPolicy`
+(scripts, safety gate, queue coalescing) plus the `ToolheadController`
+queue owner; no transport changes.
 
-- Jog pad: X/Y/Z arrow cluster with distance presets (0.1 / 1 / 10 / 100 mm).
-- Per-axis home and home-all, motors off, extrude/retract, babystep
-  (extending the existing z-offset plumbing), absolute/relative display
-  from `gcode_move`.
-- Safety model: jogging is enabled when idle or paused. While printing, a
-  jog request first pauses — moves queued behind a printing buffer are the
-  kind of surprise that breaks prints, so there is no unprompted force-move.
+The release also delivered the Monitor layout overhaul: three panes
+(**Information**, **Printer status**, **Printer controls**) with
+Cura-style collapsible accordion sections that persist across restarts,
+collapsible panes with rotated titles, the lock-all padlock, the
+full-width emergency-stop dock and the labelled readout columns —
+procedures for extending all of it are in `INSTRUCTIONS.md`.
+
+Original scope notes, all delivered:
 - The follower already tolerates this: the refinement distance guard holds
   the Preview head when the physical head leaves the gcode path, and
   Klipper returns to the exact print position on resume.

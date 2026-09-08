@@ -1,0 +1,241 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  schedule:
+    - cron: "23 7 * * 3"
+
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install qmlformat and shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-declarative-dev-tools shellcheck
+
+      - name: Install ruff
+        run: python -m pip install ruff
+
+      - name: Compile Python sources
+        run: python -m compileall -q plugins tools tests
+
+      - name: QML structural sanity
+        run: python tools/check_qml.py plugins
+
+      - name: QML formatting
+        run: sh tools/check_qml_format.sh plugins/*.qml
+
+      - name: Ruff
+        run: ruff check plugins tools tests
+
+      - name: Shell scripts
+        run: shellcheck tools/*.sh
+
+      - name: Dockerfile
+        run: |
+          wget -qO /tmp/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
+          chmod +x /tmp/hadolint
+          /tmp/hadolint Dockerfile
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime and tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libxkbcommon0
+          python -m pip install PyQt6==6.11.0 coverage
+
+      - name: Run the suite under coverage
+        run: |
+          QT_QPA_PLATFORM=offscreen coverage run -m unittest discover -s tests -p "test_*.py"
+          coverage report --include="plugins/*" --fail-under=80
+          coverage xml --include="plugins/*"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          fail_ci_if_error: false
+
+  python-compatibility:
+    name: Python ${{ matrix.python-version }} and Qt runtime
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile Python sources
+        run: python -m compileall -q plugins tools tests
+
+      - name: Install Qt system runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1
+
+      - name: Install Qt test runtime (Cura supplies Qt in production)
+        run: python -m pip install PyQt6==6.11.0
+
+      - name: Run all discovered tests with the real Qt runtime
+        run: |
+          python -c "from PyQt6.QtCore import QCoreApplication"
+          python -m unittest discover -s tests -p "test_*.py"
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: QML structural sanity
+        run: python tools/check_qml.py plugins
+
+      - name: Run all discovered tests
+        run: python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Read package and CI metadata
+        id: build_meta
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          package = json.load(open("package.json", encoding="utf-8"))
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={package['package_version']}\n")
+          PY
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          BRANCH="${BRANCH//\//-}"
+          BRANCH="$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')"
+          SHORT_SHA="${GITHUB_SHA:0:8}"
+          echo "artifact_name=MoonrakerPrintFollower-ci-${BRANCH}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Cura package
+        run: python tools/build_curapackage.py
+
+      - name: Verify exact Cura package contents
+        run: python tools/verify_curapackage.py dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}.curapackage
+
+      - name: Build Cura Marketplace source ZIP
+        run: python tools/build_marketplace_source.py
+
+      - name: Verify Cura Marketplace source ZIP
+        run: python tools/verify_marketplace_source.py dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}-source.zip
+
+      - name: Install capture runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libxkbcommon0
+          python -m pip install PyQt6==6.11.0
+
+      - name: Capture deterministic screenshots
+        run: |
+          QT_QPA_PLATFORM=offscreen python tools/capture_monitor.py dist/screenshots
+          QT_QPA_PLATFORM=offscreen python tools/capture_preview.py dist/screenshots
+          QT_QPA_PLATFORM=offscreen python tools/capture_settings.py dist/screenshots
+          QT_QPA_PLATFORM=offscreen python tools/capture_upload.py dist/screenshots
+
+      - name: Upload CI artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.build_meta.outputs.artifact_name }}
+          path: |
+            dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}.curapackage
+            dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}-source.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  screenshot-sync:
+    name: Screenshot sync
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Build the pinned capture image
+        run: docker build -q -t moonraker-print-follower-dev .
+
+      - name: Regenerate screenshots in the canonical container
+        # The dev container pins the toolchain (Qt, fonts) that makes the
+        # captures byte-stable, so the committed copies can be compared
+        # against a fresh render on every push. The host-user/bind-mount
+        # incantation lives in tools/docker_dev.sh.
+        run: |
+          tools/docker_dev.sh sh -c "python3 tools/capture_monitor.py dist/screenshots \
+                && python3 tools/capture_preview.py dist/screenshots \
+                && python3 tools/capture_settings.py dist/screenshots \
+                && python3 tools/capture_upload.py dist/screenshots"
+
+      - name: Reject stale committed screenshots
+        # Every generated PNG must match its committed copy byte for byte;
+        # extra hand-captured files (e.g. a real 3-D Preview shot) are
+        # allowed and never checked.
+        run: |
+          stale=0
+          for generated in dist/screenshots/*.png; do
+            name="$(basename "$generated")"
+            if ! cmp -s "screenshots/$name" "$generated"; then
+              echo "::error::$name is stale: regenerate inside the dev container (./tools/docker_gates.sh) and commit the PNGs"
+              stale=1
+            fi
+          done
+          exit "$stale"
+
+  analyze:
+    name: Analyze (CodeQL)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    strategy:
+      fail-fast: false
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+

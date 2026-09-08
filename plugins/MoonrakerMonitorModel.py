@@ -1,7 +1,10 @@
 """One Cura Qt model: declarations and composition, not an inheritance stack."""
 from __future__ import annotations
+import json
+import os
 from copy import deepcopy
 from PyQt6.QtCore import QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
+from UM.Resources import Resources
 from PyQt6.QtGui import QDesktopServices
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from .MonitorCamera import MonitorCamera
@@ -10,6 +13,61 @@ from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
 from .MonitorFormatting import core_values, peripheral_values
 from .MonitorTuning import MonitorTuning
+from .ToolheadController import ToolheadController
+
+
+# The monitor's panel state lives in a plugin-owned JSON file next to
+# cura.cfg. Uranium's preference store is not used: it drops reads and
+# writes on unregistered keys depending on version, and only persists on
+# Cura's own save cycle, so the state has proven unreliable there. The
+# file name predates the extra fields and stays for continuity.
+SECTIONS_FILE_NAME = "moonraker_print_follower_sections.json"
+
+
+def _sections_path() -> str:
+    return Resources.getStoragePath(Resources.Preferences, SECTIONS_FILE_NAME)
+
+
+def _state_bool(value) -> bool:
+    """Coerce a stored flag; string values from hand-edited or older files
+    must not hydrate inverted (bool('false') is True)."""
+    if isinstance(value, str):
+        return value.strip().lower() not in ("", "0", "false", "no", "off")
+    return bool(value)
+
+
+def _read_state() -> dict:
+    """The persisted panel state: collapsed sections, the control-pane
+    collapse and the lock-all toggle. The first shipped format was a flat
+    section map, which is migrated to the current shape on read."""
+    try:
+        with open(_sections_path(), "r", encoding="utf-8") as handle:
+            decoded = json.load(handle)
+        if isinstance(decoded, dict):
+            sections = decoded.get("sections")
+            if not isinstance(sections, dict):
+                sections = decoded  # legacy flat section map
+            return {
+                "sections": {str(key): _state_bool(value) for key, value in sections.items()},
+                "controlsCollapsed": _state_bool(decoded.get("controlsCollapsed", False)),
+                "controlsLocked": _state_bool(decoded.get("controlsLocked", False)),
+                "infoCollapsed": _state_bool(decoded.get("infoCollapsed", False)),
+                "statusCollapsed": _state_bool(decoded.get("statusCollapsed", False)),
+            }
+    except Exception:
+        pass
+    return {"sections": {}, "controlsCollapsed": False, "controlsLocked": False,
+            "infoCollapsed": False, "statusCollapsed": False}
+
+
+def _write_state(state: dict) -> None:
+    try:
+        path = _sections_path()
+        with open(path + ".tmp", "w", encoding="utf-8") as handle:
+            json.dump(state, handle)
+        os.replace(path + ".tmp", path)
+    except Exception:
+        pass
 
 
 def value_property(kind, name, signal, default=None):
@@ -32,6 +90,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     controlsChanged = pyqtSignal()
     emergencyStopChanged = pyqtSignal()
     typedControlsChanged = pyqtSignal()
+    toolheadChanged = pyqtSignal()
+    sectionsChanged = pyqtSignal()
+    controlsLockChanged = pyqtSignal()
+    infoPaneChanged = pyqtSignal()
+    statusPaneChanged = pyqtSignal()
+    cameraRefreshChanged = pyqtSignal()
 
     _SIGNAL_KEYS = (
         ("monitorChanged", ("monitorState", "monitorFilename", "monitorProgress", "monitorLayer", "monitorElapsed",
@@ -43,12 +107,20 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
-        ("actionChanged", ("printActive", "canPausePrint", "canResumePrint", "canCancelPrint", "actionBusy", "actionStatus")),
+        ("actionChanged", ("printActive", "canPausePrint", "canResumePrint", "canCancelPrint", "actionBusy",
+                           "actionStatus", "emergencyHoldProgress")),
         ("controlsChanged", ("monitorLayerHeight", "macroNames", "hasQuadGantryLevel", "hasBedMesh", "canRunSetup",
                              "temperaturePresetNames", "canApplyTemperaturePreset", "speedFactorPercent", "flowFactorPercent",
                              "zOffset", "zOffsetText", "fanControlItems", "ledItems", "saveConfigPending", "saveConfigSummary",
                              "canSaveConfig")),
         ("emergencyStopChanged", ("emergencyStopClicks",)),
+        ("toolheadChanged", ("jogEnabled", "jogDistance", "extrudeDistance", "extrudeSpeed",
+                             "homedAxes", "positionMode", "jogStatus")),
+        ("controlsLockChanged", ("controlsLocked", "controlsCollapsed")),
+        ("infoPaneChanged", ("infoCollapsed",)),
+        ("statusPaneChanged", ("statusCollapsed",)),
+        ("sectionsChanged", ("sectionExpandedMap",)),
+        ("cameraRefreshChanged", ("cameraRefreshNonce",)),
         ("typedControlsChanged", ("temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
                                   "bedMeshProfileNames", "bedMeshRows", "bedMeshColumns", "bedMeshValues", "bedMeshMinimum",
                                   "bedMeshMaximum", "bedMeshRange", "bedMeshXMin", "bedMeshXMax", "bedMeshYMin", "bedMeshYMax",
@@ -59,12 +131,21 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         super().__init__(output_controller, number_of_extruders)
         self._client, self._print_state, self._config, self._mesh = client, print_state, config, bed_mesh
         self._values = {}
+        state = _read_state()
+        self._controls_locked = state["controlsLocked"]
+        self._controls_collapsed = state["controlsCollapsed"]
+        self._info_collapsed = state["infoCollapsed"]
+        self._status_collapsed = state["statusCollapsed"]
+        self._camera_refresh_nonce = 0
+        self._sections = state["sections"]
         self._data = MonitorData(client, self)
         self._commands = MonitorCommands(self._data, self)
         self._tuning = MonitorTuning(self._data, self._commands, self)
         self._controls = MonitorControls(self._data, self._commands, self._tuning, bed_mesh, config, self)
         self._camera = MonitorCamera(self._data, config, apply_config, self)
-        for signal in (self._data.changed, self._commands.changed, self._controls.changed, self._camera.changed, bed_mesh.changed):
+        self._toolhead = ToolheadController(self._data, self._commands, self)
+        for signal in (self._data.changed, self._commands.changed, self._controls.changed, self._camera.changed,
+                       self._toolhead.changed, bed_mesh.changed):
             signal.connect(self._publish)
         self._data.set_active(True)
         self._publish()
@@ -77,11 +158,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values.update(peripheral_values(self._data.snapshot))
         values.update(self._controls.values)
         values.update(self._camera.values)
+        values.update(self._toolhead.values)
         commands, mesh = self._commands, self._mesh.snapshot
         values.update(printActive=commands.print_active, canPausePrint=commands.state == "printing" and not commands.busy,
             canResumePrint=commands.state == "paused" and not commands.busy,
             canCancelPrint=commands.print_active and not commands.busy, actionBusy=commands.busy,
-            actionStatus=commands.status, emergencyStopClicks=commands.clicks, powerDevices=self._controls.power_devices(),
+            actionStatus=commands.status, emergencyStopClicks=commands.clicks,
+            emergencyHoldProgress=commands.hold_progress, powerDevices=self._controls.power_devices(),
             bedMeshAvailable=bool(mesh), bedMeshProfile=str(mesh.get("profile") or "Current mesh") if mesh else "",
             bedMeshRows=int(mesh.get("rows") or 0), bedMeshColumns=int(mesh.get("columns") or 0),
             bedMeshValues=list(mesh.get("values") or ()), bedMeshMinimum=float(mesh.get("minimum") or 0),
@@ -89,7 +172,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             bedMeshXMin=float(mesh.get("xMin") or 0), bedMeshXMax=float(mesh.get("xMax") or 0),
             bedMeshYMin=float(mesh.get("yMin") or 0), bedMeshYMax=float(mesh.get("yMax") or 0),
             bedMeshRangeText=f"{float(mesh.get('range') or 0):.3f} mm range" if mesh else "",
-            bedMeshPreviewVisible=self._mesh.visible)
+            bedMeshPreviewVisible=self._mesh.visible,
+            controlsLocked=self._controls_locked, controlsCollapsed=self._controls_collapsed,
+            infoCollapsed=self._info_collapsed, statusCollapsed=self._status_collapsed,
+            cameraRefreshNonce=self._camera_refresh_nonce,
+            sectionExpandedMap=dict(self._sections))
         self._values = values
         try: self.setCameraUrl(QUrl(self._camera.url))
         except AttributeError: pass
@@ -158,6 +245,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     saveConfigSummary = value_property(str, "saveConfigSummary", controlsChanged, "")
     canSaveConfig = value_property(bool, "canSaveConfig", controlsChanged, False)
     emergencyStopClicks = value_property(int, "emergencyStopClicks", emergencyStopChanged, 0)
+    emergencyHoldProgress = value_property(float, "emergencyHoldProgress", actionChanged, 0.0)
     bedMeshAvailable = value_property(bool, "bedMeshAvailable", typedControlsChanged, False)
     bedMeshProfile = value_property(str, "bedMeshProfile", typedControlsChanged, "")
     bedMeshProfileNames = value_property(QVariant, "bedMeshProfileNames", typedControlsChanged, [])
@@ -173,11 +261,65 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     bedMeshYMax = value_property(float, "bedMeshYMax", typedControlsChanged, 0.0)
     bedMeshRangeText = value_property(str, "bedMeshRangeText", typedControlsChanged, "")
     bedMeshPreviewVisible = value_property(bool, "bedMeshPreviewVisible", typedControlsChanged, True)
+    jogEnabled = value_property(bool, "jogEnabled", toolheadChanged, False)
+    jogDistance = value_property(float, "jogDistance", toolheadChanged, 25.0)
+    extrudeDistance = value_property(float, "extrudeDistance", toolheadChanged, 5.0)
+    extrudeSpeed = value_property(float, "extrudeSpeed", toolheadChanged, 300.0)
+    homedAxes = value_property(str, "homedAxes", toolheadChanged, "")
+    positionMode = value_property(str, "positionMode", toolheadChanged, "")
+    jogStatus = value_property(str, "jogStatus", toolheadChanged, "")
+    controlsLocked = value_property(bool, "controlsLocked", controlsLockChanged, False)
+    controlsCollapsed = value_property(bool, "controlsCollapsed", controlsLockChanged, False)
+    infoCollapsed = value_property(bool, "infoCollapsed", infoPaneChanged, False)
+    statusCollapsed = value_property(bool, "statusCollapsed", statusPaneChanged, False)
+    cameraRefreshNonce = value_property(int, "cameraRefreshNonce", cameraRefreshChanged, 0)
+    sectionExpandedMap = value_property(QVariant, "sectionExpandedMap", sectionsChanged, {})
 
     @pyqtSlot()
     def refreshAll(self): self._data.refresh_all()
     @pyqtSlot()
-    def refreshWebcams(self): self._data.refresh_webcams()
+    def refreshWebcams(self):
+        # The nonce feeds a cache-busting query parameter so the live
+        # stream itself reloads, not just the webcam list.
+        self._camera_refresh_nonce += 1
+        self._data.refresh_webcams()
+        self._publish()
+    @pyqtSlot(bool)
+    def setControlsLocked(self, locked):
+        self._controls_locked = bool(locked)
+        self._save_state()
+        self._publish()
+    @pyqtSlot(bool)
+    def setControlsCollapsed(self, collapsed):
+        self._controls_collapsed = bool(collapsed)
+        self._save_state()
+        self._publish()
+    @pyqtSlot(bool)
+    def setInfoCollapsed(self, collapsed):
+        self._info_collapsed = bool(collapsed)
+        self._save_state()
+        self._publish()
+    @pyqtSlot(bool)
+    def setStatusCollapsed(self, collapsed):
+        self._status_collapsed = bool(collapsed)
+        self._save_state()
+        self._publish()
+    @pyqtSlot(str, bool)
+    def setSectionExpanded(self, section, expanded):
+        sections = dict(self._sections)
+        sections[str(section)] = bool(expanded)
+        self._sections = sections
+        self._save_state()
+        self._publish()
+
+    def _save_state(self):
+        _write_state({
+            "sections": dict(self._sections),
+            "controlsCollapsed": self._controls_collapsed,
+            "controlsLocked": self._controls_locked,
+            "infoCollapsed": self._info_collapsed,
+            "statusCollapsed": self._status_collapsed,
+        })
     @pyqtSlot(object)
     def updateMoonrakerStatus(self, status): self._data.observe(status)
     @pyqtSlot()
@@ -240,7 +382,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot()
     def saveConfig(self): self._controls.setup("save")
     @pyqtSlot()
+    def firmwareRestart(self): self._controls.firmware_restart()
+    @pyqtSlot()
+    def hostRestart(self): self._controls.host_restart()
+    @pyqtSlot()
     def emergencyStopClick(self): self._commands.emergency_click()
+    @pyqtSlot()
+    def emergencyHoldStarted(self): self._commands.emergency_hold_started()
+    @pyqtSlot()
+    def emergencyHoldReleased(self): self._commands.emergency_hold_released()
     @pyqtSlot(str)
     def loadBedMeshProfile(self, name): self._controls.mesh_profile(name)
     @pyqtSlot()
@@ -249,3 +399,23 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def setBedMeshPreviewVisible(self, visible): self._mesh.set_visible(visible)
     @pyqtSlot(str, result=QVariant)
     def macroParameterDefinitions(self, name): return QVariant(self._controls.macro_parameters(name))
+    @pyqtSlot(str, int)
+    def jog(self, axis, direction): self._toolhead.jog(axis, direction)
+    @pyqtSlot(float)
+    def setJogDistance(self, distance): self._toolhead.set_distance(distance)
+    @pyqtSlot(float)
+    def setExtrudeDistance(self, distance): self._toolhead.set_extrude_distance(distance)
+    @pyqtSlot(float)
+    def setExtrudeSpeed(self, speed): self._toolhead.set_extrude_speed(speed)
+    @pyqtSlot(str)
+    def home(self, axis): self._toolhead.home(axis)
+    @pyqtSlot()
+    def motorsOff(self): self._toolhead.motors_off()
+    @pyqtSlot()
+    def centerToolhead(self): self._toolhead.center_toolhead()
+    @pyqtSlot()
+    def zToZero(self): self._toolhead.z_to_zero()
+    @pyqtSlot(int)
+    def extrude(self, direction): self._toolhead.extrude(direction)
+    @pyqtSlot()
+    def heatersOff(self): self._controls.heaters_off()

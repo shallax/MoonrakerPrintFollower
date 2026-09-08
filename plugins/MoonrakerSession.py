@@ -44,7 +44,11 @@ class PollPolicy:
         active = state == "printing"
         paused = state == "paused"
         if category == RequestCategory.CORE:
-            if urgent and active:
+            # Urgent covers both guards: the pause guard (printer is
+            # pausing, state still "printing") and the toolhead guard
+            # (moves running while idle/paused) — the floors must not
+            # apply while either is latched.
+            if urgent:
                 return min(configured, self.pause_guard_ms)
             if active:
                 return configured
@@ -246,11 +250,13 @@ class MoonrakerSessionState:
         self.base_url = ""
         self.connected = False
         self.pause_guard = False
+        self.toolhead_guard = False
 
     def reset(self) -> None:
         self.generation += 1
         self.connected = False
         self.pause_guard = False
+        self.toolhead_guard = False
         self.snapshot = SessionSnapshot()
         self.commands.clear()
         self.coalescer.clear()
@@ -260,6 +266,15 @@ class MoonrakerSessionState:
         if active == self.pause_guard:
             return False
         self.pause_guard = active
+        return True
+
+    def set_toolhead_guard(self, active: bool) -> bool:
+        # While the toolhead is moving (or just moved), the core poll floor
+        # drops to the urgent rate so the position readout tracks the head.
+        active = bool(active)
+        if active == self.toolhead_guard:
+            return False
+        self.toolhead_guard = active
         return True
 
     def merge_status(self, patch: Dict[str, Any], *, now: Optional[float] = None) -> tuple[Dict[str, Any], list[CommandAcknowledgement]]:
@@ -331,6 +346,10 @@ class MoonrakerSession:
     def pause_guard(self) -> bool:
         return self._state.pause_guard
 
+    @property
+    def toolhead_guard(self) -> bool:
+        return self._state.toolhead_guard
+
     def configure(self, base_url: str, api_key: str) -> bool:
         target_url = str(base_url or "").rstrip("/")
         target_key = str(api_key or "")
@@ -351,6 +370,9 @@ class MoonrakerSession:
 
     def set_pause_guard(self, active: bool) -> bool:
         return self._state.set_pause_guard(active)
+
+    def set_toolhead_guard(self, active: bool) -> bool:
+        return self._state.set_toolhead_guard(active)
 
     def merge_status(self, patch: Dict[str, Any], *, now: Optional[float] = None):
         return self._state.merge_status(patch, now=now)

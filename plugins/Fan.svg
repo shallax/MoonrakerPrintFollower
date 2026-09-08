@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill-rule="evenodd">
+  <!-- Fan: a hub with three curved blades. No fills here: UM.ColorImage
+       injects the theme colour into the root svg element, so the glyph
+       follows Cura's theme and scaling. -->
+  <path d="M12 9.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2z"/>
+  <path d="M12 9.6c-1.2-.4-2.3-1.6-2.3-3.3 0-1.8 1-2.8 2.3-2.8s2.3 1 2.3 2.8c0 1.7-1.1 2.9-2.3 3.3z"/>
+  <path transform="rotate(120 12 12)" d="M12 9.6c-1.2-.4-2.3-1.6-2.3-3.3 0-1.8 1-2.8 2.3-2.8s2.3 1 2.3 2.8c0 1.7-1.1 2.9-2.3 3.3z"/>
+  <path transform="rotate(240 12 12)" d="M12 9.6c-1.2-.4-2.3-1.6-2.3-3.3 0-1.8 1-2.8 2.3-2.8s2.3 1 2.3 2.8c0 1.7-1.1 2.9-2.3 3.3z"/>
+</svg>

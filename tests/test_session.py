@@ -36,6 +36,10 @@ class SessionStateTests(unittest.TestCase):
         self.assertEqual(policy.interval_ms(RequestCategory.CORE, 750, "printing"), 750)
         self.assertEqual(policy.interval_ms(RequestCategory.CORE, 750, "printing", urgent=True), 250)
         self.assertEqual(policy.interval_ms(RequestCategory.CORE, 100, "printing", urgent=True), 100)
+        # The toolhead guard must beat the idle/paused floors too: moves
+        # execute in those states, and the readout has to track the head.
+        self.assertEqual(policy.interval_ms(RequestCategory.CORE, 750, "paused", urgent=True), 250)
+        self.assertEqual(policy.interval_ms(RequestCategory.CORE, 750, "standby", urgent=True), 250)
         self.assertEqual(policy.interval_ms(RequestCategory.CORE, 750, "paused"), 1500)
         self.assertEqual(policy.interval_ms(RequestCategory.CORE, 750, "standby"), 5000)
         self.assertEqual(policy.interval_ms(RequestCategory.AUXILIARY, 750, "printing"), 1000)
@@ -104,7 +108,21 @@ class SessionStateTests(unittest.TestCase):
         self.assertIsNone(session.commands.get("Pause"))
         self.assertFalse(session.connected)
         self.assertFalse(session.pause_guard)
+        self.assertFalse(session.toolhead_guard)
         self.assertEqual(transport.cancel_calls, 1)
+
+    def test_qt_wrapper_delegates_toolhead_guard_to_the_shared_state(self):
+        # The client reads session.toolhead_guard at configure time and
+        # ToolheadController arms it through set_toolhead_guard; both must
+        # delegate to the state the configure path resets.
+        session = MoonrakerSession(transport=_FakeTransport())
+        self.assertFalse(session.toolhead_guard)
+        self.assertTrue(session.set_toolhead_guard(True))
+        self.assertTrue(session.toolhead_guard)
+        self.assertTrue(session.state.toolhead_guard)
+        self.assertFalse(session.set_toolhead_guard(True))  # idempotent
+        session.configure("http://printer", "key")
+        self.assertFalse(session.toolhead_guard)
 
     def test_command_ack_requires_observed_printer_state(self):
         fake = FakeMoonraker([

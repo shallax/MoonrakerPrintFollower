@@ -13,11 +13,15 @@ from UM.Backend.Backend import BackendState
 from .CuraLifecycleBridge import CuraLifecycleBridge
 from .NativeNozzleLifecycle import keep_native_nozzle_visible
 
+# Layer heights read per event-loop tick while building the table.
+_HEIGHTS_PER_TICK = 200
+
 
 class CuraIntegration(QObject):
     invalidated = pyqtSignal(str)
     changed = pyqtSignal()
     positionChanged = pyqtSignal()
+    viewSwapped = pyqtSignal()
     fileLoaded = pyqtSignal(str)
     loadFailed = pyqtSignal(str)
 
@@ -94,18 +98,44 @@ class CuraIntegration(QObject):
         if self._view is None:
             return ()
         if self._heights is None:
-            result = []
+            # Build the layer-height table progressively: reading it for
+            # a large file in one go is a visible UI freeze right after
+            # the print loads. The per-layer reads are cheap; the batch
+            # is what hurts, so spread it over event-loop ticks. Callers
+            # already degrade gracefully with partial heights (the
+            # resolver falls back to metadata paths).
+            batch = []
+            self._heights = batch
+            self._heights_built = 0
             try:
                 view = self._view
                 if view is not None and hasattr(view, "_calculateLayerHeightsCache"):
                     view._calculateLayerHeightsCache()
-                for layer in range((self.max_layer or 0) + 1):
-                    try: result.append(float(view._getLayerHeight(layer)))
-                    except Exception: result.append(0.0)
             except Exception:
                 pass
-            self._heights = tuple(result)
-        return self._heights
+            self._build_heights_step(batch)
+        return tuple(self._heights)
+
+    def _build_heights_step(self, batch):
+        view = self._view
+        # The batch identity ties every queued tick to its own build: a
+        # stale tick from an invalidated build (or a swapped view) must
+        # not append into a newer one.
+        if self._closed or view is None or self._heights is not batch:
+            return
+        total = (self.max_layer or 0) + 1
+        target = min(self._heights_built + _HEIGHTS_PER_TICK, total)
+        for layer in range(self._heights_built, target):
+            try:
+                batch.append(float(view._getLayerHeight(layer)))
+            except Exception:
+                batch.append(0.0)
+        self._heights_built = target
+        if target < total:
+            QTimer.singleShot(0, lambda: self._build_heights_step(batch))
+        else:
+            self._heights = tuple(batch)
+            self._heights_built = 0
 
     def watch(self, enabled):
         if enabled and not self._closed:
@@ -160,6 +190,15 @@ class CuraIntegration(QObject):
                 except Exception: pass
             self._view_connections.clear()
             self._view, self._heights = view, None
+            # A swapped view (stage switches, window changes) restores its
+            # own layer/path handles asynchronously — after rapid back-and-
+            # forth switching Cura can hang and the restore lands seconds
+            # late. Those echoes must never read as user overrides: clear
+            # the follower's expectations and suspend override detection
+            # generously. Each switch refreshes the window, so it always
+            # spans the last switch plus the recovery lag.
+            self._settle_until = time.monotonic() + 2.0
+            self.viewSwapped.emit()
             if view is not None:
                 for name in ("currentLayerNumChanged", "currentPathNumChanged"):
                     signal = getattr(view, name, None)

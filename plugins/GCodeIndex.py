@@ -226,6 +226,11 @@ def _build_pass(
     while True:
         if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
             return [], [], [], [], [], [], [], [], [], [], []
+        if (line_number & 0xFFF) == 0 and line_number:
+            # Release the GIL every 4096 lines: the parse is a tight
+            # Python loop, and without periodic yields the UI thread
+            # starves for the whole indexing duration on large files.
+            time.sleep(0)
         offset = handle.tell()
         line = handle.readline()
         if not line:
@@ -372,6 +377,8 @@ def _collect_marker_values(handle: BinaryIO, capture: Optional[re.Pattern[bytes]
     return values
 
 
+_MARKER_SNIFF_BYTES = 262144
+
 def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] = None) -> LayerMotionIndex:
     if compact is None:
         try:
@@ -385,10 +392,27 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         (_PRUSA_LAYER_CHANGE, None),
         (_STATS_MARKER, _STATS_MARKER),
     )
+    # Sniff the layer-change format from the file head so the matching
+    # marker pass runs first. A non-matching pass still reads the entire
+    # file, and four full reads of a large G-code dominate the indexing
+    # time; the fallback loop keeps files whose marker appears beyond
+    # the sniff window working as before.
+    try:
+        with open(path, "rb") as probe:
+            # The pass itself matches per line (the markers are
+            # line-anchored), so the sniff must too: a raw blob search
+            # would miss the layer markers and hand the first pass to the
+            # stats marker.
+            head_lines = probe.read(_MARKER_SNIFF_BYTES).splitlines()
+        sniffed = next((marker for marker, _capture in markers
+                        if any(marker.match(line) for line in head_lines)), None)
+    except OSError:
+        sniffed = None
+    ordered = [entry for entry in markers if entry[0] is sniffed] + [entry for entry in markers if entry[0] is not sniffed]
     ranges = motions = xs = ys = zs = starts = start_absolute = start_units = elapsed_times = stats_values = block_stats = None
     marker_values: List[int] = []
     with open(path, "rb") as handle:
-        for marker, capture in markers:
+        for marker, capture in ordered:
             result = _build_pass(
                 handle, marker, collect_stats=True, collect_motions=not compact, cancel_event=cancel_event
             )

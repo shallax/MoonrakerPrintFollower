@@ -1,0 +1,10 @@
+# Dependabot keeps the workflow actions current. The plugin itself has
+# no runtime pip dependencies (Cura supplies them), and the CI/dev pins
+# live inline in the Dockerfile and workflows, which Dependabot's pip
+# ecosystem cannot resolve — so only github-actions is configured.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

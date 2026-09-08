@@ -2,14 +2,13 @@ import QtQuick 2.15
 import UM 1.5 as UM
 import Cura 1.0 as Cura
 
-Item
-{
+Item {
     id: root
 
     property string text: ""
     property string tooltip: ""
 
-    signal clicked()
+    signal clicked
 
     implicitHeight: UM.Theme.getSize("action_button").height
     implicitWidth: 120 * screenScaleFactor
@@ -18,8 +17,7 @@ Item
     // styling and tooltips, but draw its label ourselves. Cura's ActionButton
     // label does not vertically centre its Text contents and its fixed-width
     // layout can look offset in narrow/plugin-defined widths.
-    Cura.SecondaryButton
-    {
+    Cura.SecondaryButton {
         id: nativeButton
         anchors.fill: parent
         text: root.text
@@ -32,15 +30,12 @@ Item
         onClicked: root.clicked()
     }
 
-    UM.Label
-    {
+    UM.Label {
         anchors.fill: parent
         anchors.leftMargin: UM.Theme.getSize("default_margin").width
         anchors.rightMargin: UM.Theme.getSize("default_margin").width
         text: root.text
-        color: root.enabled
-            ? UM.Theme.getColor("secondary_button_text")
-            : UM.Theme.getColor("action_button_disabled_text")
+        color: root.enabled ? UM.Theme.getColor("secondary_button_text") : UM.Theme.getColor("action_button_disabled_text")
         font: UM.Theme.getFont("medium")
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter

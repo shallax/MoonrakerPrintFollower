@@ -1,12 +1,35 @@
 # Moonraker Print Follower
 
+[![CI](https://github.com/shallax/MoonrakerPrintFollower/actions/workflows/ci.yml/badge.svg)](https://github.com/shallax/MoonrakerPrintFollower/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/shallax/MoonrakerPrintFollower/branch/main/graph/badge.svg)](https://codecov.io/gh/shallax/MoonrakerPrintFollower)
+
 Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It keeps Cura Preview synchronised with a live print, provides Cura's Moonraker upload/print destination, and adds a full live Monitor view, so the separate Moonraker Connection plugin is no longer required.
 
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 3.3.1
+- **Release:** 3.4.0
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
+
+## What changed in 3.4.0
+
+Version 3.4.0 adds manual toolhead control to the Monitor tab: a **Toolhead** section with an X/Y/Z compass, distance presets from 0.1 to 125 mm plus free-text entry, per-axis home and home-all, motors off, centre/Z-to-0 parking moves, KlipperScreen-style extrusion controls and a readout of homed axes, move mode and the live position. Moves run while the printer is idle or paused; the jog controls are disabled while printing — pause first, and a safety net pauses and drains any tap that lands while the print is starting.
+
+The Monitor layout is overhauled into three panes — **Information**, **Printer status** and **Printer controls** — each with Cura-style collapsible accordion sections (icons, chevrons, hover tinting) whose state persists across restarts. Every pane collapses into a thin strip with a rotated title (click anywhere to re-expand), the controls can be locked behind a padlock glyph, and the emergency stop — two clicks, then a held third press — docks across the bottom of the window. Full details in `CHANGELOG.md`.
+
+## What changed in 3.3.1
+
+Version 3.3.1 is an audit-driven hardening pass over 3.3.0. An adversarial multi-agent review against the architecture contract fixed the following:
+
+- The smoothing CSV trace is now opt-in via the `MOONRAKER_FOLLOWER_SMOOTHING_TRACE` environment variable (see `INSTRUCTIONS.md`) instead of writing to Cura's cache on every smoothed print.
+- The display timer now snaps to the target and stops when pure gap decay converges, instead of ticking at 30 Hz for the whole duration of a pause.
+- Failed G-code downloads retry on a backoff ladder (2 s → 60 s) instead of wedging the file service for the rest of the print.
+- Start-print power-on probes every configured power device; a powered socket can no longer mask a powered-down PSU.
+- Failed layer hydration is latched until a new file or index arrives, so a broken file is not re-read in full on every poll.
+- While a compact layer hydrates, the animation driver is reset so a stale target cannot fight the follower's own writes.
+- The velocity window scales with the measured poll interval, keeping the glide honest at slow polling rates.
+- Service failure messages are logged instead of being emitted with no listener.
+- Corrected documentation that still described the removed lookahead and the old fallback behaviour, plus regression tests for every fix above.
 
 ## What changed in 3.3.0
 
@@ -53,20 +76,6 @@ Existing Moonraker Print Follower URL/API-key values take precedence when alread
 
 After verifying the integrated plugin with your printers, the separate Moonraker Connection plugin can be removed.
 
-## What changed in 3.3.1
-
-Version 3.3.1 is an audit-driven hardening pass over 3.3.0. An adversarial multi-agent review against the architecture contract fixed the following:
-
-- The smoothing CSV trace is now opt-in via the `MOONRAKER_FOLLOWER_SMOOTHING_TRACE` environment variable (see `INSTRUCTIONS.md`) instead of writing to Cura's cache on every smoothed print.
-- The display timer now snaps to the target and stops when pure gap decay converges, instead of ticking at 30 Hz for the whole duration of a pause.
-- Failed G-code downloads retry on a backoff ladder (2 s → 60 s) instead of wedging the file service for the rest of the print.
-- Start-print power-on probes every configured power device; a powered socket can no longer mask a powered-down PSU.
-- Failed layer hydration is latched until a new file or index arrives, so a broken file is not re-read in full on every poll.
-- While a compact layer hydrates, the animation driver is reset so a stale target cannot fight the follower's own writes.
-- The velocity window scales with the measured poll interval, keeping the glide honest at slow polling rates.
-- Service failure messages are logged instead of being emitted with no listener.
-- Corrected documentation that still described the removed lookahead and the old fallback behaviour, plus regression tests for every fix above.
-
 ## Cura / SDK compatibility
 
 The plugin targets the complete Cura 5.x SDK 8 line from **Cura 5.0 / SDK 8.0** through **Cura 5.13 / SDK 8.12**. The package declares SDK 8.0 as its minimum package SDK, while `plugin.json` explicitly records SDK 8.0 through 8.12 support.
@@ -111,7 +120,7 @@ Settings include:
 - enable or disable automatic following
 - follow mode
 - within-layer path following
-- smoothed path display (display-only; can be disabled)
+- **Smooth path progress** (display-only; can be disabled)
 - native Cura live printhead fallback
 - fallback layer-number convention
 - automatic switching to Preview
@@ -137,7 +146,7 @@ The Upload tab configures Cura-to-Moonraker uploads:
 - **Start printing after upload by default**.
 - **Remember upload choices** — remembers remote folders and, when enabled, the last folder/start-print choice.
 - **Auto-hide successful upload message**.
-- **Power devices** — comma-separated Moonraker power device names. When a print is requested and the first device is off, the plugin powers the configured devices on before waiting for Klippy.
+- **Power devices** — comma-separated Moonraker power device names. When a print is requested, the plugin powers on every configured device that is off before waiting for Klippy.
 - **Printer-ready retry interval** — Qt timers are used rather than blocking sleeps, so Cura remains responsive while a powered-on printer starts.
 - **Filename translation** — position-for-position replacement plus a set of characters to remove.
 
@@ -214,7 +223,7 @@ The dashboard includes direct printer controls when the printer is idle:
 - **PWM outputs** — per-pin percentage controls for `output_pin` objects configured for PWM
 - **Temperature presets** — one-click profiles from the configured presets database
 - **Setup** — home all, quad gantry level and bed-mesh calibration
-- **Emergency stop** — a pinned three-click control; the third click within the one-second window stops the printer immediately
+- **Emergency stop** — a pinned control that arms on two clicks and fires when the third press is held for 0.6 s
 
 ### Bed mesh
 
@@ -240,6 +249,36 @@ The follower controls live in their own Cura-styled action-panel card in Preview
 The panel uses a fixed layout so status changes do not resize it. If the currently active Cura printer is not enabled and configured with a usable Moonraker URL, the follower card is hidden. A configured printer that is temporarily offline still shows the card with its disconnected state.
 
 When exact within-layer following is active, the plugin can keep **Cura's own native SimulationView nozzle** visible when Cura's Preview lifecycle would otherwise leave it uninitialised or suppress it during a live layer change. The plugin does not draw a second nozzle model, so Cura's normal mesh, visibility, depth and transparency behaviour are preserved.
+
+## Screenshots
+
+The screenshots are captured deterministically from the plugin's real
+QML with the real cura-light theme (see `INSTRUCTIONS.md`), so they
+always match the checked-out code.
+
+![Monitor dashboard](screenshots/01-dashboard-default.png)
+
+The Monitor dashboard: printer status, information panes and printer controls.
+
+![Monitor panes collapsed](screenshots/02-panes-collapsed.png)
+![Monitor sections collapsed](screenshots/03-sections-collapsed.png)
+
+Panes collapse to the window edge with a rotated title; each pane's
+sections collapse into an accordion like Cura's own settings.
+
+![Preview panel](screenshots/04-preview-panel.png)
+
+The Preview floating panel: follow controls, bed-mesh view and pause-at-layer.
+
+![Connection settings](screenshots/05-settings-connection.png)
+![Following settings](screenshots/05-settings-following.png)
+![Upload settings](screenshots/05-settings-upload.png)
+
+The settings tabs: Connection, Following and Upload.
+
+![Upload dialog](screenshots/06-upload-dialog.png)
+
+The Cura-to-Moonraker upload dialog.
 
 ## Moonraker transport
 

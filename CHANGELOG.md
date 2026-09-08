@@ -2,6 +2,68 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 3.4.0
+
+Version 3.4.0 is the first Monitor-parity release: manual control of the
+physical toolhead from the Monitor tab, and a full overhaul of the Monitor
+layout into Cura-style panes and collapsible sections.
+
+### Highlights
+- Adds a **Toolhead** section to the Monitor tab: an X/Y/Z compass with
+  directional arrows, 0.1 / 0.5 / 1 / 5 / 10 / 25 / 50 / 100 / 125 mm
+  distance presets plus free-text entry, per-axis home and home-all,
+  motors off, centre-toolhead and Z-to-0 parking moves, and a readout of
+  homed axes, absolute or relative move mode and the live position.
+- KlipperScreen-style extrusion controls: separate distance presets
+  (5 / 10 / 15 / 25 / 75 / 100 mm) and speed presets (1 / 2 / 5 / 25 mm/s).
+- Jogs are clamped to the axis limits and can never cross the axis
+  minimum — a move that would end negative is forbidden outright.
+- Moves are never force-executed mid-print: the jog controls are disabled
+  while printing (pause first), and a tap that lands while the print is
+  starting pauses the print through the same tracked Pause command as the
+  pause button, with the queued moves running only once the printer
+  reports paused. Queued moves are dropped if the pause is not confirmed
+  within ten seconds or the print resumes mid-drain; rapid taps while
+  paused coalesce into single relative moves. The live position tracks the
+  head at the urgent poll floor while the queue drains.
+- All motion G-code, the print-state safety gate and the queue coalescing
+  rules are pure policy (`ToolheadPolicy`), fully unit-tested without Qt;
+  the queue and pause sequencing live in one controller (`ToolheadController`).
+- The Monitor tab is reorganised into three panes — **Information**,
+  **Printer status** and **Printer controls** — each with Cura-style
+  accordion sections: an icon, a title hugging a chevron on the right,
+  hover tinting and a divider that survives collapsing. Section state,
+  pane collapse and the lock-all toggle persist across Cura restarts
+  through a plugin-owned state file. Every pane collapses into a thin
+  strip with a rotated title; clicking anywhere on a strip re-expands it.
+- The accordion header is one shared `CollapsibleSectionHeader` QML type
+  used by every pane; the section icons are Cura's own glyphs where they
+  exist, and plugin-drawn SVGs (padlocks, power symbol) — theme-tinted
+  through `UM.ColorImage` — where they don't.
+- Lock-all now disables only the controls inside sections; the accordion
+  stays navigable, and the lock state is shown by a closed/open padlock
+  glyph in the pane title row (grey unlocked, Cura blue locked).
+- Setup commands (Home, QGL, mesh calibration, Save) queue behind the
+  in-flight command so they can be lined up in quick succession, and
+  firmware/host restart actions join the System section. The emergency
+  stop — two clicks, then a held third press of 0.6 seconds — now docks
+  across the whole bottom of the window.
+- The camera bar sits centred under the feed with a compact webcam
+  selector and an icon-only refresh that restarts the stream. The
+  readouts (print job, temperatures, fans, filament, objects, system,
+  MCUs) share one labelled value column.
+- Command replies get an honest timeout: a connection-level failure after
+  acceptance reports "outcome unknown" instead of claiming the command
+  was cancelled.
+- The pre-release adversarial review fixed the rest: a rapid Preview ⇄
+  Monitor switch (which can hang Cura and land its view restoration
+  seconds late) no longer detaches the follower; the pane row compresses
+  gracefully on narrow stages instead of sliding the Printer status pane
+  under the controls; wrapped status sections keep their inter-section
+  margins; the emergency stop cannot fire when a stolen mouse grab drops
+  the release; the camera area distinguishes "not configured" from
+  offline; and the toolhead guard releases after the queue settles.
+
 ## 3.3.1
 
 Version 3.3.1 is an audit-driven hardening pass over 3.3.0: an adversarial

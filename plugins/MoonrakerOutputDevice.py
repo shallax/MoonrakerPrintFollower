@@ -45,11 +45,19 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         try: extruders = int(stack.getProperty("machine_extruder_count", "value"))
         except Exception: extruders = 1
         self._printers = [PrinterOutputModel(MoonrakerOutputController(self), extruders)]
-        self.updateConfig(config())
+        self.updateConfig(active_identity)
 
-    def updateConfig(self, config):
-        # Client sessionInvalidated cancels the operation before connection edits.
-        name = self._application.getGlobalContainerStack().getName()
+    def updateConfig(self, identity):
+        """Set the device's display name from its binding identity.
+
+        The name comes from the machine this device was created for —
+        never the application's current global stack, which a machine
+        switch or a reordered refresh could change independently.
+        """
+        try:
+            _machine_id, name = identity()
+        except Exception:
+            name = "Printer"
         self.setName(name)
         self.setDescription("Upload to " + name)
         self.setShortDescription("Upload to " + name)

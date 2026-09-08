@@ -3,10 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-import zipfile
 
-from build_curapackage import LICENSE_FILE, PACKAGE_JSON, PLUGIN_ROOT, iter_plugin_sources
-from build_marketplace_source import CHANGELOG_FILE, archive_name, expected_archive_entries
+from build_curapackage import PACKAGE_JSON
+from build_marketplace_source import archive_name, expected_archive_entries
 
 MAX_MARKETPLACE_BYTES = 50 * 1024 * 1024
 

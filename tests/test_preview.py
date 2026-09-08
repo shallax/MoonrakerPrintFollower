@@ -129,10 +129,23 @@ class PreviewFollowerServiceTests(unittest.TestCase):
 
     def test_manual_layer_change_detaches_without_changing_physical_layer(self):
         self.observe(4)
+        self.service._echo_until = 0.0  # the echo window is for Cura's own restores
         self.cura.view.layer = 10
         self.assertEqual(self.service.detect_override(), "layer")
         self.assertFalse(self.service.state.attached)
         self.assertEqual(self.service.state.observed_layer, 4)
+
+    def test_view_restoration_echo_does_not_detach(self):
+        # Cura's own asynchronous restoration (stage switches can hang and
+        # land late) arrives right after a re-arm: the echo window absorbs
+        # it, drops the expectations and stays attached. The next drive
+        # re-arms on the settled view.
+        self.observe(4)
+        self.cura.view.layer = 10
+        self.assertIsNone(self.service.detect_override())
+        self.assertTrue(self.service.state.attached)
+        self.assertIsNone(self.service.state.expected_layer)
+        self.service._echo_until = 0.0  # a genuine scroll now detaches again
 
     def test_eta_uses_path_progress_and_live_duration_anchor(self):
         self.observe(4, 100)

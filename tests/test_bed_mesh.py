@@ -1,5 +1,4 @@
 import pathlib
-import sys
 import types
 import unittest
 from plugins.MonitorFormatting import mesh_profiles, parse_bed_mesh
@@ -13,6 +12,7 @@ PRESENTER = (PLUGINS / "BedMeshPresenter.py").read_text()
 SCENE_NODE = (PLUGINS / "BedMeshSceneNode.py").read_text()
 MONITOR_CONTROLS = (PLUGINS / "MonitorControls.py").read_text()
 DASHBOARD = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
+MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 MAIN_DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 PREVIEW_CONTROLS = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
 EMPTY_PREVIEW = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
@@ -83,12 +83,16 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("setBedMeshPreviewVisible", TYPED_CONTROLS)
         self.assertIn("self._node", PRESENTER)
         self.assertNotIn("self._follower", PRESENTER)
-        self.assertIn("Canvas", DASHBOARD)
-        self.assertIn('text: "Bed mesh — "', DASHBOARD)
-        self.assertIn("bedMeshMinimum", DASHBOARD)
-        self.assertIn("bedMeshMaximum", DASHBOARD)
-        self.assertIn("bedMeshRange", DASHBOARD)
-        self.assertIn("20× vertical exaggeration", DASHBOARD)
+        self.assertIn("MoonrakerMonitorDashboard", DASHBOARD)  # the registered shell
+        self.assertIn("Canvas", MONITOR_QML)
+        self.assertIn('text: "Bed mesh — "', MONITOR_QML)
+        self.assertIn("bedMeshMinimum", MONITOR_QML)
+        self.assertIn("bedMeshMaximum", MONITOR_QML)
+        self.assertIn("bedMeshRange", MONITOR_QML)
+        self.assertIn("20× vertical exaggeration", MONITOR_QML)
+        self.assertIn("id: infoPanel", MONITOR_QML)
+        self.assertIn('text: "Information"', MONITOR_QML)
+        self.assertIn("bedMeshXMax - root.printer.bedMeshXMin", MONITOR_QML)  # aspect-fitted plot
         for qml in (PREVIEW_CONTROLS, EMPTY_PREVIEW):
             self.assertIn("bedMeshVisibilityRequested", qml)
             self.assertIn('"Hide bed mesh"', qml)
