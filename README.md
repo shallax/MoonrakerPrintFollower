@@ -1,7 +1,6 @@
 # Moonraker Print Follower
 
 [![CI](https://github.com/shallax/MoonrakerPrintFollower/actions/workflows/ci.yml/badge.svg)](https://github.com/shallax/MoonrakerPrintFollower/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/shallax/MoonrakerPrintFollower/actions/workflows/codeql.yml/badge.svg)](https://github.com/shallax/MoonrakerPrintFollower/actions/workflows/codeql.yml)
 [![Coverage](https://codecov.io/gh/shallax/MoonrakerPrintFollower/branch/main/graph/badge.svg)](https://codecov.io/gh/shallax/MoonrakerPrintFollower)
 
 Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It keeps Cura Preview synchronised with a live print, provides Cura's Moonraker upload/print destination, and adds a full live Monitor view, so the separate Moonraker Connection plugin is no longer required.
