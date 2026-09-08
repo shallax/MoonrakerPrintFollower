@@ -93,6 +93,9 @@ class MonitorData(QObject):
     def force_refresh(self):
         self._client.force_refresh()
 
+    def set_toolhead_guard(self, active):
+        self._client.set_toolhead_guard(active)
+
     def _update(self, **patch):
         from dataclasses import replace
         self._snapshot = replace(self._snapshot, **{key: freeze(value) for key, value in patch.items()})
@@ -119,7 +122,8 @@ class MonitorData(QObject):
             interval = self._client.session.poll_policy.interval_ms(category, 1000, self._client.session.snapshot.printer_state)
             if timer.interval() != interval: timer.setInterval(interval)
 
-    def request(self, channel, method, path, callback, *, body=None, replace=False, category="auxiliary"):
+    def request(self, channel, method, path, callback, *, body=None, replace=False, category="auxiliary",
+                timeout_ms=5000):
         if not self._active or not self._client.session.base_url: return False
         generation = self._generation
         session = self._client.session.generation
@@ -127,7 +131,7 @@ class MonitorData(QObject):
             if self._active and generation == self._generation and session == self._client.session.generation:
                 callback(payload, error)
         return self._client.transport.send_json("monitor", channel, method, path, finished,
-            body=body, replace=replace, category=category)
+            body=body, replace=replace, category=category, timeout_ms=timeout_ms)
 
     def later(self, delay_ms, callback):
         generation, session = self._generation, self._client.session.generation

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import queue
 import shutil
 import tempfile
+import threading
 import time
 from types import MappingProxyType
 
@@ -99,6 +101,12 @@ class RemoteFileService(QObject):
         self._error = ""
         self._download_attempts = 0
         self._download_retry_at = 0.0
+        # The download writes land on a dedicated thread: draining a
+        # multi-megabyte QNetworkReply buffer into disk on the UI thread
+        # made every chunk a visible stall during large G-code loads.
+        self._write_queue = None
+        self._writer = None
+        self._writer_error = None
         self.changed.emit()
 
     def request_metadata(self):
@@ -165,6 +173,10 @@ class RemoteFileService(QObject):
         if os.path.splitext(name)[1].lower() not in {".g", ".gcode"}: name += ".gcode"
         try:
             self._target = DownloadTarget.open(os.path.join(directory, name))
+            self._write_queue = queue.Queue()
+            self._writer_error = None
+            self._writer = threading.Thread(target=self._writer_main, daemon=True)
+            self._writer.start()
             request = self._transport.request(download_endpoint(self._transport.identity[0], job[0]), timeout_ms=30000)
             request.setRawHeader(b"Accept", b"application/octet-stream")
             reply = self._transport.network.get(request)
@@ -178,10 +190,22 @@ class RemoteFileService(QObject):
             shutil.rmtree(directory, ignore_errors=True)
             self._fail(str(error))
 
+    def _writer_main(self):
+        try:
+            while True:
+                chunk = self._write_queue.get()
+                if chunk is None:
+                    break
+                self._target.write(chunk)
+        except Exception as error:
+            self._writer_error = str(error)
+
     def _drain(self, reply):
         if reply is not self._reply or self._target is None: return
         try:
-            self._target.write(reply.readAll())
+            chunk = bytes(reply.readAll())
+            if chunk and self._write_queue is not None:
+                self._write_queue.put(chunk)
         except Exception as error:
             self._abort_download()
             self._fail(str(error))
@@ -192,9 +216,20 @@ class RemoteFileService(QObject):
             return
         self._drain(reply)
         if reply is not self._reply: return
+        # Let the writer finish the buffered tail (the sentinel ends the
+        # loop); only the tail remains, the bulk was written off the UI
+        # thread as the chunks arrived.
+        if self._write_queue is not None:
+            self._write_queue.put(None)
+            self._writer.join()
+            self._write_queue = None
+            self._writer = None
         target = self._target
         self._reply = self._target = None
         try:
+            if self._writer_error is not None:
+                raise OSError(self._writer_error)
+            self._writer_error = None
             if generation != self._generation or job != self._job:
                 target.abort()
                 self._retire(target.path)

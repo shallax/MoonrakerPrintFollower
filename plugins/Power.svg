@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill-rule="evenodd">
+  <!-- The IEC power symbol: a ring with a vertical stem through the top.
+       No fills here: UM.ColorImage injects the theme colour into the
+       root svg element, so the glyph follows Cura's theme and scaling. -->
+  <path d="M12 3.8a8.2 8.2 0 1 0 .001 16.4A8.2 8.2 0 0 0 12 3.8zM12 6.6a5.4 5.4 0 1 0 .001 10.8A5.4 5.4 0 0 0 12 6.6z"/>
+  <path d="M10.6 4.6a1.4 1.4 0 0 1 1.4-1.4h0a1.4 1.4 0 0 1 1.4 1.4v7a1.4 1.4 0 0 1-1.4 1.4h0a1.4 1.4 0 0 1-1.4-1.4z"/>
+</svg>

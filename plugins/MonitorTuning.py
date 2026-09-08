@@ -80,7 +80,7 @@ class MonitorTuning(QObject):
     def matches(actual, desired, tolerance=1.0):
         if isinstance(actual, (list, tuple)) or isinstance(desired, (list, tuple)):
             if not isinstance(actual, (list, tuple)) or not isinstance(desired, (list, tuple)) or len(actual) != len(desired): return False
-            return all(MonitorTuning.matches(a, b, tolerance) for a, b in zip(actual, desired))
+            return all(MonitorTuning.matches(a, b, tolerance) for a, b in zip(actual, desired, strict=True))
         try: return abs(float(actual) - float(desired)) <= tolerance
         except (TypeError, ValueError): return actual == desired
 

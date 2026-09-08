@@ -87,6 +87,11 @@ class MoonrakerClient(QObject):
         if endpoint_changed:
             # Synchronous UI-thread subscribers cancel streaming uploads and
             # deferred work while the transport still has the OLD identity.
+            # The emit is unconditional: configure is the rebind point, and
+            # subscribers must tear down even when the poller was not
+            # enabled (an upload can be in flight without polling). Callers
+            # that want no second wave (PrinterBinding) stop with
+            # reset_session=False beforehand.
             self.stop(reset_session=False)
             self.sessionInvalidated.emit()
         self._base_url = new_base_url
@@ -137,6 +142,12 @@ class MoonrakerClient(QObject):
             self._session.reset()
         if was_connected:
             self.connectionChanged.emit(False, "Moonraker polling stopped")
+
+    def set_toolhead_guard(self, active: bool) -> None:
+        changed = self._session.set_toolhead_guard(active)
+        self._apply_adaptive_interval()
+        if changed and active and self._enabled:
+            self.force_refresh()
 
     def set_pause_guard(self, active: bool) -> None:
         changed = self._session.set_pause_guard(active)
@@ -219,7 +230,7 @@ class MoonrakerClient(QObject):
             RequestCategory.CORE,
             self._poll_interval_ms,
             self._session.snapshot.printer_state,
-            urgent=self._session.pause_guard,
+            urgent=self._session.pause_guard or self._session.toolhead_guard,
         )
         interval = max(interval, self._retry_delay_ms)
         if self._poll_timer.interval() != interval:
@@ -241,7 +252,7 @@ class MoonrakerClient(QObject):
             RequestCategory.CORE,
             self._poll_interval_ms,
             self._session.snapshot.printer_state,
-            urgent=self._session.pause_guard,
+            urgent=self._session.pause_guard or self._session.toolhead_guard,
         )
         retry_interval = max(adaptive, delay)
         self._retry_delay_ms = retry_interval

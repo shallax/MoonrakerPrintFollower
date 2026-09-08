@@ -59,7 +59,10 @@ class PrinterBinding(QObject):
         camera_only = camera_changed and replace(previous, camera_selected=config.camera_selected) == config
 
         if endpoint_changed:
-            self._client.stop()  # all owners invalidate before persistence/rebind
+            # Tear the poller down before persistence/rebind without
+            # emitting: the client's configure below emits exactly one
+            # invalidation wave on the old identity.
+            self._client.stop(reset_session=False)
 
         # Camera selection is UI state, not connection state. Persist it directly
         # against the active machine and flush Cura's preference file immediately;
@@ -79,7 +82,10 @@ class PrinterBinding(QObject):
             self._machine_name = name
             self.changed.emit()
             return
-        self._client.stop()  # even if both Cura profiles use the same endpoint
+        # A machine switch must invalidate the session state even when both
+        # Cura profiles use the same endpoint: subscribers tear down and
+        # the generation bump is what stale-callback guards rely on.
+        self._client.stop()
         self._machine_id, self._machine_name = machine_id, name
         self._migrate()
         self._apply()

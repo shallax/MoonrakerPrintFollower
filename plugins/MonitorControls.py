@@ -136,7 +136,7 @@ class MonitorControls(QObject):
         return deepcopy(self._macro_cache[name])
 
     def run_macro(self, name, arguments=""):
-        if name in self._macros:
+        if name in self._macros and not self._commands.print_active:
             arguments = str(arguments).replace("\r", " ").replace("\n", " ").strip()
             self._commands.script("Macro " + name, name + (" " + arguments if arguments else ""))
 
@@ -146,6 +146,14 @@ class MonitorControls(QObject):
             "save": ("Save configuration", "SAVE_CONFIG", self._values.get("saveConfigPending"))}
         label, script, allowed = scripts[name]
         if self._commands.setup_allowed and allowed: self._commands.script(label, script)
+
+    def firmware_restart(self):
+        if not self._data.active or self._commands.print_active: return
+        self._commands.script("Firmware restart", "FIRMWARE_RESTART")
+
+    def host_restart(self):
+        if not self._data.active or self._commands.print_active: return
+        self._commands.request("Host restart", "machine/reboot", {})
 
     def apply_preset(self, index):
         if not self._commands.setup_allowed or not 0 <= index < len(self._presets): return
@@ -161,6 +169,27 @@ class MonitorControls(QObject):
             commands.append(command + f" TARGET={target:g}")
         if preset.get("gcode"): commands.append(str(preset["gcode"]))
         if commands: self._commands.script(item["name"], "\n".join(commands))
+
+    def heaters_off(self):
+        """Cooldown: set every heater appearing in the profiles to 0 target.
+
+        The union of profile heater entries is the safe heater inventory —
+        auxiliary objects include temperature *sensors*, which take no
+        target and must not receive a heater command.
+        """
+        if not self._commands.setup_allowed: return
+        commands, seen = [], set()
+        for item in self._presets:
+            for name, attributes in (item.get("preset") or {}).get("values", {}).items():
+                if not isinstance(attributes, Mapping) or not attributes.get("bool"): continue
+                if name in seen: continue
+                seen.add(name)
+                parts = name.split(" ", 1)
+                heater = parts[-1]
+                command = (f"SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN={heater}"
+                           if parts[0] == "temperature_fan" else f"SET_HEATER_TEMPERATURE HEATER={heater}")
+                commands.append(command + " TARGET=0")
+        if commands: self._commands.script("Cooldown", "\n".join(commands))
 
     def factor(self, kind, percent, preview=False):
         percent = max(10 if kind == "speed" else 50, int(percent))

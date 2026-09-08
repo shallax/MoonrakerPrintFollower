@@ -1,7 +1,7 @@
 """Cross-domain orchestration with explicit dependencies; not a shared state bag."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
 
 from .MonitorFormatting import parse_bed_mesh
@@ -33,6 +33,16 @@ class PrintCoordinator(QObject):
         self._load_job = None
         self._load_requested = False
         self._processing = self._closed = False
+        # An override detach that no further view activity follows is
+        # almost certainly Cura's own restoration (a stage switch or a
+        # window re-activation can hang and land it late) — the watchdog
+        # re-attaches after the view has been quiet, while the user is
+        # still in the Preview stage. Manual toggles cancel it.
+        self._detach_from_override = False
+        self._detach_watchdog = QTimer(self)
+        self._detach_watchdog.setSingleShot(True)
+        self._detach_watchdog.setInterval(3000)
+        self._detach_watchdog.timeout.connect(self._watchdog_reattach)
         client.statusReceived.connect(self.observe)
         client.connectionChanged.connect(self._connection_changed)
         client.sessionInvalidated.connect(self.reset_binding)
@@ -46,6 +56,7 @@ class PrintCoordinator(QObject):
         cura.changed.connect(self.refresh)
         cura.positionChanged.connect(self._position_changed)
         cura.invalidated.connect(self._scene_invalidated)
+        cura.viewSwapped.connect(self._on_view_swapped)
         cura.fileLoaded.connect(self._file_loaded)
         cura.loadFailed.connect(self._load_failed)
         pauses.changed.connect(self._publish)
@@ -110,9 +121,16 @@ class PrintCoordinator(QObject):
             self._bed_mesh.update(parse_bed_mesh(self._status.get("bed_mesh")))
             self._cura.watch(config.enabled)
             if self._snapshot.active:
-                self._files.request_metadata()
-                if config.path_follow and config.enabled:
-                    self._index.request()
+                # The metadata and index serve the Preview, which needs the
+                # print loaded in Cura. Pulling them for a print that is
+                # merely active wastes the download and shows confusing
+                # "Downloading… / Indexing…" chatter before the user has
+                # loaded anything; the load flow (observe -> request_file)
+                # starts the pull itself.
+                if self._cura.has_toolpath:
+                    self._files.request_metadata()
+                    if config.path_follow and config.enabled:
+                        self._index.request()
                 self._pauses.observe(physical.index)
             if self._load_job is not None:
                 if self._load_job != job:
@@ -133,6 +151,8 @@ class PrintCoordinator(QObject):
             self._processing = False
 
     def reset_binding(self):
+        self._detach_watchdog.stop()
+        self._detach_from_override = False
         self._processing = True
         try:
             self._load_job = None
@@ -164,6 +184,18 @@ class PrintCoordinator(QObject):
         self._load_requested = False
         self._publish()
 
+    def _on_view_swapped(self):
+        # The old view's layer/path handles are gone. Until the new view
+        # has accepted the follower's next drive, nothing may count as a
+        # user override — Cura's own late restoration after a stage-switch
+        # hang would otherwise detach the follower. If the follower was
+        # attached before the switch, restore that state: switching stages
+        # is navigation, not a detach request.
+        was_attached = self._preview.state.attached
+        self._preview.invalidate_view()
+        if was_attached:
+            self._preview.attach(True)
+
     def _index_changed(self):
         # A newly installed index resets path anchors, not print-local attachment.
         if self._index.phase == "indexing": self._preview.reset_tracking()
@@ -171,9 +203,24 @@ class PrintCoordinator(QObject):
 
     def _position_changed(self):
         if self._binding.config.enabled:
-            if self._preview.detect_override(): self._detail = "Detached"
+            if self._preview.detect_override():
+                self._detail = "Detached"
+                self._detach_from_override = True
+                self._detach_watchdog.start()
         self._preview.update_eta(self._snapshot, self._index.view)
         self._publish()
+
+    def _watchdog_reattach(self):
+        # Only re-attach when nothing has contradicted the detach: the
+        # user is still in Preview, has not toggled manually, and the view
+        # has been quiet since. Cura's own restoration leaves the view
+        # alone afterwards; an inspecting user keeps moving it.
+        if (not self._detach_from_override or self._preview.state.attached
+                or not self._cura.preview_active or self._closed):
+            return
+        self._detach_from_override = False
+        self._preview.attach(True)
+        self._client.force_refresh()
 
     def _file_loaded(self, path):
         self._preview.invalidate_view()
@@ -200,6 +247,10 @@ class PrintCoordinator(QObject):
         self._client.force_refresh()
 
     def toggle_attachment(self):
+        # A manual toggle is a deliberate choice: it cancels any pending
+        # watchdog re-attach.
+        self._detach_watchdog.stop()
+        self._detach_from_override = False
         self._preview.attach(not self._preview.state.attached)
         self.refresh()
         if self._preview.state.attached: self._client.force_refresh()

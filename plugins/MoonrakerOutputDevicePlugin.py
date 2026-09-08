@@ -83,13 +83,17 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 apply_config=self._follower.apply_printer_config,
                 bed_mesh=self._follower.bed_mesh,
             )
-            try:
-                monitor.updateName(stack.getName())
-                monitor.updateUniqueName(stack.getId())
-                monitor.updateBuildplate(stack.getProperty("machine_buildplate_type", "value"))
-            except Exception:
-                pass
             device._printers = [monitor]
+
+        # Refresh the display identity on every install: a cached monitor
+        # reused across machine switches must not keep the old printer's
+        # name or buildplate.
+        try:
+            monitor.updateName(stack.getName())
+            monitor.updateUniqueName(stack.getId())
+            monitor.updateBuildplate(stack.getProperty("machine_buildplate_type", "value"))
+        except Exception:
+            pass
 
         self._set_monitor_active(device, True)
         device.setMonitorViewQmlPath(os.path.join(
@@ -137,7 +141,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                     active_identity=self._follower.current_printer_identity)
                 self._devices[machine_id] = device
             else:
-                device.updateConfig(config)
+                device.updateConfig(self._follower.current_printer_identity)
 
             # The transition must be computed after the incoming device is
             # resolved: at startup both _current and device are None before
