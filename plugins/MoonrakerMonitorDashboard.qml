@@ -238,6 +238,218 @@ Component
 
                         ColumnLayout
                         {
+                            id: toolheadSection
+                            visible: root.printer != null
+                            Layout.fillWidth: true
+                            spacing: UM.Theme.getSize("default_margin").height / 2
+                            readonly property var jogPresets: [0.1, 1, 10, 100]
+
+                            Rectangle
+                            {
+                                Layout.fillWidth: true
+                                height: UM.Theme.getSize("default_lining").height
+                                color: UM.Theme.getColor("lining")
+                            }
+
+                            UM.Label
+                            {
+                                text: "Toolhead"
+                                font: UM.Theme.getFont("medium_bold")
+                            }
+
+                            RowLayout
+                            {
+                                Layout.fillWidth: true
+                                spacing: UM.Theme.getSize("thin_margin").width
+                                UM.Label
+                                {
+                                    text: "Move distance"
+                                    color: UM.Theme.getColor("text_inactive")
+                                }
+                                Cura.ComboBox
+                                {
+                                    id: jogDistanceSelector
+                                    Layout.fillWidth: true
+                                    model: toolheadSection.jogPresets
+                                    currentIndex: 1
+                                    onActivated: function(index)
+                                    {
+                                        if (root.printer != null)
+                                        {
+                                            root.printer.setJogDistance(toolheadSection.jogPresets[index])
+                                        }
+                                    }
+                                }
+                                UM.Label
+                                {
+                                    text: "mm"
+                                    color: UM.Theme.getColor("text_inactive")
+                                }
+                            }
+
+                            RowLayout
+                            {
+                                Layout.fillWidth: true
+                                spacing: UM.Theme.getSize("thin_margin").width
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "X-"
+                                    tooltip: "Move the toolhead towards the X minimum."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.jog("x", -1)
+                                }
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "X+"
+                                    tooltip: "Move the toolhead towards the X maximum."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.jog("x", 1)
+                                }
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "Y-"
+                                    tooltip: "Move the toolhead towards the Y minimum."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.jog("y", -1)
+                                }
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "Y+"
+                                    tooltip: "Move the toolhead towards the Y maximum."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.jog("y", 1)
+                                }
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "Z-"
+                                    tooltip: "Move the toolhead down."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.jog("z", -1)
+                                }
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "Z+"
+                                    tooltip: "Move the toolhead up."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.jog("z", 1)
+                                }
+                            }
+
+                            UM.Label
+                            {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                text: root.printer != null
+                                    ? "Homed: " + (root.printer.homedAxes.length > 0 ? root.printer.homedAxes.toUpperCase().split('').join(' ') : "—")
+                                      + "  ·  " + root.printer.positionMode + " moves  ·  " + root.printer.monitorPosition
+                                    : ""
+                                color: UM.Theme.getColor("text_inactive")
+                            }
+
+                            RowLayout
+                            {
+                                Layout.fillWidth: true
+                                spacing: UM.Theme.getSize("thin_margin").width
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "Home X"
+                                    tooltip: "Home the X axis."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.home("x")
+                                }
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "Home Y"
+                                    tooltip: "Home the Y axis."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.home("y")
+                                }
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "Home Z"
+                                    tooltip: "Home the Z axis."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.home("z")
+                                }
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "Home all"
+                                    tooltip: "Home every axis."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.home("")
+                                }
+                            }
+
+                            RowLayout
+                            {
+                                Layout.fillWidth: true
+                                spacing: UM.Theme.getSize("thin_margin").width
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "Motors off"
+                                    tooltip: "Disable the stepper motors so the toolhead can be moved by hand."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.motorsOff()
+                                }
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "Extrude 5 mm"
+                                    tooltip: "Extrude 5 mm of filament."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.extrude(5)
+                                }
+                                Cura.SecondaryButton
+                                {
+                                    Layout.fillWidth: true
+                                    text: "Retract 5 mm"
+                                    tooltip: "Retract 5 mm of filament."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.extrude(-5)
+                                }
+                            }
+
+                            UM.Label
+                            {
+                                visible: root.printer != null && root.printer.canResumePrint
+                                text: "Printer is paused — moves run immediately; a print resumes from Klipper's recorded position."
+                                color: UM.Theme.getColor("text_inactive")
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+
+                            UM.Label
+                            {
+                                visible: root.printer != null && root.printer.canPausePrint
+                                text: "Jogging pauses the print first — keep tapping to queue moves."
+                                color: UM.Theme.getColor("text_inactive")
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+
+                            UM.Label
+                            {
+                                visible: root.printer != null && root.printer.jogStatus.length > 0
+                                text: root.printer != null ? root.printer.jogStatus : ""
+                                color: UM.Theme.getColor("text_inactive")
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        ColumnLayout
+                        {
                             id: macroSection
                             visible: root.printer != null && root.printer.macroNames.length > 0
                             Layout.fillWidth: true

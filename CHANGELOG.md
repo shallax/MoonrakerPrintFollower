@@ -2,6 +2,29 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 3.4.0
+
+Version 3.4.0 is the first Monitor-parity release: manual control of the
+physical toolhead from the Monitor tab.
+
+### Highlights
+- Adds a **Toolhead** section to the Monitor tab: X/Y/Z jog buttons with
+  0.1 / 1 / 10 / 100 mm distance presets, per-axis home and home-all,
+  motors off, extrude/retract, and a readout of homed axes, absolute or
+  relative move mode and the live position.
+- Moves are never force-executed mid-print: while printing, a jog request
+  first pauses the print through the same tracked Pause command as the
+  pause button, and the queued moves run only once the printer reports
+  paused. Queued moves are dropped if the pause is not confirmed within
+  ten seconds or the print resumes mid-drain; rapid taps while paused
+  coalesce into single relative moves.
+- All motion G-code, the print-state safety gate and the queue coalescing
+  rules are pure policy (`ToolheadPolicy`), fully unit-tested without Qt;
+  the queue and pause sequencing live in one controller (`ToolheadController`).
+- No transport or polling changes: jog commands travel the existing
+  single-flight Monitor command lane, and the position readout refreshes
+  through the established post-command forced refresh.
+
 ## 3.3.1
 
 Version 3.3.1 is an audit-driven hardening pass over 3.3.0: an adversarial

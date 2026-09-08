@@ -48,6 +48,28 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("class MoonrakerMonitorModel(PrinterOutputModel)", MONITOR_MODEL)
         self.assertNotIn("_BaseMoonrakerMonitorModel", MONITOR_MODEL)
 
+    def test_toolhead_control_surface(self):
+        policy = (PLUGINS / "ToolheadPolicy.py").read_text()
+        for token in ("G91", "G28", "M18", "jog_gate", "push_op", "JogOp"):
+            self.assertIn(token, policy)
+        # Motion scripts have exactly one owner: MonitorControls gains none.
+        self.assertNotIn("G91", CONTROLS)
+        self.assertNotIn("M18", CONTROLS)
+        for token in ("jogEnabled", "jogDistance", "homedAxes", "positionMode", "jogStatus",
+                      "toolheadChanged", "def jog(", "def setJogDistance(", "def home(",
+                      "def motorsOff(", "def extrude("):
+            self.assertIn(token, MONITOR_MODEL)
+        for token in ("id: toolheadSection", 'text: "Toolhead"', 'jog("x", -1)', 'jog("z", 1)',
+                      "setJogDistance(", 'home("")', '"Motors off"', '"Extrude 5 mm"',
+                      '"Retract 5 mm"', "Jogging pauses the print first", "root.printer.monitorPosition"):
+            self.assertIn(token, DASHBOARD_QML)
+        # The toolhead block is gated by jogEnabled alone, never actionBusy:
+        # taps must keep working while the queue drains.
+        start = DASHBOARD_QML.index("id: toolheadSection")
+        end = DASHBOARD_QML.index("id: macroSection", start)
+        self.assertIn("jogEnabled", DASHBOARD_QML[start:end])
+        self.assertNotIn("actionBusy", DASHBOARD_QML[start:end])
+
     def test_same_dashboard_chain_and_power_lock_explanation(self):
         self.assertIn('"MoonrakerMonitorBedMesh.qml"', OUTPUT_PLUGIN)
         self.assertIn("MoonrakerMonitorDashboard", BED_MESH_QML)
@@ -381,6 +403,103 @@ class MonitorQtTests(unittest.TestCase):
             "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1},
         }
         client._handle_http_status({"result": {"status": status}}, None, client._generation)
+
+    def deliver_state(self, state):
+        client = self.follower.client
+        status = {
+            "print_stats": {"filename": "part.gcode", "state": state, "print_duration": 30,
+                            "info": {"current_layer": 2, "total_layer": 20}},
+            "virtual_sdcard": {"file_size": 100, "file_position": 20},
+            "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1,
+                           "absolute_coordinates": True},
+            "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
+        }
+        client._handle_http_status({"result": {"status": status}}, None, client._generation)
+
+    def scripts(self):
+        return [r for r in self.transport.requests if r.path == "printer/gcode/script"]
+
+    def test_toolhead_slots_send_exact_scripts(self):
+        model = self.monitor()
+        self.deliver_state("standby")
+        self.assertTrue(model.jogEnabled)
+        self.assertEqual(model.positionMode, "Absolute")
+        model.setJogDistance(10)
+        self.assertEqual(model.jogDistance, 10.0)
+
+        def next_script(action, *args):
+            before = len(self.scripts())
+            action(*args)
+            self.qt.events(10)
+            scripts = self.scripts()
+            self.assertEqual(len(scripts), before + 1)
+            scripts[-1].callback({}, None)
+            self.qt.events(10)
+            return scripts[-1].options["body"]
+        self.assertEqual(next_script(model.jog, "x", 1), {"script": "G91\nG1 X10 F3000\nG90"})
+        self.assertEqual(next_script(model.jog, "z", -1), {"script": "G91\nG1 Z-10 F600\nG90"})
+        self.assertEqual(next_script(model.home, "y"), {"script": "G28 Y"})
+        self.assertEqual(next_script(model.home, ""), {"script": "G28"})
+        self.assertEqual(next_script(model.motorsOff), {"script": "M18"})
+        self.assertEqual(next_script(model.extrude, 5), {"script": "G91\nG1 E5 F300\nG90"})
+        self.assertEqual(next_script(model.extrude, -5), {"script": "G91\nG1 E-5 F300\nG90"})
+
+    def test_pause_first_jog_waits_for_paused_confirmation_then_drains(self):
+        model = self.monitor()
+        self.deliver_state("printing")
+        self.assertTrue(model.jogEnabled)  # pause-first keeps the controls live
+        model.jog("x", 1)
+        model.jog("x", 1)  # merges into the queued move
+        pauses = [r for r in self.transport.requests if r.path == "printer/print/pause"]
+        self.assertEqual(len(pauses), 1)
+        self.assertEqual(self.scripts(), [])
+        self.assertIn("Waiting for the printer to pause", model.jogStatus)
+        self.deliver_state("paused")
+        self.qt.events(20)
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)
+        self.assertEqual(scripts[0].options["body"], {"script": "G91\nG1 X2 F3000\nG90"})
+        self.assertEqual(model.jogStatus, "")
+
+    def test_pause_timeout_drops_queued_jogs(self):
+        controller = self.qt.load("ToolheadController")
+        with patch.object(controller, "PAUSE_WAIT_TIMEOUT_S", 0.05):
+            model = self.monitor()
+            self.deliver_state("printing")
+            model.jog("x", 1)
+            self.qt.events(200)
+        self.assertEqual(self.scripts(), [])
+        self.assertIn("did not pause", model.jogStatus)
+
+    def test_resume_during_drain_drops_remaining_moves(self):
+        model = self.monitor()
+        self.deliver_state("printing")
+        model.jog("x", 1)
+        model.jog("y", 1)  # different axis: two distinct ops
+        self.deliver_state("paused")
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)  # the first op drains
+        self.assertEqual(scripts[0].options["body"], {"script": "G91\nG1 X1 F3000\nG90"})
+        # The print resumes before the first move completes: the remaining
+        # move must be dropped, never force-executed mid-print.
+        self.deliver_state("printing")
+        self.assertEqual(self.scripts(), scripts)
+        self.assertIn("resumed", model.jogStatus)
+
+    def test_rapid_jogs_while_paused_coalesce(self):
+        model = self.monitor()
+        self.deliver_state("paused")
+        model.jog("x", 1)  # sent immediately
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)
+        model.jog("x", 1)  # queued behind the in-flight send
+        model.jog("x", 1)  # merges into the queued move
+        self.assertEqual(self.scripts(), scripts)  # nothing new in flight
+        scripts[0].callback({}, None)
+        self.qt.events(20)
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 2)
+        self.assertEqual(scripts[1].options["body"], {"script": "G91\nG1 X2 F3000\nG90"})
 
     def test_monitor_device_is_registered_with_output_manager(self):
         # The Monitor stage shows Cura's "connect the printer" placeholder when

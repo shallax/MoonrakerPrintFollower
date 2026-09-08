@@ -745,6 +745,126 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
+class ToolheadControllerTests(unittest.TestCase):
+    """The jog queue and pause-first sequencing against scripted doubles."""
+
+    def setUp(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+
+        class Data(QObject):
+            changed = pyqtSignal()
+            invalidated = pyqtSignal()
+            commandChanged = pyqtSignal(object)
+            def __init__(self):
+                super().__init__()
+                self.active = True
+                self.connected = True
+                self.snapshot = SimpleNamespace(core={}, auxiliary={})
+            def set_state(self, state):
+                self.snapshot = SimpleNamespace(
+                    core={"print_stats": {"state": state},
+                          "gcode_move": {"absolute_coordinates": True}},
+                    auxiliary={"toolhead": {"homed_axes": "xyz"}})
+                self.changed.emit()
+
+        class Commands(QObject):
+            changed = pyqtSignal()
+            def __init__(self):
+                super().__init__()
+                self.busy = False
+                self.sent = []
+            def send(self, label, path, body=None):
+                if self.busy:
+                    return False
+                self.sent.append((label, path, body))
+                self.busy = True
+                return True
+            def complete(self):
+                self.busy = False
+                self.changed.emit()
+
+        self.data = Data()
+        self.commands = Commands()
+        module = self.qt.load("ToolheadController")
+        self.controller = module.ToolheadController(self.data, self.commands)
+        self.addCleanup(self.controller.close)
+
+    def scripts(self):
+        return [body["script"] for label, path, body in self.commands.sent if path == "printer/gcode/script"]
+
+    def pauses(self):
+        return [1 for label, path, body in self.commands.sent if path == "printer/print/pause"]
+
+    def test_paused_jogs_send_immediately_and_drain_in_order(self):
+        self.data.set_state("paused")
+        self.assertTrue(self.controller.values["jogEnabled"])
+        self.assertEqual(self.controller.values["homedAxes"], "xyz")
+        self.assertEqual(self.controller.values["positionMode"], "Absolute")
+        self.controller.jog("x", 1)
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        self.controller.jog("y", 1)
+        self.commands.complete()
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90", "G91\nG1 Y1 F3000\nG90"])
+
+    def test_printing_jog_pauses_first_and_never_double_sends(self):
+        self.data.set_state("printing")
+        self.controller.jog("x", 1)
+        self.assertEqual(self.scripts(), [])
+        self.assertEqual(len(self.pauses()), 1)
+        self.assertIn("Waiting for the printer to pause", self.controller.values["jogStatus"])
+        # The pause is confirmed (event) before the fresh state arrives; the
+        # flags stay armed so no redundant Pause is sent against the stale
+        # "printing" state.
+        self.commands.busy = False
+        self.commands.changed.emit()
+        self.data.commandChanged.emit({"name": "Pause", "outcome": "confirmed", "terminal": True, "detail": "paused"})
+        self.assertEqual(len(self.pauses()), 1)
+        # The fresh paused state drains the queue.
+        self.data.set_state("paused")
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+
+    def test_pause_timeout_drops_the_queue(self):
+        controller = self.qt.load("ToolheadController")
+        with patch.object(controller, "PAUSE_WAIT_TIMEOUT_S", 0.05):
+            timed = controller.ToolheadController(self.data, self.commands)
+            self.addCleanup(timed.close)
+            self.data.set_state("printing")
+            timed.jog("x", 1)
+            self.qt.events(200)
+        self.assertEqual(self.scripts(), [])
+        self.assertIn("did not pause", timed.values["jogStatus"])
+
+    def test_resume_mid_drain_drops_remaining_moves(self):
+        self.data.set_state("printing")
+        self.controller.jog("x", 1)
+        self.controller.jog("y", 1)
+        self.data.set_state("paused")
+        # The tracked pause reaches terminal confirmation, clearing busy.
+        self.commands.busy = False
+        self.commands.changed.emit()
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        # The print resumes before the first move completes; the remaining
+        # move must never run mid-print.
+        self.data.set_state("printing")
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        self.assertIn("resumed", self.controller.values["jogStatus"])
+
+    def test_taps_coalesce_while_a_move_is_in_flight(self):
+        self.data.set_state("paused")
+        self.controller.jog("x", 1)
+        self.controller.jog("x", 1)
+        self.controller.jog("x", 1)
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        self.commands.complete()
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90", "G91\nG1 X2 F3000\nG90"])
+        self.assertEqual(self.controller.values["jogStatus"], "")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
 class RemoteFileServiceMetadataTests(unittest.TestCase):
     def setUp(self):
         self.context = runtime()

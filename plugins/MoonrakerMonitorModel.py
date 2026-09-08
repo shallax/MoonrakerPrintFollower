@@ -10,6 +10,7 @@ from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
 from .MonitorFormatting import core_values, peripheral_values
 from .MonitorTuning import MonitorTuning
+from .ToolheadController import ToolheadController
 
 
 def value_property(kind, name, signal, default=None):
@@ -32,6 +33,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     controlsChanged = pyqtSignal()
     emergencyStopChanged = pyqtSignal()
     typedControlsChanged = pyqtSignal()
+    toolheadChanged = pyqtSignal()
 
     _SIGNAL_KEYS = (
         ("monitorChanged", ("monitorState", "monitorFilename", "monitorProgress", "monitorLayer", "monitorElapsed",
@@ -49,6 +51,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                              "zOffset", "zOffsetText", "fanControlItems", "ledItems", "saveConfigPending", "saveConfigSummary",
                              "canSaveConfig")),
         ("emergencyStopChanged", ("emergencyStopClicks",)),
+        ("toolheadChanged", ("jogEnabled", "jogDistance", "homedAxes", "positionMode", "jogStatus")),
         ("typedControlsChanged", ("temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
                                   "bedMeshProfileNames", "bedMeshRows", "bedMeshColumns", "bedMeshValues", "bedMeshMinimum",
                                   "bedMeshMaximum", "bedMeshRange", "bedMeshXMin", "bedMeshXMax", "bedMeshYMin", "bedMeshYMax",
@@ -64,7 +67,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._tuning = MonitorTuning(self._data, self._commands, self)
         self._controls = MonitorControls(self._data, self._commands, self._tuning, bed_mesh, config, self)
         self._camera = MonitorCamera(self._data, config, apply_config, self)
-        for signal in (self._data.changed, self._commands.changed, self._controls.changed, self._camera.changed, bed_mesh.changed):
+        self._toolhead = ToolheadController(self._data, self._commands, self)
+        for signal in (self._data.changed, self._commands.changed, self._controls.changed, self._camera.changed,
+                       self._toolhead.changed, bed_mesh.changed):
             signal.connect(self._publish)
         self._data.set_active(True)
         self._publish()
@@ -77,6 +82,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values.update(peripheral_values(self._data.snapshot))
         values.update(self._controls.values)
         values.update(self._camera.values)
+        values.update(self._toolhead.values)
         commands, mesh = self._commands, self._mesh.snapshot
         values.update(printActive=commands.print_active, canPausePrint=commands.state == "printing" and not commands.busy,
             canResumePrint=commands.state == "paused" and not commands.busy,
@@ -173,6 +179,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     bedMeshYMax = value_property(float, "bedMeshYMax", typedControlsChanged, 0.0)
     bedMeshRangeText = value_property(str, "bedMeshRangeText", typedControlsChanged, "")
     bedMeshPreviewVisible = value_property(bool, "bedMeshPreviewVisible", typedControlsChanged, True)
+    jogEnabled = value_property(bool, "jogEnabled", toolheadChanged, False)
+    jogDistance = value_property(float, "jogDistance", toolheadChanged, 1.0)
+    homedAxes = value_property(str, "homedAxes", toolheadChanged, "")
+    positionMode = value_property(str, "positionMode", toolheadChanged, "")
+    jogStatus = value_property(str, "jogStatus", toolheadChanged, "")
 
     @pyqtSlot()
     def refreshAll(self): self._data.refresh_all()
@@ -249,3 +260,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def setBedMeshPreviewVisible(self, visible): self._mesh.set_visible(visible)
     @pyqtSlot(str, result=QVariant)
     def macroParameterDefinitions(self, name): return QVariant(self._controls.macro_parameters(name))
+    @pyqtSlot(str, int)
+    def jog(self, axis, direction): self._toolhead.jog(axis, direction)
+    @pyqtSlot(float)
+    def setJogDistance(self, distance): self._toolhead.set_distance(distance)
+    @pyqtSlot(str)
+    def home(self, axis): self._toolhead.home(axis)
+    @pyqtSlot()
+    def motorsOff(self): self._toolhead.motors_off()
+    @pyqtSlot(float)
+    def extrude(self, amount): self._toolhead.extrude(amount)

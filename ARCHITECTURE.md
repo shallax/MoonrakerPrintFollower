@@ -74,6 +74,8 @@ private follower state to either integration.
 | `MonitorCommands.py` | Monitor action acknowledgement and emergency-stop click sequence | Sliders or discovery |
 | `MonitorTuning.py` | Debounce, pending tuning values, revision/confirmation timers | QML or printer discovery |
 | `MonitorControls.py` | Macro, preset, fan/LED/PWM, setup and power/exclusion policy | Qt model inheritance |
+| `ToolheadPolicy.py` | Pure jog/home/extrude G-code, the print-state safety gate and jog-queue coalescing | Qt, timers or networking |
+| `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
 | `MonitorCamera.py` | Camera selection, transforms and per-printer selection persistence | Private configuration store |
@@ -243,6 +245,18 @@ capabilities, not the model or follower. Tuning owns its revisions and debounce
 lifetimes. Macro argument parsing is cached until static configuration changes.
 Camera selection is persisted through the public configuration operation.
 
+Manual toolhead control is pure policy plus one queue owner: `ToolheadPolicy`
+generates every G-code string, classifies the print state (disabled in
+unknown/error states, pause-first while printing, allowed otherwise) and
+coalesces adjacent same-axis jog taps. `ToolheadController` owns the pending
+queue and the pause-first sequence: a jog while printing first sends the
+shared tracked Pause, drains the queue only after a fresh `paused` state is
+observed, and drops queued moves if the pause is not confirmed within ten
+seconds or the print resumes mid-drain. Jog scripts travel the single-flight
+`monitor::control` lane; the transport's replace lane is never used for
+motion because replacement aborts an in-flight request whose G-code may or
+may not have executed.
+
 `BedMeshPresenter` alone owns the active scene node and Preview mesh UI. It uses
 `CuraIntegration.decorating_scene()` to distinguish its non-sliceable visual changes
 from user scene changes. Inactive Monitor instances cannot overwrite the active mesh.
@@ -276,7 +290,9 @@ an earlier write's terminal notification.
 - New display behaviour: keep policy pure (like `PreviewSmoothing`) and put
   the Qt tick/writes in `PreviewMotion`; never let displayed state feed back
   into physical observations.
-- New controls: add policy to a focused controller and declare the Qt property/slot.
+- New controls: add policy to a focused controller and declare the Qt property/slot
+  (toolhead control keeps script text and safety gates pure in `ToolheadPolicy`;
+  the controller owns the queue and pause sequencing).
 - New file operations: consume `FileLease`, never infer lifetime from Preview flags.
 - New index work: use the bounded index owner and generation-valid publication.
 - New Cura APIs: isolate them in Cura integration/presentation or the writer adapter.

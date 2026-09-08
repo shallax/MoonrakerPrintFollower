@@ -5,7 +5,7 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 3.3.1
+- **Release:** 3.4.0
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
 
 ## What changed in 3.3.0
@@ -52,6 +52,10 @@ On startup, Moonraker Print Follower looks for the standalone plugin's existing 
 Existing Moonraker Print Follower URL/API-key values take precedence when already configured. Upload-specific settings such as format/path, start-print behaviour, power devices, retry interval, frontend URL and filename translation are imported from Moonraker Connection. Its legacy camera URL, rotation and mirror settings are also imported as a fallback for Moonraker installations that do not expose webcam configuration through the webcam API. The old preference data is left untouched so rollback remains possible.
 
 After verifying the integrated plugin with your printers, the separate Moonraker Connection plugin can be removed.
+
+## What changed in 3.4.0
+
+Version 3.4.0 adds manual toolhead control to the Monitor tab: a **Toolhead** section with X/Y/Z jog buttons (0.1 / 1 / 10 / 100 mm presets), per-axis home and home-all, motors off, extrude/retract, and a readout of homed axes, move mode and the live position. Moves run while the printer is idle or paused; while printing, a jog request pauses the print first and the queued moves run only once the printer reports paused — never a force-move mid-print.
 
 ## What changed in 3.3.1
 
