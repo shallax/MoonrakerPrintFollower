@@ -1,0 +1,25 @@
+module Cura
+SecondaryButton 1.0 SecondaryButton.qml
+SecondaryButton 1.1 SecondaryButton.qml
+PrimaryButton 1.0 PrimaryButton.qml
+PrimaryButton 1.1 PrimaryButton.qml
+ComboBox 1.0 ComboBox.qml
+ComboBox 1.1 ComboBox.qml
+RoundedRectangle 1.0 RoundedRectangle.qml
+RoundedRectangle 1.1 RoundedRectangle.qml
+MessageDialog 1.0 MessageDialog.qml
+MessageDialog 1.1 MessageDialog.qml
+NetworkMJPGImage 1.0 NetworkMJPGImage.qml
+NetworkMJPGImage 1.1 NetworkMJPGImage.qml
+TextField 1.0 TextField.qml
+TextField 1.1 TextField.qml
+CheckBox 1.0 CheckBox.qml
+CheckBox 1.1 CheckBox.qml
+TabRowButton 1.0 TabRowButton.qml
+TabRowButton 1.1 TabRowButton.qml
+TooltipArea 1.0 TooltipArea.qml
+TooltipArea 1.1 TooltipArea.qml
+Dialog 1.0 Dialog.qml
+Dialog 1.1 Dialog.qml
+PreviewSecondaryButton 1.0 PreviewSecondaryButton.qml
+PreviewSecondaryButton 1.1 PreviewSecondaryButton.qml

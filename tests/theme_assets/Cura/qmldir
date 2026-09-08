@@ -1,0 +1,106 @@
+module Cura
+
+MachineSelector 1.0 MachineSelector.qml
+MachineSelectorButton 1.0 MachineSelectorButton.qml
+MachineListButton 1.0 MachineListButton.qml
+CustomConfigurationSelector 1.0 CustomConfigurationSelector.qml
+PrintSetupSelector 1.0 PrintSetupSelector.qml
+ProfileOverview 1.6 ProfileOverview.qml
+ActionButton 1.0 ActionButton.qml
+MaterialMenu 1.0 MaterialMenu.qml
+NozzleMenu 1.0 NozzleMenu.qml
+ActionPanelWidget 1.0 ActionPanelWidget.qml
+IconWithText 1.0 IconWithText.qml
+OutputDevicesActionButton 1.0 OutputDevicesActionButton.qml
+ExpandableComponent 1.0 ExpandableComponent.qml
+PrinterTypeLabel 1.0 PrinterTypeLabel.qml
+ViewsSelector 1.0 ViewsSelector.qml
+SettingView 1.0 SettingView.qml
+ProfileMenu 1.0 ProfileMenu.qml
+PrintSelectorCard 1.0 PrintSelectorCard.qml
+
+# Cura/WelcomePages
+
+WizardPanel         1.0 WizardPanel.qml
+WizardDialog        1.0 WizardDialog.qml
+
+
+# Cura/Widgets
+
+ComboBox            1.0 ComboBox.qml
+NotificationIcon    1.0 NotificationIcon.qml
+RadioButton         1.0 RadioButton.qml
+Scrollable          1.0 Scrollable.qml
+TabButton           1.0 TabButton.qml
+TextField           1.0 TextField.qml
+ScrollView          1.0 ScrollView.qml
+Menu                1.0 Menu.qml
+MenuItem            1.0 MenuItem.qml
+MenuSeparator       1.0 MenuSeparator.qml
+SingleSettingExtruderSelectorBar        1.7 SingleSettingExtruderSelectorBar.qml
+ExtruderButton                          1.7 ExtruderButton.qml
+SingleSettingComboBox                   1.7 SingleSettingComboBox.qml
+SingleSettingSlider                     1.7 SingleSettingSlider.qml
+SingleSettingTextField                  1.7 SingleSettingTextField.qml
+
+
+# Cura/MachineSettings
+
+ComboBoxWithOptions         1.0 ComboBoxWithOptions.qml
+GcodeTextArea               1.0 GcodeTextArea.qml
+NumericTextFieldWithUnit    1.0 NumericTextFieldWithUnit.qml
+PrintHeadMinMaxTextField    1.0 PrintHeadMinMaxTextField.qml
+SimpleCheckBox              1.0 SimpleCheckBox.qml
+RenameDialog                1.0 RenameDialog.qml
+
+# Cura/Preferences
+
+PreferencesDialog 1.0 PreferencesDialog.qml
+SecondaryButton 1.0 SecondaryButton.qml
+PrimaryButton 1.0 PrimaryButton.qml
+RoundedRectangle 1.0 RoundedRectangle.qml
+SecondaryButton 1.1 SecondaryButton.qml
+PrimaryButton 1.1 PrimaryButton.qml
+RoundedRectangle 1.1 RoundedRectangle.qml
+MessageDialog 1.0 Dialogs/MessageDialog.qml
+MessageDialog 1.1 Dialogs/MessageDialog.qml
+
+# Real files under Cura/ that the settings page (MoonrakerFollowerConfiguration.qml)
+# instantiates via its "Cura 1.1" import.  TextField/ComboBox/RadioButton keep
+# their earlier bare 1.0 lines; 1.1 adds the real Widgets/ copies those 1.0 lines
+# cannot reach (a second 1.0 line would be a duplicate qmldir registration).
+MachineAction 1.0 MachineAction.qml
+MachineAction 1.1 MachineAction.qml
+RadioButton 1.1 Widgets/RadioButton.qml
+TextField 1.1 Widgets/TextField.qml
+ComboBox 1.1 Widgets/ComboBox.qml
+Actions 1.0 Actions.qml
+Actions 1.1 Actions.qml
+CategoryButton 1.0 CategoryButton.qml
+CategoryButton 1.1 CategoryButton.qml
+ColorDialog 1.0 Dialogs/ColorDialog.qml
+ColorDialog 1.1 Dialogs/ColorDialog.qml
+ExpandablePopup 1.0 ExpandablePopup.qml
+ExpandablePopup 1.1 ExpandablePopup.qml
+ExtruderIcon 1.0 ExtruderIcon.qml
+ExtruderIcon 1.1 ExtruderIcon.qml
+MaterialBrandMenu 1.0 Menus/MaterialBrandMenu.qml
+MaterialBrandMenu 1.1 Menus/MaterialBrandMenu.qml
+ModeSelectorButton 1.0 ModeSelectorButton.qml
+ModeSelectorButton 1.1 ModeSelectorButton.qml
+PrintSetupHeaderButton 1.0 PrintSetupHeaderButton.qml
+PrintSetupHeaderButton 1.1 PrintSetupHeaderButton.qml
+ReadOnlyTextArea 1.0 Preferences/ReadOnlyTextArea.qml
+ReadOnlyTextArea 1.1 Preferences/ReadOnlyTextArea.qml
+ScrollableTextArea 1.0 Widgets/ScrollableTextArea.qml
+ScrollableTextArea 1.1 Widgets/ScrollableTextArea.qml
+SettingVisibilityCategory 1.0 Preferences/SettingVisibilityCategory.qml
+SettingVisibilityCategory 1.1 Preferences/SettingVisibilityCategory.qml
+SettingVisibilityItem 1.0 Preferences/SettingVisibilityItem.qml
+SettingVisibilityItem 1.1 Preferences/SettingVisibilityItem.qml
+SpinBox 1.0 SpinBox.qml
+SpinBox 1.1 SpinBox.qml
+TableView 1.0 TableView.qml
+TableView 1.1 TableView.qml
+TertiaryButton 1.0 TertiaryButton.qml
+TertiaryButton 1.1 TertiaryButton.qml
