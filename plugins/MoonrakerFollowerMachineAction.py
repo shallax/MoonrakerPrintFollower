@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 from dataclasses import asdict
 from typing import Any, Dict, Optional
 
@@ -14,6 +16,7 @@ from PyQt6.QtNetwork import QHostAddress
 
 from cura.MachineAction import MachineAction
 from UM.Logger import Logger
+from UM.Resources import Resources
 from UM.Settings.DefinitionContainer import DefinitionContainer
 
 from .FollowController import FollowMode
@@ -32,6 +35,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
     settingsChanged = pyqtSignal()
     testStatusChanged = pyqtSignal()
     testBusyChanged = pyqtSignal()
+    cacheStatusChanged = pyqtSignal()
 
     def __init__(self, application: Any, follower: Any, output_plugin: Any = None) -> None:
         super().__init__(self.KEY, self.LABEL)
@@ -49,6 +53,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
         self._probe_server_info: Dict[str, Any] = {}
         self._test_status = "Not tested"
         self._test_busy = False
+        self._cache_status = ""
 
         registry = application.getContainerRegistry()
         self._container_registry = registry
@@ -215,6 +220,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtProperty(bool, notify=testBusyChanged)
     def testBusy(self) -> bool:
         return self._test_busy
+
+    @pyqtProperty(str, notify=cacheStatusChanged)
+    def cacheStatus(self) -> str:
+        return self._cache_status
 
     @staticmethod
     def _url_is_usable(value: str) -> bool:
@@ -425,6 +434,26 @@ class MoonrakerFollowerMachineAction(MachineAction):
             )
         except Exception as exc:
             self._set_test_state(f"Invalid printer-object response: {exc}", busy=False)
+
+    def _cache_root(self) -> str:
+        # Same composition as FollowerRuntime's cache directory: the
+        # persistent index cache and the diagnostics traces live under
+        # it. The session's downloaded FILE is a temp directory and
+        # disappears when Cura exits.
+        return os.path.join(Resources.getCacheStoragePath(), "Moonraker_Print_Follower")
+
+    @pyqtSlot()
+    def clearCache(self) -> None:
+        """The Diagnostics tab's cache-clear: drop the persistent index
+        cache so the next Improve-ETA re-downloads and re-indexes (the
+        author asked for a re-testable download flow)."""
+        try:
+            shutil.rmtree(self._cache_root(), ignore_errors=True)
+            self._cache_status = "Cache cleared. Restart Cura to also drop the session's downloaded file."
+        except Exception as error:
+            Logger.log("w", "Moonraker Print Follower: cache clear failed: %s", error)
+            self._cache_status = "Could not clear the cache — see Cura's log."
+        self.cacheStatusChanged.emit()
 
     @pyqtSlot()
     def cancelTest(self) -> None:

@@ -363,14 +363,6 @@ Component {
                                 }
                             }
 
-                            UM.Label {
-                                visible: root.printer != null && root.printer.actionStatus.length > 0
-                                text: root.printer != null ? root.printer.actionStatus : ""
-                                color: UM.Theme.getColor("text_inactive")
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                            }
-
                             GridLayout {
                                 columns: 2
                                 Layout.fillWidth: true
@@ -1148,11 +1140,17 @@ Component {
 
                                     // The original two-row layout: all up
                                     // nudges on the top row, all down on
-                                    // the bottom. Layout.fillWidth alone
-                                    // gives every button a quarter of the
-                                    // row — the elision was the
-                                    // fixedWidthMode conflict, now gone,
-                                    // not the row width.
+                                    // the bottom. Each button takes an
+                                    // exact quarter of the row: fillWidth
+                                    // alone leaves each button its label's
+                                    // implicit width as a base, and the
+                                    // layout shares the leftover in
+                                    // proportion — "↑ 0.005" and "↑ 0.05"
+                                    // came out different widths (the
+                                    // author's report). A bound preferred
+                                    // width — (row - 3 gaps) / 4 — makes
+                                    // every button the same width without
+                                    // depending on layout distribution.
                                     RowLayout {
                                         Layout.fillWidth: true
                                         spacing: zOffsetGrid.buttonSpacing
@@ -1160,6 +1158,7 @@ Component {
                                             model: [0.005, 0.01, 0.025, 0.05]
                                             Cura.SecondaryButton {
                                                 Layout.fillWidth: true
+                                                Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4
                                                 height: UM.Theme.getSize("action_button").height
                                                 text: "↑ " + modelData.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
                                                 tooltip: "Moves the nozzle up, away from the bed."
@@ -1175,6 +1174,7 @@ Component {
                                             model: [-0.005, -0.01, -0.025, -0.05]
                                             Cura.SecondaryButton {
                                                 Layout.fillWidth: true
+                                                Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4
                                                 height: UM.Theme.getSize("action_button").height
                                                 text: "↓ " + Math.abs(modelData).toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
                                                 tooltip: "Moves the nozzle down, closer to the bed."

@@ -42,6 +42,9 @@ class PrintSnapshot:
     # ONE load state shared by the Preview and the Monitor: true from
     # any load request (either view's) until the terminal state.
     load_active: bool = False
+    # The slicer's total filament length (mm) from the file metadata:
+    # the Print-job section shows "used / remaining" against it.
+    filament_total: Optional[float] = None
 
     @property
     def active(self) -> bool:

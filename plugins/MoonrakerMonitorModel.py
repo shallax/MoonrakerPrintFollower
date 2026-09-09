@@ -154,7 +154,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("monitorChanged", ("monitorState", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
                             "improvingEta", "improveEtaProgress", "improveEtaPhase", "monitorElapsed",
                             "monitorEta", "monitorEtaBasis", "monitorFinish", "monitorSpeed", "monitorFlow",
-                            "monitorPosition", "monitorMessage", "monitorLayerSource")),
+                            "monitorPosition", "monitorMessage", "monitorLayerSource", "filamentUsed", "filamentRemaining")),
         ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
         ("temperatureChartChanged", ("temperatureChart",)),
         ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
@@ -180,7 +180,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("sectionsChanged", ("sectionExpandedMap",)),
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
-        ("consoleChanged", ("consoleHistory", "consolePending", "consoleStatus")),
+        ("consoleChanged", ("consoleHistory", "consoleLines", "consoleDropped", "consolePending", "consoleStatus")),
         ("typedControlsChanged", ("temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
                                   "bedMeshProfileNames", "bedMeshRows", "bedMeshColumns", "bedMeshValues", "bedMeshMinimum",
                                   "bedMeshMaximum", "bedMeshRange", "bedMeshXMin", "bedMeshXMax", "bedMeshYMin", "bedMeshYMax",
@@ -337,6 +337,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     monitorLayer = value_property(str, "monitorLayer", monitorChanged, "—")
     monitorLayerProgress = value_property(float, "monitorLayerProgress", monitorChanged, -1.0)
     monitorLayerSource = value_property(str, "monitorLayerSource", monitorChanged, "")
+    filamentUsed = value_property(str, "filamentUsed", monitorChanged, "—")
+    filamentRemaining = value_property(str, "filamentRemaining", monitorChanged, "—")
     britishSpelling = value_property(bool, "britishSpelling", monitorChanged, False)
     improvingEta = value_property(bool, "improvingEta", monitorChanged, False)
     improveEtaProgress = value_property(float, "improveEtaProgress", monitorChanged, -1.0)
@@ -377,6 +379,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     showProbePoints = value_property(bool, "showProbePoints", showProbePointsChanged, False)
     consoleHistory = value_property(QVariant, "consoleHistory", consoleChanged, [])
     consoleLines = value_property(QVariant, "consoleLines", consoleChanged, [])
+    # Lines the session ring rotated out of its head (0 until the
+    # transcript passes its cap); the pane uses it to stay aligned.
+    consoleDropped = value_property(int, "consoleDropped", consoleChanged, 0)
     consolePending = value_property(int, "consolePending", consoleChanged, 0)
     consoleStatus = value_property(str, "consoleStatus", consoleChanged, "")
     cameraName = value_property(str, "cameraName", cameraTransformChanged, "")

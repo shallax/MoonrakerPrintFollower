@@ -1,4 +1,12 @@
-"""Monitor command acknowledgement and emergency-stop ownership."""
+"""Monitor command acknowledgement and emergency-stop ownership.
+
+The one-shot lane keeps two display channels: the durable STATUS (tracked
+confirmations, outcome-unknown warnings, emergency-stop results — it never
+expires) and a transient RECEIPT ("X sent") that overlays it for a few
+seconds and then reverts, plus a LIVE lifecycle text ("X requested…",
+"X queued") for the in-flight moment. Console sends are label-guarded out
+of all three: console feedback lives on the console's own status line.
+"""
 from __future__ import annotations
 
 import time
@@ -24,17 +32,26 @@ class MonitorCommands(QObject):
     # while a real emergency stays under a second away.
     HOLD_MS = 600
     HOLD_TICK_MS = 50
+    # A completion receipt overlays the durable status for this long,
+    # then reverts to whatever was beneath it (the author's ruling:
+    # age out to the previous durable value, never to nothing).
+    RECEIPT_MS = 5000
 
     def __init__(self, data, parent=None):
         super().__init__(parent)
         self._data = data
         self._busy = False
         self._status = self._tracked = ""
+        self._live = self._receipt = ""
         self._clicks = 0
         self._queue = []
         self._hold_progress = 0.0
         self._hold_started_at = 0.0
         self._suppress_click = False
+        self._receipt_timer = QTimer(self)
+        self._receipt_timer.setSingleShot(True)
+        self._receipt_timer.setInterval(self.RECEIPT_MS)
+        self._receipt_timer.timeout.connect(self._expire_receipt)
         self._reset_timer = QTimer(self)
         self._reset_timer.setSingleShot(True)
         self._reset_timer.setInterval(1000)
@@ -52,7 +69,11 @@ class MonitorCommands(QObject):
     @property
     def busy(self): return self._busy
     @property
-    def status(self): return self._status
+    def status(self):
+        # Receipt overlays lifecycle overlays durable: the in-flight
+        # text hides under a completion receipt, and the receipt's
+        # expiry reveals the live text or the durable status beneath.
+        return self._receipt or self._live or self._status
     @property
     def clicks(self): return self._clicks
     @property
@@ -74,13 +95,16 @@ class MonitorCommands(QObject):
         self._busy = False
         self._queue.clear()
         self._status = self._tracked = ""
+        self._live = self._receipt = ""
+        self._receipt_timer.stop()
         self._reset_clicks()
         self.changed.emit()
 
     def send(self, label, path, body=None, queued=False):
         if self._busy or not self._data.active: return False
         self._busy = True
-        self._status = f"{label} requested…"
+        if label != "Console":
+            self._live = f"{label} requested…"
         expected = self.EXPECTED.get(label)
         self._tracked = label if expected else ""
         if expected: self._data.track_command(label, expected,
@@ -91,17 +115,25 @@ class MonitorCommands(QObject):
                 self.completed.emit(label)
             if error:
                 self._busy = False
+                self._live = ""
                 # A connection-level error says nothing about whether the
                 # command executed: the script may already have been
                 # accepted by the printer.
-                self._status = f"{label} outcome unknown: {error}"
+                if label != "Console":
+                    self._status = f"{label} outcome unknown: {error}"
                 if expected: self._data.fail_command(label, error)
                 self._tracked = ""
             elif expected:
+                self._live = ""
                 self._data.accept_command(label)
             else:
                 self._busy = False
-                self._status = f"{label} accepted"
+                self._live = ""
+                # A receipt, never "accepted": the POST ack only means
+                # Moonraker queued the script, and Klipper can still
+                # answer "!!" afterwards (panel UX ruling).
+                if label != "Console":
+                    self._set_receipt(f"{label} sent")
             self._data.later(150, self._data.refresh_all)
             # Pump the queued one-shots BEFORE announcing the idle lane:
             # listeners (the toolhead controller) react to "changed" by
@@ -135,7 +167,8 @@ class MonitorCommands(QObject):
             if len(self._queue) >= self.MAX_QUEUED_COMMANDS:
                 return False
             self._queue.append((label, path, body))
-            self._status = f"{label} queued"
+            if label != "Console":
+                self._live = f"{label} queued"
             self.changed.emit()
             return True
         return self.send(label, path, body)
@@ -153,6 +186,7 @@ class MonitorCommands(QObject):
     def _command_changed(self, event):
         if event.get("name") != self._tracked: return
         outcome = event.get("outcome")
+        self._live = ""
         self._status = f"{self._tracked}: {event.get('detail') or outcome}"
         if event.get("terminal"):
             self._busy = False
@@ -223,5 +257,18 @@ class MonitorCommands(QObject):
         self._hold_timer.stop()
         self._hold_progress = 0.0
         self._clicks = 0
+        self.changed.emit()
+
+    def _set_receipt(self, text) -> None:
+        # No changed.emit here: the only caller is inside finished(),
+        # which must pump the queue BEFORE announcing the idle lane —
+        # the toolhead controller reacts to "changed" by sending its own
+        # command, and the queue must keep its place ahead of that
+        # fresh send (an early emit let a queued jog jump Home).
+        self._receipt = text
+        self._receipt_timer.start()
+
+    def _expire_receipt(self) -> None:
+        self._receipt = ""
         self.changed.emit()
 

@@ -56,7 +56,17 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   module — never the global one), grabs a fourth scene with the chart
   pop-over open, and asserts the mini-chart region contains painted
   pixels (the requestPaint regression test).
-- Deterministic captures: `tools/capture_monitor.py` plus the sibling
+- Deterministic captures: the harness freezes EVERY live input the
+  scenes render — the formatter's wall clock is patched to a fixed
+  instant (`FrozenDatetime`, patching every module object loaded from
+  MonitorFormatting.py because the Qt runtime registers plugin modules
+  under synthetic names), the model's time module is patched
+  module-scoped during seeding, and the console pane renders no caret.
+  `make verify_captures` runs the full capture suite TWICE in the
+  pinned container and fails on any byte difference — a deterministic
+  catch for leaks the committed-compare only catches by chance. Run it
+  after changing anything the captures render.
+- The capture scripts: `tools/capture_monitor.py` plus the sibling
   `capture_preview.py` / `capture_settings.py` / `capture_upload.py`
   render the real plugin QML offscreen using the REAL Cura and Uranium
   QML components and the real cura-light theme copied into

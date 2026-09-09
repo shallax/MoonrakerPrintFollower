@@ -513,6 +513,27 @@ Cura.MachineAction {
                             text: "Log HTTP requests (diagnostics)"
                             checked: manager.settingsTraceHttp
                         }
+
+                        UM.Label {
+                            width: parent.width
+                            text: "Downloads and the G-code index cache keep the Improve-ETA flow fast on a second run. Clear them to watch a full download and index again."
+                            wrapMode: Text.WordWrap
+                            color: UM.Theme.getColor("text_inactive")
+                        }
+                        RowLayout {
+                            width: parent.width
+                            spacing: UM.Theme.getSize("default_margin").width
+                            Cura.SecondaryButton {
+                                text: "Clear cached downloads and indexes"
+                                onClicked: manager.clearCache()
+                            }
+                            UM.Label {
+                                Layout.fillWidth: true
+                                text: manager.cacheStatus
+                                color: UM.Theme.getColor("text_inactive")
+                                wrapMode: Text.WordWrap
+                            }
+                        }
                     }
                 }
             }

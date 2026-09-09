@@ -258,6 +258,17 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertIn('text: "Upload"', config)
         self.assertIn('text: "Upload format"', config)
 
+    def test_diagnostics_tab_carries_the_cache_clear(self):
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        self.assertIn('text: "Clear cached downloads and indexes"', config)
+        self.assertIn("manager.clearCache()", config)
+        self.assertIn("manager.cacheStatus", config)
+        self.assertIn('text: "Log layer resolution (diagnostics)"', config)
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+        self.assertIn("def clearCache(self)", action)
+        self.assertIn('shutil.rmtree(self._cache_root(), ignore_errors=True)', action)
+        self.assertIn('"Moonraker_Print_Follower"', action)
+
     def test_normalise_url_is_the_single_url_rule(self):
         self.assertEqual(normalise_url(""), "http://")
         self.assertEqual(normalise_url(None), "http://")

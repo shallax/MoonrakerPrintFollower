@@ -33,7 +33,11 @@ from qt_runtime_support import ScriptedTransport, runtime
 
 def fake_status(state="printing"):
     return {
+        # filament_used is TOP-LEVEL in real Klipper print_stats (the
+        # info dict only ever carries layer counters) — the seed mirrors
+        # the live shape so the captures test the real parse.
         "print_stats": {"filename": "benchy.gcode", "state": state, "print_duration": 1800,
+                        "filament_used": 3500.0,
                         "info": {"current_layer": 12, "total_layer": 150},
                         "message": ""},
         "virtual_sdcard": {"file_size": 3_000_000, "file_position": 720_000, "progress": 0.24},
@@ -72,12 +76,36 @@ def main():
     context = runtime()
     qt = context.__enter__()
     try:
+        # DETERMINISM: every live input the scene renders must be mocked.
+        # The model's time module is patched during seeding below, but
+        # the formatter's finish-clock reads datetime.now() straight off
+        # the wall (MonitorFormatting.monitorFinish), so captures made in
+        # different minutes differed by one clock glyph and CI's
+        # byte-compare failed. Freeze the formatter's clock for the life
+        # of this process: the pinned container then renders the same
+        # bytes regardless of when the capture runs. The Qt runtime
+        # registers plugin modules under synthetic names (the same trap
+        # documented for the model below), so EVERY module object loaded
+        # from the formatter's source file is patched — after the
+        # plugin tree has been loaded by the runtime.
+        from datetime import datetime as _real_datetime
+
+        class FrozenDatetime(_real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 9, 9, 12, 0, 0)
+
+        def _freeze_formatter_clock():
+            for _mod in list(sys.modules.values()):
+                if getattr(_mod, "__file__", "") == os.path.join(ROOT, "plugins", "MonitorFormatting.py"):
+                    _mod.datetime = FrozenDatetime
         transport = ScriptedTransport()
         root = qt.load("FollowerRuntime")
         real = root.MoonrakerClient
         follower_app = qt.Application(machine_name="Voron v2.4 250")
         with patch.object(root, "MoonrakerClient", lambda parent: real(parent, transport=transport)):
             follower = qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(follower_app)
+        _freeze_formatter_clock()
         config_type = qt.load("PrinterConfig").PrinterConfig
         # The console transcript seeds the terminal pane: a typed line,
         # a plain response and a "!!" error, all restored (they came
@@ -94,6 +122,20 @@ def main():
 
         client = follower.client
         client._handle_http_status({"result": {"status": fake_status("printing")}}, None, client._generation)
+        # The filament readouts need the slicer's total, which arrives
+        # with the metadata fetch — answer it like Moonraker would.
+        for request in transport.requests:
+            if getattr(request, "channel", "") == "mr-metadata":
+                request.callback({"result": {"layer_height": 0.2, "filament_total": 42000.0,
+                                             "estimated_time": 3600}}, None)
+                break
+        # The filament readouts need the slicer's total, which arrives
+        # with the metadata fetch — answer it like Moonraker would.
+        for request in transport.requests:
+            if getattr(request, "channel", "") == "mr-metadata":
+                request.callback({"result": {"layer_height": 0.2, "filament_total": 42000.0,
+                                             "estimated_time": 3600}}, None)
+                break
         # One configured webcam: the camera bar and a fitted placeholder
         # stream render in the captures.
         model._data._update(webcams=(

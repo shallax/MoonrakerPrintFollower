@@ -24,6 +24,16 @@ jobs:
 
       - name: Install qmlformat and shellcheck
         run: |
+          # ubuntu-latest ships Google's apt repos pre-configured; one bad
+          # index there fails EVERY apt update (2026-09-09: chrome-stable
+          # Packages.gz hash mismatch). This workflow needs neither Chrome
+          # nor the Cloud SDK, so drop every source pointing at Google
+          # before the update — the file name varies (google-chrome.list
+          # on some images, deb822 .sources on others, and the first
+          # attempt guessed wrong).
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+            if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com" "$f"; then sudo rm -f "$f"; fi
+          done
           sudo apt-get update
           sudo apt-get install -y qt6-declarative-dev-tools shellcheck
 
@@ -65,6 +75,16 @@ jobs:
 
       - name: Install runtime and tools
         run: |
+          # ubuntu-latest ships Google's apt repos pre-configured; one bad
+          # index there fails EVERY apt update (2026-09-09: chrome-stable
+          # Packages.gz hash mismatch). This workflow needs neither Chrome
+          # nor the Cloud SDK, so drop every source pointing at Google
+          # before the update — the file name varies (google-chrome.list
+          # on some images, deb822 .sources on others, and the first
+          # attempt guessed wrong).
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+            if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com" "$f"; then sudo rm -f "$f"; fi
+          done
           sudo apt-get update
           sudo apt-get install -y libegl1 libxkbcommon0
           python -m pip install PyQt6==6.11.0 coverage
@@ -103,6 +123,16 @@ jobs:
 
       - name: Install Qt system runtime
         run: |
+          # ubuntu-latest ships Google's apt repos pre-configured; one bad
+          # index there fails EVERY apt update (2026-09-09: chrome-stable
+          # Packages.gz hash mismatch). This workflow needs neither Chrome
+          # nor the Cloud SDK, so drop every source pointing at Google
+          # before the update — the file name varies (google-chrome.list
+          # on some images, deb822 .sources on others, and the first
+          # attempt guessed wrong).
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+            if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com" "$f"; then sudo rm -f "$f"; fi
+          done
           sudo apt-get update
           sudo apt-get install -y libegl1
 
@@ -163,6 +193,16 @@ jobs:
 
       - name: Install capture runtime
         run: |
+          # ubuntu-latest ships Google's apt repos pre-configured; one bad
+          # index there fails EVERY apt update (2026-09-09: chrome-stable
+          # Packages.gz hash mismatch). This workflow needs neither Chrome
+          # nor the Cloud SDK, so drop every source pointing at Google
+          # before the update — the file name varies (google-chrome.list
+          # on some images, deb822 .sources on others, and the first
+          # attempt guessed wrong).
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+            if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com" "$f"; then sudo rm -f "$f"; fi
+          done
           sudo apt-get update
           sudo apt-get install -y libegl1 libxkbcommon0
           python -m pip install PyQt6==6.11.0
@@ -204,6 +244,14 @@ jobs:
                 && python3 tools/capture_preview.py dist/screenshots \
                 && python3 tools/capture_settings.py dist/screenshots \
                 && python3 tools/capture_upload.py dist/screenshots"
+
+      - name: Verify capture determinism
+        # Two runs in the same container must be byte-identical: the
+        # committed-compare above only has a CHANCE of catching a
+        # phase-dependent leak (a blinking caret, a ticking clock);
+        # this catches it deterministically. The harness freezes every
+        # live input, so any difference means a new one leaked in.
+        run: ./tools/verify_capture_determinism.sh
 
       - name: Reject stale committed screenshots
         # Every generated PNG must match its committed copy byte for byte;

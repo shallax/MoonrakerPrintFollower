@@ -156,12 +156,17 @@ class PrintCoordinator(QObject):
                            or self._files.phase in ("resolving", "downloading")
                            or self._index.phase == "indexing"
                            or self._cura.loading)
+            try:
+                filament_total = float(metadata.get("filament_total"))
+            except (TypeError, ValueError):
+                filament_total = None
             self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
                 estimate if estimate > 0 else None, self._files.metadata_complete,
                 layer_progress=layer_progress, index_ready=view is not None,
                 download_fraction=self._files.download_fraction,
                 indexing=self._index.phase == "indexing",
-                load_active=load_active)
+                load_active=load_active,
+                filament_total=filament_total if filament_total and filament_total > 0 else None)
             filename = str((self._status.get("print_stats") or {}).get("filename") or "")
             if self._snapshot.active and filename:
                 self._maybe_fetch_mr_metadata(filename, job)

@@ -91,11 +91,20 @@ Item {
         _maxElapsed = maxElapsed;
     }
 
+    function _rightGutter() {
+        // The 0-100% power labels live OUTSIDE the plot, in a reserved
+        // right margin (the author's ruling: chips painted over the
+        // data looked janky, and the labels must never collide with the
+        // lines). The plot domain shrinks to fit; the compact sparkline
+        // keeps its full width.
+        return (root.chart.showPower && !root.compact) ? 34 : 0;
+    }
+
     function _xFor(elapsed) {
         if (_maxElapsed <= _minElapsed) {
             return 0;
         }
-        return (elapsed - _minElapsed) / (_maxElapsed - _minElapsed) * width;
+        return (elapsed - _minElapsed) / (_maxElapsed - _minElapsed) * (width - root._rightGutter());
     }
 
     function _plotBottom() {
@@ -181,7 +190,7 @@ Item {
             overlay.requestPaint();
             return;
         }
-        var fraction = Math.max(0, Math.min(1, x / width));
+        var fraction = Math.max(0, Math.min(1, x / (width - root._rightGutter())));
         var cursor = _minElapsed + fraction * (_maxElapsed - _minElapsed);
         var snapped = Math.round(cursor);
         if (snapped !== _hoverSnap) {
@@ -267,6 +276,8 @@ Item {
             var gridColor = UM.Theme.getColor("lining");
             var labelColor = UM.Theme.getColor("text_inactive");
             var lines = root.compact ? 2 : 4;
+            var drewPower = false;
+            var gutter = root._rightGutter();
 
             // Horizontal grid + temperature labels.
             for (var g = 0; g <= lines; ++g) {
@@ -275,7 +286,7 @@ Item {
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 ctx.moveTo(0, gy);
-                ctx.lineTo(width, gy);
+                ctx.lineTo(width - gutter, gy);
                 ctx.stroke();
                 if (!root.compact) {
                     var value = root._maxTemp - (root._maxTemp - root._minTemp) * g / lines;
@@ -331,6 +342,7 @@ Item {
                         if (powerSeg.length < 2) {
                             continue;
                         }
+                        drewPower = true;
                         ctx.fillStyle = root._strokeColor(series[p].color, 0.22);
                         ctx.beginPath();
                         ctx.moveTo(root._xFor(powerSeg[0][0]), root._plotBottom());
@@ -396,6 +408,24 @@ Item {
                 }
                 ctx.stroke();
                 ctx.lineWidth = 1;
+            }
+
+            // Power-axis labels (0-100%, pinned — never scaled) sit in
+            // the reserved right gutter, clear of the data. Painted
+            // last so they are never over-drawn; no background chip —
+            // the gutter is empty by construction.
+            if (drewPower && !root.compact) {
+                var ascent = Math.ceil(root._fontPixels() * 0.8);
+                var descent = Math.ceil(root._fontPixels() * 0.2);
+                var labelX = width - gutter + 4;
+                ctx.font = root._fontString();
+                ctx.textAlign = "left";
+                ctx.fillStyle = labelColor;
+                // The 100% baseline starts 4px+ascent down so its top
+                // never clips at the canvas edge; the 0% sits just
+                // above the plot's bottom edge.
+                ctx.fillText("100%", labelX, 4 + ascent);
+                ctx.fillText("0%", labelX, root._plotBottom() - descent - 1);
             }
         }
     }

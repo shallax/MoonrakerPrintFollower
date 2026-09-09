@@ -37,6 +37,7 @@ BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
 POPOVER_QML = (PLUGINS / "MonitorPopOver.qml").read_text()
 TEMP_CHART_QML = (PLUGINS / "TemperatureChart.qml").read_text()
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
+CAPTURE_HARNESS = (ROOT / "tools" / "capture_monitor.py").read_text()
 
 
 class MonitorModelContractTests(unittest.TestCase):
@@ -877,6 +878,42 @@ class EndstopAndEtaBasisTests(unittest.TestCase):
         values = core_values(snapshot, physical, True)
         self.assertEqual(values["monitorEtaBasis"], "blend")
 
+    def test_core_values_reports_filament_used_and_remaining(self):
+        from plugins.MonitorFormatting import core_values
+        # Real Klipper shape (Status_Reference + klippy/print_stats.py):
+        # filament_used is a TOP-LEVEL print_stats field, always present
+        # while printing; the info dict only ever carries the layer
+        # counters a slicer's SET_PRINT_STATS_INFO wrote. The slicer
+        # total rides the COORDINATOR snapshot (the physical arg); the
+        # monitor snapshot has no such field.
+        snapshot = SimpleNamespace(core={"print_stats": {"state": "printing", "print_duration": 30,
+                                                         "filament_used": 3500.0,
+                                                         "info": {"current_layer": 1, "total_layer": 20}},
+                                        "virtual_sdcard": {}},
+                                   auxiliary={}, server={})
+        physical = SimpleNamespace(layer=SimpleNamespace(index=1, total=20, thickness=None),
+                                   estimated_time=None, metadata_complete=True, layer_eta=None,
+                                   filament_total=42000.0)
+        values = core_values(snapshot, physical, True)
+        self.assertEqual(values["filamentUsed"], "3.50 m")
+        self.assertEqual(values["filamentRemaining"], "38.50 m")
+        # Without the metadata total the remaining length is honest "—".
+        physical.filament_total = None
+        values = core_values(snapshot, physical, True)
+        self.assertEqual(values["filamentRemaining"], "—")
+        # Without the polled used length both read "—".
+        snapshot.core = {"print_stats": {"state": "printing"}}
+        values = core_values(snapshot, physical, True)
+        self.assertEqual(values["filamentUsed"], "—")
+        # The legacy shapes still parse (info-dict used, monitor-
+        # snapshot total) — they are fallbacks, not the live path.
+        snapshot.core = {"print_stats": {"state": "printing",
+                                         "info": {"filament_used": 1200.0}}}
+        snapshot.filament_total = 42000.0
+        values = core_values(snapshot, physical, True)
+        self.assertEqual(values["filamentUsed"], "1.20 m")
+        self.assertEqual(values["filamentRemaining"], "40.80 m")
+
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
 class MonitorQtTests(unittest.TestCase):
@@ -1139,6 +1176,75 @@ class MonitorQtTests(unittest.TestCase):
         # may well have executed it.
         scripts[0].callback(None, "Operation canceled")
         self.assertIn("outcome unknown", model.actionStatus)
+
+    def test_action_status_receipt_overlays_then_reverts_to_durable(self):
+        # The lane's completion receipts are transient: "X sent"
+        # overlays for RECEIPT_MS, then the row reverts to the durable
+        # value beneath — never to nothing (the author's ruling: age
+        # out to the previous durable value).
+        model = self.monitor()
+        self.deliver_state("standby")
+        model._commands._status = "Pause: paused"
+        model._controls._macros = {"TEST_MACRO": "macro-name"}
+        model.runMacro("TEST_MACRO", "")
+        # In flight: the lifecycle text overlays the durable status.
+        self.assertEqual(model.actionStatus, "Macro TEST_MACRO requested…")
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)
+        scripts[0].callback(None, None)
+        # Completed: the receipt, with send-family copy — never
+        # "accepted", which would claim an outcome the POST ack cannot
+        # vouch for.
+        self.assertEqual(model.actionStatus, "Macro TEST_MACRO sent")
+        self.assertNotIn("accepted", model.actionStatus)
+        # Aged out: back to the durable value that was there before.
+        self.qt.events(model._commands.RECEIPT_MS + 500)
+        self.assertEqual(model.actionStatus, "Pause: paused")
+
+    def test_console_sends_never_touch_the_action_status(self):
+        # Console traffic left the card ticker: the pane's own status
+        # line carries console feedback, and the card row keeps showing
+        # whatever durable value it had (the panel UX ruling).
+        model = self.monitor()
+        model._commands._status = "Pause: paused"
+        self.assertTrue(model.sendConsoleCommand("G28"))
+        self.assertEqual(model.consoleStatus,
+                         "Sent to Klipper's queue — output appears below as Moonraker reports it.")
+        self.assertEqual(model.actionStatus, "Pause: paused")
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)
+        scripts[0].callback(None, None)
+        # The completion is a console lane cycle, not a card event.
+        self.assertEqual(model.actionStatus, "Pause: paused")
+
+    def test_console_error_flips_the_console_local_status(self):
+        # A live "!!" response flips the console's own status line to
+        # the error notice; it holds until the next send replaces it.
+        # The card row is untouched by any of this.
+        model = self.monitor()
+        self.assertTrue(model.sendConsoleCommand("G28"))
+        self.assertEqual(model.actionStatus, "")
+        model._console.append_responses([{"text": "!! Must home first", "error": True,
+                                          "success": False, "time": model._console._store_time + 1.0}])
+        self.assertEqual(model.consoleStatus, "Klipper reported an error — see the console output.")
+        self.assertEqual(model.actionStatus, "")
+        # The next send supersedes the notice.
+        self.assertTrue(model.sendConsoleCommand("G28"))
+        self.assertEqual(model.consoleStatus,
+                         "Sent to Klipper's queue — output appears below as Moonraker reports it.")
+
+    def test_last_action_rows_are_labelled_and_always_visible(self):
+        # The permanent caption row (the author's ruling): a label so
+        # the row explains itself before first use, "—" until the first
+        # event, and no visibility gate to make it pop in and out. It
+        # lives ONLY in the Monitor's Print job grid (first row, so its
+        # columns are the grid's columns — a separate row read as
+        # misaligned); the Dashboard's print section does not repeat it.
+        self.assertIn('text: "Last action"', MONITOR_QML)
+        self.assertIn('root.printer.actionStatus.length > 0 ? root.printer.actionStatus : "—"', MONITOR_QML)
+        self.assertNotIn("visible: root.printer != null && root.printer.actionStatus.length > 0", MONITOR_QML)
+        self.assertLess(MONITOR_QML.index('text: "Last action"'), MONITOR_QML.index('text: "Layer"'))
+        self.assertNotIn('text: "Last action"', DASHBOARD_QML)
 
     def test_macros_refuse_while_printing(self):
         model = self.monitor()
@@ -1890,15 +1996,66 @@ Item {
                       "consoleSyncLines", "consoleLineHtml",
                       "textFormat: TextEdit.RichText", "selectionStart",
                       "wasAtEnd", "consoleFlick",
+                      # Appends must land on fresh lines and the ring
+                      # rotation must rebuild, not stall (the live
+                      # "everything on one line" report and its fix).
+                      'consoleText.length > 0 ? "<br>" : ""',
+                      "consoleDroppedSeen",
+                      "root.printer.setConsoleExpanded(true)",
                       # Terminal ethics: follow the tail ONLY while at it
                       # and not selecting.
                       "consoleLines", "selectByMouse",
                       "server/gcode_store?count=100"):
             self.assertIn(token, MONITOR_QML + (PLUGINS / "MonitorData.py").read_text())
+        # The poll gate opens on printer attach — never wired to the
+        # info pane's collapse (infoCollapsed defaults to false, which
+        # left the feed dead in the default layout).
+        self.assertNotIn("setConsoleExpanded(!root.infoCollapsed)", MONITOR_QML)
+        self.assertNotIn("onInfoCollapsedChanged:", MONITOR_QML)
         for token in ("consoleHistory", "consolePending", "consoleStatus", "consoleChanged",
-                      "consoleLines", "def setConsoleExpanded(",
-                      "def sendConsoleCommand(", "def clearConsoleHistory("):
+                      "consoleLines", "consoleDropped", "def setConsoleExpanded(",
+                      "def sendConsoleCommand(", "def clearConsoleHistory(",
+                      "filamentUsed", "filamentRemaining"):
             self.assertIn(token, MONITOR_MODEL)
+        # The filament rows are caption/value grid rows placed AFTER
+        # the Finish row (the author's placement), visible only while
+        # a print is active.
+        self.assertIn('text: "Filament used"', MONITOR_QML)
+        self.assertIn('text: "Filament remaining"', MONITOR_QML)
+        self.assertLess(MONITOR_QML.index('text: "Finish"'), MONITOR_QML.index('text: "Filament used"'))
+        # The z-offset nudge buttons take an exact quarter of the row
+        # (a bound preferred width, not layout distribution): fillWidth
+        # alone left "↑ 0.005" wider than "↑ 0.05" (the author's report).
+        self.assertIn("Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4", DASHBOARD_QML)
+        # The expanded chart's power axis carries its 0-100% legend,
+        # pinned (never scaled), drawn OUTSIDE the plot in a reserved
+        # right gutter — chips painted over the data looked janky (the
+        # author's report), so the plot domain shrinks to fit instead.
+        self.assertIn("function _rightGutter()", TEMP_CHART_QML)
+        self.assertIn('ctx.fillText("100%", labelX, 4 + ascent)', TEMP_CHART_QML)
+        self.assertIn('ctx.fillText("0%", labelX, root._plotBottom() - descent - 1)', TEMP_CHART_QML)
+        self.assertNotIn("fillRect(chipX", TEMP_CHART_QML)
+
+    def test_capture_harness_mocks_every_live_input(self):
+        # Determinism discipline: the captures must not read ANY live
+        # input. The wall clock slipped through once — the formatter's
+        # monitorFinish called datetime.now() and captures made in
+        # different minutes differed by one clock glyph, failing CI's
+        # byte-compare. The harness must freeze the formatter's clock,
+        # and because the Qt runtime registers plugin modules under
+        # synthetic names (the same trap as the model below), it must
+        # patch EVERY module object loaded from the formatter's source
+        # file, after the plugin tree has loaded.
+        self.assertIn("class FrozenDatetime", CAPTURE_HARNESS)
+        self.assertIn("def now(cls, tz=None)", CAPTURE_HARNESS)
+        self.assertIn("MonitorFormatting.py", CAPTURE_HARNESS)
+        self.assertIn("_freeze_formatter_clock()", CAPTURE_HARNESS)
+        # The model's own time reference stays patched module-scoped, so
+        # the synthetic history seeds from a fixed clock.
+        self.assertIn('patch.object(model_module, "time", fake_time)', CAPTURE_HARNESS)
+        # The console pane renders no caret: a blinking cursor made the
+        # captures phase-dependent.
+        self.assertIn("cursorVisible: false", MONITOR_QML)
 
     def test_no_bisect_debris_and_the_console_is_visible(self):
         # The 3.5.0 release shipped with the console behind a

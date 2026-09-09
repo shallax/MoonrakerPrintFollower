@@ -35,6 +35,12 @@ def _trim_transcript(entries: list) -> list:
     return entries[-MAX_TRANSCRIPT:]
 
 
+# The console-local status when a live "!!" response lands: the pane's
+# own status line is where Klipper's verdicts live, and it must not
+# keep claiming "sent" while the feed shows an error (panel UX ruling).
+KLIPPER_ERROR_STATUS = "Klipper reported an error — see the console output."
+
+
 class ConsoleController(QObject):
     changed = pyqtSignal()
 
@@ -63,6 +69,12 @@ class ConsoleController(QObject):
             transcript = _transcript_from_history(getattr(self._config(), "console_history", ()))
         self._transcript = [dict(entry) for entry in transcript]
         self._store_time = float(getattr(self._config(), "console_store_time", 0.0) or 0.0)
+        # Lines rotated out of the session ring's HEAD once it hits
+        # MAX_HISTORY. The pane renders the transcript incrementally and
+        # the ring's length stops growing at the cap, so the count alone
+        # can no longer signal new content: the pane drops this many
+        # lines from its own head (or rebuilds) to stay aligned.
+        self._dropped = 0
         self._status = ""
         # Accepted-but-unacknowledged sends, counted per completion of a
         # console-labelled lane cycle. Per-idle-epoch decrements drifted
@@ -82,9 +94,20 @@ class ConsoleController(QObject):
         return {
             "consoleHistory": [entry["text"] for entry in self._transcript if entry["kind"] == "command"],
             "consoleLines": [dict(entry) for entry in self._transcript],
+            "consoleDropped": self._dropped,
             "consolePending": self._pending,
             "consoleStatus": self._status,
         }
+
+    def _append_entries(self, additions) -> None:
+        """Append transcript entries, trimming to the session ring cap.
+        Once the ring is full every addition rotates one entry out of
+        the HEAD; the count of rotated lines feeds the pane's renderer
+        (a full ring never grows, so an incremental sync would otherwise
+        stop appending forever)."""
+        prior = len(self._transcript)
+        self._transcript = (self._transcript + additions)[-MAX_HISTORY:]
+        self._dropped += max(0, prior + len(additions) - MAX_HISTORY)
 
     def send(self, text) -> bool:
         """Accept a console line; True only when it actually entered the
@@ -105,7 +128,7 @@ class ConsoleController(QObject):
             self.changed.emit()
             return False
         entry = {"kind": "command", "text": line, "error": False, "success": False, "restored": False}
-        self._transcript = self._transcript[-MAX_HISTORY + 1:] + [entry]
+        self._append_entries([entry])
         self._pending += 1
         self._status = "Sent to Klipper's queue — output appears below as Moonraker reports it."
         self._persist()
@@ -132,7 +155,13 @@ class ConsoleController(QObject):
         # "stale responses without requests" report was the backfill
         # re-adding the server's whole buffer).
         self._store_time = max(float(entry.get("time") or 0.0) for entry in entries)
-        self._transcript = (self._transcript + fresh)[-MAX_HISTORY:]
+        self._append_entries(fresh)
+        # A live "!!" anywhere in the batch flips the console-local
+        # status to the error notice; it holds until the next send
+        # replaces it. Restored lines never flip it (load is not a
+        # verdict).
+        if any(entry["error"] for entry in fresh):
+            self._status = KLIPPER_ERROR_STATUS
         self._persist()
         self.changed.emit()
 

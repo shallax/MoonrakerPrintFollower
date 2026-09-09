@@ -18,3 +18,6 @@ pyproject.toml
 
 # Persona-review records and decision log — never committed.
 review/
+
+.determinism-check/
+.claude/

@@ -52,7 +52,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 from PyQt6.QtCore import QObject, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlComponent, QQmlEngine
-from PyQt6.QtQuick import QQuickWindow
+from PyQt6.QtQuick import QQuickItem, QQuickWindow
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +189,14 @@ class SettingsManager(QObject):
     @pyqtProperty(bool, notify=settingsChanged)
     def settingsTraceHttp(self):
         return False
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def cacheStatus(self):
+        return ""
+
+    @pyqtSlot()
+    def clearCache(self):
+        pass
 
     # --- Connection test ---
     @pyqtProperty(str, notify=testStatusChanged)
@@ -483,16 +491,37 @@ def main():
                                % (len(tab_names), tab_bar.property("count")))
 
         def fitted_height():
-            """Fitted height for the ACTIVE tab's visible Flickable content.
+            """Fitted height for the ACTIVE tab's Flickable content.
 
             Everything below the Flickable's content bottom is fixed
             chrome: 11 px page margin, the tab panel's 10 px bottom gap
             and the action-buttons row (~28 px).
+
+            The Flickable is located through the StackLayout's CURRENT
+            item, never by a visible-item hunt: the tab switch's
+            visibility propagation is racy, and "the first visible
+            Flickable" once found nothing (the diagnostics tab kept the
+            upload height) and another time the wrong tab's page — the
+            two flake shapes the determinism gate caught. contentHeight
+            is a content property, so the active page can be measured
+            even before it reports visible.
             """
-            flickable = None
+            stack = None
             for candidate in descendants(item):
                 meta = candidate.metaObject()
-                if meta.className() == "QQuickFlickable" and candidate.isVisible():
+                if meta.className() == "QQuickStackLayout":
+                    stack = candidate
+                    break
+            page = stack.property("currentItem") if stack is not None else None
+            flickable = None
+            if page is not None:
+                # The QML-only types (QQuickFlickable) are not importable
+                # from PyQt6.QtQuick; match by class name like the rest
+                # of the harness.
+                for candidate in page.findChildren(QQuickItem):
+                    meta = candidate.metaObject()
+                    if meta.className() != "QQuickFlickable":
+                        continue
                     try:
                         content = float(candidate.property("contentHeight") or 0.0)
                     except TypeError:
@@ -519,12 +548,38 @@ def main():
             # active tab's content (the contentHeight is independent of the
             # viewport size, so measuring before resizing is stable).  The
             # tab panel never stretches.  Width stays at the requested 700.
-            target = fitted_height()
+            # The Flickable's contentHeight can settle late (async item
+            # loads), so spin until two consecutive measurements agree
+            # before trusting it — a one-in-N capture flake otherwise.
+            target = None
+            previous = object()  # a sentinel: a first read of None must
+            # NOT count as "stable" (the tab switch may not have landed
+            # yet and no Flickable reports visible — the diagnostics
+            # tab once kept the upload height and the captures flipped).
+            for _ in range(40):
+                target = fitted_height()
+                if target == previous:
+                    break
+                previous = target
+                app.processEvents()
             if target is not None and 300 <= target <= 900:
                 item.setHeight(target)
                 window.resize(700, target)
                 for _ in range(5):
                     app.processEvents()
+            # The Save button's enabled binding can flip late; grab it
+            # only after two consecutive stable reads AND a short settle
+            # so any style transition finishes (a mid-transition grab
+            # rendered the footer grey in one run and blue in the next).
+            stable = None
+            for _ in range(25):
+                now = item.property("canSave")
+                app.processEvents()
+                if now == stable:
+                    break
+                stable = now
+            for _ in range(5):
+                app.processEvents()
             path = os.path.join(output_dir, "05-settings-%s.png" % name)
             image = window.grabWindow()
             if not image.save(path):

@@ -147,6 +147,7 @@ def core_values(snapshot, physical, connected):
     sd = snapshot.core.get("virtual_sdcard") or {}
     move = snapshot.core.get("gcode_move") or {}
     motion = snapshot.core.get("motion_report") or {}
+    info = stats.get("info") or {}
     state = str(stats.get("state") or "unknown")
     layer = physical.layer
     current, total = layer.index, layer.total
@@ -172,6 +173,24 @@ def core_values(snapshot, physical, connected):
     if layer_progress is None:
         layer_progress = -1.0
     position = motion.get("live_position") or ()
+    # Filament accounting (the author's request): Moonraker reports the
+    # used length as a TOP-LEVEL print_stats field; Klipper's info dict
+    # only ever holds the layer counters a slicer's SET_PRINT_STATS_INFO
+    # wrote (current_layer/total_layer), never filament_used — the old
+    # info-dict read matched no real poll. The info dict stays a
+    # fallback for robustness. The slicer's total comes from the file
+    # metadata in the coordinator snapshot (physical.filament_total);
+    # the monitor snapshot is the second home for legacy callers.
+    # Remaining is honest "—" without both.
+    used_mm = number(stats.get("filament_used"), None)
+    if used_mm is None:
+        used_mm = number(info.get("filament_used"), None)
+    total_mm = getattr(physical, "filament_total", None)
+    if total_mm is None:
+        total_mm = getattr(snapshot, "filament_total", None)
+    filament_used = f"{used_mm / 1000.0:.2f} m" if used_mm is not None else "—"
+    filament_remaining = f"{max(0.0, total_mm - used_mm) / 1000.0:.2f} m" \
+        if used_mm is not None and total_mm is not None and total_mm >= 0 else "—"
     return {
         "monitorState": state.capitalize() if connected else "Disconnected",
         "monitorFilename": str(stats.get("filename") or ""),
@@ -185,6 +204,8 @@ def core_values(snapshot, physical, connected):
         "monitorFlow": factor_percent(move.get("extrude_factor")),
         "monitorPosition": f"X {number(position[0]):.1f}   Y {number(position[1]):.1f}   Z {number(position[2]):.2f}" if len(position) >= 3 else "—",
         "monitorMessage": str(stats.get("message") or ""),
+        "filamentUsed": filament_used,
+        "filamentRemaining": filament_remaining,
     }
 
 

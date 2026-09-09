@@ -96,21 +96,25 @@ Component {
         onPrinterChanged: {
             openPopOver = "";
             selectedChartSensor = "";
-            // The console's gcode-store poll runs only while the pane
-            // is visible (the author's ruling): push the initial state
-            // and follow collapses.
+            // The console sits below the webcam in the always-visible
+            // camera column — collapsing the info pane never hides it —
+            // so the gcode-store poll (the author's ruling: 1 s while
+            // the console is on screen, backfill on expand) opens as
+            // soon as a printer is attached and stays open. Wiring it
+            // to the info pane's collapse left the feed dead in the
+            // default layout: the pane was on screen but the poll was
+            // never enabled, and only a typed command's local echo
+            // ever appeared.
             if (root.printer != null) {
-                root.printer.setConsoleExpanded(!root.infoCollapsed);
+                root.printer.setConsoleExpanded(true);
             }
             consoleSection.consoleRenderedLines = 0;
+            consoleSection.consoleDroppedSeen = root.printer != null ? root.printer.consoleDropped : 0;
             consoleText.text = "";
             consoleSection.consoleSyncLines();
         }
-        onInfoCollapsedChanged: {
-            if (root.printer != null) {
-                root.printer.setConsoleExpanded(!root.infoCollapsed);
-            }
-        }
+        // No onInfoCollapsedChanged polling flip: the console has no
+        // collapsed state of its own (see onPrinterChanged).
         Keys.onEscapePressed: {
             openPopOver = "";
             selectedChartSensor = "";
@@ -664,6 +668,9 @@ Component {
                             // never disturbs a selection or yanks the
                             // scroll position.
                             property int consoleRenderedLines: 0
+                            // Ring-rotation lines the pane already saw
+                            // dropped out of the transcript's head.
+                            property int consoleDroppedSeen: 0
 
                             function consoleLineHtml(entry) {
                                 var hue = "#d9dde3";
@@ -679,21 +686,39 @@ Component {
 
                             function consoleSyncLines() {
                                 var lines = root.printer != null ? root.printer.consoleLines : [];
-                                if (lines.length < consoleRenderedLines) {
-                                    // A Clear (or a printer switch): rebuild.
+                                var dropped = root.printer != null ? root.printer.consoleDropped : 0;
+                                // Captured BEFORE any rebuild below: a
+                                // rebuild collapses the content height,
+                                // which would otherwise read as "at the
+                                // end" and yank a scrolled-up reader.
+                                var wasAtEnd = consoleFlick.contentY + consoleFlick.height >= consoleFlick.contentHeight - 2;
+                                if (lines.length < consoleRenderedLines || dropped > consoleDroppedSeen) {
+                                    // A Clear, a printer switch, or the
+                                    // session ring rotating at its cap
+                                    // (its length stops growing there, so
+                                    // the count alone would stall this
+                                    // sync forever): rebuild the pane
+                                    // from the transcript.
                                     consoleText.text = "";
                                     consoleRenderedLines = 0;
+                                    consoleDroppedSeen = dropped;
                                 }
                                 if (lines.length === consoleRenderedLines) {
                                     return;
                                 }
-                                var wasAtEnd = consoleFlick.contentY + consoleFlick.height >= consoleFlick.contentHeight - 2;
                                 var selStart = consoleText.selectionStart;
                                 var selEnd = consoleText.selectionEnd;
-                                var html = "";
+                                // A chunk appended into a pane that
+                                // already shows lines must start on a
+                                // fresh line: without the leading break
+                                // it glued onto the last rendered line.
+                                // The rebuild path (empty text) needs no
+                                // lead-in — the first line is the head.
+                                var html = consoleText.length > 0 ? "<br>" : "";
                                 for (var i = consoleRenderedLines; i < lines.length; ++i) {
-                                    if (html !== "")
+                                    if (i > consoleRenderedLines) {
                                         html += "<br>";
+                                    }
                                     html += consoleLineHtml(lines[i]);
                                 }
                                 consoleText.cursorPosition = consoleText.length;
@@ -794,6 +819,11 @@ Component {
                                                 wrapMode: TextEdit.NoWrap
                                                 font.family: consoleSection.monoFamily()
                                                 color: "#d9dde3"
+                                                // No blinking caret: a read-only
+                                                // terminal pane has no cursor, and
+                                                // the caret's phase made the
+                                                // captures nondeterministic.
+                                                cursorVisible: false
                                             }
                                         }
                                     }
@@ -1020,19 +1050,30 @@ Component {
                                 Layout.alignment: Qt.AlignHCenter
                             }
 
-                            UM.Label {
-                                visible: root.printer != null && root.printer.actionStatus.length > 0
-                                text: root.printer != null ? root.printer.actionStatus : ""
-                                color: UM.Theme.getColor("text_inactive")
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                            }
-
                             GridLayout {
                                 columns: 2
                                 columnSpacing: UM.Theme.getSize("default_margin").width
                                 rowSpacing: UM.Theme.getSize("default_margin").height / 2
                                 Layout.fillWidth: true
+
+                                // "Last action": the shared one-shot
+                                // lane's status row, first in the grid so
+                                // its columns ARE the grid's columns (a
+                                // separate row above read as misaligned —
+                                // the author's report). The caption is
+                                // permanent so the row explains itself
+                                // before its first event; the value is
+                                // "—" until then.
+                                UM.Label {
+                                    text: "Last action"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    text: root.printer != null && root.printer.actionStatus.length > 0 ? root.printer.actionStatus : "—"
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                }
 
                                 UM.Label {
                                     text: "Layer"
@@ -1270,6 +1311,34 @@ Component {
                                 }
                                 UM.Label {
                                     text: root.printer != null ? root.printer.monitorFinish : "—"
+                                    Layout.fillWidth: true
+                                }
+
+                                // Filament rows sit after Finish, beside
+                                // the progress block they belong to (the
+                                // author's placement). Visible only while
+                                // a print is active; the dash means
+                                // Moonraker did not report a value.
+                                UM.Label {
+                                    visible: root.printer != null && root.printer.printActive
+                                    text: "Filament used"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    visible: root.printer != null && root.printer.printActive
+                                    text: root.printer != null ? root.printer.filamentUsed : "—"
+                                    Layout.fillWidth: true
+                                }
+                                UM.Label {
+                                    visible: root.printer != null && root.printer.printActive
+                                    text: "Filament remaining"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    visible: root.printer != null && root.printer.printActive
+                                    text: root.printer != null ? root.printer.filamentRemaining : "—"
                                     Layout.fillWidth: true
                                 }
 
