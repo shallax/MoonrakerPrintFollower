@@ -1,11 +1,11 @@
 """Monitor command acknowledgement and emergency-stop ownership.
 
 The one-shot lane keeps two display channels: the durable STATUS (tracked
-confirmations, outcome-unknown warnings, emergency-stop results — it never
-expires) and a transient RECEIPT ("X sent") that overlays it for a few
-seconds and then reverts, plus a LIVE lifecycle text ("X requested…",
-"X queued") for the in-flight moment. Console sends are label-guarded out
-of all three: console feedback lives on the console's own status line.
+confirmations, outcome-unknown warnings, emergency-stop results) and a
+transient RECEIPT ("X sent") that overlays it for a few seconds, plus a
+LIVE lifecycle text ("X requested…", "X queued") for the in-flight
+moment. Console sends never ride this lane at all (the console posts its
+own request) — console feedback lives on the console's own status line.
 """
 from __future__ import annotations
 
@@ -17,10 +17,6 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 class MonitorCommands(QObject):
     changed = pyqtSignal()
     emergencyStopped = pyqtSignal()
-    # Fires when the one-shot lane finishes a command that really ran,
-    # carrying its label — console pending accounting needs per-command
-    # completions, not idle-epoch guesses.
-    completed = pyqtSignal(str)
     EXPECTED = {"Pause": {"paused"}, "Resume": {"printing"}, "Cancel": {"cancelled", "complete", "standby"}}
     # A resumed printer may re-heat before it actually resumes; the
     # confirmation must outlive a slow heat-up instead of reporting
@@ -33,8 +29,11 @@ class MonitorCommands(QObject):
     HOLD_MS = 600
     HOLD_TICK_MS = 50
     # A completion receipt overlays the durable status for this long,
-    # then reverts to whatever was beneath it (the author's ruling:
-    # age out to the previous durable value, never to nothing).
+    # then the row ages out to "—" under its permanent caption — never
+    # back to a stale claim from an earlier action (the panel ruling:
+    # "Pause: paused" resurfacing after Home reads as fresh activity).
+    # A newer action supersedes the receipt immediately, and a fresh
+    # terminal outcome can never hide under an old banner.
     RECEIPT_MS = 5000
 
     def __init__(self, data, parent=None):
@@ -103,24 +102,24 @@ class MonitorCommands(QObject):
     def send(self, label, path, body=None, queued=False):
         if self._busy or not self._data.active: return False
         self._busy = True
-        if label != "Console":
-            self._live = f"{label} requested…"
+        # A new action supersedes any old completion banner: the receipt
+        # must never resurface over the fresh lifecycle text or a newer
+        # terminal outcome (the engineering panel's receipt resurrection).
+        self._clear_receipt()
+        self._live = f"{label} requested…"
         expected = self.EXPECTED.get(label)
         self._tracked = label if expected else ""
         if expected: self._data.track_command(label, expected,
             timeout_s=self.EXPECTED_TIMEOUT_S.get(label, 10))
         self.changed.emit()
-        def finished(payload, error, occupied=True):
-            if occupied:
-                self.completed.emit(label)
+        def finished(payload, error):
             if error:
                 self._busy = False
                 self._live = ""
                 # A connection-level error says nothing about whether the
                 # command executed: the script may already have been
                 # accepted by the printer.
-                if label != "Console":
-                    self._status = f"{label} outcome unknown: {error}"
+                self._status = f"{label} outcome unknown: {error}"
                 if expected: self._data.fail_command(label, error)
                 self._tracked = ""
             elif expected:
@@ -132,8 +131,7 @@ class MonitorCommands(QObject):
                 # A receipt, never "accepted": the POST ack only means
                 # Moonraker queued the script, and Klipper can still
                 # answer "!!" afterwards (panel UX ruling).
-                if label != "Console":
-                    self._set_receipt(f"{label} sent")
+                self._set_receipt(f"{label} sent")
             self._data.later(150, self._data.refresh_all)
             # Pump the queued one-shots BEFORE announcing the idle lane:
             # listeners (the toolhead controller) react to "changed" by
@@ -147,10 +145,7 @@ class MonitorCommands(QObject):
         started = self._data.request("control", "POST", path, finished, body=body,
             category="command", timeout_ms=30000)
         if not started:
-            # A line that never entered the lane is not a completion —
-            # but one that was QUEUED and then refused at pump time is:
-            # its queue-time pending increment must still drain.
-            finished(None, "Moonraker is unavailable", occupied=queued)
+            finished(None, "Moonraker is unavailable")
         return started
 
     def script(self, label, script):
@@ -167,8 +162,7 @@ class MonitorCommands(QObject):
             if len(self._queue) >= self.MAX_QUEUED_COMMANDS:
                 return False
             self._queue.append((label, path, body))
-            if label != "Console":
-                self._live = f"{label} queued"
+            self._live = f"{label} queued"
             self.changed.emit()
             return True
         return self.send(label, path, body)
@@ -186,6 +180,9 @@ class MonitorCommands(QObject):
     def _command_changed(self, event):
         if event.get("name") != self._tracked: return
         outcome = event.get("outcome")
+        # A fresh terminal outcome must never hide under an old receipt
+        # banner (the engineering panel's receipt resurrection).
+        self._clear_receipt()
         self._live = ""
         self._status = f"{self._tracked}: {event.get('detail') or outcome}"
         if event.get("terminal"):
@@ -259,6 +256,12 @@ class MonitorCommands(QObject):
         self._clicks = 0
         self.changed.emit()
 
+    def _clear_receipt(self) -> None:
+        """Supersede the current banner without emitting — callers hold
+        the display transition and emit once themselves."""
+        self._receipt = ""
+        self._receipt_timer.stop()
+
     def _set_receipt(self, text) -> None:
         # No changed.emit here: the only caller is inside finished(),
         # which must pump the queue BEFORE announcing the idle lane —
@@ -269,6 +272,14 @@ class MonitorCommands(QObject):
         self._receipt_timer.start()
 
     def _expire_receipt(self) -> None:
+        # A receipt that is still showing owns this expiry. One that was
+        # superseded by a newer action was already cleared by it — this
+        # expiry must not blank the newer action's fresh status.
+        if not self._receipt:
+            return
         self._receipt = ""
+        # Age out to "—" (the row's caption stays), never back to a
+        # stale durable claim from an earlier action (panel ruling).
+        self._status = ""
         self.changed.emit()
 

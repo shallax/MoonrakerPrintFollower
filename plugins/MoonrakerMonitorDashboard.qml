@@ -182,13 +182,6 @@ Component {
                 height: 46 * screenScaleFactor
                 sourceComponent: emergencyButtonComponent
             }
-            UM.Label {
-                width: parent.width
-                text: "Click twice, then press and hold the third time: the stop fires after 0.6 seconds of holding, and releasing early cancels. The arm resets after 1 second of inactivity."
-                color: UM.Theme.getColor("text_inactive")
-                font: UM.Theme.getFont("default")
-                wrapMode: Text.WordWrap
-            }
         }
 
         RowLayout {
@@ -280,9 +273,20 @@ Component {
                     }
                     Cura.SecondaryButton {
                         id: collapseButton
+                        Layout.alignment: Qt.AlignVCenter
                         fixedWidthMode: true
-                        width: 32 * screenScaleFactor
-                        text: root.controlsCollapsed ? "‹" : "›"
+                        // Square at the OLD button width: the theme adds
+                        // its padding around the 32px content, so the
+                        // height tracks the rendered width (the
+                        // author's ruling).
+                        width: 28 * screenScaleFactor
+                        iconSize: 12 * screenScaleFactor
+                        height: width
+                        implicitHeight: width
+                        // The SAME theme-chevron family as the monitor's
+                        // pane toggles (the author's ruling: all pane
+                        // collapse buttons uniform).
+                        iconSource: root.controlsCollapsed ? UM.Theme.getIcon("ChevronSingleLeft") : UM.Theme.getIcon("ChevronSingleRight")
                         tooltip: root.controlsCollapsed ? "Show the printer controls." : "Hide the printer controls."
                         onClicked: {
                             if (root.printer != null) {

@@ -78,15 +78,17 @@ def main():
     try:
         # DETERMINISM: every live input the scene renders must be mocked.
         # The model's time module is patched during seeding below, but
-        # the formatter's finish-clock reads datetime.now() straight off
-        # the wall (MonitorFormatting.monitorFinish), so captures made in
-        # different minutes differed by one clock glyph and CI's
-        # byte-compare failed. Freeze the formatter's clock for the life
+        # wall-clock text rendered from plugin modules is not: the
+        # formatter's finish-clock reads datetime.now() straight off the
+        # wall (MonitorFormatting.monitorFinish), and so does the
+        # Preview follower's ETA finish (PreviewFollower.update_eta), so
+        # captures made in different minutes differed by one clock glyph
+        # and CI's byte-compare failed. Freeze both clocks for the life
         # of this process: the pinned container then renders the same
         # bytes regardless of when the capture runs. The Qt runtime
         # registers plugin modules under synthetic names (the same trap
         # documented for the model below), so EVERY module object loaded
-        # from the formatter's source file is patched — after the
+        # from one of the frozen source files is patched — after the
         # plugin tree has been loaded by the runtime.
         from datetime import datetime as _real_datetime
 
@@ -95,9 +97,14 @@ def main():
             def now(cls, tz=None):
                 return cls(2026, 9, 9, 12, 0, 0)
 
-        def _freeze_formatter_clock():
+        _frozen_clock_sources = (
+            os.path.join(ROOT, "plugins", "MonitorFormatting.py"),
+            os.path.join(ROOT, "plugins", "PreviewFollower.py"),
+        )
+
+        def _freeze_plugin_clocks():
             for _mod in list(sys.modules.values()):
-                if getattr(_mod, "__file__", "") == os.path.join(ROOT, "plugins", "MonitorFormatting.py"):
+                if getattr(_mod, "__file__", "") in _frozen_clock_sources:
                     _mod.datetime = FrozenDatetime
         transport = ScriptedTransport()
         root = qt.load("FollowerRuntime")
@@ -105,7 +112,7 @@ def main():
         follower_app = qt.Application(machine_name="Voron v2.4 250")
         with patch.object(root, "MoonrakerClient", lambda parent: real(parent, transport=transport)):
             follower = qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(follower_app)
-        _freeze_formatter_clock()
+        _freeze_plugin_clocks()
         config_type = qt.load("PrinterConfig").PrinterConfig
         # The console transcript seeds the terminal pane: a typed line,
         # a plain response and a "!!" error, all restored (they came

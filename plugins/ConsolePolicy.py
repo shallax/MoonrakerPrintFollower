@@ -20,8 +20,9 @@ MAX_HISTORY = 200
 # survive across sessions, with restored lines greyed in the pane.
 MAX_TRANSCRIPT = 50
 
-# Mirror MonitorCommands.MAX_QUEUED_COMMANDS: the console shares the
-# one-shot lane with macros and setup scripts.
+# The console's own in-flight bound: its sends ride their own request
+# lane, never the shared one-shot lane. The real transport serialises
+# one request per channel, so this is headroom, not a queue depth.
 MAX_PENDING = 16
 
 # A pasted megabyte "line" must not be sent verbatim — the console's

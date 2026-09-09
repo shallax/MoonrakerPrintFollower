@@ -29,16 +29,35 @@ for run in run1 run2; do
         && python3 tools/capture_upload.py '$tmp/$run'"
 done
 stale=0
+count=0
+# ANY asymmetry between the runs fails the gate, not just a changed
+# byte: a file produced by only one run — run1 missing a scene run2
+# rendered, or run2 growing an extra scene run1 never made — is drift
+# too, so the scene lists must agree in both directions, and then every
+# common file must match byte for byte.
 for generated in "$tmp/run1"/*.png; do
+    [ -e "$generated" ] || break
+    count=$((count + 1))
     name="$(basename "$generated")"
-    if ! cmp -s "$generated" "$tmp/run2/$name"; then
-        echo "NON-DETERMINISTIC: $name differs between two runs in the same container" >&2
+    if [ -e "$tmp/run2/$name" ]; then
+        if ! cmp -s "$generated" "$tmp/run2/$name"; then
+            echo "NON-DETERMINISTIC: $name differs between two runs in the same container" >&2
+            stale=1
+        fi
+    else
+        echo "NON-DETERMINISTIC: $name was produced by run1 but not by run2" >&2
+        stale=1
+    fi
+done
+for generated in "$tmp/run2"/*.png; do
+    [ -e "$generated" ] || break
+    name="$(basename "$generated")"
+    if [ ! -e "$tmp/run1/$name" ]; then
+        echo "NON-DETERMINISTIC: $name was produced by run2 but not by run1" >&2
         stale=1
     fi
 done
 if [ "$stale" -eq 0 ]; then
-    set -- "$tmp/run1"/*.png
-    count=$#
     rm -rf "$tmp"
     echo "captures are deterministic: $count scenes byte-identical across two runs"
 fi

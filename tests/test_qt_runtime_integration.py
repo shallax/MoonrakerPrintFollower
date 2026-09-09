@@ -320,7 +320,7 @@ class QtRuntimeTests(unittest.TestCase):
     def test_monitor_background_timers_fire_during_frequent_status_updates(self):
         model, client, transport = self.monitor()
         policy = self.qt.load("MoonrakerSession").PollPolicy
-        client.session.state.poll_policy = policy(auxiliary_idle_ms=30, power_ms=40, system_ms=50, endstops_ms=70, console_ms=30, discovery_ms=60)
+        client.session.state.poll_policy = policy(auxiliary_idle_ms=30, power_ms=40, system_ms=50, endstops_ms=70, console_ms=30, console_idle_ms=30, discovery_ms=60)
         model._data._intervals()
         counts = [0, 0, 0, 0, 0, 0]  # auxiliary, power, system, endstops, console, discovery
         for index, timer in enumerate(model._data._timers.values()):

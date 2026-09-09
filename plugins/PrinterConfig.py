@@ -213,12 +213,12 @@ class PrinterConfig:
             data["console_transcript"] = []
         try:
             store_time = float(data.get("console_store_time") or 0.0)
-            data["console_store_time"] = store_time if isfinite(store_time) else 0.0
-        except (TypeError, ValueError):
-            data["console_store_time"] = 0.0
-        try:
-            store_time = float(data.get("console_store_time") or 0.0)
-            data["console_store_time"] = store_time if isfinite(store_time) else 0.0
+            # A finite stamp beyond 2100-01-01 (or before the epoch) is a
+            # corrupt record, not a printer clock: the feed's watermark
+            # would freeze the console forever (panel security P2-4).
+            if not isfinite(store_time) or store_time < 0.0 or store_time > 4_102_444_800.0:
+                store_time = 0.0
+            data["console_store_time"] = store_time
         except (TypeError, ValueError):
             data["console_store_time"] = 0.0
 
@@ -242,8 +242,12 @@ class PrinterConfig:
 
         data["upload_path"] = data["upload_path"].strip().strip("/")
         data["temperature_chart"] = normalise_temperature_chart(data.get("temperature_chart"))
+        # A corrupt legacy record must not load an unbounded history
+        # list into memory (panel security P3): trim like every other
+        # retained list in this record (ConsolePolicy.MAX_HISTORY = 200;
+        # the layering pin keeps the number local).
         history = data.get("console_history")
-        data["console_history"] = [str(line) for line in history] if isinstance(history, (list, tuple)) else []
+        data["console_history"] = [str(line) for line in history][-200:] if isinstance(history, (list, tuple)) else []
         return cls(**data)
 
 

@@ -9,7 +9,7 @@ from urllib.parse import quote
 from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
 
-from .MonitorFormatting import parse_bed_mesh, result
+from .MonitorFormatting import filament_total_mm_from_file, parse_bed_mesh, result
 from .PreviewFormatting import (
     pause_can_toggle,
     pause_eta,
@@ -44,6 +44,15 @@ class PrintCoordinator(QObject):
         self._mr_meta_file = ""
         self._mr_meta_job = ""
         self._mr_meta_at = 0.0
+        # The active print's filament total parsed from the DOWNLOADED
+        # file's own header (client-side): Moonraker's metadata
+        # undercounts multi-extruder prints (its Cura parser read only
+        # the first ';Filament used:' value until v0.10), so the header
+        # parse wins whenever the file is local and the metadata total
+        # stays the fallback for files never downloaded. The bounded
+        # scan is latched per downloaded file path.
+        self._header_total_mm = None
+        self._header_total_path = ""
         self._layer_trace_at = 0.0
         self._monitor_requested = False
         self._publish_at = 0.0
@@ -123,6 +132,16 @@ class PrintCoordinator(QObject):
             job = self._files.job_key
             view = self._index.view
             if view is not None and view.job_key != job: view = None
+            # The downloaded file's OWN header is the authoritative
+            # filament total; Moonraker's parse of it (the metadata
+            # below) is the fallback. One bounded head read per
+            # downloaded file — the files service emits changed when a
+            # download completes, so this latch runs on the refresh
+            # that immediately follows it.
+            path = self._files.path
+            if path != self._header_total_path:
+                self._header_total_path = path
+                self._header_total_mm = filament_total_mm_from_file(path) if path else None
             # The downloaded metadata wins; Moonraker's header parse is
             # the fallback that populates the layer-height readout and
             # the slicer estimate without any gcode download.
@@ -156,10 +175,12 @@ class PrintCoordinator(QObject):
                            or self._files.phase in ("resolving", "downloading")
                            or self._index.phase == "indexing"
                            or self._cura.loading)
-            try:
-                filament_total = float(metadata.get("filament_total"))
-            except (TypeError, ValueError):
-                filament_total = None
+            filament_total = self._header_total_mm
+            if filament_total is None:
+                try:
+                    filament_total = float(metadata.get("filament_total"))
+                except (TypeError, ValueError):
+                    filament_total = None
             self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
                 estimate if estimate > 0 else None, self._files.metadata_complete,
                 layer_progress=layer_progress, index_ready=view is not None,
@@ -270,6 +291,8 @@ class PrintCoordinator(QObject):
             self._mr_meta = {}
             self._mr_meta_file = ""
             self._mr_meta_job = ""
+            self._header_total_mm = None
+            self._header_total_path = ""
             self._status = {}
             self._jobs.reset()
             self._layers.reset()

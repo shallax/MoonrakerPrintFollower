@@ -35,11 +35,11 @@ class ConsolePolicyTests(unittest.TestCase):
         self.assertEqual(trim_history("not-a-list"), [])
         self.assertEqual(trim_history([1, 2, 3]), ["1", "2", "3"])
 
-    def test_pending_cap_mirrors_the_shared_lane(self):
-        # ConsolePolicy.MAX_PENDING mirrors MonitorCommands'
-        # MAX_QUEUED_COMMANDS so the console can never flood the shared
-        # one-shot lane (asserted as a literal: MonitorCommands imports
-        # Qt, and this file must stay stdlib-only).
+    def test_pending_cap_bounds_the_consoles_own_lane(self):
+        # ConsolePolicy.MAX_PENDING bounds the console's OWN in-flight
+        # sends (the console posts its own requests, never the shared
+        # one-shot lane). Asserted as a literal: this file must stay
+        # stdlib-only.
         self.assertEqual(MAX_PENDING, 16)
 
 

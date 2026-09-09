@@ -96,25 +96,24 @@ Component {
         onPrinterChanged: {
             openPopOver = "";
             selectedChartSensor = "";
-            // The console sits below the webcam in the always-visible
-            // camera column — collapsing the info pane never hides it —
-            // so the gcode-store poll (the author's ruling: 1 s while
-            // the console is on screen, backfill on expand) opens as
-            // soon as a printer is attached and stays open. Wiring it
-            // to the info pane's collapse left the feed dead in the
-            // default layout: the pane was on screen but the poll was
-            // never enabled, and only a typed command's local echo
-            // ever appeared.
+            // The gcode-store poll follows the console's OWN collapse
+            // state (the author's ruling: poll only while the console
+            // is on screen, with a backfill on expand). A printer that
+            // attaches with the console collapsed starts without the
+            // poll; expanding starts it (and seeds the backfill).
             if (root.printer != null) {
-                root.printer.setConsoleExpanded(true);
+                root.printer.setConsoleExpanded(root.printer.sectionExpandedMap["console"] !== false);
             }
             consoleSection.consoleRenderedLines = 0;
             consoleSection.consoleDroppedSeen = root.printer != null ? root.printer.consoleDropped : 0;
+            // Revisions are monotonic per model lifetime; on a new
+            // printer the pane re-renders from scratch anyway, so the
+            // cursor resets with the other two (the architecture
+            // panel's asymmetry note).
+            consoleSection.consoleRevisionsSeen = root.printer != null ? root.printer.consoleRevisions : 0;
             consoleText.text = "";
             consoleSection.consoleSyncLines();
         }
-        // No onInfoCollapsedChanged polling flip: the console has no
-        // collapsed state of its own (see onPrinterChanged).
         Keys.onEscapePressed: {
             openPopOver = "";
             selectedChartSensor = "";
@@ -223,9 +222,22 @@ Component {
                     // this pane is leftmost, so the button leads.
                     Cura.SecondaryButton {
                         id: infoCollapseButton
+                        Layout.alignment: Qt.AlignVCenter
                         fixedWidthMode: true
-                        width: 32 * screenScaleFactor
-                        text: root.infoCollapsed ? "›" : "‹"
+                        // Square at the OLD button width: the theme
+                        // adds its padding around the 32px content, so
+                        // the height tracks the rendered width (the
+                        // author's ruling).
+                        width: 28 * screenScaleFactor
+                        iconSize: 12 * screenScaleFactor
+                        height: width
+                        implicitHeight: width
+
+                        // The SAME theme-chevron family as the console
+                        // and status toggles (the author's ruling: all
+                        // pane collapse buttons uniform). This pane is
+                        // leftmost and collapses left.
+                        iconSource: root.infoCollapsed ? UM.Theme.getIcon("ChevronSingleRight") : UM.Theme.getIcon("ChevronSingleLeft")
                         tooltip: root.infoCollapsed ? "Show the information." : "Hide the information."
                         onClicked: {
                             // The NEW state is computed locally: the
@@ -460,516 +472,757 @@ Component {
                 Layout.fillHeight: true
                 Layout.minimumWidth: 180 * screenScaleFactor
 
-                Cura.RoundedRectangle {
-                    id: cameraPanel
+                // Two SIBLING cards in the middle column: the webcam
+                // card on top, the console card below it (the author's
+                // ruling — the console nested inside the webcam card
+                // read as one mis-anchored pane).
+                ColumnLayout {
                     anchors.fill: parent
-                    border.color: UM.Theme.getColor("lining")
-                    border.width: UM.Theme.getSize("default_lining").width
-                    color: UM.Theme.getColor("main_background")
-                    radius: UM.Theme.getSize("default_radius").width
+                    spacing: UM.Theme.getSize("default_margin").height
 
-                    ColumnLayout {
-                        anchors.fill: parent
-                        spacing: 0
+                    Cura.RoundedRectangle {
+                        id: cameraPanel
+                        Layout.fillWidth: true
+                        // The webcam card ALWAYS fills: the layout
+                        // allocates the console's capped preferred
+                        // height first and the webcam card absorbs the
+                        // rest — collapsing the console shrinks its
+                        // preferred to the header row and the webcam
+                        // grows into the freed space automatically.
+                        Layout.fillHeight: true
+                        Layout.preferredHeight: cameraColumn.implicitHeight
+                        Layout.minimumHeight: 0
+                        border.color: UM.Theme.getColor("lining")
+                        border.width: UM.Theme.getSize("default_lining").width
+                        color: UM.Theme.getColor("main_background")
+                        radius: UM.Theme.getSize("default_radius").width
 
-                        UM.Label {
-                            // The pane title, in the other panes' style.
-                            text: "Webcam"
-                            font: UM.Theme.getFont("medium_bold")
-                            color: UM.Theme.getColor("text_inactive")
-                            Layout.fillWidth: true
-                            Layout.topMargin: UM.Theme.getSize("default_margin").height
-                            Layout.leftMargin: UM.Theme.getSize("default_margin").width
-                        }
-
-                        Item {
-                            id: cameraViewport
-                            Layout.fillWidth: true
-                            // The camera fills the pane ONLY while the
-                            // console is collapsed; expanded, the camera
-                            // fits its stream and the console (the
-                            // column's last child) absorbs the leftover
-                            // space (the author's rulings).
-                            Layout.fillHeight: root.printer != null && root.printer.sectionExpandedMap["console"] === false
-                            // The viewport must be allowed to SHRINK
-                            // below its content: with a tight pane the
-                            // fitted stream + controls + console
-                            // overflowed the pane's bounds (the
-                            // author's report).
-                            Layout.minimumHeight: 0
-                            Layout.margins: UM.Theme.getSize("default_margin").width
-
-                            UM.Label {
-                                anchors.centerIn: parent
-                                // "Not configured" and "offline" are
-                                // different states: a configured webcam is
-                                // merely unreachable while Moonraker is
-                                // down, and must not read as missing.
-                                visible: !root.cameraConfigured && (root.printer == null || root.printer.webcamNames.length === 0)
-                                text: "No webcam configured in Moonraker"
-                                color: UM.Theme.getColor("text_inactive")
-                                font: UM.Theme.getFont("default")
-                            }
-
-                            UM.Label {
-                                anchors.centerIn: parent
-                                visible: !root.cameraConfigured && root.printer != null && root.printer.webcamNames.length > 0
-                                text: "Camera offline — reconnecting to Moonraker…"
-                                color: UM.Theme.getColor("text_inactive")
-                                font: UM.Theme.getFont("default")
-                            }
-
-                            Cura.NetworkMJPGImage {
-                                id: cameraImage
-                                visible: root.cameraConfigured
-                                source: root.cameraConfigured ? (root.printer.cameraRefreshNonce > 0 ? root.printer.cameraUrl.toString() + (root.printer.cameraUrl.toString().indexOf("?") >= 0 ? "&" : "?") + "mpf_reload=" + root.printer.cameraRefreshNonce : root.printer.cameraUrl) : ""
-                                rotation: root.printer != null ? root.printer.cameraRotation : 0
-                                anchors.centerIn: parent
-
-                                property bool imageRotated: rotation === 90 || rotation === 270
-                                property real maxViewWidth: cameraViewport.width
-                                property real maxViewHeight: cameraViewport.height
-                                property real fitScale: {
-                                    if (imageWidth <= 0 || imageHeight <= 0) {
-                                        return 1;
-                                    }
-                                    if (imageRotated) {
-                                        return Math.min(maxViewWidth / imageHeight, maxViewHeight / imageWidth);
-                                    }
-                                    return Math.min(maxViewWidth / imageWidth, maxViewHeight / imageHeight);
-                                }
-
-                                width: Math.max(1, Math.floor(imageWidth * fitScale))
-                                height: Math.max(1, Math.floor(imageHeight * fitScale))
-
-                                transform: Scale {
-                                    origin.x: cameraImage.width / 2
-                                    origin.y: cameraImage.height / 2
-                                    xScale: root.printer != null && root.printer.cameraFlipHorizontal ? -1 : 1
-                                    yScale: root.printer != null && root.printer.cameraFlipVertical ? -1 : 1
-                                }
-
-                                onVisibleChanged: {
-                                    if (source !== "") {
-                                        if (visible)
-                                            start();
-                                        else
-                                            stop();
-                                    }
-                                }
-
-                                onSourceChanged: {
-                                    if (visible && source !== "") {
-                                        start();
-                                    }
-                                }
-
-                                Component.onCompleted: {
-                                    if (source !== "") {
-                                        start();
-                                    }
-                                }
-                            }
-                        }
-
-                        // Camera control bar: a centred "Camera: <webcam>
-                        // <refresh>" group tucked under the feed. The dropdown
-                        // already carries the selected name, so no label repeats
-                        // it. (A plain Column ignores Layout.alignment, so the
-                        // bar must be a ColumnLayout for the centring to hold.)
                         ColumnLayout {
-                            // No cameras, no bar: "Camera:" with an empty
-                            // dropdown and a refresh button is dead chrome
-                            // under the "No webcam configured" message.
-                            visible: root.printer != null && root.printer.webcamNames.length > 0
-                            Layout.fillWidth: true
+                            id: cameraColumn
+                            anchors.fill: parent
                             spacing: 0
 
-                            Rectangle {
-                                width: parent.width
-                                height: UM.Theme.getSize("default_lining").height
-                                color: UM.Theme.getColor("lining")
+                            UM.Label {
+                                // The pane title, in the other panes' style.
+                                text: "Webcam"
+                                font: UM.Theme.getFont("medium_bold")
+                                color: UM.Theme.getColor("text_inactive")
+                                Layout.fillWidth: true
+                                Layout.topMargin: UM.Theme.getSize("default_margin").height
+                                Layout.leftMargin: UM.Theme.getSize("default_margin").width
                             }
 
                             Item {
+                                id: cameraViewport
                                 Layout.fillWidth: true
-                                height: cameraControls.height + 2 * UM.Theme.getSize("narrow_margin").height
+                                // The camera fills the pane ONLY while the
+                                // console is collapsed; expanded, the camera
+                                // fits its stream and the console (the
+                                // column's last child) absorbs the leftover
+                                // space (the author's rulings).
+                                // The viewport fills the webcam card: a
+                                // small stream centres inside the card, and
+                                // the card itself grows or fits with the
+                                // console's collapse state.
+                                Layout.fillHeight: true
+                                Layout.margins: UM.Theme.getSize("default_margin").width
 
-                                RowLayout {
-                                    id: cameraControls
+                                UM.Label {
                                     anchors.centerIn: parent
-                                    spacing: UM.Theme.getSize("narrow_margin").width
+                                    // "Not configured" and "offline" are
+                                    // different states: a configured webcam is
+                                    // merely unreachable while Moonraker is
+                                    // down, and must not read as missing.
+                                    visible: !root.cameraConfigured && (root.printer == null || root.printer.webcamNames.length === 0)
+                                    text: "No webcam configured in Moonraker"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    font: UM.Theme.getFont("default")
+                                }
 
-                                    UM.Label {
-                                        text: "Camera:"
-                                        font: UM.Theme.getFont("medium")
-                                        color: UM.Theme.getColor("text")
+                                UM.Label {
+                                    anchors.centerIn: parent
+                                    visible: !root.cameraConfigured && root.printer != null && root.printer.webcamNames.length > 0
+                                    text: "Camera offline — reconnecting to Moonraker…"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    font: UM.Theme.getFont("default")
+                                }
+
+                                Cura.NetworkMJPGImage {
+                                    id: cameraImage
+                                    visible: root.cameraConfigured
+                                    source: root.cameraConfigured ? (root.printer.cameraRefreshNonce > 0 ? root.printer.cameraUrl.toString() + (root.printer.cameraUrl.toString().indexOf("?") >= 0 ? "&" : "?") + "mpf_reload=" + root.printer.cameraRefreshNonce : root.printer.cameraUrl) : ""
+                                    rotation: root.printer != null ? root.printer.cameraRotation : 0
+                                    anchors.centerIn: parent
+
+                                    property bool imageRotated: rotation === 90 || rotation === 270
+                                    property real maxViewWidth: cameraViewport.width
+                                    property real maxViewHeight: cameraViewport.height
+                                    property real fitScale: {
+                                        if (imageWidth <= 0 || imageHeight <= 0) {
+                                            return 1;
+                                        }
+                                        if (imageRotated) {
+                                            return Math.min(maxViewWidth / imageHeight, maxViewHeight / imageWidth);
+                                        }
+                                        return Math.min(maxViewWidth / imageWidth, maxViewHeight / imageHeight);
                                     }
 
-                                    Cura.ComboBox {
-                                        id: cameraSelector
-                                        visible: root.printer != null && root.printer.webcamNames.length > 1
-                                        Layout.preferredWidth: 180 * screenScaleFactor
-                                        Layout.minimumWidth: 160 * screenScaleFactor
-                                        enabled: visible
-                                        model: root.printer != null ? root.printer.webcamNames : []
-                                        currentIndex: root.printer != null ? root.printer.activeWebcamIndex : -1
-                                        onActivated: function (index) {
-                                            if (root.printer != null) {
-                                                root.printer.selectWebcam(index);
-                                            }
+                                    width: Math.max(1, Math.floor(imageWidth * fitScale))
+                                    height: Math.max(1, Math.floor(imageHeight * fitScale))
+
+                                    transform: Scale {
+                                        origin.x: cameraImage.width / 2
+                                        origin.y: cameraImage.height / 2
+                                        xScale: root.printer != null && root.printer.cameraFlipHorizontal ? -1 : 1
+                                        yScale: root.printer != null && root.printer.cameraFlipVertical ? -1 : 1
+                                    }
+
+                                    onVisibleChanged: {
+                                        if (source !== "") {
+                                            if (visible)
+                                                start();
+                                            else
+                                                stop();
                                         }
                                     }
 
-                                    UM.SimpleButton {
-                                        Layout.alignment: Qt.AlignVCenter
-                                        width: UM.Theme.getSize("small_button_icon").width
-                                        height: UM.Theme.getSize("small_button_icon").height
-                                        color: UM.Theme.getColor("text_inactive")
-                                        hoverColor: UM.Theme.getColor("text")
-                                        iconSource: UM.Theme.getIcon("ArrowDoubleCircleRight")
-                                        onClicked: {
-                                            if (root.printer != null) {
-                                                root.printer.refreshWebcams();
+                                    onSourceChanged: {
+                                        if (visible && source !== "") {
+                                            start();
+                                        }
+                                    }
+
+                                    Component.onCompleted: {
+                                        if (source !== "") {
+                                            start();
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Camera control bar: a centred "Camera: <webcam>
+                            // <refresh>" group tucked under the feed. The dropdown
+                            // already carries the selected name, so no label repeats
+                            // it. (A plain Column ignores Layout.alignment, so the
+                            // bar must be a ColumnLayout for the centring to hold.)
+                            ColumnLayout {
+                                // No cameras, no bar: "Camera:" with an empty
+                                // dropdown and a refresh button is dead chrome
+                                // under the "No webcam configured" message.
+                                visible: root.printer != null && root.printer.webcamNames.length > 0
+                                Layout.fillWidth: true
+                                spacing: 0
+
+                                Rectangle {
+                                    width: parent.width
+                                    height: UM.Theme.getSize("default_lining").height
+                                    color: UM.Theme.getColor("lining")
+                                }
+
+                                Item {
+                                    Layout.fillWidth: true
+                                    height: cameraControls.height + 2 * UM.Theme.getSize("narrow_margin").height
+
+                                    RowLayout {
+                                        id: cameraControls
+                                        anchors.centerIn: parent
+                                        spacing: UM.Theme.getSize("narrow_margin").width
+
+                                        UM.Label {
+                                            text: "Camera:"
+                                            font: UM.Theme.getFont("medium")
+                                            color: UM.Theme.getColor("text")
+                                        }
+
+                                        Cura.ComboBox {
+                                            id: cameraSelector
+                                            visible: root.printer != null && root.printer.webcamNames.length > 1
+                                            Layout.preferredWidth: 180 * screenScaleFactor
+                                            Layout.minimumWidth: 160 * screenScaleFactor
+                                            enabled: visible
+                                            model: root.printer != null ? root.printer.webcamNames : []
+                                            currentIndex: root.printer != null ? root.printer.activeWebcamIndex : -1
+                                            onActivated: function (index) {
+                                                if (root.printer != null) {
+                                                    root.printer.selectWebcam(index);
+                                                }
                                             }
                                         }
 
-                                        UM.TooltipArea {
-                                            anchors.fill: parent
-                                            text: "Refresh Moonraker's webcam list."
-                                            acceptedButtons: Qt.NoButton
+                                        UM.SimpleButton {
+                                            Layout.alignment: Qt.AlignVCenter
+                                            width: UM.Theme.getSize("small_button_icon").width
+                                            height: UM.Theme.getSize("small_button_icon").height
+                                            color: UM.Theme.getColor("text_inactive")
+                                            hoverColor: UM.Theme.getColor("text")
+                                            iconSource: UM.Theme.getIcon("ArrowDoubleCircleRight")
+                                            onClicked: {
+                                                if (root.printer != null) {
+                                                    root.printer.refreshWebcams();
+                                                }
+                                            }
+
+                                            UM.TooltipArea {
+                                                anchors.fill: parent
+                                                text: "Refresh Moonraker's webcam list."
+                                                acceptedButtons: Qt.NoButton
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
+                    }
+                    // Console: a collapsing pane beneath the
+                    // webcam. printer/gcode/script returns after
+                    // Klipper processes the script, and its output
+                    // streams back through the gcode store.
+                    Cura.RoundedRectangle {
+                        Layout.fillWidth: true
+                        // NO fillHeight: the card hugs the webcam card
+                        // directly (a fill slot plus a maximum clamp
+                        // left a huge gap between the cards — the
+                        // author's live report). Its height is its
+                        // content's, bounded by the hard cap below:
+                        // the author's live test found even 55% of the
+                        // column "way too high" — ~28% it is.
+                        // Collapsed, the card is a header strip sized
+                        // BY THE BUTTON with equal top/bottom margins —
+                        // the button is the largest element and decides
+                        // the strip (the author's ruling). The inner
+                        // column's implicit does not shrink reliably
+                        // once its content hides, so the collapsed
+                        // height is explicit.
+                        // EXPLICIT height, never the inner column's
+                        // implicit: the real Cura engine computed the
+                        // implicit from a collapsed chain and the card
+                        // rendered two lines tall with a white gap (the
+                        // author's report; the harness engine disagreed).
+                        Layout.preferredHeight: (root.printer != null && root.printer.sectionExpandedMap["console"] !== false) ? Math.max(190 * screenScaleFactor, cameraArea.height * 0.28) : consoleCollapseButton.height + 2 * UM.Theme.getSize("thin_margin").height
+                        Layout.maximumHeight: Math.max(190 * screenScaleFactor, cameraArea.height * 0.28)
+                        border.color: UM.Theme.getColor("lining")
+                        border.width: UM.Theme.getSize("default_lining").width
+                        color: UM.Theme.getColor("main_background")
+                        radius: UM.Theme.getSize("default_radius").width
 
-                        // Console: a collapsing pane beneath the
-                        // webcam. printer/gcode/script returns after
-                        // Klipper processes the script, and its output
-                        // streams back through the gcode store.
-                        Cura.RoundedRectangle {
-                            Layout.fillWidth: true
-                            // Expanded the pane absorbs the leftover
-                            // space; collapsed it shrinks to its header
-                            // row and the camera expands into the freed
-                            // height (the author's rulings).
-                            Layout.fillHeight: root.printer != null && root.printer.sectionExpandedMap["console"] !== false
-                            // A hard cap: with a placeholder camera (no
-                            // stream yet) the leftover is the WHOLE
-                            // pane, and an uncapped fill let the console
-                            // swallow the webcam entirely (the author's
-                            // report — the pane rendered 689 of 767 px).
-                            Layout.maximumHeight: Math.max(240 * screenScaleFactor, cameraPanel.height * 0.55)
-                            border.color: UM.Theme.getColor("lining")
-                            border.width: UM.Theme.getSize("default_lining").width
-                            color: UM.Theme.getColor("main_background")
-                            radius: UM.Theme.getSize("default_radius").width
+                        // While collapsed, a click ANYWHERE on the
+                        // strip expands the pane, like the other
+                        // panes; the header button sits above this
+                        // area and keeps its own clicks.
+                        MouseArea {
+                            visible: root.printer != null && root.printer.sectionExpandedMap["console"] === false
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (root.printer != null) {
+                                    root.printer.setSectionExpanded("console", true);
+                                    root.printer.setConsoleExpanded(true);
+                                }
+                            }
+                        }
 
-                            ColumnLayout {
-                                anchors.fill: parent
-                                spacing: 0
+                        ColumnLayout {
+                            id: consoleColumn
+                            anchors.fill: parent
+                            spacing: 0
 
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Layout.topMargin: UM.Theme.getSize("thin_margin").height
-                                    Layout.leftMargin: UM.Theme.getSize("thin_margin").width
-                                    Layout.rightMargin: UM.Theme.getSize("thin_margin").width
-                                    spacing: UM.Theme.getSize("thin_margin").width
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.topMargin: UM.Theme.getSize("thin_margin").height
+                                // The bottom breathing room keeps the
+                                // collapsed card from hugging the title
+                                // on both edges (the author's report).
+                                Layout.bottomMargin: UM.Theme.getSize("thin_margin").height
+                                Layout.leftMargin: UM.Theme.getSize("thin_margin").width
+                                Layout.rightMargin: UM.Theme.getSize("thin_margin").width
+                                spacing: UM.Theme.getSize("thin_margin").width
 
-                                    // The collapse toggle hugs the top
-                                    // LEFT like the other panes' buttons;
-                                    // the chevron points the way the
-                                    // pane will move (up = collapse).
-                                    UM.SimpleButton {
-                                        id: consoleCollapseButton
-                                        Layout.alignment: Qt.AlignVCenter
-                                        width: UM.Theme.getSize("small_button_icon").width
-                                        height: UM.Theme.getSize("small_button_icon").height
-                                        color: UM.Theme.getColor("text_inactive")
-                                        hoverColor: UM.Theme.getColor("text")
-                                        iconSource: root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? UM.Theme.getIcon("ChevronSingleUp") : UM.Theme.getIcon("ChevronSingleDown")
-                                        onClicked: {
-                                            if (root.printer != null) {
-                                                root.printer.setSectionExpanded("console", root.printer.sectionExpandedMap["console"] === false);
-                                            }
+                                // The collapse toggle hugs the top
+                                // LEFT like the other panes' buttons;
+                                // the chevron points the way the
+                                // pane will move (up = collapse).
+                                // The toggle hugs the top LEFT and
+                                // matches the OTHER panes' collapse
+                                // buttons (‹/›), not a theme chevron
+                                // (the author's ruling).
+                                Cura.SecondaryButton {
+                                    id: consoleCollapseButton
+                                    Layout.alignment: Qt.AlignVCenter
+                                    fixedWidthMode: true
+                                    // Square at the OLD button width:
+                                    // the theme adds its padding around
+                                    // the 32px content, so the height
+                                    // tracks the rendered width (the
+                                    // author's ruling).
+                                    width: 28 * screenScaleFactor
+                                    iconSize: 12 * screenScaleFactor
+                                    height: width
+                                    implicitHeight: width
+
+                                    // The same button style as the other
+                                    // panes, with the theme's UP/DOWN
+                                    // chevrons inside it (the pane
+                                    // collapses upward); the button
+                                    // centres the icon itself.
+                                    // The accordion convention: DOWN when expanded
+                                    // (the author's ruling — the first direction read
+                                    // inverted).
+                                    iconSource: root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? UM.Theme.getIcon("ChevronSingleDown") : UM.Theme.getIcon("ChevronSingleUp")
+                                    tooltip: root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? "Collapse the console." : "Expand the console."
+                                    onClicked: {
+                                        if (root.printer != null) {
+                                            // The poll follows the pane:
+                                            // collapsing stops the
+                                            // gcode-store fetch (the
+                                            // author's expanded-only
+                                            // ruling), expanding starts
+                                            // it with a backfill seed.
+                                            var expanding = root.printer.sectionExpandedMap["console"] === false;
+                                            root.printer.setSectionExpanded("console", expanding);
+                                            root.printer.setConsoleExpanded(expanding);
                                         }
-                                        UM.TooltipArea {
-                                            anchors.fill: parent
-                                            text: root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? "Collapse the console." : "Expand the console."
-                                            acceptedButtons: Qt.NoButton
-                                        }
-                                    }
-
-                                    UM.Label {
-                                        Layout.fillWidth: true
-                                        text: "Console"
-                                        font: UM.Theme.getFont("medium_bold")
-                                        color: UM.Theme.getColor("text_inactive")
                                     }
                                 }
 
-                                ColumnLayout {
-                                    id: consoleSection
-                                    visible: root.printer != null && root.printer.sectionExpandedMap["console"] !== false
+                                UM.Label {
                                     Layout.fillWidth: true
-                                    Layout.fillHeight: true
-                                    Layout.margins: UM.Theme.getSize("default_margin").width
-                                    Layout.topMargin: UM.Theme.getSize("narrow_margin").height
-                                    Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                                    spacing: UM.Theme.getSize("narrow_margin").height
-                                    enabled: root.printer != null
-                                    property int consoleRecallIndex: -1
-                                    property string consoleDraft: ""
-                                    // Pick an actually-installed monospace face at
-                                    // runtime: the generic "monospace" and comma
-                                    // lists do not resolve on every machine.
-                                    function monoFamily() {
-                                        try {
-                                            var names = Qt.fontFamilies();
-                                            var known = ["consolas", "menlo", "courier", "mono"];
-                                            for (var i = 0; i < names.length; ++i) {
-                                                var lower = String(names[i]).toLowerCase();
-                                                for (var k = 0; k < known.length; ++k) {
-                                                    if (lower.indexOf(known[k]) >= 0) {
-                                                        return names[i];
-                                                    }
+                                    text: "Console"
+                                    font: UM.Theme.getFont("medium_bold")
+                                    // Expanded, a proper title reads in
+                                    // the normal text colour; collapsed
+                                    // it greys like the other panes'
+                                    // collapsed strips.
+                                    color: root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
+                                }
+                            }
+
+                            ColumnLayout {
+                                id: consoleSection
+                                visible: root.printer != null && root.printer.sectionExpandedMap["console"] !== false
+                                // The author's cheat: if the app started
+                                // with the console collapsed, the FIRST
+                                // expand scrolls to the tail once (the
+                                // restore ran collapsed and its metrics
+                                // were stale). Later collapse/expands
+                                // never scroll.
+                                property bool consoleStartedCollapsed: false
+                                property bool consoleFirstExpandHandled: false
+                                Component.onCompleted: {
+                                    consoleStartedCollapsed = root.printer != null && root.printer.sectionExpandedMap["console"] === false;
+                                }
+                                onVisibleChanged: {
+                                    if (visible && consoleStartedCollapsed && !consoleFirstExpandHandled) {
+                                        consoleFirstExpandHandled = true;
+                                        consoleFlick.restoreScrollPending = true;
+                                    }
+                                }
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                Layout.margins: UM.Theme.getSize("default_margin").width
+                                Layout.topMargin: UM.Theme.getSize("narrow_margin").height
+                                Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+                                spacing: UM.Theme.getSize("narrow_margin").height
+                                enabled: root.printer != null
+                                property int consoleRecallIndex: -1
+                                property string consoleDraft: ""
+                                // Pick an actually-installed monospace face at
+                                // runtime: the generic "monospace" and comma
+                                // lists do not resolve on every machine.
+                                function monoFamily() {
+                                    try {
+                                        var names = Qt.fontFamilies();
+                                        var known = ["consolas", "menlo", "courier", "mono"];
+                                        for (var i = 0; i < names.length; ++i) {
+                                            var lower = String(names[i]).toLowerCase();
+                                            for (var k = 0; k < known.length; ++k) {
+                                                if (lower.indexOf(known[k]) >= 0) {
+                                                    return names[i];
                                                 }
                                             }
-                                        } catch (e) {
                                         }
-                                        return "monospace";
+                                    } catch (e) {
                                     }
-                                    // The transcript arrives oldest-first; the pane
-                                    // is ONE rich TextEdit so text selection spans
-                                    // lines (per-line delegates could not). The
-                                    // sync appends only the NEW lines, inserting
-                                    // at the end with the reader's selection
-                                    // saved and restored around it — new output
-                                    // never disturbs a selection or yanks the
-                                    // scroll position.
-                                    property int consoleRenderedLines: 0
-                                    // Ring-rotation lines the pane already saw
-                                    // dropped out of the transcript's head.
-                                    property int consoleDroppedSeen: 0
+                                    return "monospace";
+                                }
+                                // The transcript arrives oldest-first; the pane
+                                // is ONE rich TextEdit so text selection spans
+                                // lines (per-line delegates could not). The
+                                // sync appends only the NEW lines, inserting
+                                // at the end with the reader's selection
+                                // saved and restored around it — new output
+                                // never disturbs a selection or yanks the
+                                // scroll position.
+                                property int consoleRenderedLines: 0
+                                // Ring-rotation lines the pane already saw
+                                // dropped out of the transcript's head.
+                                property int consoleDroppedSeen: 0
+                                property int consoleRevisionsSeen: 0
 
-                                    function consoleLineHtml(entry) {
-                                        var hue = "#d9dde3";
-                                        if (entry.kind === "response") {
-                                            hue = entry.error ? "#f85149" : (entry.success ? "#57ab5a" : "#8b949e");
-                                        } else if (entry.success) {
-                                            // The typed line carries the send's
-                                            // own verdict (the endpoint returns
-                                            // "ok" on completion) — green like a
-                                            // success, red like an error.
-                                            hue = "#57ab5a";
-                                        } else if (entry.error) {
-                                            hue = "#f85149";
-                                        }
-                                        if (entry.restored) {
-                                            hue = entry.error ? "#a63a34" : (entry.success ? "#3f7a42" : (entry.kind === "response" ? "#5b6670" : "#6e7681"));
-                                        }
-                                        var escaped = String(entry.text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-                                        return "<span style=\"color:" + hue + ";\">" + escaped + "</span>";
+                                function consoleLineHtml(entry) {
+                                    // Terminal voice, three speakers
+                                    // (the author's rulings): commands
+                                    // carry ">", Moonraker's responses
+                                    // carry "<", and the plugin's own
+                                    // notes carry "#" in amber — a hue
+                                    // Klipper's red/green/grey never
+                                    // uses, so anything the plugin adds
+                                    // is obviously its own. Responses
+                                    // render BRIGHT (red/green); saved
+                                    // commands keep their TEXT light
+                                    // grey and put the verdict on the
+                                    // ">" only (the author's live
+                                    // ruling: the whole line turning
+                                    // green was too much) — green
+                                    // matches the input row's prompt,
+                                    // red is a failure, quiet grey is
+                                    // no verdict. While unsaved the
+                                    // line stays blue (the author's
+                                    // ruling). The muted hues are
+                                    // contrast-checked (≥4.5:1 on the
+                                    // dark well) — the old muted
+                                    // family sat near 2:1.
+                                    var hue = "#d9dde3";
+                                    var promptHue = "";
+                                    if (entry.kind === "response") {
+                                        hue = entry.error ? "#f85149" : (entry.success ? "#57ab5a" : "#8b949e");
+                                    } else if (entry.kind === "note") {
+                                        hue = "#d29922";
+                                    } else if (entry.saved === false) {
+                                        // Sent but not yet flushed to
+                                        // disk: blue until the save
+                                        // lands (the author's ruling —
+                                        // the API verdict flips too
+                                        // fast to read live).
+                                        hue = "#58a6ff";
+                                    } else {
+                                        promptHue = entry.error ? "#e05650" : (entry.success ? "#3fb950" : "#8b949e");
                                     }
+                                    if (entry.restored) {
+                                        // Restored lines grey uniformly:
+                                        // the verdict colours are LIVE
+                                        // signals, and a restored command
+                                        // showing its old green read as
+                                        // current state (the author's
+                                        // report). Restored responses
+                                        // keep their muted hues.
+                                        hue = entry.kind === "command" ? "#9da7b3" : (entry.error ? "#d0635e" : (entry.success ? "#4f9a5d" : "#9da7b3"));
+                                    }
+                                    var escaped = String(entry.text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                                    if (entry.kind === "note") {
+                                        return "<span style=\"color:" + hue + ";\"># " + escaped + "</span>";
+                                    }
+                                    if (entry.kind === "response") {
+                                        return "<span style=\"color:" + hue + ";\">&lt; " + escaped + "</span>";
+                                    }
+                                    if (promptHue) {
+                                        return "<span style=\"color:" + promptHue + ";\">&gt; </span><span style=\"color:" + hue + ";\">" + escaped + "</span>";
+                                    }
+                                    return "<span style=\"color:" + hue + ";\">&gt; " + escaped + "</span>";
+                                }
 
-                                    function consoleSyncLines() {
-                                        var lines = root.printer != null ? root.printer.consoleLines : [];
-                                        var dropped = root.printer != null ? root.printer.consoleDropped : 0;
-                                        // Captured BEFORE any rebuild below: a
-                                        // rebuild collapses the content height,
-                                        // which would otherwise read as "at the
-                                        // end" and yank a scrolled-up reader.
-                                        var wasAtEnd = consoleFlick.contentY + consoleFlick.height >= consoleFlick.contentHeight - 2;
-                                        if (lines.length < consoleRenderedLines || dropped > consoleDroppedSeen) {
-                                            // A Clear, a printer switch, or the
-                                            // session ring rotating at its cap
-                                            // (its length stops growing there, so
-                                            // the count alone would stall this
-                                            // sync forever): rebuild the pane
-                                            // from the transcript.
-                                            consoleText.text = "";
-                                            consoleRenderedLines = 0;
-                                            consoleDroppedSeen = dropped;
+                                function consoleSyncLines() {
+                                    var lines = root.printer != null ? root.printer.consoleLines : [];
+                                    var dropped = root.printer != null ? root.printer.consoleDropped : 0;
+                                    var revisions = root.printer != null ? root.printer.consoleRevisions : 0;
+                                    // Captured BEFORE any rebuild below: a
+                                    // rebuild collapses the content height,
+                                    // which would otherwise read as "at the
+                                    // end" and yank a scrolled-up reader.
+                                    var wasAtEnd = consoleFlick.contentY + consoleFlick.height >= consoleFlick.contentHeight - 2;
+                                    // A recolour rebuild (a verdict or a
+                                    // saved-flush) must keep the reader's
+                                    // EXACT place; only a first load may
+                                    // follow the tail.
+                                    var fromEmpty = consoleRenderedLines === 0;
+                                    var rebuildContentY = consoleFlick.contentY;
+                                    // The selection is captured BEFORE the
+                                    // rebuild wipe: capturing it after left
+                                    // the wiped document empty, so the
+                                    // restore below was a silent no-op and
+                                    // a mid-copy selection died on every
+                                    // recolour (the UX panel).
+                                    var selStart = consoleText.selectionStart;
+                                    var selEnd = consoleText.selectionEnd;
+                                    var prevTextHeight = consoleText.height;
+                                    if (lines.length < consoleRenderedLines || dropped > consoleDroppedSeen || revisions > consoleRevisionsSeen) {
+                                        // A Clear, a printer switch, or the
+                                        // session ring rotating at its cap
+                                        // (its length stops growing there, so
+                                        // the count alone would stall this
+                                        // sync forever): rebuild the pane
+                                        // from the transcript.
+                                        consoleText.text = "";
+                                        consoleRenderedLines = 0;
+                                        consoleDroppedSeen = dropped;
+                                        consoleRevisionsSeen = revisions;
+                                    }
+                                    if (lines.length === consoleRenderedLines) {
+                                        return;
+                                    }
+                                    var html = "";
+                                    for (var i = consoleRenderedLines; i < lines.length; ++i) {
+                                        if (i > consoleRenderedLines) {
+                                            html += "<br>";
                                         }
-                                        if (lines.length === consoleRenderedLines) {
-                                            return;
+                                        html += consoleLineHtml(lines[i]);
+                                    }
+                                    if (consoleRenderedLines === 0) {
+                                        // The rebuild sets the document
+                                        // DIRECTLY: clearing the text and
+                                        // insert()ing afterwards produced
+                                        // an EMPTY pane in the real Cura
+                                        // engine (total=53 rendered=53
+                                        // text='' — the author's smoking
+                                        // gun), while the append path's
+                                        // insert works there. The
+                                        // restored history then opens at
+                                        // the NEWEST line (the author's
+                                        // ruling).
+                                        consoleText.text = html;
+                                        if (fromEmpty) {
+                                            // The FIRST load follows the
+                                            // tail (waits for the flick's
+                                            // metrics to settle, or for the
+                                            // first expand of a start-
+                                            // collapsed console — the
+                                            // author's cheat). Recolour
+                                            // rebuilds never follow.
+                                            consoleFlick.restoreScrollPending = true;
+                                        } else {
+                                            // The reader keeps their exact
+                                            // place across the recolour
+                                            // (the golden rule). A ring
+                                            // rotation ALSO removed lines
+                                            // above the viewport: the
+                                            // document shrank by exactly
+                                            // their height, so the position
+                                            // shifts up by that amount to
+                                            // keep the visible text
+                                            // stationary (the engineering
+                                            // panel's rotation yank).
+                                            var rotationDrop = Math.max(0, prevTextHeight - consoleText.height);
+                                            consoleFlick.contentY = Math.max(0, Math.min(rebuildContentY - rotationDrop, consoleFlick.contentHeight - consoleFlick.height));
                                         }
-                                        var selStart = consoleText.selectionStart;
-                                        var selEnd = consoleText.selectionEnd;
-                                        // A chunk appended into a pane that
-                                        // already shows lines must start on a
-                                        // fresh line: without the leading break
-                                        // it glued onto the last rendered line.
-                                        // The rebuild path (empty text) needs no
-                                        // lead-in — the first line is the head.
-                                        var html = consoleText.length > 0 ? "<br>" : "";
-                                        for (var i = consoleRenderedLines; i < lines.length; ++i) {
-                                            if (i > consoleRenderedLines) {
-                                                html += "<br>";
-                                            }
-                                            html += consoleLineHtml(lines[i]);
-                                        }
+                                    } else {
+                                        // A chunk appended into a pane
+                                        // that already shows lines must
+                                        // start on a fresh line: without
+                                        // the leading break it glued onto
+                                        // the last rendered line.
+                                        html = "<br>" + html;
                                         consoleText.cursorPosition = consoleText.length;
                                         consoleText.insert(consoleText.length, html);
-                                        consoleRenderedLines = lines.length;
-                                        if (selStart !== selEnd && selStart >= 0) {
-                                            consoleText.select(selStart, selEnd);
-                                        }
-                                        if (wasAtEnd) {
-                                            consoleFlick.contentY = consoleFlick.contentHeight - consoleFlick.height;
-                                        }
                                     }
-
-                                    function consoleSend() {
-                                        if (root.printer != null) {
-                                            // A refused send (queue full, lane
-                                            // busy, Moonraker down) must keep
-                                            // the typed line: losing an unsent
-                                            // G-code draft on refusal is data
-                                            // loss, and the status line already
-                                            // explains the refusal.
-                                            if (root.printer.sendConsoleCommand(consoleInput.text)) {
-                                                consoleInput.text = "";
-                                                consoleDraft = "";
-                                                consoleRecallIndex = -1;
-                                            }
-                                            consoleInput.forceActiveFocus();
-                                        }
+                                    consoleRenderedLines = lines.length;
+                                    if (selStart !== selEnd && selStart >= 0) {
+                                        consoleText.select(selStart, selEnd);
                                     }
-                                    function consoleRecall(step) {
-                                        var history = root.printer != null ? root.printer.consoleHistory : [];
-                                        if (history.length === 0) {
-                                            return;
-                                        }
-                                        if (consoleRecallIndex < 0) {
-                                            consoleDraft = consoleInput.text;
-                                        }
-                                        consoleRecallIndex = Math.max(-1, Math.min(history.length - 1, consoleRecallIndex + step));
-                                        consoleInput.text = consoleRecallIndex < 0 ? consoleDraft : history[history.length - 1 - consoleRecallIndex];
+                                    // Follow the tail ONLY while the
+                                    // reader was already at it AND the
+                                    // pane had content before this sync:
+                                    // the FIRST sync renders an empty
+                                    // pane that reads as "at the end",
+                                    // and auto-scrolling then buried
+                                    // the restored commands at the head
+                                    // (the author's report).
+                                    if (wasAtEnd && consoleRenderedLines > 0) {
+                                        consoleFlick.contentY = consoleFlick.contentHeight - consoleFlick.height;
                                     }
+                                }
 
-                                    // A shell-terminal-styled console: dark,
-                                    // fixed-width, newest line pinned to the
-                                    // bottom — the list slides to the end as
-                                    // each line lands, and the input row lives
-                                    // INSIDE the dark well with the prompt, so
-                                    // the green ">" keeps its contrast on both
-                                    // themes (panel UX P3).
-                                    Cura.RoundedRectangle {
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 190 * screenScaleFactor
-                                        // The terminal is the pane's
-                                        // filler: the extra height goes
-                                        // to the feed, not to dead space
-                                        // under it.
-                                        Layout.fillHeight: true
-                                        color: "#161b22"
-                                        border.color: UM.Theme.getColor("lining")
-                                        border.width: UM.Theme.getSize("default_lining").width
-                                        radius: UM.Theme.getSize("default_radius").width
-
-                                        ColumnLayout {
-                                            anchors.fill: parent
-                                            anchors.margins: UM.Theme.getSize("narrow_margin").width
-                                            spacing: UM.Theme.getSize("thin_margin").height
-
-                                            Flickable {
-                                                id: consoleFlick
-                                                Layout.fillWidth: true
-                                                Layout.fillHeight: true
-                                                clip: true
-                                                contentWidth: consoleText.width
-                                                contentHeight: Math.max(consoleText.height, consoleFlick.height)
-                                                ScrollBar.vertical: UM.ScrollBar {
-                                                    id: consoleScrollbar
-                                                }
-                                                Column {
-                                                    width: consoleFlick.width
-                                                    height: consoleFlick.contentHeight
-                                                    // The spacer pins the sparse
-                                                    // transcript to the shell's
-                                                    // bottom edge; once the text
-                                                    // fills the viewport it scrolls
-                                                    // exactly like a terminal.
-                                                    Item {
-                                                        width: 1
-                                                        height: Math.max(0, consoleFlick.height - consoleText.height)
-                                                    }
-                                                    TextEdit {
-                                                        id: consoleText
-                                                        width: parent.width
-                                                        readOnly: true
-                                                        selectByMouse: true
-                                                        selectByKeyboard: true
-                                                        textFormat: TextEdit.RichText
-                                                        wrapMode: TextEdit.NoWrap
-                                                        font.family: consoleSection.monoFamily()
-                                                        color: "#d9dde3"
-                                                        // No blinking caret: a read-only
-                                                        // terminal pane has no cursor, and
-                                                        // the caret's phase made the
-                                                        // captures nondeterministic.
-                                                        cursorVisible: false
-                                                    }
-                                                }
-                                            }
-
-                                            UM.Label {
-                                                visible: root.printer == null || root.printer.consoleLines.length === 0
-                                                anchors.left: parent.left
-                                                anchors.right: parent.right
-                                                text: "No commands yet — lines you send appear here."
-                                                font.family: consoleSection.monoFamily()
-                                                color: "#7d8590"
-                                                elide: Text.ElideRight
-                                            }
-
-                                            Connections {
-                                                target: root.printer
-                                                function onConsoleChanged() {
-                                                    consoleSection.consoleSyncLines();
-                                                }
-                                            }
-
-                                            RowLayout {
-                                                Layout.fillWidth: true
-                                                spacing: UM.Theme.getSize("thin_margin").width
-                                                UM.Label {
-                                                    text: ">"
-                                                    font: UM.Theme.getFont("medium_bold")
-                                                    color: "#3fb950"
-                                                }
-                                                Cura.TextField {
-                                                    id: consoleInput
-                                                    Layout.fillWidth: true
-                                                    placeholderText: "G-code command…"
-                                                    font.family: consoleSection.monoFamily()
-                                                    Keys.onReturnPressed: consoleSection.consoleSend()
-                                                    Keys.onUpPressed: consoleSection.consoleRecall(1)
-                                                    Keys.onDownPressed: consoleSection.consoleRecall(-1)
-                                                }
-                                                Cura.SecondaryButton {
-                                                    text: "Send"
-                                                    onClicked: consoleSection.consoleSend()
-                                                }
-                                                Cura.SecondaryButton {
-                                                    text: "Clear"
-                                                    visible: root.printer != null && root.printer.consoleLines.length > 0
-                                                    onClicked: root.printer.clearConsoleHistory()
-                                                }
-                                            }
+                                function consoleSend() {
+                                    if (root.printer != null) {
+                                        // A refused send (queue full, lane
+                                        // busy, Moonraker down) must keep
+                                        // the typed line: losing an unsent
+                                        // G-code draft on refusal is data
+                                        // loss, and the status line already
+                                        // explains the refusal.
+                                        if (root.printer.sendConsoleCommand(consoleInput.text)) {
+                                            consoleInput.text = "";
+                                            consoleDraft = "";
+                                            consoleRecallIndex = -1;
                                         }
+                                        consoleInput.forceActiveFocus();
                                     }
+                                }
+                                function consoleRecall(step) {
+                                    var history = root.printer != null ? root.printer.consoleHistory : [];
+                                    if (history.length === 0) {
+                                        return;
+                                    }
+                                    if (consoleRecallIndex < 0) {
+                                        consoleDraft = consoleInput.text;
+                                    }
+                                    consoleRecallIndex = Math.max(-1, Math.min(history.length - 1, consoleRecallIndex + step));
+                                    consoleInput.text = consoleRecallIndex < 0 ? consoleDraft : history[history.length - 1 - consoleRecallIndex];
+                                }
 
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: UM.Theme.getSize("thin_margin").width
-                                        UM.Label {
+                                // A shell-terminal-styled console: dark,
+                                // fixed-width, newest line pinned to the
+                                // bottom — the list slides to the end as
+                                // each line lands, and the input row lives
+                                // INSIDE the dark well with the prompt, so
+                                // the green ">" keeps its contrast on both
+                                // themes (panel UX P3).
+                                Cura.RoundedRectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 190 * screenScaleFactor
+                                    // The terminal is the pane's
+                                    // filler: the extra height goes
+                                    // to the feed, not to dead space
+                                    // under it.
+                                    Layout.fillHeight: true
+                                    color: "#161b22"
+                                    border.color: UM.Theme.getColor("lining")
+                                    border.width: UM.Theme.getSize("default_lining").width
+                                    radius: UM.Theme.getSize("default_radius").width
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: UM.Theme.getSize("narrow_margin").width
+                                        spacing: UM.Theme.getSize("thin_margin").height
+
+                                        Flickable {
+                                            id: consoleFlick
                                             Layout.fillWidth: true
-                                            text: root.printer != null ? root.printer.consoleStatus : ""
-                                            color: UM.Theme.getColor("text_inactive")
-                                            wrapMode: Text.WordWrap
+                                            Layout.fillHeight: true
+                                            clip: true
+                                            // The restore's tail scroll
+                                            // fires when the metrics
+                                            // SETTLE: the content height
+                                            // updates over several frames
+                                            // after setting the text, and
+                                            // one-shot scrolls measured
+                                            // stale values (the author's
+                                            // reports).
+                                            property bool restoreScrollPending: false
+                                            // The scroll follows every
+                                            // metric change until the
+                                            // layout goes quiet — the
+                                            // text height settles over
+                                            // several frames and a
+                                            // one-shot scroll kept
+                                            // landing off by the command
+                                            // bar (the author's reports).
+                                            Timer {
+                                                id: restoreQuietTimer
+                                                interval: 120
+                                                repeat: false
+                                                onTriggered: consoleFlick.restoreScrollPending = false
+                                            }
+                                            // GOLDEN RULE: the reader's own
+                                            // movement cancels the restore's
+                                            // follow — a user scrolling up
+                                            // mid-history is never yanked
+                                            // (the author's ruling).
+                                            onMovementStarted: {
+                                                restoreScrollPending = false;
+                                            }
+                                            onContentHeightChanged: {
+                                                if (restoreScrollPending) {
+                                                    contentY = contentHeight - height;
+                                                    restoreQuietTimer.restart();
+                                                }
+                                            }
+                                            onHeightChanged: {
+                                                if (restoreScrollPending) {
+                                                    contentY = contentHeight - height;
+                                                    restoreQuietTimer.restart();
+                                                }
+                                            }
+                                            contentWidth: consoleText.width
+                                            contentHeight: Math.max(consoleText.height, consoleFlick.height)
+                                            ScrollBar.vertical: UM.ScrollBar {
+                                                id: consoleScrollbar
+                                                // GOLDEN RULE, scrollbar
+                                                // variant: a handle drag
+                                                // drives contentY directly
+                                                // and never fires
+                                                // onMovementStarted — the
+                                                // reader's drag cancels the
+                                                // pending restore itself
+                                                // (the UX panel).
+                                                onPressedChanged: {
+                                                    if (pressed) {
+                                                        restoreScrollPending = false;
+                                                    }
+                                                }
+                                            }
+                                            Column {
+                                                width: consoleFlick.width
+                                                height: consoleFlick.contentHeight
+                                                // The spacer pins the sparse
+                                                // transcript to the shell's
+                                                // bottom edge; once the text
+                                                // fills the viewport it scrolls
+                                                // exactly like a terminal.
+                                                Item {
+                                                    width: 1
+                                                    height: Math.max(0, consoleFlick.height - consoleText.height)
+                                                }
+                                                TextEdit {
+                                                    id: consoleText
+                                                    width: parent.width
+                                                    readOnly: true
+                                                    selectByMouse: true
+                                                    selectByKeyboard: true
+                                                    textFormat: TextEdit.RichText
+                                                    wrapMode: TextEdit.NoWrap
+                                                    font.family: consoleSection.monoFamily()
+                                                    color: "#d9dde3"
+                                                    // No blinking caret: a read-only
+                                                    // terminal pane has no cursor, and
+                                                    // the caret's phase made the
+                                                    // captures nondeterministic.
+                                                    cursorVisible: false
+                                                }
+                                            }
+                                        }
+
+                                        UM.Label {
+                                            visible: root.printer == null || root.printer.consoleLines.length === 0
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            text: "No commands yet — lines you send appear here."
+                                            font.family: consoleSection.monoFamily()
+                                            color: "#7d8590"
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Connections {
+                                            target: root.printer
+                                            function onConsoleChanged() {
+                                                consoleSection.consoleSyncLines();
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: UM.Theme.getSize("thin_margin").width
+                                            UM.Label {
+                                                text: ">"
+                                                font: UM.Theme.getFont("medium_bold")
+                                                color: "#3fb950"
+                                            }
+                                            Cura.TextField {
+                                                id: consoleInput
+                                                Layout.fillWidth: true
+                                                placeholderText: "G-code command…"
+                                                font.family: consoleSection.monoFamily()
+                                                Keys.onReturnPressed: consoleSection.consoleSend()
+                                                Keys.onUpPressed: consoleSection.consoleRecall(1)
+                                                Keys.onDownPressed: consoleSection.consoleRecall(-1)
+                                            }
+                                            Cura.SecondaryButton {
+                                                text: "Send"
+                                                onClicked: consoleSection.consoleSend()
+                                            }
+                                            Cura.SecondaryButton {
+                                                text: "Clear"
+                                                visible: root.printer != null && root.printer.consoleLines.length > 0
+                                                onClicked: root.printer.clearConsoleHistory()
+                                            }
                                         }
                                     }
                                 }
@@ -1051,9 +1304,21 @@ Component {
                     // Left when collapsed (expand left), right when open.
                     Cura.SecondaryButton {
                         id: statusCollapseButton
+                        Layout.alignment: Qt.AlignVCenter
                         fixedWidthMode: true
-                        width: 32 * screenScaleFactor
-                        text: root.statusCollapsed ? "‹" : "›"
+                        // Square at the OLD button width: the theme
+                        // adds its padding around the 32px content, so
+                        // the height tracks the rendered width (the
+                        // author's ruling).
+                        width: 28 * screenScaleFactor
+                        iconSize: 12 * screenScaleFactor
+                        height: width
+                        implicitHeight: width
+
+                        // The SAME theme-chevron family as the console
+                        // and info toggles; this pane is rightmost and
+                        // collapses right.
+                        iconSource: root.statusCollapsed ? UM.Theme.getIcon("ChevronSingleLeft") : UM.Theme.getIcon("ChevronSingleRight")
                         tooltip: root.statusCollapsed ? "Show the printer status." : "Hide the printer status."
                         onClicked: {
                             if (root.printer != null) {
@@ -1405,28 +1670,32 @@ Component {
 
                                 // Filament rows sit after Finish, beside
                                 // the progress block they belong to (the
-                                // author's placement). Visible only while
-                                // a print is active; the dash means
+                                // author's placement). They outlive the
+                                // print: "used" is exactly the figure a
+                                // user wants to record after the job
+                                // completes, so the rows stay through
+                                // complete/cancelled until the next job
+                                // starts (the UX panel). The dash means
                                 // Moonraker did not report a value.
                                 UM.Label {
-                                    visible: root.printer != null && root.printer.printActive
+                                    visible: root.printer != null && root.printer.filamentReadoutVisible
                                     text: "Filament used"
                                     color: UM.Theme.getColor("text_inactive")
                                     Layout.preferredWidth: 110 * screenScaleFactor
                                 }
                                 UM.Label {
-                                    visible: root.printer != null && root.printer.printActive
+                                    visible: root.printer != null && root.printer.filamentReadoutVisible
                                     text: root.printer != null ? root.printer.filamentUsed : "—"
                                     Layout.fillWidth: true
                                 }
                                 UM.Label {
-                                    visible: root.printer != null && root.printer.printActive
+                                    visible: root.printer != null && root.printer.filamentReadoutVisible
                                     text: "Filament remaining"
                                     color: UM.Theme.getColor("text_inactive")
                                     Layout.preferredWidth: 110 * screenScaleFactor
                                 }
                                 UM.Label {
-                                    visible: root.printer != null && root.printer.printActive
+                                    visible: root.printer != null && root.printer.filamentReadoutVisible
                                     text: root.printer != null ? root.printer.filamentRemaining : "—"
                                     Layout.fillWidth: true
                                 }

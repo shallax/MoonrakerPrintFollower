@@ -166,7 +166,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                            "cpuTemperature", "mcuSummary", "mcuItems")),
         ("endstopsChanged", ("endstopItems", "endstopSummary")),
         ("actionChanged", ("printActive", "canPausePrint", "canResumePrint", "canCancelPrint", "actionBusy",
-                           "actionStatus", "emergencyHoldProgress")),
+                           "actionStatus", "emergencyHoldProgress", "filamentReadoutVisible")),
         ("controlsChanged", ("monitorLayerHeight", "macroNames", "hasQuadGantryLevel", "hasBedMesh", "canRunSetup",
                              "temperaturePresetNames", "canApplyTemperaturePreset", "speedFactorPercent", "flowFactorPercent",
                              "zOffset", "zOffsetText", "fanControlItems", "ledItems", "saveConfigPending", "saveConfigSummary",
@@ -180,7 +180,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("sectionsChanged", ("sectionExpandedMap",)),
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
-        ("consoleChanged", ("consoleHistory", "consoleLines", "consoleDropped", "consolePending", "consoleStatus")),
+        ("consoleChanged", ("consoleHistory", "consoleLines", "consoleDropped", "consoleRevisions", "consolePending")),
         ("typedControlsChanged", ("temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
                                   "bedMeshProfileNames", "bedMeshRows", "bedMeshColumns", "bedMeshValues", "bedMeshMinimum",
                                   "bedMeshMaximum", "bedMeshRange", "bedMeshXMin", "bedMeshXMax", "bedMeshYMin", "bedMeshYMax",
@@ -188,7 +188,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     )
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
-                 request_load=None, request_monitor_download=None):
+                 request_load=None, request_monitor_download=None, preferences_flushed=None, identity=None):
         super().__init__(output_controller, number_of_extruders)
         self._client, self._print_state, self._config, self._apply_config, self._mesh = \
             client, print_state, config, apply_config, bed_mesh
@@ -236,7 +236,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._controls = MonitorControls(self._data, self._commands, self._tuning, bed_mesh, config, self)
         self._camera = MonitorCamera(self._data, config, apply_config, self)
         self._toolhead = ToolheadController(self._data, self._commands, self)
-        self._console = ConsoleController(self._data, self._commands, config, apply_config, self)
+        self._console = ConsoleController(self._data, self._commands, config, apply_config, identity, self)
+        if preferences_flushed is not None:
+            # The console marks its sent lines SAVED when the preference
+            # file actually flushes (the author's colour ruling).
+            preferences_flushed.connect(self._console.mark_saved)
         for signal in (self._data.changed, self._commands.changed, self._controls.changed, self._camera.changed,
                        self._toolhead.changed, self._console.changed, bed_mesh.changed):
             signal.connect(self._publish)
@@ -247,6 +251,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._data.auxiliaryChanged.connect(self._on_auxiliary)
         self._data.consoleStoreChanged.connect(self._on_console_store)
         self._data.invalidated.connect(self._on_invalidated)
+        # The attach-time reload can run before the active machine's
+        # identity resolves; retry it on every poll heartbeat so the
+        # restored transcript lands the moment the config is readable
+        # (the author's "commands never rehydrate" report).
+        self._data.changed.connect(self._console.reload_if_empty)
         self._data.set_active(True)
         self._publish()
 
@@ -295,6 +304,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             canResumePrint=commands.state == "paused" and not commands.busy,
             canCancelPrint=commands.print_active and not commands.busy, actionBusy=commands.busy,
             actionStatus=commands.status, emergencyStopClicks=commands.clicks,
+            # The filament rows outlive the print: "used" is exactly the
+            # figure a user wants to record after the job COMPLETES, and
+            # the old printActive gate hid it at that moment (the UX
+            # panel). The rows stay through complete/cancelled until the
+            # next job starts.
+            filamentReadoutVisible=commands.print_active or commands.state in ("complete", "cancelled"),
             emergencyHoldProgress=commands.hold_progress, powerDevices=self._controls.power_devices(),
             bedMeshAvailable=bool(mesh), bedMeshProfile=str(mesh.get("profile") or "Current mesh") if mesh else "",
             bedMeshRows=int(mesh.get("rows") or 0), bedMeshColumns=int(mesh.get("columns") or 0),
@@ -363,6 +378,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     canCancelPrint = value_property(bool, "canCancelPrint", actionChanged, False)
     actionBusy = value_property(bool, "actionBusy", actionChanged, False)
     actionStatus = value_property(str, "actionStatus", actionChanged, "")
+    filamentReadoutVisible = value_property(bool, "filamentReadoutVisible", actionChanged, False)
     temperatureItems = value_property(QVariant, "temperatureItems", peripheralsChanged, [])
     fanItems = value_property(QVariant, "fanItems", peripheralsChanged, [])
     filamentSensorItems = value_property(QVariant, "filamentSensorItems", peripheralsChanged, [])
@@ -388,8 +404,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     # Lines the session ring rotated out of its head (0 until the
     # transcript passes its cap); the pane uses it to stay aligned.
     consoleDropped = value_property(int, "consoleDropped", consoleChanged, 0)
+    consoleRevisions = value_property(int, "consoleRevisions", consoleChanged, 0)
     consolePending = value_property(int, "consolePending", consoleChanged, 0)
-    consoleStatus = value_property(str, "consoleStatus", consoleChanged, "")
     cameraName = value_property(str, "cameraName", cameraTransformChanged, "")
     cameraRotation = value_property(int, "cameraRotation", cameraTransformChanged, 0)
     cameraFlipHorizontal = value_property(bool, "cameraFlipHorizontal", cameraTransformChanged, False)

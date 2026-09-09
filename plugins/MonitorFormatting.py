@@ -142,6 +142,71 @@ def estimate_remaining(elapsed, progress, estimate, complete):
     return by_file if complete else None
 
 
+# How much of a downloaded gcode file's head the filament-total scan
+# may read. Slicers write the ';Filament used:' declaration in the
+# file's opening comments, so one bounded read of the head covers every
+# real file; the bound keeps a hostile file with no such line (or no
+# newlines) a bounded cost instead of a full-file scan. The scan runs
+# once per downloaded file, never on a timer.
+_FILAMENT_HEADER_SCAN_BYTES = 1024 * 1024
+
+
+def filament_total_mm_from_gcode(data):
+    """The slicer's declared total filament length (mm), parsed from the
+    FIRST ';Filament used:' line of gcode header text.
+
+    CuraEngine writes one comma-separated metre value per extruder on
+    that line; the values are summed (Moonraker's own metadata parse
+    read only the FIRST value until v0.10, undercounting multi-extruder
+    prints by the other materials' lengths). None when the file carries
+    no such line — callers then keep Moonraker's metadata total, which
+    is exactly today's behaviour. The unit is mm end-to-end: each value
+    is in metres, so the sum is scaled by 1000.
+    """
+    marker = re.compile(rb";Filament\s+used\s*:", re.IGNORECASE)
+    value = re.compile(rb"[0-9]*\.?[0-9]+")
+    for raw in bytes(data or b"").splitlines():
+        stripped = raw.lstrip()
+        if not stripped.startswith(b";") or marker.search(stripped) is None:
+            continue
+        # Every value on the FIRST declaration line must be a finite
+        # length: a hostile token (an overflowing digit run) makes the
+        # whole line untrustworthy, and a line with no usable values
+        # carries no total at all. None either way — the caller then
+        # keeps the Moonraker metadata total.
+        values = [number(token, None) for token in value.findall(stripped)]
+        if not values or any(parsed is None for parsed in values):
+            return None
+        total = sum(values)
+        if not math.isfinite(total):
+            return None
+        return total * 1000.0
+    return None
+
+
+def filament_total_mm_from_file(path, limit=_FILAMENT_HEADER_SCAN_BYTES):
+    """The header's total filament (mm) from a downloaded gcode file.
+
+    Only the file's head is ever read (``limit`` bytes): the slicer's
+    header sits at the very top of the file, so the FIRST
+    ';Filament used:' line of the whole file is inside the head for
+    every real slicer. A line truncated by the limit is ignored — a
+    partial value must not masquerade as the total. Missing or
+    unreadable files yield None (the Moonraker metadata fallback).
+    """
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(limit + 1)
+    except OSError:
+        return None
+    if len(data) > limit:
+        # The file continues past the window: drop the possibly partial
+        # final line before parsing.
+        cut = data.rfind(b"\n")
+        data = data[:cut] if cut >= 0 else b""
+    return filament_total_mm_from_gcode(data)
+
+
 def core_values(snapshot, physical, connected):
     stats = snapshot.core.get("print_stats") or {}
     sd = snapshot.core.get("virtual_sdcard") or {}
@@ -178,10 +243,14 @@ def core_values(snapshot, physical, connected):
     # only ever holds the layer counters a slicer's SET_PRINT_STATS_INFO
     # wrote (current_layer/total_layer), never filament_used — the old
     # info-dict read matched no real poll. The info dict stays a
-    # fallback for robustness. The slicer's total comes from the file
-    # metadata in the coordinator snapshot (physical.filament_total);
-    # the monitor snapshot is the second home for legacy callers.
-    # Remaining is honest "—" without both.
+    # fallback for robustness. The slicer's total is the CLIENT's own
+    # parse of the downloaded file's header (filament_total_mm_from_*)
+    # in the coordinator snapshot (physical.filament_total): Moonraker's
+    # metadata read only the first ';Filament used:' value of multi-
+    # extruder prints until v0.10, so the client-side sum is preferred
+    # and the metadata total stays the fallback for files never
+    # downloaded. The monitor snapshot is the second home for legacy
+    # callers.
     used_mm = number(stats.get("filament_used"), None)
     if used_mm is None:
         used_mm = number(info.get("filament_used"), None)
@@ -189,8 +258,14 @@ def core_values(snapshot, physical, connected):
     if total_mm is None:
         total_mm = getattr(snapshot, "filament_total", None)
     filament_used = f"{used_mm / 1000.0:.2f} m" if used_mm is not None else "—"
+    # Remaining is only a number while the measured used length still
+    # fits under the declared total. Once used OVERTAKES total the
+    # total is untrustworthy (Moonraker's metadata undercounts multi-
+    # extruder prints) — the old clamp then stated a wrong estimate as
+    # a confident "0.00 m" for the rest of the job; "—" is the honest
+    # readout.
     filament_remaining = f"{max(0.0, total_mm - used_mm) / 1000.0:.2f} m" \
-        if used_mm is not None and total_mm is not None and total_mm >= 0 else "—"
+        if used_mm is not None and total_mm is not None and 0 <= used_mm <= total_mm else "—"
     return {
         "monitorState": state.capitalize() if connected else "Disconnected",
         "monitorFilename": str(stats.get("filename") or ""),

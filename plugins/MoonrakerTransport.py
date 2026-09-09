@@ -236,7 +236,13 @@ class MoonrakerHttpTransport(QObject):
                     if not isinstance(decoded, dict):
                         raise ValueError("Moonraker returned a non-object JSON response")
                     if decoded.get("error"):
-                        raise ValueError(str(decoded.get("error")))
+                        # A Moonraker error object still leaves the
+                        # server's ANSWER in the payload: consumers can
+                        # distinguish "the printer refused this" (error
+                        # set, payload present) from a transport-level
+                        # failure (payload None) — the console's verdict
+                        # colours need exactly that distinction.
+                        error = str(decoded.get("error"))
                     payload = decoded
                 else:
                     payload = {}

@@ -7,7 +7,7 @@ Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
 Current release: **3.5.0** (Monitor awareness: temperature charts, bed-mesh
-mini map, write-only console, endstops and the layer-anchored ETA).
+mini map, G-code console, endstops and the layer-anchored ETA).
 
 ## Direction
 
@@ -71,11 +71,12 @@ the stream).
   (dense meshes and exact values still need the big canvas), gaining a
   crosshair that snaps to probe points with coordinate and Z-offset
   readouts.
-- G-code console below the webcam: send arbitrary commands with
+- G-code console below the webcam (a collapsing pane, so the camera
+  grows while it is collapsed): send arbitrary commands with
   scrollable history, up/down recall and a per-printer persisted
-  history. Write-only by protocol — HTTP acknowledgement means queued
-  at the Klipper boundary, never executed, and Klipper's replies are
-  websocket-only (4.0.0 debt); the UI says exactly that. Deliberately
+  history. Sends return Klipper's execution verdict, and Klipper's
+  output streams back over HTTP from the gcode store, polled only
+  while the console is expanded — a real terminal feed. Deliberately
   unrestricted: typing a command is intent, so there is no
   command-safety table.
 - Endstops readouts: the live pin states come from a one-shot
@@ -88,6 +89,30 @@ the stream).
   is unavailable.
 
 ## 3.6.0 — File manager and the small controls
+
+**Safety first — the jog reflow bug (the author's live report, 2026-09-09):**
+while hammering a toolhead move with some Printer-controls sections open,
+other controls can disappear/reappear and REFLOW the whole pane — the nudge
+button under the pointer can move mid-click. Incredibly dangerous during
+nudges; the pane's content must stop shifting under the jog pad (stable
+layout slots / fixed control heights / deferred section re-layout while a
+jog is in flight — mechanism TBD). Reproduced on the 3.5.0 candidate:
+open Printer controls, expand or collapse another section mid-nudge and
+the pane reflows under the pointer. 3.5.0 ships with it as a known issue;
+the fix lands in a **3.5.x patch release** (the author's ruling) rather
+than delaying 3.5.0.
+
+**Console sizing (the author's direction):** the console's only expanded
+size is ~28% of the column — a drag handle to resize the pane lands with
+this release, shaped by the new pro-user persona (a 3D-printer
+enthusiast lens on feature value joins the review panel from this
+release).
+
+**Layer numbering from the file's own comments:** honour explicit
+`;LAYER:n`-style comments for the layer index, demoting the Z-rise
+heuristic to a comment-less fallback (the author's ruling: a future fix
+— a resumed print showed layers 305..330 in Cura against the monitor's
+25).
 
 The last large Mainsail parity piece: browse remote gcode, print and delete.
 `RemoteFileService` and its `FileLease` lifetime model already provide the

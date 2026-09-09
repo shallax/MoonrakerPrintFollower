@@ -45,6 +45,14 @@ container_image="$(docker inspect "$name" --format '{{.Image}}' 2>/dev/null || t
 if [ -n "$container_image" ] && [ "$container_image" = "$image_id" ]; then
     docker exec -i -w /work "$name" "$@"
 else
-    docker rm -f "$name" >/dev/null 2>&1 || true
+    # The stale container must not be torn down while another invocation
+    # is still executing inside it (parallel make targets can race this
+    # path): docker rm -f would kill that run mid-command. When it is
+    # running, leave it alone and fall through to the docker run path —
+    # the fresh container is unnamed, so it cannot collide with it. The
+    # stale one is removed the next time this path runs and finds it idle.
+    if [ "$(docker inspect "$name" --format '{{.State.Running}}' 2>/dev/null || true)" != "true" ]; then
+        docker rm -f "$name" >/dev/null 2>&1 || true
+    fi
     docker run --rm --user "$(id -u):$(id -g)" -v "$root":/work moonraker-print-follower-dev "$@"
 fi

@@ -31,6 +31,7 @@ class PollPolicy:
     system_ms: int = 10000
     endstops_ms: int = 10000
     console_ms: int = 1000
+    console_idle_ms: int = 5000
     discovery_ms: int = 30000
     pause_guard_ms: int = 250
 
@@ -68,7 +69,10 @@ class PollPolicy:
         if category == RequestCategory.ENDSTOPS:
             return self.endstops_ms
         if category == RequestCategory.CONSOLE:
-            return self.console_ms
+            # Live output matters while a print runs; an idle printer
+            # does not need a store fetch every second (the domain
+            # panel's idle-floor point: ~86k requests/day otherwise).
+            return self.console_ms if (active or paused) else max(self.console_ms, self.console_idle_ms)
         if category == RequestCategory.DISCOVERY:
             return self.discovery_ms
         return configured

@@ -22,18 +22,27 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install qmlformat and shellcheck
+      # Image-specific workaround, defined ONCE here and aliased (YAML
+      # anchor — see *drop_google_apt_sources in the jobs below) into
+      # every other job that runs apt-get update, so the fix cannot
+      # drift between copies: the GitHub-hosted ubuntu runner images
+      # this workflow pins ship Google's apt repos pre-configured, and
+      # one bad index there (2026-09-09: chrome-stable Packages.gz hash
+      # mismatch) fails EVERY apt update. No job needs Chrome or the
+      # Cloud SDK, so drop every source pointing at Google before the
+      # update — the file name varies (google-chrome.list on some
+      # images, deb822 .sources on others). Runner-image specific: the
+      # pinned Dockerfile dev image ships no Google sources, so do not
+      # carry this into container flows.
+      - &drop_google_apt_sources
+        name: Drop Google's broken apt sources
         run: |
-          # ubuntu-latest ships Google's apt repos pre-configured; one bad
-          # index there fails EVERY apt update (2026-09-09: chrome-stable
-          # Packages.gz hash mismatch). This workflow needs neither Chrome
-          # nor the Cloud SDK, so drop every source pointing at Google
-          # before the update — the file name varies (google-chrome.list
-          # on some images, deb822 .sources on others, and the first
-          # attempt guessed wrong).
           for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
             if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com" "$f"; then sudo rm -f "$f"; fi
           done
+
+      - name: Install qmlformat and shellcheck
+        run: |
           sudo apt-get update
           sudo apt-get install -y qt6-declarative-dev-tools shellcheck
 
@@ -73,18 +82,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Shared step: the drop_google_apt_sources anchor defined in the
+      # lint job's steps above.
+      - *drop_google_apt_sources
+
       - name: Install runtime and tools
         run: |
-          # ubuntu-latest ships Google's apt repos pre-configured; one bad
-          # index there fails EVERY apt update (2026-09-09: chrome-stable
-          # Packages.gz hash mismatch). This workflow needs neither Chrome
-          # nor the Cloud SDK, so drop every source pointing at Google
-          # before the update — the file name varies (google-chrome.list
-          # on some images, deb822 .sources on others, and the first
-          # attempt guessed wrong).
-          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
-            if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com" "$f"; then sudo rm -f "$f"; fi
-          done
           sudo apt-get update
           sudo apt-get install -y libegl1 libxkbcommon0
           python -m pip install PyQt6==6.11.0 coverage
@@ -121,18 +124,12 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q plugins tools tests
 
+      # Shared step: the drop_google_apt_sources anchor defined in the
+      # lint job's steps above.
+      - *drop_google_apt_sources
+
       - name: Install Qt system runtime
         run: |
-          # ubuntu-latest ships Google's apt repos pre-configured; one bad
-          # index there fails EVERY apt update (2026-09-09: chrome-stable
-          # Packages.gz hash mismatch). This workflow needs neither Chrome
-          # nor the Cloud SDK, so drop every source pointing at Google
-          # before the update — the file name varies (google-chrome.list
-          # on some images, deb822 .sources on others, and the first
-          # attempt guessed wrong).
-          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
-            if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com" "$f"; then sudo rm -f "$f"; fi
-          done
           sudo apt-get update
           sudo apt-get install -y libegl1
 
@@ -191,18 +188,12 @@ jobs:
       - name: Verify Cura Marketplace source ZIP
         run: python tools/verify_marketplace_source.py dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}-source.zip
 
+      # Shared step: the drop_google_apt_sources anchor defined in the
+      # lint job's steps above.
+      - *drop_google_apt_sources
+
       - name: Install capture runtime
         run: |
-          # ubuntu-latest ships Google's apt repos pre-configured; one bad
-          # index there fails EVERY apt update (2026-09-09: chrome-stable
-          # Packages.gz hash mismatch). This workflow needs neither Chrome
-          # nor the Cloud SDK, so drop every source pointing at Google
-          # before the update — the file name varies (google-chrome.list
-          # on some images, deb822 .sources on others, and the first
-          # attempt guessed wrong).
-          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
-            if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com" "$f"; then sudo rm -f "$f"; fi
-          done
           sudo apt-get update
           sudo apt-get install -y libegl1 libxkbcommon0
           python -m pip install PyQt6==6.11.0

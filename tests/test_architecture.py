@@ -135,7 +135,7 @@ class SourceContractTests(unittest.TestCase):
             "MonitorCamera": set(),
             "MonitorCommands": set(),
             "MonitorControls": {"MonitorFormatting"},
-            "MonitorData": {"MonitorFormatting", "MoonrakerSession"},
+            "MonitorData": {"ConsolePolicy", "MonitorFormatting", "MoonrakerSession"},
             "MonitorFormatting": set(),
             "MonitorTuning": set(),
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},

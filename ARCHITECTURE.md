@@ -282,13 +282,19 @@ between machines; the plugin-owned JSON state file keeps the chrome
 only (expanded-section map, pane collapse, controls lock), and a legacy
 global chart block migrates into the per-printer record once.
 
-The console is write-only by protocol: commands travel the untracked
-one-shot lane, HTTP acknowledgement means queued at the Klipper
-boundary (never executed), and Klipper's replies are websocket-only —
-the UI states exactly that. `ConsolePolicy` owns the history bounds and
-input guards (deliberately no command-safety table: the author ruled
-the console unrestricted); `ConsoleController` owns the bounded
-per-printer history and the send lane. `CollapsibleSectionHeader` is
+The console sends on its own request path: `printer/gcode/script`
+replies only after Klipper processes the script, and that reply's
+result is the execution verdict — a client timeout is "no verdict",
+because a blocking command may still be running. Klipper's output
+streams back over HTTP from Moonraker's gcode store, polled only while
+the console is expanded (an idle floor slows the cadence when no print
+runs), so the pane is a terminal feed: typed lines as sent, output as
+it arrives. `ConsolePolicy` owns the history bounds and input guards
+(deliberately no command-safety table: the author ruled the console
+unrestricted); `ConsoleController` owns the bounded per-printer
+history, the send lane and the verdict pairing — each send closes over
+its own entry, and no line claims an attribution the store cannot
+support (it pairs by recency only). `CollapsibleSectionHeader` is
 the single header implementation shared by every pane; pane chrome
 (toggles, collapsed strips, plugin-drawn glyphs) is UI-only state in
 the QML files and never mutates printer state directly. The recipes for

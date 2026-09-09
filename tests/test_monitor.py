@@ -815,7 +815,9 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         commands = (PLUGINS / "MonitorCommands.py").read_text()
         click_window = int(_re.search(r"_reset_timer\.setInterval\((\d+)\)", commands).group(1))
         self.assertEqual(click_window, 1000)
-        self.assertIn(f"after {click_window // 1000} second", DASHBOARD_QML)
+        # The helper prose that restated the arm-reset window was
+        # removed at the author's request; the constant lives in the
+        # code alone now.
 
         follow = (PLUGINS / "FollowController.py").read_text()
         radius = int(_re.search(r"window_radius: int = (\d+)", follow).group(1))
@@ -1197,18 +1199,20 @@ class MonitorQtTests(unittest.TestCase):
         # vouch for.
         self.assertEqual(model.actionStatus, "Macro TEST_MACRO sent")
         self.assertNotIn("accepted", model.actionStatus)
-        # Aged out: back to the durable value that was there before.
+        # Aged out: the row falls to "—" under its permanent caption —
+        # never back to a stale durable claim from an earlier action
+        # (the panel ruling: "Pause: paused" resurfacing after a newer
+        # action reads as fresh printer activity).
         self.qt.events(model._commands.RECEIPT_MS + 500)
-        self.assertEqual(model.actionStatus, "Pause: paused")
+        self.assertEqual(model.actionStatus, "")
 
     def test_console_sends_never_touch_the_action_status(self):
-        # Console traffic left the card ticker: the pane's own status
-        # line carries console feedback, and the card row keeps showing
-        # whatever durable value it had (the panel UX ruling).
+        # Console traffic left the card ticker: the feed carries
+        # console feedback, and the card row keeps showing whatever
+        # durable value it had (the panel UX ruling).
         model = self.monitor()
         model._commands._status = "Pause: paused"
         self.assertTrue(model.sendConsoleCommand("G28"))
-        self.assertEqual(model.consoleStatus, "")
         self.assertEqual(model.actionStatus, "Pause: paused")
         scripts = self.scripts()
         self.assertEqual(len(scripts), 1)
@@ -1216,21 +1220,20 @@ class MonitorQtTests(unittest.TestCase):
         # The completion is a console lane cycle, not a card event.
         self.assertEqual(model.actionStatus, "Pause: paused")
 
-    def test_console_error_flips_the_console_local_status(self):
-        # A live "!!" response flips the console's own status line to
-        # the error notice; it holds until the next send replaces it.
-        # The card row is untouched by any of this.
+    def test_console_error_lines_speak_in_the_feed(self):
+        # The author's live ruling: no status banners or labels outside
+        # the feed — a live "!!" line is its own red signal, and
+        # nothing asserts "Klipper reported an error" anywhere.
         model = self.monitor()
+        self.assertFalse(hasattr(model, "consoleStatus"))
         self.assertTrue(model.sendConsoleCommand("G28"))
         self.assertEqual(model.actionStatus, "")
         model._console.append_responses([{"text": "!! Must home first", "error": True,
                                           "success": False, "time": model._console._store_time + 1.0}])
-        self.assertEqual(model.consoleStatus, "Klipper reported an error — see the console output.")
+        lines = model.consoleLines.value()
+        self.assertTrue(lines[-1]["error"])
         self.assertEqual(model.actionStatus, "")
-        # The next send supersedes the notice (success sends stay
-        # quiet — the author's ruling).
         self.assertTrue(model.sendConsoleCommand("G28"))
-        self.assertEqual(model.consoleStatus, "")
 
     def test_last_action_rows_are_labelled_and_always_visible(self):
         # The permanent caption row (the author's ruling): a label so
@@ -1538,9 +1541,8 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(second.consoleLines.value(), [{"kind": "command", "text": "M104 S200",
                                                         "error": False, "success": False, "restored": True}])
         # No "sent to Klipper" caption (the author's ruling): the typed
-        # line's verdict colouring carries the feedback; the status
-        # stays quiet on a successful send.
-        self.assertEqual(model.consoleStatus, "")
+        # line's verdict colouring carries the feedback, and nothing
+        # else speaks on a successful send.
 
     def test_console_persist_keeps_commands_against_chatty_responses(self):
         # A chatty Klipper fills the 50-entry persist window with
@@ -1588,18 +1590,24 @@ class MonitorQtTests(unittest.TestCase):
         # a refusal instead of destroying an unsent G-code line.
         self.assertFalse(model.sendConsoleCommand("   "))
         self.assertEqual(model.consoleHistory, [])
-        self.assertIn("Empty command", model.consoleStatus)
+        # An empty Enter is simply nothing — no note, no banner (the
+        # author's ruling: nothing sent carries no information).
+        self.assertEqual(model.consoleLines.value(), [])
         self.assertTrue(model.sendConsoleCommand("G28"))
         self.assertEqual(model.consoleHistory, ["G28"])
         model.clearConsoleHistory()
         self.assertEqual(model.consoleHistory, [])
         self.assertEqual(self.follower.current_printer_config().console_transcript, [])
-        # A refused send (lane full / Moonraker down) reports honestly
-        # and does not enter the history.
+        # A refused send (lane full / Moonraker down) explains itself
+        # as a neutral "//" feed line and does not enter the history.
         model._console._data.request = lambda *args, **kwargs: False
         self.assertFalse(model.sendConsoleCommand("G1 X10"))
         self.assertEqual(model.consoleHistory, [])
-        self.assertIn("try again", model.consoleStatus)
+        self.assertIn("try again", model.consoleLines.value()[-1]["text"])
+        # The note is the plugin's own feed line — kind "note", not a
+        # Moonraker response.
+        self.assertEqual(model.consoleLines.value()[-1]["kind"], "note")
+        self.assertFalse(model.consoleLines.value()[-1]["error"])
 
     def test_console_reloads_the_transcript_when_it_constructed_empty(self):
         # The plugin constructs the console before the active machine
@@ -1615,12 +1623,44 @@ class MonitorQtTests(unittest.TestCase):
         self.assertTrue(any(entry["kind"] == "command" and entry["text"] == "M104 S200"
                             for entry in lines))
 
+    def test_console_replay_of_the_authors_record_keeps_commands(self):
+        # The author's real record: 53 entries, 8 commands scattered,
+        # 3 pinned at the head (the retention's shape). A session that
+        # loads it, backfills responses and persists must NOT drop the
+        # commands (the author's "it's just a bunch of responses").
+        kinds = (["command"] * 3
+                 + ["response"] * 12
+                 + ["command", "response"] * 3
+                 + ["response"] * 5
+                 + ["command", "response"] * 2
+                 + ["response"] * 8
+                 + ["command", "response", "response", "response"])
+        transcript = [{"kind": kind, "text": f"{kind}@{i}", "error": False,
+                       "success": False, "restored": True}
+                      for i, kind in enumerate(kinds)]
+        model = self.monitor()
+        model._console._transcript = [dict(entry) for entry in transcript]
+        # A backfill of two fresh server responses arrives.
+        model._console.append_responses([
+            {"text": "B:55.0 /55.0", "error": False, "success": True,
+             "time": model._console._store_time + 1.0},
+            {"text": "// Unknown command:\"123\"", "error": False, "success": False,
+             "time": model._console._store_time + 2.0},
+        ])
+        model._console._persist()
+        stored = self.follower.current_printer_config().console_transcript
+        commands = [entry for entry in stored if entry["kind"] == "command"]
+        self.assertGreaterEqual(len(commands), 8)
+        # The three head commands survive the window as the record head.
+        self.assertEqual([entry["text"] for entry in stored[:3]],
+                         ["command@0", "command@1", "command@2"])
+
     def test_console_send_verdict_colours_the_typed_line(self):
         # The send POST's own result is the execution verdict (the
-        # endpoint returns "ok" on completion, an error on failure —
-        # Moonraker's docs); the store feed cannot pair, but this
-        # callback belongs to THIS request, so the verdict colours
-        # the typed line: green for "ok", red for a failure.
+        # endpoint returns "ok" on completion); the store feed cannot
+        # pair, but this callback belongs to THIS request — the entry
+        # is captured at send time, so identical commands in flight can
+        # never swap verdicts.
         model = self.monitor()
         self.assertTrue(model.sendConsoleCommand("G28"))
         scripts = self.scripts()
@@ -1630,12 +1670,113 @@ class MonitorQtTests(unittest.TestCase):
         lines = model.consoleLines.value()
         self.assertTrue(lines[0]["success"])
         self.assertFalse(lines[0]["error"])
+        # A server ANSWER with an error body is a real refusal: red.
         self.assertTrue(model.sendConsoleCommand("M999"))
-        self.scripts()[-1].callback(None, "Moonraker is unavailable")
+        self.scripts()[-1].callback({"error": {"message": "Command refused"}}, "Command refused")
         self.qt.events(1)
         lines = model.consoleLines.value()
         self.assertTrue(lines[1]["error"])
         self.assertFalse(lines[1]["success"])
+        # A transport-level failure (timeout, network) is NO verdict:
+        # the command may still be executing — a client timeout must
+        # never paint a running command red (the domain panel: blocking
+        # commands legitimately outlast the 30 s client timeout). The
+        # status note says so, honestly.
+        self.assertTrue(model.sendConsoleCommand("M190 S60"))
+        self.scripts()[-1].callback(None, "Connection timed out")
+        self.qt.events(1)
+        lines = model.consoleLines.value()
+        self.assertFalse(lines[2]["error"])
+        self.assertFalse(lines[2]["success"])
+        # The honest note lands as the plugin's own feed line.
+        self.assertIn("may still be running", lines[-1]["text"])
+        self.assertEqual(lines[-1]["kind"], "note")
+        self.assertFalse(lines[-1]["error"])
+        self.assertFalse(lines[-1]["success"])
+
+    def test_console_verdicts_pair_by_captured_entry_not_text(self):
+        # Two identical commands in flight: the older request's verdict
+        # must land on the OLDER line, never on the newest twin with
+        # the same text (the old text+recency scan swapped them).
+        model = self.monitor()
+        self.assertTrue(model.sendConsoleCommand("G28"))
+        self.assertTrue(model.sendConsoleCommand("G28"))
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 2)
+        # The OLDER request completes first, successfully.
+        scripts[0].callback({"result": "ok"}, None)
+        self.qt.events(1)
+        lines = model.consoleLines.value()
+        self.assertTrue(lines[0]["success"])
+        self.assertFalse(lines[1]["success"])
+        # The NEWER request then fails at the server.
+        scripts[1].callback({"error": {"message": "refused"}}, "refused")
+        self.qt.events(1)
+        lines = model.consoleLines.value()
+        self.assertFalse(lines[0]["error"])
+        self.assertTrue(lines[1]["error"])
+        self.assertFalse(lines[1]["success"])
+
+    def test_emergency_stop_pending_tokens_survive_stale_completions(self):
+        # The empirical drift: 3 sends → emergency stop → 2 fresh sends →
+        # 3 stale completions → pending 0 (should be 2). In-flight tokens
+        # fix it: completions belong to a specific entry, and dead
+        # requests' entries were dropped with the stop.
+        model = self.monitor()
+        for text in ("G28", "M105", "G90"):
+            self.assertTrue(model.sendConsoleCommand(text))
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 3)
+        self.assertEqual(model.consolePending, 3)
+        model._commands.emergencyStopped.emit()
+        self.assertEqual(model.consolePending, 0)
+        for text in ("M105", "G1 X0"):
+            self.assertTrue(model.sendConsoleCommand(text))
+        self.assertEqual(model.consolePending, 2)
+        # The three dead requests complete late — nothing drains.
+        for script in scripts:
+            script.callback(None, "aborted")
+        self.qt.events(1)
+        self.assertEqual(model.consolePending, 2)
+
+    def test_fresh_tracked_outcome_survives_a_stale_receipt_timer(self):
+        # The engineering panel's receipt resurrection: a macro banner
+        # arms, then a tracked Pause completes inside the window — the
+        # old "Macro sent" banner must never resurface over the fresh
+        # terminal status (it did: send() never stopped the timer).
+        model = self.monitor()
+        self.deliver_state("standby")
+        model._controls._macros = {"TEST_MACRO": "macro-name"}
+        model.runMacro("TEST_MACRO", "")
+        self.scripts()[0].callback(None, None)
+        self.assertEqual(model.actionStatus, "Macro TEST_MACRO sent")
+        model._commands.send("Pause", "printer/print/pause")
+        self.qt.events(1)
+        # The harness's command tracker delivers a "pending" event
+        # synchronously on track; the live text resolves immediately.
+        self.assertEqual(model.actionStatus, "Pause: pending")
+        model._commands._command_changed({"name": "Pause", "outcome": "confirmed",
+                                          "detail": "paused", "terminal": True})
+        self.assertEqual(model.actionStatus, "Pause: paused")
+        self.qt.events(model._commands.RECEIPT_MS + 500)
+        self.assertEqual(model.actionStatus, "Pause: paused")
+
+    def test_mark_saved_only_claims_the_persisted_window(self):
+        # The engineering panel's over-promise: mark_saved once greys
+        # every live command "on disk", including entries beyond the
+        # persisted window that die with the session. Only the window's
+        # entries (last 50 + up to 10 pinned commands) may claim saved.
+        model = self.monitor()
+        model._console._transcript = [
+            *[{"kind": "command", "text": "OLD%d" % i, "error": False, "success": False,
+               "restored": False, "saved": False} for i in range(12)],
+            *[{"kind": "response", "text": "B:%d.0" % i, "error": False,
+               "success": False, "restored": False} for i in range(60)],
+        ]
+        model._console.mark_saved()
+        lines = model.consoleLines.value()
+        self.assertFalse(lines[0]["saved"])  # OLD0: beyond the pin reach
+        self.assertTrue(lines[2]["saved"])   # OLD2: pinned into the window
 
     def test_endstop_and_eta_surfaces(self):
         # The Improve-ETA action is a small download glyph beside the
@@ -1881,6 +2022,10 @@ class MonitorQtTests(unittest.TestCase):
         model = self.monitor()
         self.qt.events(1)
         self.assertEqual([r for r in self.transport.requests if r.channel == "console-store"], [])
+        # The store polls at 1 s while PRINTING; an idle printer gets
+        # the idle floor (5 s), so seed a printing state for the 1 s
+        # cadence this test pumps.
+        self.deliver_state("printing")
         model.setConsoleExpanded(True)
         store = [r for r in self.transport.requests if r.channel == "console-store"]
         self.assertEqual(len(store), 1)
@@ -1917,10 +2062,12 @@ class MonitorQtTests(unittest.TestCase):
         # The transcript persists with the responses.
         transcript = self.follower.current_printer_config().console_transcript
         self.assertEqual([entry["text"] for entry in transcript], ["ok", "!! Heater extruder not heating", "Target reached"])
-        # Moonraker strips the "ok" prefix from stored lines (a live
-        # M105 arrives as a bare "B:55.0..." — the author's report), so
-        # success is inferred: not an error, not an echo. A stripped
-        # response is success; a "//" echo is neither success nor error.
+        # The store holds Klipper's output VERBATIM — Moonraker strips
+        # nothing (data_store.py stores the payload as delivered) — and
+        # modern Klipper's response lines carry no "ok" prefix at all
+        # (the "ok" is the RPC result, never console output). So the
+        # store can never attest success: a line that is neither "!!"
+        # nor a "//" echo is inferred success.
         self.qt.events(1200)
         later = [r for r in self.transport.requests if r.channel == "console-store"][1:]
         later[-1].callback({"result": {"gcode_store": [
@@ -1933,6 +2080,36 @@ class MonitorQtTests(unittest.TestCase):
         self.assertFalse(lines[0]["error"])
         self.assertFalse(lines[1]["success"])
         self.assertFalse(lines[1]["error"])
+
+    def test_console_store_seed_skips_the_stale_buffer_beyond_the_first_poll(self):
+        # The expand seed is one-shot by design — but the entries it
+        # skips must stay skipped for the whole session. The regression:
+        # the second poll re-delivered Moonraker's entire stale buffer
+        # (the author's live report of the console re-fetching the
+        # printer's history on load).
+        model = self.monitor()
+        self.deliver_state("printing")
+        model._data.set_console_expanded(True, 11.0)
+        store = [r for r in self.transport.requests if r.channel == "console-store"]
+        self.assertEqual(len(store), 1)
+        store[0].callback({"result": {"gcode_store": [
+            {"message": "old one", "type": "response", "time": 10.0},
+            {"message": "old two", "type": "response", "time": 11.0},
+            {"message": "fresh", "type": "response", "time": 12.0},
+        ]}}, None)
+        self.qt.events(1)
+        self.assertEqual([entry["text"] for entry in model.consoleLines.value()], ["fresh"])
+        # The next poll repeats the same buffer: nothing new may land.
+        self.qt.events(1200)
+        later = [r for r in self.transport.requests if r.channel == "console-store"][1:]
+        self.assertTrue(later)
+        later[-1].callback({"result": {"gcode_store": [
+            {"message": "old one", "type": "response", "time": 10.0},
+            {"message": "old two", "type": "response", "time": 11.0},
+            {"message": "fresh", "type": "response", "time": 12.0},
+        ]}}, None)
+        self.qt.events(1)
+        self.assertEqual([entry["text"] for entry in model.consoleLines.value()], ["fresh"])
 
     def test_sweep_phase_advances_on_the_real_engine(self):
         # The sweep's position is a binding on the bar's sweepPhase; a
@@ -2073,20 +2250,29 @@ Item {
                       "consoleSyncLines", "consoleLineHtml",
                       "textFormat: TextEdit.RichText", "selectionStart",
                       "wasAtEnd", "consoleFlick",
-                      # Appends must land on fresh lines and the ring
-                      # rotation must rebuild, not stall (the live
-                      # "everything on one line" report and its fix).
-                      'consoleText.length > 0 ? "<br>" : ""',
+                      # Appends must land on fresh lines, the ring
+                      # rotation must rebuild, and the rebuild SETS the
+                      # document directly (clear+insert produced an
+                      # empty pane in the real engine).
+                      "consoleText.text = html",
+                      'html = "<br>" + html',
                       "consoleDroppedSeen",
-                      "root.printer.setConsoleExpanded(true)",
+                      "consoleRevisionsSeen",
+                      "root.printer.setConsoleExpanded(expanding)",
+                      'setConsoleExpanded(root.printer.sectionExpandedMap["console"] !== false)',
                       # The console is a collapsing pane beneath the
                       # webcam: a top-left chevron toggle, a "Console"
                       # title in the panes' style, and the camera fills
                       # the pane only while it is collapsed.
                       'sectionExpandedMap["console"]',
                       'text: "Webcam"',
+                      # The toggle keeps the other panes' button
+                      # style with the theme's up/down chevrons inside
+                      # it (the author's rulings).
                       "ChevronSingleUp",
                       "ChevronSingleDown",
+                      "fixedWidthMode: true",
+                      "consoleCollapseButton",
                       # Terminal ethics: follow the tail ONLY while at it
                       # and not selecting.
                       "consoleLines", "selectByMouse",
@@ -2097,17 +2283,43 @@ Item {
         # left the feed dead in the default layout).
         self.assertNotIn("setConsoleExpanded(!root.infoCollapsed)", MONITOR_QML)
         self.assertNotIn("onInfoCollapsedChanged:", MONITOR_QML)
-        for token in ("consoleHistory", "consolePending", "consoleStatus", "consoleChanged",
+        # The feed's three voices (the author's live rulings):
+        # commands carry ">", Moonraker's responses carry "<", and the
+        # plugin's notes carry "#" in amber. Responses render bright
+        # red/green; saved commands keep their text light grey and put
+        # the verdict on the ">" prompt only — green matches the input
+        # row's prompt, red is a failure — and the restored hues are
+        # contrast-bumped (the old muted family sat near 2:1).
+        for token in ('"#f85149"', '"#57ab5a"', '"#e05650"', '"#3fb950"', '"#d29922"',
+                      '&gt; "', '&lt; "', '# "', '"#9da7b3"', '"#d0635e"', '"#4f9a5d"'):
+            self.assertIn(token, MONITOR_QML)
+        # The selection is captured BEFORE the rebuild wipe (the old
+        # order made the restore a silent no-op); the rotation rebuild
+        # compensates the content dropped above the viewport.
+        self.assertLess(MONITOR_QML.index("var selStart"), MONITOR_QML.index("consoleDroppedSeen = dropped;"))
+        for token in ("prevTextHeight", "rotationDrop"):
+            self.assertIn(token, MONITOR_QML)
+        # The scrollbar's handle drag cancels the pending restore (it
+        # drives contentY directly and never fires onMovementStarted).
+        self.assertIn("onPressedChanged:", MONITOR_QML)
+        self.assertIn("if (pressed)", MONITOR_QML)
+        for token in ("consoleHistory", "consolePending", "consoleChanged",
                       "consoleLines", "consoleDropped", "def setConsoleExpanded(",
                       "def sendConsoleCommand(", "def clearConsoleHistory(",
                       "filamentUsed", "filamentRemaining"):
             self.assertIn(token, MONITOR_MODEL)
+        self.assertNotIn("consoleStatus", MONITOR_MODEL)
         # The filament rows are caption/value grid rows placed AFTER
-        # the Finish row (the author's placement), visible only while
-        # a print is active.
+        # the Finish row (the author's placement). They outlive the
+        # print through complete/cancelled until the next job starts
+        # (the UX panel): the gate is the model's readout flag, not
+        # printActive.
         self.assertIn('text: "Filament used"', MONITOR_QML)
         self.assertIn('text: "Filament remaining"', MONITOR_QML)
         self.assertLess(MONITOR_QML.index('text: "Finish"'), MONITOR_QML.index('text: "Filament used"'))
+        self.assertIn("filamentReadoutVisible", MONITOR_QML)
+        self.assertIn("filamentReadoutVisible", MONITOR_MODEL)
+        self.assertIn('visible: root.printer != null && root.printer.filamentReadoutVisible', MONITOR_QML)
         # The z-offset nudge buttons take an exact quarter of the row
         # (a bound preferred width, not layout distribution): fillWidth
         # alone left "↑ 0.005" wider than "↑ 0.05" (the author's report).
@@ -2126,15 +2338,17 @@ Item {
         # input. The wall clock slipped through once — the formatter's
         # monitorFinish called datetime.now() and captures made in
         # different minutes differed by one clock glyph, failing CI's
-        # byte-compare. The harness must freeze the formatter's clock,
-        # and because the Qt runtime registers plugin modules under
-        # synthetic names (the same trap as the model below), it must
-        # patch EVERY module object loaded from the formatter's source
+        # byte-compare. The harness must freeze BOTH wall-clock readers
+        # (the formatter's finish clock and PreviewFollower's ETA
+        # finish), and because the Qt runtime registers plugin modules
+        # under synthetic names (the same trap as the model below), it
+        # must patch EVERY module object loaded from each frozen source
         # file, after the plugin tree has loaded.
         self.assertIn("class FrozenDatetime", CAPTURE_HARNESS)
         self.assertIn("def now(cls, tz=None)", CAPTURE_HARNESS)
         self.assertIn("MonitorFormatting.py", CAPTURE_HARNESS)
-        self.assertIn("_freeze_formatter_clock()", CAPTURE_HARNESS)
+        self.assertIn("PreviewFollower.py", CAPTURE_HARNESS)
+        self.assertIn("_freeze_plugin_clocks()", CAPTURE_HARNESS)
         # The model's own time reference stays patched module-scoped, so
         # the synthetic history seeds from a fixed clock.
         self.assertIn('patch.object(model_module, "time", fake_time)', CAPTURE_HARNESS)
