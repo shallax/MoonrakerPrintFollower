@@ -7,6 +7,12 @@ from math import isfinite
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
+# ConsolePolicy owns these bounds; PrinterConfig may not import it
+# (module-layering pin), so the coercion repeats the numbers. Drift is
+# harmless: the controller re-trims the transcript on load regardless.
+_CONSOLE_TRANSCRIPT_CAP = 50
+_CONSOLE_LINE_CAP = 8 * 1024
+
 
 def normalise_url(value: Any) -> str:
     """Canonical Moonraker base URL: scheme required, no trailing slash.
@@ -120,6 +126,14 @@ class PrinterConfig:
     # lock).
     temperature_chart: Dict[str, Any] = field(default_factory=dict)
     console_history: List[str] = field(default_factory=list)
+    # The persisted console transcript (the author's ruling): the last
+    # ~50 lines of BOTH the user's commands and Klipper's gcode-store
+    # output survive across sessions; restored lines grey in the pane.
+    console_transcript: List[Dict[str, Any]] = field(default_factory=list)
+    # The gcode-store poll's last-seen timestamp, persisted with the
+    # transcript so the next session's expand-backfill never repeats
+    # already-seen lines.
+    console_store_time: float = 0.0
     # The bed-mesh pop-over's probe-point overlay, per printer.
     show_probe_points: bool = False
 
@@ -174,6 +188,34 @@ class PrinterConfig:
         else:
             data["upload_paths"] = []
         data["upload_path"] = upload_path_safe(data.get("upload_path"))
+
+        transcript = data.get("console_transcript")
+        if isinstance(transcript, (list, tuple)):
+            cleaned = []
+            for entry in transcript:
+                if not isinstance(entry, Mapping):
+                    continue
+                kind = str(entry.get("kind") or "")
+                if kind not in {"command", "response"}:
+                    continue
+                cleaned.append({
+                    "kind": kind,
+                    "text": str(entry.get("text") or "")[:_CONSOLE_LINE_CAP],
+                    "error": bool(entry.get("error")),
+                })
+            data["console_transcript"] = cleaned[-_CONSOLE_TRANSCRIPT_CAP:]
+        else:
+            data["console_transcript"] = []
+        try:
+            store_time = float(data.get("console_store_time") or 0.0)
+            data["console_store_time"] = store_time if isfinite(store_time) else 0.0
+        except (TypeError, ValueError):
+            data["console_store_time"] = 0.0
+        try:
+            store_time = float(data.get("console_store_time") or 0.0)
+            data["console_store_time"] = store_time if isfinite(store_time) else 0.0
+        except (TypeError, ValueError):
+            data["console_store_time"] = 0.0
 
         for key in (
             "enabled", "moonraker_layer_is_one_based", "auto_preview",

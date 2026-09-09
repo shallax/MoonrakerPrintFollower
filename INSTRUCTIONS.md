@@ -70,7 +70,7 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   first), and PyQt6 collects inline `setContextProperty` temporaries —
   hold Python references. Outputs land in `dist/screenshots/*.png` (the
   CI artifact no longer includes them). `capture_settings.py` writes one PNG per
-  settings tab (Connection / Following / Upload), each fitted to that
+  settings tab (Connection / Following / Upload / Diagnostics), each fitted to that
   tab's Flickable content height — contentHeight is viewport-independent
   so measure-then-resize is stable, and the page's `UM.TabRow` appears
   as a composite class name (`TabRow_QMLTYPE_nn`), not `QQuickTabBar`.
@@ -107,8 +107,10 @@ New releases follow the `/new-feature` skill (`.claude/skills/new-feature/SKILL.
 plan with verbatim author quotes and real push-back → one round-1 critic
 before going deep → build with tests → a four-persona panel
 (architecture/UX/engineering/product, read-only, findings funnel back
-through the maintainer) → decisions logged in `review/DECISIONS.md`
-(git-ignored) → round-3 verification → ship.
+through the maintainer) — one-off security/hardening and
+Klipper/Moonraker/Cura domain-expert personas join the round on
+releases whose surface warrants them — → decisions logged in
+`review/DECISIONS.md` (git-ignored) → round-3 verification → ship.
 
 ## Version bump checklist
 
@@ -187,9 +189,9 @@ Then update the pins in `tests/test_monitor.py` in the same commit: the
 file must match the number of sections. Section ids are unique across all
 panes (the map is shared): print, setup, toolhead, macros, profiles,
 tuning, fans, leds, pwm, power, system, save on the controls pane;
-meshmap, job, temps, fansinfo, filament, objects, systeminfo, mcus on
-the Information and Printer status panes. Persistence is automatic — the
-stored map only records sections the user has touched.
+meshmap, job, temps, fansinfo, filament, objects, systeminfo, mcus,
+temphistory on the Information and Printer status panes. Persistence is
+automatic — the stored map only records sections the user has touched.
 
 ### Collapsing a whole pane
 
@@ -364,9 +366,14 @@ they cannot recur silently.
   an inner item/row instead; children may reference the root's id.
 - `tools/check_qml_engine.py` loads every plugin QML document on the
   real engine and fails on component errors and engine diagnostics
-  (ReferenceError, dropped bindings, binding loops, TypeError); it
-  runs in the lint gates and the pre-commit hook. External context
-  contracts (manager, actionDialog, OutputDevice) are stubbed there —
+  (ReferenceError, dropped bindings, binding loops, TypeError,
+  non-existent-property assignments); it runs in the LOCAL lint gates
+  and the pre-commit hook only — it is not part of any GitHub
+  workflow, and it is an INSTANTIATION smoke test: documents load
+  with a null printer and closed pop-overs, so guarded branches and
+  Loader-gated content never evaluate (a live-model variant is 4.0.0
+  debt). External context contracts
+  (manager, actionDialog, OutputDevice) are stubbed there —
   the manager stub covers BOTH the machine-action settings surface and
   the upload-dialog surface (the dialog reads the same `manager`
   context property), the stubs are pyqtProperty-declared (dynamic
@@ -421,10 +428,24 @@ CI runs the same checks (the `lint` job) plus the full suite including the
 real-Qt tests (PyQt6 6.11.0). The release workflow on tag push additionally
 builds reproducible archives and verifies source/package byte parity and the
 Marketplace layout. Before tagging, run the smoke checks the harness cannot
-cover: real QML rendering, native nozzle/bed-mesh integration, Cura
-file-writer compatibility, multi-printer interaction and large files,
-and the bed-mesh pop-over open with its probe-points toggle (the one
-pop-over path the capture harness does not exercise).
+cover (the full matrix from the panel round, restored after a
+transcription drift):
+
+- Real QML rendering on the tag-built artifact (not a stale local build).
+- Native nozzle/bed-mesh integration in the Preview.
+- Cura file-writer compatibility (save/upload paths).
+- Multi-printer interaction and large files.
+- Chart continuity across preheat / print / pause / target-change.
+- Power-area plausibility (heater power bands on the chart).
+- Persistence across a Cura restart AND a printer switch.
+- Multi-hotend / chamber mini-widget selection.
+- A dense 25x25 bed mesh crosshair.
+- The bed-mesh pop-over open with its probe-points toggle (the one
+  pop-over path the capture harness does not exercise).
+- Escape-dismiss hand-test on the pop-overs.
+- Multi-hour Canvas/CPU sanity while printing.
+- One old + one current Cura (the README claims Cura 5.0-5.13 /
+  SDK 8.0-8.12).
 Once the workflow's tag-built artifacts exist, unpack the curapackage and
 grep the shipped QML/Python for the verification markers — no `BISECT`,
 no `visible: false` console gate, `GET` (not POST) on the endstop query,

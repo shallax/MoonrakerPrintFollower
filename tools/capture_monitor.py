@@ -79,7 +79,15 @@ def main():
         with patch.object(root, "MoonrakerClient", lambda parent: real(parent, transport=transport)):
             follower = qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(follower_app)
         config_type = qt.load("PrinterConfig").PrinterConfig
-        follower.apply_printer_config(config_type(url="http://printer-a", path_follow=False))
+        # The console transcript seeds the terminal pane: a typed line,
+        # a plain response and a "!!" error, all restored (they came
+        # from config, so the pane greys them — exercising the feed's
+        # three delegate styles in the captures).
+        follower.apply_printer_config(config_type(url="http://printer-a", path_follow=False, console_transcript=[
+            {"kind": "command", "text": "M104 S200", "error": False},
+            {"kind": "response", "text": "ok", "error": False},
+            {"kind": "response", "text": "!! Heater extruder not heating", "error": True},
+        ]))
         output = qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(follower_app, follower)
         output.start()
         model = output._current.activePrinter
@@ -199,6 +207,11 @@ def main():
         filled = 0
         for bar in bars:
             top_left = bar.mapToScene(QPointF(0, 0))
+            # ≥10 hits at 4 px pitch = ≥40 px of contiguous blue: the
+            # assertion is calibrated to the 24%-progress seed, so the
+            # fixture's bar must stay ~165 px wide or more — a layout
+            # change that shrinks the pane (or zeroes the seed's
+            # progress) would false-fail here before the render itself.
             hits = sum(1 for x in range(5, min(int(bar.width()), 400), 4)
                        for y in range(1, max(2, int(bar.height()) - 1))
                        if scene.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name() == blue)

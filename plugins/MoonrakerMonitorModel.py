@@ -111,7 +111,18 @@ def value_property(kind, name, signal, default=None):
     """
     def read(self):
         value = self._values.get(name, default)
-        return QVariant(value) if kind is QVariant else value
+        cached = self._qv_cache.get(name)
+        if cached is None or cached[0] is not value:
+            # One QVariant conversion per VALUE REBUILD, not per read:
+            # at the mature 1800-sample payload a conversion costs
+            # ~6.75 ms (measured in the pinned container), and the
+            # chart is read by several bindings per aux feed. The
+            # stored value's identity is stable across publishes by
+            # design (payloads rebuild only on real changes), so the
+            # cache hits for every unchanged publish.
+            cached = (value, QVariant(value) if kind is QVariant else value)
+            self._qv_cache[name] = cached
+        return cached[1]
     return pyqtProperty(kind, read, notify=signal)
 
 
@@ -189,6 +200,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # finds the file already local and skips the re-download.
         self._request_monitor_download = request_monitor_download
         self._show_probe_points = bool(getattr(self._config(), "show_probe_points", False))
+        self._qv_cache = {}
         self._improving_eta = False
         self._values = {}
         state = _read_state()
@@ -233,9 +245,24 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # a session invalidation restarts the window so the previous
         # printer's curves never bleed into the next one.
         self._data.auxiliaryChanged.connect(self._on_auxiliary)
+        self._data.consoleStoreChanged.connect(self._on_console_store)
         self._data.invalidated.connect(self._on_invalidated)
         self._data.set_active(True)
         self._publish()
+
+    def _on_console_store(self):
+        # Klipper's output arrives from the gcode-store poll; the
+        # controller merges it into the transcript feed.
+        self._console.append_responses(self._data.console_entries)
+
+    @pyqtSlot(bool)
+    def setConsoleExpanded(self, expanded):
+        # The console polls the store only while on screen (the author's
+        # ruling); the pane's visibility drives this flag, seeded with
+        # the persisted last-seen stamp so the backfill skips the
+        # server's stale buffer.
+        stored = float(getattr(self._config(), "console_store_time", 0.0) or 0.0)
+        self._data.set_console_expanded(expanded, stored)
 
     def _on_auxiliary(self):
         self._history.observe(self._data.snapshot.auxiliary, time.monotonic(), time.time())
@@ -349,6 +376,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     endstopSummary = value_property(str, "endstopSummary", endstopsChanged, "")
     showProbePoints = value_property(bool, "showProbePoints", showProbePointsChanged, False)
     consoleHistory = value_property(QVariant, "consoleHistory", consoleChanged, [])
+    consoleLines = value_property(QVariant, "consoleLines", consoleChanged, [])
     consolePending = value_property(int, "consolePending", consoleChanged, 0)
     consoleStatus = value_property(str, "consoleStatus", consoleChanged, "")
     cameraName = value_property(str, "cameraName", cameraTransformChanged, "")

@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import QHostAddress, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
+# QHostAddress is a QtNetwork class: some bundled PyQt6 builds (Cura
+# 5.13's included) do not re-export it from QtCore, and the plugin
+# fails to register with "cannot import name 'QHostAddress'" when the
+# import points at the wrong module.
+from PyQt6.QtNetwork import QHostAddress
 
 from cura.MachineAction import MachineAction
 from UM.Logger import Logger

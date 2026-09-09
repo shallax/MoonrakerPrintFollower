@@ -6,7 +6,7 @@ from types import MappingProxyType
 from collections.abc import Mapping
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
-from .MonitorFormatting import result, wanted_object
+from .MonitorFormatting import number, result, wanted_object
 from .MoonrakerSession import RequestCategory
 
 
@@ -35,6 +35,7 @@ class MonitorData(QObject):
     # Fired after each auxiliary reply lands in the snapshot — the
     # temperature history feeds from this, not from every publish.
     auxiliaryChanged = pyqtSignal()
+    consoleStoreChanged = pyqtSignal()
     commandChanged = pyqtSignal(object)
 
     def __init__(self, client, parent=None):
@@ -43,10 +44,14 @@ class MonitorData(QObject):
         self._active = False
         self._generation = 0
         self._timers = {}
+        self._console_expanded = False
+        self._console_store_time = 0.0
+        self._console_entries = []
         self._clear()
         for category, callback in ((RequestCategory.AUXILIARY, self.refresh_aux),
             (RequestCategory.POWER, self.refresh_power), (RequestCategory.SYSTEM, self.refresh_system),
             (RequestCategory.ENDSTOPS, self.refresh_endstops),
+            (RequestCategory.CONSOLE, self.refresh_console_store),
             (RequestCategory.DISCOVERY, self.refresh_discovery)):
             timer = QTimer(self)
             timer.timeout.connect(callback)
@@ -156,6 +161,10 @@ class MonitorData(QObject):
         self.refresh_endstops()
         self.refresh_webcams()
 
+    @property
+    def console_entries(self) -> list:
+        return list(self._console_entries)
+
     @staticmethod
     def wants_object(name):
         return wanted_object(name)
@@ -196,6 +205,56 @@ class MonitorData(QObject):
             merged[name] = dict(previous, **value) if isinstance(previous, Mapping) and isinstance(value, Mapping) else value
         self._update(auxiliary=merged)
         self.auxiliaryChanged.emit()
+
+    # The console's gcode-store feed: polled at 1 s ONLY while the
+    # console is on screen (the author's ruling — expanded-only, with a
+    # backfill fetch on expand so nothing is missed). The store pairs
+    # responses to recent commands by recency; we take response entries
+    # only (our own commands are already in the pane) and advance a
+    # last-seen timestamp so entries never repeat.
+    def set_console_expanded(self, expanded, stored_time=0.0):
+        expanded = bool(expanded)
+        if expanded == self._console_expanded:
+            return
+        self._console_expanded = expanded
+        if expanded:
+            # The persisted last-seen stamp seeds the backfill: the
+            # store's buffer holds entries from other sessions and
+            # other clients, and re-adding them was the author's
+            # "stale responses without requests" dump.
+            self._console_store_time = float(stored_time or 0.0)
+            self.refresh_console_store()
+
+    def refresh_console_store(self):
+        if not self._console_expanded:
+            return
+        def finished(payload, error):
+            if error or not isinstance(result(payload), Mapping):
+                return
+            store = result(payload).get("gcode_store")
+            if not isinstance(store, (list, tuple)):
+                return
+            newest = self._console_store_time
+            responses = []
+            for entry in store:
+                if not isinstance(entry, Mapping) or entry.get("type") != "response":
+                    continue
+                stamp = number(entry.get("time"), float) or 0.0
+                if stamp > newest:
+                    newest = stamp
+                    text = str(entry.get("message") or "")
+                    if text:
+                        responses.append({
+                            "text": text,
+                            "error": text.startswith("!!"),
+                            "success": text == "ok" or text.lower().startswith("ok "),
+                            "time": stamp,
+                        })
+            self._console_store_time = newest
+            if responses:
+                self._console_entries = responses
+                self.consoleStoreChanged.emit()
+        self.request("console-store", "GET", "server/gcode_store?count=100", finished, category="console")
 
     def refresh_endstops(self):
         # Endstop pin states are NOT part of the objects query; the

@@ -1,15 +1,20 @@
-"""Console state owner: the bounded, per-printer command history and
+"""Console state owner: the bounded, per-printer command transcript and
 the send lane.
 
 Commands go through MonitorCommands' untracked one-shot path — HTTP
-acknowledgement means *queued at the Klipper boundary*, never executed,
-and Klipper's replies are websocket-only (logged as 4.0.0 debt in the
-roadmap). The UI must say exactly that, so this controller publishes
-honest status strings instead of pretending completion.
+acknowledgement means Klipper received the script (printer/gcode/script
+returns after Klipper processes it), and Klipper's OUTPUT streams back
+through Moonraker's gcode store, which MonitorData polls at 1 s while
+the console is on screen (the author's ruling: expanded-only polling
+with a backfill on expand). The store pairs responses to the most
+recent command by recency — there are no correlation ids — so the pane
+is a terminal FEED, not a per-command echo: our typed lines appear as
+sent, Klipper's lines arrive as they land, and no line claims an
+attribution the store cannot support.
 
-The history persists per printer (sensor/command vocabulary differs
-between machines); it is bounded by ConsolePolicy and never lands in
-the global chrome file.
+The transcript persists per printer (sensor/command vocabulary differs
+between machines), bounded by ConsolePolicy; lines restored from a
+previous session render greyed in the pane.
 """
 from __future__ import annotations
 
@@ -17,7 +22,17 @@ from dataclasses import replace
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from .ConsolePolicy import MAX_LINE, MAX_PENDING, normalise_line, trim_history
+from .ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, MAX_TRANSCRIPT, normalise_line
+
+def _transcript_from_history(lines) -> list:
+    """Legacy console_history (typed lines) becomes a command transcript
+    with every line marked restored — they all predate this session."""
+    return [{"kind": "command", "text": str(line), "error": False, "success": False, "restored": True}
+            for line in lines][-MAX_TRANSCRIPT:]
+
+
+def _trim_transcript(entries: list) -> list:
+    return entries[-MAX_TRANSCRIPT:]
 
 
 class ConsoleController(QObject):
@@ -27,7 +42,27 @@ class ConsoleController(QObject):
         super().__init__(parent)
         self._data, self._commands = data, commands
         self._config, self._apply_config = config, apply_config
-        self._history = trim_history(getattr(self._config(), "console_history", ()))
+        stored = getattr(self._config(), "console_transcript", None)
+        if isinstance(stored, (list, tuple)):
+            # EVERY loaded line predates this session: restored stays
+            # out of the persisted record and is stamped on load so the
+            # pane greys the previous session's lines. An EMPTY list is
+            # a genuine Clear — it must not fall through to the legacy
+            # history re-migration (the author's Clear-doesn't-stick
+            # report).
+            transcript = [{
+                "kind": str(entry.get("kind") or "command"),
+                "text": str(entry.get("text") or ""),
+                "error": bool(entry.get("error")),
+                "success": bool(entry.get("success")),
+                "restored": True,
+            } for entry in stored][-MAX_TRANSCRIPT:]
+        else:
+            # Legacy migration: the typed-only history becomes the
+            # transcript; everything in it predates this session.
+            transcript = _transcript_from_history(getattr(self._config(), "console_history", ()))
+        self._transcript = [dict(entry) for entry in transcript]
+        self._store_time = float(getattr(self._config(), "console_store_time", 0.0) or 0.0)
         self._status = ""
         # Accepted-but-unacknowledged sends, counted per completion of a
         # console-labelled lane cycle. Per-idle-epoch decrements drifted
@@ -38,14 +73,15 @@ class ConsoleController(QObject):
         commands.completed.connect(self._lane_completed)
         commands.emergencyStopped.connect(self._emergency_stopped)
         # A printer switch must not leave phantom pending sends or a
-        # "sent" status bleeding across sessions; the history is
+        # "sent" status bleeding across sessions; the transcript is
         # per-printer and persists, so it stays.
         data.invalidated.connect(self._session_invalidated)
 
     @property
     def values(self):
         return {
-            "consoleHistory": list(self._history),
+            "consoleHistory": [entry["text"] for entry in self._transcript if entry["kind"] == "command"],
+            "consoleLines": [dict(entry) for entry in self._transcript],
             "consolePending": self._pending,
             "consoleStatus": self._status,
         }
@@ -68,18 +104,48 @@ class ConsoleController(QObject):
             self._status = "Command queue full or Moonraker unavailable — try again."
             self.changed.emit()
             return False
-        self._history = trim_history(self._history + [line])
+        entry = {"kind": "command", "text": line, "error": False, "success": False, "restored": False}
+        self._transcript = self._transcript[-MAX_HISTORY + 1:] + [entry]
         self._pending += 1
-        self._status = "Sent to Klipper's queue — HTTP gives no output or errors."
+        self._status = "Sent to Klipper's queue — output appears below as Moonraker reports it."
         self._persist()
         self.changed.emit()
         return True
 
-    def clear(self) -> None:
-        if not self._history:
+    def append_responses(self, entries) -> None:
+        """Klipper's gcode-store output, newest last. Entries are already
+        formatted ({text, error}) and deduplicated by MonitorData; the
+        transcript keeps the last MAX_TRANSCRIPT lines of the combined
+        feed."""
+        if not entries:
             return
-        self._history = []
+        fresh = [{"kind": "response", "text": str(entry.get("text") or ""),
+                  "error": bool(entry.get("error")),
+                  "success": bool(entry.get("success")),
+                  "restored": False}
+                 for entry in entries
+                 if str(entry.get("text") or "") and float(entry.get("time") or 0.0) > self._store_time]
+        if not fresh:
+            return
+        # The store stamp advances with the newest entry so re-polls and
+        # the expand-backfill never repeat a line (the author's
+        # "stale responses without requests" report was the backfill
+        # re-adding the server's whole buffer).
+        self._store_time = max(float(entry.get("time") or 0.0) for entry in entries)
+        self._transcript = (self._transcript + fresh)[-MAX_HISTORY:]
         self._persist()
+        self.changed.emit()
+
+    def clear(self) -> None:
+        if not self._transcript:
+            return
+        self._transcript = []
+        # Clear must clear the PERSISTED record too — both the new
+        # transcript and the legacy typed history, so nothing survives
+        # a restart (the author's ruling). The store stamp stays: the
+        # cleared pane must not refill from the server's buffer.
+        config = self._config()
+        self._apply_config(replace(config, console_transcript=[], console_history=[]))
         self.changed.emit()
 
     def _lane_completed(self, label) -> None:
@@ -106,5 +172,11 @@ class ConsoleController(QObject):
 
     def _persist(self) -> None:
         config = self._config()
-        if getattr(config, "console_history", None) != self._history:
-            self._apply_config(replace(config, console_history=self._history))
+        # Only the last 50 lines persist (the author's ruling); the
+        # session keeps up to MAX_HISTORY in the pane. The store stamp
+        # persists with them so the next session's backfill skips
+        # everything already seen.
+        transcript = self._transcript[-MAX_TRANSCRIPT:]
+        if getattr(config, "console_transcript", None) != transcript                 or getattr(config, "console_store_time", 0.0) != self._store_time:
+            self._apply_config(replace(config, console_transcript=transcript,
+                                       console_store_time=self._store_time))

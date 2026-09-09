@@ -6,8 +6,8 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 Version 3.5.0 is the informational half of Mainsail parity: the Monitor
 tab becomes the at-a-glance view of a running printer, with temperature
-history, a bed-mesh map, a write-only console, endstop readouts and a
-better remaining-time estimate.
+history, a bed-mesh map, a console with Klipper's live output, endstop
+readouts and a better remaining-time estimate.
 
 ### Highlights
 - **Temperature history chart** in the Information pane: a 30-minute
@@ -25,12 +25,15 @@ better remaining-time estimate.
 - **Bed-mesh mini map** in the Information pane; the enlarged detail
   view gains a crosshair that snaps to probe points with coordinates
   and Z offsets.
-- **Write-only G-code console** below the webcam: arbitrary commands,
-  Enter-to-send, up/down recall and a per-printer persisted history.
-  HTTP acknowledgement means queued at the Klipper boundary, never
-  executed — Klipper's replies are websocket-only, and the console
-  says exactly that. Deliberately unrestricted: typing a command is
-  intent, so there is no command-safety table.
+- **G-code console** below the webcam: arbitrary commands,
+  Enter-to-send, up/down recall and a per-printer persisted transcript
+  (the last ~50 lines of commands AND output survive across sessions,
+  restored lines greyed). Klipper's replies stream in from Moonraker's
+  command store — polled once a second while the console is on screen
+  — so the pane is a real terminal feed: typed lines as sent, output
+  as it arrives, `!!` errors in red, no false attribution (the store
+  pairs by recency, not per command). Deliberately unrestricted:
+  typing a command is intent, so there is no command-safety table.
 - **Endstop readouts**: live pin states from a one-shot
   `printer/query_endstops/status` poll, with an explicit
   not-homed-yet state.
@@ -56,9 +59,9 @@ better remaining-time estimate.
   window.
 - The 1 s chart cadence applies while printing or paused; the idle
   auxiliary poll stays at 2.5 s.
-- Chart colours, visibility and the console history persist per
-  printer; the pane chrome (collapsed sections, pane collapse, lock)
-  stays global.
+- Chart colours, visibility and the console transcript (commands and
+  Klipper's output) persist per printer; the pane chrome (collapsed
+  sections, pane collapse, lock) stays global.
 
 ## 3.4.0
 

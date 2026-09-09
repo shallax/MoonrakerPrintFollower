@@ -87,12 +87,34 @@ the stream).
   global estimate alone. Falls back to the current blend when the index
   is unavailable.
 
-## 3.6.0 — File manager
+## 3.6.0 — File manager and the small controls
 
 The last large Mainsail parity piece: browse remote gcode, print and delete.
 `RemoteFileService` and its `FileLease` lifetime model already provide the
 safe download path; this release adds listing UI and the print/delete
-command surface on top.
+command surface on top. Print-from-file is as powerful as the console (it
+IS the console path plus print start): it needs the same ready-retry,
+power-device gating and state-expectation machinery as UploadController,
+delete of the currently-printing file must surface Moonraker's refusal
+cleanly, and starting a print must trigger the existing job-observation →
+load flow (stated so the wiring is tested).
+
+Small controls the domain panel ranked as the real Mainsail gaps:
+
+- Live M220 speed / M221 flow sliders during printing, wired into the ETA
+  as feed-forward (an empirical-only ETA misstates for minutes after a
+  speed change).
+- Z-babystepping (SET_GCODE_OFFSET Z±0.01…0.05 MOVE=1) — first-layer
+  tuning is the most common live-print adjustment; reuses the
+  homed-axes-gated offset code.
+- Firmware-restart / restart actions with double-confirm beside the
+  emergency stop (after printer.cfg edits the user restarts from the
+  printer today).
+- Per-printer opt-in "auto-improve monitor ETA when a print starts" —
+  the no-silent-downloads ruling is respected by the explicit toggle.
+- Webcam liveness watchdog: an HTTP probe on the stream URL → "offline"
+  badge + auto-switch to the next configured camera (mjpeg-streamer dies
+  silently in the field).
 
 ## 3.7.0 — Physical head in the Preview
 
@@ -101,27 +123,63 @@ What a web dashboard cannot do: show the real machine inside the slice.
 - A live physical-position marker overlaid on the Preview scene. Moonraker
   reports `absolute_position` even while jogging, so the marker follows the
   real head around the build plate independently of the path follower.
+  The hard cases are pause-park, start-gcode parking and homing, not
+  jogging: the marker must hide/fade when not printing/paused, when Z is
+  above the model with no extrusion (reuse the LayerResolver's extrusion
+  guard), and when axes are unhomed. Klipper already reports the ACTIVE
+  nozzle on multi-extruder machines, so no extra extruder math.
 - A floating jog pad in the Preview panel, so the head can be moved while
   looking at the actual toolpath.
-- The bed-mesh presenter has already solved scene↔machine coordinate
-  mapping, so the transform precedent exists.
+- A shared coordinate-transform module: the marker and the bed-mesh
+  overlay both need the same homing_origin/axis_map conversion as
+  `live_position_in_gcode_space` — name it once, use it everywhere.
+- Macro surfacing from `configfile.settings` `[gcode_macro]` sections:
+  names, descriptions and bodies are introspectable over HTTP; execution
+  stays gcode/script with a confirmation and a hard gate — never while a
+  print is active unless whitelisted (PRINT_START mid-print is a real
+  hazard); parameters cannot be introspected, so a raw param string
+  passes through like Mainsail.
 
-## 4.0.0 — WebSockets, eventually
+## 4.0.0 — WebSockets as a transport swap
 
-Still the right long-term foundation for high-rate data, but nothing before
-this needs it: the poller already matches Mainsail's chart resolution, and
-250 ms core polling has proven adequate for path following. Taking on the
-socket migration before the parity surface exists would be paying a large
-cost for no user-visible gain.
+The socket remains the right long-term transport, but the domain panel
+re-sequenced the plan on two facts:
 
-Known gaps the socket work should close: the 3.5.0 console is outbound-only
-over HTTP — Klipper's script replies and errors (`notify_gcode_response`)
-are websocket-only, so the console shows "sent" and cannot echo command
-output or failures. An inbound response stream appended to the console
-history is the natural first socket consumer. Also carried from the 3.5.0
-panel (P21): push chart samples asynchronously at a steady cadence instead
-of per aux-reply bursts, and build the coherent command/state push story
-that lets tracked commands drop their polling confirmations.
+- The console's echo no longer needs it: 3.5.0 ships the gcode-store feed
+  over HTTP, and `notify_gcode_response` cannot do per-command attribution
+  anyway (a broadcast with no correlation ids, doubled by every other
+  connected client). The "first socket consumer" premise is retired.
+- `notify_proc_stat_update` is HOST stats (cpu/memory/network), not
+  printer data — the old "push chart samples" story conflated it with
+  `notify_status_update` deltas of the heater/temperature objects. And
+  heater readings update at Klippy's MCU sampling cadence, which is not
+  faster than the 1 s aux poll: the socket buys event edges and lower
+  polling load, not chart resolution. "High-rate data" is not a promise
+  this roadmap makes.
+
+The honest socket drivers are: immediate error/response streaming,
+state-edge confirmation for tracked commands (reframed as "confirm via a
+print_stats state subscription, HTTP poll as the post-reconnect
+state-recovery path — notifications are diffs with no replay"), and lower
+polling load. HTTP stays for uploads/downloads regardless — dual transport
+is the destination, not a transitional wart. Reconnect semantics (re-identify,
+re-subscribe, no replay) are pre-designed into the session-invalidation
+machinery before the work starts.
+
+Cross-cutting workstreams (land in whichever release touches their code
+first): a version-drift capability gate (Moonraker has moved webcams,
+history and notify names between minors — promote the existing
+objects/list + server/info probes into feature flags before any socket
+code), and the layer-hardening pack: full continuous-Z (vase) support and
+the per-layer-heights rewrite WITH foreign-heights job gating as one work
+item (the exact-match path is dead code on real Cura 5.x today; activating
+it without the gate would claim wrong layers for the load-A-while-B-prints
+workflow). A fixture-driven resolver test corpus from real trace-layer logs
+(vase, multi-extruder, mesh-less, macro-less) backs the next
+resolver-touching release. Far-future notes: full i18n via community
+catalogs (the locale-driven spelling variants in 3.5.0 are the seed), and
+per-series marker styles for deuteranopia (the palette already passes WCAG
+contrast; pairwise hue separation is the residual debt).
 
 ## Explicitly out of scope
 
@@ -129,3 +187,23 @@ that lets tracked commands drop their polling confirmations.
   time; per-printer Monitor instances do not fit.
 - **Printer.cfg editing** — Cura machines are configured in Cura; a config
   editor belongs to Mainsail, not this plugin.
+- **Per-command correlated console over the websocket** — no correlation
+  ids exist in notify_gcode_response; the gcode-store feed is the
+  attribution-free answer (Mainsail's own model).
+- **Socket-only transport** — notifications have no replay; the HTTP
+  objects query is the state-recovery path and upload/download is HTTP.
+- **A Pi/system-health panel from notify_proc_stat_update** — host stats,
+  not printer state; Mainsail/Fluidd already own that surface.
+- **High-rate chart push (10 Hz+)** — MCU temperature sampling caps the
+  source; the 1 s aux poll matches Mainsail's resolution.
+- **Firmware-update management (Moonraker update_manager)** — dangerous,
+  off-brand for a slicer plugin, and per-machine update state is a
+  support sink.
+- **Thumbnail galleries / folder trees in the file manager** — Cura's
+  value is loading real G-code, not browsing it; deep management belongs
+  in Mainsail.
+- **Spoolman / filament inventory, job queues, OctoPrint-plugin API
+  parity** — no Cura-side payoff; ecosystem features with their own
+  frontends.
+- **Network discovery of Moonraker instances** — a security surface for
+  near-zero value; users configure one URL per machine.

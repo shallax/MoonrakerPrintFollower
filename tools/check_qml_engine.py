@@ -76,6 +76,7 @@ engine.rootContext().setContextProperty("OutputDevice", {"activePrinter": None})
 BAD = re.compile(
     r"ReferenceError|Unable to assign \[undefined\]|is not defined"
     r"|Invalid component body|Binding loop detected|TypeError"
+    r"|Cannot assign to non-existent property"
 )
 diagnostics = []
 

@@ -352,7 +352,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('text: "Custom…"', MONITOR_QML)
         self.assertIn("setShowProbePoints", MONITOR_QML)
         # Terminal order: the history sits above the input row.
-        self.assertLess(MONITOR_QML.index("id: consoleHistoryView"), MONITOR_QML.index("id: consoleInput"))
+        self.assertLess(MONITOR_QML.index("id: consoleText"), MONITOR_QML.index("id: consoleInput"))
         self.assertIn("All sensors hidden — click to re-enable one in the chart.", MONITOR_QML)
 
     def test_system_restart_surface(self):
@@ -1419,13 +1419,22 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(len(scripts), 1)
         self.assertEqual(scripts[0].options["body"], {"script": "M104 S200"})
         self.assertEqual(model.consoleHistory, ["M104 S200"])
-        # The history persists per printer, never in the global file.
-        self.assertEqual(self.follower.current_printer_config().console_history, ["M104 S200"])
+        # The TRANSCRIPT persists per printer, never in the global file
+        # (the typed history is now derived from it).
+        # The persisted record carries kind/text/error only; the
+        # controller stamps restored=True on load (everything loaded
+        # predates this session — the pane greys it).
+        self.assertEqual(self.follower.current_printer_config().console_transcript[-1],
+                         {"kind": "command", "text": "M104 S200", "error": False})
         second = self.monitor()
         self.assertEqual(second.consoleHistory, ["M104 S200"])
-        # The caption and status stay honest: HTTP acks mean queued,
-        # never executed.
-        self.assertEqual(model.consoleStatus, "Sent to Klipper's queue — HTTP gives no output or errors.")
+        # The pane list serves the transcript; restored lines carry the
+        # stamped flag (everything persisted predates this session).
+        self.assertEqual(second.consoleLines.value(), [{"kind": "command", "text": "M104 S200",
+                                                        "error": False, "success": False, "restored": True}])
+        # The caption and status stay honest: output streams from the
+        # gcode store, not from an execution echo.
+        self.assertEqual(model.consoleStatus, "Sent to Klipper's queue — output appears below as Moonraker reports it.")
 
     def test_console_empty_input_and_clear_and_refused_sends(self):
         model = self.monitor()
@@ -1438,7 +1447,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(model.consoleHistory, ["G28"])
         model.clearConsoleHistory()
         self.assertEqual(model.consoleHistory, [])
-        self.assertEqual(self.follower.current_printer_config().console_history, [])
+        self.assertEqual(self.follower.current_printer_config().console_transcript, [])
         # A refused send (lane full / Moonraker down) reports honestly
         # and does not enter the history.
         model._console._commands.request = lambda *args, **kwargs: False
@@ -1696,6 +1705,52 @@ class MonitorQtTests(unittest.TestCase):
         self.qt.events(1)
         self.assertEqual(model.webcamNames, ["Front"])
 
+    def test_gcode_store_feed_appends_klippers_output_without_duplicates(self):
+        # The console echo (the author's ruling): the store is polled
+        # ONLY while the console is expanded, Klipper's response entries
+        # land in the transcript feed, "!!" lines carry the error flag,
+        # commands from the store are ignored (ours are already in the
+        # pane), and a re-poll never repeats an entry.
+        model = self.monitor()
+        self.qt.events(1)
+        self.assertEqual([r for r in self.transport.requests if r.channel == "console-store"], [])
+        model.setConsoleExpanded(True)
+        store = [r for r in self.transport.requests if r.channel == "console-store"]
+        self.assertEqual(len(store), 1)
+        self.assertIn("server/gcode_store", store[0].path)
+        store[0].callback({"result": {"gcode_store": [
+            {"message": "M104 S200", "type": "command", "time": 9.0},
+            {"message": "ok", "type": "response", "time": 10.0},
+            {"message": "!! Heater extruder not heating", "type": "response", "time": 11.0},
+        ]}}, None)
+        self.qt.events(1)
+        lines = model.consoleLines.value()
+        self.assertEqual([entry["text"] for entry in lines],
+                         ["ok", "!! Heater extruder not heating"])
+        self.assertFalse(lines[0]["error"])
+        self.assertTrue(lines[0]["success"])
+        self.assertTrue(lines[1]["error"])
+        self.assertFalse(lines[1]["success"])
+        # The next poll repeats the old entries with one new line: the
+        # last-seen stamp dedups and only the new line lands. (1200 ms:
+        # the 1 s timer was started a hair before this pump, so a
+        # 1000 ms window can end just short of its due point.)
+        self.qt.events(1200)
+        later = [r for r in self.transport.requests if r.channel == "console-store"][1:]
+        self.assertTrue(later)
+        later[-1].callback({"result": {"gcode_store": [
+            {"message": "ok", "type": "response", "time": 10.0},
+            {"message": "!! Heater extruder not heating", "type": "response", "time": 11.0},
+            {"message": "Target reached", "type": "response", "time": 12.0},
+        ]}}, None)
+        self.qt.events(1)
+        lines = model.consoleLines.value()
+        self.assertEqual([entry["text"] for entry in lines],
+                         ["ok", "!! Heater extruder not heating", "Target reached"])
+        # The transcript persists with the responses.
+        transcript = self.follower.current_printer_config().console_transcript
+        self.assertEqual([entry["text"] for entry in transcript], ["ok", "!! Heater extruder not heating", "Target reached"])
+
     def test_sweep_phase_advances_on_the_real_engine(self):
         # The sweep's position is a binding on the bar's sweepPhase; a
         # bare unqualified reference did NOT resolve through the visual
@@ -1824,17 +1879,24 @@ Item {
 
     def test_console_qml_surface(self):
         for token in ("id: consoleSection", '"G-code command…"', "sendConsoleCommand(",
-                      "clearConsoleHistory()", "no output comes back over HTTP",
+                      "clearConsoleHistory()", "output comes from Moonraker's command store",
                       "Keys.onReturnPressed", "Keys.onUpPressed", "Keys.onDownPressed",
-                      '"monospace"', "id: consoleHistoryView",
+                      '"monospace"', "id: consoleText",
                       "consoleRecallIndex", "consoleDraft",
-                      # The terminal fills upward: BottomToTop over the
-                      # reversed history pins the newest line to the
-                      # bottom edge; the face itself is picked at
-                      # runtime (see the monoFamily pin).
-                      "ListView.BottomToTop", "consoleHistory.slice().reverse()"):
-            self.assertIn(token, MONITOR_QML)
+                      # The pane is ONE rich TextEdit (multi-line
+                      # selection) with the terminal-feed colours and
+                      # the append-with-selection-restore sync; the face
+                      # itself is picked at runtime (monoFamily pin).
+                      "consoleSyncLines", "consoleLineHtml",
+                      "textFormat: TextEdit.RichText", "selectionStart",
+                      "wasAtEnd", "consoleFlick",
+                      # Terminal ethics: follow the tail ONLY while at it
+                      # and not selecting.
+                      "consoleLines", "selectByMouse",
+                      "server/gcode_store?count=100"):
+            self.assertIn(token, MONITOR_QML + (PLUGINS / "MonitorData.py").read_text())
         for token in ("consoleHistory", "consolePending", "consoleStatus", "consoleChanged",
+                      "consoleLines", "def setConsoleExpanded(",
                       "def sendConsoleCommand(", "def clearConsoleHistory("):
             self.assertIn(token, MONITOR_MODEL)
 
@@ -1846,7 +1908,7 @@ Item {
         # carry a visibility gate.
         self.assertNotIn("BISECT", MONITOR_QML)
         self.assertNotIn("BISECT", DASHBOARD_QML)
-        console = MONITOR_QML[MONITOR_QML.index("id: consoleSection"):MONITOR_QML.index("id: consoleHistoryView")]
+        console = MONITOR_QML[MONITOR_QML.index("id: consoleSection"):MONITOR_QML.index("id: consoleInput")]
         self.assertNotIn("visible: false", console)
 
     def test_publishes_without_aux_do_not_append_history(self):

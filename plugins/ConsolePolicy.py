@@ -15,6 +15,11 @@ from typing import List
 # never grows unbounded.
 MAX_HISTORY = 200
 
+# The persisted console TRANSCRIPT bound (commands + Klipper's output
+# from the gcode store): the author's ruling is the last ~50 lines
+# survive across sessions, with restored lines greyed in the pane.
+MAX_TRANSCRIPT = 50
+
 # Mirror MonitorCommands.MAX_QUEUED_COMMANDS: the console shares the
 # one-shot lane with macros and setup scripts.
 MAX_PENDING = 16

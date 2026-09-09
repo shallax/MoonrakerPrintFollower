@@ -13,6 +13,7 @@ class RequestCategory(str, Enum):
     POWER = "power"
     SYSTEM = "system"
     ENDSTOPS = "endstops"
+    CONSOLE = "console"
     DISCOVERY = "discovery"
     COMMAND = "command"
     STATIC = "static"
@@ -29,6 +30,7 @@ class PollPolicy:
     power_ms: int = 5000
     system_ms: int = 10000
     endstops_ms: int = 10000
+    console_ms: int = 1000
     discovery_ms: int = 30000
     pause_guard_ms: int = 250
 
@@ -65,6 +67,8 @@ class PollPolicy:
             return self.system_ms
         if category == RequestCategory.ENDSTOPS:
             return self.endstops_ms
+        if category == RequestCategory.CONSOLE:
+            return self.console_ms
         if category == RequestCategory.DISCOVERY:
             return self.discovery_ms
         return configured

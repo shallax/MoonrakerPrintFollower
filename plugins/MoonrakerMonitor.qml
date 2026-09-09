@@ -96,6 +96,20 @@ Component {
         onPrinterChanged: {
             openPopOver = "";
             selectedChartSensor = "";
+            // The console's gcode-store poll runs only while the pane
+            // is visible (the author's ruling): push the initial state
+            // and follow collapses.
+            if (root.printer != null) {
+                root.printer.setConsoleExpanded(!root.infoCollapsed);
+            }
+            consoleSection.consoleRenderedLines = 0;
+            consoleText.text = "";
+            consoleSection.consoleSyncLines();
+        }
+        onInfoCollapsedChanged: {
+            if (root.printer != null) {
+                root.printer.setConsoleExpanded(!root.infoCollapsed);
+            }
         }
         Keys.onEscapePressed: {
             openPopOver = "";
@@ -602,10 +616,11 @@ Component {
                             }
                         }
 
-                        // Console: a write-only command line below the
-                        // feed. HTTP acknowledgement means "queued at the
-                        // Klipper boundary", never executed, and no
-                        // output comes back — the caption says so.
+                        // Console: the command line below the feed.
+                        // printer/gcode/script returns after Klipper
+                        // processes the script, and its output streams
+                        // back through the gcode store — the caption
+                        // says exactly that.
                         Rectangle {
                             Layout.fillWidth: true
                             height: UM.Theme.getSize("default_lining").height
@@ -640,10 +655,57 @@ Component {
                                 }
                                 return "monospace";
                             }
-                            // Newest-first: BottomToTop lays index 0 at
-                            // the bottom edge, so the terminal fills
-                            // upward from the prompt like a shell.
-                            property var consoleLinesBottomUp: root.printer != null ? root.printer.consoleHistory.slice().reverse() : []
+                            // The transcript arrives oldest-first; the pane
+                            // is ONE rich TextEdit so text selection spans
+                            // lines (per-line delegates could not). The
+                            // sync appends only the NEW lines, inserting
+                            // at the end with the reader's selection
+                            // saved and restored around it — new output
+                            // never disturbs a selection or yanks the
+                            // scroll position.
+                            property int consoleRenderedLines: 0
+
+                            function consoleLineHtml(entry) {
+                                var hue = "#d9dde3";
+                                if (entry.kind === "response") {
+                                    hue = entry.error ? "#f85149" : (entry.success ? "#57ab5a" : "#8b949e");
+                                }
+                                if (entry.restored) {
+                                    hue = entry.error ? "#a63a34" : (entry.success ? "#3f7a42" : (entry.kind === "response" ? "#5b6670" : "#6e7681"));
+                                }
+                                var escaped = String(entry.text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                                return "<span style=\"color:" + hue + ";\">" + escaped + "</span>";
+                            }
+
+                            function consoleSyncLines() {
+                                var lines = root.printer != null ? root.printer.consoleLines : [];
+                                if (lines.length < consoleRenderedLines) {
+                                    // A Clear (or a printer switch): rebuild.
+                                    consoleText.text = "";
+                                    consoleRenderedLines = 0;
+                                }
+                                if (lines.length === consoleRenderedLines) {
+                                    return;
+                                }
+                                var wasAtEnd = consoleFlick.contentY + consoleFlick.height >= consoleFlick.contentHeight - 2;
+                                var selStart = consoleText.selectionStart;
+                                var selEnd = consoleText.selectionEnd;
+                                var html = "";
+                                for (var i = consoleRenderedLines; i < lines.length; ++i) {
+                                    if (html !== "")
+                                        html += "<br>";
+                                    html += consoleLineHtml(lines[i]);
+                                }
+                                consoleText.cursorPosition = consoleText.length;
+                                consoleText.insert(consoleText.length, html);
+                                consoleRenderedLines = lines.length;
+                                if (selStart !== selEnd && selStart >= 0) {
+                                    consoleText.select(selStart, selEnd);
+                                }
+                                if (wasAtEnd) {
+                                    consoleFlick.contentY = consoleFlick.contentHeight - consoleFlick.height;
+                                }
+                            }
 
                             function consoleSend() {
                                 if (root.printer != null) {
@@ -675,7 +737,7 @@ Component {
 
                             UM.Label {
                                 Layout.fillWidth: true
-                                text: "Console — commands go straight to Klipper's queue; no output comes back over HTTP."
+                                text: "Console — commands go straight to Klipper; output comes from Moonraker's command store (1 s refresh)."
                                 color: UM.Theme.getColor("text_inactive")
                                 wrapMode: Text.WordWrap
                             }
@@ -700,49 +762,57 @@ Component {
                                     anchors.margins: UM.Theme.getSize("narrow_margin").width
                                     spacing: UM.Theme.getSize("thin_margin").height
 
-                                    ListView {
-                                        id: consoleHistoryView
+                                    Flickable {
+                                        id: consoleFlick
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         clip: true
-                                        // BottomToTop + the reversed model put
-                                        // the newest line right against the
-                                        // bottom edge and fill upward — a
-                                        // shell, not a top-filled list.
-                                        verticalLayoutDirection: ListView.BottomToTop
-                                        model: consoleSection.consoleLinesBottomUp
-                                        delegate: UM.Label {
-                                            // Anchors, not a width binding: the
-                                            // bound width fed the label's layout
-                                            // back into the view's size hints and
-                                            // oscillated on pane collapses. The
-                                            // null guard keeps the engine quiet
-                                            // while the delegate is constructed
-                                            // before its view parents it.
-                                            anchors.left: parent !== null ? parent.left : undefined
-                                            anchors.right: parent !== null ? parent.right : undefined
-                                            text: modelData
-                                            // A concrete-family fallback list:
-                                            // the bare "monospace" generic does
-                                            // not resolve to a fixed-width face
-                                            // in Cura's label rendering.
-                                            font.family: consoleSection.monoFamily()
-                                            color: "#d9dde3"
-                                            elide: Text.ElideRight
-                                        }
+                                        contentWidth: consoleText.width
+                                        contentHeight: Math.max(consoleText.height, consoleFlick.height)
                                         ScrollBar.vertical: UM.ScrollBar {
                                             id: consoleScrollbar
+                                        }
+                                        Column {
+                                            width: consoleFlick.width
+                                            height: consoleFlick.contentHeight
+                                            // The spacer pins the sparse
+                                            // transcript to the shell's
+                                            // bottom edge; once the text
+                                            // fills the viewport it scrolls
+                                            // exactly like a terminal.
+                                            Item {
+                                                width: 1
+                                                height: Math.max(0, consoleFlick.height - consoleText.height)
+                                            }
+                                            TextEdit {
+                                                id: consoleText
+                                                width: parent.width
+                                                readOnly: true
+                                                selectByMouse: true
+                                                selectByKeyboard: true
+                                                textFormat: TextEdit.RichText
+                                                wrapMode: TextEdit.NoWrap
+                                                font.family: consoleSection.monoFamily()
+                                                color: "#d9dde3"
+                                            }
                                         }
                                     }
 
                                     UM.Label {
-                                        visible: root.printer == null || root.printer.consoleHistory.length === 0
+                                        visible: root.printer == null || root.printer.consoleLines.length === 0
                                         anchors.left: parent.left
                                         anchors.right: parent.right
                                         text: "No commands yet — lines you send appear here."
                                         font.family: consoleSection.monoFamily()
                                         color: "#7d8590"
                                         elide: Text.ElideRight
+                                    }
+
+                                    Connections {
+                                        target: root.printer
+                                        function onConsoleChanged() {
+                                            consoleSection.consoleSyncLines();
+                                        }
                                     }
 
                                     RowLayout {
@@ -768,7 +838,7 @@ Component {
                                         }
                                         Cura.SecondaryButton {
                                             text: "Clear"
-                                            visible: root.printer != null && root.printer.consoleHistory.length > 0
+                                            visible: root.printer != null && root.printer.consoleLines.length > 0
                                             onClicked: root.printer.clearConsoleHistory()
                                         }
                                     }
