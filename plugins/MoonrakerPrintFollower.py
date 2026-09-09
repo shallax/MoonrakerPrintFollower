@@ -26,8 +26,12 @@ class MoonrakerPrintFollower(QObject, Extension):
     def current_printer_identity(self): return self._runtime.binding.identity
     def apply_printer_config(self, config): self._runtime.binding.apply(config)
 
+    @property
+    def preferencesFlushed(self): return self._runtime.binding.preferencesFlushed
+
     @pyqtSlot()
     def confirmForceLoadCurrentPrint(self): self._runtime.coordinator.confirm_load()
+    def confirmDownloadForMonitor(self): self._runtime.coordinator.download_for_monitor()
 
     @pyqtSlot()
     def toggleFollowingPause(self): self._runtime.coordinator.toggle_attachment()

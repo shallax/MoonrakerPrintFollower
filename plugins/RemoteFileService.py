@@ -42,6 +42,11 @@ class RemoteFileService(QObject):
 
     METADATA_RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)
     DOWNLOAD_RETRY_DELAYS_MS = (2000, 5000, 15000, 60000)
+    # Download byte cap (panel security P2-3): the equality check against
+    # the server-declared size is the only other guard, and a hostile or
+    # stale endpoint simply lies about it. Real prints are well under a
+    # gigabyte; 2 GiB is headroom beyond generous.
+    MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
 
     def __init__(self, transport, parent=None):
         super().__init__(parent)
@@ -64,6 +69,19 @@ class RemoteFileService(QObject):
         self._error = ""
         self._download_attempts = 0
         self._download_retry_at = 0.0
+        self._download_received = 0
+
+    @property
+    def download_fraction(self):
+        """0..1 of the in-flight download, or None when nothing is
+        downloading. The denominator is the printer's file_size; the
+        numerator accumulates as chunks drain."""
+        if self._reply is None:
+            return None
+        size = int((self._job or (None, 0, 0))[1] or 0)
+        if size <= 0:
+            return None
+        return max(0.0, min(1.0, self._download_received / size))
 
     @property
     def job_key(self): return self._job
@@ -205,6 +223,16 @@ class RemoteFileService(QObject):
         try:
             chunk = bytes(reply.readAll())
             if chunk and self._write_queue is not None:
+                self._download_received += len(chunk)
+                if self._download_received > self.MAX_DOWNLOAD_BYTES:
+                    # Byte cap (panel security P2-3): the only guard was
+                    # equality against the SERVER-DECLARED size, which a
+                    # hostile or stale endpoint simply lies about. Past
+                    # the cap the download aborts and the retry ladder
+                    # takes over — unbounded disk fill under /tmp is off.
+                    self._abort_download()
+                    self._fail("Downloaded G-code exceeds the size cap")
+                    return
                 self._write_queue.put(chunk)
         except Exception as error:
             self._abort_download()

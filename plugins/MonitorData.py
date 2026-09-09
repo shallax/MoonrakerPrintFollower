@@ -1,12 +1,14 @@
 """Active Monitor request/poll lifecycle and immutable data projections."""
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from types import MappingProxyType
 from collections.abc import Mapping
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
-from .MonitorFormatting import wanted_object
+from .ConsolePolicy import MAX_LINE
+from .MonitorFormatting import number, result, wanted_object
 from .MoonrakerSession import RequestCategory
 
 
@@ -14,10 +16,6 @@ def freeze(value):
     if isinstance(value, dict): return MappingProxyType({key: freeze(item) for key, item in value.items()})
     if isinstance(value, (list, tuple)): return tuple(freeze(item) for item in value)
     return value
-
-
-def result(payload):
-    return payload.get("result", payload) if isinstance(payload, Mapping) else {}
 
 
 @dataclass(frozen=True)
@@ -30,11 +28,16 @@ class MonitorSnapshot:
     power: tuple
     webcams: tuple
     presets: Mapping
+    endstops: Mapping
 
 
 class MonitorData(QObject):
     changed = pyqtSignal()
     invalidated = pyqtSignal()
+    # Fired after each auxiliary reply lands in the snapshot — the
+    # temperature history feeds from this, not from every publish.
+    auxiliaryChanged = pyqtSignal()
+    consoleStoreChanged = pyqtSignal()
     commandChanged = pyqtSignal(object)
 
     def __init__(self, client, parent=None):
@@ -43,9 +46,20 @@ class MonitorData(QObject):
         self._active = False
         self._generation = 0
         self._timers = {}
+        self._console_expanded = False
+        self._console_store_time = 0.0
+        self._console_entries = []
+        # The store has no cursor API and entries can share a float
+        # stamp: dedupe on (time, text) keys instead of the stamp alone.
+        # Survives reconnects (not cleared on deactivation) so an entry
+        # consumed before a drop never backfills again.
+        self._console_seen = deque(maxlen=400)
+        self._console_seed = None
         self._clear()
         for category, callback in ((RequestCategory.AUXILIARY, self.refresh_aux),
             (RequestCategory.POWER, self.refresh_power), (RequestCategory.SYSTEM, self.refresh_system),
+            (RequestCategory.ENDSTOPS, self.refresh_endstops),
+            (RequestCategory.CONSOLE, self.refresh_console_store),
             (RequestCategory.DISCOVERY, self.refresh_discovery)):
             timer = QTimer(self)
             timer.timeout.connect(callback)
@@ -66,7 +80,7 @@ class MonitorData(QObject):
 
     def _clear(self):
         empty = freeze({})
-        self._snapshot = MonitorSnapshot(empty, empty, (), empty, empty, (), (), empty)
+        self._snapshot = MonitorSnapshot(empty, empty, (), empty, empty, (), (), empty, empty)
 
     @property
     def snapshot(self): return self._snapshot
@@ -108,6 +122,15 @@ class MonitorData(QObject):
             self._generation += 1
             for timer in self._timers.values(): timer.stop()
             self._client.transport.cancel_owner("monitor")
+            # The console poll state dies with the session so a re-attach
+            # is a REAL expand: the backfill seed must re-apply from the
+            # persisted stamp (the domain panel's re-seed point — the
+            # unchanged-flag early-return once left a rebound session
+            # polling without a fresh seed).
+            self._console_expanded = False
+            self._console_seed = None
+            self._console_store_time = 0.0
+            self._console_entries = []
             self._clear()
             self.invalidated.emit()
             self.changed.emit()
@@ -152,7 +175,12 @@ class MonitorData(QObject):
         self.refresh_discovery()
         self.refresh_power()
         self.refresh_system()
+        self.refresh_endstops()
         self.refresh_webcams()
+
+    @property
+    def console_entries(self) -> list:
+        return list(self._console_entries)
 
     @staticmethod
     def wants_object(name):
@@ -193,6 +221,93 @@ class MonitorData(QObject):
             previous = merged.get(name)
             merged[name] = dict(previous, **value) if isinstance(previous, Mapping) and isinstance(value, Mapping) else value
         self._update(auxiliary=merged)
+        self.auxiliaryChanged.emit()
+
+    # The console's gcode-store feed: polled ONLY while the console is
+    # expanded (the author's ruling), on the CONSOLE poll interval with
+    # an idle floor (PollPolicy). The store holds Klipper's output
+    # VERBATIM — Moonraker strips nothing (data_store.py stores the
+    # payload as delivered) — and modern Klipper's response lines carry
+    # no "ok" prefix at all (the "ok" is the RPC result, never console
+    # output), so the store can never attest success. The honest proxy:
+    # a line that is neither "!!" nor an "//" echo is normal output.
+    def set_console_expanded(self, expanded, stored_time=0.0):
+        expanded = bool(expanded)
+        if expanded == self._console_expanded:
+            return
+        self._console_expanded = expanded
+        if expanded:
+            # The persisted last-seen stamp seeds the ONE-SHOT skip on
+            # the first fetch: the store's buffer holds entries from
+            # other sessions and other clients, and re-adding them was
+            # the author's "stale responses without requests" dump.
+            self._console_seed = float(stored_time or 0.0)
+            self.refresh_console_store()
+
+    def refresh_console_store(self):
+        if not self._console_expanded:
+            return
+        def finished(payload, error):
+            if error or not isinstance(result(payload), Mapping):
+                return
+            store = result(payload).get("gcode_store")
+            if not isinstance(store, (list, tuple)):
+                return
+            seed = self._console_seed
+            self._console_seed = None
+            seen = self._console_seen
+            responses = []
+            buffer_max = 0.0
+            for entry in store:
+                if not isinstance(entry, Mapping) or entry.get("type") != "response":
+                    continue
+                stamp = number(entry.get("time"), float) or 0.0
+                text = str(entry.get("message") or "")
+                if not text:
+                    continue
+                buffer_max = max(buffer_max, stamp)
+                if (stamp, text) in seen:
+                    continue
+                if seed is not None and stamp <= seed:
+                    # The seed protects only this FIRST fetch — but the
+                    # entries it skips must stay skipped for the whole
+                    # session, or the next poll re-delivers the stale
+                    # buffer (the author's live report: the console
+                    # re-fetching Moonraker's history on load).
+                    seen.append((stamp, text))
+                    continue
+                seen.append((stamp, text))
+                responses.append({
+                    "text": text[:MAX_LINE],
+                    "error": text.startswith("!!"),
+                    "success": not text.startswith("!!") and not text.startswith("//"),
+                    "time": stamp,
+                })
+            if responses:
+                self._console_store_time = max(self._console_store_time, buffer_max)
+                self._console_entries = responses
+                self.consoleStoreChanged.emit()
+            elif buffer_max and buffer_max < self._console_store_time:
+                # Recovery: the buffer's newest sits BEHIND our watermark
+                # (a clock step back, or a contaminated stamp from another
+                # machine's record) — lower the watermark to the buffer so
+                # the feed self-heals. Nothing unseen is lost: anything
+                # unseen is newer than the old watermark and would have
+                # been emitted above.
+                self._console_store_time = buffer_max
+        self.request("console-store", "GET", "server/gcode_store?count=100", finished, category="console")
+
+    def refresh_endstops(self):
+        # Endstop pin states are NOT part of the objects query; the
+        # only live readout is this one-shot status endpoint, polled on
+        # a slow cadence (they change at homing, not every second).
+        # A failed poll must never erase last-known states: an empty
+        # endstop map reads as "not homed yet" while connected, which is
+        # a lie about the printer during a transient network blip. The
+        # states blank only on invalidation/disconnect.
+        self.request("endstops", "GET", "printer/query_endstops/status",
+            lambda p, e: self._update(endstops=dict(result(p))) if not e and isinstance(result(p), Mapping) else None,
+            category="endstops")
 
     def refresh_power(self):
         self.request("power-list", "GET", "machine/device_power/devices",
@@ -206,9 +321,13 @@ class MonitorData(QObject):
                 category="system")
 
     def refresh_webcams(self):
+        # Same retention principle as endstops: a failed poll must never
+        # erase last-known cameras — a transient blip would blank the
+        # camera column ("no camera") during a printer reboot. The list
+        # clears only on invalidation/disconnect.
         self.request("webcams", "GET", "server/webcams/list",
             lambda p, e: self._update(webcams=tuple(item for item in result(p).get("webcams", ()) if isinstance(item, dict) and item.get("enabled", True)))
-            if not e and isinstance(result(p), Mapping) else self._update(webcams=()),
+            if not e and isinstance(result(p), Mapping) else None,
             replace=True, category="discovery")
 
 

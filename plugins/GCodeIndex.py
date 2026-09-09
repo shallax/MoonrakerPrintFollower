@@ -36,6 +36,15 @@ _AXIS = re.compile(rb"([XYZ])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
 _CACHE_MAGIC = b"MPFI110\0"
 _CACHE_VERSION = 3
 _LARGE_FILE_COMPACT_THRESHOLD = 128 * 1024 * 1024
+# Hardening bounds for hostile/corrupt gcode (panel security P2-4): a
+# real gcode line is well under 1 KB, real prints stay under ~100k
+# layers, and no single layer carries more than a few hundred thousand
+# motions. Past a bound the index DEGRADES to the coarser fallbacks
+# (byte-range fraction, last known layer) instead of growing structures
+# without limit — a poisoned file on the printer must not OOM Cura.
+_MAX_LINE_BYTES = 64 * 1024
+_MAX_LAYER_BLOCKS = 100_000
+_MAX_MOTIONS_PER_LAYER = 200_000
 # How far below the monotonic floor the refinement search may start, in
 # motions. Generous enough to cover a parser-chunk lead and any earlier
 # floor overshoot; the monotonic clamp is applied to the result.
@@ -232,9 +241,14 @@ def _build_pass(
             # starves for the whole indexing duration on large files.
             time.sleep(0)
         offset = handle.tell()
-        line = handle.readline()
+        line = handle.readline(_MAX_LINE_BYTES + 1)
         if not line:
             break
+        if len(line) > _MAX_LINE_BYTES:
+            # A hostile/corrupt file with no newlines would load a
+            # giant "line" into RAM and regex-scan it; truncated
+            # garbage chunks simply match nothing and are skipped.
+            line = b""
         stripped = line.rstrip(b"\r\n")
 
         if collect_stats:
@@ -256,20 +270,27 @@ def _build_pass(
         if marker.search(stripped):
             if current is not None and current["end"] is None:
                 current["end"] = offset
-            current = {
-                "start": offset,
-                "end": None,
-                "elapsed": None,
-                "stats": None,
-                "motions": array("Q"),
-                "x": array("f"),
-                "y": array("f"),
-                "z": array("f"),
-                "start_position": (x, y, z),
-                "start_absolute": absolute_xyz,
-                "start_units": units_scale,
-            }
-            blocks.append(current)
+            if len(blocks) >= _MAX_LAYER_BLOCKS:
+                # Marker-dense hostile file: stop tracking further
+                # layers. The last tracked block already closed at the
+                # offset above; everything after degrades to the
+                # byte-range fraction and the last known layer.
+                current = None
+            else:
+                current = {
+                    "start": offset,
+                    "end": None,
+                    "elapsed": None,
+                    "stats": None,
+                    "motions": array("Q"),
+                    "x": array("f"),
+                    "y": array("f"),
+                    "z": array("f"),
+                    "start_position": (x, y, z),
+                    "start_absolute": absolute_xyz,
+                    "start_units": units_scale,
+                }
+                blocks.append(current)
         elif current is not None and current["end"] is None:
             elapsed_match = _ELAPSED.search(stripped)
             if elapsed_match is not None:
@@ -312,7 +333,11 @@ def _build_pass(
             if "Z" in axes:
                 nz = axes["Z"] if absolute_xyz else z + axes["Z"]
             x, y, z = nx, ny, nz
-            if collect_motions and current is not None and current["end"] is None:
+            if collect_motions and current is not None and current["end"] is None \
+                    and len(current["motions"]) < _MAX_MOTIONS_PER_LAYER:
+                # Past the cap the layer's path data truncates and the
+                # byte-range fraction covers the rest — a one-layer
+                # hostile file must not grow multi-GB motion arrays.
                 current["motions"].append(offset)
                 current["x"].append(x)
                 current["y"].append(y)
@@ -364,9 +389,11 @@ def _collect_marker_values(handle: BinaryIO, capture: Optional[re.Pattern[bytes]
     while True:
         if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
             return []
-        line = handle.readline()
+        line = handle.readline(_MAX_LINE_BYTES + 1)
         if not line:
             break
+        if len(line) > _MAX_LINE_BYTES:
+            line = b""
         match = capture.search(line.rstrip(b"\r\n"))
         if match is not None:
             try:
@@ -502,9 +529,11 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int) -> b
             zs = array("f")
             while handle.tell() < end:
                 offset = handle.tell()
-                line = handle.readline()
+                line = handle.readline(_MAX_LINE_BYTES + 1)
                 if not line:
                     break
+                if len(line) > _MAX_LINE_BYTES:
+                    line = b""
                 stripped = line.rstrip(b"\r\n")
                 code = stripped.split(b";", 1)[0]
                 command_match = _COMMAND.search(code)
@@ -526,7 +555,8 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int) -> b
                     if "X" in axes: x = axes["X"] if absolute_xyz else x + axes["X"]
                     if "Y" in axes: y = axes["Y"] if absolute_xyz else y + axes["Y"]
                     if "Z" in axes: z = axes["Z"] if absolute_xyz else z + axes["Z"]
-                    offsets.append(offset); xs.append(x); ys.append(y); zs.append(z)
+                    if len(offsets) < _MAX_MOTIONS_PER_LAYER:
+                        offsets.append(offset); xs.append(x); ys.append(y); zs.append(z)
         with index.cache_lock:
             while len(index.motion_offsets) < len(index.ranges):
                 index.motion_offsets.append(array("Q")); index.motion_x.append(array("f")); index.motion_y.append(array("f")); index.motion_z.append(array("f"))

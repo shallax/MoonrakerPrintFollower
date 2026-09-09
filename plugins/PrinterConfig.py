@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 from dataclasses import asdict, dataclass, field
 from math import isfinite
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit, urlunsplit
+
+# ConsolePolicy owns these bounds; PrinterConfig may not import it
+# (module-layering pin), so the coercion repeats the numbers. Drift is
+# harmless: the controller re-trims the transcript on load regardless.
+_CONSOLE_TRANSCRIPT_CAP = 60  # MAX_TRANSCRIPT (50) + the command retention (10)
+_CONSOLE_LINE_CAP = 8 * 1024
 
 
 def normalise_url(value: Any) -> str:
@@ -11,16 +19,63 @@ def normalise_url(value: Any) -> str:
 
     Scheme-only input (``http:``, ``https://``, …) is the unconfigured
     placeholder and maps to ``http://``; ``usable_url`` rejects it.
+    Control characters and embedded userinfo are stripped (panel
+    security P3): Qt logs the full request URL on errors, so
+    ``http://user:pass@host`` would leak credentials into Cura's log.
     """
     text = str(value or "").strip()
     if not text or text.lower() in ("http:", "https:", "http://", "https://"):
         return "http://"
+    if any(ord(ch) < 32 for ch in text):
+        return "http://"
     if not text.lower().startswith(("http://", "https://")):
         text = f"http://{text}"
+    split = urlsplit(text)
+    if split.username is not None or split.password is not None:
+        host = split.hostname or ""
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        if split.port is not None:
+            host = f"{host}:{split.port}"
+        text = urlunsplit((split.scheme, host, split.path, split.query, split.fragment))
     # rstrip("/") would eat the scheme's own "//"; only strip path separators.
     while text.endswith("/") and not text.endswith("://"):
         text = text[:-1]
     return text
+
+
+def upload_path_safe(value: Any) -> str:
+    """The upload path with Moonraker-side traversal segments refused:
+    the dialog applies UploadController.valid_path, but a hand-edited
+    or migrated config must not carry ".." segments to the upload API
+    either (panel security P3 — same rule, one place per surface)."""
+    text = str(value or "").strip().strip("/")
+    if text == "<root>":
+        return ""
+    parts = text.replace("\\", "/").split("/")
+    return "" if any(part.startswith(".") for part in parts if part) else text
+
+
+def normalise_temperature_chart(value: Any) -> dict:
+    """The chart config block: per-sensor visibility/colours plus the
+    display toggles, coerced so hand-edited values cannot silently flip
+    semantics (bool("false") is True)."""
+    if not isinstance(value, Mapping) or not value:
+        # An empty block stays empty: it means "never configured", and a
+        # materialised default block would defeat the legacy migration.
+        return {}
+    visible = value.get("visible") if isinstance(value.get("visible"), Mapping) else {}
+    colors = value.get("colors") if isinstance(value.get("colors"), Mapping) else {}
+
+    def truth(item):
+        return item if isinstance(item, bool) else str(item).strip().lower() in ("1", "true", "yes", "on")
+
+    return {
+        "visible": {str(key): truth(item) for key, item in visible.items()},
+        "colors": {str(key): str(item) for key, item in colors.items()},
+        "showTargets": truth(value.get("showTargets", True)),
+        "showPower": truth(value.get("showPower", True)),
+    }
 
 
 @dataclass
@@ -34,6 +89,8 @@ class PrinterConfig:
     auto_preview: bool = False
     z_fallback: bool = True
     z_tolerance: float = 0.04
+    trace_layer: bool = False
+    trace_http: bool = False
     path_follow: bool = True
     path_smoothing: bool = True
     show_toolhead_indicator: bool = True
@@ -61,6 +118,24 @@ class PrinterConfig:
     camera_rotation: int = 0
     camera_mirror: bool = False
     camera_selected: str = ""
+
+    # Monitor user preferences that are machine-specific: sensor names
+    # differ between printers, so chart colours/visibility and the
+    # console history live here rather than in the global chrome file
+    # (which keeps the sections map, pane collapse and the controls
+    # lock).
+    temperature_chart: Dict[str, Any] = field(default_factory=dict)
+    console_history: List[str] = field(default_factory=list)
+    # The persisted console transcript (the author's ruling): the last
+    # ~50 lines of BOTH the user's commands and Klipper's gcode-store
+    # output survive across sessions; restored lines grey in the pane.
+    console_transcript: List[Dict[str, Any]] = field(default_factory=list)
+    # The gcode-store poll's last-seen timestamp, persisted with the
+    # transcript so the next session's expand-backfill never repeats
+    # already-seen lines.
+    console_store_time: float = 0.0
+    # The bed-mesh pop-over's probe-point overlay, per printer.
+    show_probe_points: bool = False
 
     @property
     def frontend_target(self) -> str:
@@ -109,16 +184,48 @@ class PrinterConfig:
 
         paths = data.get("upload_paths")
         if isinstance(paths, (list, tuple)):
-            data["upload_paths"] = [
-                str(item).strip().strip("/") for item in paths
-                if str(item).strip().strip("/")
-            ]
+            data["upload_paths"] = [safe for safe in (upload_path_safe(item) for item in paths) if safe]
         else:
             data["upload_paths"] = []
+        data["upload_path"] = upload_path_safe(data.get("upload_path"))
+
+        transcript = data.get("console_transcript")
+        if isinstance(transcript, (list, tuple)):
+            cleaned = []
+            for entry in transcript:
+                if not isinstance(entry, Mapping):
+                    continue
+                kind = str(entry.get("kind") or "")
+                if kind not in {"command", "response"}:
+                    continue
+                cleaned.append({
+                    "kind": kind,
+                    "text": str(entry.get("text") or "")[:_CONSOLE_LINE_CAP],
+                    "error": bool(entry.get("error")),
+                    # The success flag colours the restored "ok" green;
+                    # dropping it here rendered every restored response
+                    # neutral grey (the author's "never seen a coloured
+                    # line" report).
+                    "success": bool(entry.get("success")),
+                })
+            data["console_transcript"] = cleaned[-_CONSOLE_TRANSCRIPT_CAP:]
+        else:
+            data["console_transcript"] = []
+        try:
+            store_time = float(data.get("console_store_time") or 0.0)
+            # A finite stamp beyond 2100-01-01 (or before the epoch) is a
+            # corrupt record, not a printer clock: the feed's watermark
+            # would freeze the console forever (panel security P2-4).
+            if not isfinite(store_time) or store_time < 0.0 or store_time > 4_102_444_800.0:
+                store_time = 0.0
+            data["console_store_time"] = store_time
+        except (TypeError, ValueError):
+            data["console_store_time"] = 0.0
 
         for key in (
             "enabled", "moonraker_layer_is_one_based", "auto_preview",
             "z_fallback", "path_follow", "path_smoothing", "show_toolhead_indicator",
+            "trace_layer", "trace_http",
             "upload_dialog", "upload_start_print", "upload_remember_state",
             "upload_autohide_message", "camera_mirror",
         ):
@@ -134,6 +241,13 @@ class PrinterConfig:
             data["output_format"] = data["output_format"].lower()
 
         data["upload_path"] = data["upload_path"].strip().strip("/")
+        data["temperature_chart"] = normalise_temperature_chart(data.get("temperature_chart"))
+        # A corrupt legacy record must not load an unbounded history
+        # list into memory (panel security P3): trim like every other
+        # retained list in this record (ConsolePolicy.MAX_HISTORY = 200;
+        # the layering pin keeps the number local).
+        history = data.get("console_history")
+        data["console_history"] = [str(line) for line in history][-200:] if isinstance(history, (list, tuple)) else []
         return cls(**data)
 
 
@@ -160,6 +274,8 @@ class PrinterConfigStore:
         "auto_preview": "moonraker_print_follower/auto_preview",
         "z_fallback": "moonraker_print_follower/z_fallback",
         "z_tolerance": "moonraker_print_follower/z_tolerance",
+        "trace_layer": "moonraker_print_follower/trace_layer",
+        "trace_http": "moonraker_print_follower/trace_http",
         "path_follow": "moonraker_print_follower/path_follow",
     }
     LEGACY_DEFAULTS = {
@@ -171,6 +287,8 @@ class PrinterConfigStore:
         "auto_preview": False,
         "z_fallback": True,
         "z_tolerance": 0.04,
+        "trace_layer": False,
+        "trace_http": False,
         "path_follow": True,
     }
 

@@ -1,26 +1,26 @@
 {
-    "package_id": "Moonraker_Print_Follower",
-    "package_type": "plugin",
-    "display_name": "Moonraker Print Follower",
-    "package_version": "3.4.0",
-    "sdk_version": "8.0.0",
-    "sdk_version_semver": "8.0.0",
-    "website": "https://github.com/shallax/MoonrakerPrintFollower",
-    "author": {
-        "author_id": "shallax",
-        "display_name": "shallax",
-        "email": "moonrakerprintfollower@maintain.contact"
-    },
-    "description": "Unified Cura integration for Klipper/Moonraker: upload and print, live Preview following, webcams and printer monitoring.",
-    "tags": [
-        "Klipper",
-        "Moonraker",
-        "Upload",
-        "Print",
-        "Preview",
-        "Monitor",
-        "Webcam",
-        "Layer",
-        "Progress"
-    ]
+  "package_id": "Moonraker_Print_Follower",
+  "package_type": "plugin",
+  "display_name": "Moonraker Print Follower",
+  "package_version": "3.5.0",
+  "sdk_version": "8.0.0",
+  "sdk_version_semver": "8.0.0",
+  "website": "https://github.com/shallax/MoonrakerPrintFollower",
+  "author": {
+    "author_id": "shallax",
+    "display_name": "shallax",
+    "email": "moonrakerprintfollower@maintain.contact"
+  },
+  "description": "Unified Cura integration for Klipper/Moonraker: upload and print, live Preview following, webcams and printer monitoring.",
+  "tags": [
+    "Klipper",
+    "Moonraker",
+    "Upload",
+    "Print",
+    "Preview",
+    "Monitor",
+    "Webcam",
+    "Layer",
+    "Progress"
+  ]
 }

@@ -7,6 +7,12 @@ import math
 import re
 
 
+def result(payload):
+    """The 'result' field of a Moonraker reply, falling back to the
+    payload itself; {} when there is no mapping at all."""
+    return payload.get("result", payload) if isinstance(payload, Mapping) else {}
+
+
 def factor_percent(value) -> str:
     """A speed/flow factor as a percentage, or '—' when the printer did
     not report one (empty snapshot, reconnect, unsupported Klipper)."""
@@ -28,6 +34,14 @@ def friendly(name):
     if name == "heater_bed": return "Bed"
     if name == "fan": return "Part fan"
     return name.split(" ", 1)[-1].replace("_", " ").strip().capitalize()
+
+
+def chart_label(name):
+    """The chart/pane label: friendly(), with the family kept for fan
+    objects so a temperature_fan's reading cannot be mistaken for a
+    heater of the same suffix."""
+    label = friendly(name)
+    return label + " (fan)" if object_kind(name) == "fan" else label
 
 
 # One classification policy for Klipper printer objects. MonitorData uses it
@@ -71,6 +85,40 @@ def wanted_object(name):
     return object_kind(name) in {"system", "fan", "led", "pwm", "temperature", "filament", "mcu"}
 
 
+def chart_temperature_objects(auxiliary):
+    """Temperature-bearing objects for the chart and the pane's list.
+
+    Heaters and temperature sensors chart unconditionally. Fan objects
+    (``temperature_fan``) chart only when no other charted object reads
+    the same sensor — equal readings at the same tick — because the
+    fan's temperature is worth plotting only when it is the only window
+    onto that sensor. The pane's temperature list and the chart share
+    this predicate so the two can never disagree.
+    """
+    readings = {}
+    for name, value in auxiliary.items():
+        if not isinstance(value, Mapping):
+            continue
+        kind = object_kind(name)
+        if kind == "system":
+            lower = str(name).lower()
+            if lower != "heater_bed" and not re.fullmatch(r"extruder\d*", lower):
+                continue
+        elif kind not in ("temperature", "fan"):
+            continue
+        temperature = number(value.get("temperature"), None)
+        if temperature is None:
+            continue
+        readings[str(name)] = temperature
+    for name, reading in list(readings.items()):
+        if object_kind(name) != "fan":
+            continue
+        if any(object_kind(other) != "fan" and abs(reading - other_reading) <= 0.01
+               for other, other_reading in readings.items() if other != name):
+            del readings[name]
+    return readings
+
+
 def duration(seconds):
     hours, rest = divmod(max(0, int(round(number(seconds)))), 3600)
     minutes, seconds = divmod(rest, 60)
@@ -79,7 +127,11 @@ def duration(seconds):
 
 def estimate_remaining(elapsed, progress, estimate, complete):
     elapsed, progress, estimate = max(0, number(elapsed)), max(0, min(1, number(progress))), number(estimate)
-    by_file = max(0, elapsed / progress - elapsed) if progress >= 0.02 and elapsed >= 60 else None
+    # The by-file blend needs only a little progress signal and must
+    # appear promptly: the author expects the unoptimised values as
+    # soon as Moonraker reports them on connect, not a minute into the
+    # print (the old 60 s / 2% floor left the readout empty at start).
+    by_file = max(0, elapsed / progress - elapsed) if progress >= 0.005 and elapsed >= 10 else None
     if estimate > 0:
         remaining = max(0, estimate - elapsed)
         if remaining > 0:
@@ -90,34 +142,164 @@ def estimate_remaining(elapsed, progress, estimate, complete):
     return by_file if complete else None
 
 
+# How much of a downloaded gcode file's head the filament-total scan
+# may read. Slicers write the ';Filament used:' declaration in the
+# file's opening comments, so one bounded read of the head covers every
+# real file; the bound keeps a hostile file with no such line (or no
+# newlines) a bounded cost instead of a full-file scan. The scan runs
+# once per downloaded file, never on a timer.
+_FILAMENT_HEADER_SCAN_BYTES = 1024 * 1024
+
+
+def filament_total_mm_from_gcode(data):
+    """The slicer's declared total filament length (mm), parsed from the
+    FIRST ';Filament used:' line of gcode header text.
+
+    CuraEngine writes one comma-separated metre value per extruder on
+    that line; the values are summed (Moonraker's own metadata parse
+    read only the FIRST value until v0.10, undercounting multi-extruder
+    prints by the other materials' lengths). None when the file carries
+    no such line — callers then keep Moonraker's metadata total, which
+    is exactly today's behaviour. The unit is mm end-to-end: each value
+    is in metres, so the sum is scaled by 1000.
+    """
+    marker = re.compile(rb";Filament\s+used\s*:", re.IGNORECASE)
+    value = re.compile(rb"[0-9]*\.?[0-9]+")
+    for raw in bytes(data or b"").splitlines():
+        stripped = raw.lstrip()
+        if not stripped.startswith(b";") or marker.search(stripped) is None:
+            continue
+        # Every value on the FIRST declaration line must be a finite
+        # length: a hostile token (an overflowing digit run) makes the
+        # whole line untrustworthy, and a line with no usable values
+        # carries no total at all. None either way — the caller then
+        # keeps the Moonraker metadata total.
+        values = [number(token, None) for token in value.findall(stripped)]
+        if not values or any(parsed is None for parsed in values):
+            return None
+        total = sum(values)
+        if not math.isfinite(total):
+            return None
+        return total * 1000.0
+    return None
+
+
+def filament_total_mm_from_file(path, limit=_FILAMENT_HEADER_SCAN_BYTES):
+    """The header's total filament (mm) from a downloaded gcode file.
+
+    Only the file's head is ever read (``limit`` bytes): the slicer's
+    header sits at the very top of the file, so the FIRST
+    ';Filament used:' line of the whole file is inside the head for
+    every real slicer. A line truncated by the limit is ignored — a
+    partial value must not masquerade as the total. Missing or
+    unreadable files yield None (the Moonraker metadata fallback).
+    """
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(limit + 1)
+    except OSError:
+        return None
+    if len(data) > limit:
+        # The file continues past the window: drop the possibly partial
+        # final line before parsing.
+        cut = data.rfind(b"\n")
+        data = data[:cut] if cut >= 0 else b""
+    return filament_total_mm_from_gcode(data)
+
+
 def core_values(snapshot, physical, connected):
     stats = snapshot.core.get("print_stats") or {}
     sd = snapshot.core.get("virtual_sdcard") or {}
     move = snapshot.core.get("gcode_move") or {}
     motion = snapshot.core.get("motion_report") or {}
+    info = stats.get("info") or {}
     state = str(stats.get("state") or "unknown")
     layer = physical.layer
     current, total = layer.index, layer.total
     layer_text = f"{current + 1} / {total}" if current is not None and total is not None else str(current + 1) if current is not None else f"— / {total}" if total else "—"
-    eta, finish = "—", "—"
+    eta, finish, basis = "—", "—", ""
     if state == "paused": eta = "Paused"
     elif state == "printing":
-        remaining = estimate_remaining(stats.get("print_duration"), sd.get("progress"), physical.estimated_time, physical.metadata_complete)
+        # The layer-anchored estimate (index timing × observed speed)
+        # wins when the coordinator computed one; the plain blend stays
+        # the fallback and the UI shows which basis is active.
+        remaining = getattr(physical, "layer_eta", None)
+        basis = "index"
+        if remaining is None:
+            remaining = estimate_remaining(stats.get("print_duration"), sd.get("progress"), physical.estimated_time, physical.metadata_complete)
+            basis = "blend"
         if remaining is not None:
             eta = duration(remaining)
             finish = (datetime.now().astimezone() + timedelta(seconds=remaining)).strftime("%a %H:%M" if remaining >= 72000 else "%H:%M")
+    # How far through the CURRENT layer the file position is, from the
+    # index's byte ranges (the nozzle's Z never moves within a layer,
+    # so Z cannot express this). -1 without an index: the bar hides.
+    layer_progress = getattr(physical, "layer_progress", None)
+    if layer_progress is None:
+        layer_progress = -1.0
     position = motion.get("live_position") or ()
+    # Filament accounting (the author's request): Moonraker reports the
+    # used length as a TOP-LEVEL print_stats field; Klipper's info dict
+    # only ever holds the layer counters a slicer's SET_PRINT_STATS_INFO
+    # wrote (current_layer/total_layer), never filament_used — the old
+    # info-dict read matched no real poll. The info dict stays a
+    # fallback for robustness. The slicer's total is the CLIENT's own
+    # parse of the downloaded file's header (filament_total_mm_from_*)
+    # in the coordinator snapshot (physical.filament_total): Moonraker's
+    # metadata read only the first ';Filament used:' value of multi-
+    # extruder prints until v0.10, so the client-side sum is preferred
+    # and the metadata total stays the fallback for files never
+    # downloaded. The monitor snapshot is the second home for legacy
+    # callers.
+    used_mm = number(stats.get("filament_used"), None)
+    if used_mm is None:
+        used_mm = number(info.get("filament_used"), None)
+    total_mm = getattr(physical, "filament_total", None)
+    if total_mm is None:
+        total_mm = getattr(snapshot, "filament_total", None)
+    filament_used = f"{used_mm / 1000.0:.2f} m" if used_mm is not None else "—"
+    # Remaining is only a number while the measured used length still
+    # fits under the declared total. Once used OVERTAKES total the
+    # total is untrustworthy (Moonraker's metadata undercounts multi-
+    # extruder prints) — the old clamp then stated a wrong estimate as
+    # a confident "0.00 m" for the rest of the job; "—" is the honest
+    # readout.
+    filament_remaining = f"{max(0.0, total_mm - used_mm) / 1000.0:.2f} m" \
+        if used_mm is not None and total_mm is not None and 0 <= used_mm <= total_mm else "—"
     return {
         "monitorState": state.capitalize() if connected else "Disconnected",
         "monitorFilename": str(stats.get("filename") or ""),
-        "monitorProgress": max(0, min(100, round(number(sd.get("progress")) * 100))),
+        "monitorProgress": max(0, min(100, round(number(sd.get("progress")) * 100, 2))),
         "monitorLayer": layer_text, "monitorLayerHeight": f"{layer.thickness:.3f} mm" if layer.thickness is not None else "—",
+        "monitorLayerSource": getattr(layer, "source", ""),
+        "monitorLayerProgress": layer_progress,
         "monitorElapsed": duration(stats.get("print_duration")), "monitorEta": eta, "monitorFinish": finish,
+        "monitorEtaBasis": basis,
         "monitorSpeed": factor_percent(move.get("speed_factor")),
         "monitorFlow": factor_percent(move.get("extrude_factor")),
         "monitorPosition": f"X {number(position[0]):.1f}   Y {number(position[1]):.1f}   Z {number(position[2]):.2f}" if len(position) >= 3 else "—",
         "monitorMessage": str(stats.get("message") or ""),
+        "filamentUsed": filament_used,
+        "filamentRemaining": filament_remaining,
     }
+
+
+def endstop_values(snapshot, connected=True):
+    """The endstop readout: per-axis pin states, or an explicit
+    "not homed yet" summary — Klipper's endstop values are meaningless
+    before the first homing of a session, and an empty list must not
+    read as a bug."""
+    states = snapshot.endstops or {}
+    items = []
+    for axis in sorted(states):
+        raw = str(states[axis]).strip()
+        if raw:
+            items.append({"name": axis.upper(), "state": raw, "triggered": raw.lower() == "triggered"})
+    # An empty set means two different things: never homed this
+    # session, or disconnected (the snapshot cleared). Only claim
+    # homing is missing while actually connected.
+    summary = "" if items or not connected else "Not homed yet — home an axis to populate the readout."
+    return {"endstopItems": items, "endstopSummary": summary}
 
 
 def parse_mcu_stats(value):
@@ -135,16 +317,16 @@ def format_bytes(value):
 def peripheral_values(snapshot):
     temperatures, fans, filament, mcus = [], [], [], []
     cpu, versions = None, []
+    chartable = chart_temperature_objects(snapshot.auxiliary)
     for name, value in sorted(snapshot.auxiliary.items()):
         if not isinstance(value, Mapping): continue
-        lower, label = name.lower(), friendly(name)
-        if "temperature" in value:
-            temperature = number(value["temperature"], None)
-            if temperature is not None:
-                target, power = number(value.get("target"), None), number(value.get("power"), None)
-                detail = f"{temperature:.1f} °C" + (f"  → {target:.0f} °C" if target is not None else "") + (f"  · {power * 100:.0f}%" if power is not None else "")
-                temperatures.append({"name": label, "temperature": temperature, "target": target if target is not None else -1, "power": power if power is not None else -1, "detail": detail})
-                if cpu is None and (lower.startswith("temperature_host ") or "cpu" in lower or "rpi" in lower): cpu = temperature
+        lower, label = name.lower(), chart_label(name)
+        if name in chartable:
+            temperature = chartable[name]
+            target, power = number(value.get("target"), None), number(value.get("power"), None)
+            detail = f"{temperature:.1f} °C" + (f"  → {target:.0f} °C" if target is not None else "") + (f"  · {power * 100:.0f}%" if power is not None else "")
+            temperatures.append({"name": label, "temperature": temperature, "target": target if target is not None else -1, "power": power if power is not None else -1, "detail": detail})
+            if cpu is None and (lower.startswith("temperature_host ") or "cpu" in lower or "rpi" in lower): cpu = temperature
         if "speed" in value and (lower == "fan" or lower.startswith(FAN_OBJECT_PREFIXES)):
             speed = max(0, min(1, number(value.get("speed"))))
             detail = f"{speed * 100:.0f}%" + (f"  · {int(number(value['rpm'])):,} RPM" if value.get("rpm") is not None else "")

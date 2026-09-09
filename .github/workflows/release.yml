@@ -65,6 +65,12 @@ jobs:
           python tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v${VERSION}.curapackage"
           python tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
 
+      - name: Scan the release artifacts for secrets
+        run: |
+          # The local gates run gitleaks, but the release workflow never
+          # did while the README claimed it — panel security P3.
+          gitleaks detect --no-git --no-banner --redact .
+
       - name: Extract release notes from changelog
         run: |
           python - <<'PY' > /tmp/release-notes.md

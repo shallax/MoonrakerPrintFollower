@@ -14,6 +14,14 @@ from UM.Logger import Logger
 
 JsonCallback = Callable[[Optional[Dict[str, Any]], Optional[str]], None]
 
+# Response-size cap (panel security P2-2): the configured URL is
+# user-entered and may point at something that is NOT the printer any
+# more — an impostor or stale endpoint answering the poll with an
+# unbounded body would otherwise be buffered whole and OOM Cura.
+# Nothing legitimate exceeds a few MB (status payloads, webcam lists,
+# single-file metadata); 64 MB is headroom beyond generous.
+MAX_REPLY_BYTES = 64 * 1024 * 1024
+
 
 @dataclass
 class TransportMetrics:
@@ -54,6 +62,7 @@ class MoonrakerHttpTransport(QObject):
         self._request_serial = 0
         self._pending: Dict[str, _PendingRequest] = {}
         self._metrics: Dict[str, TransportMetrics] = defaultdict(TransportMetrics)
+        self._trace_http = False
 
     @property
     def network(self) -> QNetworkAccessManager:
@@ -87,6 +96,11 @@ class MoonrakerHttpTransport(QObject):
         self.cancel_all()
         self._base_url, self._api_key = identity
         return True
+
+    def set_trace_http(self, enabled) -> None:
+        """Per-printer diagnostics toggle: log every request at debug
+        (off by default — failures always log a warning)."""
+        self._trace_http = bool(enabled)
 
     def request(self, path_or_url: str, *, timeout_ms: int = 5000) -> QNetworkRequest:
         target = str(path_or_url or "")
@@ -210,13 +224,25 @@ class MoonrakerHttpTransport(QObject):
             if reply.error() != QNetworkReply.NetworkError.NoError:
                 error = reply.errorString()
             else:
-                raw = bytes(reply.readAll()).decode("utf-8", errors="replace")
-                if raw.strip():
-                    decoded = json.loads(raw)
+                declared = reply.header(QNetworkRequest.KnownHeaders.ContentLengthHeader)
+                if declared is not None and int(declared) > MAX_REPLY_BYTES:
+                    raise ValueError("Moonraker response exceeds the size cap")
+                raw = bytes(reply.read(MAX_REPLY_BYTES + 1))
+                if len(raw) > MAX_REPLY_BYTES or reply.bytesAvailable() > 0:
+                    raise ValueError("Moonraker response exceeds the size cap")
+                text = raw.decode("utf-8", errors="replace")
+                if text.strip():
+                    decoded = json.loads(text)
                     if not isinstance(decoded, dict):
                         raise ValueError("Moonraker returned a non-object JSON response")
                     if decoded.get("error"):
-                        raise ValueError(str(decoded.get("error")))
+                        # A Moonraker error object still leaves the
+                        # server's ANSWER in the payload: consumers can
+                        # distinguish "the printer refused this" (error
+                        # set, payload present) from a transport-level
+                        # failure (payload None) — the console's verdict
+                        # colours need exactly that distinction.
+                        error = str(decoded.get("error"))
                     payload = decoded
                 else:
                     payload = {}
@@ -225,16 +251,21 @@ class MoonrakerHttpTransport(QObject):
         if error:
             metric.failed += 1
 
-        Logger.log(
-            "d",
-            "MoonrakerHTTP request_id=%d category=%s channel=%s method=%s elapsed_ms=%.1f outcome=%s",
-            pending.request_id,
-            pending.category,
-            key,
-            pending.method,
-            elapsed_ms,
-            "error" if error else "ok",
-        )
+        # Failures always surface; the per-request debug line is opt-in
+        # (MOONRAKER_FOLLOWER_TRACE_HTTP) — at the poll cadence the
+        # unconditional debug log flooded Cura's log.
+        if error:
+            Logger.log("w", "MoonrakerHTTP %s %s failed: %s", pending.method, key, error)
+        elif self._trace_http:
+            Logger.log(
+                "d",
+                "MoonrakerHTTP request_id=%d category=%s channel=%s method=%s elapsed_ms=%.1f outcome=ok",
+                pending.request_id,
+                pending.category,
+                key,
+                pending.method,
+                elapsed_ms,
+            )
         try:
             reply.deleteLater()
         except Exception:

@@ -22,6 +22,25 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Image-specific workaround, defined ONCE here and aliased (YAML
+      # anchor — see *drop_google_apt_sources in the jobs below) into
+      # every other job that runs apt-get update, so the fix cannot
+      # drift between copies: the GitHub-hosted ubuntu runner images
+      # this workflow pins ship Google's apt repos pre-configured, and
+      # one bad index there (2026-09-09: chrome-stable Packages.gz hash
+      # mismatch) fails EVERY apt update. No job needs Chrome or the
+      # Cloud SDK, so drop every source pointing at Google before the
+      # update — the file name varies (google-chrome.list on some
+      # images, deb822 .sources on others). Runner-image specific: the
+      # pinned Dockerfile dev image ships no Google sources, so do not
+      # carry this into container flows.
+      - &drop_google_apt_sources
+        name: Drop Google's broken apt sources
+        run: |
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+            if [ -f "$f" ] && grep -qE "dl.google.com|packages.cloud.google.com" "$f"; then sudo rm -f "$f"; fi
+          done
+
       - name: Install qmlformat and shellcheck
         run: |
           sudo apt-get update
@@ -63,6 +82,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Shared step: the drop_google_apt_sources anchor defined in the
+      # lint job's steps above.
+      - *drop_google_apt_sources
+
       - name: Install runtime and tools
         run: |
           sudo apt-get update
@@ -100,6 +123,10 @@ jobs:
 
       - name: Compile Python sources
         run: python -m compileall -q plugins tools tests
+
+      # Shared step: the drop_google_apt_sources anchor defined in the
+      # lint job's steps above.
+      - *drop_google_apt_sources
 
       - name: Install Qt system runtime
         run: |
@@ -161,6 +188,10 @@ jobs:
       - name: Verify Cura Marketplace source ZIP
         run: python tools/verify_marketplace_source.py dist/MoonrakerPrintFollower-v${{ steps.build_meta.outputs.version }}-source.zip
 
+      # Shared step: the drop_google_apt_sources anchor defined in the
+      # lint job's steps above.
+      - *drop_google_apt_sources
+
       - name: Install capture runtime
         run: |
           sudo apt-get update
@@ -204,6 +235,14 @@ jobs:
                 && python3 tools/capture_preview.py dist/screenshots \
                 && python3 tools/capture_settings.py dist/screenshots \
                 && python3 tools/capture_upload.py dist/screenshots"
+
+      - name: Verify capture determinism
+        # Two runs in the same container must be byte-identical: the
+        # committed-compare above only has a CHANCE of catching a
+        # phase-dependent leak (a blinking caret, a ticking clock);
+        # this catches it deterministically. The harness freezes every
+        # live input, so any difference means a new one leaked in.
+        run: ./tools/verify_capture_determinism.sh
 
       - name: Reject stale committed screenshots
         # Every generated PNG must match its committed copy byte for byte;

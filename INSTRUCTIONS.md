@@ -50,7 +50,23 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
 - Builds: `tools/build_curapackage.py` (Cura package) and
   `tools/build_marketplace_source.py` (Marketplace ZIP), verified by the
   matching verify tools; CI uploads both as artifacts.
-- Deterministic captures: `tools/capture_monitor.py` plus the sibling
+- Seeded capture content: `tools/capture_monitor.py` feeds the dashboard
+  with a bed mesh, endstop states, two console lines and ~10 minutes of
+  synthetic temperature history (patching the model instance's own time
+  module — never the global one), grabs a fourth scene with the chart
+  pop-over open, and asserts the mini-chart region contains painted
+  pixels (the requestPaint regression test).
+- Deterministic captures: the harness freezes EVERY live input the
+  scenes render — the formatter's wall clock is patched to a fixed
+  instant (`FrozenDatetime`, patching every module object loaded from
+  MonitorFormatting.py because the Qt runtime registers plugin modules
+  under synthetic names), the model's time module is patched
+  module-scoped during seeding, and the console pane renders no caret.
+  `make verify_captures` runs the full capture suite TWICE in the
+  pinned container and fails on any byte difference — a deterministic
+  catch for leaks the committed-compare only catches by chance. Run it
+  after changing anything the captures render.
+- The capture scripts: `tools/capture_monitor.py` plus the sibling
   `capture_preview.py` / `capture_settings.py` / `capture_upload.py`
   render the real plugin QML offscreen using the REAL Cura and Uranium
   QML components and the real cura-light theme copied into
@@ -64,7 +80,7 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   first), and PyQt6 collects inline `setContextProperty` temporaries —
   hold Python references. Outputs land in `dist/screenshots/*.png` (the
   CI artifact no longer includes them). `capture_settings.py` writes one PNG per
-  settings tab (Connection / Following / Upload), each fitted to that
+  settings tab (Connection / Following / Upload / Diagnostics), each fitted to that
   tab's Flickable content height — contentHeight is viewport-independent
   so measure-then-resize is stable, and the page's `UM.TabRow` appears
   as a composite class name (`TabRow_QMLTYPE_nn`), not `QQuickTabBar`.
@@ -80,7 +96,9 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   live in `screenshots/` and must be regenerated inside the dev
   container (whose pinned fonts make the output canonical — host font
   metrics differ): `tools/refresh_screenshots.sh` regenerates them in
-  the container and refreshes the committed copies in one step. The CI
+  the container and refreshes the committed copies in one step — the
+  `screenshots/` tree at the repo root is the canonical copy the README
+  links; `dist/screenshots/` is only the harness's working directory. The CI
   **Screenshot sync**
   job enforces this on every push: it rebuilds the pinned image,
   regenerates the captures inside it and fails byte-for-byte if the
@@ -89,7 +107,20 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   scripts as a render smoke test (each script fails on a blank capture)
   but no longer ships the PNGs as artifacts. These capture the 2-D UI
   only: the 3-D Preview (bed-mesh overlay on a rendered model) needs a
-  real Cura session — capture those by hand for marketing.
+  real Cura session — capture those by hand for marketing. Automating
+  that (running real Cura under a virtual display) was considered and
+  deliberately rejected: the cost and fragility are not worth it.
+
+## Release workflow
+
+New releases follow the `/new-feature` skill (`.claude/skills/new-feature/SKILL.md`):
+plan with verbatim author quotes and real push-back → one round-1 critic
+before going deep → build with tests → a four-persona panel
+(architecture/UX/engineering/product, read-only, findings funnel back
+through the maintainer) — one-off security/hardening and
+Klipper/Moonraker/Cura domain-expert personas join the round on
+releases whose surface warrants them — → decisions logged in
+`review/DECISIONS.md` (git-ignored) → round-3 verification → ship.
 
 ## Version bump checklist
 
@@ -168,9 +199,9 @@ Then update the pins in `tests/test_monitor.py` in the same commit: the
 file must match the number of sections. Section ids are unique across all
 panes (the map is shared): print, setup, toolhead, macros, profiles,
 tuning, fans, leds, pwm, power, system, save on the controls pane;
-meshmap, job, temps, fansinfo, filament, objects, systeminfo, mcus on
-the Information and Printer status panes. Persistence is automatic — the
-stored map only records sections the user has touched.
+meshmap, job, temps, fansinfo, filament, objects, systeminfo, mcus,
+temphistory on the Information and Printer status panes. Persistence is
+automatic — the stored map only records sections the user has touched.
 
 ### Collapsing a whole pane
 
@@ -226,6 +257,25 @@ cycle, and mangles values through configparser.
   `tests/test_composed_components.py` (the properties string and the slot
   list) and the `_SIGNAL_KEYS` grouping in the model.
 
+### Rehydration order
+
+Restore persisted values into the model eagerly — before their widgets
+even exist. A sensor colour saved yesterday must apply to the samples
+that arrive today, the console history is just a list, and the
+probe-points toggle is a plain bool: all are safe to rehydrate at model
+construction. The trap is the reverse direction: pruning, validating or
+projecting persisted state against a live set that is still EMPTY
+(startup before the first auxiliary reply) silently discards or
+misreads what the user saved. The rules: never prune persisted entries
+while the live set is empty; never treat "no data yet" as "nothing
+configured"; and pin the set-before-arrival scenario with a Qt test
+(see `test_chart_config_set_before_history_arrives_still_persists`).
+The same rule covers widget INSTANCES created after the model already
+holds the value: a freshly instantiated `BedMeshMap` must rehydrate its
+`showProbePoints` from the printer property at creation — waiting for a
+toggle event left the checkbox on while the freshly opened map drew no
+dots (the 3.5.0 probe-points persistence bug).
+
 ### QML gotchas
 
 Each of these cost real iterations; the pins and recipes above exist so
@@ -276,6 +326,82 @@ they cannot recur silently.
 - `tools/check_qml.py` must pass before commit — it catches unbalanced
   braces and stray bare-type declarations that text scanners miss but the
   real QML engine rejects.
+- **Component-scoped ids are invisible outside their Component.** The
+  mesh detail map's `id: meshDetail` lives inside `Component { id:
+  meshContent }`; three outer-scope call sites referenced it and threw
+  `ReferenceError` — which also killed the auto-close statement that
+  followed the throw. Inner components see outer ids, never the
+  reverse; put refresh `Connections` inside the component.
+  `tests/test_monitor.py` pins `meshDetail.refresh()` to exactly one
+  in-scope call.
+- **Pop-over anchoring is a single consistent offset.** Both pop-overs
+  open at `x: cameraArea.x + margin, y: margin` — clear of the
+  Information-pane openers, so a second click dismisses without moving
+  the mouse (the author's chosen position).
+- **Cursor-following tooltips live OUTSIDE the clipped card.** The
+  chart's hover values are a floating, root-scoped `Item` (z above the
+  pop-overs) positioned from the chart's cursor point mapped with
+  `mapToItem(root, …)`, proxied through properties on the pop-over
+  shell. A tooltip is allowed to overflow any boundary; putting the
+  readout inside the card made the pop-up stretch past the window
+  instead.
+- **Never combine `fixedWidthMode: true` with `Layout.fillWidth`** on the
+  same button: the two fight every layout pass and sent
+  `QQuickGridLayoutBase` into an endless, memory-eating invalidate loop
+  that froze pane collapses (the 3.5.0 capture runaway). Likewise never
+  bind a pop-over shell's height to its content column's implicit height
+  while the content uses `Layout.fillHeight` — the same cycle.
+  `tests/test_monitor.py` pins both.
+
+### QML change discipline (learned the hard way)
+
+- Prefer structural edits with exact anchors read from the file over
+  text-scan surgery; brace-scanned edits have broken the monitor QML
+  twice (naive check_qml and the unit suites both passed).
+- Before committing QML changes, load the document on the REAL engine
+  (the capture harness's theme/materialise setup) — structural errors
+  and unresolved names only surface there. A binding's unqualified
+  name does NOT resolve through the visual parent (ReferenceError);
+  qualify through ids.
+- Check the capture log explicitly (`tools/refresh_screenshots.sh`
+  exits 0 AND reports all scenes) before committing; a silent capture
+  failure makes CI's screenshot sync fail.
+- For animation/layout behaviour, add an engine-level test that
+  instantiates the pattern and measures it (see
+  `test_sweep_phase_advances_on_the_real_engine`), rather than
+  debugging through the full-suite loop.
+- Bindings on the ROOT object do not track setProperty-driven changes
+  to the root's own properties (engine-proven: the root's `visible`
+  stayed frozen while a child's identical binding flipped). Gate with
+  an inner item/row instead; children may reference the root's id.
+- `tools/check_qml_engine.py` loads every plugin QML document on the
+  real engine and fails on component errors and engine diagnostics
+  (ReferenceError, dropped bindings, binding loops, TypeError,
+  non-existent-property assignments); it runs in the LOCAL lint gates
+  and the pre-commit hook only — it is not part of any GitHub
+  workflow, and it is an INSTANTIATION smoke test: documents load
+  with a null printer and closed pop-overs, so guarded branches and
+  Loader-gated content never evaluate (a live-model variant is 4.0.0
+  debt). External context contracts
+  (manager, actionDialog, OutputDevice) are stubbed there —
+  the manager stub covers BOTH the machine-action settings surface and
+  the upload-dialog surface (the dialog reads the same `manager`
+  context property), the stubs are pyqtProperty-declared (dynamic
+  setProperty values are not visible to QML bindings as typed
+  properties), and every stub QObject keeps a Python reference for the
+  whole run (PyQt6 releases unrooted wrappers and QML then reads null).
+  Documents must tolerate standalone instantiation without a parent
+  (`parent != null` guards) — the gate creates them that way.
+- The monitor's progress bars and sliders are plugin-owned outline
+  components (`OutlineProgressBar`, `OutlineSlider`), not the themed
+  `ProgressBar`/`Slider`: the themed controls render a black slab in
+  the inactive-window palette. Tracks are transparent with a lining
+  border and the fill is Cura's brand blue (`primary`, the same accent
+  as buttons and slider handles). New bar/slider uses go through the
+  outline components; the unit pins forbid bare themed ones. The
+  capture harness seeds `virtual_sdcard.progress` so the bars show a
+  fill, and asserts accent-blue pixels inside every visible bar and
+  slider — a fill that stops rendering fails the screenshot job.
 
 ### Verifying QML geometry
 
@@ -312,5 +438,47 @@ CI runs the same checks (the `lint` job) plus the full suite including the
 real-Qt tests (PyQt6 6.11.0). The release workflow on tag push additionally
 builds reproducible archives and verifies source/package byte parity and the
 Marketplace layout. Before tagging, run the smoke checks the harness cannot
-cover: real QML rendering, native nozzle/bed-mesh integration, Cura
-file-writer compatibility, multi-printer interaction and large files.
+cover (the full matrix from the panel round, restored after a
+transcription drift):
+
+- Real QML rendering on the tag-built artifact (not a stale local build).
+- Native nozzle/bed-mesh integration in the Preview.
+- Cura file-writer compatibility (save/upload paths).
+- Multi-printer interaction and large files.
+- Chart continuity across preheat / print / pause / target-change.
+- Power-area plausibility (heater power bands on the chart).
+- Persistence across a Cura restart AND a printer switch.
+- Multi-hotend / chamber mini-widget selection.
+- A dense 25x25 bed mesh crosshair.
+- The bed-mesh pop-over open with its probe-points toggle (the one
+  pop-over path the capture harness does not exercise).
+- Escape-dismiss hand-test on the pop-overs.
+- Multi-hour Canvas/CPU sanity while printing.
+- One old + one current Cura (the README claims Cura 5.0-5.13 /
+  SDK 8.0-8.12).
+Once the workflow's tag-built artifacts exist, unpack the curapackage and
+grep the shipped QML/Python for the verification markers — no `BISECT`,
+no `visible: false` console gate, `GET` (not POST) on the endstop query,
+no `~` backup files — before announcing; a stale local `dist/` build can
+look identical to the real artifact by eye.
+
+## Development install loop
+
+`make dev_install` (tools/install_dev.sh) symlinks this checkout's
+`plugins/` into Cura's user plugin directory
+(`~/.local/share/cura/<version>/plugins/Moonraker_Print_Follower`), so
+edits appear on the next Cura restart — no package download, unzip or
+drag. The symlink shadows the packaged copy; `rm` it to go back to the
+installed package. QML/plugin changes still need a Cura restart (Python
+modules and the QML engine cache), which is the floor the loop can
+reach without in-process reload machinery.
+
+A plugin must never self-update at runtime: replacing its own files
+while loaded is fragile (file locks, half-written states, no rollback)
+and Marketplace rules expect updates to flow through the Marketplace
+channel.
+
+Diagnostic traces are per-printer settings in the plugin's
+configuration: "Log layer resolution" writes the layer inputs every
+5 s to Cura's log; "Log HTTP requests" logs every request. Both off
+by default — request FAILURES always log a warning regardless.

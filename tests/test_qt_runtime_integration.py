@@ -320,9 +320,9 @@ class QtRuntimeTests(unittest.TestCase):
     def test_monitor_background_timers_fire_during_frequent_status_updates(self):
         model, client, transport = self.monitor()
         policy = self.qt.load("MoonrakerSession").PollPolicy
-        client.session.state.poll_policy = policy(auxiliary_idle_ms=30, power_ms=40, system_ms=50, discovery_ms=60)
+        client.session.state.poll_policy = policy(auxiliary_idle_ms=30, power_ms=40, system_ms=50, endstops_ms=70, console_ms=30, console_idle_ms=30, discovery_ms=60)
         model._data._intervals()
-        counts = [0, 0, 0, 0]
+        counts = [0, 0, 0, 0, 0, 0]  # auxiliary, power, system, endstops, console, discovery
         for index, timer in enumerate(model._data._timers.values()):
             timer.timeout.connect(lambda i=index: counts.__setitem__(i, counts[i] + 1))
         updates = self.qt.QTimer()
@@ -791,6 +791,9 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
                 self._error = QNetworkReply.NetworkError.ContentNotFoundError if error else QNetworkReply.NetworkError.NoError
             def setReadBufferSize(self, size): pass
             def readAll(self): return b"G1 X0 Y0\n"
+            def header(self, name): return None  # no declared size: the bounded read path applies
+            def read(self, maxsize): return self.readAll()
+            def bytesAvailable(self): return 0
             def error(self): return self._error
             def errorString(self): return "simulated"
             def abort(self): pass

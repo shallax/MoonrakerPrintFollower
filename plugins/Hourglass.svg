@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill-rule="evenodd">
+  <!-- Hourglass: a single clean silhouette, bulb to bulb with a
+       waisted middle. No fills here: UM.ColorImage injects the theme
+       colour into the root svg element. -->
+  <path d="M6.4 2h11.2v3.4L13.2 12l4.4 6.6V22H6.4v-3.4L10.8 12 6.4 5.4z"/>
+</svg>

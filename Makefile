@@ -6,8 +6,8 @@
 
 ARGS ?=
 
-.PHONY: help all build gates lint run_tests generate_screenshots package \
-        format coverage install_hooks docker_exec clean
+.PHONY: help all build gates lint run_tests generate_screenshots verify_captures package \
+        snapshot_package format coverage install_hooks dev_up dev_down docker_exec clean
 
 help:
 	@echo "all                    everything: gates, tests, screenshots, package"
@@ -21,15 +21,22 @@ help:
 	@echo "                       the real-Qt suite in the container"
 	@echo "generate_screenshots   regenerate the canonical captures in the"
 	@echo "                       container and refresh the committed copies"
+	@echo "verify_captures        two capture runs in the pinned container must be"
+	@echo "                       byte-identical (catches leaked live inputs)"
+	@echo "snapshot_package       build + verify, then copy the curapackage to"
+	@echo "                       /tmp/mpf.curapackage for the author to SCP"
 	@echo "package                build and verify the Cura package and Marketplace ZIP"
 	@echo "format                 apply qmlformat to the plugin QML (in the container)"
 	@echo "coverage               coverage run and report for plugins/ (in the container)"
 	@echo "install_hooks          install the pre-commit hook"
+	@echo "dev_up                 start the warm dev container (docker_dev.sh"
+	@echo "                       then reuses it; recreated after any rebuild)"
+	@echo "dev_down               stop the warm dev container"
 	@echo "docker_exec            run a command in the dev container"
 	@echo "                       (make docker_exec ARGS=\"qmlformat -i plugins/X.qml\")"
 	@echo "clean                  remove build outputs and editor backups"
 
-all: build lint run_tests package
+all: build lint run_tests verify_captures package snapshot_package
 
 build: gates
 	./tools/refresh_screenshots.sh --copy-only
@@ -40,22 +47,38 @@ gates:
 lint:
 	./tools/docker_dev.sh sh -c "python3 -m compileall -q plugins tools tests \
 	    && python3 tools/check_qml.py plugins \
+	    && python3 tools/check_qml_engine.py \
 	    && check_qml_format plugins/*.qml \
 	    && ruff check plugins tools tests \
 	    && shellcheck tools/*.sh \
-	    && hadolint Dockerfile"
+	    && hadolint Dockerfile \
+	    && gitleaks detect --no-git --no-banner --redact"
 
 run_tests:
 	./tools/run_tests.sh
 
+dev_install:
+	./tools/install_dev.sh
+
 generate_screenshots:
 	./tools/refresh_screenshots.sh
+
+verify_captures:
+	./tools/verify_capture_determinism.sh
 
 package:
 	python3 tools/build_curapackage.py
 	python3 tools/build_marketplace_source.py
 	python3 tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])').curapackage"
 	python3 tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')-source.zip"
+
+# The author SCPs the built package to the Cura machine after every
+# push: a verified curapackage at a fixed path, rebuilt from the
+# current checkout (make package above builds and verifies both
+# artifacts first).
+snapshot_package: package
+	cp dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
+	@echo "wrote /tmp/mpf.curapackage"
 
 format:
 	./tools/docker_dev.sh /usr/lib/qt6/bin/qmlformat -i plugins/*.qml
@@ -66,6 +89,12 @@ coverage:
 
 install_hooks:
 	./tools/install_hooks.sh
+
+dev_up:
+	docker run -d --name mpf-dev --user "$$(id -u):$$(id -g)" -v "$$(git rev-parse --show-toplevel)":/work moonraker-print-follower-dev sleep infinity
+
+dev_down:
+	docker rm -f mpf-dev || true
 
 docker_exec:
 	./tools/docker_dev.sh $(ARGS)

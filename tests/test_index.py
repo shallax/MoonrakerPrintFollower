@@ -429,6 +429,22 @@ G00 X2 Y2 Z0.2
         self.assertEqual(index.motion_count(0), 2)
         self.assertAlmostEqual(index.motion_x[0][1], 3.0)
 
+    def test_hostile_index_inputs_stay_bounded(self):
+        # Panel security P2-4: a poisoned/corrupt file on the printer
+        # must not grow unbounded structures — giant lines are skipped,
+        # marker-dense files cap their layer blocks, and a one-layer
+        # motion bomb truncates at the per-layer cap instead of loading
+        # the whole print into RAM.
+        from plugins.GCodeIndex import _MAX_LAYER_BLOCKS, _MAX_MOTIONS_PER_LAYER
+        giant = build_index_from_bytes(b";LAYER:0\nG1 X1\n" + b"G1 X2 " * 300_000)
+        self.assertEqual(giant.layer_count(), 1)
+        dense = build_index_from_bytes(b"".join(b";LAYER:%d\nG1 X1\n" % layer
+                                                for layer in range(_MAX_LAYER_BLOCKS + 200)))
+        self.assertLessEqual(dense.layer_count(), _MAX_LAYER_BLOCKS)
+        bomb = build_index_from_bytes(b";LAYER:0\n" + b"G1 X1\n" * (_MAX_MOTIONS_PER_LAYER + 5_000)
+                                      + b";LAYER:1\nG1 X2\n")
+        self.assertLessEqual(bomb.motion_count(0), _MAX_MOTIONS_PER_LAYER)
+
     def test_cache_rejects_same_uuid_with_changed_size_or_modified(self):
         data = b";LAYER:0\nG1 X1\n"
         index = build_index_from_bytes(data)

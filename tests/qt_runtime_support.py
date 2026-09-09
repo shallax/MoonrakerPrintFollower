@@ -51,6 +51,9 @@ class ScriptedTransport:
         self.generation += 1
         return True
 
+    def set_trace_http(self, enabled):
+        self.trace_http = enabled
+
     def send_json(self, owner, channel, method, path, callback, **kwargs):
         self.requests.append(SimpleNamespace(owner=owner, channel=channel,
             method=method, path=path, callback=callback, options=kwargs))

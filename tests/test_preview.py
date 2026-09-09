@@ -106,6 +106,21 @@ class PreviewFollowerServiceTests(unittest.TestCase):
         self.observe(4, 18)
         self.assertEqual(self.service.state.anchor_duration, 18)
 
+    def test_remaining_end_anchors_to_the_end_of_the_last_layer(self):
+        self.observe()  # layer 4 of 21, fraction 0.6
+        # Layer 4 spans boundaries 40-50 s; now = 46. The final layer
+        # has no next boundary, so the end anchor is the last boundary
+        # plus the mean layer duration (10 s): (210 + 10 - 46) / 1.0.
+        self.assertEqual(self.service.remaining_end(self.index, None), 174.0)
+        # A slicer estimate beyond the last boundary wins as the anchor.
+        self.assertEqual(self.service.remaining_end(self.index, 400.0), 354.0)
+
+    def test_remaining_end_needs_an_observed_layer(self):
+        self.observe()
+        from dataclasses import replace
+        self.service._state = replace(self.service._state, observed_layer=None)
+        self.assertIsNone(self.service.remaining_end(self.index, None))
+
     def test_reset_tracking_preserves_print_observation_and_attachment(self):
         self.observe(7, 100)
         self.service.attach(False)

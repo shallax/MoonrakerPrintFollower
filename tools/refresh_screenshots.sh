@@ -19,6 +19,14 @@ fi
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 rm -f dist/screenshots/*.png
+# The CI's sync job builds the capture image FRESH from the Dockerfile;
+# docker_dev.sh reuses layer-cached bases, so a moved base image made
+# the local captures drift from the CI's (the settings scenes' fitted
+# heights are font-metric sensitive). Pull fresh so the local renders
+# always match what the sync job produces — and fail loudly if the
+# pull/build fails: silently falling back to the stale image commits
+# captures CI will reject.
+docker build --pull -q -t moonraker-print-follower-dev .
 tools/docker_dev.sh sh -c "python3 tools/capture_monitor.py dist/screenshots \
     && python3 tools/capture_preview.py dist/screenshots \
     && python3 tools/capture_settings.py dist/screenshots \

@@ -55,6 +55,9 @@ class MoonrakerClient(QObject):
     def session(self) -> MoonrakerSession:
         return self._session
 
+    def set_trace_http(self, enabled) -> None:
+        self._session.transport.set_trace_http(enabled)
+
     @property
     def transport(self):
         return self._session.transport

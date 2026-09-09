@@ -64,6 +64,8 @@ class PrinterConfigTests(unittest.TestCase):
             "z_fallback": False,
             "z_tolerance": 0.08,
             "path_follow": False,
+            "trace_layer": False,
+            "trace_http": False,
         }
         for field, key in PrinterConfigStore.LEGACY_MAP.items():
             prefs.values[key] = defaults[field]
@@ -237,10 +239,35 @@ class PrinterConfigTests(unittest.TestCase):
         active[:] = ["printer-b", "Printer B"]
         self.assertEqual(store.get().camera_selected, "")
 
+    def test_diagnostics_settings_save_and_list_in_a_tab(self):
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        self.assertIn('text: "Diagnostics"', config)
+        self.assertIn('"trace_layer": layerTraceBox.checked', config)
+        self.assertIn('"trace_http": httpTraceBox.checked', config)
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+        self.assertIn('"trace_layer": bool(raw.get("trace_layer", False))', action)
+        self.assertIn('"trace_http": bool(raw.get("trace_http", False))', action)
+
+    def test_settings_tab_lists_diagnostic_traces(self):
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        self.assertIn('text: "Log layer resolution (diagnostics)"', config)
+        self.assertIn('text: "Log HTTP requests (diagnostics)"', config)
+
     def test_settings_tab_lists_upload(self):
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
         self.assertIn('text: "Upload"', config)
         self.assertIn('text: "Upload format"', config)
+
+    def test_diagnostics_tab_carries_the_cache_clear(self):
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        self.assertIn('text: "Clear cached downloads and indexes"', config)
+        self.assertIn("manager.clearCache()", config)
+        self.assertIn("manager.cacheStatus", config)
+        self.assertIn('text: "Log layer resolution (diagnostics)"', config)
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+        self.assertIn("def clearCache(self)", action)
+        self.assertIn('shutil.rmtree(self._cache_root(), ignore_errors=True)', action)
+        self.assertIn('"Moonraker_Print_Follower"', action)
 
     def test_normalise_url_is_the_single_url_rule(self):
         self.assertEqual(normalise_url(""), "http://")
@@ -250,6 +277,31 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertEqual(normalise_url("HTTP://Printer:7125//"), "HTTP://Printer:7125")
         for scheme_only in ("http:", "https:", "http://", "https://", "HTTP://"):
             self.assertEqual(normalise_url(scheme_only), "http://")
+
+    def test_normalise_url_strips_userinfo_and_control_characters(self):
+        # Panel security P3: Qt logs the full request URL on errors, so
+        # embedded credentials would leak into Cura's log; control
+        # characters never belong in a host.
+        self.assertEqual(normalise_url("http://user:pass@printer.lan"), "http://printer.lan")
+        self.assertEqual(normalise_url("https://user@printer.lan:7125/"), "https://printer.lan:7125")
+        self.assertEqual(normalise_url("http://printer.l\x00an"), "http://")
+        self.assertEqual(normalise_url("http://printer.l\nan"), "http://")
+
+    def test_upload_paths_refuse_traversal_segments_at_config_time(self):
+        # Panel security P3: the dialog applies UploadController.valid_path,
+        # but a hand-edited or migrated config must not carry ".." to the
+        # upload API either.
+        from plugins.PrinterConfig import upload_path_safe
+        self.assertEqual(upload_path_safe("PLA"), "PLA")
+        self.assertEqual(upload_path_safe("PLA/parts"), "PLA/parts")
+        self.assertEqual(upload_path_safe("<root>"), "")
+        self.assertEqual(upload_path_safe("../gcodes"), "")
+        self.assertEqual(upload_path_safe("PLA/../gcodes"), "")
+        self.assertEqual(upload_path_safe(".hidden"), "")
+        config = PrinterConfig.from_dict({"upload_path": "../gcodes",
+                                          "upload_paths": ["PLA", "../steal"]})
+        self.assertEqual(config.upload_path, "")
+        self.assertEqual(config.upload_paths, ["PLA"])
 
     def test_from_dict_normalises_url(self):
         self.assertEqual(PrinterConfig.from_dict({"url": "printer.lan"}).url, "http://printer.lan")

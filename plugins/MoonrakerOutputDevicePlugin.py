@@ -82,6 +82,10 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 config=self._follower.current_printer_config,
                 apply_config=self._follower.apply_printer_config,
                 bed_mesh=self._follower.bed_mesh,
+                request_load=self._follower.confirmForceLoadCurrentPrint,
+                request_monitor_download=self._follower.confirmDownloadForMonitor,
+                preferences_flushed=self._follower.preferencesFlushed,
+                identity=self._follower.current_printer_identity,
             )
             device._printers = [monitor]
 

@@ -59,7 +59,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
             "MonitorControls.py", "MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py",
             "BedMeshSceneNode.py", "MoonrakerMonitorModel.py", "MoonrakerFollowerMachineAction.py",
             "MoonrakerProtocol.py", "UploadController.py", "CuraOutputWriter.py",
-            "ToolheadPolicy.py", "ToolheadController.py",
+            "ToolheadPolicy.py", "ToolheadController.py", "MonitorTemperatureHistory.py", "ConsolePolicy.py", "ConsoleController.py",
         ):
             self.assertIn(f"`{module}`", ARCH)
 
@@ -135,13 +135,16 @@ class SourceContractTests(unittest.TestCase):
             "MonitorCamera": set(),
             "MonitorCommands": set(),
             "MonitorControls": {"MonitorFormatting"},
-            "MonitorData": {"MonitorFormatting", "MoonrakerSession"},
+            "MonitorData": {"ConsolePolicy", "MonitorFormatting", "MoonrakerSession"},
             "MonitorFormatting": set(),
             "MonitorTuning": set(),
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
             "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
-            "MoonrakerMonitorModel": {"MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTuning", "ToolheadController"},
+            "MoonrakerMonitorModel": {"ConsoleController", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTemperatureHistory", "MonitorTuning", "PrinterConfig", "ToolheadController"},
+            "ConsoleController": {"ConsolePolicy"},
             "ToolheadController": {"ToolheadPolicy"},
+            "MonitorTemperatureHistory": {"MonitorFormatting"},
+            "ConsolePolicy": set(),
             "ToolheadPolicy": set(),
             "MoonrakerOutputDevice": {"CuraOutputWriter", "UploadController"},
             "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice"},
@@ -235,6 +238,60 @@ class SourceContractTests(unittest.TestCase):
             if path.suffix in {".py", ".qml"}:
                 self.assertIsNone(re.search(r"\bv3\b", path.read_text(), re.I), path.name)
 
+    def test_qt_imports_name_the_module_that_owns_the_class(self):
+        # QHostAddress broke the plugin on Cura 5.13's bundled PyQt6:
+        # the container's build re-exports it from QtCore, so the gates
+        # stayed green while the real Cura raised ImportError at plugin
+        # registration. Pin EVERY Qt import against the module that
+        # owns the class — newer PyQt6 re-exports liberally, older
+        # bundled builds do not.
+        owners = {
+            "QAbstractListModel": "QtCore",
+            "QByteArray": "QtCore",
+            "QCoreApplication": "QtCore",
+            "QModelIndex": "QtCore",
+            "QObject": "QtCore",
+            "QPointF": "QtCore",
+            "QRect": "QtCore",
+            "QSettings": "QtCore",
+            "QThread": "QtCore",
+            "QTimer": "QtCore",
+            "QUrl": "QtCore",
+            "QVariant": "QtCore",
+            "qInstallMessageHandler": "QtCore",
+            "QColor": "QtGui",
+            "QDesktopServices": "QtGui",
+            "QFont": "QtGui",
+            "QFontMetrics": "QtGui",
+            "QGuiApplication": "QtGui",
+            "QImage": "QtGui",
+            "QPixmap": "QtGui",
+            "QPainter": "QtGui",
+            "QColorConstants": "QtGui",
+            "QHostAddress": "QtNetwork",
+            "QNetworkAccessManager": "QtNetwork",
+            "QNetworkReply": "QtNetwork",
+            "QNetworkRequest": "QtNetwork",
+            "QAbstractAnimation": "QtCore",
+            "QEasingCurve": "QtCore",
+            "QPropertyAnimation": "QtCore",
+        }
+        import ast
+        for path in PLUGINS.glob("*.py"):
+            try:
+                tree = ast.parse(path.read_text(), filename=path.name)
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom) or not str(node.module or "").startswith("PyQt6."):
+                    continue
+                imported_module = str(node.module).split(".", 1)[1]
+                for alias in node.names:
+                    name = alias.name
+                    if name in owners and owners[name] != imported_module:
+                        self.fail(f"{path.name}: {name} belongs to PyQt6.{owners[name]}, "
+                                  f"not PyQt6.{imported_module}")
+
     def test_source_contains_no_private_network_examples_or_literal_api_key(self):
         candidates = list(PLUGINS.rglob("*")) + list((ROOT / "tools").rglob("*")) + list(ROOT.glob("*"))
         text = "\n".join(p.read_text(errors="replace") for p in candidates if p.is_file() and p.suffix.lower() in {".py", ".qml", ".md", ".json", ".txt"})
@@ -299,7 +356,8 @@ class CompositionStructureTests(unittest.TestCase):
                      "PauseController", "PauseScheduleService", "PreviewFollower", "PreviewFormatting",
                      "PreviewMotion", "PreviewPresentation", "PreviewSmoothing", "PrintCoordinator",
                      "PrinterBinding", "PrinterConfig", "PrintState",
-                     "RemoteFileService", "RemoteJobService", "ToolheadController", "ToolheadPolicy", "UploadController"):
+                     "ConsoleController", "ConsolePolicy", "RemoteFileService", "RemoteJobService",
+                     "ToolheadController", "ToolheadPolicy", "UploadController"):
             source = (PLUGINS / (name + ".py")).read_text()
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.FunctionDef) and node.name == "__init__":

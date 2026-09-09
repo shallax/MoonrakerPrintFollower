@@ -4,9 +4,14 @@ import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
 
+// Component-rooted DELIBERATELY: Cura's monitor-view loader
+// (setMonitorViewQmlPath) creates this document and expects a
+// Component it can instantiate — unwrapping to the modern item-root
+// form loaded fine in the capture harness but made the real Monitor
+// stage fall back to Cura's placeholder. Qt logs a typecompiler
+// deprecation for the pattern; that warning is accepted.
 Component {
     id: dashboardComponent
-
     Item {
         id: root
         property variant catalog: UM.I18nCatalog {
@@ -177,13 +182,6 @@ Component {
                 height: 46 * screenScaleFactor
                 sourceComponent: emergencyButtonComponent
             }
-            UM.Label {
-                width: parent.width
-                text: "Click twice, then press and hold the third time: the stop fires after 0.6 seconds of holding, and releasing early cancels. The arm resets after 1 second of inactivity."
-                color: UM.Theme.getColor("text_inactive")
-                font: UM.Theme.getFont("default")
-                wrapMode: Text.WordWrap
-            }
         }
 
         RowLayout {
@@ -275,9 +273,20 @@ Component {
                     }
                     Cura.SecondaryButton {
                         id: collapseButton
+                        Layout.alignment: Qt.AlignVCenter
                         fixedWidthMode: true
-                        width: 32 * screenScaleFactor
-                        text: root.controlsCollapsed ? "‹" : "›"
+                        // Square at the OLD button width: the theme adds
+                        // its padding around the 32px content, so the
+                        // height tracks the rendered width (the
+                        // author's ruling).
+                        width: 28 * screenScaleFactor
+                        iconSize: 12 * screenScaleFactor
+                        height: width
+                        implicitHeight: width
+                        // The SAME theme-chevron family as the monitor's
+                        // pane toggles (the author's ruling: all pane
+                        // collapse buttons uniform).
+                        iconSource: root.controlsCollapsed ? UM.Theme.getIcon("ChevronSingleLeft") : UM.Theme.getIcon("ChevronSingleRight")
                         tooltip: root.controlsCollapsed ? "Show the printer controls." : "Hide the printer controls."
                         onClicked: {
                             if (root.printer != null) {
@@ -356,14 +365,6 @@ Component {
                                     text: "Cancel"
                                     onClicked: cancelPrintDialog.open()
                                 }
-                            }
-
-                            UM.Label {
-                                visible: root.printer != null && root.printer.actionStatus.length > 0
-                                text: root.printer != null ? root.printer.actionStatus : ""
-                                color: UM.Theme.getColor("text_inactive")
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
                             }
 
                             GridLayout {
@@ -497,6 +498,50 @@ Component {
                             spacing: UM.Theme.getSize("default_margin").height / 2
                             readonly property var jogPresets: [0.1, 0.5, 1, 5, 10, 25, 50, 100, 125]
 
+                            // The readout leads the section: current state
+                            // first, controls below. Two rows on purpose —
+                            // the one-line readout wrapped at narrow widths
+                            // and made the content jump. Elide instead of
+                            // wrap so the section height never changes.
+                            UM.Label {
+                                Layout.fillWidth: true
+                                text: root.printer != null ? "Homed: " + (root.printer.homedAxes.length > 0 ? root.printer.homedAxes.toUpperCase().split('').join(' ') : "—") + "  ·  " + root.printer.positionMode + " moves" : ""
+                                color: UM.Theme.getColor("text_inactive")
+                                elide: Text.ElideRight
+                            }
+                            UM.Label {
+                                Layout.fillWidth: true
+                                visible: root.printer != null && root.printer.monitorPosition !== "—"
+                                text: root.printer != null ? root.printer.monitorPosition : ""
+                                color: UM.Theme.getColor("text_inactive")
+                                elide: Text.ElideRight
+                            }
+
+                            // The endstop readout is a tri-state: values
+                            // only exist after the first homing of the
+                            // session, so an empty list says so instead
+                            // of reading as a bug. TRIGGERED axes get the
+                            // normal text colour; open axes stay muted.
+                            UM.Label {
+                                Layout.fillWidth: true
+                                visible: root.printer != null && root.printer.endstopSummary !== ""
+                                text: root.printer != null ? root.printer.endstopSummary : ""
+                                color: UM.Theme.getColor("text_inactive")
+                                wrapMode: Text.WordWrap
+                            }
+                            Flow {
+                                Layout.fillWidth: true
+                                visible: root.printer != null && root.printer.endstopItems.length > 0
+                                spacing: UM.Theme.getSize("default_margin").width
+                                Repeater {
+                                    model: root.printer != null ? root.printer.endstopItems : []
+                                    UM.Label {
+                                        text: modelData.name + ": " + modelData.state
+                                        color: modelData.triggered ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
+                                    }
+                                }
+                            }
+
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: UM.Theme.getSize("thin_margin").width
@@ -571,6 +616,12 @@ Component {
 
                                         onClicked: root.printer.jog("x", -1)
                                     }
+                                    // The compass centre is deliberately
+                                    // empty (the old Home-all button used
+                                    // to live here).
+                                    Item {
+                                        Layout.fillWidth: true
+                                    }
                                     PreviewSecondaryButton {
 
                                         Layout.fillWidth: true
@@ -627,13 +678,6 @@ Component {
                                 }
                             }
 
-                            UM.Label {
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                text: root.printer != null ? "Homed: " + (root.printer.homedAxes.length > 0 ? root.printer.homedAxes.toUpperCase().split('').join(' ') : "—") + "  ·  " + root.printer.positionMode + " moves  ·  " + root.printer.monitorPosition : ""
-                                color: UM.Theme.getColor("text_inactive")
-                            }
-
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: UM.Theme.getSize("thin_margin").width
@@ -658,13 +702,6 @@ Component {
                                     enabled: root.printer != null && root.printer.jogEnabled
                                     onClicked: root.printer.home("z")
                                 }
-                                Cura.SecondaryButton {
-                                    Layout.fillWidth: true
-                                    text: "Motors off"
-                                    tooltip: "Disable the stepper motors so the toolhead can be moved by hand."
-                                    enabled: root.printer != null && root.printer.jogEnabled
-                                    onClicked: root.printer.motorsOff()
-                                }
                             }
 
                             RowLayout {
@@ -678,11 +715,16 @@ Component {
                                     onClicked: root.printer.centerToolhead()
                                 }
                                 Cura.SecondaryButton {
-                                    Layout.fillWidth: true
                                     text: "Z to 0"
                                     tooltip: "Move Z down to 0, the bed level after homing."
                                     enabled: root.printer != null && root.printer.jogEnabled
                                     onClicked: root.printer.zToZero()
+                                }
+                                Cura.SecondaryButton {
+                                    text: "Motors off"
+                                    tooltip: "Disable the stepper motors so the toolhead can be moved by hand."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.motorsOff()
                                 }
                             }
 
@@ -1016,7 +1058,7 @@ Component {
                                         text: root.sliderSelection(speedSlider) + "%"
                                     }
                                 }
-                                Slider {
+                                OutlineSlider {
                                     id: speedSlider
                                     Layout.fillWidth: true
                                     from: 10
@@ -1054,7 +1096,7 @@ Component {
                                         text: root.sliderSelection(flowSlider) + "%"
                                     }
                                 }
-                                Slider {
+                                OutlineSlider {
                                     id: flowSlider
                                     Layout.fillWidth: true
                                     from: 50
@@ -1099,17 +1141,29 @@ Component {
                                     Layout.fillWidth: true
                                     spacing: 2 * screenScaleFactor
                                     property real buttonSpacing: 2 * screenScaleFactor
-                                    property real buttonWidth: (width - 3 * buttonSpacing) / 4
 
-                                    Row {
-                                        width: parent.width
+                                    // The original two-row layout: all up
+                                    // nudges on the top row, all down on
+                                    // the bottom. Each button takes an
+                                    // exact quarter of the row: fillWidth
+                                    // alone leaves each button its label's
+                                    // implicit width as a base, and the
+                                    // layout shares the leftover in
+                                    // proportion — "↑ 0.005" and "↑ 0.05"
+                                    // came out different widths (the
+                                    // author's report). A bound preferred
+                                    // width — (row - 3 gaps) / 4 — makes
+                                    // every button the same width without
+                                    // depending on layout distribution.
+                                    RowLayout {
+                                        Layout.fillWidth: true
                                         spacing: zOffsetGrid.buttonSpacing
                                         Repeater {
                                             model: [0.005, 0.01, 0.025, 0.05]
                                             Cura.SecondaryButton {
-                                                width: zOffsetGrid.buttonWidth
+                                                Layout.fillWidth: true
+                                                Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4
                                                 height: UM.Theme.getSize("action_button").height
-                                                fixedWidthMode: true
                                                 text: "↑ " + modelData.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
                                                 tooltip: "Moves the nozzle up, away from the bed."
                                                 enabled: root.printer != null && !root.printer.actionBusy
@@ -1117,15 +1171,15 @@ Component {
                                             }
                                         }
                                     }
-                                    Row {
-                                        width: parent.width
+                                    RowLayout {
+                                        Layout.fillWidth: true
                                         spacing: zOffsetGrid.buttonSpacing
                                         Repeater {
                                             model: [-0.005, -0.01, -0.025, -0.05]
                                             Cura.SecondaryButton {
-                                                width: zOffsetGrid.buttonWidth
+                                                Layout.fillWidth: true
+                                                Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4
                                                 height: UM.Theme.getSize("action_button").height
-                                                fixedWidthMode: true
                                                 text: "↓ " + Math.abs(modelData).toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
                                                 tooltip: "Moves the nozzle down, closer to the bed."
                                                 enabled: root.printer != null && !root.printer.actionBusy
@@ -1171,7 +1225,7 @@ Component {
                                             text: root.sliderSelection(fanSlider) + "%"
                                         }
                                     }
-                                    Slider {
+                                    OutlineSlider {
                                         id: fanSlider
                                         Layout.fillWidth: true
                                         from: 0
@@ -1247,7 +1301,7 @@ Component {
                                             text: "Brightness " + root.sliderSelection(ledSlider) + "%"
                                         }
                                     }
-                                    Slider {
+                                    OutlineSlider {
                                         id: ledSlider
                                         Layout.fillWidth: true
                                         from: 0
@@ -1280,7 +1334,7 @@ Component {
                                             text: "R"
                                             color: UM.Theme.getColor("text_inactive")
                                         }
-                                        Slider {
+                                        OutlineSlider {
                                             id: redSlider
                                             Layout.fillWidth: true
                                             from: 0
@@ -1303,7 +1357,7 @@ Component {
                                             text: "G"
                                             color: UM.Theme.getColor("text_inactive")
                                         }
-                                        Slider {
+                                        OutlineSlider {
                                             id: greenSlider
                                             Layout.fillWidth: true
                                             from: 0
@@ -1326,7 +1380,7 @@ Component {
                                             text: "B"
                                             color: UM.Theme.getColor("text_inactive")
                                         }
-                                        Slider {
+                                        OutlineSlider {
                                             id: blueSlider
                                             Layout.fillWidth: true
                                             from: 0
@@ -1350,7 +1404,7 @@ Component {
                                             text: "W"
                                             color: UM.Theme.getColor("text_inactive")
                                         }
-                                        Slider {
+                                        OutlineSlider {
                                             id: whiteSlider
                                             visible: modelData.hasWhite
                                             Layout.fillWidth: true
@@ -1404,7 +1458,7 @@ Component {
                                             text: root.sliderSelection(pwmSlider) + "%"
                                         }
                                     }
-                                    Slider {
+                                    OutlineSlider {
                                         id: pwmSlider
                                         Layout.fillWidth: true
                                         from: 0
@@ -1562,10 +1616,6 @@ Component {
                     }
                 }
 
-                // The collapsed strip: the toggle stays at the top and the
-                // panel title reads top-to-bottom directly under it. The
-                // wrapper box swaps the label's extents so the rotated text
-                // starts exactly where the box begins.
                 // The collapsed strip: the toggle stays at the top and the
                 // pane title reads top-to-bottom directly under it. The
                 // wrapper box swaps the label's extents so the rotated

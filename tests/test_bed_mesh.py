@@ -12,6 +12,7 @@ PRESENTER = (PLUGINS / "BedMeshPresenter.py").read_text()
 SCENE_NODE = (PLUGINS / "BedMeshSceneNode.py").read_text()
 MONITOR_CONTROLS = (PLUGINS / "MonitorControls.py").read_text()
 DASHBOARD = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
+BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 MAIN_DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 PREVIEW_CONTROLS = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
@@ -84,15 +85,16 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("self._node", PRESENTER)
         self.assertNotIn("self._follower", PRESENTER)
         self.assertIn("MoonrakerMonitorDashboard", DASHBOARD)  # the registered shell
-        self.assertIn("Canvas", MONITOR_QML)
-        self.assertIn('text: "Bed mesh — "', MONITOR_QML)
+        self.assertIn("BedMeshMap {", MONITOR_QML)  # the shared mesh canvas
+        self.assertIn("Canvas", BED_MESH_MAP_QML)
+        self.assertIn('title: "Bed mesh — "', MONITOR_QML)  # the pop-over shell owns the title
         self.assertIn("bedMeshMinimum", MONITOR_QML)
         self.assertIn("bedMeshMaximum", MONITOR_QML)
         self.assertIn("bedMeshRange", MONITOR_QML)
         self.assertIn("20× vertical exaggeration", MONITOR_QML)
         self.assertIn("id: infoPanel", MONITOR_QML)
         self.assertIn('text: "Information"', MONITOR_QML)
-        self.assertIn("bedMeshXMax - root.printer.bedMeshXMin", MONITOR_QML)  # aspect-fitted plot
+        self.assertIn("bedMeshXMax - root.printer.bedMeshXMin", BED_MESH_MAP_QML)  # aspect-fitted plot
         for qml in (PREVIEW_CONTROLS, EMPTY_PREVIEW):
             self.assertIn("bedMeshVisibilityRequested", qml)
             self.assertIn('"Hide bed mesh"', qml)

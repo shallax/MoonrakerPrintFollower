@@ -79,6 +79,9 @@ private follower state to either integration.
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
 | `MonitorCamera.py` | Camera selection, transforms and per-printer selection persistence | Private configuration store |
+| `MonitorTemperatureHistory.py` | Pure per-sensor temperature ring buffers and the chart payload projection | Qt or networking |
+| `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
+| `ConsoleController.py` | Console state owner: the bounded per-printer history and the untracked send lane | Model inheritance or formatting |
 | `CuraOutputWriter.py` | Cura-affine preparation of a temporary G-code/UFP file | HTTP upload |
 | `UploadController.py` | One write operation: discovery, readiness, multipart stream and cancellation | Cura application or QML |
 | `MoonrakerOutputDevice.py` | Cura output-device signals/dialog/message adapter | Upload state machine |
@@ -125,6 +128,7 @@ unsaved credentials; a probe must not reconfigure the live binding.
 | Monitor auxiliary, idle | 2500 ms |
 | Power | 5000 ms |
 | System | 10000 ms |
+| Endstops (one-shot query_endstops) | 10000 ms |
 | Discovery/static configuration | 30000 ms or explicit refresh |
 
 `MonitorData` alone applies Monitor timer policy. An unchanged interval is not
@@ -268,11 +272,33 @@ The Monitor's three panes and their accordion sections are presentation
 owned by the model's published state: the expanded-section map, the pane
 collapse flags and the lock toggle live in the model, persisted through
 the plugin-owned JSON state file, and QML binds to them through declared
-properties and setter slots. `CollapsibleSectionHeader` is the single
-header implementation shared by every pane; pane chrome (toggles,
-collapsed strips, plugin-drawn glyphs) is UI-only state in the QML files
-and never mutates printer state directly. The recipes for extending the
-panes are in `INSTRUCTIONS.md`, not here.
+properties and setter slots. The temperature history follows the same
+split: `MonitorTemperatureHistory` keeps the bounded per-sensor ring
+buffers and chart projection pure, and the model feeds them from the
+auxiliary poll — once per auxiliary reply, never per publish. The chart
+config (sensor visibility, colours, target/power toggles) persists per
+printer in the `PrinterConfig` record because sensor names differ
+between machines; the plugin-owned JSON state file keeps the chrome
+only (expanded-section map, pane collapse, controls lock), and a legacy
+global chart block migrates into the per-printer record once.
+
+The console sends on its own request path: `printer/gcode/script`
+replies only after Klipper processes the script, and that reply's
+result is the execution verdict — a client timeout is "no verdict",
+because a blocking command may still be running. Klipper's output
+streams back over HTTP from Moonraker's gcode store, polled only while
+the console is expanded (an idle floor slows the cadence when no print
+runs), so the pane is a terminal feed: typed lines as sent, output as
+it arrives. `ConsolePolicy` owns the history bounds and input guards
+(deliberately no command-safety table: the author ruled the console
+unrestricted); `ConsoleController` owns the bounded per-printer
+history, the send lane and the verdict pairing — each send closes over
+its own entry, and no line claims an attribution the store cannot
+support (it pairs by recency only). `CollapsibleSectionHeader` is
+the single header implementation shared by every pane; pane chrome
+(toggles, collapsed strips, plugin-drawn glyphs) is UI-only state in
+the QML files and never mutates printer state directly. The recipes for
+extending the panes are in `INSTRUCTIONS.md`, not here.
 
 `BedMeshPresenter` alone owns the active scene node and Preview mesh UI. It uses
 `CuraIntegration.decorating_scene()` to distinguish its non-sliceable visual changes

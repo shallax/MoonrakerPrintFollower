@@ -18,6 +18,12 @@ Item {
     property string statusText: ""
     property string statusIconName: "Information"
     property bool bedMeshAvailable: false
+    // Declared so the bindings below exist from creation: undeclared
+    // dynamic names read as undefined at load time and the bindings
+    // are dropped before setProperty can ever reach them.
+    property bool loadBusy: false
+    property real loadProgress: -1
+    property string loadPhase: ""
     property bool bedMeshVisible: true
     property string bedMeshRangeText: ""
     property string bedMeshMinimumText: ""
@@ -76,7 +82,16 @@ Item {
                 height: UM.Theme.getSize("action_button").height
                 text: "Load current print"
                 tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
+                // Non-clickable until the load reaches a terminal state.
+                enabled: !base.loadBusy
                 onClicked: base.loadClicked()
+            }
+
+            LoadProgressIndicator {
+                width: parent.width
+                busy: base.loadBusy
+                progress: base.loadProgress
+                phase: base.loadPhase
             }
 
             PreviewSecondaryButton {

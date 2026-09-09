@@ -81,6 +81,10 @@ def is_packaged_source(path: pathlib.Path) -> bool:
         return False
     if path.name in FORBIDDEN_NAMES or path.suffix.lower() in FORBIDDEN_SUFFIXES:
         return False
+    # Editor backups (name.qml~) have a bogus suffix and would otherwise
+    # ship stale half-written sources in the artifacts.
+    if path.name.endswith("~"):
+        return False
     return True
 
 
