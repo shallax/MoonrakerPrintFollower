@@ -58,6 +58,13 @@ class PrinterBinding(QObject):
         endpoint_changed = (normalise_url(previous.url), previous.api_key) != (normalise_url(config.url), config.api_key)
         camera_changed = previous.camera_selected != config.camera_selected
         camera_only = camera_changed and replace(previous, camera_selected=config.camera_selected) == config
+        # Console transcript persists arrive every second while the
+        # printer chats; they are storage state, not connection state,
+        # and must never reconfigure/restart the client (they did -
+        # one configure per response batch).
+        console_only = replace(previous, console_transcript=config.console_transcript,
+                               console_store_time=config.console_store_time,
+                               console_history=config.console_history) == config
 
         if endpoint_changed:
             # Tear the poller down before persistence/rebind without
@@ -72,7 +79,7 @@ class PrinterBinding(QObject):
         self._store.set(config, self._machine_id)
         if camera_changed:
             self._flush_preferences()
-        if camera_only:
+        if camera_only or console_only:
             self.changed.emit()
             return
         self._apply()

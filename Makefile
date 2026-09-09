@@ -7,7 +7,7 @@
 ARGS ?=
 
 .PHONY: help all build gates lint run_tests generate_screenshots verify_captures package \
-        snapshot_package format coverage install_hooks docker_exec clean
+        snapshot_package format coverage install_hooks dev_up dev_down docker_exec clean
 
 help:
 	@echo "all                    everything: gates, tests, screenshots, package"
@@ -29,6 +29,9 @@ help:
 	@echo "format                 apply qmlformat to the plugin QML (in the container)"
 	@echo "coverage               coverage run and report for plugins/ (in the container)"
 	@echo "install_hooks          install the pre-commit hook"
+	@echo "dev_up                 start the warm dev container (docker_dev.sh"
+	@echo "                       then reuses it; recreated after any rebuild)"
+	@echo "dev_down               stop the warm dev container"
 	@echo "docker_exec            run a command in the dev container"
 	@echo "                       (make docker_exec ARGS=\"qmlformat -i plugins/X.qml\")"
 	@echo "clean                  remove build outputs and editor backups"
@@ -86,6 +89,12 @@ coverage:
 
 install_hooks:
 	./tools/install_hooks.sh
+
+dev_up:
+	docker run -d --name mpf-dev --user "$$(id -u):$$(id -g)" -v "$$(git rev-parse --show-toplevel)":/work moonraker-print-follower-dev sleep infinity
+
+dev_down:
+	docker rm -f mpf-dev || true
 
 docker_exec:
 	./tools/docker_dev.sh $(ARGS)

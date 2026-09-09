@@ -23,6 +23,7 @@ from dataclasses import replace
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from .ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, MAX_TRANSCRIPT, normalise_line
+from collections.abc import Mapping
 
 def _transcript_from_history(lines) -> list:
     """Legacy console_history (typed lines) becomes a command transcript
@@ -62,7 +63,12 @@ class ConsoleController(QObject):
                 "error": bool(entry.get("error")),
                 "success": bool(entry.get("success")),
                 "restored": True,
-            } for entry in stored][-MAX_TRANSCRIPT:]
+            } for entry in stored][-(MAX_TRANSCRIPT + self.MAX_PERSIST_COMMANDS):]
+            # The load must keep the retained commands: the persist
+            # stores MAX_TRANSCRIPT entries plus up to
+            # MAX_PERSIST_COMMANDS newest commands at the FRONT, and a
+            # plain MAX_TRANSCRIPT trim here cut exactly those (the
+            # author's "my requests are missing from the restore").
         else:
             # Legacy migration: the typed-only history becomes the
             # transcript; everything in it predates this session.
@@ -104,10 +110,16 @@ class ConsoleController(QObject):
         Once the ring is full every addition rotates one entry out of
         the HEAD; the count of rotated lines feeds the pane's renderer
         (a full ring never grows, so an incremental sync would otherwise
-        stop appending forever)."""
-        prior = len(self._transcript)
-        self._transcript = (self._transcript + additions)[-MAX_HISTORY:]
-        self._dropped += max(0, prior + len(additions) - MAX_HISTORY)
+        stop appending forever). The newest commands are pinned through
+        the rotation: a chatty Klipper floods the ring with a response
+        per second and the typed requests rotated out entirely, so
+        restores came back requestless (the author's report)."""
+        dropped_head, self._transcript =             (self._transcript + additions)[:-MAX_HISTORY],             (self._transcript + additions)[-MAX_HISTORY:]
+        if len(dropped_head) > 0:
+            keep = [entry for entry in dropped_head
+                    if entry["kind"] == "command"][-self.MAX_PERSIST_COMMANDS:]
+            self._transcript = keep + self._transcript
+            self._dropped += len(dropped_head) - len(keep)
 
     def send(self, text) -> bool:
         """Accept a console line; True only when it actually entered the
@@ -122,7 +134,37 @@ class ConsoleController(QObject):
             self._status = "Too many commands waiting — try again in a moment."
             self.changed.emit()
             return False
-        started = self._commands.request("Console", "printer/gcode/script", {"script": line})
+        def finished(payload, error):
+            # The send's OWN result is the execution verdict: the
+            # endpoint returns "ok" when the command completed and an
+            # error when it failed (Moonraker's docs), and this callback
+            # belongs to THIS request — the pairing the store feed
+            # cannot offer (its entries carry no correlation id). The
+            # verdict colours the typed line: green for "ok", red for a
+            # failure; the match is by recency among this session's
+            # unverdict-command entries with the same text.
+            for entry in reversed(self._transcript):
+                if (entry["kind"] == "command" and entry["text"] == line
+                        and not entry["success"] and not entry["error"]
+                        and not entry["restored"]):
+                    entry["error"] = bool(error)
+                    # The layering pin keeps ConsoleController on
+                    # ConsolePolicy only, so the MonitorFormatting
+                    # result() helper is inlined here.
+                    verdict = payload.get("result", payload) if isinstance(payload, Mapping) else {}
+                    entry["success"] = not error and verdict == "ok"
+                    self._persist()
+                    self.changed.emit()
+                    break
+            if self._pending:
+                self._pending -= 1
+                self.changed.emit()
+        # The console posts its own request instead of riding the shared
+        # one-shot lane: the lane's card ticker is off-limits for console
+        # traffic (the panel UX ruling), and the lane's completion signal
+        # carries no verdict to colour the line with.
+        started = self._data.request("console", "POST", "printer/gcode/script", finished,
+                                     body={"script": line}, category="command", timeout_ms=30000)
         if not started:
             self._status = "Command queue full or Moonraker unavailable — try again."
             self.changed.emit()
@@ -130,7 +172,10 @@ class ConsoleController(QObject):
         entry = {"kind": "command", "text": line, "error": False, "success": False, "restored": False}
         self._append_entries([entry])
         self._pending += 1
-        self._status = "Sent to Klipper's queue — output appears below as Moonraker reports it."
+        # No "sent to Klipper" caption (the author's ruling): the typed
+        # line's own verdict colouring carries the feedback. Refusals
+        # and live "!!" errors still set the status.
+        self._status = ""
         self._persist()
         self.changed.emit()
         return True
@@ -187,11 +232,37 @@ class ConsoleController(QObject):
             self._pending -= 1
             self.changed.emit()
 
+    def reload_if_empty(self) -> None:
+        """The console loads its transcript ONCE, at construction — and
+        the plugin constructs before Cura's active machine exists, so
+        the early read hits the 'unknown' machine's EMPTY record and the
+        restored lines never appear (the author's 'console is completely
+        empty' report; the writes land under the real machine once the
+        identity arrives). Re-load once the pane attaches / the session
+        comes alive, but only while the transcript is still empty: a
+        working session must not be re-stamped by a reconnect."""
+        if self._transcript:
+            return
+        stored = getattr(self._config(), "console_transcript", None)
+        if not isinstance(stored, (list, tuple)) or not stored:
+            return
+        self._transcript = [dict(entry) for entry in [{
+            "kind": str(entry.get("kind") or "command"),
+            "text": str(entry.get("text") or ""),
+            "error": bool(entry.get("error")),
+            "success": bool(entry.get("success")),
+            "restored": True,
+        } for entry in stored][-(MAX_TRANSCRIPT + self.MAX_PERSIST_COMMANDS):]]
+        self._dropped = 0
+        self._store_time = float(getattr(self._config(), "console_store_time", 0.0) or 0.0)
+        self.changed.emit()
+
     def _session_invalidated(self) -> None:
         if self._pending or self._status:
             self._pending = 0
             self._status = ""
             self.changed.emit()
+        self.reload_if_empty()
 
     def _emergency_stopped(self) -> None:
         if self._pending:
@@ -199,13 +270,28 @@ class ConsoleController(QObject):
             self._status = "Pending console commands dropped by the emergency stop."
             self.changed.emit()
 
+    # The author's ruling: persist the last ~50 lines per printer —
+    # BOTH our requests and its responses. A chatty Klipper fills the
+    # 50-line window with responses and the typed requests age out of
+    # it entirely, so the newest commands are pulled back in (bounded).
+    MAX_PERSIST_COMMANDS = 10
+
     def _persist(self) -> None:
         config = self._config()
+        entries = self._transcript
+        transcript = list(entries[-MAX_TRANSCRIPT:])
+        have = sum(1 for entry in transcript if entry["kind"] == "command")
+        if have < self.MAX_PERSIST_COMMANDS:
+            for entry in reversed(entries[:-len(transcript)]):
+                if have >= self.MAX_PERSIST_COMMANDS:
+                    break
+                if entry["kind"] == "command":
+                    transcript.insert(0, entry)
+                    have += 1
         # Only the last 50 lines persist (the author's ruling); the
         # session keeps up to MAX_HISTORY in the pane. The store stamp
         # persists with them so the next session's backfill skips
         # everything already seen.
-        transcript = self._transcript[-MAX_TRANSCRIPT:]
         if getattr(config, "console_transcript", None) != transcript                 or getattr(config, "console_store_time", 0.0) != self._store_time:
             self._apply_config(replace(config, console_transcript=transcript,
                                        console_store_time=self._store_time))

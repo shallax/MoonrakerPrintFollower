@@ -34,4 +34,17 @@ else
     printf '%s\n' "$build_log" \
         | grep -vE "legacy builder is deprecated|Install the buildx component|docs.docker.com/go/buildx" || true
 fi
-docker run --rm --user "$(id -u):$(id -g)" -v "$root":/work moonraker-print-follower-dev "$@"
+# Warm-container reuse: a named container (make dev_up) survives between
+# commands, so repeated gates skip the create/teardown churn. The reuse
+# is image-aware — after a rebuild (a --pull'd base, a Dockerfile
+# change) the stale container is recreated, never reused, so a warmed
+# container can never serve drifted results.
+name="mpf-dev"
+image_id="$(docker image inspect moonraker-print-follower-dev --format '{{.Id}}' 2>/dev/null || true)"
+container_image="$(docker inspect "$name" --format '{{.Image}}' 2>/dev/null || true)"
+if [ -n "$container_image" ] && [ "$container_image" = "$image_id" ]; then
+    docker exec -i -w /work "$name" "$@"
+else
+    docker rm -f "$name" >/dev/null 2>&1 || true
+    docker run --rm --user "$(id -u):$(id -g)" -v "$root":/work moonraker-print-follower-dev "$@"
+fi

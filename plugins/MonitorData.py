@@ -247,7 +247,13 @@ class MonitorData(QObject):
                         responses.append({
                             "text": text,
                             "error": text.startswith("!!"),
-                            "success": text == "ok" or text.lower().startswith("ok "),
+                            # Moonraker STRIPS the "ok" prefix from stored
+                            # lines (a live M105 arrives as a bare
+                            # "B:55.0..." — the author's report), so the
+                            # store can never attest success. The honest
+                            # proxy: a response that is neither an error
+                            # nor an echo ("//") is normal Klipper output.
+                            "success": not text.startswith("!!") and not text.startswith("//"),
                             "time": stamp,
                         })
             self._console_store_time = newest

@@ -10,7 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 # ConsolePolicy owns these bounds; PrinterConfig may not import it
 # (module-layering pin), so the coercion repeats the numbers. Drift is
 # harmless: the controller re-trims the transcript on load regardless.
-_CONSOLE_TRANSCRIPT_CAP = 50
+_CONSOLE_TRANSCRIPT_CAP = 60  # MAX_TRANSCRIPT (50) + the command retention (10)
 _CONSOLE_LINE_CAP = 8 * 1024
 
 
@@ -202,6 +202,11 @@ class PrinterConfig:
                     "kind": kind,
                     "text": str(entry.get("text") or "")[:_CONSOLE_LINE_CAP],
                     "error": bool(entry.get("error")),
+                    # The success flag colours the restored "ok" green;
+                    # dropping it here rendered every restored response
+                    # neutral grey (the author's "never seen a coloured
+                    # line" report).
+                    "success": bool(entry.get("success")),
                 })
             data["console_transcript"] = cleaned[-_CONSOLE_TRANSCRIPT_CAP:]
         else:

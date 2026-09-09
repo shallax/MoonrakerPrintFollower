@@ -188,7 +188,10 @@ Component {
                 Layout.maximumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 240 * screenScaleFactor)
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.leftMargin: UM.Theme.getSize("default_margin").width
+                // No Layout.leftMargin here: the host RowLayout's
+                // anchors.margins already indents every pane, and the
+                // doubled left edge read wider than the right pane's
+                // (the author's report).
                 border.color: UM.Theme.getColor("lining")
                 border.width: UM.Theme.getSize("default_lining").width
                 color: UM.Theme.getColor("main_background")
@@ -469,10 +472,31 @@ Component {
                         anchors.fill: parent
                         spacing: 0
 
+                        UM.Label {
+                            // The pane title, in the other panes' style.
+                            text: "Webcam"
+                            font: UM.Theme.getFont("medium_bold")
+                            color: UM.Theme.getColor("text_inactive")
+                            Layout.fillWidth: true
+                            Layout.topMargin: UM.Theme.getSize("default_margin").height
+                            Layout.leftMargin: UM.Theme.getSize("default_margin").width
+                        }
+
                         Item {
                             id: cameraViewport
                             Layout.fillWidth: true
-                            Layout.fillHeight: true
+                            // The camera fills the pane ONLY while the
+                            // console is collapsed; expanded, the camera
+                            // fits its stream and the console (the
+                            // column's last child) absorbs the leftover
+                            // space (the author's rulings).
+                            Layout.fillHeight: root.printer != null && root.printer.sectionExpandedMap["console"] === false
+                            // The viewport must be allowed to SHRINK
+                            // below its content: with a tight pane the
+                            // fitted stream + controls + console
+                            // overflowed the pane's bounds (the
+                            // author's report).
+                            Layout.minimumHeight: 0
                             Layout.margins: UM.Theme.getSize("default_margin").width
 
                             UM.Label {
@@ -620,228 +644,321 @@ Component {
                             }
                         }
 
-                        // Console: the command line below the feed.
-                        // printer/gcode/script returns after Klipper
-                        // processes the script, and its output streams
-                        // back through the gcode store — the caption
-                        // says exactly that.
-                        Rectangle {
+                        // Console: a collapsing pane beneath the
+                        // webcam. printer/gcode/script returns after
+                        // Klipper processes the script, and its output
+                        // streams back through the gcode store.
+                        Cura.RoundedRectangle {
                             Layout.fillWidth: true
-                            height: UM.Theme.getSize("default_lining").height
-                            color: UM.Theme.getColor("lining")
-                        }
+                            // Expanded the pane absorbs the leftover
+                            // space; collapsed it shrinks to its header
+                            // row and the camera expands into the freed
+                            // height (the author's rulings).
+                            Layout.fillHeight: root.printer != null && root.printer.sectionExpandedMap["console"] !== false
+                            // A hard cap: with a placeholder camera (no
+                            // stream yet) the leftover is the WHOLE
+                            // pane, and an uncapped fill let the console
+                            // swallow the webcam entirely (the author's
+                            // report — the pane rendered 689 of 767 px).
+                            Layout.maximumHeight: Math.max(240 * screenScaleFactor, cameraPanel.height * 0.55)
+                            border.color: UM.Theme.getColor("lining")
+                            border.width: UM.Theme.getSize("default_lining").width
+                            color: UM.Theme.getColor("main_background")
+                            radius: UM.Theme.getSize("default_radius").width
 
-                        ColumnLayout {
-                            id: consoleSection
-                            Layout.fillWidth: true
-                            Layout.margins: UM.Theme.getSize("default_margin").width
-                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                            spacing: UM.Theme.getSize("narrow_margin").height
-                            enabled: root.printer != null
-                            property int consoleRecallIndex: -1
-                            property string consoleDraft: ""
-                            // Pick an actually-installed monospace face at
-                            // runtime: the generic "monospace" and comma
-                            // lists do not resolve on every machine.
-                            function monoFamily() {
-                                try {
-                                    var names = Qt.fontFamilies();
-                                    var known = ["consolas", "menlo", "courier", "mono"];
-                                    for (var i = 0; i < names.length; ++i) {
-                                        var lower = String(names[i]).toLowerCase();
-                                        for (var k = 0; k < known.length; ++k) {
-                                            if (lower.indexOf(known[k]) >= 0) {
-                                                return names[i];
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 0
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Layout.topMargin: UM.Theme.getSize("thin_margin").height
+                                    Layout.leftMargin: UM.Theme.getSize("thin_margin").width
+                                    Layout.rightMargin: UM.Theme.getSize("thin_margin").width
+                                    spacing: UM.Theme.getSize("thin_margin").width
+
+                                    // The collapse toggle hugs the top
+                                    // LEFT like the other panes' buttons;
+                                    // the chevron points the way the
+                                    // pane will move (up = collapse).
+                                    UM.SimpleButton {
+                                        id: consoleCollapseButton
+                                        Layout.alignment: Qt.AlignVCenter
+                                        width: UM.Theme.getSize("small_button_icon").width
+                                        height: UM.Theme.getSize("small_button_icon").height
+                                        color: UM.Theme.getColor("text_inactive")
+                                        hoverColor: UM.Theme.getColor("text")
+                                        iconSource: root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? UM.Theme.getIcon("ChevronSingleUp") : UM.Theme.getIcon("ChevronSingleDown")
+                                        onClicked: {
+                                            if (root.printer != null) {
+                                                root.printer.setSectionExpanded("console", root.printer.sectionExpandedMap["console"] === false);
                                             }
                                         }
-                                    }
-                                } catch (e) {
-                                }
-                                return "monospace";
-                            }
-                            // The transcript arrives oldest-first; the pane
-                            // is ONE rich TextEdit so text selection spans
-                            // lines (per-line delegates could not). The
-                            // sync appends only the NEW lines, inserting
-                            // at the end with the reader's selection
-                            // saved and restored around it — new output
-                            // never disturbs a selection or yanks the
-                            // scroll position.
-                            property int consoleRenderedLines: 0
-                            // Ring-rotation lines the pane already saw
-                            // dropped out of the transcript's head.
-                            property int consoleDroppedSeen: 0
-
-                            function consoleLineHtml(entry) {
-                                var hue = "#d9dde3";
-                                if (entry.kind === "response") {
-                                    hue = entry.error ? "#f85149" : (entry.success ? "#57ab5a" : "#8b949e");
-                                }
-                                if (entry.restored) {
-                                    hue = entry.error ? "#a63a34" : (entry.success ? "#3f7a42" : (entry.kind === "response" ? "#5b6670" : "#6e7681"));
-                                }
-                                var escaped = String(entry.text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-                                return "<span style=\"color:" + hue + ";\">" + escaped + "</span>";
-                            }
-
-                            function consoleSyncLines() {
-                                var lines = root.printer != null ? root.printer.consoleLines : [];
-                                var dropped = root.printer != null ? root.printer.consoleDropped : 0;
-                                // Captured BEFORE any rebuild below: a
-                                // rebuild collapses the content height,
-                                // which would otherwise read as "at the
-                                // end" and yank a scrolled-up reader.
-                                var wasAtEnd = consoleFlick.contentY + consoleFlick.height >= consoleFlick.contentHeight - 2;
-                                if (lines.length < consoleRenderedLines || dropped > consoleDroppedSeen) {
-                                    // A Clear, a printer switch, or the
-                                    // session ring rotating at its cap
-                                    // (its length stops growing there, so
-                                    // the count alone would stall this
-                                    // sync forever): rebuild the pane
-                                    // from the transcript.
-                                    consoleText.text = "";
-                                    consoleRenderedLines = 0;
-                                    consoleDroppedSeen = dropped;
-                                }
-                                if (lines.length === consoleRenderedLines) {
-                                    return;
-                                }
-                                var selStart = consoleText.selectionStart;
-                                var selEnd = consoleText.selectionEnd;
-                                // A chunk appended into a pane that
-                                // already shows lines must start on a
-                                // fresh line: without the leading break
-                                // it glued onto the last rendered line.
-                                // The rebuild path (empty text) needs no
-                                // lead-in — the first line is the head.
-                                var html = consoleText.length > 0 ? "<br>" : "";
-                                for (var i = consoleRenderedLines; i < lines.length; ++i) {
-                                    if (i > consoleRenderedLines) {
-                                        html += "<br>";
-                                    }
-                                    html += consoleLineHtml(lines[i]);
-                                }
-                                consoleText.cursorPosition = consoleText.length;
-                                consoleText.insert(consoleText.length, html);
-                                consoleRenderedLines = lines.length;
-                                if (selStart !== selEnd && selStart >= 0) {
-                                    consoleText.select(selStart, selEnd);
-                                }
-                                if (wasAtEnd) {
-                                    consoleFlick.contentY = consoleFlick.contentHeight - consoleFlick.height;
-                                }
-                            }
-
-                            function consoleSend() {
-                                if (root.printer != null) {
-                                    // A refused send (queue full, lane
-                                    // busy, Moonraker down) must keep
-                                    // the typed line: losing an unsent
-                                    // G-code draft on refusal is data
-                                    // loss, and the status line already
-                                    // explains the refusal.
-                                    if (root.printer.sendConsoleCommand(consoleInput.text)) {
-                                        consoleInput.text = "";
-                                        consoleDraft = "";
-                                        consoleRecallIndex = -1;
-                                    }
-                                    consoleInput.forceActiveFocus();
-                                }
-                            }
-                            function consoleRecall(step) {
-                                var history = root.printer != null ? root.printer.consoleHistory : [];
-                                if (history.length === 0) {
-                                    return;
-                                }
-                                if (consoleRecallIndex < 0) {
-                                    consoleDraft = consoleInput.text;
-                                }
-                                consoleRecallIndex = Math.max(-1, Math.min(history.length - 1, consoleRecallIndex + step));
-                                consoleInput.text = consoleRecallIndex < 0 ? consoleDraft : history[history.length - 1 - consoleRecallIndex];
-                            }
-
-                            UM.Label {
-                                Layout.fillWidth: true
-                                text: "Console — commands go straight to Klipper; output comes from Moonraker's command store (1 s refresh)."
-                                color: UM.Theme.getColor("text_inactive")
-                                wrapMode: Text.WordWrap
-                            }
-
-                            // A shell-terminal-styled console: dark,
-                            // fixed-width, newest line pinned to the
-                            // bottom — the list slides to the end as
-                            // each line lands, and the input row lives
-                            // INSIDE the dark well with the prompt, so
-                            // the green ">" keeps its contrast on both
-                            // themes (panel UX P3).
-                            Cura.RoundedRectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 190 * screenScaleFactor
-                                color: "#161b22"
-                                border.color: UM.Theme.getColor("lining")
-                                border.width: UM.Theme.getSize("default_lining").width
-                                radius: UM.Theme.getSize("default_radius").width
-
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: UM.Theme.getSize("narrow_margin").width
-                                    spacing: UM.Theme.getSize("thin_margin").height
-
-                                    Flickable {
-                                        id: consoleFlick
-                                        Layout.fillWidth: true
-                                        Layout.fillHeight: true
-                                        clip: true
-                                        contentWidth: consoleText.width
-                                        contentHeight: Math.max(consoleText.height, consoleFlick.height)
-                                        ScrollBar.vertical: UM.ScrollBar {
-                                            id: consoleScrollbar
-                                        }
-                                        Column {
-                                            width: consoleFlick.width
-                                            height: consoleFlick.contentHeight
-                                            // The spacer pins the sparse
-                                            // transcript to the shell's
-                                            // bottom edge; once the text
-                                            // fills the viewport it scrolls
-                                            // exactly like a terminal.
-                                            Item {
-                                                width: 1
-                                                height: Math.max(0, consoleFlick.height - consoleText.height)
-                                            }
-                                            TextEdit {
-                                                id: consoleText
-                                                width: parent.width
-                                                readOnly: true
-                                                selectByMouse: true
-                                                selectByKeyboard: true
-                                                textFormat: TextEdit.RichText
-                                                wrapMode: TextEdit.NoWrap
-                                                font.family: consoleSection.monoFamily()
-                                                color: "#d9dde3"
-                                                // No blinking caret: a read-only
-                                                // terminal pane has no cursor, and
-                                                // the caret's phase made the
-                                                // captures nondeterministic.
-                                                cursorVisible: false
-                                            }
+                                        UM.TooltipArea {
+                                            anchors.fill: parent
+                                            text: root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? "Collapse the console." : "Expand the console."
+                                            acceptedButtons: Qt.NoButton
                                         }
                                     }
 
                                     UM.Label {
-                                        visible: root.printer == null || root.printer.consoleLines.length === 0
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        text: "No commands yet — lines you send appear here."
-                                        font.family: consoleSection.monoFamily()
-                                        color: "#7d8590"
-                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                        text: "Console"
+                                        font: UM.Theme.getFont("medium_bold")
+                                        color: UM.Theme.getColor("text_inactive")
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    id: consoleSection
+                                    visible: root.printer != null && root.printer.sectionExpandedMap["console"] !== false
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    Layout.margins: UM.Theme.getSize("default_margin").width
+                                    Layout.topMargin: UM.Theme.getSize("narrow_margin").height
+                                    Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+                                    spacing: UM.Theme.getSize("narrow_margin").height
+                                    enabled: root.printer != null
+                                    property int consoleRecallIndex: -1
+                                    property string consoleDraft: ""
+                                    // Pick an actually-installed monospace face at
+                                    // runtime: the generic "monospace" and comma
+                                    // lists do not resolve on every machine.
+                                    function monoFamily() {
+                                        try {
+                                            var names = Qt.fontFamilies();
+                                            var known = ["consolas", "menlo", "courier", "mono"];
+                                            for (var i = 0; i < names.length; ++i) {
+                                                var lower = String(names[i]).toLowerCase();
+                                                for (var k = 0; k < known.length; ++k) {
+                                                    if (lower.indexOf(known[k]) >= 0) {
+                                                        return names[i];
+                                                    }
+                                                }
+                                            }
+                                        } catch (e) {
+                                        }
+                                        return "monospace";
+                                    }
+                                    // The transcript arrives oldest-first; the pane
+                                    // is ONE rich TextEdit so text selection spans
+                                    // lines (per-line delegates could not). The
+                                    // sync appends only the NEW lines, inserting
+                                    // at the end with the reader's selection
+                                    // saved and restored around it — new output
+                                    // never disturbs a selection or yanks the
+                                    // scroll position.
+                                    property int consoleRenderedLines: 0
+                                    // Ring-rotation lines the pane already saw
+                                    // dropped out of the transcript's head.
+                                    property int consoleDroppedSeen: 0
+
+                                    function consoleLineHtml(entry) {
+                                        var hue = "#d9dde3";
+                                        if (entry.kind === "response") {
+                                            hue = entry.error ? "#f85149" : (entry.success ? "#57ab5a" : "#8b949e");
+                                        } else if (entry.success) {
+                                            // The typed line carries the send's
+                                            // own verdict (the endpoint returns
+                                            // "ok" on completion) — green like a
+                                            // success, red like an error.
+                                            hue = "#57ab5a";
+                                        } else if (entry.error) {
+                                            hue = "#f85149";
+                                        }
+                                        if (entry.restored) {
+                                            hue = entry.error ? "#a63a34" : (entry.success ? "#3f7a42" : (entry.kind === "response" ? "#5b6670" : "#6e7681"));
+                                        }
+                                        var escaped = String(entry.text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                                        return "<span style=\"color:" + hue + ";\">" + escaped + "</span>";
                                     }
 
-                                    Connections {
-                                        target: root.printer
-                                        function onConsoleChanged() {
-                                            consoleSection.consoleSyncLines();
+                                    function consoleSyncLines() {
+                                        var lines = root.printer != null ? root.printer.consoleLines : [];
+                                        var dropped = root.printer != null ? root.printer.consoleDropped : 0;
+                                        // Captured BEFORE any rebuild below: a
+                                        // rebuild collapses the content height,
+                                        // which would otherwise read as "at the
+                                        // end" and yank a scrolled-up reader.
+                                        var wasAtEnd = consoleFlick.contentY + consoleFlick.height >= consoleFlick.contentHeight - 2;
+                                        if (lines.length < consoleRenderedLines || dropped > consoleDroppedSeen) {
+                                            // A Clear, a printer switch, or the
+                                            // session ring rotating at its cap
+                                            // (its length stops growing there, so
+                                            // the count alone would stall this
+                                            // sync forever): rebuild the pane
+                                            // from the transcript.
+                                            consoleText.text = "";
+                                            consoleRenderedLines = 0;
+                                            consoleDroppedSeen = dropped;
+                                        }
+                                        if (lines.length === consoleRenderedLines) {
+                                            return;
+                                        }
+                                        var selStart = consoleText.selectionStart;
+                                        var selEnd = consoleText.selectionEnd;
+                                        // A chunk appended into a pane that
+                                        // already shows lines must start on a
+                                        // fresh line: without the leading break
+                                        // it glued onto the last rendered line.
+                                        // The rebuild path (empty text) needs no
+                                        // lead-in — the first line is the head.
+                                        var html = consoleText.length > 0 ? "<br>" : "";
+                                        for (var i = consoleRenderedLines; i < lines.length; ++i) {
+                                            if (i > consoleRenderedLines) {
+                                                html += "<br>";
+                                            }
+                                            html += consoleLineHtml(lines[i]);
+                                        }
+                                        consoleText.cursorPosition = consoleText.length;
+                                        consoleText.insert(consoleText.length, html);
+                                        consoleRenderedLines = lines.length;
+                                        if (selStart !== selEnd && selStart >= 0) {
+                                            consoleText.select(selStart, selEnd);
+                                        }
+                                        if (wasAtEnd) {
+                                            consoleFlick.contentY = consoleFlick.contentHeight - consoleFlick.height;
+                                        }
+                                    }
+
+                                    function consoleSend() {
+                                        if (root.printer != null) {
+                                            // A refused send (queue full, lane
+                                            // busy, Moonraker down) must keep
+                                            // the typed line: losing an unsent
+                                            // G-code draft on refusal is data
+                                            // loss, and the status line already
+                                            // explains the refusal.
+                                            if (root.printer.sendConsoleCommand(consoleInput.text)) {
+                                                consoleInput.text = "";
+                                                consoleDraft = "";
+                                                consoleRecallIndex = -1;
+                                            }
+                                            consoleInput.forceActiveFocus();
+                                        }
+                                    }
+                                    function consoleRecall(step) {
+                                        var history = root.printer != null ? root.printer.consoleHistory : [];
+                                        if (history.length === 0) {
+                                            return;
+                                        }
+                                        if (consoleRecallIndex < 0) {
+                                            consoleDraft = consoleInput.text;
+                                        }
+                                        consoleRecallIndex = Math.max(-1, Math.min(history.length - 1, consoleRecallIndex + step));
+                                        consoleInput.text = consoleRecallIndex < 0 ? consoleDraft : history[history.length - 1 - consoleRecallIndex];
+                                    }
+
+                                    // A shell-terminal-styled console: dark,
+                                    // fixed-width, newest line pinned to the
+                                    // bottom — the list slides to the end as
+                                    // each line lands, and the input row lives
+                                    // INSIDE the dark well with the prompt, so
+                                    // the green ">" keeps its contrast on both
+                                    // themes (panel UX P3).
+                                    Cura.RoundedRectangle {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 190 * screenScaleFactor
+                                        // The terminal is the pane's
+                                        // filler: the extra height goes
+                                        // to the feed, not to dead space
+                                        // under it.
+                                        Layout.fillHeight: true
+                                        color: "#161b22"
+                                        border.color: UM.Theme.getColor("lining")
+                                        border.width: UM.Theme.getSize("default_lining").width
+                                        radius: UM.Theme.getSize("default_radius").width
+
+                                        ColumnLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: UM.Theme.getSize("narrow_margin").width
+                                            spacing: UM.Theme.getSize("thin_margin").height
+
+                                            Flickable {
+                                                id: consoleFlick
+                                                Layout.fillWidth: true
+                                                Layout.fillHeight: true
+                                                clip: true
+                                                contentWidth: consoleText.width
+                                                contentHeight: Math.max(consoleText.height, consoleFlick.height)
+                                                ScrollBar.vertical: UM.ScrollBar {
+                                                    id: consoleScrollbar
+                                                }
+                                                Column {
+                                                    width: consoleFlick.width
+                                                    height: consoleFlick.contentHeight
+                                                    // The spacer pins the sparse
+                                                    // transcript to the shell's
+                                                    // bottom edge; once the text
+                                                    // fills the viewport it scrolls
+                                                    // exactly like a terminal.
+                                                    Item {
+                                                        width: 1
+                                                        height: Math.max(0, consoleFlick.height - consoleText.height)
+                                                    }
+                                                    TextEdit {
+                                                        id: consoleText
+                                                        width: parent.width
+                                                        readOnly: true
+                                                        selectByMouse: true
+                                                        selectByKeyboard: true
+                                                        textFormat: TextEdit.RichText
+                                                        wrapMode: TextEdit.NoWrap
+                                                        font.family: consoleSection.monoFamily()
+                                                        color: "#d9dde3"
+                                                        // No blinking caret: a read-only
+                                                        // terminal pane has no cursor, and
+                                                        // the caret's phase made the
+                                                        // captures nondeterministic.
+                                                        cursorVisible: false
+                                                    }
+                                                }
+                                            }
+
+                                            UM.Label {
+                                                visible: root.printer == null || root.printer.consoleLines.length === 0
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                text: "No commands yet — lines you send appear here."
+                                                font.family: consoleSection.monoFamily()
+                                                color: "#7d8590"
+                                                elide: Text.ElideRight
+                                            }
+
+                                            Connections {
+                                                target: root.printer
+                                                function onConsoleChanged() {
+                                                    consoleSection.consoleSyncLines();
+                                                }
+                                            }
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: UM.Theme.getSize("thin_margin").width
+                                                UM.Label {
+                                                    text: ">"
+                                                    font: UM.Theme.getFont("medium_bold")
+                                                    color: "#3fb950"
+                                                }
+                                                Cura.TextField {
+                                                    id: consoleInput
+                                                    Layout.fillWidth: true
+                                                    placeholderText: "G-code command…"
+                                                    font.family: consoleSection.monoFamily()
+                                                    Keys.onReturnPressed: consoleSection.consoleSend()
+                                                    Keys.onUpPressed: consoleSection.consoleRecall(1)
+                                                    Keys.onDownPressed: consoleSection.consoleRecall(-1)
+                                                }
+                                                Cura.SecondaryButton {
+                                                    text: "Send"
+                                                    onClicked: consoleSection.consoleSend()
+                                                }
+                                                Cura.SecondaryButton {
+                                                    text: "Clear"
+                                                    visible: root.printer != null && root.printer.consoleLines.length > 0
+                                                    onClicked: root.printer.clearConsoleHistory()
+                                                }
+                                            }
                                         }
                                     }
 
@@ -849,40 +966,12 @@ Component {
                                         Layout.fillWidth: true
                                         spacing: UM.Theme.getSize("thin_margin").width
                                         UM.Label {
-                                            text: ">"
-                                            font: UM.Theme.getFont("medium_bold")
-                                            color: "#3fb950"
-                                        }
-                                        Cura.TextField {
-                                            id: consoleInput
                                             Layout.fillWidth: true
-                                            placeholderText: "G-code command…"
-                                            font.family: consoleSection.monoFamily()
-                                            Keys.onReturnPressed: consoleSection.consoleSend()
-                                            Keys.onUpPressed: consoleSection.consoleRecall(1)
-                                            Keys.onDownPressed: consoleSection.consoleRecall(-1)
-                                        }
-                                        Cura.SecondaryButton {
-                                            text: "Send"
-                                            onClicked: consoleSection.consoleSend()
-                                        }
-                                        Cura.SecondaryButton {
-                                            text: "Clear"
-                                            visible: root.printer != null && root.printer.consoleLines.length > 0
-                                            onClicked: root.printer.clearConsoleHistory()
+                                            text: root.printer != null ? root.printer.consoleStatus : ""
+                                            color: UM.Theme.getColor("text_inactive")
+                                            wrapMode: Text.WordWrap
                                         }
                                     }
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: UM.Theme.getSize("thin_margin").width
-                                UM.Label {
-                                    Layout.fillWidth: true
-                                    text: root.printer != null ? root.printer.consoleStatus : ""
-                                    color: UM.Theme.getColor("text_inactive")
-                                    wrapMode: Text.WordWrap
                                 }
                             }
                         }

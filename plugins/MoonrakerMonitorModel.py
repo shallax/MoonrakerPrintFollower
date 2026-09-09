@@ -262,6 +262,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # the persisted last-seen stamp so the backfill skips the
         # server's stale buffer.
         stored = float(getattr(self._config(), "console_store_time", 0.0) or 0.0)
+        if expanded:
+            # The console constructed before the active machine existed
+            # and read an empty record; by attach time the identity is
+            # real, so re-load the transcript if it never did (the
+            # author's "completely empty at app start" report).
+            self._console.reload_if_empty()
         self._data.set_console_expanded(expanded, stored)
 
     def _on_auxiliary(self):
