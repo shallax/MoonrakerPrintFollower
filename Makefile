@@ -43,7 +43,8 @@ lint:
 	    && check_qml_format plugins/*.qml \
 	    && ruff check plugins tools tests \
 	    && shellcheck tools/*.sh \
-	    && hadolint Dockerfile"
+	    && hadolint Dockerfile \
+	    && gitleaks detect --no-git --no-banner --redact"
 
 run_tests:
 	./tools/run_tests.sh

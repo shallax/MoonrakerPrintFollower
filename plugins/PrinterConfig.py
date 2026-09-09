@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 from dataclasses import asdict, dataclass, field
 from math import isfinite
@@ -21,6 +22,28 @@ def normalise_url(value: Any) -> str:
     while text.endswith("/") and not text.endswith("://"):
         text = text[:-1]
     return text
+
+
+def normalise_temperature_chart(value: Any) -> dict:
+    """The chart config block: per-sensor visibility/colours plus the
+    display toggles, coerced so hand-edited values cannot silently flip
+    semantics (bool("false") is True)."""
+    if not isinstance(value, Mapping) or not value:
+        # An empty block stays empty: it means "never configured", and a
+        # materialised default block would defeat the legacy migration.
+        return {}
+    visible = value.get("visible") if isinstance(value.get("visible"), Mapping) else {}
+    colors = value.get("colors") if isinstance(value.get("colors"), Mapping) else {}
+
+    def truth(item):
+        return item if isinstance(item, bool) else str(item).strip().lower() in ("1", "true", "yes", "on")
+
+    return {
+        "visible": {str(key): truth(item) for key, item in visible.items()},
+        "colors": {str(key): str(item) for key, item in colors.items()},
+        "showTargets": truth(value.get("showTargets", True)),
+        "showPower": truth(value.get("showPower", True)),
+    }
 
 
 @dataclass
@@ -61,6 +84,14 @@ class PrinterConfig:
     camera_rotation: int = 0
     camera_mirror: bool = False
     camera_selected: str = ""
+
+    # Monitor user preferences that are machine-specific: sensor names
+    # differ between printers, so chart colours/visibility and the
+    # console history live here rather than in the global chrome file
+    # (which keeps the sections map, pane collapse and the controls
+    # lock).
+    temperature_chart: Dict[str, Any] = field(default_factory=dict)
+    console_history: List[str] = field(default_factory=list)
 
     @property
     def frontend_target(self) -> str:
@@ -134,6 +165,9 @@ class PrinterConfig:
             data["output_format"] = data["output_format"].lower()
 
         data["upload_path"] = data["upload_path"].strip().strip("/")
+        data["temperature_chart"] = normalise_temperature_chart(data.get("temperature_chart"))
+        history = data.get("console_history")
+        data["console_history"] = [str(line) for line in history] if isinstance(history, (list, tuple)) else []
         return cls(**data)
 
 

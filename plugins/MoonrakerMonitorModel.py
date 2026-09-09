@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import re
 from copy import deepcopy
 from PyQt6.QtCore import QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from UM.Resources import Resources
@@ -12,6 +13,11 @@ from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
 from .MonitorFormatting import core_values, peripheral_values
+from dataclasses import replace
+
+from .PrinterConfig import normalise_temperature_chart
+from .MonitorTemperatureHistory import TemperatureHistory, chart_payload
+import time
 from .MonitorTuning import MonitorTuning
 from .ToolheadController import ToolheadController
 
@@ -36,6 +42,11 @@ def _state_bool(value) -> bool:
     return bool(value)
 
 
+# The shared chart-config normaliser (PrinterConfig owns the per-printer
+# record; the legacy global JSON still feeds it during migration).
+_chart_state = normalise_temperature_chart
+
+
 def _read_state() -> dict:
     """The persisted panel state: collapsed sections, the control-pane
     collapse and the lock-all toggle. The first shipped format was a flat
@@ -53,11 +64,13 @@ def _read_state() -> dict:
                 "controlsLocked": _state_bool(decoded.get("controlsLocked", False)),
                 "infoCollapsed": _state_bool(decoded.get("infoCollapsed", False)),
                 "statusCollapsed": _state_bool(decoded.get("statusCollapsed", False)),
+                "temperatureChart": _chart_state(decoded.get("temperatureChart")),
             }
     except Exception:
         pass
     return {"sections": {}, "controlsCollapsed": False, "controlsLocked": False,
-            "infoCollapsed": False, "statusCollapsed": False}
+            "infoCollapsed": False, "statusCollapsed": False,
+            "temperatureChart": _chart_state({})}
 
 
 def _write_state(state: dict) -> None:
@@ -71,9 +84,14 @@ def _write_state(state: dict) -> None:
 
 
 def value_property(kind, name, signal, default=None):
-    """Declarative Qt binding, not a domain-state forwarding mechanism."""
+    """Declarative Qt binding, not a domain-state forwarding mechanism.
+
+    The published values are treated as immutable once `_publish` has
+    stored them (every publish replaces the whole dict), so reads return
+    the stored object instead of deep-copying per read.
+    """
     def read(self):
-        value = deepcopy(self._values.get(name, default))
+        value = self._values.get(name, default)
         return QVariant(value) if kind is QVariant else value
     return pyqtProperty(kind, read, notify=signal)
 
@@ -81,6 +99,8 @@ def value_property(kind, name, signal, default=None):
 class MoonrakerMonitorModel(PrinterOutputModel):
     monitorChanged = pyqtSignal()
     webcamsChanged = pyqtSignal()
+    temperatureChartChanged = pyqtSignal()
+    temperatureChartLegendChanged = pyqtSignal()
     cameraTransformChanged = pyqtSignal()
     peripheralsChanged = pyqtSignal()
     excludeObjectsChanged = pyqtSignal()
@@ -101,6 +121,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("monitorChanged", ("monitorState", "monitorFilename", "monitorProgress", "monitorLayer", "monitorElapsed",
                             "monitorEta", "monitorFinish", "monitorSpeed", "monitorFlow", "monitorPosition", "monitorMessage")),
         ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
+        ("temperatureChartChanged", ("temperatureChart",)),
+        ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
         ("cameraTransformChanged", ("cameraName", "cameraRotation", "cameraFlipHorizontal", "cameraFlipVertical")),
         ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
         ("excludeObjectsChanged", ("excludeObjectItems",)),
@@ -129,7 +151,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh):
         super().__init__(output_controller, number_of_extruders)
-        self._client, self._print_state, self._config, self._mesh = client, print_state, config, bed_mesh
+        self._client, self._print_state, self._config, self._apply_config, self._mesh = \
+            client, print_state, config, apply_config, bed_mesh
         self._values = {}
         state = _read_state()
         self._controls_locked = state["controlsLocked"]
@@ -138,6 +161,23 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._status_collapsed = state["statusCollapsed"]
         self._camera_refresh_nonce = 0
         self._sections = state["sections"]
+        # The chart config is per-printer (sensor names differ between
+        # machines): it lives in the PrinterConfig record, adopting the
+        # legacy global JSON block once on first upgrade.
+        per_printer = normalise_temperature_chart(getattr(self._config(), "temperature_chart", {}))
+        if per_printer:
+            self._chart_config = per_printer
+        elif state.get("temperatureChart"):
+            self._chart_config = state["temperatureChart"]
+            self._apply_chart_config()
+            self._save_state()  # rewrite the global file chrome-only
+        else:
+            self._chart_config = {}
+        self._history = TemperatureHistory()
+        self._chart_payload = None  # rebuilt only when the history or config changes
+        self._chart_payload_revision = -1
+        self._chart_config_key = None
+        self._legend_payload = None
         self._data = MonitorData(client, self)
         self._commands = MonitorCommands(self._data, self)
         self._tuning = MonitorTuning(self._data, self._commands, self)
@@ -147,7 +187,21 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         for signal in (self._data.changed, self._commands.changed, self._controls.changed, self._camera.changed,
                        self._toolhead.changed, bed_mesh.changed):
             signal.connect(self._publish)
+        # The history feeds once per auxiliary reply, not per publish
+        # (per-publish feeding duplicated samples and halved the window);
+        # a session invalidation restarts the window so the previous
+        # printer's curves never bleed into the next one.
+        self._data.auxiliaryChanged.connect(self._on_auxiliary)
+        self._data.invalidated.connect(self._on_invalidated)
         self._data.set_active(True)
+        self._publish()
+
+    def _on_auxiliary(self):
+        self._history.observe(self._data.snapshot.auxiliary, time.monotonic(), time.time())
+        self._publish()
+
+    def _on_invalidated(self):
+        self._history.reset()
         self._publish()
 
     def setMonitoringActive(self, active): self._data.set_active(active)
@@ -176,7 +230,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             controlsLocked=self._controls_locked, controlsCollapsed=self._controls_collapsed,
             infoCollapsed=self._info_collapsed, statusCollapsed=self._status_collapsed,
             cameraRefreshNonce=self._camera_refresh_nonce,
-            sectionExpandedMap=dict(self._sections))
+            sectionExpandedMap=dict(self._sections),
+            temperatureChart=self._chart_value(),
+            temperatureChartLegend=self._legend_value())
         self._values = values
         try: self.setCameraUrl(QUrl(self._camera.url))
         except AttributeError: pass
@@ -222,6 +278,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     mcuItems = value_property(QVariant, "mcuItems", systemChanged, [])
     webcamNames = value_property(QVariant, "webcamNames", webcamsChanged, [])
     activeWebcamIndex = value_property(int, "activeWebcamIndex", webcamsChanged, -1)
+    temperatureChart = value_property(QVariant, "temperatureChart", temperatureChartChanged, {})
+    temperatureChartLegend = value_property(QVariant, "temperatureChartLegend", temperatureChartLegendChanged, {})
     cameraName = value_property(str, "cameraName", cameraTransformChanged, "")
     cameraRotation = value_property(int, "cameraRotation", cameraTransformChanged, 0)
     cameraFlipHorizontal = value_property(bool, "cameraFlipHorizontal", cameraTransformChanged, False)
@@ -311,6 +369,102 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._sections = sections
         self._save_state()
         self._publish()
+
+    @pyqtSlot(str, bool)
+    def setTemperatureSensorVisible(self, name, visible):
+        # Missing keys mean the default (visible); only a real change saves.
+        if self._chart_config.get("visible", {}).get(str(name), True) is bool(visible):
+            return  # idempotent: a re-bound checkbox must not rewrite the config
+        config = self._prune_chart_config(self._chart_config)
+        config = deepcopy(config)
+        config.setdefault("visible", {})[str(name)] = bool(visible)
+        self._chart_config = config
+        self._apply_chart_config()
+        self._publish()
+
+    @pyqtSlot(str, str)
+    def setTemperatureSensorColor(self, name, color):
+        color = str(color)
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            return  # the canvas only renders #rrggbb; anything else would silently draw grey
+        # A missing entry means the palette default, so compare against
+        # the colour the series actually renders with right now.
+        if any(series["name"] == str(name) and series["color"] == color
+               for series in self._chart_value().get("series", ())):
+            return
+        config = self._prune_chart_config(self._chart_config)
+        config = deepcopy(config)
+        config.setdefault("colors", {})[str(name)] = color
+        self._chart_config = config
+        self._apply_chart_config()
+        self._publish()
+
+    @pyqtSlot(bool)
+    def setShowTemperatureTargets(self, show):
+        if self._chart_config.get("showTargets") is bool(show):
+            return
+        self._chart_config = {**self._chart_config, "showTargets": bool(show)}
+        self._apply_chart_config()
+        self._publish()
+
+    @pyqtSlot(bool)
+    def setShowTemperaturePower(self, show):
+        if self._chart_config.get("showPower") is bool(show):
+            return
+        self._chart_config = {**self._chart_config, "showPower": bool(show)}
+        self._apply_chart_config()
+        self._publish()
+
+    def _chart_value(self):
+        """The sample payload, rebuilt only when the history's revision
+        or the persisted config actually changed."""
+        key = json.dumps(self._chart_config, sort_keys=True)
+        if (self._chart_payload is None or self._chart_payload_revision != self._history.revision
+                or key != self._chart_config_key):
+            self._chart_payload = chart_payload(self._history, self._chart_config)
+            self._chart_payload_revision = self._history.revision
+            self._chart_config_key = key
+        return self._chart_payload
+
+    def _legend_value(self):
+        """Legend metadata (identity, labels, colours, visibility): its
+        own property so legend delegates only rebuild when something
+        actually changed, never at the 1 Hz sample cadence."""
+        if self._legend_payload is None:
+            self._legend_payload = {}
+        key = json.dumps(self._chart_config, sort_keys=True) + "|" + "|".join(self._history.names())
+        if self._legend_payload.get("_key") != key:
+            chart = self._chart_value()
+            self._legend_payload = {
+                "_key": key,
+                "series": [{"name": series["name"], "label": series["label"],
+                            "color": series["color"], "visible": series["visible"],
+                            "primary": series["primary"]} for series in chart["series"]],
+                "showTargets": chart["showTargets"],
+                "showPower": chart["showPower"],
+                "palette": chart["palette"],
+            }
+        return self._legend_payload
+
+    def _apply_chart_config(self):
+        """Persist the chart config into the per-printer record (the
+        camera_selected precedent); the global JSON keeps chrome only."""
+        config = self._config()
+        if getattr(config, "temperature_chart", None) != self._chart_config:
+            self._apply_config(replace(config, temperature_chart=self._chart_config))
+
+    def _prune_chart_config(self, config):
+        """Drop colours/visibility for sensors that no longer exist; never
+        prune while the live set is empty (startup before the first aux)."""
+        names = self._history.names()
+        if not names:
+            return config
+        for key in ("visible", "colors"):
+            entries = config.get(key)
+            if isinstance(entries, dict) and any(name not in names for name in entries):
+                config = dict(config)
+                config[key] = {name: value for name, value in entries.items() if name in names}
+        return config
 
     def _save_state(self):
         _write_state({

@@ -89,7 +89,18 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   scripts as a render smoke test (each script fails on a blank capture)
   but no longer ships the PNGs as artifacts. These capture the 2-D UI
   only: the 3-D Preview (bed-mesh overlay on a rendered model) needs a
-  real Cura session — capture those by hand for marketing.
+  real Cura session — capture those by hand for marketing. Automating
+  that (running real Cura under a virtual display) was considered and
+  deliberately rejected: the cost and fragility are not worth it.
+
+## Release workflow
+
+New releases follow the `/new-feature` skill (`.claude/skills/new-feature/SKILL.md`):
+plan with verbatim author quotes and real push-back → one round-1 critic
+before going deep → build with tests → a four-persona panel
+(architecture/UX/engineering/product, read-only, findings funnel back
+through the maintainer) → decisions logged in `review/DECISIONS.md`
+(git-ignored) → round-3 verification → ship.
 
 ## Version bump checklist
 

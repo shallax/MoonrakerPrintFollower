@@ -44,12 +44,32 @@ Original scope notes, all delivered:
 
 ## 3.5.0 — Monitor awareness
 
-The informational half of Mainsail parity, plus the better ETA.
+The informational half of Mainsail parity, plus the better ETA. The
+Information pane becomes the at-a-glance pane (permanent, collapsible
+sections); the camera column becomes live feed + action (console below
+the stream).
 
-- Temperature charts: ring buffers of the existing 1 s auxiliary poll
-  feeding a small QML chart component. 1 s matches Mainsail's resolution;
-  no transport change.
-- G-code console: send arbitrary commands with scrollable history.
+- Temperature charts in the Information pane: ring buffers of the
+  existing 1 s auxiliary poll feeding a small dependency-free QML chart
+  component. 1 s matches Mainsail's resolution; no transport change.
+  The Information pane's widgets share one interaction model: a small
+  glanceable widget in the pane, and a click-to-enlarge pop-over for
+  perusal and interaction (one shared pop-over shell, two contents).
+  Chart spec: actuals are solid lines in a customisable, persisted
+  colour per sensor; targets are dashed lines of the same hue at
+  reduced opacity (never a fill — fills occlude the lowest series);
+  heater power is a translucent 0-100% area on a second Y axis;
+  everything toggleable from a Mainsail-style legend (sensor
+  visibility, setpoints, power). Hovering shows a vertical cursor
+  snapped to the 1 s samples with a per-series readout. The mini
+  widget shows hotend and bed actuals only.
+- Bed-mesh mini map, also permanent in the Information pane; the
+  existing full-size pop-over becomes the click-to-enlarge detail view
+  (dense meshes and exact values still need the big canvas), gaining a
+  crosshair that snaps to probe points with coordinate and Z-offset
+  readouts.
+- G-code console below the webcam: send arbitrary commands with
+  scrollable history.
 - Endstops and stepper readouts (a small new auxiliary query).
 - Improved Monitor ETA: layer-anchored remaining time from the index's
   per-layer timing scaled by the observed speed ratio — the same
@@ -83,6 +103,12 @@ this needs it: the poller already matches Mainsail's chart resolution, and
 250 ms core polling has proven adequate for path following. Taking on the
 socket migration before the parity surface exists would be paying a large
 cost for no user-visible gain.
+
+Known gap the socket work should close: the 3.5.0 console is outbound-only
+over HTTP — Klipper's script replies and errors (`notify_gcode_response`)
+are websocket-only, so the console shows "sent" and cannot echo command
+output or failures. An inbound response stream appended to the console
+history is the natural first socket consumer.
 
 ## Explicitly out of scope
 

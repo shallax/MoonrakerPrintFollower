@@ -2,3 +2,6 @@ MoonrakerMonitor 1.0 MoonrakerMonitor.qml
 MoonrakerMonitorDashboard 1.0 MoonrakerMonitorDashboard.qml
 MoonrakerMonitorBedMesh 1.0 MoonrakerMonitorBedMesh.qml
 CollapsibleSectionHeader 1.0 CollapsibleSectionHeader.qml
+BedMeshMap 1.0 BedMeshMap.qml
+MonitorPopOver 1.0 MonitorPopOver.qml
+TemperatureChart 1.0 TemperatureChart.qml

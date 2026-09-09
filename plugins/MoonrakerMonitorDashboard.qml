@@ -497,6 +497,25 @@ Component {
                             spacing: UM.Theme.getSize("default_margin").height / 2
                             readonly property var jogPresets: [0.1, 0.5, 1, 5, 10, 25, 50, 100, 125]
 
+                            // The readout leads the section: current state
+                            // first, controls below. Two rows on purpose —
+                            // the one-line readout wrapped at narrow widths
+                            // and made the content jump. Elide instead of
+                            // wrap so the section height never changes.
+                            UM.Label {
+                                Layout.fillWidth: true
+                                text: root.printer != null ? "Homed: " + (root.printer.homedAxes.length > 0 ? root.printer.homedAxes.toUpperCase().split('').join(' ') : "—") + "  ·  " + root.printer.positionMode + " moves" : ""
+                                color: UM.Theme.getColor("text_inactive")
+                                elide: Text.ElideRight
+                            }
+                            UM.Label {
+                                Layout.fillWidth: true
+                                visible: root.printer != null && root.printer.monitorPosition !== "—"
+                                text: root.printer != null ? root.printer.monitorPosition : ""
+                                color: UM.Theme.getColor("text_inactive")
+                                elide: Text.ElideRight
+                            }
+
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: UM.Theme.getSize("thin_margin").width
@@ -571,6 +590,12 @@ Component {
 
                                         onClicked: root.printer.jog("x", -1)
                                     }
+                                    // The compass centre is deliberately
+                                    // empty (the old Home-all button used
+                                    // to live here).
+                                    Item {
+                                        Layout.fillWidth: true
+                                    }
                                     PreviewSecondaryButton {
 
                                         Layout.fillWidth: true
@@ -582,9 +607,6 @@ Component {
                                         enabled: root.printer != null && root.printer.jogEnabled
 
                                         onClicked: root.printer.jog("x", 1)
-                                    }
-                                    Item {
-                                        Layout.fillWidth: true
                                     }
                                     PreviewSecondaryButton {
 
@@ -627,13 +649,6 @@ Component {
                                 }
                             }
 
-                            UM.Label {
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                text: root.printer != null ? "Homed: " + (root.printer.homedAxes.length > 0 ? root.printer.homedAxes.toUpperCase().split('').join(' ') : "—") + "  ·  " + root.printer.positionMode + " moves  ·  " + root.printer.monitorPosition : ""
-                                color: UM.Theme.getColor("text_inactive")
-                            }
-
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: UM.Theme.getSize("thin_margin").width
@@ -658,13 +673,6 @@ Component {
                                     enabled: root.printer != null && root.printer.jogEnabled
                                     onClicked: root.printer.home("z")
                                 }
-                                Cura.SecondaryButton {
-                                    Layout.fillWidth: true
-                                    text: "Motors off"
-                                    tooltip: "Disable the stepper motors so the toolhead can be moved by hand."
-                                    enabled: root.printer != null && root.printer.jogEnabled
-                                    onClicked: root.printer.motorsOff()
-                                }
                             }
 
                             RowLayout {
@@ -678,11 +686,16 @@ Component {
                                     onClicked: root.printer.centerToolhead()
                                 }
                                 Cura.SecondaryButton {
-                                    Layout.fillWidth: true
                                     text: "Z to 0"
                                     tooltip: "Move Z down to 0, the bed level after homing."
                                     enabled: root.printer != null && root.printer.jogEnabled
                                     onClicked: root.printer.zToZero()
+                                }
+                                Cura.SecondaryButton {
+                                    text: "Motors off"
+                                    tooltip: "Disable the stepper motors so the toolhead can be moved by hand."
+                                    enabled: root.printer != null && root.printer.jogEnabled
+                                    onClicked: root.printer.motorsOff()
                                 }
                             }
 
@@ -1094,43 +1107,40 @@ Component {
                                         font: UM.Theme.getFont("medium_bold")
                                     }
                                 }
-                                Column {
+                                GridLayout {
                                     id: zOffsetGrid
                                     Layout.fillWidth: true
-                                    spacing: 2 * screenScaleFactor
-                                    property real buttonSpacing: 2 * screenScaleFactor
-                                    property real buttonWidth: (width - 3 * buttonSpacing) / 4
-
-                                    Row {
-                                        width: parent.width
-                                        spacing: zOffsetGrid.buttonSpacing
-                                        Repeater {
-                                            model: [0.005, 0.01, 0.025, 0.05]
-                                            Cura.SecondaryButton {
-                                                width: zOffsetGrid.buttonWidth
-                                                height: UM.Theme.getSize("action_button").height
-                                                fixedWidthMode: true
-                                                text: "↑ " + modelData.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
-                                                tooltip: "Moves the nozzle up, away from the bed."
-                                                enabled: root.printer != null && !root.printer.actionBusy
-                                                onClicked: root.printer.adjustZOffset(modelData)
-                                            }
+                                    columns: 2
+                                    columnSpacing: 2 * screenScaleFactor
+                                    rowSpacing: 2 * screenScaleFactor
+                                    // Up in the left column, down in the
+                                    // right: each button keeps at least
+                                    // half the pane width, so the labels
+                                    // never elide — the old 4-across rows
+                                    // elided the moment the window
+                                    // compressed the pane.
+                                    Repeater {
+                                        model: [0.005, 0.01, 0.025, 0.05]
+                                        Cura.SecondaryButton {
+                                            Layout.fillWidth: true
+                                            height: UM.Theme.getSize("action_button").height
+                                            fixedWidthMode: true
+                                            text: "↑ " + modelData.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
+                                            tooltip: "Moves the nozzle up, away from the bed."
+                                            enabled: root.printer != null && !root.printer.actionBusy
+                                            onClicked: root.printer.adjustZOffset(modelData)
                                         }
                                     }
-                                    Row {
-                                        width: parent.width
-                                        spacing: zOffsetGrid.buttonSpacing
-                                        Repeater {
-                                            model: [-0.005, -0.01, -0.025, -0.05]
-                                            Cura.SecondaryButton {
-                                                width: zOffsetGrid.buttonWidth
-                                                height: UM.Theme.getSize("action_button").height
-                                                fixedWidthMode: true
-                                                text: "↓ " + Math.abs(modelData).toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
-                                                tooltip: "Moves the nozzle down, closer to the bed."
-                                                enabled: root.printer != null && !root.printer.actionBusy
-                                                onClicked: root.printer.adjustZOffset(modelData)
-                                            }
+                                    Repeater {
+                                        model: [-0.005, -0.01, -0.025, -0.05]
+                                        Cura.SecondaryButton {
+                                            Layout.fillWidth: true
+                                            height: UM.Theme.getSize("action_button").height
+                                            fixedWidthMode: true
+                                            text: "↓ " + Math.abs(modelData).toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
+                                            tooltip: "Moves the nozzle down, closer to the bed."
+                                            enabled: root.printer != null && !root.printer.actionBusy
+                                            onClicked: root.printer.adjustZOffset(modelData)
                                         }
                                     }
                                 }

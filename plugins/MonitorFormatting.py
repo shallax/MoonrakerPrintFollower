@@ -30,6 +30,14 @@ def friendly(name):
     return name.split(" ", 1)[-1].replace("_", " ").strip().capitalize()
 
 
+def chart_label(name):
+    """The chart/pane label: friendly(), with the family kept for fan
+    objects so a temperature_fan's reading cannot be mistaken for a
+    heater of the same suffix."""
+    label = friendly(name)
+    return label + " (fan)" if object_kind(name) == "fan" else label
+
+
 # One classification policy for Klipper printer objects. MonitorData uses it
 # to decide what to query; the controllers and formatting use it to decide
 # what to project. Adding a new object family means editing these tables only.
@@ -69,6 +77,40 @@ def object_kind(name):
 def wanted_object(name):
     """Whether MonitorData should query this object's auxiliary state."""
     return object_kind(name) in {"system", "fan", "led", "pwm", "temperature", "filament", "mcu"}
+
+
+def chart_temperature_objects(auxiliary):
+    """Temperature-bearing objects for the chart and the pane's list.
+
+    Heaters and temperature sensors chart unconditionally. Fan objects
+    (``temperature_fan``) chart only when no other charted object reads
+    the same sensor — equal readings at the same tick — because the
+    fan's temperature is worth plotting only when it is the only window
+    onto that sensor. The pane's temperature list and the chart share
+    this predicate so the two can never disagree.
+    """
+    readings = {}
+    for name, value in auxiliary.items():
+        if not isinstance(value, Mapping):
+            continue
+        kind = object_kind(name)
+        if kind == "system":
+            lower = str(name).lower()
+            if lower != "heater_bed" and not re.fullmatch(r"extruder\d*", lower):
+                continue
+        elif kind not in ("temperature", "fan"):
+            continue
+        temperature = number(value.get("temperature"), None)
+        if temperature is None:
+            continue
+        readings[str(name)] = temperature
+    for name, reading in list(readings.items()):
+        if object_kind(name) != "fan":
+            continue
+        if any(object_kind(other) != "fan" and abs(reading - other_reading) <= 0.01
+               for other, other_reading in readings.items() if other != name):
+            del readings[name]
+    return readings
 
 
 def duration(seconds):
@@ -135,16 +177,16 @@ def format_bytes(value):
 def peripheral_values(snapshot):
     temperatures, fans, filament, mcus = [], [], [], []
     cpu, versions = None, []
+    chartable = chart_temperature_objects(snapshot.auxiliary)
     for name, value in sorted(snapshot.auxiliary.items()):
         if not isinstance(value, Mapping): continue
-        lower, label = name.lower(), friendly(name)
-        if "temperature" in value:
-            temperature = number(value["temperature"], None)
-            if temperature is not None:
-                target, power = number(value.get("target"), None), number(value.get("power"), None)
-                detail = f"{temperature:.1f} °C" + (f"  → {target:.0f} °C" if target is not None else "") + (f"  · {power * 100:.0f}%" if power is not None else "")
-                temperatures.append({"name": label, "temperature": temperature, "target": target if target is not None else -1, "power": power if power is not None else -1, "detail": detail})
-                if cpu is None and (lower.startswith("temperature_host ") or "cpu" in lower or "rpi" in lower): cpu = temperature
+        lower, label = name.lower(), chart_label(name)
+        if name in chartable:
+            temperature = chartable[name]
+            target, power = number(value.get("target"), None), number(value.get("power"), None)
+            detail = f"{temperature:.1f} °C" + (f"  → {target:.0f} °C" if target is not None else "") + (f"  · {power * 100:.0f}%" if power is not None else "")
+            temperatures.append({"name": label, "temperature": temperature, "target": target if target is not None else -1, "power": power if power is not None else -1, "detail": detail})
+            if cpu is None and (lower.startswith("temperature_host ") or "cpu" in lower or "rpi" in lower): cpu = temperature
         if "speed" in value and (lower == "fan" or lower.startswith(FAN_OBJECT_PREFIXES)):
             speed = max(0, min(1, number(value.get("speed"))))
             detail = f"{speed * 100:.0f}%" + (f"  · {int(number(value['rpm'])):,} RPM" if value.get("rpm") is not None else "")

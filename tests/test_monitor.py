@@ -32,6 +32,9 @@ TYPED = "\n".join((PLUGINS / name).read_text() for name in ("MonitorFormatting.p
 DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
+BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
+POPOVER_QML = (PLUGINS / "MonitorPopOver.qml").read_text()
+TEMP_CHART_QML = (PLUGINS / "TemperatureChart.qml").read_text()
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
 
 
@@ -133,7 +136,10 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("root.printer.emergencyStopClick", DASHBOARD_QML)  # the one permitted command
         # The information pane sits left of the webcam with the mesh map.
         self.assertIn("id: infoPanel", MONITOR_QML)
-        self.assertIn('"Bed mesh map"', MONITOR_QML)
+        # The mesh section hosts the mini map; a click opens the shared
+        # pop-over. The button is gone; the mini map's tooltip remains.
+        self.assertIn('tooltipText: root.printer != null ? "Click for the full bed mesh map ("', MONITOR_QML)
+        self.assertNotIn('id: mapButton', MONITOR_QML)
         # Cura-style collapsible sections, persisted per section, sharing
         # the CollapsibleSectionHeader type across all three panes.
         self.assertIn("sectionExpandedMap", DASHBOARD_QML)
@@ -156,9 +162,9 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('text: "Open the Moonraker frontend."', MONITOR_QML)
         self.assertNotIn('text: "Open Moonraker frontend"', MONITOR_QML)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 12)
-        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 8)
+        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 11)
-        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)
+        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 9)
         # Filament state is colour-coded: green detected, orange runout.
         self.assertIn('"#43a047"', MONITOR_QML)
         self.assertIn('"#fb8c00"', MONITOR_QML)
@@ -190,6 +196,36 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("cameraRefreshNonce", MONITOR_MODEL)
         self.assertIn("mpf_reload", MONITOR_QML)  # Refresh camera restarts the stream
 
+    def test_temperature_chart_repaints_and_popovers_are_overlays(self):
+        # A QML Canvas paints exactly once unless asked: the chart must
+        # requestPaint on payload, geometry, visibility and hover
+        # changes (it used to render one frame and freeze).
+        self.assertIn("onChartChanged", TEMP_CHART_QML)
+        self.assertIn("dataCanvas.requestPaint()", TEMP_CHART_QML)
+        self.assertIn("overlay.requestPaint()", TEMP_CHART_QML)
+        self.assertIn("onVisibleChanged", TEMP_CHART_QML)
+        # One open pop-over at a time; the shells are overlay siblings
+        # of the pane RowLayout, never layout children (anchored layout
+        # children reflow every pane and log undefined-behavior
+        # warnings).
+        self.assertIn('property string openPopOver: ""', MONITOR_QML)
+        self.assertNotIn("bedMeshPanelOpen", MONITOR_QML)
+        self.assertNotIn("chartPanelOpen", MONITOR_QML)
+        self.assertIn("id: outsideClickLayer", MONITOR_QML)
+        self.assertIn("Keys.onEscapePressed", MONITOR_QML)
+        # The legend binds to the legend property (notifies only on real
+        # changes, so delegates are never rebuilt at the 1 Hz sample
+        # cadence) and toggles on user intent only — re-bound checkboxes
+        # used to rewrite the state file every second.
+        self.assertIn("temperatureChartLegend.series", MONITOR_QML)
+        self.assertIn("onToggled: root.printer.setTemperatureSensorVisible", MONITOR_QML)
+        self.assertNotIn("onCheckedChanged: root.printer.setTemperatureSensorVisible", MONITOR_QML)
+        # Target bands, not dashed lines (the author's ruling), and the
+        # hover readout carries the clock.
+        self.assertIn("Target bands", TEMP_CHART_QML)
+        self.assertIn("hoverClock", TEMP_CHART_QML)
+        self.assertIn('"wallOrigin"', TEMP_CHART_QML)
+
     def test_system_restart_surface(self):
         for token in ("firmwareRestart", "hostRestart", "FIRMWARE_RESTART", "machine/reboot"):
             self.assertIn(token, MONITOR_MODEL + CONTROLS)
@@ -219,8 +255,13 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("id: zOffsetGrid", DASHBOARD_QML)
         self.assertIn("model: [-0.005, -0.01, -0.025, -0.05]", DASHBOARD_QML)
         self.assertIn("model: [0.005, 0.01, 0.025, 0.05]", DASHBOARD_QML)
-        self.assertEqual(DASHBOARD_QML.count("width: zOffsetGrid.buttonWidth"), 2)
-        self.assertGreaterEqual(DASHBOARD_QML.count("fixedWidthMode: true"), 2)
+        # A two-column grid (up left, down right): both Repeater
+        # delegates fill their cell equally, so click zones stay
+        # matched and the labels cannot elide at narrow pane widths.
+        grid = DASHBOARD_QML[DASHBOARD_QML.index("id: zOffsetGrid"):DASHBOARD_QML.index('text: "Clear Z offset"')]
+        self.assertGreaterEqual(grid.count("Layout.fillWidth: true"), 2)
+        self.assertIn("columns: 2", grid)
+        self.assertGreaterEqual(grid.count("fixedWidthMode: true"), 2)
 
     def test_temperature_presets_are_buttons_not_an_implied_selection(self):
         self.assertIn("temperaturePresetItems", DASHBOARD_QML)
@@ -793,6 +834,9 @@ class MonitorQtTests(unittest.TestCase):
                 "infoCollapsed": True,
                 "statusCollapsed": True,
             })
+            # The chart config is per-printer now: the global file must
+            # not carry it, and the per-printer record defaults empty.
+            self.assertEqual(self.follower.current_printer_config().temperature_chart, {})
         # A fresh model reads the stored file back.
         second = self.monitor()
         self.assertEqual(second._sections["toolhead"], False)
@@ -837,6 +881,149 @@ class MonitorQtTests(unittest.TestCase):
         self.assertIs(model._sections["setup"], False)
         self.assertIs(model._sections["toolhead"], False)
         self.assertIs(model.controlsLocked, True)
+
+    def chart_of(self, model):
+        chart = model.temperatureChart
+        return chart if isinstance(chart, dict) else chart.value()
+
+    def test_temperature_chart_config_persists_across_model_instances(self):
+        model = self.monitor()
+        auxiliary = {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5},
+                     "heater_bed": {"temperature": 60.0, "target": 60.0, "power": 0.2}}
+        model._data._update(auxiliary=auxiliary)
+        model._data.auxiliaryChanged.emit()  # the real feed path: _aux updates then emits
+        # Defaults: everything visible, palette colours, toggles on.
+        default = self.chart_of(model)
+        self.assertTrue(default["showTargets"])
+        self.assertTrue(default["showPower"])
+        model.setTemperatureSensorVisible("extruder", False)
+        model.setTemperatureSensorColor("heater_bed", "#123456")
+        model.setShowTemperatureTargets(False)
+        model.setShowTemperaturePower(False)
+        # The chart config persists per printer (sensor names differ
+        # between machines), never in the global chrome file.
+        self.assertEqual(self.follower.current_printer_config().temperature_chart, {
+            "visible": {"extruder": False},
+            "colors": {"heater_bed": "#123456"},
+            "showTargets": False,
+            "showPower": False,
+        })
+        # A fresh model restores the config from the file.
+        second = self.monitor()
+        second._data._update(auxiliary=auxiliary)
+        second._data.auxiliaryChanged.emit()
+        chart = self.chart_of(second)
+        self.assertFalse(chart["showTargets"])
+        self.assertFalse(chart["showPower"])
+        extruder = next(item for item in chart["series"] if item["name"] == "extruder")
+        bed = next(item for item in chart["series"] if item["name"] == "heater_bed")
+        self.assertFalse(extruder["visible"])
+        self.assertEqual(bed["color"], "#123456")
+
+    def test_history_feeds_once_per_auxiliary_arrival_not_per_publish(self):
+        model = self.monitor()
+        auxiliary = {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}}
+        model._data._update(auxiliary=auxiliary)
+        model._data.auxiliaryChanged.emit()
+        self.assertEqual(len(self.chart_of(model)["series"][0]["points"]), 1)
+        # Core-only publishes (no aux reply) must not append samples:
+        # the old per-publish feed duplicated samples and halved the
+        # effective window.
+        for _ in range(5):
+            model._data._update(core={"print_stats": {"state": "printing"}})
+        self.assertEqual(len(self.chart_of(model)["series"][0]["points"]), 1)
+        # A second aux reply appends exactly one more sample.
+        model._data._update(auxiliary=auxiliary)
+        model._data.auxiliaryChanged.emit()
+        self.assertEqual(len(self.chart_of(model)["series"][0]["points"]), 2)
+
+    def test_history_resets_when_the_session_is_invalidated(self):
+        model = self.monitor()
+        model._data._update(auxiliary={"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
+        model._data.auxiliaryChanged.emit()
+        self.assertEqual(len(self.chart_of(model)["series"]), 1)
+        model._data.set_active(False)  # emits invalidated
+        chart = self.chart_of(model)
+        self.assertEqual(chart["series"], [])
+
+    def test_chart_setters_are_idempotent_and_validate(self):
+        model = self.monitor()
+        model._data._update(auxiliary={"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
+        model._data.auxiliaryChanged.emit()
+        writes = []
+        model._apply_chart_config = lambda: writes.append(1)
+        # Re-applying the same value must not rewrite the state file
+        # (the legend re-binds every second and used to re-save each
+        # time).
+        model.setTemperatureSensorVisible("extruder", True)
+        model.setTemperatureSensorColor("extruder", "#d32f2f")  # the palette default: a no-op
+        self.assertEqual(writes, [])
+        model.setTemperatureSensorVisible("extruder", False)
+        self.assertEqual(writes, [1])
+        model.setTemperatureSensorVisible("extruder", False)
+        self.assertEqual(writes, [1])
+        # Invalid colours are rejected outright.
+        model.setTemperatureSensorColor("extruder", "#fff")
+        self.assertEqual(writes, [1])
+        chart = self.chart_of(model)
+        extruder = next(item for item in chart["series"] if item["name"] == "extruder")
+        self.assertEqual(extruder["color"], "#d32f2f")  # the palette default, unchanged
+        model.setTemperatureSensorColor("extruder", "#123456")
+        self.assertEqual(writes, [1, 1])
+
+    def test_chart_config_prunes_vanished_sensors(self):
+        model = self.monitor()
+        model._data._update(auxiliary={"extruder": {"temperature": 200.0}})
+        model._data.auxiliaryChanged.emit()
+        model.setTemperatureSensorColor("ghost_sensor", "#123456")
+        # Any later change prunes keys for sensors no longer present —
+        # but never while the live set is empty.
+        model.setTemperatureSensorVisible("extruder", False)
+        chart = self.follower.current_printer_config().temperature_chart
+        self.assertNotIn("ghost_sensor", chart["colors"])
+        self.assertEqual(chart["colors"], {})
+
+    def test_temperature_chart_defaults_when_the_block_is_missing(self):
+        import UM.Resources as UMResourcesModule
+        section_path = UMResourcesModule.Resources.getStoragePath(
+            UMResourcesModule.Resources.Preferences,
+            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        with open(section_path, "w", encoding="utf-8") as handle:
+            json.dump({"sections": {"setup": False}}, handle)
+        model = self.monitor()
+        chart = self.chart_of(model)
+        self.assertTrue(chart["showTargets"])
+        self.assertTrue(chart["showPower"])
+        self.assertTrue(all(item["visible"] for item in chart["series"]))
+
+    def test_legacy_global_chart_block_migrates_into_the_per_printer_record(self):
+        import UM.Resources as UMResourcesModule
+        section_path = UMResourcesModule.Resources.getStoragePath(
+            UMResourcesModule.Resources.Preferences,
+            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        with open(section_path, "w", encoding="utf-8") as handle:
+            json.dump({"sections": {"setup": False},
+                       "temperatureChart": {"visible": {"extruder": False},
+                                            "colors": {"heater_bed": "#123456"},
+                                            "showTargets": False, "showPower": False}}, handle)
+        model = self.monitor()
+        model._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
+        model._data.auxiliaryChanged.emit()
+        # The legacy block was adopted once into the per-printer record…
+        self.assertEqual(self.follower.current_printer_config().temperature_chart, {
+            "visible": {"extruder": False},
+            "colors": {"heater_bed": "#123456"},
+            "showTargets": False,
+            "showPower": False,
+        })
+        extruder = next(item for item in self.chart_of(model)["series"] if item["name"] == "extruder")
+        bed = next(item for item in self.chart_of(model)["series"] if item["name"] == "heater_bed")
+        self.assertFalse(extruder["visible"])
+        self.assertEqual(bed["color"], "#123456")
+        # …and the global file keeps chrome only afterwards.
+        with open(section_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.assertNotIn("temperatureChart", payload)
 
     def test_controls_lock_and_camera_refresh_nonce(self):
         model = self.monitor()

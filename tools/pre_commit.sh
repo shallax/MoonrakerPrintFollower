@@ -17,6 +17,16 @@ python3 -m compileall -q plugins tools tests || fail=1
 printf 'pre-commit: QML structure... '
 python3 tools/check_qml.py plugins >/dev/null || fail=1
 
+if command -v gitleaks >/dev/null 2>&1; then
+    printf 'pre-commit: gitleaks... '
+    gitleaks protect --staged --no-banner >/dev/null || fail=1
+elif command -v docker >/dev/null 2>&1; then
+    printf 'pre-commit: gitleaks (container)... '
+    tools/docker_dev.sh gitleaks protect --staged --no-banner >/dev/null || fail=1
+else
+    echo "pre-commit: gitleaks not found — skipping (see INSTRUCTIONS.md)"
+fi
+
 if command -v ruff >/dev/null 2>&1; then
     printf 'pre-commit: ruff... '
     ruff check plugins tools tests || fail=1

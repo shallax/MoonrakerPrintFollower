@@ -35,6 +35,9 @@ class MonitorSnapshot:
 class MonitorData(QObject):
     changed = pyqtSignal()
     invalidated = pyqtSignal()
+    # Fired after each auxiliary reply lands in the snapshot — the
+    # temperature history feeds from this, not from every publish.
+    auxiliaryChanged = pyqtSignal()
     commandChanged = pyqtSignal(object)
 
     def __init__(self, client, parent=None):
@@ -193,6 +196,7 @@ class MonitorData(QObject):
             previous = merged.get(name)
             merged[name] = dict(previous, **value) if isinstance(previous, Mapping) and isinstance(value, Mapping) else value
         self._update(auxiliary=merged)
+        self.auxiliaryChanged.emit()
 
     def refresh_power(self):
         self.request("power-list", "GET", "machine/device_power/devices",

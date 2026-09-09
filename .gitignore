@@ -15,3 +15,6 @@ pyproject.toml
 *.lock
 .coverage
 *~
+
+# Persona-review records and decision log — never committed.
+review/

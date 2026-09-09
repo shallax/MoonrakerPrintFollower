@@ -12,24 +12,75 @@ Component {
 
         property var printer: OutputDevice != null ? OutputDevice.activePrinter : null
         property bool cameraConfigured: printer != null && printer.cameraUrl != null && printer.cameraUrl.toString().length > 0
-        property bool bedMeshPanelOpen: false
-        property bool infoCollapsed: root.printer != null ? root.printer.infoCollapsed : false
-        property bool statusCollapsed: root.printer != null ? root.printer.statusCollapsed : false
+        // One open pop-over at a time ("" | "chart" | "mesh"); every
+        // opener and closer writes this, so the shells can never
+        // overlap or trap a close button under another card.
+        property string openPopOver: ""
+        property string selectedChartSensor: ""
 
-        function bedMeshColor(value, minimum, maximum) {
-            var limit = Math.max(Math.abs(minimum), Math.abs(maximum), 0.000000001);
-            var t = Math.max(0.0, Math.min(1.0, 0.5 + 0.5 * value / limit));
-            var stops = [[0.00, 0.10, 0.28, 0.95], [0.25, 0.00, 0.72, 1.00], [0.50, 0.20, 0.86, 0.38], [0.75, 1.00, 0.82, 0.12], [1.00, 0.92, 0.16, 0.12]];
-            for (var i = 1; i < stops.length; ++i) {
-                if (t <= stops[i][0]) {
-                    var left = stops[i - 1];
-                    var right = stops[i];
-                    var f = (t - left[0]) / Math.max(0.000000001, right[0] - left[0]);
-                    return Qt.rgba(left[1] + (right[1] - left[1]) * f, left[2] + (right[2] - left[2]) * f, left[3] + (right[3] - left[3]) * f, 1.0);
+        // Mini-chart helpers: primary sensors only (extruders, bed,
+        // chamber heater), honouring the legend's visibility.
+        property bool miniChartHasSeries: {
+            var payload = root.printer != null ? root.printer.temperatureChart : ({
+                    "series": []
+                });
+            var series = payload.series;
+            for (var i = 0; i < series.length; ++i) {
+                if (series[i].primary && series[i].visible) {
+                    return true;
                 }
             }
-            return Qt.rgba(0.92, 0.16, 0.12, 1.0);
+            return false;
         }
+        property bool miniChartFilling: root.printer != null ? (root.printer.temperatureChart.series.length > 0 && root.printer.temperatureChart.filling) : false
+        property bool allChartSensorsHidden: {
+            var legend = root.printer != null ? root.printer.temperatureChartLegend : ({
+                    "series": []
+                });
+            if (legend.series.length === 0) {
+                return false;
+            }
+            for (var i = 0; i < legend.series.length; ++i) {
+                if (legend.series[i].visible) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        property string selectedChartSensorLabel: {
+            var legend = root.printer != null ? root.printer.temperatureChartLegend : ({
+                    "series": []
+                });
+            for (var i = 0; i < legend.series.length; ++i) {
+                if (legend.series[i].name === root.selectedChartSensor) {
+                    return legend.series[i].label;
+                }
+            }
+            return root.selectedChartSensor;
+        }
+        property string selectedChartColor: {
+            var legend = root.printer != null ? root.printer.temperatureChartLegend : ({
+                    "series": []
+                });
+            for (var i = 0; i < legend.series.length; ++i) {
+                if (legend.series[i].name === root.selectedChartSensor) {
+                    return legend.series[i].color;
+                }
+            }
+            return "";
+        }
+
+        onPrinterChanged: {
+            openPopOver = "";
+            selectedChartSensor = "";
+        }
+        Keys.onEscapePressed: {
+            openPopOver = "";
+            selectedChartSensor = "";
+        }
+        focus: true
+        property bool infoCollapsed: root.printer != null ? root.printer.infoCollapsed : false
+        property bool statusCollapsed: root.printer != null ? root.printer.statusCollapsed : false
 
         Cura.MessageDialog {
             id: excludeObjectDialog
@@ -50,9 +101,10 @@ Component {
         Connections {
             target: root.printer
             function onTypedControlsChanged() {
-                bedMeshCanvas.requestPaint();
+                meshMiniMap.refresh();
+                meshDetail.refresh();
                 if (root.printer == null || !root.printer.bedMeshAvailable) {
-                    root.bedMeshPanelOpen = false;
+                    root.openPopOver = "";
                 }
             }
         }
@@ -168,16 +220,21 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             spacing: UM.Theme.getSize("default_margin").height
 
-                            Cura.SecondaryButton {
-                                id: mapButton
+                            // The mini map is the at-a-glance widget; a
+                            // click opens the pop-over detail view with
+                            // the probe-snapping crosshair.
+                            BedMeshMap {
+                                id: meshMiniMap
                                 Layout.fillWidth: true
+                                Layout.preferredHeight: 90 * screenScaleFactor
+                                compact: true
+                                printer: root.printer
                                 visible: root.printer != null && root.printer.bedMeshAvailable
-                                text: root.bedMeshPanelOpen ? "Hide bed mesh map" : "Bed mesh map"
-                                tooltip: root.printer != null ? "Show the active Klipper mesh (" + root.printer.bedMeshRangeText + ")." : ""
+                                tooltipText: root.printer != null ? "Click for the full bed mesh map (" + root.printer.bedMeshRangeText + ")." : "Click for the full bed mesh map."
                                 onClicked: {
-                                    root.bedMeshPanelOpen = !root.bedMeshPanelOpen;
-                                    if (root.bedMeshPanelOpen)
-                                        bedMeshCanvas.requestPaint();
+                                    root.openPopOver = root.openPopOver === "mesh" ? "" : "mesh";
+                                    if (root.openPopOver === "mesh")
+                                        meshDetail.refresh();
                                 }
                             }
 
@@ -185,6 +242,69 @@ Component {
                                 Layout.fillWidth: true
                                 visible: root.printer == null || !root.printer.bedMeshAvailable
                                 text: "No bed mesh to show"
+                                color: UM.Theme.getColor("text_inactive")
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        CollapsibleSectionHeader {
+                            Layout.fillWidth: true
+                            printerModel: root.printer
+                            title: "Temperature history"
+                            sectionId: "temphistory"
+                            sectionIcon: "Spinner"
+                        }
+                        ColumnLayout {
+                            visible: root.printer == null || root.printer.sectionExpandedMap["temphistory"] !== false
+                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+                            Layout.fillWidth: true
+                            Layout.topMargin: UM.Theme.getSize("default_margin").height
+                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+                            spacing: UM.Theme.getSize("default_margin").height
+
+                            // The mini widget graphs the primary sensors
+                            // (extruders, bed, chamber heater) honouring
+                            // the legend's visibility; the full legend,
+                            // targets and power live in the click-to-
+                            // enlarge pop-over.
+                            TemperatureChart {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 90 * screenScaleFactor
+                                compact: true
+                                tooltipText: "Click for the full temperature history (last 30 minutes)."
+                                chart: {
+                                    var payload = root.printer != null ? root.printer.temperatureChart : ({
+                                            "series": [],
+                                            "showTargets": true,
+                                            "showPower": true,
+                                            "palette": [],
+                                            "filling": false,
+                                            "wallOrigin": 0
+                                        });
+                                    var series = payload.series.filter(function (s) {
+                                            return s.primary && s.visible;
+                                        });
+                                    return {
+                                        "series": series,
+                                        "showTargets": false,
+                                        "showPower": false,
+                                        "palette": payload.palette,
+                                        "filling": payload.filling,
+                                        "wallOrigin": payload.wallOrigin
+                                    };
+                                }
+                                visible: root.miniChartHasSeries && !root.miniChartFilling
+                                onClicked: {
+                                    if (root.printer != null) {
+                                        root.openPopOver = root.openPopOver === "chart" ? "" : "chart";
+                                    }
+                                }
+                            }
+
+                            UM.Label {
+                                Layout.fillWidth: true
+                                visible: root.printer != null && (root.miniChartFilling || !root.miniChartHasSeries)
+                                text: root.miniChartFilling ? "Collecting temperature history…" : "No hotend or bed temperature data yet"
                                 color: UM.Theme.getColor("text_inactive")
                                 wrapMode: Text.WordWrap
                             }
@@ -384,114 +504,7 @@ Component {
                         }
                     }
                 }
-                Cura.RoundedRectangle {
-                    id: meshPanel
-                    visible: root.bedMeshPanelOpen && root.printer != null && root.printer.bedMeshAvailable
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.topMargin: UM.Theme.getSize("default_margin").height
-                    anchors.leftMargin: UM.Theme.getSize("default_margin").width
-                    width: 390 * screenScaleFactor
-                    height: 430 * screenScaleFactor
-                    z: 999
-                    color: UM.Theme.getColor("main_background")
-                    border.color: UM.Theme.getColor("lining")
-                    border.width: UM.Theme.getSize("default_lining").width
-                    radius: UM.Theme.getSize("default_radius").width
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: UM.Theme.getSize("default_margin").width
-                        spacing: UM.Theme.getSize("thin_margin").height
-
-                        UM.Label {
-                            Layout.fillWidth: true
-                            text: "Bed mesh — " + (root.printer != null ? root.printer.bedMeshProfile : "")
-                            font: UM.Theme.getFont("medium_bold")
-                            elide: Text.ElideRight
-                        }
-
-                        Canvas {
-                            id: bedMeshCanvas
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            Layout.minimumHeight: 215 * screenScaleFactor
-
-                            onPaint: {
-                                var ctx = getContext("2d");
-                                ctx.clearRect(0, 0, width, height);
-                                if (root.printer == null || !root.printer.bedMeshAvailable)
-                                    return;
-                                var rows = root.printer.bedMeshRows;
-                                var columns = root.printer.bedMeshColumns;
-                                var values = root.printer.bedMeshValues;
-                                if (rows < 2 || columns < 2 || values.length !== rows * columns)
-                                    return;
-                                // Fit the mesh to its real X/Y aspect: the plot mirrors the
-                                // bed shape instead of forcing the probe grid square.
-                                var xSpan = root.printer.bedMeshXMax - root.printer.bedMeshXMin;
-                                var ySpan = root.printer.bedMeshYMax - root.printer.bedMeshYMin;
-                                var plotWidth = width;
-                                var plotHeight = height;
-                                var offsetX = 0;
-                                var offsetY = 0;
-                                if (xSpan > 0 && ySpan > 0) {
-                                    var target = xSpan / ySpan;
-                                    if (width / height > target) {
-                                        plotWidth = height * target;
-                                        offsetX = (width - plotWidth) / 2;
-                                    } else {
-                                        plotHeight = width / target;
-                                        offsetY = (height - plotHeight) / 2;
-                                    }
-                                }
-                                var cellWidth = plotWidth / columns;
-                                var cellHeight = plotHeight / rows;
-                                for (var screenRow = 0; screenRow < rows; ++screenRow) {
-                                    var meshRow = rows - 1 - screenRow;
-                                    for (var column = 0; column < columns; ++column) {
-                                        var value = Number(values[meshRow * columns + column]);
-                                        ctx.fillStyle = root.bedMeshColor(value, root.printer.bedMeshMinimum, root.printer.bedMeshMaximum);
-                                        ctx.fillRect(offsetX + column * cellWidth, offsetY + screenRow * cellHeight, cellWidth + 1, cellHeight + 1);
-                                    }
-                                }
-                            }
-                        }
-
-                        GridLayout {
-                            columns: 3
-                            Layout.fillWidth: true
-                            UM.Label {
-                                text: "Min " + (root.printer != null ? root.printer.bedMeshMinimum.toFixed(3) : "0.000") + " mm"
-                            }
-                            UM.Label {
-                                Layout.fillWidth: true
-                                horizontalAlignment: Text.AlignHCenter
-                                text: "Range " + (root.printer != null ? root.printer.bedMeshRange.toFixed(3) : "0.000") + " mm"
-                            }
-                            UM.Label {
-                                horizontalAlignment: Text.AlignRight
-                                text: "Max " + (root.printer != null ? root.printer.bedMeshMaximum.toFixed(3) : "0.000") + " mm"
-                            }
-                        }
-
-                        UM.Label {
-                            Layout.fillWidth: true
-                            text: root.printer != null ? "X " + root.printer.bedMeshXMin.toFixed(1) + "…" + root.printer.bedMeshXMax.toFixed(1) + " mm   ·   Y " + root.printer.bedMeshYMin.toFixed(1) + "…" + root.printer.bedMeshYMax.toFixed(1) + " mm" : ""
-                            color: UM.Theme.getColor("text_inactive")
-                            horizontalAlignment: Text.AlignHCenter
-                        }
-
-                        UM.Label {
-                            Layout.fillWidth: true
-                            text: "Preview uses 20× vertical exaggeration. The solid area is Klipper's mesh; the faded perimeter is extrapolated to Cura's bed edge. Values shown here are the actual Klipper mesh heights."
-                            color: UM.Theme.getColor("text_inactive")
-                            wrapMode: Text.WordWrap
-                        }
-                    }
-                }
             }
-
             Cura.RoundedRectangle {
                 id: statusPanel
                 // Collapsed, the pane shrinks to the toggle button and its
@@ -1105,6 +1118,254 @@ Component {
                         anchors.centerIn: parent
                     }
                 }
+            }
+        }
+
+        // The pop-overs are overlay siblings of the pane RowLayout, not
+        // layout children: anchored children inside a layout reflow
+        // every pane (and Qt logs undefined-behavior warnings), and a
+        // layout child cannot overlap the layout. A click outside any
+        // open card closes it; the pop-overs sit above this layer.
+        MouseArea {
+            id: outsideClickLayer
+            visible: root.openPopOver !== ""
+            anchors.fill: parent
+            z: 998
+            acceptedButtons: Qt.LeftButton
+            onClicked: {
+                root.openPopOver = "";
+                root.selectedChartSensor = "";
+            }
+        }
+
+        MonitorPopOver {
+            id: chartPanel
+            visible: root.openPopOver === "chart" && root.printer != null
+            x: UM.Theme.getSize("default_margin").width
+            y: UM.Theme.getSize("default_margin").height
+            onClosed: {
+                root.openPopOver = "";
+                root.selectedChartSensor = "";
+            }
+
+            TemperatureChart {
+                id: chartPanelChart
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 180 * screenScaleFactor
+                visible: root.printer != null && root.printer.temperatureChart.series.length > 0
+                chart: root.printer != null ? root.printer.temperatureChart : ({
+                        "series": [],
+                        "showTargets": true,
+                        "showPower": true
+                    })
+            }
+
+            UM.Label {
+                Layout.fillWidth: true
+                visible: root.printer != null && root.printer.temperatureChart.series.length === 0
+                text: "No temperature data yet — the chart fills once the printer reports temperatures."
+                color: UM.Theme.getColor("text_inactive")
+                wrapMode: Text.WordWrap
+            }
+
+            // Hover readout: the clock at the snapped cursor plus
+            // each visible series' value. A Flow wraps on machines
+            // with many sensors instead of eliding.
+            Flow {
+                Layout.fillWidth: true
+                spacing: UM.Theme.getSize("default_margin").width
+                visible: chartPanelChart.hoverClock !== ""
+                UM.Label {
+                    text: chartPanelChart.hoverClock
+                    font: UM.Theme.getFont("medium")
+                    color: UM.Theme.getColor("text_inactive")
+                }
+                Repeater {
+                    model: chartPanelChart.hoverValues
+                    RowLayout {
+                        spacing: UM.Theme.getSize("narrow_margin").width
+                        Rectangle {
+                            width: 8 * screenScaleFactor
+                            height: 8 * screenScaleFactor
+                            radius: 4 * screenScaleFactor
+                            color: modelData.color
+                        }
+                        UM.Label {
+                            text: modelData.label + ": " + modelData.text
+                            font: UM.Theme.getFont("default")
+                        }
+                    }
+                }
+            }
+
+            UM.Label {
+                Layout.fillWidth: true
+                visible: root.allChartSensorsHidden
+                text: "All sensors hidden — use the legend to show them again."
+                color: UM.Theme.getColor("text_inactive")
+                wrapMode: Text.WordWrap
+            }
+
+            // Legend: a two-column grid of visibility toggles with
+            // live values. It binds to the legend property, which
+            // only notifies on real changes, and `toggled` fires on
+            // user interaction only — so the delegates are never
+            // rebuilt at the 1 Hz sample cadence and re-bound
+            // checkboxes cannot rewrite the state file.
+            GridLayout {
+                Layout.fillWidth: true
+                columns: 2
+                columnSpacing: UM.Theme.getSize("default_margin").width
+                rowSpacing: UM.Theme.getSize("narrow_margin").height
+                Repeater {
+                    model: root.printer != null ? root.printer.temperatureChartLegend.series : []
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: UM.Theme.getSize("narrow_margin").width
+                        UM.CheckBox {
+                            checked: modelData.visible
+                            onToggled: root.printer.setTemperatureSensorVisible(modelData.name, checked)
+                        }
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: 10 * screenScaleFactor
+                            radius: 5 * screenScaleFactor
+                            color: modelData.color
+                            border.color: root.selectedChartSensor === modelData.name ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
+                            border.width: root.selectedChartSensor === modelData.name ? 2 : 1
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.selectedChartSensor = root.selectedChartSensor === modelData.name ? "" : modelData.name
+                            }
+                        }
+                        UM.Label {
+                            Layout.fillWidth: true
+                            text: modelData.label
+                            elide: Text.ElideRight
+                        }
+                        UM.Label {
+                            text: {
+                                var payload = root.printer != null ? root.printer.temperatureChart.series : [];
+                                for (var i = 0; i < payload.length; ++i) {
+                                    if (payload[i].name === modelData.name && payload[i].points.length > 0) {
+                                        return payload[i].points[payload[i].points.length - 1][1].toFixed(1) + "°";
+                                    }
+                                }
+                                return "—";
+                            }
+                            color: UM.Theme.getColor("text_inactive")
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: root.selectedChartSensor !== ""
+                spacing: UM.Theme.getSize("thin_margin").width
+                UM.Label {
+                    text: root.selectedChartSensorLabel + " color:"
+                    color: UM.Theme.getColor("text_inactive")
+                }
+                Repeater {
+                    model: root.printer != null ? root.printer.temperatureChartLegend.palette : []
+                    Rectangle {
+                        width: 16 * screenScaleFactor
+                        height: 16 * screenScaleFactor
+                        radius: 8 * screenScaleFactor
+                        color: modelData
+                        border.color: root.selectedChartColor === modelData ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
+                        border.width: root.selectedChartColor === modelData ? 2 : 1
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.printer.setTemperatureSensorColor(root.selectedChartSensor, modelData)
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: UM.Theme.getSize("default_margin").width
+                UM.CheckBox {
+                    checked: root.printer != null ? root.printer.temperatureChartLegend.showTargets : true
+                    onToggled: root.printer.setShowTemperatureTargets(checked)
+                }
+                UM.Label {
+                    text: "Targets"
+                }
+                UM.CheckBox {
+                    checked: root.printer != null ? root.printer.temperatureChartLegend.showPower : true
+                    onToggled: root.printer.setShowTemperaturePower(checked)
+                }
+                UM.Label {
+                    text: "Heater power"
+                }
+            }
+        }
+
+        MonitorPopOver {
+            id: meshPanel
+            visible: root.openPopOver === "mesh" && root.printer != null && root.printer.bedMeshAvailable
+            x: cameraArea.x + UM.Theme.getSize("default_margin").width
+            y: UM.Theme.getSize("default_margin").height
+            contentWidth: 390 * screenScaleFactor
+            title: "Bed mesh — " + (root.printer != null ? root.printer.bedMeshProfile : "")
+            onClosed: root.openPopOver = ""
+            onVisibleChanged: {
+                if (visible)
+                    meshDetail.refresh();
+            }
+
+            BedMeshMap {
+                id: meshDetail
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 215 * screenScaleFactor
+                printer: root.printer
+            }
+
+            // The crosshair readout: coordinates and Z offset of
+            // the snapped probe point.
+            UM.Label {
+                Layout.fillWidth: true
+                visible: meshDetail.hoverColumn >= 0
+                text: meshDetail.hoverText
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            GridLayout {
+                columns: 3
+                Layout.fillWidth: true
+                UM.Label {
+                    text: "Min " + (root.printer != null ? root.printer.bedMeshMinimum.toFixed(3) : "0.000") + " mm"
+                }
+                UM.Label {
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    text: "Range " + (root.printer != null ? root.printer.bedMeshRange.toFixed(3) : "0.000") + " mm"
+                }
+                UM.Label {
+                    horizontalAlignment: Text.AlignRight
+                    text: "Max " + (root.printer != null ? root.printer.bedMeshMaximum.toFixed(3) : "0.000") + " mm"
+                }
+            }
+
+            UM.Label {
+                Layout.fillWidth: true
+                text: root.printer != null ? "X " + root.printer.bedMeshXMin.toFixed(1) + "…" + root.printer.bedMeshXMax.toFixed(1) + " mm   ·   Y " + root.printer.bedMeshYMin.toFixed(1) + "…" + root.printer.bedMeshYMax.toFixed(1) + " mm" : ""
+                color: UM.Theme.getColor("text_inactive")
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            UM.Label {
+                Layout.fillWidth: true
+                text: "Preview uses 20× vertical exaggeration. The solid area is Klipper's mesh; the faded perimeter is extrapolated to Cura's bed edge. Values shown here are the actual Klipper mesh heights."
+                color: UM.Theme.getColor("text_inactive")
+                wrapMode: Text.WordWrap
             }
         }
     }

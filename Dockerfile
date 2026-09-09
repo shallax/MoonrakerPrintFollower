@@ -31,7 +31,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && wget -qO /usr/local/bin/hadolint \
         https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64 \
-    && chmod +x /usr/local/bin/hadolint
+    && chmod +x /usr/local/bin/hadolint \
+    && wget -qO /tmp/gitleaks.tar.gz \
+        https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+    && tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks \
+    && rm /tmp/gitleaks.tar.gz
 
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir PyQt6==6.11.0 PyQt6-Qt6==6.11.2 ruff==0.16.6 coverage
@@ -57,6 +61,7 @@ CMD ["sh", "-c", "python3 -m compileall -q plugins tools tests \
     && ruff check plugins tools tests \
     && shellcheck tools/*.sh \
     && hadolint Dockerfile \
+    && gitleaks detect --no-git --no-banner --redact \
     && coverage run -m unittest discover -s tests -p 'test_*.py' \
     && coverage report --include='plugins/*' --fail-under=80 \
     && python3 tools/capture_monitor.py dist/screenshots \

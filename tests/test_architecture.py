@@ -59,7 +59,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
             "MonitorControls.py", "MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py",
             "BedMeshSceneNode.py", "MoonrakerMonitorModel.py", "MoonrakerFollowerMachineAction.py",
             "MoonrakerProtocol.py", "UploadController.py", "CuraOutputWriter.py",
-            "ToolheadPolicy.py", "ToolheadController.py",
+            "ToolheadPolicy.py", "ToolheadController.py", "MonitorTemperatureHistory.py",
         ):
             self.assertIn(f"`{module}`", ARCH)
 
@@ -140,8 +140,9 @@ class SourceContractTests(unittest.TestCase):
             "MonitorTuning": set(),
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
             "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
-            "MoonrakerMonitorModel": {"MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTuning", "ToolheadController"},
+            "MoonrakerMonitorModel": {"MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTemperatureHistory", "MonitorTuning", "PrinterConfig", "ToolheadController"},
             "ToolheadController": {"ToolheadPolicy"},
+            "MonitorTemperatureHistory": {"MonitorFormatting"},
             "ToolheadPolicy": set(),
             "MoonrakerOutputDevice": {"CuraOutputWriter", "UploadController"},
             "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice"},
