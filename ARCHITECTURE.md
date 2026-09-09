@@ -80,6 +80,8 @@ private follower state to either integration.
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
 | `MonitorCamera.py` | Camera selection, transforms and per-printer selection persistence | Private configuration store |
 | `MonitorTemperatureHistory.py` | Pure per-sensor temperature ring buffers and the chart payload projection | Qt or networking |
+| `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
+| `ConsoleController.py` | Console state owner: the bounded per-printer history and the untracked send lane | Model inheritance or formatting |
 | `CuraOutputWriter.py` | Cura-affine preparation of a temporary G-code/UFP file | HTTP upload |
 | `UploadController.py` | One write operation: discovery, readiness, multipart stream and cancellation | Cura application or QML |
 | `MoonrakerOutputDevice.py` | Cura output-device signals/dialog/message adapter | Upload state machine |
@@ -126,6 +128,7 @@ unsaved credentials; a probe must not reconfigure the live binding.
 | Monitor auxiliary, idle | 2500 ms |
 | Power | 5000 ms |
 | System | 10000 ms |
+| Endstops (one-shot query_endstops) | 10000 ms |
 | Discovery/static configuration | 30000 ms or explicit refresh |
 
 `MonitorData` alone applies Monitor timer policy. An unchanged interval is not
@@ -271,13 +274,25 @@ collapse flags and the lock toggle live in the model, persisted through
 the plugin-owned JSON state file, and QML binds to them through declared
 properties and setter slots. The temperature history follows the same
 split: `MonitorTemperatureHistory` keeps the bounded per-sensor ring
-buffers and chart projection pure, the model feeds them from the 1 s
-auxiliary poll and persists the chart config (sensor visibility,
-colours, target/power toggles) in the same state file. `CollapsibleSectionHeader` is the single
-header implementation shared by every pane; pane chrome (toggles,
-collapsed strips, plugin-drawn glyphs) is UI-only state in the QML files
-and never mutates printer state directly. The recipes for extending the
-panes are in `INSTRUCTIONS.md`, not here.
+buffers and chart projection pure, and the model feeds them from the
+auxiliary poll — once per auxiliary reply, never per publish. The chart
+config (sensor visibility, colours, target/power toggles) persists per
+printer in the `PrinterConfig` record because sensor names differ
+between machines; the plugin-owned JSON state file keeps the chrome
+only (expanded-section map, pane collapse, controls lock), and a legacy
+global chart block migrates into the per-printer record once.
+
+The console is write-only by protocol: commands travel the untracked
+one-shot lane, HTTP acknowledgement means queued at the Klipper
+boundary (never executed), and Klipper's replies are websocket-only —
+the UI states exactly that. `ConsolePolicy` owns the history bounds and
+input guards (deliberately no command-safety table: the author ruled
+the console unrestricted); `ConsoleController` owns the bounded
+per-printer history and the send lane. `CollapsibleSectionHeader` is
+the single header implementation shared by every pane; pane chrome
+(toggles, collapsed strips, plugin-drawn glyphs) is UI-only state in
+the QML files and never mutates printer state directly. The recipes for
+extending the panes are in `INSTRUCTIONS.md`, not here.
 
 `BedMeshPresenter` alone owns the active scene node and Preview mesh UI. It uses
 `CuraIntegration.decorating_scene()` to distinguish its non-sliceable visual changes

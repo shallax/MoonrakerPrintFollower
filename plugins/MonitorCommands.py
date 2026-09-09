@@ -9,6 +9,10 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 class MonitorCommands(QObject):
     changed = pyqtSignal()
     emergencyStopped = pyqtSignal()
+    # Fires when the one-shot lane finishes a command that really ran,
+    # carrying its label — console pending accounting needs per-command
+    # completions, not idle-epoch guesses.
+    completed = pyqtSignal(str)
     EXPECTED = {"Pause": {"paused"}, "Resume": {"printing"}, "Cancel": {"cancelled", "complete", "standby"}}
     # A resumed printer may re-heat before it actually resumes; the
     # confirmation must outlive a slow heat-up instead of reporting
@@ -73,7 +77,7 @@ class MonitorCommands(QObject):
         self._reset_clicks()
         self.changed.emit()
 
-    def send(self, label, path, body=None):
+    def send(self, label, path, body=None, queued=False):
         if self._busy or not self._data.active: return False
         self._busy = True
         self._status = f"{label} requested…"
@@ -82,7 +86,9 @@ class MonitorCommands(QObject):
         if expected: self._data.track_command(label, expected,
             timeout_s=self.EXPECTED_TIMEOUT_S.get(label, 10))
         self.changed.emit()
-        def finished(payload, error):
+        def finished(payload, error, occupied=True):
+            if occupied:
+                self.completed.emit(label)
             if error:
                 self._busy = False
                 # A connection-level error says nothing about whether the
@@ -109,7 +115,10 @@ class MonitorCommands(QObject):
         started = self._data.request("control", "POST", path, finished, body=body,
             category="command", timeout_ms=30000)
         if not started:
-            finished(None, "Moonraker is unavailable")
+            # A line that never entered the lane is not a completion —
+            # but one that was QUEUED and then refused at pump time is:
+            # its queue-time pending increment must still drain.
+            finished(None, "Moonraker is unavailable", occupied=queued)
         return started
 
     def script(self, label, script):
@@ -135,7 +144,7 @@ class MonitorCommands(QObject):
         if not self._queue or self._busy or not self._data.active:
             return
         label, path, body = self._queue.pop(0)
-        self.send(label, path, body)
+        self.send(label, path, body, queued=True)
 
     def quick(self, channel, script, callback):
         return self._data.request("quick-" + channel, "POST", "printer/gcode/script", callback,

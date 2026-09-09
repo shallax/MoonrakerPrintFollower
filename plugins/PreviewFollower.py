@@ -294,13 +294,51 @@ class PreviewFollower:
         target = boundary(layer if end else layer - 1)
         start, finish = boundary(current - 1), boundary(current)
         if target is None or start is None: return None
-        fraction = state.path_fraction or 0.0 if state.path_layer == current else 0.0
+        fraction = (state.path_fraction or 0.0) if state.path_layer == current else 0.0
         if (state.anchor_layer == current and state.anchor_duration is not None and state.duration is not None
                 and finish is not None and finish > start):
             observed = (state.duration - state.anchor_duration) * state.speed / (finish - start)
             fraction = max(fraction, min(1.0, max(0.0, observed)))
         now = start + ((finish - start) * fraction if finish is not None and finish >= start else 0)
         return max(0.0, target - now) / state.speed
+
+    def remaining_end(self, index, estimated_time):
+        """Remaining seconds until the END of the print (the Monitor's
+        ETA), using the same anchors and observed speed ratio as
+        remaining(). The final layer has no next boundary, so the end
+        anchor is the last boundary plus the layer's share of the
+        remaining slicer estimate — falling back to the mean layer
+        duration when no estimate is available."""
+        state = self._state
+        current = state.observed_layer
+        if current is None or index is None: return None
+        times = index.elapsed_times
+        if not times or times[0] is None: return None
+        def boundary(n):
+            if n < 0: return 0.0
+            if n >= len(times) or times[n] is None: return None
+            return float(times[n])
+        start, finish = boundary(current - 1), boundary(current)
+        if start is None: return None
+        fraction = (state.path_fraction or 0.0) if state.path_layer == current else 0.0
+        if (state.anchor_layer == current and state.anchor_duration is not None and state.duration is not None
+                and finish is not None and finish > start):
+            observed = (state.duration - state.anchor_duration) * state.speed / (finish - start)
+            fraction = max(fraction, min(1.0, max(0.0, observed)))
+        now = start + ((finish - start) * fraction if finish is not None and finish >= start else 0)
+        last = len(times) - 1
+        while last > 0 and times[last] is None:
+            last -= 1
+        end = boundary(last)
+        if end is None: return None
+        if estimated_time and estimated_time > end:
+            end = float(estimated_time)
+        else:
+            durations = [times[i] - times[i - 1] for i in range(1, last + 1)
+                         if times[i] is not None and times[i - 1] is not None]
+            if durations:
+                end += sum(durations) / len(durations)
+        return max(0.0, end - now) / state.speed
 
     def update_eta(self, snapshot, index):
         selected, current = self._cura.selected_layer, self._state.observed_layer

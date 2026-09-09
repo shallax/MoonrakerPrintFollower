@@ -64,6 +64,19 @@ class RemoteFileService(QObject):
         self._error = ""
         self._download_attempts = 0
         self._download_retry_at = 0.0
+        self._download_received = 0
+
+    @property
+    def download_fraction(self):
+        """0..1 of the in-flight download, or None when nothing is
+        downloading. The denominator is the printer's file_size; the
+        numerator accumulates as chunks drain."""
+        if self._reply is None:
+            return None
+        size = int((self._job or (None, 0, 0))[1] or 0)
+        if size <= 0:
+            return None
+        return max(0.0, min(1.0, self._download_received / size))
 
     @property
     def job_key(self): return self._job
@@ -205,6 +218,7 @@ class RemoteFileService(QObject):
         try:
             chunk = bytes(reply.readAll())
             if chunk and self._write_queue is not None:
+                self._download_received += len(chunk)
                 self._write_queue.put(chunk)
         except Exception as error:
             self._abort_download()

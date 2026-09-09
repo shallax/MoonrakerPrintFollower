@@ -17,9 +17,17 @@ Cura.RoundedRectangle {
 
     property real contentWidth: 520 * screenScaleFactor
 
+    // The card clips its content: an overflowing child (a chart whose
+    // layout budget was exceeded) must never draw past the card edge.
+    clip: true
+
     z: 999
-    width: Math.min(root.contentWidth, parent.width - 2 * UM.Theme.getSize("default_margin").width)
-    height: Math.min(column.implicitHeight + 2 * UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
+    width: parent != null ? Math.min(root.contentWidth, parent.width - 2 * UM.Theme.getSize("default_margin").width) : root.contentWidth
+    // Height is owned by the call sites: an internal height binding
+    // cycled through the fillHeight content and sent the layout engine
+    // into an endless, memory-eating relayout whenever a pop-over
+    // opened. The chart card grows with the legend-row count; the mesh
+    // card keeps its fixed comfortable size.
     color: UM.Theme.getColor("main_background")
     border.color: UM.Theme.getColor("lining")
     border.width: UM.Theme.getSize("default_lining").width

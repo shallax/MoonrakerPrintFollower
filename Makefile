@@ -40,6 +40,7 @@ gates:
 lint:
 	./tools/docker_dev.sh sh -c "python3 -m compileall -q plugins tools tests \
 	    && python3 tools/check_qml.py plugins \
+	    && python3 tools/check_qml_engine.py \
 	    && check_qml_format plugins/*.qml \
 	    && ruff check plugins tools tests \
 	    && shellcheck tools/*.sh \
@@ -48,6 +49,9 @@ lint:
 
 run_tests:
 	./tools/run_tests.sh
+
+dev_install:
+	./tools/install_dev.sh
 
 generate_screenshots:
 	./tools/refresh_screenshots.sh

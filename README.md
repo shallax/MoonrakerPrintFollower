@@ -8,8 +8,24 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 3.4.0
+- **Release:** 3.5.0
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
+
+## What changed in 3.5.0
+
+Version 3.5.0 is the informational half of Mainsail parity. The Information
+pane gains a 30-minute **temperature history chart** (solid actuals in
+per-sensor colours, translucent target bands, a heater-power axis, a
+Mainsail-style legend that persists per printer, hover readouts with a
+clock, and a compact mini-chart of the hotend/bed/chamber) and a **bed-mesh
+mini map** whose enlarged view adds a probe-snapping crosshair. A
+**write-only G-code console** sits below the webcam with up/down recall and
+a per-printer history — it says plainly that HTTP only confirms the command
+was queued, never executed. **Endstop readouts** show the live pin states
+(or "not homed yet"), and the **remaining-time estimate** now prefers the
+layer timings of the downloaded G-code scaled by the observed speed, with
+the ETA readout showing which estimate is active (colour and tooltip) and
+a button to download and index the print. Full details in `CHANGELOG.md`.
 
 ## What changed in 3.4.0
 
@@ -262,6 +278,7 @@ The Monitor dashboard: printer status, information panes and printer controls.
 
 ![Monitor panes collapsed](screenshots/02-panes-collapsed.png)
 ![Monitor sections collapsed](screenshots/03-sections-collapsed.png)
+![Temperature chart pop-over](screenshots/07-chart-popover.png)
 
 Panes collapse to the window edge with a rotated title; each pane's
 sections collapse into an accordion like Cura's own settings.

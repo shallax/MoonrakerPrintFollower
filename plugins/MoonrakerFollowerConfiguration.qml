@@ -42,6 +42,8 @@ Cura.MachineAction {
                 "show_toolhead_indicator": toolheadIndicatorBox.checked,
                 "z_fallback": zFallbackBox.checked,
                 "z_tolerance": zToleranceField.text,
+                "trace_layer": layerTraceBox.checked,
+                "trace_http": httpTraceBox.checked,
                 "frontend_url": frontendUrlField.text,
                 "output_format": outputFormatBox.currentIndex === 1 ? "ufp" : "gcode",
                 "upload_dialog": uploadDialogBox.checked,
@@ -103,6 +105,9 @@ Cura.MachineAction {
         }
         UM.TabRowButton {
             text: "Upload"
+        }
+        UM.TabRowButton {
+            text: "Diagnostics"
         }
     }
 
@@ -292,7 +297,6 @@ Cura.MachineAction {
                             text: "Use Z-height fallback when current_layer is unavailable"
                             checked: manager.settingsZFallback
                         }
-
                         UM.Label {
                             text: "Z-height match tolerance (mm)"
                             enabled: zFallbackBox.checked
@@ -467,6 +471,39 @@ Cura.MachineAction {
                             text: "The replace and replacement fields must have the same number of characters."
                             color: UM.Theme.getColor("error")
                             font: UM.Theme.getFont("default_italic")
+                        }
+                    }
+                }
+            }
+            Item {
+                Flickable {
+                    anchors.fill: parent
+                    anchors.margins: UM.Theme.getSize("default_margin").width
+                    contentWidth: width
+                    contentHeight: diagnosticsColumn.implicitHeight
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    Column {
+                        id: diagnosticsColumn
+                        width: parent.width
+                        spacing: UM.Theme.getSize("default_margin").height
+
+                        UM.Label {
+                            width: parent.width
+                            text: "Diagnostic logging writes to Cura's log (Help > Show configuration folder). Request failures always log a warning regardless of these toggles."
+                            wrapMode: Text.WordWrap
+                            color: UM.Theme.getColor("text_inactive")
+                        }
+                        UM.CheckBox {
+                            id: layerTraceBox
+                            text: "Log layer resolution (diagnostics)"
+                            checked: manager.settingsTraceLayer
+                        }
+                        UM.CheckBox {
+                            id: httpTraceBox
+                            text: "Log HTTP requests (diagnostics)"
+                            checked: manager.settingsTraceHttp
                         }
                     }
                 }

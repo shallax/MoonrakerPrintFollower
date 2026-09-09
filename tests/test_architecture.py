@@ -59,7 +59,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
             "MonitorControls.py", "MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py",
             "BedMeshSceneNode.py", "MoonrakerMonitorModel.py", "MoonrakerFollowerMachineAction.py",
             "MoonrakerProtocol.py", "UploadController.py", "CuraOutputWriter.py",
-            "ToolheadPolicy.py", "ToolheadController.py", "MonitorTemperatureHistory.py",
+            "ToolheadPolicy.py", "ToolheadController.py", "MonitorTemperatureHistory.py", "ConsolePolicy.py", "ConsoleController.py",
         ):
             self.assertIn(f"`{module}`", ARCH)
 
@@ -140,9 +140,11 @@ class SourceContractTests(unittest.TestCase):
             "MonitorTuning": set(),
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
             "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
-            "MoonrakerMonitorModel": {"MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTemperatureHistory", "MonitorTuning", "PrinterConfig", "ToolheadController"},
+            "MoonrakerMonitorModel": {"ConsoleController", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTemperatureHistory", "MonitorTuning", "PrinterConfig", "ToolheadController"},
+            "ConsoleController": {"ConsolePolicy"},
             "ToolheadController": {"ToolheadPolicy"},
             "MonitorTemperatureHistory": {"MonitorFormatting"},
+            "ConsolePolicy": set(),
             "ToolheadPolicy": set(),
             "MoonrakerOutputDevice": {"CuraOutputWriter", "UploadController"},
             "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice"},
@@ -300,7 +302,8 @@ class CompositionStructureTests(unittest.TestCase):
                      "PauseController", "PauseScheduleService", "PreviewFollower", "PreviewFormatting",
                      "PreviewMotion", "PreviewPresentation", "PreviewSmoothing", "PrintCoordinator",
                      "PrinterBinding", "PrinterConfig", "PrintState",
-                     "RemoteFileService", "RemoteJobService", "ToolheadController", "ToolheadPolicy", "UploadController"):
+                     "ConsoleController", "ConsolePolicy", "RemoteFileService", "RemoteJobService",
+                     "ToolheadController", "ToolheadPolicy", "UploadController"):
             source = (PLUGINS / (name + ".py")).read_text()
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.FunctionDef) and node.name == "__init__":

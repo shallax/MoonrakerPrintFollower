@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill-rule="evenodd">
+  <!-- Thermometer: rounded bulb over a vertical stem, the mercury
+       centre cut out by the evenodd rule. No fills here: UM.ColorImage
+       injects the theme colour into the root svg element, so the glyph
+       follows Cura's theme and scaling. -->
+  <path d="M10.4 2.6a1.6 1.6 0 0 1 1.6-1.6h0a1.6 1.6 0 0 1 1.6 1.6v6a1.6 1.6 0 0 1-1.6 1.6h0a1.6 1.6 0 0 1-1.6-1.6z"/>
+  <path d="M12 7a4.5 4.5 0 1 0 .001 9A4.5 4.5 0 0 0 12 7zM12 13.6a2.2 2.2 0 1 0 .001 4.4A2.2 2.2 0 0 0 12 13.6z"/>
+</svg>

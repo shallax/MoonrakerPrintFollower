@@ -4,15 +4,16 @@ import json
 import os
 import re
 from copy import deepcopy
-from PyQt6.QtCore import QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from UM.Resources import Resources
 from PyQt6.QtGui import QDesktopServices
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
+from .ConsoleController import ConsoleController
 from .MonitorCamera import MonitorCamera
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
-from .MonitorFormatting import core_values, peripheral_values
+from .MonitorFormatting import core_values, endstop_values, peripheral_values
 from dataclasses import replace
 
 from .PrinterConfig import normalise_temperature_chart
@@ -101,11 +102,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     webcamsChanged = pyqtSignal()
     temperatureChartChanged = pyqtSignal()
     temperatureChartLegendChanged = pyqtSignal()
+    consoleChanged = pyqtSignal()
     cameraTransformChanged = pyqtSignal()
     peripheralsChanged = pyqtSignal()
     excludeObjectsChanged = pyqtSignal()
     powerDevicesChanged = pyqtSignal()
     systemChanged = pyqtSignal()
+    endstopsChanged = pyqtSignal()
+    showProbePointsChanged = pyqtSignal()
     actionChanged = pyqtSignal()
     controlsChanged = pyqtSignal()
     emergencyStopChanged = pyqtSignal()
@@ -118,8 +122,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     cameraRefreshChanged = pyqtSignal()
 
     _SIGNAL_KEYS = (
-        ("monitorChanged", ("monitorState", "monitorFilename", "monitorProgress", "monitorLayer", "monitorElapsed",
-                            "monitorEta", "monitorFinish", "monitorSpeed", "monitorFlow", "monitorPosition", "monitorMessage")),
+        ("monitorChanged", ("monitorState", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
+                            "improvingEta", "improveEtaProgress", "improveEtaPhase", "monitorElapsed",
+                            "monitorEta", "monitorEtaBasis", "monitorFinish", "monitorSpeed", "monitorFlow",
+                            "monitorPosition", "monitorMessage", "monitorLayerSource")),
         ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
         ("temperatureChartChanged", ("temperatureChart",)),
         ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
@@ -129,6 +135,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
+        ("endstopsChanged", ("endstopItems", "endstopSummary")),
         ("actionChanged", ("printActive", "canPausePrint", "canResumePrint", "canCancelPrint", "actionBusy",
                            "actionStatus", "emergencyHoldProgress")),
         ("controlsChanged", ("monitorLayerHeight", "macroNames", "hasQuadGantryLevel", "hasBedMesh", "canRunSetup",
@@ -142,17 +149,29 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("infoPaneChanged", ("infoCollapsed",)),
         ("statusPaneChanged", ("statusCollapsed",)),
         ("sectionsChanged", ("sectionExpandedMap",)),
+        ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
+        ("consoleChanged", ("consoleHistory", "consolePending", "consoleStatus")),
         ("typedControlsChanged", ("temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
                                   "bedMeshProfileNames", "bedMeshRows", "bedMeshColumns", "bedMeshValues", "bedMeshMinimum",
                                   "bedMeshMaximum", "bedMeshRange", "bedMeshXMin", "bedMeshXMax", "bedMeshYMin", "bedMeshYMax",
                                   "bedMeshRangeText", "bedMeshPreviewVisible")),
     )
 
-    def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh):
+    def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
+                 request_load=None, request_monitor_download=None):
         super().__init__(output_controller, number_of_extruders)
         self._client, self._print_state, self._config, self._apply_config, self._mesh = \
             client, print_state, config, apply_config, bed_mesh
+        # The "improve ETA" action reuses the facade's load-current-print
+        # flow (download + index), passed in as an explicit capability.
+        self._request_load = request_load
+        # The monitor-only variant: download + index WITHOUT the preview
+        # render (the author's optimisation); the preview's own load
+        # finds the file already local and skips the re-download.
+        self._request_monitor_download = request_monitor_download
+        self._show_probe_points = bool(getattr(self._config(), "show_probe_points", False))
+        self._improving_eta = False
         self._values = {}
         state = _read_state()
         self._controls_locked = state["controlsLocked"]
@@ -164,6 +183,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The chart config is per-printer (sensor names differ between
         # machines): it lives in the PrinterConfig record, adopting the
         # legacy global JSON block once on first upgrade.
+        # The legacy global block migrates only into the FIRST printer
+        # record that is empty; a second printer configured before the
+        # upgrade starts fresh. One-time migration, by design.
         per_printer = normalise_temperature_chart(getattr(self._config(), "temperature_chart", {}))
         if per_printer:
             self._chart_config = per_printer
@@ -184,8 +206,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._controls = MonitorControls(self._data, self._commands, self._tuning, bed_mesh, config, self)
         self._camera = MonitorCamera(self._data, config, apply_config, self)
         self._toolhead = ToolheadController(self._data, self._commands, self)
+        self._console = ConsoleController(self._data, self._commands, config, apply_config, self)
         for signal in (self._data.changed, self._commands.changed, self._controls.changed, self._camera.changed,
-                       self._toolhead.changed, bed_mesh.changed):
+                       self._toolhead.changed, self._console.changed, bed_mesh.changed):
             signal.connect(self._publish)
         # The history feeds once per auxiliary reply, not per publish
         # (per-publish feeding duplicated samples and halved the window);
@@ -208,11 +231,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _publish(self):
         previous = self._values
-        values = core_values(self._data.snapshot, self._print_state(), self._client.connected)
+        snapshot = self._print_state()
+        values = core_values(self._data.snapshot, snapshot, self._client.connected)
         values.update(peripheral_values(self._data.snapshot))
+        values.update(endstop_values(self._data.snapshot, self._client.connected))
         values.update(self._controls.values)
         values.update(self._camera.values)
         values.update(self._toolhead.values)
+        values.update(self._console.values)
         commands, mesh = self._commands, self._mesh.snapshot
         values.update(printActive=commands.print_active, canPausePrint=commands.state == "printing" and not commands.busy,
             canResumePrint=commands.state == "paused" and not commands.busy,
@@ -232,7 +258,20 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             cameraRefreshNonce=self._camera_refresh_nonce,
             sectionExpandedMap=dict(self._sections),
             temperatureChart=self._chart_value(),
-            temperatureChartLegend=self._legend_value())
+            temperatureChartLegend=self._legend_value(),
+            showProbePoints=self._show_probe_points,
+            improvingEta=(snapshot.load_active or self._improving_eta) and not snapshot.index_ready,
+            improveEtaProgress=(max(0.0, min(1.0, snapshot.download_fraction))
+                                if (snapshot.load_active or self._improving_eta) and snapshot.download_fraction is not None else -1.0),
+            improveEtaPhase=("Downloading…" if (snapshot.load_active or self._improving_eta) and snapshot.download_fraction is not None
+                             else "Indexing…" if (snapshot.load_active or self._improving_eta) and snapshot.indexing
+                             else "Resolving…" if snapshot.load_active or self._improving_eta else ""))
+        if self._improving_eta and (snapshot.index_ready or not snapshot.load_active):
+            # The index landed, or the download/build failed and the
+            # coordinator cleared its flags (panel finding P1-1): the
+            # hourglass ends and the glyph becomes the retry affordance.
+            # The 90 s timer stays as the last resort for a hung pull.
+            self._improving_eta = False
         self._values = values
         try: self.setCameraUrl(QUrl(self._camera.url))
         except AttributeError: pass
@@ -248,10 +287,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
     monitorFilename = value_property(str, "monitorFilename", monitorChanged, "")
-    monitorProgress = value_property(int, "monitorProgress", monitorChanged, 0)
+    monitorProgress = value_property(float, "monitorProgress", monitorChanged, 0.0)
     monitorLayer = value_property(str, "monitorLayer", monitorChanged, "—")
+    monitorLayerProgress = value_property(float, "monitorLayerProgress", monitorChanged, -1.0)
+    monitorLayerSource = value_property(str, "monitorLayerSource", monitorChanged, "")
+    improvingEta = value_property(bool, "improvingEta", monitorChanged, False)
+    improveEtaProgress = value_property(float, "improveEtaProgress", monitorChanged, -1.0)
+    improveEtaPhase = value_property(str, "improveEtaPhase", monitorChanged, "")
     monitorElapsed = value_property(str, "monitorElapsed", monitorChanged, "00:00:00")
     monitorEta = value_property(str, "monitorEta", monitorChanged, "—")
+    monitorEtaBasis = value_property(str, "monitorEtaBasis", monitorChanged, "")
     monitorFinish = value_property(str, "monitorFinish", monitorChanged, "—")
     monitorSpeed = value_property(str, "monitorSpeed", monitorChanged, "100%")
     monitorFlow = value_property(str, "monitorFlow", monitorChanged, "100%")
@@ -280,6 +325,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     activeWebcamIndex = value_property(int, "activeWebcamIndex", webcamsChanged, -1)
     temperatureChart = value_property(QVariant, "temperatureChart", temperatureChartChanged, {})
     temperatureChartLegend = value_property(QVariant, "temperatureChartLegend", temperatureChartLegendChanged, {})
+    endstopItems = value_property(QVariant, "endstopItems", endstopsChanged, [])
+    endstopSummary = value_property(str, "endstopSummary", endstopsChanged, "")
+    showProbePoints = value_property(bool, "showProbePoints", showProbePointsChanged, False)
+    consoleHistory = value_property(QVariant, "consoleHistory", consoleChanged, [])
+    consolePending = value_property(int, "consolePending", consoleChanged, 0)
+    consoleStatus = value_property(str, "consoleStatus", consoleChanged, "")
     cameraName = value_property(str, "cameraName", cameraTransformChanged, "")
     cameraRotation = value_property(int, "cameraRotation", cameraTransformChanged, 0)
     cameraFlipHorizontal = value_property(bool, "cameraFlipHorizontal", cameraTransformChanged, False)
@@ -487,6 +538,36 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self.canCancelPrint: self._commands.send("Cancel", "printer/print/cancel")
     @pyqtSlot(str)
     def excludeObject(self, name): self._controls.exclude(name)
+    @pyqtSlot(str, result=bool)
+    def sendConsoleCommand(self, text): return self._console.send(text)
+    @pyqtSlot()
+    def clearConsoleHistory(self): self._console.clear()
+    @pyqtSlot()
+    def improveEta(self):
+        # Download and index for the Monitor only — no preview render
+        # unless the user loads it there later. The glyph turns into an
+        # hourglass until the index lands, the pull fails, or the 90 s
+        # timeout gives up; a click while busy is a legitimate retry
+        # (the request path is idempotent and coalesced).
+        if self._request_monitor_download is not None:
+            self._improving_eta = True
+            self._publish()
+            self._request_monitor_download()
+            QTimer.singleShot(90000, self._improve_eta_timeout)
+
+    def _improve_eta_timeout(self):
+        if self._improving_eta:
+            self._improving_eta = False
+            self._publish()
+    @pyqtSlot(bool)
+    def setShowProbePoints(self, show):
+        if self._show_probe_points is bool(show):
+            return
+        self._show_probe_points = bool(show)
+        config = self._config()
+        if getattr(config, "show_probe_points", None) != self._show_probe_points:
+            self._apply_config(replace(config, show_probe_points=self._show_probe_points))
+        self._publish()
     @pyqtSlot(str, bool)
     def setPowerDevice(self, name, on): self._controls.set_power(name, on)
     @pyqtSlot(int)

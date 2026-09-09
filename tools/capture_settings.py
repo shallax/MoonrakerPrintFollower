@@ -182,6 +182,14 @@ class SettingsManager(QObject):
     def settingsTranslateRemove(self):
         return ""
 
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsTraceLayer(self):
+        return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsTraceHttp(self):
+        return False
+
     # --- Connection test ---
     @pyqtProperty(str, notify=testStatusChanged)
     def testStatus(self):
@@ -465,7 +473,7 @@ def main():
         if tab_bar is None:
             raise RuntimeError("settings tab bar not found in the rendered page")
 
-        tab_names = ("connection", "following", "upload")
+        tab_names = ("connection", "following", "upload", "diagnostics")
         if tab_bar.property("count") != len(tab_names):
             raise RuntimeError("settings page tab count changed: expected %d, got %s"
                                % (len(tab_names), tab_bar.property("count")))

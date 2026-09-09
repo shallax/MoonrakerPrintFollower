@@ -12,8 +12,11 @@ Item {
 
     property var printer: null
     property bool compact: false
+    property bool showProbePoints: false  // grid overlay of every probe position
     property real hoverX: -1  // snapped item x of the hovered probe point
     property real hoverY: -1
+    property real _hoverMouseX: -1  // raw cursor, so refresh() can re-snap
+    property real _hoverMouseY: -1
     property int hoverColumn: -1
     property int hoverMeshRow: -1
     property string hoverText: ""
@@ -21,6 +24,13 @@ Item {
     signal clicked
 
     function refresh() {
+        // A live mesh publish recolours the plot under a parked
+        // cursor; re-snap so the readout row and the marker ring
+        // follow the NEW data instead of showing the pre-refresh Z
+        // (the temperature chart re-snaps the same way).
+        if (root._hoverMouseX >= 0) {
+            root.snap(root._hoverMouseX, root._hoverMouseY);
+        }
         meshCanvas.requestPaint();
     }
 
@@ -99,7 +109,7 @@ Item {
         root.hoverMeshRow = meshRow;
         root.hoverX = bounds.offsetX + (column + 0.5) * cellWidth;
         root.hoverY = bounds.offsetY + (screenRow + 0.5) * cellHeight;
-        root.hoverText = "X " + (root.printer.bedMeshXMin + (column + 0.5) * xSpan / columns).toFixed(1) + " mm   ·   Y " + (root.printer.bedMeshYMin + (meshRow + 0.5) * ySpan / rows).toFixed(1) + " mm   ·   Z " + value.toFixed(3) + " mm";
+        root.hoverText = "X " + (root.printer.bedMeshXMin + (column + 0.5) * xSpan / columns).toFixed(1) + " mm   ·   Y " + (root.printer.bedMeshYMin + (meshRow + 0.5) * ySpan / rows).toFixed(1) + " mm   ·   Height " + value.toFixed(3) + " mm";
     }
 
     // The tooltip sits under the mouse area so it can never steal the
@@ -138,6 +148,20 @@ Item {
                     ctx.fillRect(bounds.offsetX + column * cellWidth, bounds.offsetY + screenRow * cellHeight, cellWidth + 1, cellHeight + 1);
                 }
             }
+            // Probe-point overlay: a dot at every probe position so the
+            // sampling grid is visible (detail view, toggled).
+            if (root.showProbePoints) {
+                ctx.fillStyle = UM.Theme.getColor("text");
+                ctx.globalAlpha = 0.8;
+                for (var pr = 0; pr < rows; ++pr) {
+                    for (var pc = 0; pc < columns; ++pc) {
+                        ctx.beginPath();
+                        ctx.arc(bounds.offsetX + (pc + 0.5) * cellWidth, bounds.offsetY + (pr + 0.5) * cellHeight, Math.max(1.0, Math.min(2.0, Math.min(cellWidth, cellHeight) * 0.06)), 0, 2 * Math.PI);
+                        ctx.fill();
+                    }
+                }
+                ctx.globalAlpha = 1.0;
+            }
             // Hover crosshair: a ring and tick marks around the snapped
             // probe point (detail view only).
             if (!root.compact && root.hoverColumn >= 0) {
@@ -162,11 +186,15 @@ Item {
         cursorShape: root.compact ? Qt.PointingHandCursor : Qt.CrossCursor
         onPositionChanged: {
             if (!root.compact) {
+                root._hoverMouseX = mouse.x;
+                root._hoverMouseY = mouse.y;
                 root.snap(mouse.x, mouse.y);
             }
         }
         onExited: {
             if (!root.compact) {
+                root._hoverMouseX = -1;
+                root._hoverMouseY = -1;
                 root.snap(-1, -1);
             }
         }
@@ -174,6 +202,7 @@ Item {
     }
 
     onPrinterChanged: meshCanvas.requestPaint()
+    onShowProbePointsChanged: meshCanvas.requestPaint()
     onHoverXChanged: {
         if (!root.compact) {
             meshCanvas.requestPaint();

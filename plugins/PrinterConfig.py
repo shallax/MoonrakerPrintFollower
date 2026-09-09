@@ -57,6 +57,8 @@ class PrinterConfig:
     auto_preview: bool = False
     z_fallback: bool = True
     z_tolerance: float = 0.04
+    trace_layer: bool = False
+    trace_http: bool = False
     path_follow: bool = True
     path_smoothing: bool = True
     show_toolhead_indicator: bool = True
@@ -92,6 +94,8 @@ class PrinterConfig:
     # lock).
     temperature_chart: Dict[str, Any] = field(default_factory=dict)
     console_history: List[str] = field(default_factory=list)
+    # The bed-mesh pop-over's probe-point overlay, per printer.
+    show_probe_points: bool = False
 
     @property
     def frontend_target(self) -> str:
@@ -150,6 +154,7 @@ class PrinterConfig:
         for key in (
             "enabled", "moonraker_layer_is_one_based", "auto_preview",
             "z_fallback", "path_follow", "path_smoothing", "show_toolhead_indicator",
+            "trace_layer", "trace_http",
             "upload_dialog", "upload_start_print", "upload_remember_state",
             "upload_autohide_message", "camera_mirror",
         ):
@@ -194,6 +199,8 @@ class PrinterConfigStore:
         "auto_preview": "moonraker_print_follower/auto_preview",
         "z_fallback": "moonraker_print_follower/z_fallback",
         "z_tolerance": "moonraker_print_follower/z_tolerance",
+        "trace_layer": "moonraker_print_follower/trace_layer",
+        "trace_http": "moonraker_print_follower/trace_http",
         "path_follow": "moonraker_print_follower/path_follow",
     }
     LEGACY_DEFAULTS = {
@@ -205,6 +212,8 @@ class PrinterConfigStore:
         "auto_preview": False,
         "z_fallback": True,
         "z_tolerance": 0.04,
+        "trace_layer": False,
+        "trace_http": False,
         "path_follow": True,
     }
 

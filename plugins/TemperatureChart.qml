@@ -24,6 +24,7 @@ Item {
     property real hoverX: -1  // item x of the hover cursor; -1 = none
     property string hoverClock: ""  // HH:MM:SS at the snapped cursor
     property var hoverValues: []    // [{label, color, text}] per visible series
+    property point hoverCursor: Qt.point(-1, -1)  // raw cursor in item coordinates
     property string tooltipText: ""
     signal clicked
 
@@ -52,13 +53,17 @@ Item {
             }
             // Setpoints join the domain so a droop to a new target is
             // visible while it happens, not only once the actual nearly
-            // arrives (target > 0 = heater on).
-            var targets = series[i].targets;
-            for (var t = 0; t < targets.length; ++t) {
-                for (var u = 0; u < targets[t].length; ++u) {
-                    if (targets[t][u][1] > 0) {
-                        minTemp = Math.min(minTemp, targets[t][u][1]);
-                        maxTemp = Math.max(maxTemp, targets[t][u][1]);
+            // arrives (target > 0 = heater on) — and only while targets
+            // are shown: hiding them must not leave the domain inflated
+            // by a far-away setpoint.
+            if (chart.showTargets) {
+                var targets = series[i].targets;
+                for (var t = 0; t < targets.length; ++t) {
+                    for (var u = 0; u < targets[t].length; ++u) {
+                        if (targets[t][u][1] > 0) {
+                            minTemp = Math.min(minTemp, targets[t][u][1]);
+                            maxTemp = Math.max(maxTemp, targets[t][u][1]);
+                        }
                     }
                 }
             }
@@ -93,11 +98,19 @@ Item {
         return (elapsed - _minElapsed) / (_maxElapsed - _minElapsed) * width;
     }
 
+    function _plotBottom() {
+        // Full-size charts reserve a strip below the plot for the
+        // HH:MM ticks — with breathing room, not butted against the
+        // plot — and so they never paint over the bottom temperature
+        // label; the mini sparkline uses the whole height.
+        return root.compact ? height : Math.max(1, height - 22);
+    }
+
     function _yFor(value) {
         if (_maxTemp <= _minTemp) {
-            return height;
+            return _plotBottom();
         }
-        return height - (value - _minTemp) / (_maxTemp - _minTemp) * height;
+        return _plotBottom() - (value - _minTemp) / (_maxTemp - _minTemp) * _plotBottom();
     }
 
     function _strokeColor(seriesColor, alpha) {
@@ -139,11 +152,15 @@ Item {
         return text;
     }
 
+    function _fontPixels() {
+        var font = UM.Theme.getFont("default");
+        return Math.max(9, Math.round(font.pointSize * 96 / 72));
+    }
+
     function _fontString() {
         // The canvas context needs a CSS pixel font string; handing it
         // the theme's QFont spams warnings and renders a default font.
-        var font = UM.Theme.getFont("default");
-        return Math.max(9, Math.round(font.pointSize * 96 / 72)) + "px '" + font.family + "'";
+        return root._fontPixels() + "px sans-serif";
     }
 
     function _updateHover(x) {
@@ -163,27 +180,42 @@ Item {
         if (snapped !== _hoverSnap) {
             _hoverSnap = snapped;
             overlay.requestPaint();
-        }
-        hoverClock = _clockText(snapped);
-        var values = [];
-        var series = chart.series !== undefined ? chart.series : [];
-        for (var i = 0; i < series.length; ++i) {
-            if (!series[i].visible || series[i].points.length === 0) {
-                continue;
+            // Publications are gated on the snapped second too: history
+            // is append-only, so a given second's values never change,
+            // and re-publishing an identical-content array on every
+            // mousemove would just fire change signals for nothing.
+            hoverClock = _clockText(snapped);
+            var values = [];
+            var series = chart.series !== undefined ? chart.series : [];
+            for (var i = 0; i < series.length; ++i) {
+                if (!series[i].visible || series[i].points.length === 0) {
+                    continue;
+                }
+                var index = _nearestIndex(series[i].points, snapped);
+                values.push({
+                        "label": series[i].label,
+                        "color": series[i].color,
+                        "text": index >= 0 ? series[i].points[index][1].toFixed(1) + "°C" : "—"
+                    });
             }
-            var index = _nearestIndex(series[i].points, snapped);
-            values.push({
-                    "label": series[i].label,
-                    "color": series[i].color,
-                    "text": index >= 0 ? series[i].points[index][1].toFixed(1) + "°" : "—"
-                });
+            hoverValues = values;
         }
-        hoverValues = values;
     }
 
     onChartChanged: {
         _recomputeBounds();
         dataCanvas.requestPaint();
+        // The window scrolls under a parked cursor: re-snap the hover so
+        // the overlay line, markers and readout follow the data instead
+        // of sitting at pre-scroll positions. _hoverSnap is cleared
+        // first so the publish runs even when the new elapsed second
+        // collides with the old one — after a gap reset the wall clock
+        // and values both change while the snap can stay equal, and a
+        // legend toggle must not leave a ghost row in the tooltip.
+        if (!root.compact && root.hoverX >= 0) {
+            _hoverSnap = -1;
+            _updateHover(root.hoverX);
+        }
     }
     onWidthChanged: {
         _recomputeBounds();
@@ -199,6 +231,11 @@ Item {
         if (visible) {
             _recomputeBounds();
             dataCanvas.requestPaint();
+            // The pop-over can close with the cursor parked over the
+            // chart; reopening must not show a stale overlay cursor at
+            // a pre-scroll position (the data canvas repaints above,
+            // the overlay did not).
+            overlay.requestPaint();
         }
     }
     onHoverXChanged: _updateHover(hoverX)
@@ -226,7 +263,7 @@ Item {
 
             // Horizontal grid + temperature labels.
             for (var g = 0; g <= lines; ++g) {
-                var gy = g * height / lines;
+                var gy = g * root._plotBottom() / lines;
                 ctx.strokeStyle = gridColor;
                 ctx.lineWidth = 1;
                 ctx.beginPath();
@@ -238,7 +275,12 @@ Item {
                     ctx.fillStyle = labelColor;
                     ctx.font = root._fontString();
                     ctx.textAlign = "left";
-                    ctx.fillText(value.toFixed(0) + "°", 4, gy - 3);
+                    // The g = 0 row would baseline above the canvas
+                    // edge; clamp by the actual font ascent so the top
+                    // value stays fully visible at any theme size.
+                    // Temperatures carry their unit: the plugin follows
+                    // Cura, which always displays °C.
+                    ctx.fillText(value.toFixed(0) + "°C", 4, Math.max(gy - 3, Math.ceil(root._fontPixels() * 0.8) + 3));
                 }
             }
 
@@ -252,8 +294,19 @@ Item {
                     if (clock !== "") {
                         ctx.fillStyle = labelColor;
                         ctx.font = root._fontString();
-                        ctx.textAlign = "center";
-                        ctx.fillText(clock, root._xFor(telapsed), height - 2);
+                        // Edge ticks align inward so they never clip at
+                        // the canvas sides; the strip sits below the
+                        // plot, clear of the temperature labels.
+                        if (tick === 0) {
+                            ctx.textAlign = "left";
+                            ctx.fillText(clock, 2, height - 2);
+                        } else if (tick === ticks) {
+                            ctx.textAlign = "right";
+                            ctx.fillText(clock, width - 2, height - 2);
+                        } else {
+                            ctx.textAlign = "center";
+                            ctx.fillText(clock, root._xFor(telapsed), height - 2);
+                        }
                     }
                 }
                 ctx.textAlign = "left";
@@ -273,11 +326,11 @@ Item {
                         }
                         ctx.fillStyle = root._strokeColor(series[p].color, 0.22);
                         ctx.beginPath();
-                        ctx.moveTo(root._xFor(powerSeg[0][0]), height);
+                        ctx.moveTo(root._xFor(powerSeg[0][0]), root._plotBottom());
                         for (var q = 0; q < powerSeg.length; ++q) {
-                            ctx.lineTo(root._xFor(powerSeg[q][0]), height - powerSeg[q][1] * height);
+                            ctx.lineTo(root._xFor(powerSeg[q][0]), root._plotBottom() - powerSeg[q][1] * root._plotBottom());
                         }
-                        ctx.lineTo(root._xFor(powerSeg[powerSeg.length - 1][0]), height);
+                        ctx.lineTo(root._xFor(powerSeg[powerSeg.length - 1][0]), root._plotBottom());
                         ctx.closePath();
                         ctx.fill();
                     }
@@ -384,11 +437,13 @@ Item {
         onPositionChanged: {
             if (!root.compact) {
                 root.hoverX = mouse.x;
+                root.hoverCursor = Qt.point(mouse.x, mouse.y);
             }
         }
         onExited: {
             if (!root.compact) {
                 root.hoverX = -1;
+                root.hoverCursor = Qt.point(-1, -1);
             }
         }
         onClicked: root.clicked()

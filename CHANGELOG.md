@@ -2,6 +2,64 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 3.5.0
+
+Version 3.5.0 is the informational half of Mainsail parity: the Monitor
+tab becomes the at-a-glance view of a running printer, with temperature
+history, a bed-mesh map, a write-only console, endstop readouts and a
+better remaining-time estimate.
+
+### Highlights
+- **Temperature history chart** in the Information pane: a 30-minute
+  rolling window at the 1 s auxiliary cadence, solid actuals in
+  per-sensor colours, translucent target bands whose top edge is the
+  setpoint marker, and heater power as a translucent 0-100% area on a
+  second axis — all toggleable from a legend (per-sensor visibility,
+  setpoints, power) that persists per printer, with the axis labelled
+  in °C (the plugin follows Cura, which has no temperature-unit
+  preference). Hovering snaps a cursor
+  to the samples and the clock plus per-series readouts follow the
+  mouse as a floating tooltip that never resizes the chart; a compact
+  mini-chart of the primary sensors (extruders, bed, chamber heater)
+  sits in the pane, and a click opens the full chart.
+- **Bed-mesh mini map** in the Information pane; the enlarged detail
+  view gains a crosshair that snaps to probe points with coordinates
+  and Z offsets.
+- **Write-only G-code console** below the webcam: arbitrary commands,
+  Enter-to-send, up/down recall and a per-printer persisted history.
+  HTTP acknowledgement means queued at the Klipper boundary, never
+  executed — Klipper's replies are websocket-only, and the console
+  says exactly that. Deliberately unrestricted: typing a command is
+  intent, so there is no command-safety table.
+- **Endstop readouts**: live pin states from a one-shot
+  `printer/query_endstops/status` poll, with an explicit
+  not-homed-yet state.
+- **Layer-anchored ETA**: the remaining time prefers the estimate from
+  the G-code index's per-layer timing scaled by the observed speed
+  ratio (routed through the one PreviewFollower owner), falling back to
+  the previous blend when the print was never downloaded and indexed.
+  The blend itself uses the slicer's estimate from Moonraker's file
+  metadata (a server-side header parse, not a download) when the print
+  was never loaded, and the layer-height readout uses the same source.
+  The ETA readout shows the active basis (colour and tooltip), and a
+  small download glyph beside the estimate runs the download-and-index
+  flow WITHOUT loading the preview (the author's optimisation: the
+  render is only paid when the print is loaded in the Preview, which
+  then reuses the already-downloaded file).
+- One shared pop-over shell for the Information pane's glanceable
+  widgets; each pop-over dismisses with its Close button, Escape, or
+  an outside click, and no longer disturbs the pane layout.
+
+### Notes
+- Chart history is session-scoped: a Cura restart starts the chart
+  empty, and a monitor pause longer than half a minute starts a fresh
+  window ("Collecting temperature history…").
+- The 1 s chart cadence applies while printing or paused; the idle
+  auxiliary poll stays at 2.5 s.
+- Chart colours, visibility and the console history persist per
+  printer; the pane chrome (collapsed sections, pane collapse, lock)
+  stays global.
+
 ## 3.4.0
 
 Version 3.4.0 is the first Monitor-parity release: manual control of the

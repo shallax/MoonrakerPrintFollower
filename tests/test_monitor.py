@@ -95,6 +95,15 @@ class MonitorModelContractTests(unittest.TestCase):
         end = DASHBOARD_QML.index("id: macroSection", start)
         self.assertIn("jogEnabled", DASHBOARD_QML[start:end])
         self.assertNotIn("actionBusy", DASHBOARD_QML[start:end])
+        # The compass is a 3×3 grid (9 cells) with the empty centre: the
+        # four arrows must appear in north-west-east-south order so the
+        # south button sits under north, never under west.
+        grid = DASHBOARD_QML[DASHBOARD_QML.index('text: "↑ Y"'):DASHBOARD_QML.index('text: "↓ Y"') + len('text: "↓ Y"')]
+        positions = [grid.index(token) for token in ('text: "↑ Y"', 'text: "← X"', 'text: "→ X"', 'text: "↓ Y"')]
+        self.assertEqual(positions, sorted(positions))
+        compass = DASHBOARD_QML[DASHBOARD_QML.index('columns: 3'):DASHBOARD_QML.index('ColumnLayout {', DASHBOARD_QML.index('text: "↑ Y"'))]
+        self.assertEqual(compass.count('PreviewSecondaryButton {'), 4)
+        self.assertEqual(compass.count('Item {'), 5)
 
     def test_same_dashboard_chain_and_power_lock_explanation(self):
         self.assertIn('"MoonrakerMonitorBedMesh.qml"', OUTPUT_PLUGIN)
@@ -158,13 +167,15 @@ class MonitorModelContractTests(unittest.TestCase):
         # Plugin-drawn glyphs feed the header through a url, and the
         # frontend launcher lives in the Printer status title row.
         self.assertIn('sectionIcon: "Fan"', MONITOR_QML)
+        self.assertIn('sectionIconUrl: Qt.resolvedUrl("Thermometer.svg")', MONITOR_QML)
+        self.assertIn('Qt.resolvedUrl("Download.svg")', MONITOR_QML)
         self.assertIn('sectionIconUrl: Qt.resolvedUrl("Power.svg")', DASHBOARD_QML)
         self.assertIn('text: "Open the Moonraker frontend."', MONITOR_QML)
         self.assertNotIn('text: "Open Moonraker frontend"', MONITOR_QML)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 12)
         self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 11)
-        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 9)
+        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
         # Filament state is colour-coded: green detected, orange runout.
         self.assertIn('"#43a047"', MONITOR_QML)
         self.assertIn('"#fb8c00"', MONITOR_QML)
@@ -225,6 +236,123 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("Target bands", TEMP_CHART_QML)
         self.assertIn("hoverClock", TEMP_CHART_QML)
         self.assertIn('"wallOrigin"', TEMP_CHART_QML)
+        # The mini chart carries a live legend row (dot, name, value) so
+        # the unlabelled sparklines stay readable, and the mesh detail's
+        # readout row is permanent so the map never resizes on hover.
+        self.assertIn("modelData.label + \" \" + value", MONITOR_QML)
+        self.assertIn("Hover the map for probe coordinates", MONITOR_QML)
+        # The chart's hover values live in a cursor-following tooltip
+        # OUTSIDE the clipped card (allowed to overflow any boundary) —
+        # there is no in-card readout row to stretch the pop-up, and the
+        # chart is declared exactly once in the pop-over.
+        self.assertIn("id: chartHoverTooltip", MONITOR_QML)
+        self.assertNotIn("Hover the chart for per-series values", MONITOR_QML)
+        self.assertEqual(MONITOR_QML.count("id: chartPanelChart"), 1)
+        self.assertIn("mapToItem(root, chartPanelChart.hoverCursor", MONITOR_QML)
+        self.assertIn("hoverCursor", TEMP_CHART_QML)
+        # The top gridline's temperature label must be clamped by the
+        # FONT ASCENT into the canvas (it used to baseline at y = -3,
+        # always off-screen, and the fixed 10 px clamp shaved digit
+        # tops on larger desktop fonts).
+        self.assertIn("Math.ceil(root._fontPixels() * 0.8) + 3", TEMP_CHART_QML)
+        # Units are explicit (°C — Cura has no temperature-unit
+        # preference, so the plugin follows Cura) on the axis, the
+        # tooltip rows and both legend live values; the X-axis tick
+        # strip keeps breathing room below the plot.
+        self.assertIn('toFixed(0) + "°C"', TEMP_CHART_QML)
+        self.assertIn('points[index][1].toFixed(1) + "°C"', TEMP_CHART_QML)
+        self.assertEqual(MONITOR_QML.count('toFixed(1) + "°C"'), 2)
+        self.assertIn("Math.max(1, height - 22)", TEMP_CHART_QML)
+        # The console history lives in a terminal-styled pane: dark,
+        # fixed-width, newest line pinned to the bottom, with a prompt
+        # glyph on the input row.
+        for token in ('color: "#161b22"', "No commands yet — lines you send appear here.", 'text: ">"'):
+            self.assertIn(token, MONITOR_QML)
+        # Both pop-overs open at the same offset over the camera column
+        # so a second click on the opener dismisses without moving the
+        # mouse (the author's chosen position, mesh-style).
+        self.assertEqual(MONITOR_QML.count("x: cameraArea.x + UM.Theme.getSize(\"default_margin\").width"), 2)
+        # meshDetail is component-scoped: exactly one in-scope refresh
+        # (inside meshContent) may reference it, or the outer handler
+        # throws and kills the pop-over auto-close.
+        self.assertEqual(MONITOR_QML.count("meshDetail.refresh()"), 1)
+        self.assertGreater(MONITOR_QML.index("meshDetail.refresh()"), MONITOR_QML.index("id: meshContent"))
+        # The snapped-second gate must WRAP the publications, and the
+        # chart-changed re-snap must clear the snap first so a gap
+        # reset or legend toggle republishes even on a snap collision.
+        self.assertGreater(TEMP_CHART_QML.index("hoverClock = _clockText(snapped);"),
+                           TEMP_CHART_QML.index("if (snapped !== _hoverSnap) {"))
+        on_chart = TEMP_CHART_QML[TEMP_CHART_QML.index("onChartChanged: {"):]
+        self.assertIn("_hoverSnap = -1;", on_chart[:800])
+        self.assertIn("_updateHover(root.hoverX);", on_chart[:800])
+        # The freshly created detail map rehydrates the persisted
+        # probe-points toggle at creation (never after a toggle event).
+        self.assertIn("showProbePoints: root.printer != null ? root.printer.showProbePoints : false", MONITOR_QML)
+        # A refused console send keeps the typed draft.
+        self.assertIn("if (root.printer.sendConsoleCommand(consoleInput.text)) {", MONITOR_QML)
+        # When every primary sensor is hidden, up to two visible
+        # non-primary sensors stand in for the mini chart.
+        self.assertIn("others.slice(0, 2)", MONITOR_QML)
+        self.assertIn("2 - primary.length", MONITOR_QML)
+        self.assertIn('"series": root.miniChartSeries', MONITOR_QML)
+        # The Layer row discloses which source produced the value, and
+        # the terminal picks an installed monospace face at runtime
+        # (the generic and comma lists do not resolve everywhere).
+        self.assertIn("monitorLayerSource", MONITOR_QML)
+        self.assertIn("monitorLayerSource !== undefined", MONITOR_QML)
+        self.assertIn("Layer source: ", MONITOR_QML)
+        # The model DECLARES the source (a dynamic setProperty would be
+        # undefined at QML creation and the .length read would throw).
+        self.assertIn('value_property(str, "monitorLayerSource", monitorChanged, "")', MONITOR_MODEL)
+        self.assertIn('"monitorLayerSource"', MONITOR_MODEL)
+        # A slim bar under the layer value shows the within-layer
+        # progress; it hides while the layer has no height anchor.
+        self.assertIn("monitorLayerProgress >= 0", MONITOR_QML)
+        self.assertIn("Layer progress — how far through the current layer.", MONITOR_QML)
+        self.assertIn("without loading it into the preview", MONITOR_QML)
+        # The glyph's in-progress state: a non-clickable hourglass.
+        self.assertIn('Qt.resolvedUrl("Hourglass.svg")', MONITOR_QML)
+        self.assertIn("root.printer.improvingEta", MONITOR_QML)
+        # Both progress figures carry two decimals.
+        self.assertIn("monitorProgress.toFixed(2)", MONITOR_QML)
+        self.assertIn("(root.printer.monitorLayerProgress * 100).toFixed(2)", MONITOR_QML)
+        # The Improve-ETA bar: determinate during the download, a
+        # plugin-owned sweep while resolving/indexing (Cura's themed
+        # indeterminate renders as a static full bar).
+        self.assertIn("improveEtaProgress", MONITOR_QML)
+        self.assertIn("NumberAnimation on sweepPhase", MONITOR_QML)
+        self.assertIn("(1 - Math.abs(2 * improveEtaBar.sweepPhase - 1))", MONITOR_QML)
+        self.assertIn("The spacer keeps the glyph hugging", MONITOR_QML)
+        self.assertIn("SequentialAnimation on rotation", MONITOR_QML)
+        self.assertIn("PauseAnimation", MONITOR_QML)
+        self.assertIn("root.printer.improveEtaPhase", MONITOR_QML)
+        self.assertIn("download_fraction", MONITOR_MODEL + (PLUGINS / "RemoteFileService.py").read_text())
+        self.assertIn('"monitorLayerProgress"', MONITOR_MODEL)
+        self.assertIn("function monoFamily()", MONITOR_QML)
+        self.assertIn("Qt.fontFamilies()", MONITOR_QML)
+        # The tooltip sizes to its content (no width cap: the author
+        # ruled it may overflow any boundary) and flips above only when
+        # there is no room below the cursor.
+        self.assertIn("width: tooltipColumn.implicitWidth + 2", MONITOR_QML)
+        self.assertIn("y: chartPanel.hoverCursor.y + height + 16 > root.height", MONITOR_QML)
+        # Send and Clear share one row beside the input (the author's
+        # side-by-side request) — no RowLayout may open between them.
+        send_clear = MONITOR_QML[MONITOR_QML.index('text: "Send"'):MONITOR_QML.index('text: "Clear"')]
+        self.assertNotIn("RowLayout {", send_clear)
+        # The mesh readout says Height, not a third coordinate, and a
+        # live refresh re-snaps a parked cursor.
+        self.assertIn('Height " + value.toFixed(3)', BED_MESH_MAP_QML)
+        self.assertIn("root.snap(root._hoverMouseX", BED_MESH_MAP_QML)
+        self.assertIn('"Probe points"', MONITOR_QML)
+        self.assertIn("showProbePoints", BED_MESH_MAP_QML)
+        # The colour row offers a full picker beside the quick swatches.
+        self.assertIn('import QtQuick.Dialogs', MONITOR_QML)
+        self.assertIn("chartColorDialog", MONITOR_QML)
+        self.assertIn('text: "Custom…"', MONITOR_QML)
+        self.assertIn("setShowProbePoints", MONITOR_QML)
+        # Terminal order: the history sits above the input row.
+        self.assertLess(MONITOR_QML.index("id: consoleHistoryView"), MONITOR_QML.index("id: consoleInput"))
+        self.assertIn("All sensors hidden — click to re-enable one in the chart.", MONITOR_QML)
 
     def test_system_restart_surface(self):
         for token in ("firmwareRestart", "hostRestart", "FIRMWARE_RESTART", "machine/reboot"):
@@ -259,9 +387,15 @@ class MonitorModelContractTests(unittest.TestCase):
         # delegates fill their cell equally, so click zones stay
         # matched and the labels cannot elide at narrow pane widths.
         grid = DASHBOARD_QML[DASHBOARD_QML.index("id: zOffsetGrid"):DASHBOARD_QML.index('text: "Clear Z offset"')]
+        # Up row first, down row second, each four-across with equal
+        # layout cells; the up model must precede the down model.
+        self.assertLess(grid.index('text: "↑ "'), grid.index('text: "↓ "'))
+        self.assertEqual(grid.count("RowLayout {"), 2)
         self.assertGreaterEqual(grid.count("Layout.fillWidth: true"), 2)
-        self.assertIn("columns: 2", grid)
-        self.assertGreaterEqual(grid.count("fixedWidthMode: true"), 2)
+        # fixedWidthMode must NOT combine with Layout.fillWidth: the two
+        # fight on every layout pass and sent the grid into an endless
+        # invalidate loop that froze pane collapses.
+        self.assertNotIn("fixedWidthMode: true", grid)
 
     def test_temperature_presets_are_buttons_not_an_implied_selection(self):
         self.assertIn("temperaturePresetItems", DASHBOARD_QML)
@@ -365,6 +499,46 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertIn("id: " + slider_id, DASHBOARD_QML)
         self.assertGreaterEqual(DASHBOARD_QML.count("root.tuningSliderPressed = pressed"), 9)
 
+    def test_monitor_uses_plugin_outline_bars_and_sliders(self):
+        # The themed ProgressBar/Slider render a black slab in the
+        # inactive-window palette (author's screenshot) — the monitor's
+        # bars and sliders are all plugin-owned outline components now,
+        # so a bare themed control may not creep back in.
+        for file_text in (MONITOR_QML, DASHBOARD_QML):
+            # Every "ProgressBar {"/"Slider {" token must be the plugin
+            # outline components (the substring check covers both).
+            self.assertEqual(file_text.count("ProgressBar {"), file_text.count("OutlineProgressBar {"))
+            self.assertEqual(file_text.count("Slider {"), file_text.count("OutlineSlider {"))
+        self.assertIn("OutlineProgressBar {", MONITOR_QML)
+        self.assertGreaterEqual(DASHBOARD_QML.count("OutlineSlider {"), 9)
+        indicator = (PLUGINS / "LoadProgressIndicator.qml").read_text()
+        # The indicator bar's track is an outline too: transparent
+        # interior, lining border, Cura-blue fill.
+        self.assertIn('color: "transparent"', indicator)
+        self.assertIn('border.color: UM.Theme.getColor("lining")', indicator)
+        self.assertIn('border.width: UM.Theme.getSize("default_lining").width', indicator)
+        self.assertIn('UM.Theme.getColor("primary")', indicator)
+        # The outline components fill in Cura's brand blue (the same
+        # accent as buttons and slider handles), never the text colour.
+        bar = (PLUGINS / "OutlineProgressBar.qml").read_text()
+        slider = (PLUGINS / "OutlineSlider.qml").read_text()
+        self.assertIn('UM.Theme.getColor("primary")', bar)
+        self.assertNotIn('color: UM.Theme.getColor("text")', bar)
+        self.assertNotIn('border.color: UM.Theme.getColor("text")', slider)
+        self.assertIn('UM.Theme.getColor("primary")', slider)
+        # Every bar corner uses Cura's own progressbar radius ("little
+        # rounded ends"), never a full pill — and every bar/slider
+        # radius needs cornerSide, because Cura.RoundedRectangle forces
+        # radius 0 without it (the corners silently render square).
+        for text in (bar, indicator, MONITOR_QML):
+            self.assertIn('UM.Theme.getSize("progressbar_radius")', text)
+        for text, corners in ((bar, 2), (slider, 3), (indicator, 3), (MONITOR_QML, 3)):
+            self.assertEqual(text.count("cornerSide:"), corners, text[:40])
+        # The pop-over shell must tolerate instantiation without a
+        # parent (the engine gate creates every document standalone):
+        # an unguarded parent.width read is a TypeError there.
+        self.assertIn("parent != null ?", POPOVER_QML)
+
     def test_deferred_slider_and_monitor_ux_contracts(self):
         self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 9)
         self.assertGreaterEqual(DASHBOARD_QML.count("onMoved:"), 9)
@@ -455,10 +629,144 @@ class MonitorFormattingTests(unittest.TestCase):
         )
         self.assertEqual(core_values(snapshot, physical, True)["monitorLayerHeight"], "0.150 mm")
 
+    def test_monitor_progress_reports_two_decimals(self):
+        snapshot = SimpleNamespace(core={
+            "print_stats": {"state": "printing", "print_duration": 30},
+            "virtual_sdcard": {"progress": 0.655766},
+            "gcode_move": {},
+            "motion_report": {},
+        })
+        physical = SimpleNamespace(layer=SimpleNamespace(index=0, total=0, source="", thickness=None),
+                                   estimated_time=None, metadata_complete=False, layer_eta=None, layer_progress=None)
+        self.assertEqual(core_values(snapshot, physical, True)["monitorProgress"], 65.58)
+
+    def test_layer_progress_comes_from_the_snapshot_byte_fraction(self):
+        # The within-layer fraction comes from the index's byte ranges
+        # (the nozzle's Z never moves within a layer, so Z cannot
+        # express it); without an index the UI hides the bar.
+        from plugins.PrintState import PhysicalLayer
+        snapshot = SimpleNamespace(core={
+            "print_stats": {"state": "printing", "print_duration": 30},
+            "virtual_sdcard": {"progress": 0.5},
+            "gcode_move": {},
+            "motion_report": {},
+        })
+        physical = SimpleNamespace(layer=PhysicalLayer(1, 10), estimated_time=None,
+                                   metadata_complete=False, layer_eta=None, layer_progress=0.5)
+        self.assertAlmostEqual(core_values(snapshot, physical, True)["monitorLayerProgress"], 0.5, places=6)
+        physical = SimpleNamespace(layer=PhysicalLayer(1, 10), estimated_time=None,
+                                   metadata_complete=False, layer_eta=None, layer_progress=None)
+        self.assertEqual(core_values(snapshot, physical, True)["monitorLayerProgress"], -1.0)
+
     def test_eta_prefers_slicer_time_for_early_and_resumed_prints(self):
         self.assertAlmostEqual(estimate_remaining(3600, 0.02, 7 * 3600, True), 6 * 3600, delta=1)
         self.assertAlmostEqual(estimate_remaining(3 * 3600, 0.10, 7 * 3600, True), 4 * 3600, delta=1)
         self.assertIsNone(estimate_remaining(120, 0.50, None, False))
+
+    def test_eta_appears_as_soon_as_moonraker_reports_a_little_progress(self):
+        # The author's connect-time expectation: the unoptimised blend
+        # shows up with only a small progress signal, not a minute into
+        # the print (the old 60 s / 2% floor left the readout empty).
+        self.assertAlmostEqual(estimate_remaining(15, 0.01, None, True), 1485, delta=1)
+        self.assertIsNone(estimate_remaining(5, 0.01, None, True))       # too early
+        self.assertIsNone(estimate_remaining(15, 0.001, None, True))    # no progress signal
+
+    def test_layer_resolver_bounds_the_estimate_by_the_total_print_height(self):
+        # An underestimated step (noise, a mis-cancelled hop) must not
+        # claim a layer above the object's own height.
+        config = SimpleNamespace(moonraker_layer_is_one_based=True, z_fallback=True, z_tolerance=0.05)
+        resolver = LayerResolver()
+        status = {"print_stats": {"state": "printing", "info": {"current_layer": 0, "total_layer": 12}},
+                  "virtual_sdcard": {"progress": 0.5}}
+        for z, e in ((9.8, 1.0), (9.8, 2.0), (9.9, 3.0), (9.9, 4.0)):
+            status["gcode_move"] = {"gcode_position": [100, 100, z, e]}
+            resolver.resolve(status, config, metadata={"object_height": 10})
+        # step measured as 0.1 (the only ascent) -> round((9.9-0.1)/0.1)
+        # = 98 layers, inside the 100-layer object-height bound.
+        layer = resolver.resolve(status, config, metadata={"object_height": 10})
+        self.assertEqual(layer.index, 98)
+
+    def test_layer_resolver_measures_the_layer_height_when_the_header_never_says(self):
+        # Some slicer headers declare no layer height at all; the
+        # resolver measures it from the observed Z increments (layer
+        # changes dominate positive deltas while extrusion advances).
+        config = SimpleNamespace(moonraker_layer_is_one_based=True, z_fallback=True, z_tolerance=0.05)
+        resolver = LayerResolver()
+        status = {"print_stats": {"state": "printing", "info": {"current_layer": 0, "total_layer": 12}},
+                  "virtual_sdcard": {"progress": 0.5}}
+        for z, e in ((0.3, 1.0), (0.3, 2.0), (0.5, 3.0), (0.5, 4.0), (0.7, 5.0), (0.7, 6.0)):
+            status["gcode_move"] = {"gcode_position": [100, 100, z, e]}
+            resolver.resolve(status, config, metadata={})
+        layer = resolver.resolve(status, config, metadata={})
+        self.assertEqual(layer.index, 2)  # step measured as 0.2, first assumed 0.2
+        self.assertEqual(layer.source, "extrusion-guarded Z height")
+
+    def test_layer_resolver_seeds_a_mid_print_connect_and_heals_a_wipe_seed(self):
+        # The author's trace: a mid-print connect at z=9.75 and 65%
+        # progress reported no current_layer. At significant progress
+        # the position IS the real print height — seed freely — and a
+        # wipe above the print self-heals when the nozzle descends
+        # (printing never descends, so a lower candidate is the
+        # correction; three consecutive observations avoid boundary
+        # jitter oscillation).
+        config = SimpleNamespace(moonraker_layer_is_one_based=True, z_fallback=True, z_tolerance=0.05)
+        metadata = {"layer_height": 0.2, "first_layer_height": 0.3}
+        resolver = LayerResolver()
+        status = {"print_stats": {"state": "printing", "info": {"current_layer": 0, "total_layer": 12}},
+                  "virtual_sdcard": {"progress": 0.5},
+                  "gcode_move": {"gcode_position": [100, 100, 10, 1.0]}}
+        self.assertIsNone(resolver.resolve(status, config, metadata=metadata).index)  # baseline only
+        status["gcode_move"] = {"gcode_position": [100, 100, 9.75, 2.0]}
+        self.assertEqual(resolver.resolve(status, config, metadata=metadata).index, 47)  # mid-print height seeds
+        for e in (3.0, 4.0, 5.0):
+            status["gcode_move"] = {"gcode_position": [100, 100, 0.3, e]}
+            resolver.resolve(status, config, metadata=metadata)
+        layer = resolver.resolve(status, config, metadata=metadata)
+        self.assertEqual(layer.index, 0)  # the descent corrected the wipe seed
+        self.assertEqual(layer.source, "extrusion-guarded Z height")
+
+    def test_layer_resolver_ignores_the_parked_z_before_the_file_starts(self):
+        # The Z estimate must not seed from the parked height (z=10
+        # while heating used to read as "Layer 50" for the whole
+        # print); it engages only once the virtual SD has started.
+        config = SimpleNamespace(moonraker_layer_is_one_based=True, z_fallback=True, z_tolerance=0.05)
+        metadata = {"layer_height": 0.2, "first_layer_height": 0.3}
+        resolver = LayerResolver()
+        status = {"print_stats": {"state": "printing", "info": {"current_layer": 0, "total_layer": 12}},
+                  "virtual_sdcard": {"progress": 0.0},
+                  "gcode_move": {"gcode_position": [100, 100, 10, 0.0]}}
+        self.assertEqual(resolver.resolve(status, config, metadata=metadata).source, "print start")
+        # The file starts at the first-layer height and extrusion
+        # advances: the estimate tracks from there.
+        status["virtual_sdcard"] = {"progress": 0.05}
+        status["gcode_move"] = {"gcode_position": [100, 100, 0.3, 0.5]}
+        layer = resolver.resolve(status, config, metadata=metadata)
+        self.assertEqual(layer.index, 0)
+        self.assertEqual(layer.source, "extrusion-guarded Z height")
+
+    def test_layer_resolver_does_not_claim_layer_1_for_a_stuck_current_layer(self):
+        # A printer whose G-code never emits per-layer stats reports
+        # current_layer=0 forever; past ~3% progress claiming "Layer 1"
+        # would be a stuck lie — the honest value is None.
+        config = SimpleNamespace(moonraker_layer_is_one_based=True, z_fallback=False, z_tolerance=0.05)
+        stuck = LayerResolver().resolve(
+            {"print_stats": {"state": "printing", "info": {"current_layer": 0, "total_layer": 12}},
+             "virtual_sdcard": {"progress": 0.5}}, config)
+        self.assertIsNone(stuck.index)
+
+    def test_layer_resolver_shows_layer_1_at_print_start(self):
+        # An ACTIVE print at current_layer=0 (before the first
+        # SET_PRINT_STATS_INFO) reads as layer 1 — the author expects
+        # values as soon as Moonraker reports them, not "—" until the
+        # print advances a layer.
+        config = SimpleNamespace(moonraker_layer_is_one_based=True, z_fallback=False, z_tolerance=0.05)
+        active = LayerResolver().resolve(
+            {"print_stats": {"state": "printing", "info": {"current_layer": 0, "total_layer": 12}}}, config)
+        self.assertEqual(active.index, 0)
+        self.assertEqual(active.source, "print start")
+        idle = LayerResolver().resolve(
+            {"print_stats": {"state": "standby", "info": {"current_layer": 0, "total_layer": 12}}}, config)
+        self.assertIsNone(idle.index)  # pre-print suppression stays
 
     def test_malformed_bed_mesh_and_mcu_payloads_are_rejected_or_degraded(self):
         self.assertEqual(parse_bed_mesh(None), {})
@@ -515,6 +823,34 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         self.assertIn("PWM_OBJECT_PREFIXES", controls)
         self.assertNotIn("neopixel ", data)
         self.assertNotIn("fan_generic ", data)
+
+
+class EndstopAndEtaBasisTests(unittest.TestCase):
+    def test_endstop_values_projects_axes_and_the_not_homed_state(self):
+        from plugins.MonitorFormatting import endstop_values
+        snapshot = SimpleNamespace(endstops={"x": "TRIGGERED", "y": "open", "z": "open"})
+        items, summary = endstop_values(snapshot)["endstopItems"], endstop_values(snapshot)["endstopSummary"]
+        self.assertEqual([(item["name"], item["state"], item["triggered"]) for item in items],
+                         [("X", "TRIGGERED", True), ("Y", "open", False), ("Z", "open", False)])
+        self.assertEqual(summary, "")
+        empty = SimpleNamespace(endstops={})
+        self.assertEqual(endstop_values(empty)["endstopItems"], [])
+        self.assertIn("Not homed yet", endstop_values(empty)["endstopSummary"])
+
+    def test_core_values_prefers_the_layer_anchored_eta_and_names_the_basis(self):
+        from plugins.MonitorFormatting import core_values
+        snapshot = SimpleNamespace(core={"print_stats": {"state": "printing", "print_duration": 30},
+                                        "virtual_sdcard": {"progress": 0.1}},
+                                   auxiliary={}, server={})
+        physical = SimpleNamespace(layer=SimpleNamespace(index=1, total=20, thickness=None),
+                                   estimated_time=600.0, metadata_complete=True, layer_eta=420.0)
+        values = core_values(snapshot, physical, True)
+        self.assertEqual(values["monitorEtaBasis"], "index")
+        self.assertEqual(values["monitorEta"], "00:07:00")
+        physical = SimpleNamespace(layer=SimpleNamespace(index=1, total=20, thickness=None),
+                                   estimated_time=600.0, metadata_complete=True, layer_eta=None)
+        values = core_values(snapshot, physical, True)
+        self.assertEqual(values["monitorEtaBasis"], "blend")
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
@@ -983,6 +1319,31 @@ class MonitorQtTests(unittest.TestCase):
         self.assertNotIn("ghost_sensor", chart["colors"])
         self.assertEqual(chart["colors"], {})
 
+    def test_chart_config_set_before_history_arrives_still_persists(self):
+        # The author's suspicion: changing colours before the first aux
+        # reply must survive — the history loads AFTER the config.
+        model = self.monitor()
+        model.setTemperatureSensorVisible("extruder", False)
+        model.setTemperatureSensorColor("heater_bed", "#123456")
+        self.assertEqual(self.follower.current_printer_config().temperature_chart,
+                         {"visible": {"extruder": False}, "colors": {"heater_bed": "#123456"},
+                          "showTargets": True, "showPower": True})
+        model._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
+        model._data.auxiliaryChanged.emit()
+        chart = self.chart_of(model)
+        extruder = next(item for item in chart["series"] if item["name"] == "extruder")
+        bed = next(item for item in chart["series"] if item["name"] == "heater_bed")
+        self.assertFalse(extruder["visible"])
+        self.assertEqual(bed["color"], "#123456")
+        second = self.monitor()
+        second._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
+        second._data.auxiliaryChanged.emit()
+        chart = self.chart_of(second)
+        extruder = next(item for item in chart["series"] if item["name"] == "extruder")
+        bed = next(item for item in chart["series"] if item["name"] == "heater_bed")
+        self.assertFalse(extruder["visible"])
+        self.assertEqual(bed["color"], "#123456")
+
     def test_temperature_chart_defaults_when_the_block_is_missing(self):
         import UM.Resources as UMResourcesModule
         section_path = UMResourcesModule.Resources.getStoragePath(
@@ -1024,6 +1385,506 @@ class MonitorQtTests(unittest.TestCase):
         with open(section_path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
         self.assertNotIn("temperatureChart", payload)
+
+    def test_console_sends_scripts_and_persists_history_per_printer(self):
+        model = self.monitor()
+        model.sendConsoleCommand("  M104 S200  ")
+        scripts = [request for request in self.transport.requests
+                   if request.path == "printer/gcode/script"]
+        self.assertEqual(len(scripts), 1)
+        self.assertEqual(scripts[0].options["body"], {"script": "M104 S200"})
+        self.assertEqual(model.consoleHistory, ["M104 S200"])
+        # The history persists per printer, never in the global file.
+        self.assertEqual(self.follower.current_printer_config().console_history, ["M104 S200"])
+        second = self.monitor()
+        self.assertEqual(second.consoleHistory, ["M104 S200"])
+        # The caption and status stay honest: HTTP acks mean queued,
+        # never executed.
+        self.assertEqual(model.consoleStatus, "Sent to Klipper's queue — HTTP gives no output or errors.")
+
+    def test_console_empty_input_and_clear_and_refused_sends(self):
+        model = self.monitor()
+        # The slot reports acceptance so the UI can keep the draft on
+        # a refusal instead of destroying an unsent G-code line.
+        self.assertFalse(model.sendConsoleCommand("   "))
+        self.assertEqual(model.consoleHistory, [])
+        self.assertIn("Empty command", model.consoleStatus)
+        self.assertTrue(model.sendConsoleCommand("G28"))
+        self.assertEqual(model.consoleHistory, ["G28"])
+        model.clearConsoleHistory()
+        self.assertEqual(model.consoleHistory, [])
+        self.assertEqual(self.follower.current_printer_config().console_history, [])
+        # A refused send (lane full / Moonraker down) reports honestly
+        # and does not enter the history.
+        model._console._commands.request = lambda *args, **kwargs: False
+        self.assertFalse(model.sendConsoleCommand("G1 X10"))
+        self.assertEqual(model.consoleHistory, [])
+        self.assertIn("try again", model.consoleStatus)
+
+    def test_endstop_and_eta_surfaces(self):
+        # The Improve-ETA action is a small download glyph beside the
+        # Remaining value, not a full-width button row.
+        improve = MONITOR_QML[MONITOR_QML.index('Qt.resolvedUrl("Download.svg")'):MONITOR_QML.index("onClicked: root.printer.improveEta()")]
+        self.assertIn("Download.svg", improve)
+        self.assertNotIn("Improve ETA — download", MONITOR_QML)
+        for token in ("endstopItems", "endstopSummary",
+                      "modelData.name + \": \" + modelData.state", "modelData.triggered"):
+            self.assertIn(token, DASHBOARD_QML)  # the readout lives in the Toolhead section
+        self.assertNotIn('title: "Endstops"', MONITOR_QML)
+        self.assertNotIn('sectionId: "endstops"', MONITOR_QML)
+        # The not-homed copy lives in the projection, not the QML.
+        self.assertIn("Not homed yet — home an axis to populate", FORMATTING)
+        for token in ("endstopItems", "endstopSummary", "endstopsChanged",
+                      "printer/query_endstops/status", "refresh_endstops"):
+            self.assertIn(token, MONITOR_MODEL + (PLUGINS / "MonitorData.py").read_text())
+        for token in ("improveEta()", "monitorEtaBasis === \"blend\"", "monitorEtaBasis === \"index\""):
+            self.assertIn(token, MONITOR_QML)
+        for token in ("monitorEtaBasis", "def improveEta(", "layer_eta", "remaining_end",
+                      "request_monitor_download"):
+            self.assertIn(token, MONITOR_MODEL + (PLUGINS / "MonitorFormatting.py").read_text()
+                          + (PLUGINS / "PreviewFollower.py").read_text() + (PLUGINS / "PrintState.py").read_text())
+        self.assertIn("confirmDownloadForMonitor", (PLUGINS / "MoonrakerPrintFollower.py").read_text())
+
+    def test_console_burst_drains_pending_per_completion(self):
+        # k sends while the lane is busy queue behind it; per-idle-epoch
+        # accounting leaked k-1 phantom pending (an intermediate
+        # completion pumps the next queued command, so the lane never
+        # looked idle). Each console-labelled completion must drain
+        # exactly one.
+        model = self.monitor()
+        for i in range(3):
+            self.assertTrue(model.sendConsoleCommand(f"G1 X{i}"))
+        self.assertEqual(model.consolePending, 3)
+        for i in range(3):
+            scripts = self.scripts()
+            self.assertEqual(len(scripts), i + 1)  # each completion pumps the next
+            scripts[i].callback({"result": "ok"}, None)
+            self.assertEqual(model.consolePending, 3 - (i + 1))
+        self.assertEqual(model.consolePending, 0)
+
+    def test_send_console_command_slot_registers_a_bool_for_qml(self):
+        # Without result=bool the metaobject registers the slot as void
+        # and QML receives undefined — falsy — so the console draft
+        # would never clear on an accepted send and Enter would re-send
+        # the same command. Python calls cannot see this; only the
+        # registered metaobject can.
+        model = self.monitor()
+        meta = model.metaObject()
+        method = meta.method(meta.indexOfMethod("sendConsoleCommand(QString)"))
+        self.assertGreaterEqual(meta.indexOfMethod("sendConsoleCommand(QString)"), 0)
+        self.assertEqual(method.typeName(), "bool")
+
+    def test_queued_console_line_refused_at_pump_time_still_drains_pending(self):
+        # A console line queued behind a macro and then refused when the
+        # lane pops it must still drain its pending increment — the
+        # queue-time accept counted it, so the pump-time refusal counts
+        # as its completion.
+        model = self.monitor()
+        self.deliver_state("standby")
+        model._controls._macros = {"TEST_MACRO": "macro-name"}
+        model.runMacro("TEST_MACRO", "")
+        self.assertTrue(model.sendConsoleCommand("G28"))  # queues behind the macro
+        self.assertEqual(model.consolePending, 1)
+        model._console._commands._data.request = lambda *args, **kwargs: False
+        self.scripts()[0].callback({"result": "ok"}, None)  # macro completes; pump pops the console line
+        self.assertEqual(model.consolePending, 0)
+
+    def test_improve_eta_downloads_for_the_monitor_without_a_preview_load(self):
+        # The author's optimisation: the Monitor's Improve-ETA action
+        # downloads and indexes the print WITHOUT loading it into the
+        # preview; the index service pulls the file itself.
+        model = self.monitor()
+        self.deliver_state("printing")
+        self.qt.events(1)
+        # The capability gates on a configured binding, which needs an
+        # attached machine — the harness applies config directly, so
+        # simulate the attachment and re-apply the config against it.
+        self.follower._runtime.binding._machine_id = "printer-a"
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        model.improveEta()
+        self.qt.events(1)
+        requests = [request for request in self.transport.requests if request.owner == "files"]
+        self.assertTrue(requests)  # metadata pull for the index build
+
+    def test_improve_eta_flips_to_hourglass_until_the_index_lands(self):
+        # The glyph turns into a non-clickable hourglass while the
+        # monitor-only download runs; the state ends when the snapshot
+        # reports the index ready.
+        model = self.monitor()
+        self.deliver_state("printing")
+        self.qt.events(1)
+        self.follower._runtime.binding._machine_id = "printer-a"
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        model.improveEta()
+        self.assertTrue(model.improvingEta)
+        # While the index builds the phase reads Indexing… and the bar
+        # goes indeterminate (-1); then the index lands and the state
+        # ends. The fake snapshot needs the full core_values shape —
+        # the poll-driven publishes during teardown keep reading it.
+        original = model._print_state
+        model._print_state = lambda: SimpleNamespace(
+            layer=SimpleNamespace(index=0, total=0, source="", thickness=None),
+            estimated_time=None, metadata_complete=False, layer_eta=None,
+            layer_progress=None, index_ready=False,
+            download_fraction=None, indexing=True, load_active=True)
+        model._publish()
+        self.assertTrue(model.improvingEta)
+        self.assertEqual(model.improveEtaPhase, "Indexing…")
+        self.assertEqual(model.improveEtaProgress, -1.0)
+        model._print_state = lambda: SimpleNamespace(
+            layer=SimpleNamespace(index=0, total=0, source="", thickness=None),
+            estimated_time=None, metadata_complete=False, layer_eta=None,
+            layer_progress=None, index_ready=True,
+            download_fraction=None, indexing=False, load_active=False)
+        model._publish()
+        self.assertFalse(model.improvingEta)
+        model._print_state = original
+
+    def test_improve_eta_hourglass_ends_when_the_download_fails(self):
+        # Panel P1-1: a failed monitor-only download used to strand the
+        # hourglass forever (_monitor_requested only cleared when the
+        # index landed or the BUILD failed — the download's error phase
+        # was not terminal, the retry ladder is consumer-driven, and the
+        # disabled glyph removed the only retry affordance). Now the
+        # files-service error phase is terminal and the model's flag
+        # clears as soon as nothing is in flight.
+        model = self.monitor()
+        self.deliver_state("printing")
+        self.qt.events(1)
+        self.follower._runtime.binding._machine_id = "printer-a"
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        model.improveEta()
+        self.qt.events(1)
+        self.assertTrue(model.improvingEta)
+        files = [request for request in self.transport.requests if request.owner == "files"]
+        self.assertTrue(files)
+        for request in files:
+            request.callback(None, "boom")
+        self.deliver_state("printing")  # refresh recomputes the snapshot
+        self.qt.events(1)
+        self.assertFalse(model.improvingEta)
+        coordinator = self.follower._runtime.coordinator
+        self.assertFalse(coordinator._monitor_requested)
+        # The glyph stays the retry affordance: the QML no longer gates
+        # it on the busy flag.
+        self.assertNotIn("!root.printer.improvingEta", MONITOR_QML)
+
+    def test_binding_reset_clears_the_monitor_download_flag(self):
+        # Panel P1-1 (session-interruption wedge): reset_binding must
+        # not leak _monitor_requested into the next binding.
+        model = self.monitor()
+        self.deliver_state("printing")
+        self.qt.events(1)
+        self.follower._runtime.binding._machine_id = "printer-a"
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        model.improveEta()
+        coordinator = self.follower._runtime.coordinator
+        self.assertTrue(coordinator._monitor_requested)
+        coordinator.reset_binding()
+        self.assertFalse(coordinator._monitor_requested)
+        model._publish()  # the model clears its flag on the next snapshot
+        self.assertFalse(model.improvingEta)
+
+    def test_metadata_fetch_latches_after_success_and_retries_after_failure(self):
+        # Panel ENG-P2-1: the header fetch used to re-request every 30 s
+        # for the whole print (a 10 h job ≈ 1,200 requests of the same
+        # JSON). A successful fetch is now terminal for the job; a
+        # failed one keeps the 30 s retry ladder.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import sys
+        self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        module = sys.modules[type(coordinator).__module__]
+        client = self.follower.client
+
+        def deliver(position):
+            status = {
+                "print_stats": {"filename": "part.gcode", "state": "printing", "print_duration": 30,
+                                "info": {"current_layer": 2, "total_layer": 20}},
+                "virtual_sdcard": {"file_size": 100, "file_position": position},
+                "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1,
+                               "absolute_coordinates": True},
+                "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
+            }
+            client._handle_http_status({"result": {"status": status}}, None, client._generation)
+
+        tick = [1000.0]
+        fake_time = SimpleNamespace(monotonic=lambda: tick[0], time=lambda: 1700000000.0)
+        # The coordinator's clock is patched from the START: the fetch
+        # timestamps must live on the same fake clock as the retry
+        # window, or the real/fake mix blocks the throttle forever.
+        with patch.object(module, "time", fake_time):
+            deliver(20)
+            self.qt.events(1)
+            meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+            self.assertEqual(len(meta), 1)
+            meta[0].callback({"result": {"layer_height": 0.2, "estimated_time": 3600}}, None)
+            for step in range(3):
+                tick[0] += 31.0
+                deliver(20 + step)  # each delivery differs so the poll always refreshes
+                self.qt.events(1)
+            self.assertEqual(len([r for r in self.transport.requests if r.channel == "mr-metadata"]), 1)
+            # A failed fetch must still retry after the throttle window.
+            coordinator._mr_meta = {}
+            tick[0] += 31.0
+            deliver(30)
+            self.qt.events(1)
+        self.assertEqual(len([r for r in self.transport.requests if r.channel == "mr-metadata"]), 2)
+
+    def test_metadata_request_keeps_subfolder_slashes(self):
+        # Panel DOM-P2-3: the coordinator's URL escaped subfolder
+        # separators to %2F while MoonrakerProtocol.metadata_endpoint
+        # does not; picky proxies 404 the escaped form.
+        self.monitor()
+        client = self.follower.client
+        status = {
+            "print_stats": {"filename": "PLA/part.gcode", "state": "printing", "print_duration": 30,
+                            "info": {"current_layer": 2, "total_layer": 20}},
+            "virtual_sdcard": {"file_size": 100, "file_position": 20},
+            "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1,
+                           "absolute_coordinates": True},
+            "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
+        }
+        client._handle_http_status({"result": {"status": status}}, None, client._generation)
+        self.qt.events(1)
+        meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+        self.assertEqual(len(meta), 1)
+        self.assertIn("PLA/part.gcode", meta[0].path)
+        self.assertNotIn("%2F", meta[0].path)
+
+    def test_webcam_list_survives_a_failed_poll(self):
+        # Panel ARCH-P3-1: endstops retain last-known states on error;
+        # webcams used to blank on ANY failed poll ("no camera" during a
+        # printer reboot). Now they follow the same retention principle.
+        model = self.monitor()
+        self.qt.events(1)
+        webcams = [r for r in self.transport.requests if r.channel == "webcams"]
+        self.assertTrue(webcams)
+        webcams[0].callback({"result": {"webcams": [{"name": "Front", "stream_url": "/webcam", "enabled": True}]}}, None)
+        self.qt.events(1)
+        self.assertEqual(model.webcamNames, ["Front"])
+        self.qt.events(1000)  # next poll cycle issues a fresh webcams request
+        later = [r for r in self.transport.requests if r.channel == "webcams"][1:]
+        self.assertTrue(later)
+        later[-1].callback(None, "boom")
+        self.qt.events(1)
+        self.assertEqual(model.webcamNames, ["Front"])
+
+    def test_sweep_phase_advances_on_the_real_engine(self):
+        # The sweep's position is a binding on the bar's sweepPhase; a
+        # bare unqualified reference did NOT resolve through the visual
+        # parent (ReferenceError, sweep frozen). Instantiate the exact
+        # pattern on the real engine and pin that the phase moves.
+        from PyQt6.QtQml import QQmlEngine, QQmlComponent
+        from PyQt6.QtCore import QUrl
+        engine = QQmlEngine()
+        component = QQmlComponent(engine)
+        component.setData("""
+import QtQuick 2.15
+Item {
+    id: probeRoot
+    width: 300
+    height: 40
+    property bool improving: true
+    property real progress: -1
+    Item {
+        id: probeBar
+        objectName: "probeBar"
+        anchors.fill: parent
+        property real sweepPhase: 0
+        NumberAnimation on sweepPhase {
+            running: probeRoot.improving && probeRoot.progress < 0
+            from: 0
+            to: 1
+            duration: 1000
+            loops: Animation.Infinite
+        }
+        Rectangle {
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: parent.width / 3
+            visible: probeRoot.improving && probeRoot.progress < 0
+            x: (1 - Math.abs(2 * probeBar.sweepPhase - 1)) * (parent.width - width)
+        }
+    }
+}
+""".encode(), QUrl("sweep-pin.qml"))
+        self.assertFalse(component.isError(), [str(e) for e in component.errors()])
+        item = component.create()
+        self.assertIsNotNone(item)
+        from PyQt6.QtCore import QObject
+        bar = item.findChild(QObject, "probeBar")
+        before = bar.property("sweepPhase")
+        # The harness pumps a timed event loop; 300 ms of animation
+        # must move the phase.
+        self.qt.events(300)
+        after = bar.property("sweepPhase")
+        self.assertNotEqual(after, before)  # the phase advances
+
+    def test_bed_mesh_visibility_signal_chain_toggles_and_publishes(self):
+        # The author's "Hide bed mesh does nothing in the empty
+        # preview": the overlay's signal was never connected to the
+        # presentation (pre-3.4.0 regression). Pin the presenter side
+        # of the chain — the signal must flip the flag and republish.
+        mesh = self.follower._runtime.bed_mesh
+        presentation = self.follower._runtime.presentation
+        self.assertTrue(mesh.visible)
+        presentation.bedMeshVisibilityRequested.emit(False)
+        self.assertFalse(mesh.visible)
+        self.assertFalse(presentation._values.get("bedMeshVisible"))
+        presentation.bedMeshVisibilityRequested.emit(True)
+        self.assertTrue(mesh.visible)
+
+    def test_preview_load_lights_the_monitor_improving_state(self):
+        # The shared load state: a load kicked off from the PREVIEW
+        # must show the Monitor's hourglass too (the author's sync
+        # report), and both clear when the index lands.
+        model = self.monitor()
+        self.deliver_state("printing")
+        self.qt.events(1)
+        self.follower._runtime.binding._machine_id = "printer-a"
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        coordinator = self.follower._runtime.coordinator
+        coordinator.request_load()
+        coordinator.refresh()
+        model._publish()
+        self.assertTrue(model.improvingEta)
+        self.assertEqual(model.improveEtaPhase, "Resolving…")
+        # The index lands: both surfaces clear.
+        model._print_state = lambda: SimpleNamespace(
+            layer=SimpleNamespace(index=0, total=0, source="", thickness=None),
+            estimated_time=None, metadata_complete=False, layer_eta=None,
+            layer_progress=None, index_ready=True,
+            download_fraction=None, indexing=False, load_active=False)
+        model._publish()
+        self.assertFalse(model.improvingEta)
+
+    def test_preview_load_state_is_busy_until_terminal(self):
+        # The Load current print button must stay disabled through the
+        # whole download+index+render; the presentation carries the
+        # busy state for the indicator.
+        self.monitor()
+        self.deliver_state("printing")
+        self.qt.events(1)
+        self.follower._runtime.binding._machine_id = "printer-a"
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        coordinator = self.follower._runtime.coordinator
+        presentation = self.follower._runtime.presentation
+        coordinator.request_load()
+        coordinator.refresh()
+        self.assertTrue(presentation._values.get("loadBusy"))
+        self.assertIn("Resolving current print…", presentation._values.get("loadPhase", ""))
+
+    def test_preview_load_feedback_surfaces(self):
+        overlay = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
+        panel = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
+        indicator = (PLUGINS / "LoadProgressIndicator.qml").read_text()
+        for source in (overlay, panel):
+            self.assertIn("enabled: !base.loadBusy", source)
+            self.assertIn("LoadProgressIndicator {", source)
+            # Declared on the root: undeclared dynamic names read as
+            # undefined at load time and the bindings were dropped.
+            self.assertIn("property bool loadBusy: false", source)
+            self.assertIn("property real loadProgress: -1", source)
+            self.assertIn("property string loadPhase: \"\"", source)
+        # The Attach/Detach button must not wait for the render:
+        # hasToolpath only flips once the model finishes rendering.
+        self.assertNotIn("base.hasToolpath && (base.followingEnabled", panel)
+        self.assertIn("visible: base.followingEnabled || base.followingPaused", panel)
+        self.assertIn("indicatorBar.sweepPhase", indicator)
+        self.assertIn("busy: false", indicator)
+        presentation = (PLUGINS / "PreviewPresentation.py").read_text()
+        self.assertIn("overlay.bedMeshVisibilityRequested.connect", presentation)
+
+    def test_console_qml_surface(self):
+        for token in ("id: consoleSection", '"G-code command…"', "sendConsoleCommand(",
+                      "clearConsoleHistory()", "no output comes back over HTTP",
+                      "Keys.onReturnPressed", "Keys.onUpPressed", "Keys.onDownPressed",
+                      '"monospace"', "id: consoleHistoryView",
+                      "consoleRecallIndex", "consoleDraft",
+                      # The terminal fills upward: BottomToTop over the
+                      # reversed history pins the newest line to the
+                      # bottom edge; the face itself is picked at
+                      # runtime (see the monoFamily pin).
+                      "ListView.BottomToTop", "consoleHistory.slice().reverse()"):
+            self.assertIn(token, MONITOR_QML)
+        for token in ("consoleHistory", "consolePending", "consoleStatus", "consoleChanged",
+                      "def sendConsoleCommand(", "def clearConsoleHistory("):
+            self.assertIn(token, MONITOR_MODEL)
+
+    def test_no_bisect_debris_and_the_console_is_visible(self):
+        # The 3.5.0 release shipped with the console behind a
+        # "visible: false // BISECT" flag and six labels stripped of
+        # their elide — both invisible to token pins. Behavioural pins:
+        # no BISECT markers may exist, and the console section must not
+        # carry a visibility gate.
+        self.assertNotIn("BISECT", MONITOR_QML)
+        self.assertNotIn("BISECT", DASHBOARD_QML)
+        console = MONITOR_QML[MONITOR_QML.index("id: consoleSection"):MONITOR_QML.index("id: consoleHistoryView")]
+        self.assertNotIn("visible: false", console)
+
+    def test_publishes_without_aux_do_not_append_history(self):
+        # The feed is revision-gated: a publish with no auxiliary
+        # arrival must leave the history revision untouched (the old
+        # per-publish feed duplicated samples and halved the window).
+        model = self.monitor()
+        model._data._update(auxiliary={"extruder": {"temperature": 200.0}})
+        model._data.auxiliaryChanged.emit()
+        revision = model._history.revision
+        model._data._update(core={"print_stats": {"state": "printing"}})
+        self.assertEqual(model._history.revision, revision)
+
+    def test_endstop_query_uses_the_documented_get(self):
+        model = self.monitor()
+        model._data.refresh_endstops()
+        self.qt.events(3)
+        requests = [request for request in self.transport.requests
+                    if request.path == "printer/query_endstops/status"]
+        # refresh_all fires one at activation too, so at least one —
+        # and every endstop poll must use the documented GET.
+        self.assertGreaterEqual(len(requests), 1)
+        self.assertTrue(all(request.method == "GET" for request in requests))
+
+    def test_moonraker_file_metadata_populates_layer_height_and_estimate(self):
+        # Klipper never reports a per-layer thickness. Moonraker's file
+        # metadata parses the slicer header SERVER-SIDE (a tiny JSON
+        # query, not a gcode download), so the layer-height readout and
+        # the slicer estimate populate even for prints the user never
+        # loaded — the author's "no proactive downloads" ruling is
+        # untouched.
+        model = self.monitor()
+        self.deliver_state("printing")
+        self.qt.events(1)
+        requests = [request for request in self.transport.requests
+                    if "server/files/metadata" in request.path]
+        self.assertTrue(requests)
+        requests[-1].callback({"result": {"layer_height": 0.2, "first_layer_height": 0.3, "estimated_time": 3600}},
+                              None)
+        # The coordinator re-publishes its snapshot on the callback; the
+        # model re-reads it on its own publish (its poll timers are far
+        # too slow for a test event-loop spin).
+        model._data.changed.emit()
+        # current_layer=2 (one-based) -> layer index 1 -> step 0.2 mm.
+        self.assertEqual(model.monitorLayerHeight, "0.200 mm")
+        # 3600 s slicer estimate - 30 s elapsed.
+        self.assertEqual(model.monitorEta, "00:59:30")
+        self.assertEqual(model.monitorEtaBasis, "blend")
+
+    def test_endstop_failed_poll_keeps_last_known_states(self):
+        # A transient poll failure must not erase last-known pin states
+        # into a false "Not homed yet" while connected; the states
+        # blank only on invalidation/disconnect.
+        model = self.monitor()
+        model._data._update(endstops={"x": "TRIGGERED", "y": "open"})
+        model._data.refresh_endstops()
+        self.qt.events(1)
+        requests = [request for request in self.transport.requests
+                    if request.path == "printer/query_endstops/status"]
+        self.assertTrue(requests)
+        requests[-1].callback(None, "network blip")
+        self.qt.events(1)
+        self.assertEqual(model._data.snapshot.endstops, {"x": "TRIGGERED", "y": "open"})
 
     def test_controls_lock_and_camera_refresh_nonce(self):
         model = self.monitor()

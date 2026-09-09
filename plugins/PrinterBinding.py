@@ -54,6 +54,7 @@ class PrinterBinding(QObject):
     def apply(self, config):
         if self._closed: return
         previous = self.config
+        self._client.set_trace_http(config.trace_http)
         endpoint_changed = (normalise_url(previous.url), previous.api_key) != (normalise_url(config.url), config.api_key)
         camera_changed = previous.camera_selected != config.camera_selected
         camera_only = camera_changed and replace(previous, camera_selected=config.camera_selected) == config

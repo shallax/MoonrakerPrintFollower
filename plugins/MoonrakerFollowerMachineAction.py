@@ -132,6 +132,14 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return self._config().show_toolhead_indicator
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def settingsTraceLayer(self) -> bool:
+        return self._config().trace_layer
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsTraceHttp(self) -> bool:
+        return self._config().trace_http
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def settingsZFallback(self) -> bool:
         return self._config().z_fallback
 
@@ -281,6 +289,8 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "path_follow": bool(raw.get("path_follow", True)),
                 "path_smoothing": bool(raw.get("path_smoothing", True)),
                 "show_toolhead_indicator": bool(raw.get("show_toolhead_indicator", True)),
+                "trace_layer": bool(raw.get("trace_layer", False)),
+                "trace_http": bool(raw.get("trace_http", False)),
                 "follow_mode": mode,
                 "frontend_url": str(raw.get("frontend_url") or "").strip(),
                 "output_format": str(raw.get("output_format") or "gcode").lower(),

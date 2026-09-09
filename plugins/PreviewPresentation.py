@@ -47,6 +47,12 @@ class PreviewPresentation(QObject):
                     if overlay is not None:
                         self._overlay = overlay
                         overlay.loadClicked.connect(self.loadRequested.emit)
+                        # The overlay's bed-mesh signal must reach the
+                        # presenter too: it was never connected, so the
+                        # empty-preview "Hide bed mesh" clicked into the
+                        # void while the panel variant worked (that one
+                        # IS wired in the actions tuple below).
+                        overlay.bedMeshVisibilityRequested.connect(self.bedMeshVisibilityRequested.emit)
                         overlay.destroyed.connect(lambda: self._overlay_destroyed(overlay))
                         created = True
                 if self._overlay is not None:

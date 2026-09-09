@@ -1,6 +1,7 @@
 """One owner of the active bed-mesh overlay, visibility and Preview controls."""
 from __future__ import annotations
 
+import time
 from types import MappingProxyType
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -20,6 +21,7 @@ class BedMeshPresenter(QObject):
         self._fingerprint = None
         self._node = None
         self._closed = False
+        self._render_error_at = 0.0
         cura.changed.connect(self._render)
         presentation.controlsChanged.connect(self._publish)
         presentation.bedMeshVisibilityRequested.connect(self.set_visible)
@@ -72,9 +74,16 @@ class BedMeshPresenter(QObject):
             if self._node is not None:
                 self._node.setVisible(bool(self._snapshot) and self._visible and self._cura.preview_active)
                 self._cura.controller.getScene().sceneChanged.emit(self._node)
-        except Exception:
-            # A missing renderer/API must not disable printer following.
-            pass
+        except Exception as error:
+            # A missing renderer/API must not disable printer following —
+            # but it must not vanish silently either: the author's
+            # "Hide bed mesh does nothing" report needs the real cause
+            # in Cura's log, throttled to once per 30 s.
+            from UM.Logger import Logger
+            now = time.monotonic()
+            if now - self._render_error_at >= 30:
+                self._render_error_at = now
+                Logger.log("w", "Moonraker bed-mesh render failed: %s", error)
         self._publish()
 
     def _publish(self):

@@ -7,6 +7,12 @@ import math
 import re
 
 
+def result(payload):
+    """The 'result' field of a Moonraker reply, falling back to the
+    payload itself; {} when there is no mapping at all."""
+    return payload.get("result", payload) if isinstance(payload, Mapping) else {}
+
+
 def factor_percent(value) -> str:
     """A speed/flow factor as a percentage, or '—' when the printer did
     not report one (empty snapshot, reconnect, unsupported Klipper)."""
@@ -121,7 +127,11 @@ def duration(seconds):
 
 def estimate_remaining(elapsed, progress, estimate, complete):
     elapsed, progress, estimate = max(0, number(elapsed)), max(0, min(1, number(progress))), number(estimate)
-    by_file = max(0, elapsed / progress - elapsed) if progress >= 0.02 and elapsed >= 60 else None
+    # The by-file blend needs only a little progress signal and must
+    # appear promptly: the author expects the unoptimised values as
+    # soon as Moonraker reports them on connect, not a minute into the
+    # print (the old 60 s / 2% floor left the readout empty at start).
+    by_file = max(0, elapsed / progress - elapsed) if progress >= 0.005 and elapsed >= 10 else None
     if estimate > 0:
         remaining = max(0, estimate - elapsed)
         if remaining > 0:
@@ -141,25 +151,59 @@ def core_values(snapshot, physical, connected):
     layer = physical.layer
     current, total = layer.index, layer.total
     layer_text = f"{current + 1} / {total}" if current is not None and total is not None else str(current + 1) if current is not None else f"— / {total}" if total else "—"
-    eta, finish = "—", "—"
+    eta, finish, basis = "—", "—", ""
     if state == "paused": eta = "Paused"
     elif state == "printing":
-        remaining = estimate_remaining(stats.get("print_duration"), sd.get("progress"), physical.estimated_time, physical.metadata_complete)
+        # The layer-anchored estimate (index timing × observed speed)
+        # wins when the coordinator computed one; the plain blend stays
+        # the fallback and the UI shows which basis is active.
+        remaining = getattr(physical, "layer_eta", None)
+        basis = "index"
+        if remaining is None:
+            remaining = estimate_remaining(stats.get("print_duration"), sd.get("progress"), physical.estimated_time, physical.metadata_complete)
+            basis = "blend"
         if remaining is not None:
             eta = duration(remaining)
             finish = (datetime.now().astimezone() + timedelta(seconds=remaining)).strftime("%a %H:%M" if remaining >= 72000 else "%H:%M")
+    # How far through the CURRENT layer the file position is, from the
+    # index's byte ranges (the nozzle's Z never moves within a layer,
+    # so Z cannot express this). -1 without an index: the bar hides.
+    layer_progress = getattr(physical, "layer_progress", None)
+    if layer_progress is None:
+        layer_progress = -1.0
     position = motion.get("live_position") or ()
     return {
         "monitorState": state.capitalize() if connected else "Disconnected",
         "monitorFilename": str(stats.get("filename") or ""),
-        "monitorProgress": max(0, min(100, round(number(sd.get("progress")) * 100))),
+        "monitorProgress": max(0, min(100, round(number(sd.get("progress")) * 100, 2))),
         "monitorLayer": layer_text, "monitorLayerHeight": f"{layer.thickness:.3f} mm" if layer.thickness is not None else "—",
+        "monitorLayerSource": getattr(layer, "source", ""),
+        "monitorLayerProgress": layer_progress,
         "monitorElapsed": duration(stats.get("print_duration")), "monitorEta": eta, "monitorFinish": finish,
+        "monitorEtaBasis": basis,
         "monitorSpeed": factor_percent(move.get("speed_factor")),
         "monitorFlow": factor_percent(move.get("extrude_factor")),
         "monitorPosition": f"X {number(position[0]):.1f}   Y {number(position[1]):.1f}   Z {number(position[2]):.2f}" if len(position) >= 3 else "—",
         "monitorMessage": str(stats.get("message") or ""),
     }
+
+
+def endstop_values(snapshot, connected=True):
+    """The endstop readout: per-axis pin states, or an explicit
+    "not homed yet" summary — Klipper's endstop values are meaningless
+    before the first homing of a session, and an empty list must not
+    read as a bug."""
+    states = snapshot.endstops or {}
+    items = []
+    for axis in sorted(states):
+        raw = str(states[axis]).strip()
+        if raw:
+            items.append({"name": axis.upper(), "state": raw, "triggered": raw.lower() == "triggered"})
+    # An empty set means two different things: never homed this
+    # session, or disconnected (the snapshot cleared). Only claim
+    # homing is missing while actually connected.
+    summary = "" if items or not connected else "Not homed yet — home an axis to populate the readout."
+    return {"endstopItems": items, "endstopSummary": summary}
 
 
 def parse_mcu_stats(value):

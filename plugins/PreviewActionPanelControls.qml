@@ -10,6 +10,12 @@ Item {
     property bool followingPaused: false
     property bool followingEnabled: false
     property bool configuredForFollowing: false
+    // Declared so the bindings below exist from creation: undeclared
+    // dynamic names read as undefined at load time and the bindings
+    // are dropped before setProperty can ever reach them.
+    property bool loadBusy: false
+    property real loadProgress: -1
+    property string loadPhase: ""
     property bool hasToolpath: false
     property string activePrinterName: ""
     property string statusText: ""
@@ -102,12 +108,18 @@ Item {
 
                 PreviewSecondaryButton {
                     id: followButton
-                    visible: base.hasToolpath && (base.followingEnabled || base.followingPaused)
+                    // NOT gated on hasToolpath: the follower attaches
+                    // at the view swap, but hasToolpath only flips once
+                    // the model finishes RENDERING — the button used to
+                    // wait for the render (the author's "Detach takes a
+                    // long time" report). The follower null-checks the
+                    // view on every drive, so attaching early is safe.
+                    visible: base.followingEnabled || base.followingPaused
                     width: Math.round((buttons.width - base.buttonSpacing) * 0.32)
                     height: UM.Theme.getSize("action_button").height
                     text: base.followingPaused ? "Attach" : "Detach"
                     tooltip: base.followingPaused ? "Attach Cura Preview to the live Moonraker print and resume automatic synchronisation." : "Detach Cura Preview from automatic synchronisation while Moonraker status polling continues. This does not pause the printer."
-                    enabled: base.hasToolpath && (base.followingEnabled || base.followingPaused)
+                    enabled: base.followingEnabled || base.followingPaused
                     onClicked: base.pauseClicked()
                 }
 
@@ -117,7 +129,16 @@ Item {
                     height: UM.Theme.getSize("action_button").height
                     text: "Load current print"
                     tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
+                    // Non-clickable until the load reaches a terminal state.
+                    enabled: !base.loadBusy
                     onClicked: base.loadClicked()
+                }
+
+                LoadProgressIndicator {
+                    width: parent.width
+                    busy: base.loadBusy
+                    progress: base.loadProgress
+                    phase: base.loadPhase
                 }
             }
 

@@ -6,8 +6,8 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release: **3.4.0** (manual toolhead control on the Monitor tab: jog,
-homing, motors off and extrude/retract with a pause-first safety model).
+Current release: **3.5.0** (Monitor awareness: temperature charts, bed-mesh
+mini map, write-only console, endstops and the layer-anchored ETA).
 
 ## Direction
 
@@ -55,22 +55,32 @@ the stream).
   The Information pane's widgets share one interaction model: a small
   glanceable widget in the pane, and a click-to-enlarge pop-over for
   perusal and interaction (one shared pop-over shell, two contents).
-  Chart spec: actuals are solid lines in a customisable, persisted
-  colour per sensor; targets are dashed lines of the same hue at
-  reduced opacity (never a fill — fills occlude the lowest series);
-  heater power is a translucent 0-100% area on a second Y axis;
-  everything toggleable from a Mainsail-style legend (sensor
-  visibility, setpoints, power). Hovering shows a vertical cursor
-  snapped to the 1 s samples with a per-series readout. The mini
-  widget shows hotend and bed actuals only.
+  Chart spec (the author's rulings): a 30-minute rolling window;
+  actuals are solid lines in a customisable, persisted colour per
+  sensor; targets are translucent BANDS beneath the actuals whose top
+  edge is the setpoint marker (dashes were rejected — the actual line
+  chops them at steady state, and a <=0.1-alpha band beneath everything
+  cannot occlude); heater power is a translucent 0-100% area on a
+  second Y axis; everything toggleable from a Mainsail-style legend
+  (sensor visibility, setpoints, power). Hovering shows a vertical
+  cursor snapped to the 1 s samples with a clock and per-series
+  readouts. The mini widget shows the primary sensors (extruders, bed,
+  chamber heater) honouring the legend's visibility.
 - Bed-mesh mini map, also permanent in the Information pane; the
   existing full-size pop-over becomes the click-to-enlarge detail view
   (dense meshes and exact values still need the big canvas), gaining a
   crosshair that snaps to probe points with coordinate and Z-offset
   readouts.
 - G-code console below the webcam: send arbitrary commands with
-  scrollable history.
-- Endstops and stepper readouts (a small new auxiliary query).
+  scrollable history, up/down recall and a per-printer persisted
+  history. Write-only by protocol — HTTP acknowledgement means queued
+  at the Klipper boundary, never executed, and Klipper's replies are
+  websocket-only (4.0.0 debt); the UI says exactly that. Deliberately
+  unrestricted: typing a command is intent, so there is no
+  command-safety table.
+- Endstops readouts: the live pin states come from a one-shot
+  `printer/query_endstops/status` poll on a slow cadence (they are not
+  part of the objects query), with an explicit not-homed-yet state.
 - Improved Monitor ETA: layer-anchored remaining time from the index's
   per-layer timing scaled by the observed speed ratio — the same
   information the Preview ETA already uses, instead of Moonraker's
@@ -104,11 +114,14 @@ this needs it: the poller already matches Mainsail's chart resolution, and
 socket migration before the parity surface exists would be paying a large
 cost for no user-visible gain.
 
-Known gap the socket work should close: the 3.5.0 console is outbound-only
+Known gaps the socket work should close: the 3.5.0 console is outbound-only
 over HTTP — Klipper's script replies and errors (`notify_gcode_response`)
 are websocket-only, so the console shows "sent" and cannot echo command
 output or failures. An inbound response stream appended to the console
-history is the natural first socket consumer.
+history is the natural first socket consumer. Also carried from the 3.5.0
+panel (P21): push chart samples asynchronously at a steady cadence instead
+of per aux-reply bursts, and build the coherent command/state push story
+that lets tracked commands drop their polling confirmations.
 
 ## Explicitly out of scope
 

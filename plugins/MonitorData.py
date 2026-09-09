@@ -6,7 +6,7 @@ from types import MappingProxyType
 from collections.abc import Mapping
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
-from .MonitorFormatting import wanted_object
+from .MonitorFormatting import result, wanted_object
 from .MoonrakerSession import RequestCategory
 
 
@@ -14,10 +14,6 @@ def freeze(value):
     if isinstance(value, dict): return MappingProxyType({key: freeze(item) for key, item in value.items()})
     if isinstance(value, (list, tuple)): return tuple(freeze(item) for item in value)
     return value
-
-
-def result(payload):
-    return payload.get("result", payload) if isinstance(payload, Mapping) else {}
 
 
 @dataclass(frozen=True)
@@ -30,6 +26,7 @@ class MonitorSnapshot:
     power: tuple
     webcams: tuple
     presets: Mapping
+    endstops: Mapping
 
 
 class MonitorData(QObject):
@@ -49,6 +46,7 @@ class MonitorData(QObject):
         self._clear()
         for category, callback in ((RequestCategory.AUXILIARY, self.refresh_aux),
             (RequestCategory.POWER, self.refresh_power), (RequestCategory.SYSTEM, self.refresh_system),
+            (RequestCategory.ENDSTOPS, self.refresh_endstops),
             (RequestCategory.DISCOVERY, self.refresh_discovery)):
             timer = QTimer(self)
             timer.timeout.connect(callback)
@@ -69,7 +67,7 @@ class MonitorData(QObject):
 
     def _clear(self):
         empty = freeze({})
-        self._snapshot = MonitorSnapshot(empty, empty, (), empty, empty, (), (), empty)
+        self._snapshot = MonitorSnapshot(empty, empty, (), empty, empty, (), (), empty, empty)
 
     @property
     def snapshot(self): return self._snapshot
@@ -155,6 +153,7 @@ class MonitorData(QObject):
         self.refresh_discovery()
         self.refresh_power()
         self.refresh_system()
+        self.refresh_endstops()
         self.refresh_webcams()
 
     @staticmethod
@@ -198,6 +197,18 @@ class MonitorData(QObject):
         self._update(auxiliary=merged)
         self.auxiliaryChanged.emit()
 
+    def refresh_endstops(self):
+        # Endstop pin states are NOT part of the objects query; the
+        # only live readout is this one-shot status endpoint, polled on
+        # a slow cadence (they change at homing, not every second).
+        # A failed poll must never erase last-known states: an empty
+        # endstop map reads as "not homed yet" while connected, which is
+        # a lie about the printer during a transient network blip. The
+        # states blank only on invalidation/disconnect.
+        self.request("endstops", "GET", "printer/query_endstops/status",
+            lambda p, e: self._update(endstops=dict(result(p))) if not e and isinstance(result(p), Mapping) else None,
+            category="endstops")
+
     def refresh_power(self):
         self.request("power-list", "GET", "machine/device_power/devices",
             lambda p, e: self._update(power=result(p).get("devices", ())) if not e and isinstance(result(p), Mapping) else None,
@@ -210,9 +221,13 @@ class MonitorData(QObject):
                 category="system")
 
     def refresh_webcams(self):
+        # Same retention principle as endstops: a failed poll must never
+        # erase last-known cameras — a transient blip would blank the
+        # camera column ("no camera") during a printer reboot. The list
+        # clears only on invalidation/disconnect.
         self.request("webcams", "GET", "server/webcams/list",
             lambda p, e: self._update(webcams=tuple(item for item in result(p).get("webcams", ()) if isinstance(item, dict) and item.get("enabled", True)))
-            if not e and isinstance(result(p), Mapping) else self._update(webcams=()),
+            if not e and isinstance(result(p), Mapping) else None,
             replace=True, category="discovery")
 
 

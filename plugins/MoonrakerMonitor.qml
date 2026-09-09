@@ -1,12 +1,18 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
+import QtQuick.Dialogs
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
 
+// Component-rooted DELIBERATELY: Cura's monitor-view loader
+// (setMonitorViewQmlPath) creates this document and expects a
+// Component it can instantiate — unwrapping to the modern item-root
+// form loaded fine in the capture harness but made the real Monitor
+// stage fall back to Cura's placeholder. Qt logs a typecompiler
+// deprecation for the pattern; that warning is accepted.
 Component {
     id: monitorComponent
-
     Item {
         id: root
 
@@ -18,21 +24,38 @@ Component {
         property string openPopOver: ""
         property string selectedChartSensor: ""
 
-        // Mini-chart helpers: primary sensors only (extruders, bed,
-        // chamber heater), honouring the legend's visibility.
-        property bool miniChartHasSeries: {
-            var payload = root.printer != null ? root.printer.temperatureChart : ({
-                    "series": []
-                });
+        // The mini widget's series: primary sensors (extruders, bed,
+        // chamber heater) by default; when EVERY primary is hidden,
+        // up to two of the remaining visible sensors stand in so the
+        // preview never goes blank while data exists (the author's
+        // request).
+        property var miniChartSeries: {
+            var payload = root.printer != null ? root.printer.temperatureChart : null;
+            if (payload == null) {
+                return [];
+            }
             var series = payload.series;
+            var primary = [];
+            var others = [];
             for (var i = 0; i < series.length; ++i) {
-                if (series[i].primary && series[i].visible) {
-                    return true;
+                if (!series[i].visible) {
+                    continue;
+                }
+                if (series[i].primary) {
+                    primary.push(series[i]);
+                } else {
+                    others.push(series[i]);
                 }
             }
-            return false;
+            if (primary.length === 0) {
+                return others.slice(0, 2);
+            }
+            // Primaries always get priority; when fewer than two are
+            // visible, non-primaries top the preview up to two so it
+            // never shrinks to a single line.
+            return primary.concat(others.slice(0, Math.max(0, 2 - primary.length)));
         }
-        property bool miniChartFilling: root.printer != null ? (root.printer.temperatureChart.series.length > 0 && root.printer.temperatureChart.filling) : false
+        property bool miniChartHasSeries: root.miniChartSeries.length > 0
         property bool allChartSensorsHidden: {
             var legend = root.printer != null ? root.printer.temperatureChartLegend : ({
                     "series": []
@@ -82,6 +105,18 @@ Component {
         property bool infoCollapsed: root.printer != null ? root.printer.infoCollapsed : false
         property bool statusCollapsed: root.printer != null ? root.printer.statusCollapsed : false
 
+        ColorDialog {
+            id: chartColorDialog
+            title: "Sensor colour"
+            onAccepted: {
+                var colour = selectedColor;
+                var hex = "#" + ((1 << 24) + (Math.round(colour.r * 255) << 16) + (Math.round(colour.g * 255) << 8) + Math.round(colour.b * 255)).toString(16).slice(-6);
+                if (root.printer != null && root.selectedChartSensor !== "") {
+                    root.printer.setTemperatureSensorColor(root.selectedChartSensor, hex);
+                }
+            }
+        }
+
         Cura.MessageDialog {
             id: excludeObjectDialog
             property string targetName: ""
@@ -102,8 +137,15 @@ Component {
             target: root.printer
             function onTypedControlsChanged() {
                 meshMiniMap.refresh();
-                meshDetail.refresh();
-                if (root.printer == null || !root.printer.bedMeshAvailable) {
+                // The detail map refreshes via the Connections inside
+                // meshContent — its id is component-scoped and invisible
+                // here; calling it threw ReferenceError and killed this
+                // handler's auto-close before it ever ran.
+                if (root.printer == null) {
+                    root.openPopOver = "";
+                } else if (!root.printer.bedMeshAvailable && root.openPopOver === "mesh") {
+                    // Only the pop-over that needs the mesh closes: the
+                    // chart card must survive a mesh loss.
                     root.openPopOver = "";
                 }
             }
@@ -121,11 +163,11 @@ Component {
                 id: infoPanel
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
-                Layout.preferredWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 220 * screenScaleFactor)
-                Layout.minimumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 150 * screenScaleFactor)
+                Layout.preferredWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 240 * screenScaleFactor)
+                Layout.minimumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 170 * screenScaleFactor)
                 // Shrink-only: max == preferred keeps the wide layout
                 // unchanged, but narrow stages may compress the pane.
-                Layout.maximumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 220 * screenScaleFactor)
+                Layout.maximumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 240 * screenScaleFactor)
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.leftMargin: UM.Theme.getSize("default_margin").width
@@ -233,8 +275,6 @@ Component {
                                 tooltipText: root.printer != null ? "Click for the full bed mesh map (" + root.printer.bedMeshRangeText + ")." : "Click for the full bed mesh map."
                                 onClicked: {
                                     root.openPopOver = root.openPopOver === "mesh" ? "" : "mesh";
-                                    if (root.openPopOver === "mesh")
-                                        meshDetail.refresh();
                                 }
                             }
 
@@ -252,7 +292,7 @@ Component {
                             printerModel: root.printer
                             title: "Temperature history"
                             sectionId: "temphistory"
-                            sectionIcon: "Spinner"
+                            sectionIconUrl: Qt.resolvedUrl("Thermometer.svg")
                         }
                         ColumnLayout {
                             visible: root.printer == null || root.printer.sectionExpandedMap["temphistory"] !== false
@@ -273,19 +313,19 @@ Component {
                                 compact: true
                                 tooltipText: "Click for the full temperature history (last 30 minutes)."
                                 chart: {
-                                    var payload = root.printer != null ? root.printer.temperatureChart : ({
+                                    var payload = root.printer != null ? root.printer.temperatureChart : null;
+                                    if (payload == null) {
+                                        return {
                                             "series": [],
-                                            "showTargets": true,
-                                            "showPower": true,
+                                            "showTargets": false,
+                                            "showPower": false,
                                             "palette": [],
                                             "filling": false,
                                             "wallOrigin": 0
-                                        });
-                                    var series = payload.series.filter(function (s) {
-                                            return s.primary && s.visible;
-                                        });
+                                        };
+                                    }
                                     return {
-                                        "series": series,
+                                        "series": root.miniChartSeries,
                                         "showTargets": false,
                                         "showPower": false,
                                         "palette": payload.palette,
@@ -293,7 +333,7 @@ Component {
                                         "wallOrigin": payload.wallOrigin
                                     };
                                 }
-                                visible: root.miniChartHasSeries && !root.miniChartFilling
+                                visible: root.miniChartHasSeries
                                 onClicked: {
                                     if (root.printer != null) {
                                         root.openPopOver = root.openPopOver === "chart" ? "" : "chart";
@@ -301,12 +341,60 @@ Component {
                                 }
                             }
 
+                            // The mini chart's own legend: colour dot,
+                            // sensor name and live value, so the
+                            // unlabelled sparklines stay readable.
+                            Flow {
+                                Layout.fillWidth: true
+                                visible: root.miniChartHasSeries
+                                spacing: UM.Theme.getSize("default_margin").width
+                                Repeater {
+                                    model: root.miniChartSeries
+                                    RowLayout {
+                                        spacing: UM.Theme.getSize("narrow_margin").width
+                                        Rectangle {
+                                            width: 8 * screenScaleFactor
+                                            height: 8 * screenScaleFactor
+                                            radius: 4 * screenScaleFactor
+                                            color: modelData.color
+                                        }
+                                        UM.Label {
+                                            text: {
+                                                var payload = root.printer != null ? root.printer.temperatureChart.series : [];
+                                                var value = "—";
+                                                for (var i = 0; i < payload.length; ++i) {
+                                                    if (payload[i].name === modelData.name && payload[i].points.length > 0) {
+                                                        value = payload[i].points[payload[i].points.length - 1][1].toFixed(1) + "°C";
+                                                    }
+                                                }
+                                                return modelData.label + " " + value;
+                                            }
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+                                }
+                            }
+
+                            // The label doubles as the pop-over opener
+                            // when the mini chart is gone: hiding every
+                            // primary sensor must not lock the user out
+                            // of the legend that re-enables them.
                             UM.Label {
                                 Layout.fillWidth: true
-                                visible: root.printer != null && (root.miniChartFilling || !root.miniChartHasSeries)
-                                text: root.miniChartFilling ? "Collecting temperature history…" : "No hotend or bed temperature data yet"
-                                color: UM.Theme.getColor("text_inactive")
+                                visible: root.printer != null && !root.miniChartHasSeries
+                                text: root.printer != null && root.printer.temperatureChart.series.length > 0 ? "All sensors hidden — click to re-enable one in the chart." : "No hotend or bed temperature data yet"
+                                color: root.printer != null && !root.miniChartHasSeries && root.printer.temperatureChart.series.length > 0 ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
                                 wrapMode: Text.WordWrap
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    enabled: root.printer != null && !root.miniChartHasSeries && root.printer.temperatureChart.series.length > 0
+                                    onClicked: {
+                                        if (root.printer != null) {
+                                            root.openPopOver = root.openPopOver === "chart" ? "" : "chart";
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -502,6 +590,182 @@ Component {
                                 }
                             }
                         }
+
+                        // Console: a write-only command line below the
+                        // feed. HTTP acknowledgement means "queued at the
+                        // Klipper boundary", never executed, and no
+                        // output comes back — the caption says so.
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: UM.Theme.getSize("default_lining").height
+                            color: UM.Theme.getColor("lining")
+                        }
+
+                        ColumnLayout {
+                            id: consoleSection
+                            Layout.fillWidth: true
+                            Layout.margins: UM.Theme.getSize("default_margin").width
+                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+                            spacing: UM.Theme.getSize("narrow_margin").height
+                            enabled: root.printer != null
+                            property int consoleRecallIndex: -1
+                            property string consoleDraft: ""
+                            // Pick an actually-installed monospace face at
+                            // runtime: the generic "monospace" and comma
+                            // lists do not resolve on every machine.
+                            function monoFamily() {
+                                try {
+                                    var names = Qt.fontFamilies();
+                                    var known = ["consolas", "menlo", "courier", "mono"];
+                                    for (var i = 0; i < names.length; ++i) {
+                                        var lower = String(names[i]).toLowerCase();
+                                        for (var k = 0; k < known.length; ++k) {
+                                            if (lower.indexOf(known[k]) >= 0) {
+                                                return names[i];
+                                            }
+                                        }
+                                    }
+                                } catch (e) {
+                                }
+                                return "monospace";
+                            }
+                            // Newest-first: BottomToTop lays index 0 at
+                            // the bottom edge, so the terminal fills
+                            // upward from the prompt like a shell.
+                            property var consoleLinesBottomUp: root.printer != null ? root.printer.consoleHistory.slice().reverse() : []
+
+                            function consoleSend() {
+                                if (root.printer != null) {
+                                    // A refused send (queue full, lane
+                                    // busy, Moonraker down) must keep
+                                    // the typed line: losing an unsent
+                                    // G-code draft on refusal is data
+                                    // loss, and the status line already
+                                    // explains the refusal.
+                                    if (root.printer.sendConsoleCommand(consoleInput.text)) {
+                                        consoleInput.text = "";
+                                        consoleDraft = "";
+                                        consoleRecallIndex = -1;
+                                    }
+                                    consoleInput.forceActiveFocus();
+                                }
+                            }
+                            function consoleRecall(step) {
+                                var history = root.printer != null ? root.printer.consoleHistory : [];
+                                if (history.length === 0) {
+                                    return;
+                                }
+                                if (consoleRecallIndex < 0) {
+                                    consoleDraft = consoleInput.text;
+                                }
+                                consoleRecallIndex = Math.max(-1, Math.min(history.length - 1, consoleRecallIndex + step));
+                                consoleInput.text = consoleRecallIndex < 0 ? consoleDraft : history[history.length - 1 - consoleRecallIndex];
+                            }
+
+                            UM.Label {
+                                Layout.fillWidth: true
+                                text: "Console — commands go straight to Klipper's queue; no output comes back over HTTP."
+                                color: UM.Theme.getColor("text_inactive")
+                                wrapMode: Text.WordWrap
+                            }
+
+                            // A shell-terminal-styled history pane:
+                            // dark, fixed-width, newest line pinned to
+                            // the bottom — the list slides to the end as
+                            // each line lands, so the prompt stays the
+                            // newest thing on screen.
+                            Cura.RoundedRectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 140 * screenScaleFactor
+                                color: "#161b22"
+                                border.color: UM.Theme.getColor("lining")
+                                border.width: UM.Theme.getSize("default_lining").width
+                                radius: UM.Theme.getSize("default_radius").width
+
+                                ListView {
+                                    id: consoleHistoryView
+                                    anchors.fill: parent
+                                    anchors.margins: UM.Theme.getSize("narrow_margin").width
+                                    clip: true
+                                    // BottomToTop + the reversed model put
+                                    // the newest line right against the
+                                    // bottom edge and fill upward — a
+                                    // shell, not a top-filled list.
+                                    verticalLayoutDirection: ListView.BottomToTop
+                                    model: consoleSection.consoleLinesBottomUp
+                                    delegate: UM.Label {
+                                        // Anchors, not a width binding: the
+                                        // bound width fed the label's layout
+                                        // back into the view's size hints and
+                                        // oscillated on pane collapses.
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        text: modelData
+                                        // A concrete-family fallback list:
+                                        // the bare "monospace" generic does
+                                        // not resolve to a fixed-width face
+                                        // in Cura's label rendering.
+                                        font.family: consoleSection.monoFamily()
+                                        color: "#d9dde3"
+                                        elide: Text.ElideRight
+                                    }
+                                    ScrollBar.vertical: UM.ScrollBar {
+                                        id: consoleScrollbar
+                                    }
+                                }
+
+                                UM.Label {
+                                    visible: root.printer == null || root.printer.consoleHistory.length === 0
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: UM.Theme.getSize("narrow_margin").width
+                                    text: "No commands yet — lines you send appear here."
+                                    font.family: consoleSection.monoFamily()
+                                    color: "#7d8590"
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: UM.Theme.getSize("thin_margin").width
+                                UM.Label {
+                                    text: ">"
+                                    font: UM.Theme.getFont("medium_bold")
+                                    color: "#3fb950"
+                                }
+                                Cura.TextField {
+                                    id: consoleInput
+                                    Layout.fillWidth: true
+                                    placeholderText: "G-code command…"
+                                    font.family: consoleSection.monoFamily()
+                                    Keys.onReturnPressed: consoleSection.consoleSend()
+                                    Keys.onUpPressed: consoleSection.consoleRecall(1)
+                                    Keys.onDownPressed: consoleSection.consoleRecall(-1)
+                                }
+                                Cura.SecondaryButton {
+                                    text: "Send"
+                                    onClicked: consoleSection.consoleSend()
+                                }
+                                Cura.SecondaryButton {
+                                    text: "Clear"
+                                    visible: root.printer != null && root.printer.consoleHistory.length > 0
+                                    onClicked: root.printer.clearConsoleHistory()
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: UM.Theme.getSize("thin_margin").width
+                                UM.Label {
+                                    Layout.fillWidth: true
+                                    text: root.printer != null ? root.printer.consoleStatus : ""
+                                    color: UM.Theme.getColor("text_inactive")
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -652,15 +916,16 @@ Component {
                                 wrapMode: Text.WordWrap
                             }
 
-                            ProgressBar {
+                            OutlineProgressBar {
                                 Layout.fillWidth: true
+                                Layout.preferredHeight: 10 * screenScaleFactor
                                 from: 0
                                 to: 100
                                 value: root.printer != null ? root.printer.monitorProgress : 0
                             }
 
                             UM.Label {
-                                text: root.printer != null ? root.printer.monitorProgress + "%" : "0%"
+                                text: root.printer != null ? root.printer.monitorProgress.toFixed(2) + "%" : "0.00%"
                                 font: UM.Theme.getFont("medium_bold")
                                 Layout.alignment: Qt.AlignHCenter
                             }
@@ -684,9 +949,48 @@ Component {
                                     color: UM.Theme.getColor("text_inactive")
                                     Layout.preferredWidth: 110 * screenScaleFactor
                                 }
-                                UM.Label {
-                                    text: root.printer != null ? root.printer.monitorLayer : "—"
+                                ColumnLayout {
                                     Layout.fillWidth: true
+                                    spacing: 0
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: UM.Theme.getSize("narrow_margin").width
+                                        UM.Label {
+                                            text: root.printer != null ? root.printer.monitorLayer : "—"
+                                            Layout.fillWidth: true
+                                            // Which source produced the layer —
+                                            // Klipper's stats, the file index, or
+                                            // the extrusion-guarded Z estimate.
+                                            UM.TooltipArea {
+                                                anchors.fill: parent
+                                                text: root.printer != null && root.printer.monitorLayerSource !== undefined && root.printer.monitorLayerSource.length > 0 ? "Layer source: " + root.printer.monitorLayerSource : ""
+                                                acceptedButtons: Qt.NoButton
+                                            }
+                                        }
+                                        UM.Label {
+                                            visible: root.printer != null && root.printer.monitorLayerProgress >= 0
+                                            text: root.printer != null ? (root.printer.monitorLayerProgress * 100).toFixed(2) + "%" : ""
+                                            color: UM.Theme.getColor("text_inactive")
+                                        }
+                                    }
+                                    Item {
+                                        Layout.fillWidth: true
+                                        Layout.topMargin: UM.Theme.getSize("thin_margin").height
+                                        height: 8 * screenScaleFactor
+                                        visible: root.printer != null && root.printer.monitorLayerProgress >= 0
+                                        OutlineProgressBar {
+                                            anchors.fill: parent
+                                            from: 0
+                                            to: 1
+                                            value: root.printer != null ? root.printer.monitorLayerProgress : 0
+                                            inset: 1 * screenScaleFactor
+                                        }
+                                        UM.TooltipArea {
+                                            anchors.fill: parent
+                                            text: "Layer progress — how far through the current layer."
+                                            acceptedButtons: Qt.NoButton
+                                        }
+                                    }
                                 }
 
                                 UM.Label {
@@ -704,9 +1008,166 @@ Component {
                                     color: UM.Theme.getColor("text_inactive")
                                     Layout.preferredWidth: 110 * screenScaleFactor
                                 }
-                                UM.Label {
-                                    text: root.printer != null ? root.printer.monitorEta : "—"
+                                RowLayout {
                                     Layout.fillWidth: true
+                                    spacing: UM.Theme.getSize("narrow_margin").width
+                                    UM.Label {
+                                        text: root.printer != null ? root.printer.monitorEta : "—"
+                                        // The ETA colour shows its basis:
+                                        // normal text for the layer-timed
+                                        // estimate, muted for the plain
+                                        // blend — the tooltip spells both out.
+                                        color: root.printer != null && root.printer.monitorEtaBasis === "blend" ? UM.Theme.getColor("text_inactive") : UM.Theme.getColor("text")
+                                        // The row must compress when the
+                                        // phase label appears, or the
+                                        // whole bar spills off the pane.
+                                        elide: Text.ElideRight
+                                        UM.TooltipArea {
+                                            anchors.fill: parent
+                                            text: root.printer != null && root.printer.monitorEtaBasis === "index" ? "Estimated from the G-code's layer timings × the observed speed." : "Moonraker's estimate — download the G-code for the accurate layer-timed estimate."
+                                            acceptedButtons: Qt.NoButton
+                                        }
+                                    }
+                                    // The Improve-ETA affordance: a small
+                                    // download glyph beside the value it
+                                    // improves, shown only while the
+                                    // plain blend is the active basis.
+                                    Item {
+                                        width: 16 * screenScaleFactor
+                                        height: 16 * screenScaleFactor
+                                        visible: root.printer != null && root.printer.printActive && (root.printer.monitorEtaBasis === "blend" || root.printer.improvingEta)
+                                        UM.TooltipArea {
+                                            anchors.fill: parent
+                                            text: root.printer != null && root.printer.improvingEta ? "Downloading and indexing the print…" : "Improve the estimate — download and index this print's G-code without loading it into the preview."
+                                            acceptedButtons: Qt.NoButton
+                                        }
+                                        UM.ColorImage {
+                                            anchors.fill: parent
+                                            // The hourglass is the non-clickable
+                                            // in-progress state; the download
+                                            // glyph returns on failure (timeout).
+                                            source: root.printer != null && root.printer.improvingEta ? Qt.resolvedUrl("Hourglass.svg") : Qt.resolvedUrl("Download.svg")
+                                            color: UM.Theme.getColor("text")
+                                            // The hourglass flips and rests at
+                                            // each 180-degree stop while the
+                                            // sand drains, then flips again.
+                                            SequentialAnimation on rotation  {
+                                                running: root.printer != null && root.printer.improvingEta
+                                                loops: Animation.Infinite
+                                                NumberAnimation {
+                                                    from: 0
+                                                    to: 180
+                                                    duration: 350
+                                                    easing.type: Easing.InOutCubic
+                                                }
+                                                PauseAnimation {
+                                                    duration: 700
+                                                }
+                                                NumberAnimation {
+                                                    from: 180
+                                                    to: 360
+                                                    duration: 350
+                                                    easing.type: Easing.InOutCubic
+                                                }
+                                                PauseAnimation {
+                                                    duration: 700
+                                                }
+                                            }
+                                        }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            // Clickable while busy too: a click mid-pull is a
+                                            // legitimate retry, and after a failed download
+                                            // the glyph is the ONLY in-UI recovery (the
+                                            // hourglass state ends on failure — panel P1-1).
+                                            enabled: root.printer != null
+                                            cursorShape: root.printer != null ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                            onClicked: root.printer.improveEta()
+                                        }
+                                    }
+                                    // The spacer keeps the glyph hugging
+                                    // the ETA text rather than drifting to
+                                    // the cell's right edge.
+                                    Item {
+                                        Layout.fillWidth: true
+                                    }
+                                }
+
+                                // The download+index progress: its OWN
+                                // full-width grid row, so the bar is never
+                                // crushed beside the ETA text. The bar
+                                // CLIPS its children, so the sweep cannot
+                                // render past the bar's edge whatever the
+                                // layout around it does; the sweep also
+                                // restarts when the bar resizes so its
+                                // captured endpoints stay current.
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Layout.columnSpan: 2
+                                    Layout.topMargin: UM.Theme.getSize("narrow_margin").height
+                                    spacing: UM.Theme.getSize("narrow_margin").width
+                                    visible: root.printer != null && root.printer.improvingEta
+                                    Item {
+                                        id: improveEtaBar
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 8 * screenScaleFactor
+                                        clip: true
+                                        // A trivial 0..1 phase animation;
+                                        // the sweep's POSITION is a binding
+                                        // on it, so it always tracks the
+                                        // current width — no captured
+                                        // endpoints, no restart tricks.
+                                        property real sweepPhase: 0
+                                        NumberAnimation on sweepPhase  {
+                                            running: root.printer != null && root.printer.improvingEta && root.printer.improveEtaProgress < 0
+                                            from: 0
+                                            to: 1
+                                            duration: 1100
+                                            loops: Animation.Infinite
+                                        }
+                                        Cura.RoundedRectangle {
+                                            anchors.fill: parent
+                                            color: "transparent"
+                                            border.color: UM.Theme.getColor("lining")
+                                            border.width: UM.Theme.getSize("default_lining").width
+                                            radius: UM.Theme.getSize("progressbar_radius").width
+                                            cornerSide: Cura.RoundedRectangle.Direction.All
+                                        }
+                                        Cura.RoundedRectangle {
+                                            anchors.top: parent.top
+                                            anchors.bottom: parent.bottom
+                                            anchors.left: parent.left
+                                            anchors.margins: 1 * screenScaleFactor
+                                            width: Math.max(0, Math.min(1, root.printer != null ? root.printer.improveEtaProgress : 0)) * (parent.width - 2 * screenScaleFactor)
+                                            color: UM.Theme.getColor("primary")
+                                            radius: Math.min(UM.Theme.getSize("progressbar_radius").width, height / 2)
+                                            cornerSide: Cura.RoundedRectangle.Direction.All
+                                            visible: root.printer != null && root.printer.improveEtaProgress >= 0
+                                        }
+                                        Cura.RoundedRectangle {
+                                            anchors.top: parent.top
+                                            anchors.bottom: parent.bottom
+                                            anchors.margins: 1 * screenScaleFactor
+                                            width: (parent.width - 2 * screenScaleFactor) / 3
+                                            color: UM.Theme.getColor("primary")
+                                            radius: Math.min(UM.Theme.getSize("progressbar_radius").width, height / 2)
+                                            cornerSide: Cura.RoundedRectangle.Direction.All
+                                            visible: root.printer != null && root.printer.improvingEta && root.printer.improveEtaProgress < 0
+                                            // Qualified through the bar's id:
+                                            // unqualified names do NOT resolve
+                                            // through the visual parent (the
+                                            // engine logs a ReferenceError and
+                                            // the sweep never moves).
+                                            x: (1 - Math.abs(2 * improveEtaBar.sweepPhase - 1)) * (parent.width - width) + screenScaleFactor
+                                        }
+                                    }
+                                    UM.Label {
+                                        visible: root.printer != null && root.printer.improvingEta
+                                        text: root.printer != null ? (root.printer.improveEtaPhase + (root.printer.improveEtaProgress >= 0 ? " " + (root.printer.improveEtaProgress * 100).toFixed(0) + "%" : "")) : ""
+                                        color: UM.Theme.getColor("text_inactive")
+                                        Layout.maximumWidth: 140 * screenScaleFactor
+                                        elide: Text.ElideRight
+                                    }
                                 }
 
                                 UM.Label {
@@ -1141,48 +1602,347 @@ Component {
         MonitorPopOver {
             id: chartPanel
             visible: root.openPopOver === "chart" && root.printer != null
-            x: UM.Theme.getSize("default_margin").width
+            x: cameraArea.x + UM.Theme.getSize("default_margin").width
             y: UM.Theme.getSize("default_margin").height
+            // Grows with the legend: three rows of sensors fit the base
+            // height; each further row adds its line height, capped at
+            // the monitor area.
+            height: Math.min(590 * screenScaleFactor + Math.max(0, Math.ceil((root.printer != null ? root.printer.temperatureChartLegend.series.length : 0) / 2) - 3) * 30 * screenScaleFactor, parent.height - 2 * UM.Theme.getSize("default_margin").height)
             onClosed: {
                 root.openPopOver = "";
                 root.selectedChartSensor = "";
             }
+            // Reset the tooltip proxies on EVERY close path — the Close
+            // button, the opener's second click, the outside-click layer
+            // and auto-close all flip `visible` — so a reopen never
+            // flashes the previous hover's values at a stale position.
+            onVisibleChanged: {
+                if (!visible) {
+                    hoverClockProxy = "";
+                    hoverValuesProxy = [];
+                    hoverCursor = Qt.point(-1, -1);
+                }
+            }
 
-            TemperatureChart {
-                id: chartPanelChart
+            // Proxied hover state for the floating tooltip, which lives
+            // outside the clipped card so it may overflow any boundary.
+            property string hoverClockProxy: ""
+            property var hoverValuesProxy: []
+            property point hoverCursor: Qt.point(-1, -1)
+
+            // The content loads only while the card is open: a
+            // zero-sized Canvas inside a closed card sent the engine
+            // into an endless relayout on pane collapses, and hidden
+            // bindings never evaluate.
+            Loader {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumHeight: 180 * screenScaleFactor
-                visible: root.printer != null && root.printer.temperatureChart.series.length > 0
-                chart: root.printer != null ? root.printer.temperatureChart : ({
-                        "series": [],
-                        "showTargets": true,
-                        "showPower": true
-                    })
+                active: root.openPopOver === "chart"
+                sourceComponent: chartContent
             }
+        }
 
-            UM.Label {
+        Component {
+            id: chartContent
+            ColumnLayout {
                 Layout.fillWidth: true
-                visible: root.printer != null && root.printer.temperatureChart.series.length === 0
-                text: "No temperature data yet — the chart fills once the printer reports temperatures."
-                color: UM.Theme.getColor("text_inactive")
-                wrapMode: Text.WordWrap
-            }
+                Layout.fillHeight: true
+                spacing: UM.Theme.getSize("thin_margin").height
 
-            // Hover readout: the clock at the snapped cursor plus
-            // each visible series' value. A Flow wraps on machines
-            // with many sensors instead of eliding.
-            Flow {
-                Layout.fillWidth: true
-                spacing: UM.Theme.getSize("default_margin").width
-                visible: chartPanelChart.hoverClock !== ""
+                TemperatureChart {
+                    id: chartPanelChart
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 180 * screenScaleFactor
+                    Connections {
+                        target: chartPanelChart
+                        function onHoverClockChanged() {
+                            chartPanel.hoverClockProxy = chartPanelChart.hoverClock;
+                        }
+                        function onHoverValuesChanged() {
+                            chartPanel.hoverValuesProxy = chartPanelChart.hoverValues;
+                        }
+                        function onHoverCursorChanged() {
+                            var p = chartPanelChart.mapToItem(root, chartPanelChart.hoverCursor.x, chartPanelChart.hoverCursor.y);
+                            chartPanel.hoverCursor = p;
+                        }
+                    }
+                    // Hidden when the pop-over is closed: the closed
+                    // card's zero-sized canvas must never paint.
+                    visible: root.openPopOver === "chart" && root.printer != null && root.printer.temperatureChart.series.length > 0
+                    chart: root.printer != null ? root.printer.temperatureChart : ({
+                            "series": [],
+                            "showTargets": true,
+                            "showPower": true
+                        })
+                }
+
                 UM.Label {
-                    text: chartPanelChart.hoverClock
-                    font: UM.Theme.getFont("medium")
+                    Layout.fillWidth: true
+                    visible: root.printer != null && root.printer.temperatureChart.series.length === 0
+                    text: "No temperature data yet — the chart fills once the printer reports temperatures."
                     color: UM.Theme.getColor("text_inactive")
+                    wrapMode: Text.WordWrap
+                }
+
+                UM.Label {
+                    Layout.fillWidth: true
+                    visible: root.allChartSensorsHidden
+                    text: "All sensors hidden — use the legend to show them again."
+                    color: UM.Theme.getColor("text_inactive")
+                    wrapMode: Text.WordWrap
+                }
+
+                // Legend: a two-column grid of visibility toggles with
+                // live values. It binds to the legend property, which
+                // only notifies on real changes, and `toggled` fires on
+                // user interaction only — so the delegates are never
+                // rebuilt at the 1 Hz sample cadence and re-bound
+                // checkboxes cannot rewrite the state file.
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 2
+                    columnSpacing: UM.Theme.getSize("default_margin").width
+                    rowSpacing: UM.Theme.getSize("narrow_margin").height
+                    Repeater {
+                        model: root.printer != null ? root.printer.temperatureChartLegend.series : []
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: UM.Theme.getSize("narrow_margin").width
+                            UM.CheckBox {
+                                checked: modelData.visible
+                                onToggled: root.printer.setTemperatureSensorVisible(modelData.name, checked)
+                            }
+                            Rectangle {
+                                width: 10 * screenScaleFactor
+                                height: 10 * screenScaleFactor
+                                radius: 5 * screenScaleFactor
+                                color: modelData.color
+                                border.color: root.selectedChartSensor === modelData.name ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
+                                border.width: root.selectedChartSensor === modelData.name ? 2 : 1
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.selectedChartSensor = root.selectedChartSensor === modelData.name ? "" : modelData.name
+                                }
+                            }
+                            UM.Label {
+                                Layout.fillWidth: true
+                                text: modelData.label
+                                elide: Text.ElideRight
+                            }
+                            UM.Label {
+                                text: {
+                                    var payload = root.printer != null ? root.printer.temperatureChart.series : [];
+                                    for (var i = 0; i < payload.length; ++i) {
+                                        if (payload[i].name === modelData.name && payload[i].points.length > 0) {
+                                            return payload[i].points[payload[i].points.length - 1][1].toFixed(1) + "°C";
+                                        }
+                                    }
+                                    return "—";
+                                }
+                                color: UM.Theme.getColor("text_inactive")
+                            }
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.selectedChartSensor !== ""
+                    spacing: UM.Theme.getSize("thin_margin").width
+                    UM.Label {
+                        text: root.selectedChartSensorLabel + " color:"
+                        color: UM.Theme.getColor("text_inactive")
+                    }
+                    Repeater {
+                        model: root.printer != null ? root.printer.temperatureChartLegend.palette : []
+                        Rectangle {
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            radius: 8 * screenScaleFactor
+                            color: modelData
+                            border.color: root.selectedChartColor === modelData ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
+                            border.width: root.selectedChartColor === modelData ? 2 : 1
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.printer.setTemperatureSensorColor(root.selectedChartSensor, modelData)
+                            }
+                        }
+                    }
+                    Cura.SecondaryButton {
+                        text: "Custom…"
+                        tooltip: "Pick any colour for " + root.selectedChartSensorLabel + "."
+                        onClicked: chartColorDialog.open()
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: UM.Theme.getSize("default_margin").width
+                    UM.CheckBox {
+                        checked: root.printer != null ? root.printer.temperatureChartLegend.showTargets : true
+                        onToggled: root.printer.setShowTemperatureTargets(checked)
+                    }
+                    UM.Label {
+                        text: "Targets"
+                    }
+                    UM.CheckBox {
+                        checked: root.printer != null ? root.printer.temperatureChartLegend.showPower : true
+                        onToggled: root.printer.setShowTemperaturePower(checked)
+                    }
+                    UM.Label {
+                        text: "Heater power"
+                    }
+                }
+            }
+        }
+
+        MonitorPopOver {
+            id: meshPanel
+            visible: root.openPopOver === "mesh" && root.printer != null && root.printer.bedMeshAvailable
+            x: cameraArea.x + UM.Theme.getSize("default_margin").width
+            y: UM.Theme.getSize("default_margin").height
+            height: Math.min(430 * screenScaleFactor, parent.height - 2 * UM.Theme.getSize("default_margin").height)
+            contentWidth: 390 * screenScaleFactor
+            title: "Bed mesh — " + (root.printer != null ? root.printer.bedMeshProfile : "")
+            onClosed: root.openPopOver = ""
+
+            Loader {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                active: root.openPopOver === "mesh" && root.printer != null && root.printer.bedMeshAvailable
+                sourceComponent: meshContent
+            }
+        }
+
+        Component {
+            id: meshContent
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: UM.Theme.getSize("thin_margin").height
+
+                BedMeshMap {
+                    id: meshDetail
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 215 * screenScaleFactor
+                    printer: root.printer
+                    // Rehydrated at creation: the model already holds the
+                    // persisted value, and a fresh map must never open
+                    // with the dots missing while the checkbox shows on.
+                    showProbePoints: root.printer != null ? root.printer.showProbePoints : false
+                }
+
+                // The detail map is component-scoped, so its live
+                // refresh lives here in scope.
+                Connections {
+                    target: root.printer
+                    function onTypedControlsChanged() {
+                        meshDetail.refresh();
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: UM.Theme.getSize("thin_margin").width
+                    UM.CheckBox {
+                        checked: root.printer != null ? root.printer.showProbePoints : false
+                        onToggled: {
+                            if (root.printer != null) {
+                                root.printer.setShowProbePoints(checked);
+                            }
+                        }
+                    }
+                    UM.Label {
+                        text: "Probe points"
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
+                }
+
+                // The crosshair readout row is permanent so the map
+                // never resizes on hover; it shows the placeholder until
+                // the cursor snaps to a probe point.
+                UM.Label {
+                    Layout.fillWidth: true
+                    text: meshDetail.hoverColumn >= 0 ? meshDetail.hoverText : "Hover the map for probe coordinates"
+                    color: meshDetail.hoverColumn >= 0 ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                GridLayout {
+                    columns: 3
+                    Layout.fillWidth: true
+                    UM.Label {
+                        text: "Min " + (root.printer != null ? root.printer.bedMeshMinimum.toFixed(3) : "0.000") + " mm"
+                    }
+                    UM.Label {
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
+                        text: "Range " + (root.printer != null ? root.printer.bedMeshRange.toFixed(3) : "0.000") + " mm"
+                    }
+                    UM.Label {
+                        horizontalAlignment: Text.AlignRight
+                        text: "Max " + (root.printer != null ? root.printer.bedMeshMaximum.toFixed(3) : "0.000") + " mm"
+                    }
+                }
+
+                UM.Label {
+                    Layout.fillWidth: true
+                    text: root.printer != null ? "X " + root.printer.bedMeshXMin.toFixed(1) + "…" + root.printer.bedMeshXMax.toFixed(1) + " mm   ·   Y " + root.printer.bedMeshYMin.toFixed(1) + "…" + root.printer.bedMeshYMax.toFixed(1) + " mm" : ""
+                    color: UM.Theme.getColor("text_inactive")
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                UM.Label {
+                    Layout.fillWidth: true
+                    text: "Preview uses 20× vertical exaggeration. The solid area is Klipper's mesh; the faded perimeter is extrapolated to Cura's bed edge. Values shown here are the actual Klipper mesh heights."
+                    color: UM.Theme.getColor("text_inactive")
+                    wrapMode: Text.WordWrap
+                }
+            }
+        }
+        // The chart's hover values: an immediate tooltip that sticks to
+        // the cursor tail. It lives OUTSIDE the clipped pop-over card
+        // deliberately — a tooltip is allowed (and expected) to overflow
+        // any boundary, and this way the card itself never reflows.
+        Item {
+            id: chartHoverTooltip
+            visible: root.openPopOver === "chart" && chartPanel.hoverClockProxy !== ""
+            z: 1000
+            // Sized to the content, margins included — the box must
+            // always contain its values, and it may overflow any
+            // boundary per the author's ruling. The y side is chosen
+            // by the room BELOW the cursor, so a tall box flips above
+            // instead of sliding off the bottom of the stage.
+            width: tooltipColumn.implicitWidth + 2 * UM.Theme.getSize("narrow_margin").width
+            height: tooltipColumn.implicitHeight + 2 * UM.Theme.getSize("narrow_margin").height
+            x: Math.min(Math.max(0, chartPanel.hoverCursor.x + 14), Math.max(0, root.width - width - 4))
+            y: chartPanel.hoverCursor.y + height + 16 > root.height ? Math.max(0, chartPanel.hoverCursor.y - height - 10) : chartPanel.hoverCursor.y + 16
+
+            Cura.RoundedRectangle {
+                anchors.fill: parent
+                color: UM.Theme.getColor("main_background")
+                border.color: UM.Theme.getColor("lining")
+                border.width: UM.Theme.getSize("default_lining").width
+                radius: UM.Theme.getSize("default_radius").width
+            }
+            ColumnLayout {
+                id: tooltipColumn
+                anchors.fill: parent
+                anchors.margins: UM.Theme.getSize("narrow_margin").width
+                spacing: UM.Theme.getSize("narrow_margin").height
+                UM.Label {
+                    text: chartPanel.hoverClockProxy
+                    font: UM.Theme.getFont("medium")
+                    color: UM.Theme.getColor("text")
                 }
                 Repeater {
-                    model: chartPanelChart.hoverValues
+                    model: chartPanel.hoverValuesProxy
                     RowLayout {
                         spacing: UM.Theme.getSize("narrow_margin").width
                         Rectangle {
@@ -1197,175 +1957,6 @@ Component {
                         }
                     }
                 }
-            }
-
-            UM.Label {
-                Layout.fillWidth: true
-                visible: root.allChartSensorsHidden
-                text: "All sensors hidden — use the legend to show them again."
-                color: UM.Theme.getColor("text_inactive")
-                wrapMode: Text.WordWrap
-            }
-
-            // Legend: a two-column grid of visibility toggles with
-            // live values. It binds to the legend property, which
-            // only notifies on real changes, and `toggled` fires on
-            // user interaction only — so the delegates are never
-            // rebuilt at the 1 Hz sample cadence and re-bound
-            // checkboxes cannot rewrite the state file.
-            GridLayout {
-                Layout.fillWidth: true
-                columns: 2
-                columnSpacing: UM.Theme.getSize("default_margin").width
-                rowSpacing: UM.Theme.getSize("narrow_margin").height
-                Repeater {
-                    model: root.printer != null ? root.printer.temperatureChartLegend.series : []
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: UM.Theme.getSize("narrow_margin").width
-                        UM.CheckBox {
-                            checked: modelData.visible
-                            onToggled: root.printer.setTemperatureSensorVisible(modelData.name, checked)
-                        }
-                        Rectangle {
-                            width: 10 * screenScaleFactor
-                            height: 10 * screenScaleFactor
-                            radius: 5 * screenScaleFactor
-                            color: modelData.color
-                            border.color: root.selectedChartSensor === modelData.name ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
-                            border.width: root.selectedChartSensor === modelData.name ? 2 : 1
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.selectedChartSensor = root.selectedChartSensor === modelData.name ? "" : modelData.name
-                            }
-                        }
-                        UM.Label {
-                            Layout.fillWidth: true
-                            text: modelData.label
-                            elide: Text.ElideRight
-                        }
-                        UM.Label {
-                            text: {
-                                var payload = root.printer != null ? root.printer.temperatureChart.series : [];
-                                for (var i = 0; i < payload.length; ++i) {
-                                    if (payload[i].name === modelData.name && payload[i].points.length > 0) {
-                                        return payload[i].points[payload[i].points.length - 1][1].toFixed(1) + "°";
-                                    }
-                                }
-                                return "—";
-                            }
-                            color: UM.Theme.getColor("text_inactive")
-                        }
-                    }
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                visible: root.selectedChartSensor !== ""
-                spacing: UM.Theme.getSize("thin_margin").width
-                UM.Label {
-                    text: root.selectedChartSensorLabel + " color:"
-                    color: UM.Theme.getColor("text_inactive")
-                }
-                Repeater {
-                    model: root.printer != null ? root.printer.temperatureChartLegend.palette : []
-                    Rectangle {
-                        width: 16 * screenScaleFactor
-                        height: 16 * screenScaleFactor
-                        radius: 8 * screenScaleFactor
-                        color: modelData
-                        border.color: root.selectedChartColor === modelData ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
-                        border.width: root.selectedChartColor === modelData ? 2 : 1
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.printer.setTemperatureSensorColor(root.selectedChartSensor, modelData)
-                        }
-                    }
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: UM.Theme.getSize("default_margin").width
-                UM.CheckBox {
-                    checked: root.printer != null ? root.printer.temperatureChartLegend.showTargets : true
-                    onToggled: root.printer.setShowTemperatureTargets(checked)
-                }
-                UM.Label {
-                    text: "Targets"
-                }
-                UM.CheckBox {
-                    checked: root.printer != null ? root.printer.temperatureChartLegend.showPower : true
-                    onToggled: root.printer.setShowTemperaturePower(checked)
-                }
-                UM.Label {
-                    text: "Heater power"
-                }
-            }
-        }
-
-        MonitorPopOver {
-            id: meshPanel
-            visible: root.openPopOver === "mesh" && root.printer != null && root.printer.bedMeshAvailable
-            x: cameraArea.x + UM.Theme.getSize("default_margin").width
-            y: UM.Theme.getSize("default_margin").height
-            contentWidth: 390 * screenScaleFactor
-            title: "Bed mesh — " + (root.printer != null ? root.printer.bedMeshProfile : "")
-            onClosed: root.openPopOver = ""
-            onVisibleChanged: {
-                if (visible)
-                    meshDetail.refresh();
-            }
-
-            BedMeshMap {
-                id: meshDetail
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.minimumHeight: 215 * screenScaleFactor
-                printer: root.printer
-            }
-
-            // The crosshair readout: coordinates and Z offset of
-            // the snapped probe point.
-            UM.Label {
-                Layout.fillWidth: true
-                visible: meshDetail.hoverColumn >= 0
-                text: meshDetail.hoverText
-                horizontalAlignment: Text.AlignHCenter
-            }
-
-            GridLayout {
-                columns: 3
-                Layout.fillWidth: true
-                UM.Label {
-                    text: "Min " + (root.printer != null ? root.printer.bedMeshMinimum.toFixed(3) : "0.000") + " mm"
-                }
-                UM.Label {
-                    Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    text: "Range " + (root.printer != null ? root.printer.bedMeshRange.toFixed(3) : "0.000") + " mm"
-                }
-                UM.Label {
-                    horizontalAlignment: Text.AlignRight
-                    text: "Max " + (root.printer != null ? root.printer.bedMeshMaximum.toFixed(3) : "0.000") + " mm"
-                }
-            }
-
-            UM.Label {
-                Layout.fillWidth: true
-                text: root.printer != null ? "X " + root.printer.bedMeshXMin.toFixed(1) + "…" + root.printer.bedMeshXMax.toFixed(1) + " mm   ·   Y " + root.printer.bedMeshYMin.toFixed(1) + "…" + root.printer.bedMeshYMax.toFixed(1) + " mm" : ""
-                color: UM.Theme.getColor("text_inactive")
-                horizontalAlignment: Text.AlignHCenter
-            }
-
-            UM.Label {
-                Layout.fillWidth: true
-                text: "Preview uses 20× vertical exaggeration. The solid area is Klipper's mesh; the faded perimeter is extrapolated to Cura's bed edge. Values shown here are the actual Klipper mesh heights."
-                color: UM.Theme.getColor("text_inactive")
-                wrapMode: Text.WordWrap
             }
         }
     }

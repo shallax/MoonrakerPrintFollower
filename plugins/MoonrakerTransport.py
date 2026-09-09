@@ -54,6 +54,7 @@ class MoonrakerHttpTransport(QObject):
         self._request_serial = 0
         self._pending: Dict[str, _PendingRequest] = {}
         self._metrics: Dict[str, TransportMetrics] = defaultdict(TransportMetrics)
+        self._trace_http = False
 
     @property
     def network(self) -> QNetworkAccessManager:
@@ -87,6 +88,11 @@ class MoonrakerHttpTransport(QObject):
         self.cancel_all()
         self._base_url, self._api_key = identity
         return True
+
+    def set_trace_http(self, enabled) -> None:
+        """Per-printer diagnostics toggle: log every request at debug
+        (off by default — failures always log a warning)."""
+        self._trace_http = bool(enabled)
 
     def request(self, path_or_url: str, *, timeout_ms: int = 5000) -> QNetworkRequest:
         target = str(path_or_url or "")
@@ -225,16 +231,21 @@ class MoonrakerHttpTransport(QObject):
         if error:
             metric.failed += 1
 
-        Logger.log(
-            "d",
-            "MoonrakerHTTP request_id=%d category=%s channel=%s method=%s elapsed_ms=%.1f outcome=%s",
-            pending.request_id,
-            pending.category,
-            key,
-            pending.method,
-            elapsed_ms,
-            "error" if error else "ok",
-        )
+        # Failures always surface; the per-request debug line is opt-in
+        # (MOONRAKER_FOLLOWER_TRACE_HTTP) — at the poll cadence the
+        # unconditional debug log flooded Cura's log.
+        if error:
+            Logger.log("w", "MoonrakerHTTP %s %s failed: %s", pending.method, key, error)
+        elif self._trace_http:
+            Logger.log(
+                "d",
+                "MoonrakerHTTP request_id=%d category=%s channel=%s method=%s elapsed_ms=%.1f outcome=ok",
+                pending.request_id,
+                pending.category,
+                key,
+                pending.method,
+                elapsed_ms,
+            )
         try:
             reply.deleteLater()
         except Exception:

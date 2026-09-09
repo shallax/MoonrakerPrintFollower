@@ -64,6 +64,8 @@ class PrinterConfigTests(unittest.TestCase):
             "z_fallback": False,
             "z_tolerance": 0.08,
             "path_follow": False,
+            "trace_layer": False,
+            "trace_http": False,
         }
         for field, key in PrinterConfigStore.LEGACY_MAP.items():
             prefs.values[key] = defaults[field]
@@ -236,6 +238,20 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertEqual(store.get().camera_selected, "bed-camera")
         active[:] = ["printer-b", "Printer B"]
         self.assertEqual(store.get().camera_selected, "")
+
+    def test_diagnostics_settings_save_and_list_in_a_tab(self):
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        self.assertIn('text: "Diagnostics"', config)
+        self.assertIn('"trace_layer": layerTraceBox.checked', config)
+        self.assertIn('"trace_http": httpTraceBox.checked', config)
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+        self.assertIn('"trace_layer": bool(raw.get("trace_layer", False))', action)
+        self.assertIn('"trace_http": bool(raw.get("trace_http", False))', action)
+
+    def test_settings_tab_lists_diagnostic_traces(self):
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        self.assertIn('text: "Log layer resolution (diagnostics)"', config)
+        self.assertIn('text: "Log HTTP requests (diagnostics)"', config)
 
     def test_settings_tab_lists_upload(self):
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
