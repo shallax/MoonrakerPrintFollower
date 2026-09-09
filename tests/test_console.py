@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from plugins.ConsolePolicy import MAX_HISTORY, MAX_PENDING, normalise_line, trim_history
+from plugins.ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, normalise_line, trim_history
 
 
 class ConsolePolicyTests(unittest.TestCase):
@@ -12,6 +12,16 @@ class ConsolePolicyTests(unittest.TestCase):
         self.assertEqual(normalise_line("   "), "")
         self.assertEqual(normalise_line(None), "")
         self.assertEqual(normalise_line(""), "")
+
+    def test_line_breaks_and_oversized_pastes_are_refused(self):
+        # Panel security P3: the single-line UI is the only thing that
+        # keeps multiline input out of the send path — the policy owns
+        # that guarantee now, and a pasted megabyte line must not be
+        # sent verbatim.
+        self.assertEqual(normalise_line("G28\r\nM140 S60"), "G28M140 S60")
+        self.assertEqual(normalise_line("G28\nG1 X0"), "G28G1 X0")
+        self.assertEqual(normalise_line("M117 " + "x" * MAX_LINE), "")
+        self.assertEqual(normalise_line("M117 " + "x" * (MAX_LINE - 6)), "M117 " + "x" * (MAX_LINE - 6))
 
     def test_history_trims_to_the_newest_entries(self):
         lines = [f"line-{i}" for i in range(MAX_HISTORY + 40)]

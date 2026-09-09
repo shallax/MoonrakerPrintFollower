@@ -35,7 +35,9 @@ Slider {
             anchors.left: parent.left
             anchors.margins: 2 * screenScaleFactor
             width: Math.max(0, control.visualPosition) * (parent.width - 4 * screenScaleFactor)
-            color: UM.Theme.getColor("primary")
+            // Disabled sliders grey out (the author's live report):
+            // the stock dimming does not reach a custom-styled fill.
+            color: control.enabled ? UM.Theme.getColor("primary") : UM.Theme.getColor("text_disabled")
             radius: Math.min(UM.Theme.getSize("progressbar_radius").width, height / 2)
             cornerSide: Cura.RoundedRectangle.Direction.All
         }
@@ -49,7 +51,7 @@ Slider {
         radius: 8 * screenScaleFactor
         cornerSide: Cura.RoundedRectangle.Direction.All
         color: UM.Theme.getColor("main_background")
-        border.color: UM.Theme.getColor("primary")
+        border.color: control.enabled ? UM.Theme.getColor("primary") : UM.Theme.getColor("text_disabled")
         border.width: UM.Theme.getSize("default_lining").width
     }
 }

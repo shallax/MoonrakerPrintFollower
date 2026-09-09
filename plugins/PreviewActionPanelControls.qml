@@ -133,13 +133,18 @@ Item {
                     enabled: !base.loadBusy
                     onClicked: base.loadClicked()
                 }
+            }
 
-                LoadProgressIndicator {
-                    width: parent.width
-                    busy: base.loadBusy
-                    progress: base.loadProgress
-                    phase: base.loadPhase
-                }
+            // The indicator is a SIBLING of the buttons Row, not its
+            // third child: a Row lays children side by side, so a
+            // full-width indicator inside it painted entirely past the
+            // card's right edge and the load feedback was invisible
+            // (panel UX P1 — "the second load shows no progress bar").
+            LoadProgressIndicator {
+                width: parent.width
+                busy: base.loadBusy
+                progress: base.loadProgress
+                phase: base.loadPhase
             }
 
             PreviewSecondaryButton {

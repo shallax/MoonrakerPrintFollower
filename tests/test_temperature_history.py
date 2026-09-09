@@ -83,6 +83,19 @@ class TemperatureHistoryTests(unittest.TestCase):
         self.assertAlmostEqual(points[0][1], 25.0)
         self.assertAlmostEqual(points[-1][1], 35.0)
 
+    def test_vanished_sensors_leave_the_series_once_the_window_slides_past(self):
+        # Panel UX P3: a sensor that stops reporting must not linger in
+        # the legend as a "—" row for the rest of the session.
+        history = TemperatureHistory(window_seconds=100)
+        self.observe(history, 0, {"extruder": (200, 210, 0.8), "heater_bed": (60, 60, 0.5)})
+        self.assertIn("heater_bed", history.names())
+        # Only the extruder reports for the next full window: the bed's
+        # points age past the cutoff and the deque empties — pruned.
+        for tick in range(1, 12):
+            self.observe(history, tick * 10, {"extruder": (200 + tick, 210, 0.8)})
+        self.assertIn("extruder", history.names())
+        self.assertNotIn("heater_bed", history.names())
+
     def test_target_and_power_segments_split_at_gaps(self):
         history = TemperatureHistory()
         self.observe(history, 0, {"extruder": (200, 210, 0.8)})

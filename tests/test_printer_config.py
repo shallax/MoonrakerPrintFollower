@@ -267,6 +267,31 @@ class PrinterConfigTests(unittest.TestCase):
         for scheme_only in ("http:", "https:", "http://", "https://", "HTTP://"):
             self.assertEqual(normalise_url(scheme_only), "http://")
 
+    def test_normalise_url_strips_userinfo_and_control_characters(self):
+        # Panel security P3: Qt logs the full request URL on errors, so
+        # embedded credentials would leak into Cura's log; control
+        # characters never belong in a host.
+        self.assertEqual(normalise_url("http://user:pass@printer.lan"), "http://printer.lan")
+        self.assertEqual(normalise_url("https://user@printer.lan:7125/"), "https://printer.lan:7125")
+        self.assertEqual(normalise_url("http://printer.l\x00an"), "http://")
+        self.assertEqual(normalise_url("http://printer.l\nan"), "http://")
+
+    def test_upload_paths_refuse_traversal_segments_at_config_time(self):
+        # Panel security P3: the dialog applies UploadController.valid_path,
+        # but a hand-edited or migrated config must not carry ".." to the
+        # upload API either.
+        from plugins.PrinterConfig import upload_path_safe
+        self.assertEqual(upload_path_safe("PLA"), "PLA")
+        self.assertEqual(upload_path_safe("PLA/parts"), "PLA/parts")
+        self.assertEqual(upload_path_safe("<root>"), "")
+        self.assertEqual(upload_path_safe("../gcodes"), "")
+        self.assertEqual(upload_path_safe("PLA/../gcodes"), "")
+        self.assertEqual(upload_path_safe(".hidden"), "")
+        config = PrinterConfig.from_dict({"upload_path": "../gcodes",
+                                          "upload_paths": ["PLA", "../steal"]})
+        self.assertEqual(config.upload_path, "")
+        self.assertEqual(config.upload_paths, ["PLA"])
+
     def test_from_dict_normalises_url(self):
         self.assertEqual(PrinterConfig.from_dict({"url": "printer.lan"}).url, "http://printer.lan")
         self.assertEqual(PrinterConfig.from_dict({"url": "https://printer.lan/"}).url, "https://printer.lan")

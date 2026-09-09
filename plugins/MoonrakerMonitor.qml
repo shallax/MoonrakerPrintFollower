@@ -107,7 +107,7 @@ Component {
 
         ColorDialog {
             id: chartColorDialog
-            title: "Sensor colour"
+            title: root.printer != null && root.printer.britishSpelling ? "Sensor colour" : "Sensor color"
             onAccepted: {
                 var colour = selectedColor;
                 var hex = "#" + ((1 << 24) + (Math.round(colour.r * 255) << 16) + (Math.round(colour.g * 255) << 8) + Math.round(colour.b * 255)).toString(16).slice(-6);
@@ -207,8 +207,19 @@ Component {
                         text: root.infoCollapsed ? "›" : "‹"
                         tooltip: root.infoCollapsed ? "Show the information." : "Hide the information."
                         onClicked: {
+                            // The NEW state is computed locally: the
+                            // property binding may not have re-evaluated
+                            // yet when this handler reads it back.
+                            var collapsing = root.printer == null || !root.infoCollapsed;
                             if (root.printer != null) {
-                                root.printer.setInfoCollapsed(!root.infoCollapsed);
+                                root.printer.setInfoCollapsed(collapsing);
+                            }
+                            // Collapsing the pane hides the pop-over's
+                            // opener with it — the card must close too
+                            // (the UX adjudication: only the section-
+                            // collapse deviation stands).
+                            if (collapsing) {
+                                root.openPopOver = "";
                             }
                         }
                     }
@@ -669,89 +680,98 @@ Component {
                                 wrapMode: Text.WordWrap
                             }
 
-                            // A shell-terminal-styled history pane:
-                            // dark, fixed-width, newest line pinned to
-                            // the bottom — the list slides to the end as
-                            // each line lands, so the prompt stays the
-                            // newest thing on screen.
+                            // A shell-terminal-styled console: dark,
+                            // fixed-width, newest line pinned to the
+                            // bottom — the list slides to the end as
+                            // each line lands, and the input row lives
+                            // INSIDE the dark well with the prompt, so
+                            // the green ">" keeps its contrast on both
+                            // themes (panel UX P3).
                             Cura.RoundedRectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 140 * screenScaleFactor
+                                Layout.preferredHeight: 190 * screenScaleFactor
                                 color: "#161b22"
                                 border.color: UM.Theme.getColor("lining")
                                 border.width: UM.Theme.getSize("default_lining").width
                                 radius: UM.Theme.getSize("default_radius").width
 
-                                ListView {
-                                    id: consoleHistoryView
+                                ColumnLayout {
                                     anchors.fill: parent
                                     anchors.margins: UM.Theme.getSize("narrow_margin").width
-                                    clip: true
-                                    // BottomToTop + the reversed model put
-                                    // the newest line right against the
-                                    // bottom edge and fill upward — a
-                                    // shell, not a top-filled list.
-                                    verticalLayoutDirection: ListView.BottomToTop
-                                    model: consoleSection.consoleLinesBottomUp
-                                    delegate: UM.Label {
-                                        // Anchors, not a width binding: the
-                                        // bound width fed the label's layout
-                                        // back into the view's size hints and
-                                        // oscillated on pane collapses.
+                                    spacing: UM.Theme.getSize("thin_margin").height
+
+                                    ListView {
+                                        id: consoleHistoryView
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        clip: true
+                                        // BottomToTop + the reversed model put
+                                        // the newest line right against the
+                                        // bottom edge and fill upward — a
+                                        // shell, not a top-filled list.
+                                        verticalLayoutDirection: ListView.BottomToTop
+                                        model: consoleSection.consoleLinesBottomUp
+                                        delegate: UM.Label {
+                                            // Anchors, not a width binding: the
+                                            // bound width fed the label's layout
+                                            // back into the view's size hints and
+                                            // oscillated on pane collapses. The
+                                            // null guard keeps the engine quiet
+                                            // while the delegate is constructed
+                                            // before its view parents it.
+                                            anchors.left: parent !== null ? parent.left : undefined
+                                            anchors.right: parent !== null ? parent.right : undefined
+                                            text: modelData
+                                            // A concrete-family fallback list:
+                                            // the bare "monospace" generic does
+                                            // not resolve to a fixed-width face
+                                            // in Cura's label rendering.
+                                            font.family: consoleSection.monoFamily()
+                                            color: "#d9dde3"
+                                            elide: Text.ElideRight
+                                        }
+                                        ScrollBar.vertical: UM.ScrollBar {
+                                            id: consoleScrollbar
+                                        }
+                                    }
+
+                                    UM.Label {
+                                        visible: root.printer == null || root.printer.consoleHistory.length === 0
                                         anchors.left: parent.left
                                         anchors.right: parent.right
-                                        text: modelData
-                                        // A concrete-family fallback list:
-                                        // the bare "monospace" generic does
-                                        // not resolve to a fixed-width face
-                                        // in Cura's label rendering.
+                                        text: "No commands yet — lines you send appear here."
                                         font.family: consoleSection.monoFamily()
-                                        color: "#d9dde3"
+                                        color: "#7d8590"
                                         elide: Text.ElideRight
                                     }
-                                    ScrollBar.vertical: UM.ScrollBar {
-                                        id: consoleScrollbar
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: UM.Theme.getSize("thin_margin").width
+                                        UM.Label {
+                                            text: ">"
+                                            font: UM.Theme.getFont("medium_bold")
+                                            color: "#3fb950"
+                                        }
+                                        Cura.TextField {
+                                            id: consoleInput
+                                            Layout.fillWidth: true
+                                            placeholderText: "G-code command…"
+                                            font.family: consoleSection.monoFamily()
+                                            Keys.onReturnPressed: consoleSection.consoleSend()
+                                            Keys.onUpPressed: consoleSection.consoleRecall(1)
+                                            Keys.onDownPressed: consoleSection.consoleRecall(-1)
+                                        }
+                                        Cura.SecondaryButton {
+                                            text: "Send"
+                                            onClicked: consoleSection.consoleSend()
+                                        }
+                                        Cura.SecondaryButton {
+                                            text: "Clear"
+                                            visible: root.printer != null && root.printer.consoleHistory.length > 0
+                                            onClicked: root.printer.clearConsoleHistory()
+                                        }
                                     }
-                                }
-
-                                UM.Label {
-                                    visible: root.printer == null || root.printer.consoleHistory.length === 0
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.top: parent.top
-                                    anchors.margins: UM.Theme.getSize("narrow_margin").width
-                                    text: "No commands yet — lines you send appear here."
-                                    font.family: consoleSection.monoFamily()
-                                    color: "#7d8590"
-                                    elide: Text.ElideRight
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: UM.Theme.getSize("thin_margin").width
-                                UM.Label {
-                                    text: ">"
-                                    font: UM.Theme.getFont("medium_bold")
-                                    color: "#3fb950"
-                                }
-                                Cura.TextField {
-                                    id: consoleInput
-                                    Layout.fillWidth: true
-                                    placeholderText: "G-code command…"
-                                    font.family: consoleSection.monoFamily()
-                                    Keys.onReturnPressed: consoleSection.consoleSend()
-                                    Keys.onUpPressed: consoleSection.consoleRecall(1)
-                                    Keys.onDownPressed: consoleSection.consoleRecall(-1)
-                                }
-                                Cura.SecondaryButton {
-                                    text: "Send"
-                                    onClicked: consoleSection.consoleSend()
-                                }
-                                Cura.SecondaryButton {
-                                    text: "Clear"
-                                    visible: root.printer != null && root.printer.consoleHistory.length > 0
-                                    onClicked: root.printer.clearConsoleHistory()
                                 }
                             }
 
@@ -1024,7 +1044,10 @@ Component {
                                         elide: Text.ElideRight
                                         UM.TooltipArea {
                                             anchors.fill: parent
-                                            text: root.printer != null && root.printer.monitorEtaBasis === "index" ? "Estimated from the G-code's layer timings × the observed speed." : "Moonraker's estimate — download the G-code for the accurate layer-timed estimate."
+                                            // No basis claim while the value itself is
+                                            // paused or absent — "Moonraker's estimate"
+                                            // under a dash would lie (panel UX P2).
+                                            text: root.printer == null || root.printer.monitorEta === "—" || root.printer.monitorEta === "Paused" ? "" : root.printer.monitorEtaBasis === "index" ? "Estimated from the G-code's layer timings × the observed speed." : "Moonraker's estimate — download the G-code for the accurate layer-timed estimate."
                                             acceptedButtons: Qt.NoButton
                                         }
                                     }
@@ -1711,6 +1734,10 @@ Component {
                             spacing: UM.Theme.getSize("narrow_margin").width
                             UM.CheckBox {
                                 checked: modelData.visible
+                                // The label lives in the neighbouring
+                                // cell — name the control for screen
+                                // readers (panel UX P3).
+                                Accessible.name: "Show " + modelData.label
                                 onToggled: root.printer.setTemperatureSensorVisible(modelData.name, checked)
                             }
                             Rectangle {
@@ -1752,7 +1779,7 @@ Component {
                     visible: root.selectedChartSensor !== ""
                     spacing: UM.Theme.getSize("thin_margin").width
                     UM.Label {
-                        text: root.selectedChartSensorLabel + " color:"
+                        text: root.selectedChartSensorLabel + (root.printer != null && root.printer.britishSpelling ? " colour:" : " color:")
                         color: UM.Theme.getColor("text_inactive")
                     }
                     Repeater {
@@ -1773,7 +1800,7 @@ Component {
                     }
                     Cura.SecondaryButton {
                         text: "Custom…"
-                        tooltip: "Pick any colour for " + root.selectedChartSensorLabel + "."
+                        tooltip: "Pick any " + (root.printer != null && root.printer.britishSpelling ? "colour" : "color") + " for " + root.selectedChartSensorLabel + "."
                         onClicked: chartColorDialog.open()
                     }
                 }

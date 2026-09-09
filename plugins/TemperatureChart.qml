@@ -152,6 +152,13 @@ Item {
         return text;
     }
 
+    function _clockTextMinutes(elapsed) {
+        // Axis ticks carry HH:MM only: the seconds noise ("14:03:05")
+        // belongs to the hover readout, not the tick strip (panel UX P3).
+        var text = _clockText(elapsed);
+        return text.length >= 5 ? text.slice(0, 5) : "";
+    }
+
     function _fontPixels() {
         var font = UM.Theme.getFont("default");
         return Math.max(9, Math.round(font.pointSize * 96 / 72));
@@ -290,7 +297,7 @@ Item {
                 var ticks = 4;
                 for (var tick = 0; tick <= ticks; ++tick) {
                     var telapsed = root._minElapsed + (root._maxElapsed - root._minElapsed) * tick / ticks;
-                    var clock = root._clockText(telapsed);
+                    var clock = root._clockTextMinutes(telapsed);
                     if (clock !== "") {
                         ctx.fillStyle = labelColor;
                         ctx.font = root._fontString();

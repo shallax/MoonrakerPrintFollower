@@ -9,6 +9,7 @@ Cura.MachineAction {
     anchors.fill: parent
 
     property bool validUrl: manager.validUrl(urlField.text)
+    property bool insecureKeyWarning: manager.insecureKeyWarning(urlField.text, apiKeyField.text)
     property bool validPollInterval: manager.validPollInterval(pollIntervalField.text)
     property bool validZTolerance: manager.validZTolerance(zToleranceField.text)
     property bool validRetryInterval: manager.validRetryInterval(retryIntervalField.text)
@@ -177,6 +178,13 @@ Cura.MachineAction {
                             text: manager.settingsApiKey
                             echoMode: TextInput.Password
                             maximumLength: 4096
+                        }
+                        UM.Label {
+                            visible: base.insecureKeyWarning
+                            text: "The API key is sent unencrypted over HTTP — anyone on the same network can read it. Use https:// or a local-only address for the key to protect it."
+                            color: UM.Theme.getColor("warning")
+                            wrapMode: Text.WordWrap
+                            width: parent.width
                         }
 
                         UM.Label {

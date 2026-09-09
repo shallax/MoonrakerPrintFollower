@@ -123,9 +123,23 @@ class TemperatureHistory:
             if len(points) > MAX_SAMPLES:
                 for _ in range(len(points) - MAX_SAMPLES):
                     points.popleft()
+        # Trim EVERY series against the cutoff, not just the ones in
+        # this reading: a sensor that stops reporting must age out too.
+        # Then prune the emptied ones — a vanished sensor must not
+        # linger in the legend as a "—" row for the rest of the session
+        # (panel UX P3 — ghost legend rows).
+        for points in self._series.values():
+            while points and points[0].elapsed < cutoff:
+                points.popleft()
+            if len(points) > MAX_SAMPLES:
+                for _ in range(len(points) - MAX_SAMPLES):
+                    points.popleft()
+        pruned = [name for name, points in self._series.items() if not points]
+        for name in pruned:
+            del self._series[name]
         if wall is not None:
             self._wall_origin = float(wall) - elapsed
-        if readings:
+        if readings or pruned:
             self._revision += 1
 
     def names(self) -> List[str]:

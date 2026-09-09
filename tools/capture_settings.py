@@ -200,6 +200,10 @@ class SettingsManager(QObject):
         return self._test_busy
 
     # --- Validation (same rules as MoonrakerFollowerMachineAction) ---
+    @pyqtSlot(str, str, result=bool)
+    def insecureKeyWarning(self, url, key):
+        return False
+
     @pyqtSlot(str, result=bool)
     def validUrl(self, value):
         parsed = QUrl(str(value or ""))

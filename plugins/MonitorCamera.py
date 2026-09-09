@@ -1,7 +1,7 @@
 """Webcam selection/transform policy with an explicit configuration capability."""
 from dataclasses import replace
 from urllib.parse import urljoin
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
 
 
 class MonitorCamera(QObject):
@@ -120,6 +120,13 @@ class MonitorCamera(QObject):
 
         camera = cameras[self._index] if self._index >= 0 else {}
         stream = str(camera.get("stream_url") or config.camera_url or "")
+        # Absolute stream URLs may only be http/https (panel security
+        # P3): a hostile Moonraker listing file:// or ftp:// would make
+        # Cura's image loader fetch arbitrary schemes. Relative paths
+        # (the normal webcam case) have no scheme and pass untouched.
+        if stream and QUrl(stream).isValid() and QUrl(stream).scheme() \
+                and QUrl(stream).scheme().lower() not in ("http", "https"):
+            stream = ""
         self._url = urljoin(config.url.rstrip("/") + "/", stream) if stream and self._data.active else ""
         try: rotation = int(camera.get("rotation", config.camera_rotation) or 0)
         except (TypeError, ValueError): rotation = 0

@@ -53,7 +53,7 @@ better remaining-time estimate.
 ### Notes
 - Chart history is session-scoped: a Cura restart starts the chart
   empty, and a monitor pause longer than half a minute starts a fresh
-  window ("Collecting temperature history…").
+  window.
 - The 1 s chart cadence applies while printing or paused; the idle
   auxiliary poll stays at 2.5 s.
 - Chart colours, visibility and the console history persist per

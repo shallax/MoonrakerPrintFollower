@@ -42,6 +42,11 @@ class RemoteFileService(QObject):
 
     METADATA_RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)
     DOWNLOAD_RETRY_DELAYS_MS = (2000, 5000, 15000, 60000)
+    # Download byte cap (panel security P2-3): the equality check against
+    # the server-declared size is the only other guard, and a hostile or
+    # stale endpoint simply lies about it. Real prints are well under a
+    # gigabyte; 2 GiB is headroom beyond generous.
+    MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
 
     def __init__(self, transport, parent=None):
         super().__init__(parent)
@@ -219,6 +224,15 @@ class RemoteFileService(QObject):
             chunk = bytes(reply.readAll())
             if chunk and self._write_queue is not None:
                 self._download_received += len(chunk)
+                if self._download_received > self.MAX_DOWNLOAD_BYTES:
+                    # Byte cap (panel security P2-3): the only guard was
+                    # equality against the SERVER-DECLARED size, which a
+                    # hostile or stale endpoint simply lies about. Past
+                    # the cap the download aborts and the retry ladder
+                    # takes over — unbounded disk fill under /tmp is off.
+                    self._abort_download()
+                    self._fail("Downloaded G-code exceeds the size cap")
+                    return
                 self._write_queue.put(chunk)
         except Exception as error:
             self._abort_download()

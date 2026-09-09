@@ -17,7 +17,7 @@ from dataclasses import replace
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from .ConsolePolicy import MAX_PENDING, normalise_line, trim_history
+from .ConsolePolicy import MAX_LINE, MAX_PENDING, normalise_line, trim_history
 
 
 class ConsoleController(QObject):
@@ -55,7 +55,8 @@ class ConsoleController(QObject):
         lane, so the UI can keep the draft on a refusal."""
         line = normalise_line(text)
         if not line:
-            self._status = "Empty command ignored."
+            self._status = ("Command too long — ignored." if len(str(text or "").strip()) > MAX_LINE
+                            else "Empty command ignored.")
             self.changed.emit()
             return False
         if self._pending >= MAX_PENDING:

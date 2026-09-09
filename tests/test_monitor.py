@@ -25,6 +25,7 @@ from qt_runtime_support import QT_AVAILABLE, ROOT, ScriptedTransport, runtime
 
 PLUGINS = ROOT / "plugins"
 MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
+CHANGELOG = (ROOT / "CHANGELOG.md").read_text()
 DATA = (PLUGINS / "MonitorData.py").read_text()
 CONTROLS = (PLUGINS / "MonitorControls.py").read_text()
 FORMATTING = (PLUGINS / "MonitorFormatting.py").read_text()
@@ -538,6 +539,30 @@ class MonitorModelContractTests(unittest.TestCase):
         # parent (the engine gate creates every document standalone):
         # an unguarded parent.width read is a TypeError there.
         self.assertIn("parent != null ?", POPOVER_QML)
+        # The preview load indicator must stay OUT of the buttons Row
+        # (panel UX P1: as the Row's third child it painted off-card),
+        # the pane collapse must close the pop-over, the ETA tooltip
+        # must not claim a basis for a paused/absent value, and the
+        # chart's filling state must actually render its copy.
+        panel = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
+        self.assertIn("The indicator is a SIBLING of the buttons Row", panel)
+        self.assertIn("Collapsing the pane hides the pop-over's", MONITOR_QML)
+        self.assertIn('monitorEta === "Paused" ? ""', MONITOR_QML)
+        # The "Collecting temperature history…" placeholder stays ABSENT:
+        # the author ruled the waiting state annoying and dropped it
+        # before; the changelog quote was struck instead (the filling
+        # flag remains plumbed, unused by the UI).
+        self.assertNotIn("Collecting temperature history", MONITOR_QML + CHANGELOG)
+        self.assertIn("_clockTextMinutes", TEMP_CHART_QML)
+        # Disabled sliders grey the fill and the handle ring.
+        slider_source = (PLUGINS / "OutlineSlider.qml").read_text()
+        self.assertGreaterEqual(slider_source.count("control.enabled ? UM.Theme.getColor(\"primary\") : UM.Theme.getColor(\"text_disabled\")"), 2)
+        # The colour/colour strings follow the user's locale.
+        self.assertIn("britishSpelling", MONITOR_QML)
+        self.assertIn("britishSpelling", MONITOR_MODEL)
+        self.assertIn("Accessible.name: \"Show \"", MONITOR_QML)
+        # The console's input row lives inside the dark well.
+        self.assertIn("Layout.preferredHeight: 190 * screenScaleFactor", MONITOR_QML)
 
     def test_deferred_slider_and_monitor_ux_contracts(self):
         self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 9)

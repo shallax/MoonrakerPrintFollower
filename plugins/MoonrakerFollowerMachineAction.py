@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QHostAddress, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 
 from cura.MachineAction import MachineAction
 from UM.Logger import Logger
@@ -219,6 +219,24 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtSlot(str, result=bool)
     def validUrl(self, value: str) -> bool:
         return self._url_is_usable(normalise_url(value))
+
+    @pyqtSlot(str, str, result=bool)
+    def insecureKeyWarning(self, url: str, key: str) -> bool:
+        """True when an API key would be sent in cleartext: the scheme
+        is plain http and the host is not loopback. The plugin never
+        refuses — plain-http LAN Moonraker is the normal deployment —
+        but the Connection tab must say so (panel security P2-1)."""
+        if not str(key or "").strip():
+            return False
+        text = normalise_url(url)
+        parsed = QUrl(text)
+        if not (parsed.isValid() and parsed.scheme().lower() == "http"):
+            return False
+        host = str(parsed.host() or "").lower()
+        if host == "localhost":
+            return False
+        address = QHostAddress(host)
+        return not (not address.isNull() and address.isLoopback())
 
     @pyqtSlot(str, result=bool)
     def validPollInterval(self, value: str) -> bool:

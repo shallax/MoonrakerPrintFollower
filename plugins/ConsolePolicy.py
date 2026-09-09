@@ -19,10 +19,23 @@ MAX_HISTORY = 200
 # one-shot lane with macros and setup scripts.
 MAX_PENDING = 16
 
+# A pasted megabyte "line" must not be sent verbatim — the console's
+# semantic is one line, as displayed. 8 KiB is far beyond any real
+# gcode command (panel security P3).
+MAX_LINE = 8 * 1024
+
 
 def normalise_line(text) -> str:
-    """The command text or "" when the input is empty/whitespace."""
-    return str(text or "").strip()
+    """The command text or "" when the input is empty/whitespace, over
+    the length cap, or carries line breaks (a multiline paste must not
+    smuggle extra commands past the single-line UI)."""
+    line = str(text or "")
+    if "\r" in line or "\n" in line:
+        line = line.replace("\r", "").replace("\n", "")
+    line = line.strip()
+    if len(line) > MAX_LINE:
+        return ""
+    return line
 
 
 def trim_history(lines, limit: int = MAX_HISTORY) -> List[str]:

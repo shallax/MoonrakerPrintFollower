@@ -14,6 +14,14 @@ from UM.Logger import Logger
 
 JsonCallback = Callable[[Optional[Dict[str, Any]], Optional[str]], None]
 
+# Response-size cap (panel security P2-2): the configured URL is
+# user-entered and may point at something that is NOT the printer any
+# more — an impostor or stale endpoint answering the poll with an
+# unbounded body would otherwise be buffered whole and OOM Cura.
+# Nothing legitimate exceeds a few MB (status payloads, webcam lists,
+# single-file metadata); 64 MB is headroom beyond generous.
+MAX_REPLY_BYTES = 64 * 1024 * 1024
+
 
 @dataclass
 class TransportMetrics:
@@ -216,9 +224,15 @@ class MoonrakerHttpTransport(QObject):
             if reply.error() != QNetworkReply.NetworkError.NoError:
                 error = reply.errorString()
             else:
-                raw = bytes(reply.readAll()).decode("utf-8", errors="replace")
-                if raw.strip():
-                    decoded = json.loads(raw)
+                declared = reply.header(QNetworkRequest.KnownHeaders.ContentLengthHeader)
+                if declared is not None and int(declared) > MAX_REPLY_BYTES:
+                    raise ValueError("Moonraker response exceeds the size cap")
+                raw = bytes(reply.read(MAX_REPLY_BYTES + 1))
+                if len(raw) > MAX_REPLY_BYTES or reply.bytesAvailable() > 0:
+                    raise ValueError("Moonraker response exceeds the size cap")
+                text = raw.decode("utf-8", errors="replace")
+                if text.strip():
+                    decoded = json.loads(text)
                     if not isinstance(decoded, dict):
                         raise ValueError("Moonraker returned a non-object JSON response")
                     if decoded.get("error"):

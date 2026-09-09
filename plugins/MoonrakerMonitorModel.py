@@ -4,11 +4,29 @@ import json
 import os
 import re
 from copy import deepcopy
-from PyQt6.QtCore import QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QLocale, QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from UM.Resources import Resources
 from PyQt6.QtGui import QDesktopServices
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from .ConsoleController import ConsoleController
+
+
+def _british_spelling() -> bool:
+    """British spellings for Commonwealth-English locales: the author's
+    ruling is that the plugin is British, but the handful of variant
+    strings follow the USER's locale — QLocale decides en_GB vs en_US.
+    Bare "en" and other languages get the American spellings Cura's own
+    strings use."""
+    try:
+        for language in QLocale.system().uiLanguages():
+            normalised = str(language).replace("-", "_").lower()
+            if normalised.split("_")[0] == "en":
+                return normalised not in {"en", "en_us"}
+    except Exception:
+        pass
+    return False
+
+
 from .MonitorCamera import MonitorCamera
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls
@@ -260,6 +278,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             temperatureChart=self._chart_value(),
             temperatureChartLegend=self._legend_value(),
             showProbePoints=self._show_probe_points,
+            britishSpelling=_british_spelling(),
             improvingEta=(snapshot.load_active or self._improving_eta) and not snapshot.index_ready,
             improveEtaProgress=(max(0.0, min(1.0, snapshot.download_fraction))
                                 if (snapshot.load_active or self._improving_eta) and snapshot.download_fraction is not None else -1.0),
@@ -291,6 +310,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     monitorLayer = value_property(str, "monitorLayer", monitorChanged, "—")
     monitorLayerProgress = value_property(float, "monitorLayerProgress", monitorChanged, -1.0)
     monitorLayerSource = value_property(str, "monitorLayerSource", monitorChanged, "")
+    britishSpelling = value_property(bool, "britishSpelling", monitorChanged, False)
     improvingEta = value_property(bool, "improvingEta", monitorChanged, False)
     improveEtaProgress = value_property(float, "improveEtaProgress", monitorChanged, -1.0)
     improveEtaPhase = value_property(str, "improveEtaPhase", monitorChanged, "")

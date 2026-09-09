@@ -5,6 +5,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from math import isfinite
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit, urlunsplit
 
 
 def normalise_url(value: Any) -> str:
@@ -12,16 +13,41 @@ def normalise_url(value: Any) -> str:
 
     Scheme-only input (``http:``, ``https://``, …) is the unconfigured
     placeholder and maps to ``http://``; ``usable_url`` rejects it.
+    Control characters and embedded userinfo are stripped (panel
+    security P3): Qt logs the full request URL on errors, so
+    ``http://user:pass@host`` would leak credentials into Cura's log.
     """
     text = str(value or "").strip()
     if not text or text.lower() in ("http:", "https:", "http://", "https://"):
         return "http://"
+    if any(ord(ch) < 32 for ch in text):
+        return "http://"
     if not text.lower().startswith(("http://", "https://")):
         text = f"http://{text}"
+    split = urlsplit(text)
+    if split.username is not None or split.password is not None:
+        host = split.hostname or ""
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        if split.port is not None:
+            host = f"{host}:{split.port}"
+        text = urlunsplit((split.scheme, host, split.path, split.query, split.fragment))
     # rstrip("/") would eat the scheme's own "//"; only strip path separators.
     while text.endswith("/") and not text.endswith("://"):
         text = text[:-1]
     return text
+
+
+def upload_path_safe(value: Any) -> str:
+    """The upload path with Moonraker-side traversal segments refused:
+    the dialog applies UploadController.valid_path, but a hand-edited
+    or migrated config must not carry ".." segments to the upload API
+    either (panel security P3 — same rule, one place per surface)."""
+    text = str(value or "").strip().strip("/")
+    if text == "<root>":
+        return ""
+    parts = text.replace("\\", "/").split("/")
+    return "" if any(part.startswith(".") for part in parts if part) else text
 
 
 def normalise_temperature_chart(value: Any) -> dict:
@@ -144,12 +170,10 @@ class PrinterConfig:
 
         paths = data.get("upload_paths")
         if isinstance(paths, (list, tuple)):
-            data["upload_paths"] = [
-                str(item).strip().strip("/") for item in paths
-                if str(item).strip().strip("/")
-            ]
+            data["upload_paths"] = [safe for safe in (upload_path_safe(item) for item in paths) if safe]
         else:
             data["upload_paths"] = []
+        data["upload_path"] = upload_path_safe(data.get("upload_path"))
 
         for key in (
             "enabled", "moonraker_layer_is_one_based", "auto_preview",
