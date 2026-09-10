@@ -503,27 +503,34 @@ Component {
                                     onClicked: root.printer.clearBedMesh()
                                 }
                             }
-                            UM.Label {
-                                // NO-REFLOW RULE: fixed single-line slots
-                                // — the text changes, never the layout.
-                                height: 36 * screenScaleFactor
-                                text: root.printer != null && root.printer.hasBedMesh && root.printer.bedMeshProfileNames.length === 0 ? "No saved bed mesh profiles reported by Klipper." : ""
-                                color: UM.Theme.getColor("text_inactive")
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: UM.Theme.getSize("default_margin").width
+                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
                                 Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                wrapMode: Text.NoWrap
-                            }
-                            UM.Label {
-                                height: 36 * screenScaleFactor
-                                text: root.printer != null && root.printer.printActive ? "Homing and bed-mesh setup controls are disabled during a print." : ""
-                                color: UM.Theme.getColor("text_inactive")
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                wrapMode: Text.NoWrap
-                                UM.TooltipArea {
-                                    anchors.fill: parent
-                                    text: parent.text
-                                    acceptedButtons: Qt.NoButton
+
+                                UM.Label {
+                                    text: "Status"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    // One labelled row instead of two
+                                    // always-present blank slots (the
+                                    // author's "white space at the
+                                    // bottom of Setup" report). The
+                                    // emdash is the honest empty value.
+                                    height: 36 * screenScaleFactor
+                                    text: root.printer != null ? (root.printer.printActive ? "Setup disabled during a print" : (root.printer.hasBedMesh && root.printer.bedMeshProfileNames.length === 0 ? "No saved bed mesh profiles" : "—")) : "—"
+                                    color: UM.Theme.getColor("text")
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    wrapMode: Text.NoWrap
+                                    UM.TooltipArea {
+                                        anchors.fill: parent
+                                        text: root.printer != null ? (root.printer.printActive ? "Homing and bed-mesh setup controls are disabled during a print." : (root.printer.hasBedMesh && root.printer.bedMeshProfileNames.length === 0 ? "No saved bed mesh profiles reported by Klipper." : "")) : ""
+                                        acceptedButtons: Qt.NoButton
+                                    }
                                 }
                             }
                         }
@@ -550,21 +557,44 @@ Component {
                             // the one-line readout wrapped at narrow widths
                             // and made the content jump. Elide instead of
                             // wrap so the section height never changes.
-                            UM.Label {
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: UM.Theme.getSize("default_margin").width
                                 Layout.fillWidth: true
-                                text: root.printer != null ? "Homed: " + (root.printer.homedAxes.length > 0 ? root.printer.homedAxes.toUpperCase().split('').join(' ') : "—") + "  ·  " + root.printer.positionMode + " moves" : ""
-                                color: UM.Theme.getColor("text_inactive")
-                                elide: Text.ElideRight
+
+                                UM.Label {
+                                    text: "Homed"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    Layout.fillWidth: true
+                                    text: root.printer != null ? (root.printer.homedAxes.length > 0 ? root.printer.homedAxes.toUpperCase().split('').join(' ') : "—") + "  ·  " + root.printer.positionMode + " moves" : "—"
+                                    color: UM.Theme.getColor("text")
+                                    elide: Text.ElideRight
+                                }
                             }
-                            UM.Label {
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: UM.Theme.getSize("default_margin").width
                                 Layout.fillWidth: true
-                                // Label-prefixed readout with an honest
-                                // emdash when there is no value (the
-                                // author's ruling for every slot that
-                                // might show text).
-                                text: root.printer != null ? "Position: " + root.printer.monitorPosition : ""
-                                color: UM.Theme.getColor("text_inactive")
-                                elide: Text.ElideRight
+
+                                UM.Label {
+                                    text: "Position"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    // The grey-label / black-value
+                                    // readout pattern (the author's
+                                    // ruling, after the MCUs section),
+                                    // with an honest emdash when there
+                                    // is no value.
+                                    Layout.fillWidth: true
+                                    text: root.printer != null ? root.printer.monitorPosition : "—"
+                                    color: UM.Theme.getColor("text")
+                                    elide: Text.ElideRight
+                                }
                             }
 
                             RowLayout {
@@ -803,27 +833,19 @@ Component {
                                     enabled: root.printer != null && root.printer.jogEnabled
                                     onClicked: root.printer.setExtrudeDistance(100)
                                 }
+                                UM.Label {
+                                    // The unit rides the row, like the
+                                    // speed row's "mm/s" (the author's
+                                    // ruling) — the free-text length
+                                    // box was dropped as unnecessary.
+                                    text: "mm"
+                                    color: UM.Theme.getColor("text_inactive")
+                                }
                             }
 
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: UM.Theme.getSize("thin_margin").width
-                                Cura.TextField {
-                                    id: extrudeDistanceField
-                                    Layout.fillWidth: true
-                                    text: root.printer != null ? root.printer.extrudeDistance.toString() : ""
-                                    onEditingFinished: {
-                                        var value = parseFloat(extrudeDistanceField.text);
-                                        if (root.printer != null) {
-                                            root.printer.setExtrudeDistance(value);
-                                            extrudeDistanceField.text = root.printer.extrudeDistance.toString();
-                                        }
-                                    }
-                                }
-                                UM.Label {
-                                    text: "mm"
-                                    color: UM.Theme.getColor("text_inactive")
-                                }
                                 Cura.SecondaryButton {
                                     Layout.fillWidth: true
                                     text: "Extrude"
@@ -891,18 +913,29 @@ Component {
                             // reading as a bug; TRIGGERED axes get the
                             // normal text colour, open axes stay muted.
                             UM.Label {
-                                // The author's ruling: pin names like
-                                // STEPPER_X are not self-evidently
-                                // endstops — the block gets a title.
+                                // Pin names like STEPPER_X are not
+                                // self-evidently endstops — the block
+                                // gets its own bold title, like the
+                                // MCUs section (the author's ruling).
+                                // The title stays always: it labels the
+                                // chips too.
                                 text: "Endstops"
                                 font: UM.Theme.getFont("medium_bold")
-                                color: UM.Theme.getColor("text_inactive")
+                                color: UM.Theme.getColor("text")
                             }
                             UM.Label {
                                 Layout.fillWidth: true
                                 height: 36 * screenScaleFactor
+                                // The summary line yields to the chips
+                                // once they exist — they ARE the
+                                // readout, and a bare emdash beside
+                                // them read as an error (the author's
+                                // live report). The chips sit below the
+                                // jog pad, so this follows their
+                                // accepted appearance carve-out.
+                                visible: root.printer == null || root.printer.endstopItems.length === 0
                                 text: root.printer != null ? (root.printer.endstopSummary.length > 0 ? root.printer.endstopSummary : "—") : "—"
-                                color: UM.Theme.getColor("text_inactive")
+                                color: UM.Theme.getColor("text")
                                 elide: Text.ElideRight
                                 wrapMode: Text.NoWrap
                             }
@@ -918,40 +951,72 @@ Component {
                                 }
                             }
 
-                            UM.Label {
-                                // NO-REFLOW RULE: permanent slot, fixed
-                                // single-line height — the text changes,
-                                // never the layout. Label-prefixed with
-                                // an honest emdash when nothing applies
-                                // (the author's ruling for slots that
-                                // might show text). The full sentence
-                                // lives in the tooltip: elide must never
-                                // hide the safety clause (the panel).
-                                height: 36 * screenScaleFactor
-                                text: root.printer != null ? "Status: " + (root.printer.canResumePrint ? "Printer is paused — moves run immediately; a print resumes from Klipper's recorded position." : root.printer.canPausePrint ? "Toolhead moves are disabled during a print — pause first." : "—") : "Status: —"
-                                color: UM.Theme.getColor("text_inactive")
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: UM.Theme.getSize("default_margin").width
+                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
                                 Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                wrapMode: Text.NoWrap
-                                UM.TooltipArea {
-                                    anchors.fill: parent
-                                    text: parent.text
-                                    acceptedButtons: Qt.NoButton
-                                }
-                            }
 
-                            UM.Label {
-                                // The jog feedback is its OWN slot: the
-                                // pause-timeout and resumed-drop errors
-                                // must never hide behind the state hint
-                                // (the panel's top finding — queued moves
-                                // were cancelled silently).
-                                height: 36 * screenScaleFactor
-                                text: root.printer != null ? "Jog: " + (root.printer.jogStatus.length > 0 ? root.printer.jogStatus : "—") : "Jog: —"
-                                color: UM.Theme.getColor("text_inactive")
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                wrapMode: Text.NoWrap
+                                UM.Label {
+                                    text: "Status"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    // NO-REFLOW RULE: permanent slot,
+                                    // fixed single-line height — the
+                                    // text changes, never the layout.
+                                    // Grey label, black value (the MCUs
+                                    // pattern), an honest emdash when
+                                    // nothing applies. The full sentence
+                                    // lives in the tooltip: elide must
+                                    // never hide the safety clause (the
+                                    // panel).
+                                    height: 36 * screenScaleFactor
+                                    text: root.printer != null ? (root.printer.canResumePrint ? "Paused — moves run immediately" : root.printer.canPausePrint ? "Moves disabled — pause first" : "—") : "—"
+                                    color: UM.Theme.getColor("text")
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    wrapMode: Text.NoWrap
+                                    UM.TooltipArea {
+                                        anchors.fill: parent
+                                        // Short value in the row, full
+                                        // sentence in the tooltip (the
+                                        // author's ruling).
+                                        text: root.printer != null ? (root.printer.canResumePrint ? "Printer is paused — moves run immediately; a print resumes from Klipper's recorded position." : root.printer.canPausePrint ? "Toolhead moves are disabled during a print — pause first." : "") : ""
+                                        acceptedButtons: Qt.NoButton
+                                    }
+                                }
+
+                                UM.Label {
+                                    // The jog feedback row RESERVES its
+                                    // space at all times and fades in
+                                    // only when it has something to say
+                                    // — an idle "Jog —" is noise (the
+                                    // author's live report), but hiding
+                                    // the row would be a reflow (the
+                                    // author's rule), so opacity, never
+                                    // visibility.
+                                    opacity: root.printer != null && root.printer.jogStatus.length > 0 ? 1 : 0
+                                    text: "Jog"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    // The jog feedback keeps its own row:
+                                    // the pause-timeout and resumed-drop
+                                    // errors must never hide behind the
+                                    // state hint (the panel's top
+                                    // finding — queued moves were
+                                    // cancelled silently).
+                                    opacity: root.printer != null && root.printer.jogStatus.length > 0 ? 1 : 0
+                                    height: 36 * screenScaleFactor
+                                    text: root.printer != null ? root.printer.jogStatus : ""
+                                    color: UM.Theme.getColor("text")
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    wrapMode: Text.NoWrap
+                                }
                             }
                         }
 
@@ -1088,13 +1153,34 @@ Component {
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
                             }
-                            UM.Label {
-                                height: 36 * screenScaleFactor
-                                text: root.printer != null && root.printer.printActive ? "Temperature profiles are disabled during a print, matching Mainsail." : ""
-                                wrapMode: Text.NoWrap
-                                elide: Text.ElideRight
-                                color: UM.Theme.getColor("text_inactive")
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: UM.Theme.getSize("default_margin").width
+                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
                                 Layout.fillWidth: true
+
+                                UM.Label {
+                                    height: 36 * screenScaleFactor
+                                    text: "Status"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    height: 36 * screenScaleFactor
+                                    text: root.printer != null && root.printer.printActive ? "Disabled during a print" : "—"
+                                    wrapMode: Text.NoWrap
+                                    elide: Text.ElideRight
+                                    color: UM.Theme.getColor("text")
+                                    Layout.fillWidth: true
+                                    UM.TooltipArea {
+                                        anchors.fill: parent
+                                        // Short value in the row, full
+                                        // sentence in the tooltip (the
+                                        // author's ruling).
+                                        text: root.printer != null && root.printer.printActive ? "Temperature profiles are disabled during a print, matching Mainsail." : ""
+                                        acceptedButtons: Qt.NoButton
+                                    }
+                                }
                             }
                         }
 
@@ -1602,13 +1688,34 @@ Component {
                                     }
                                 }
                             }
-                            UM.Label {
-                                height: 36 * screenScaleFactor
-                                text: root.anyPowerLocked ? "Power control is locked by Moonraker while this print is active." : ""
-                                wrapMode: Text.NoWrap
-                                elide: Text.ElideRight
-                                color: UM.Theme.getColor("text_inactive")
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: UM.Theme.getSize("default_margin").width
+                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
                                 Layout.fillWidth: true
+
+                                UM.Label {
+                                    height: 36 * screenScaleFactor
+                                    text: "Status"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    height: 36 * screenScaleFactor
+                                    text: root.anyPowerLocked ? "Locked during this print" : "—"
+                                    wrapMode: Text.NoWrap
+                                    elide: Text.ElideRight
+                                    color: UM.Theme.getColor("text")
+                                    Layout.fillWidth: true
+                                    UM.TooltipArea {
+                                        anchors.fill: parent
+                                        // Short value in the row, full
+                                        // sentence in the tooltip (the
+                                        // author's ruling).
+                                        text: root.anyPowerLocked ? "Power control is locked by Moonraker while this print is active." : ""
+                                        acceptedButtons: Qt.NoButton
+                                    }
+                                }
                             }
                         }
 
@@ -1661,13 +1768,34 @@ Component {
                                     onClicked: root.printer.klipperRestart()
                                 }
                             }
-                            UM.Label {
-                                height: 36 * screenScaleFactor
-                                text: root.printer != null && root.printer.printActive ? "System restarts are disabled during a print." : ""
-                                wrapMode: Text.NoWrap
-                                elide: Text.ElideRight
-                                color: UM.Theme.getColor("text_inactive")
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: UM.Theme.getSize("default_margin").width
+                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
                                 Layout.fillWidth: true
+
+                                UM.Label {
+                                    height: 36 * screenScaleFactor
+                                    text: "Status"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    height: 36 * screenScaleFactor
+                                    text: root.printer != null && root.printer.printActive ? "Disabled during a print" : "—"
+                                    wrapMode: Text.NoWrap
+                                    elide: Text.ElideRight
+                                    color: UM.Theme.getColor("text")
+                                    Layout.fillWidth: true
+                                    UM.TooltipArea {
+                                        anchors.fill: parent
+                                        // Short value in the row, full
+                                        // sentence in the tooltip (the
+                                        // author's ruling).
+                                        text: root.printer != null && root.printer.printActive ? "System restarts are disabled during a print." : ""
+                                        acceptedButtons: Qt.NoButton
+                                    }
+                                }
                             }
                         }
 
@@ -1694,17 +1822,30 @@ Component {
                             enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
 
-                            UM.Label {
-                                height: 36 * screenScaleFactor
-                                text: root.printer != null ? root.printer.saveConfigSummary : ""
-                                color: UM.Theme.getColor("text_inactive")
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: UM.Theme.getSize("default_margin").width
+                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
                                 Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                wrapMode: Text.NoWrap
-                                UM.TooltipArea {
-                                    anchors.fill: parent
-                                    text: parent.text
-                                    acceptedButtons: Qt.NoButton
+
+                                UM.Label {
+                                    height: 36 * screenScaleFactor
+                                    text: "Pending"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    height: 36 * screenScaleFactor
+                                    text: root.printer != null && root.printer.saveConfigSummary.length > 0 ? root.printer.saveConfigSummary : "—"
+                                    color: UM.Theme.getColor("text")
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    wrapMode: Text.NoWrap
+                                    UM.TooltipArea {
+                                        anchors.fill: parent
+                                        text: parent.text
+                                        acceptedButtons: Qt.NoButton
+                                    }
                                 }
                             }
                             Cura.PrimaryButton {
@@ -1713,13 +1854,34 @@ Component {
                                 enabled: root.printer != null && root.printer.canSaveConfig
                                 onClicked: root.printer.saveConfig()
                             }
-                            UM.Label {
-                                height: 36 * screenScaleFactor
-                                text: root.printer != null ? (root.printer.printActive ? "SAVE_CONFIG is disabled during a print." : root.printer.canSaveConfig ? "Saving configuration restarts Klipper." : "") : ""
-                                color: UM.Theme.getColor("text_inactive")
+                            GridLayout {
+                                columns: 2
+                                columnSpacing: UM.Theme.getSize("default_margin").width
+                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
                                 Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                wrapMode: Text.NoWrap
+
+                                UM.Label {
+                                    height: 36 * screenScaleFactor
+                                    text: "Save"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    height: 36 * screenScaleFactor
+                                    text: root.printer != null ? (root.printer.printActive ? "Disabled during a print" : root.printer.canSaveConfig ? "Restarts Klipper" : "—") : "—"
+                                    color: UM.Theme.getColor("text")
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    wrapMode: Text.NoWrap
+                                    UM.TooltipArea {
+                                        anchors.fill: parent
+                                        // Short value in the row, full
+                                        // sentence in the tooltip (the
+                                        // author's ruling).
+                                        text: root.printer != null ? (root.printer.printActive ? "SAVE_CONFIG is disabled during a print." : root.printer.canSaveConfig ? "Saving configuration restarts Klipper." : "") : ""
+                                        acceptedButtons: Qt.NoButton
+                                    }
+                                }
                             }
                         }
                     }

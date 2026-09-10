@@ -2402,6 +2402,10 @@ Item {
             "visible: root.printer != null && root.printer.hasBedMesh",
             # Carve-outs awaiting the author's ruling (DECISIONS round 6):
             "visible: base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive && base.pauseAtLayerItems.length > 0",
+            # The Endstops summary row yields to the chips once they
+            # exist (the author's live ruling — the chips ARE the
+            # readout); it sits below the jog pad.
+            "visible: root.printer == null || root.printer.endstopItems.length === 0",
             "visible: root.miniChartHasSeries",
             "visible: root.printer != null && !root.miniChartHasSeries",
             "visible: root.printer != null && root.printer.temperatureItems.length > 0",
