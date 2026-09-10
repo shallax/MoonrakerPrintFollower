@@ -157,6 +157,13 @@ class MonitorControls(QObject):
         if not self._data.active or self._commands.print_active: return
         self._commands.script("Firmware restart", "FIRMWARE_RESTART")
 
+    def klipper_restart(self):
+        # A full Klipper restart (Moonraker's RESTART endpoint): reloads
+        # the config, drops the MCU connection and clears Klipper state
+        # — heavier than FIRMWARE_RESTART, lighter than a host reboot.
+        if not self._data.active or self._commands.print_active: return
+        self._commands.request("Klipper restart", "printer/restart", {})
+
     def host_restart(self):
         if not self._data.active or self._commands.print_active: return
         self._commands.request("Host restart", "machine/reboot", {})

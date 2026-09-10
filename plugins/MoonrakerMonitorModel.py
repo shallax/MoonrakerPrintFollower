@@ -151,7 +151,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     cameraRefreshChanged = pyqtSignal()
 
     _SIGNAL_KEYS = (
-        ("monitorChanged", ("monitorState", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
+        ("monitorChanged", ("monitorState", "monitorConnected", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
                             "improvingEta", "improveEtaProgress", "improveEtaPhase", "monitorElapsed",
                             "monitorEta", "monitorEtaBasis", "monitorFinish", "monitorSpeed", "monitorFlow",
                             "monitorPosition", "monitorMessage", "monitorLayerSource", "filamentUsed", "filamentRemaining")),
@@ -295,6 +295,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
         values.update(peripheral_values(self._data.snapshot))
         values.update(endstop_values(self._data.snapshot, self._client.connected))
+        # The no-reflow rule's sibling ruling (the author, 2026-09-10):
+        # while DISCONNECTED every control on the Monitor page disables
+        # — the QML gates its sections and the emergency stop on this.
+        values["monitorConnected"] = self._client.connected
         values.update(self._controls.values)
         values.update(self._camera.values)
         values.update(self._toolhead.values)
@@ -347,6 +351,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 getattr(self, signal_name).emit()
 
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
+    monitorConnected = value_property(bool, "monitorConnected", monitorChanged, False)
     monitorFilename = value_property(str, "monitorFilename", monitorChanged, "")
     monitorProgress = value_property(float, "monitorProgress", monitorChanged, 0.0)
     monitorLayer = value_property(str, "monitorLayer", monitorChanged, "—")
@@ -686,6 +691,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def saveConfig(self): self._controls.setup("save")
     @pyqtSlot()
     def firmwareRestart(self): self._controls.firmware_restart()
+    @pyqtSlot()
+    def klipperRestart(self): self._controls.klipper_restart()
     @pyqtSlot()
     def hostRestart(self): self._controls.host_restart()
     @pyqtSlot()

@@ -270,7 +270,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # The console history lives in a terminal-styled pane: dark,
         # fixed-width, newest line pinned to the bottom, with a prompt
         # glyph on the input row.
-        for token in ('color: "#161b22"', "No commands yet — lines you send appear here.", 'text: ">"'):
+        for token in ('color: root.printer != null && root.printer.monitorConnected ? "#161b22" : "#2d333b"', "No commands yet — lines you send appear here.", 'text: ">"'):
             self.assertIn(token, MONITOR_QML)
         # Both pop-overs open at the same offset over the camera column
         # so a second click on the opener dismisses without moving the
@@ -1275,12 +1275,21 @@ class MonitorQtTests(unittest.TestCase):
         model.hostRestart()
         reboot = [r for r in self.transport.requests if r.path == "machine/reboot"]
         self.assertEqual(len(reboot), 1)
+        reboot[0].callback({}, None)
+        self.qt.events(10)
+        # A full Klipper restart hits Moonraker's RESTART endpoint (the
+        # author's request — heavier than FIRMWARE_RESTART).
+        model.klipperRestart()
+        self.qt.events(10)
+        self.assertEqual(len([r for r in self.transport.requests if r.path == "printer/restart"]), 1)
         # Restarts refuse while a print is active.
         self.deliver_state("printing")
         model.firmwareRestart()
         model.hostRestart()
+        model.klipperRestart()
         self.assertEqual(len([r for r in self.scripts() if "FIRMWARE_RESTART" in str(r.options["body"])]), 1)
         self.assertEqual(len([r for r in self.transport.requests if r.path == "machine/reboot"]), 1)
+        self.assertEqual(len([r for r in self.transport.requests if r.path == "printer/restart"]), 1)
 
     def test_panel_state_persists_across_model_instances(self):
         model = self.monitor()
@@ -2039,12 +2048,13 @@ class MonitorQtTests(unittest.TestCase):
         ]}}, None)
         self.qt.events(1)
         lines = model.consoleLines.value()
-        self.assertEqual([entry["text"] for entry in lines],
+        self.assertEqual([entry["text"] for entry in lines if entry["kind"] != "note"],
                          ["ok", "!! Heater extruder not heating"])
-        self.assertFalse(lines[0]["error"])
-        self.assertTrue(lines[0]["success"])
-        self.assertTrue(lines[1]["error"])
-        self.assertFalse(lines[1]["success"])
+        feed = [entry for entry in lines if entry["kind"] != "note"]
+        self.assertFalse(feed[0]["error"])
+        self.assertTrue(feed[0]["success"])
+        self.assertTrue(feed[1]["error"])
+        self.assertFalse(feed[1]["success"])
         # The next poll repeats the old entries with one new line: the
         # last-seen stamp dedups and only the new line lands. (1200 ms:
         # the 1 s timer was started a hair before this pump, so a
@@ -2059,7 +2069,7 @@ class MonitorQtTests(unittest.TestCase):
         ]}}, None)
         self.qt.events(1)
         lines = model.consoleLines.value()
-        self.assertEqual([entry["text"] for entry in lines],
+        self.assertEqual([entry["text"] for entry in lines if entry["kind"] != "note"],
                          ["ok", "!! Heater extruder not heating", "Target reached"])
         # The transcript persists with the responses.
         transcript = self.follower.current_printer_config().console_transcript
@@ -2077,7 +2087,7 @@ class MonitorQtTests(unittest.TestCase):
             {"message": "// Unknown command:\"HELLO\"", "type": "response", "time": 14.0},
         ]}}, None)
         self.qt.events(1)
-        lines = model.consoleLines.value()[-2:]
+        lines = [entry for entry in model.consoleLines.value() if entry["kind"] != "note"][-2:]
         self.assertTrue(lines[0]["success"])
         self.assertFalse(lines[0]["error"])
         self.assertFalse(lines[1]["success"])
@@ -2100,7 +2110,9 @@ class MonitorQtTests(unittest.TestCase):
             {"message": "fresh", "type": "response", "time": 12.0},
         ]}}, None)
         self.qt.events(1)
-        self.assertEqual([entry["text"] for entry in model.consoleLines.value()], ["fresh"])
+        # Plugin notes ("# Connected…") may interleave the feed — the
+        # store feed itself must be exactly the fresh line.
+        self.assertEqual([entry["text"] for entry in model.consoleLines.value() if entry["kind"] != "note"], ["fresh"])
         # The next poll repeats the same buffer: nothing new may land.
         self.qt.events(1200)
         later = [r for r in self.transport.requests if r.channel == "console-store"][1:]
@@ -2111,7 +2123,7 @@ class MonitorQtTests(unittest.TestCase):
             {"message": "fresh", "type": "response", "time": 12.0},
         ]}}, None)
         self.qt.events(1)
-        self.assertEqual([entry["text"] for entry in model.consoleLines.value()], ["fresh"])
+        self.assertEqual([entry["text"] for entry in model.consoleLines.value() if entry["kind"] != "note"], ["fresh"])
 
     def test_sweep_phase_advances_on_the_real_engine(self):
         # The sweep's position is a binding on the bar's sweepPhase; a
@@ -2414,14 +2426,55 @@ Item {
             "enabled: root.printer != null && root.printer.canPausePrint",
             "enabled: root.printer != null && root.printer.canResumePrint",
             "enabled: root.printer != null && root.printer.canCancelPrint",
-            "enabled: root.printer != null && !root.printer.actionBusy && root.printer.printActive && !modelData.excluded",
-            "enabled: root.printer != null && root.printer.consoleLines.length > 0",
+            "enabled: root.printer != null && root.printer.monitorConnected && !root.printer.actionBusy && root.printer.printActive && !modelData.excluded",
+            "enabled: root.printer != null && root.printer.monitorConnected && root.printer.consoleLines.length > 0",
             "enabled: base.bedMeshAvailable",
         ):
             self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML)
         # The Preview load button keeps its full width: the follow button
         # no longer vanishes to widen it.
         self.assertIn("width: buttons.width - base.buttonSpacing - followButton.width", PREVIEW_CONTROLS_QML)
+
+    def test_disconnected_disables_every_monitor_control(self):
+        # The author's ruling (2026-09-10): while DISCONNECTED no
+        # Monitor-page control is enabled — the emergency stop included.
+        # The model publishes the connection state; the section gates,
+        # the console, the camera refresh and the emergency stop all
+        # disable on it.
+        self.assertIn("monitorConnected", MONITOR_MODEL)
+        self.assertIn("enabled: root.printer != null && root.printer.monitorConnected", DASHBOARD_QML)
+        self.assertIn("enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)", DASHBOARD_QML)
+        self.assertIn("enabled: root.printer != null && root.printer.monitorConnected", MONITOR_QML)
+        # The console is special: the SECTION stays enabled while
+        # disconnected (scrolling, selecting and copying the restored
+        # history keep working — the author's ruling); only the input,
+        # Send and Clear disable. The well itself turns grey so the
+        # disconnected state is obvious.
+        self.assertIn("enabled: root.printer != null\n                                property int consoleRecallIndex", MONITOR_QML)
+        self.assertIn('color: root.printer != null && root.printer.monitorConnected ? "#161b22" : "#2d333b"', MONITOR_QML)
+        self.assertIn("anchors.bottom: consoleFlick.bottom", MONITOR_QML)
+        # The connection DOT rides the Printer status pane's title in
+        # BOTH pane states (expanded header and the collapsed strip) —
+        # the author's chosen spot. Plus the camera's Live badge and
+        # the disconnected grey veil over stale frames.
+        self.assertIn("connectionDotColour", MONITOR_QML)
+        self.assertIn('text: root.printer != null && root.printer.monitorConnected ? "Connected to Moonraker." : "Disconnected from Moonraker."', MONITOR_QML)
+        self.assertIn("id: statusCollapsedTitle", MONITOR_QML)
+        self.assertIn('text: "Live"', MONITOR_QML)
+        self.assertIn('color: "#c0202428"', MONITOR_QML)
+        self.assertIn('text: "Camera offline"', MONITOR_QML)
+        model = self.monitor()
+        # The harness may connect asynchronously during construction —
+        # pin the TRANSITIONS, which are synchronous.
+        self.follower.client.connectionChanged.emit(False, "offline")
+        self.assertFalse(model.monitorConnected)
+        # A flapping link re-emits the same state — the console notes
+        # only real transitions, never repeats.
+        self.follower.client.connectionChanged.emit(False, "offline")
+        self.assertEqual(len([entry for entry in model.consoleLines.value()
+                              if entry["kind"] == "note" and "Disconnected" in entry["text"]]), 1)
+        self.deliver_state("standby")
+        self.assertTrue(model.monitorConnected)
 
     def test_no_bisect_debris_and_the_console_is_visible(self):
         # The 3.5.0 release shipped with the console behind a

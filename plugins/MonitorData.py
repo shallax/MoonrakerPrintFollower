@@ -39,6 +39,9 @@ class MonitorData(QObject):
     auxiliaryChanged = pyqtSignal()
     consoleStoreChanged = pyqtSignal()
     commandChanged = pyqtSignal(object)
+    # Fires on every connection-state transition with the new state —
+    # the console logs a "#" note on each (the author's request).
+    connectionStateChanged = pyqtSignal(bool)
 
     def __init__(self, client, parent=None):
         super().__init__(parent)
@@ -74,7 +77,9 @@ class MonitorData(QObject):
     def _session_invalidated(self):
         self.set_active(False)
 
-    def _connection_changed(self, *_args):
+    def _connection_changed(self, *args):
+        connected = bool(args[0]) if args else self.connected
+        self.connectionStateChanged.emit(connected)
         self.changed.emit()
 
     def _clear(self):

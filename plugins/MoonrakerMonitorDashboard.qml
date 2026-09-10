@@ -114,6 +114,12 @@ Component {
             Item {
                 id: emergencyButton
                 property int clicks: root.printer != null ? root.printer.emergencyStopClicks : 0
+                // The author's ruling (2026-09-10): while DISCONNECTED
+                // no Monitor-page control is enabled — the emergency
+                // stop included. It dims and refuses input instead of
+                // pretending it could fire.
+                property bool enabled: root.printer != null && root.printer.monitorConnected
+                opacity: emergencyButton.enabled ? 1 : 0.4
                 Rectangle {
                     anchors.fill: parent
                     radius: UM.Theme.getSize("default_radius").width
@@ -136,6 +142,7 @@ Component {
                     }
                     MouseArea {
                         anchors.fill: parent
+                        enabled: emergencyButton.enabled
                         cursorShape: Qt.PointingHandCursor
                         onClicked: if (root.printer != null)
                             root.printer.emergencyStopClick()
@@ -334,7 +341,7 @@ Component {
                         ColumnLayout {
                             visible: root.printer == null || root.printer.sectionExpandedMap["print"] !== false
                             Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || !root.printer.controlsLocked
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             Layout.topMargin: UM.Theme.getSize("default_margin").height
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
@@ -423,7 +430,7 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             visible: root.printer == null || root.printer.sectionExpandedMap["setup"] !== false
                             Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || !root.printer.controlsLocked
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             spacing: UM.Theme.getSize("default_margin").height
                             RowLayout {
@@ -533,7 +540,7 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             visible: root.printer != null && root.printer.sectionExpandedMap["toolhead"] !== false
                             Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || !root.printer.controlsLocked
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             spacing: UM.Theme.getSize("default_margin").height / 2
                             readonly property var jogPresets: [0.1, 0.5, 1, 5, 10, 25, 50, 100, 125]
@@ -551,7 +558,11 @@ Component {
                             }
                             UM.Label {
                                 Layout.fillWidth: true
-                                text: root.printer != null ? root.printer.monitorPosition : ""
+                                // Label-prefixed readout with an honest
+                                // emdash when there is no value (the
+                                // author's ruling for every slot that
+                                // might show text).
+                                text: root.printer != null ? "Position: " + root.printer.monitorPosition : ""
                                 color: UM.Theme.getColor("text_inactive")
                                 elide: Text.ElideRight
                             }
@@ -880,9 +891,17 @@ Component {
                             // reading as a bug; TRIGGERED axes get the
                             // normal text colour, open axes stay muted.
                             UM.Label {
+                                // The author's ruling: pin names like
+                                // STEPPER_X are not self-evidently
+                                // endstops — the block gets a title.
+                                text: "Endstops"
+                                font: UM.Theme.getFont("medium_bold")
+                                color: UM.Theme.getColor("text_inactive")
+                            }
+                            UM.Label {
                                 Layout.fillWidth: true
                                 height: 36 * screenScaleFactor
-                                text: root.printer != null ? root.printer.endstopSummary : ""
+                                text: root.printer != null ? (root.printer.endstopSummary.length > 0 ? root.printer.endstopSummary : "—") : "—"
                                 color: UM.Theme.getColor("text_inactive")
                                 elide: Text.ElideRight
                                 wrapMode: Text.NoWrap
@@ -902,11 +921,14 @@ Component {
                             UM.Label {
                                 // NO-REFLOW RULE: permanent slot, fixed
                                 // single-line height — the text changes,
-                                // never the layout. The full sentence
+                                // never the layout. Label-prefixed with
+                                // an honest emdash when nothing applies
+                                // (the author's ruling for slots that
+                                // might show text). The full sentence
                                 // lives in the tooltip: elide must never
                                 // hide the safety clause (the panel).
                                 height: 36 * screenScaleFactor
-                                text: root.printer != null ? (root.printer.canResumePrint ? "Printer is paused — moves run immediately; a print resumes from Klipper's recorded position." : root.printer.canPausePrint ? "Toolhead moves are disabled during a print — pause first." : "") : ""
+                                text: root.printer != null ? "Status: " + (root.printer.canResumePrint ? "Printer is paused — moves run immediately; a print resumes from Klipper's recorded position." : root.printer.canPausePrint ? "Toolhead moves are disabled during a print — pause first." : "—") : "Status: —"
                                 color: UM.Theme.getColor("text_inactive")
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
@@ -925,7 +947,7 @@ Component {
                                 // (the panel's top finding — queued moves
                                 // were cancelled silently).
                                 height: 36 * screenScaleFactor
-                                text: root.printer != null ? root.printer.jogStatus : ""
+                                text: root.printer != null ? "Jog: " + (root.printer.jogStatus.length > 0 ? root.printer.jogStatus : "—") : "Jog: —"
                                 color: UM.Theme.getColor("text_inactive")
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
@@ -946,7 +968,7 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             visible: root.printer != null && root.printer.macroNames.length > 0 && root.printer.sectionExpandedMap["macros"] !== false
                             Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || !root.printer.controlsLocked
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             spacing: UM.Theme.getSize("default_margin").height / 2
 
@@ -1040,7 +1062,7 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             visible: root.printer != null && root.printer.temperaturePresetItems.length > 0 && root.printer.sectionExpandedMap["profiles"] !== false
                             Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || !root.printer.controlsLocked
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             spacing: UM.Theme.getSize("default_margin").height / 2
 
@@ -1088,7 +1110,7 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             visible: root.printer == null || root.printer.sectionExpandedMap["tuning"] !== false
                             Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || !root.printer.controlsLocked
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             spacing: UM.Theme.getSize("default_margin").height
                             UM.Label {
@@ -1261,7 +1283,7 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             visible: root.printer != null && root.printer.fanControlItems.length > 0 && root.printer.sectionExpandedMap["fans"] !== false
                             Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || !root.printer.controlsLocked
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             Repeater {
                                 model: root.printer != null ? root.printer.fanControlItems : []
@@ -1316,7 +1338,7 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             visible: root.printer != null && root.printer.ledItems.length > 0 && root.printer.sectionExpandedMap["leds"] !== false
                             Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || !root.printer.controlsLocked
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             spacing: UM.Theme.getSize("thin_margin").height
                             Repeater {
@@ -1494,7 +1516,7 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             visible: root.printer != null && root.printer.pwmOutputItems.length > 0 && root.printer.sectionExpandedMap["pwm"] !== false
                             Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || !root.printer.controlsLocked
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             Repeater {
                                 model: root.printer != null ? root.printer.pwmOutputItems : []
@@ -1550,7 +1572,7 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             visible: root.printer != null && root.printer.powerDevices.length > 0 && root.printer.sectionExpandedMap["power"] !== false
                             Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || !root.printer.controlsLocked
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             spacing: UM.Theme.getSize("default_margin").height / 2
 
@@ -1602,7 +1624,7 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             visible: root.printer == null || root.printer.sectionExpandedMap["system"] !== false
                             Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || !root.printer.controlsLocked
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             spacing: UM.Theme.getSize("default_margin").height / 2
 
@@ -1622,6 +1644,21 @@ Component {
                                     tooltip: "Reboot the host Moonraker runs on (machine/reboot)."
                                     enabled: root.printer != null && !root.printer.printActive
                                     onClicked: root.printer.hostRestart()
+                                }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: UM.Theme.getSize("default_margin").width / 2
+                                Cura.SecondaryButton {
+                                    // On its own row: three long labels
+                                    // in one row crushed each other and
+                                    // the text left its bounds (the
+                                    // author's live report).
+                                    Layout.fillWidth: true
+                                    text: "Klipper restart"
+                                    tooltip: "Restart Klipper entirely (printer/restart): reloads the config and reconnects the MCU."
+                                    enabled: root.printer != null && !root.printer.printActive
+                                    onClicked: root.printer.klipperRestart()
                                 }
                             }
                             UM.Label {
@@ -1654,7 +1691,7 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             visible: root.printer == null || root.printer.sectionExpandedMap["save"] !== false
                             Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || !root.printer.controlsLocked
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
 
                             UM.Label {
