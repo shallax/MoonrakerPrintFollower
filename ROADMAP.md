@@ -6,8 +6,8 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release: **3.5.0** (Monitor awareness: temperature charts, bed-mesh
-mini map, G-code console, endstops and the layer-anchored ETA).
+Current release: **3.5.1** (the stability patch over 3.5.0: the no-reflow
+rule and the disconnected state, shipped from the `jog-reflow` branch).
 
 ## Direction
 
@@ -101,18 +101,21 @@ ever. It's only disablement/ enablement. The rule basically: nothing
 should ever, EVER cause the UI to reflow unless it's explicitly done by
 the user (expanding/ collapsing sections, resizing things, etc)."
 
-Implemented on the `jog-reflow` branch and panel-reviewed (all four
-personas): every state-gated control (pause/resume/cancel, Exclude,
-the whole Configuration-changes section, the Preview
-follow/bed-mesh/pause-at-layer buttons, the console Clear button)
-renders permanently and DISABLES; state-dependent status lines are
-permanent single-line slots whose text changes; reserved space uses
-opacity (Improve-ETA row and bar, the ETA glyph, the 90 px mesh-map
-slot, the layer-progress row, the endstop readout moved below the jog
-pad). Capability-static gates (QGL, mesh calibration, the mesh profile
-selector) keep `visible:` on the UX panel's adjudication — they only
-change on printer switches, which are user-initiated. Awaiting the
-author's live test before a PR (the snapshot loop).
+Shipped as 3.5.1 (the patch release, live-tested by the author through
+the snapshot loop): every state-gated control (pause/resume/cancel,
+Exclude, the whole Configuration-changes section, the Preview
+follow/bed-mesh/pause-at-layer buttons, the console Clear button, the
+jog feedback row) renders permanently and DISABLES; state-dependent
+status lines are permanent single-line slots whose text changes;
+reserved space uses opacity (Improve-ETA row and bar, the ETA glyph,
+the 90 px mesh-map slot, the layer-progress row, the endstop readout
+moved below the jog pad). Capability-static gates (QGL, mesh
+calibration, the mesh profile selector) keep `visible:` on the UX
+panel's adjudication — they only change on printer switches, which are
+user-initiated. The night's second ruling — disconnected disables every
+Monitor control (the emergency stop included) while the console stays
+readable — shipped with it, and both rules now live in
+`INSTRUCTIONS.md` and `ARCHITECTURE.md`.
 
 **Console sizing (the author's direction):** the console's only expanded
 size is ~28% of the column — a drag handle to resize the pane lands with
@@ -250,18 +253,11 @@ contrast; pairwise hue separation is the residual debt).
 Feature-shaped ideas surfaced during the no-reflow night, held back per
 "improvements only — no new features; make a note for the roadmap":
 
-- **Connect/disconnect as a reflow boundary**: whole sections below the
-  jog pad still vanish when the connection drops (macros, fans, LEDs,
-  power). Either accept connect/disconnect as a sanctioned reflow
-  boundary or give those sections null-state defaults. Needs a ruling.
 - **Pause-list semantics**: the Preview card's scheduled-pause list
   collapses when a pause is consumed — including SILENT consumption
   (failed pause, layer skipped while a pause is in flight). A
   semantic ruling on when the list may collapse is needed before any
   further treatment.
-- **Temp-chart first-data swap**: the chart's "waiting for data"
-  placeholder swaps with the chart when the first series arrives
-  (left pane). Reserve the space or accept the swap.
 - **Console resize** (already ruled): the drag handle for the console
   pane, shaped by the pro-user persona.
 - **Scroll-to-prompt after a send** (deferred R5-10 #3): action-

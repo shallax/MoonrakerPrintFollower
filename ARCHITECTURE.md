@@ -268,6 +268,19 @@ transport's replace lane is never used for motion because replacement
 aborts an in-flight request whose G-code may or may not have executed.
 Live Z-offset nudges stay enabled during prints by design.
 
+Two standing UI rules bound every Monitor control (both pinned in
+`tests/test_monitor.py`). **No reflow**: controls never disappear —
+state gates disable, status lines are permanent single-line slots, and
+reserved space uses opacity; nothing reflows unless the user acts
+(expanding/collapsing, resizing). The reasoning is safety: a control
+that vanishes mid-interaction moves under the pointer, which during
+jog nudges is dangerous. **Disconnected state**: with the printer
+disconnected every control disables (the emergency stop included);
+the console keeps the transcript readable — scroll, select and copy
+work in a greyed well, only input and Send/Clear disable; the camera
+veils; and the connection dot plus the console's `#` notes mark the
+transitions.
+
 The Monitor's three panes and their accordion sections are presentation
 owned by the model's published state: the expanded-section map, the pane
 collapse flags and the lock toggle live in the model, persisted through

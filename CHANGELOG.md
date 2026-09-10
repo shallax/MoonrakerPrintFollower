@@ -2,6 +2,46 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 3.5.1
+
+Version 3.5.1 is the stability patch for 3.5.0: the Monitor tab never
+shifts under the pointer, and it behaves sensibly while the printer is
+disconnected.
+
+### Highlights
+- **No reflow, ever**: no control on the Monitor tab disappears any
+  more. Every state-gated control (pause/resume/cancel, Exclude, the
+  whole Configuration-changes section, the Preview follow/bed-mesh/
+  pause-at-layer buttons, the console Clear button, the jog feedback
+  row) renders permanently and simply disables; state-dependent status
+  lines are permanent single-line slots whose text changes; and
+  reserved space uses opacity (the Improve-ETA row and bar, the ETA
+  glyph, the 90 px mesh-map slot, the layer-progress row). Nothing the
+  printer does can move a button under the pointer mid-click — the UI
+  only reflows on user action (expanding/collapsing, resizing).
+- **Disconnected state**: with the printer disconnected every Monitor
+  control disables — including the emergency stop — while the console
+  stays readable: scroll, select and copy keep working in a greyed
+  well, only input and Send/Clear disable. The camera dims and
+  desaturates with a "Camera offline" caption while disconnected and
+  carries a "Live" badge with a red dot while the stream is live. A
+  connection dot sits before the Printer status title (green/red,
+  tooltip), visible while the pane is collapsed too, and the console
+  feed notes each connect and disconnect with the plugin's own `#`
+  lines.
+- **Readout restyle**: the MCUs-style two-column pattern (grey labels,
+  black values) now applies across the Printer-controls sections; the
+  status lines carry short forms with the full sentence in a tooltip;
+  the Endstops block has its own bold title and only endstop content;
+  the homed readout puts its values beside the label; and the
+  extrusion presets show their mm unit.
+- **Klipper restart** button in the System section, a larger Webcam
+  pane title, and the free-text extrusion distance box is gone (the
+  presets cover it).
+- Tooling: zero-argument gate runs (`make gates`, `make all`) use a
+  fresh container again — the warm-container reuse now applies only
+  when a command is given.
+
 ## 3.5.0
 
 Version 3.5.0 is the informational half of Mainsail parity: the Monitor
@@ -80,10 +120,11 @@ readouts and a better remaining-time estimate.
 - Chart colours, visibility and the console transcript (commands and
   Klipper's output) persist per printer; the pane chrome (collapsed
   sections, pane collapse, lock) stays global.
-- Known issue — jog reflow (fix planned for a 3.5.x patch): with some
-  Printer-controls sections open, expanding or collapsing another
-  section mid-jog can reflow the controls, and the nudge button under
-  the pointer can move mid-click.
+- Known issue — jog reflow (fixed in 3.5.1): with some Printer-controls
+  sections open, expanding or collapsing another section mid-jog could
+  reflow the controls, and the nudge button under the pointer could
+  move mid-click. 3.5.1 makes every control permanent and
+  disable-only, so nothing shifts under the pointer any more.
 
 ## 3.4.0
 

@@ -8,8 +8,25 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 3.5.0
+- **Release:** 3.5.1
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
+
+## What changed in 3.5.1
+
+Version 3.5.1 is the stability patch for 3.5.0. No control on the Monitor
+tab disappears any more — every state-gated button renders permanently and
+simply **disables**, status lines are permanent single-line slots, and
+reserved space uses opacity, so nothing the printer does can move a button
+under the pointer mid-click. With the printer **disconnected**, every
+Monitor control disables (including the emergency stop) while the console
+stays scrollable and selectable in a greyed well, the camera dims with a
+"Camera offline" caption, and a **connection dot** sits before the Printer
+status title (green/red, visible while collapsed) with each connect and
+disconnect noted in the console feed. The readouts adopt the MCUs-style
+two-column pattern across the Printer-controls sections, the status lines
+carry short forms with the full sentence in a tooltip, the Endstops block
+gets its own title, and a **Klipper restart** button joins the System
+section. Full details in `CHANGELOG.md`.
 
 ## What changed in 3.5.0
 
