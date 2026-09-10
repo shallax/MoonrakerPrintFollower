@@ -2208,7 +2208,12 @@ Component {
                     anchors.topMargin: UM.Theme.getSize("thin_margin").height
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: statusCollapsedTitle.implicitHeight
-                    height: statusCollapsedTitle.implicitWidth
+                    // Extra room at the top so the connection dot leads
+                    // the rotated title with a little air between them
+                    // (the author's rulings: the dot comes before the
+                    // word, matching the expanded header's dot-before-
+                    // title order, and the gap reads as a space).
+                    height: statusCollapsedTitle.implicitWidth + 24 * screenScaleFactor
                     UM.Label {
                         id: statusCollapsedTitle
                         text: "Printer status"
@@ -2216,14 +2221,16 @@ Component {
                         color: UM.Theme.getColor("text_inactive")
                         rotation: 90
                         anchors.centerIn: parent
+                        // Shifted down: the dot owns the top band.
+                        anchors.verticalCenterOffset: 12 * screenScaleFactor
                     }
                     Rectangle {
                         // The dot stays visible while the pane is
-                        // collapsed too — pinned to the strip's end
-                        // under the rotated title.
-                        anchors.bottom: parent.bottom
+                        // collapsed too — leading the title, in its own
+                        // band at the top.
+                        anchors.top: parent.top
                         anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.bottomMargin: 2 * screenScaleFactor
+                        anchors.topMargin: 3 * screenScaleFactor
                         width: 10 * screenScaleFactor
                         height: 10 * screenScaleFactor
                         radius: 5 * screenScaleFactor
