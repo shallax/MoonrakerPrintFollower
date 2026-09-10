@@ -94,13 +94,25 @@ the stream).
 while hammering a toolhead move with some Printer-controls sections open,
 other controls can disappear/reappear and REFLOW the whole pane — the nudge
 button under the pointer can move mid-click. Incredibly dangerous during
-nudges; the pane's content must stop shifting under the jog pad (stable
-layout slots / fixed control heights / deferred section re-layout while a
-jog is in flight — mechanism TBD). Reproduced on the 3.5.0 candidate:
-open Printer controls, expand or collapse another section mid-nudge and
-the pane reflows under the pointer. 3.5.0 ships with it as a known issue;
-the fix lands in a **3.5.x patch release** (the author's ruling) rather
-than delaying 3.5.0.
+nudges; the pane's content must stop shifting under the jog pad.
+
+**The author's rule (2026-09-10, verbatim):** "no controls disappear,
+ever. It's only disablement/ enablement. The rule basically: nothing
+should ever, EVER cause the UI to reflow unless it's explicitly done by
+the user (expanding/ collapsing sections, resizing things, etc)."
+
+Implemented on the `jog-reflow` branch and panel-reviewed (all four
+personas): every state-gated control (pause/resume/cancel, Exclude,
+the whole Configuration-changes section, the Preview
+follow/bed-mesh/pause-at-layer buttons, the console Clear button)
+renders permanently and DISABLES; state-dependent status lines are
+permanent single-line slots whose text changes; reserved space uses
+opacity (Improve-ETA row and bar, the ETA glyph, the 90 px mesh-map
+slot, the layer-progress row, the endstop readout moved below the jog
+pad). Capability-static gates (QGL, mesh calibration, the mesh profile
+selector) keep `visible:` on the UX panel's adjudication — they only
+change on printer switches, which are user-initiated. Awaiting the
+author's live test before a PR (the snapshot loop).
 
 **Console sizing (the author's direction):** the console's only expanded
 size is ~28% of the column — a drag handle to resize the pane lands with
@@ -232,3 +244,27 @@ contrast; pairwise hue separation is the residual debt).
   frontends.
 - **Network discovery of Moonraker instances** — a security surface for
   near-zero value; users configure one URL per machine.
+
+## 3.6.0 candidate notes (for the author's review — not built)
+
+Feature-shaped ideas surfaced during the no-reflow night, held back per
+"improvements only — no new features; make a note for the roadmap":
+
+- **Connect/disconnect as a reflow boundary**: whole sections below the
+  jog pad still vanish when the connection drops (macros, fans, LEDs,
+  power). Either accept connect/disconnect as a sanctioned reflow
+  boundary or give those sections null-state defaults. Needs a ruling.
+- **Pause-list semantics**: the Preview card's scheduled-pause list
+  collapses when a pause is consumed — including SILENT consumption
+  (failed pause, layer skipped while a pause is in flight). A
+  semantic ruling on when the list may collapse is needed before any
+  further treatment.
+- **Temp-chart first-data swap**: the chart's "waiting for data"
+  placeholder swaps with the chart when the first series arrives
+  (left pane). Reserve the space or accept the swap.
+- **Console resize** (already ruled): the drag handle for the console
+  pane, shaped by the pro-user persona.
+- **Scroll-to-prompt after a send** (deferred R5-10 #3): action-
+  initiated follow after sending a command while scrolled up.
+- **Pro-user persona round**: feature-value pass over the Monitor for
+  3.6.0 planning (the author's ruling — joins from this release).

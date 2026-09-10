@@ -166,7 +166,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                            "cpuTemperature", "mcuSummary", "mcuItems")),
         ("endstopsChanged", ("endstopItems", "endstopSummary")),
         ("actionChanged", ("printActive", "canPausePrint", "canResumePrint", "canCancelPrint", "actionBusy",
-                           "actionStatus", "emergencyHoldProgress", "filamentReadoutVisible")),
+                           "actionStatus", "emergencyHoldProgress")),
         ("controlsChanged", ("monitorLayerHeight", "macroNames", "hasQuadGantryLevel", "hasBedMesh", "canRunSetup",
                              "temperaturePresetNames", "canApplyTemperaturePreset", "speedFactorPercent", "flowFactorPercent",
                              "zOffset", "zOffsetText", "fanControlItems", "ledItems", "saveConfigPending", "saveConfigSummary",
@@ -304,12 +304,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             canResumePrint=commands.state == "paused" and not commands.busy,
             canCancelPrint=commands.print_active and not commands.busy, actionBusy=commands.busy,
             actionStatus=commands.status, emergencyStopClicks=commands.clicks,
-            # The filament rows outlive the print: "used" is exactly the
-            # figure a user wants to record after the job COMPLETES, and
-            # the old printActive gate hid it at that moment (the UX
-            # panel). The rows stay through complete/cancelled until the
-            # next job starts.
-            filamentReadoutVisible=commands.print_active or commands.state in ("complete", "cancelled"),
             emergencyHoldProgress=commands.hold_progress, powerDevices=self._controls.power_devices(),
             bedMeshAvailable=bool(mesh), bedMeshProfile=str(mesh.get("profile") or "Current mesh") if mesh else "",
             bedMeshRows=int(mesh.get("rows") or 0), bedMeshColumns=int(mesh.get("columns") or 0),
@@ -378,7 +372,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     canCancelPrint = value_property(bool, "canCancelPrint", actionChanged, False)
     actionBusy = value_property(bool, "actionBusy", actionChanged, False)
     actionStatus = value_property(str, "actionStatus", actionChanged, "")
-    filamentReadoutVisible = value_property(bool, "filamentReadoutVisible", actionChanged, False)
     temperatureItems = value_property(QVariant, "temperatureItems", peripheralsChanged, [])
     fanItems = value_property(QVariant, "fanItems", peripheralsChanged, [])
     filamentSensorItems = value_property(QVariant, "filamentSensorItems", peripheralsChanged, [])

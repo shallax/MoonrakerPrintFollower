@@ -109,7 +109,13 @@ class MonitorControls(QObject):
             "zOffsetText": f"{number(origin[2]) if len(origin) > 2 else 0:+.3f} mm",
             "fanControlItems": fans, "ledItems": leds, "pwmOutputItems": pwm,
             "saveConfigPending": bool(configfile.get("save_config_pending")),
-            "saveConfigSummary": "Unsaved: " + ", ".join(sorted(changes)) if changes else "Unsaved Klipper configuration changes",
+            # The section is permanently visible (no-reflow rule), so a
+            # quiet summary must actually be quiet: the fallback string
+            # only appears when a pending change exists but Klipper
+            # listed no items — never on a clean printer (the panel:
+            # the old default rendered "Unsaved Klipper configuration
+            # changes" permanently beside a dead Save button).
+            "saveConfigSummary": "Unsaved: " + ", ".join(sorted(changes)) if changes else ("Unsaved Klipper configuration changes" if bool(configfile.get("save_config_pending")) else ""),
             "canSaveConfig": setup and bool(configfile.get("save_config_pending")), "bedMeshProfileNames": profiles,
         }
         self.changed.emit()

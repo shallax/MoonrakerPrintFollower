@@ -402,6 +402,25 @@ they cannot recur silently.
   capture harness seeds `virtual_sdcard.progress` so the bars show a
   fill, and asserts accent-blue pixels inside every visible bar and
   slider — a fill that stops rendering fails the screenshot job.
+- **The no-reflow rule (the author's ruling, 2026-09-10):** a control
+  never disappears — every state lives in `enabled`, never `visible`
+  ("no controls disappear, ever. It's only disablement/enablement").
+  Nothing reflows unless the user asked for it (section collapse,
+  resize): state-dependent status lines occupy permanent single-line
+  slots whose TEXT changes, and reserved space uses opacity, never
+  visibility. **Reasoning:** the jog-reflow hazard (the author's live
+  report, 2026-09-09) — while hammering a toolhead move, the
+  pause/cancel buttons (and other state-gated controls and labels)
+  vanished and reappeared as printer state changed, so the nudge
+  button UNDER THE POINTER could move mid-click. Incredibly dangerous
+  during nudges. Every QML change must therefore keep the geometry
+  constant outside user-initiated actions. `test_no_controls_disappear_controls_disable`
+  pins the banned `visible:` patterns and the replacement `enabled:`
+  bindings; the explicit carve-outs (data-driven section gates —
+  fans/LEDs/macros/power sections on machines without them, the
+  scheduled-pause list, the temp-chart first-data swap) are listed in
+  the test and in `review/DECISIONS.md` round 6 for the author's
+  review.
 
 ### Verifying QML geometry
 

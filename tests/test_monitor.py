@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 from dataclasses import replace
 import json
+import re
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -32,6 +33,7 @@ FORMATTING = (PLUGINS / "MonitorFormatting.py").read_text()
 TYPED = "\n".join((PLUGINS / name).read_text() for name in ("MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py", "CuraIntegration.py", "MoonrakerMonitorModel.py"))
 DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
+PREVIEW_CONTROLS_QML = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
 POPOVER_QML = (PLUGINS / "MonitorPopOver.qml").read_text()
@@ -2231,7 +2233,10 @@ Item {
         # The Attach/Detach button must not wait for the render:
         # hasToolpath only flips once the model finishes rendering.
         self.assertNotIn("base.hasToolpath && (base.followingEnabled", panel)
-        self.assertIn("visible: base.followingEnabled || base.followingPaused", panel)
+        # NO-REFLOW RULE: the button never hides — its state is
+        # `enabled`, and the load button keeps its full width.
+        self.assertIn("enabled: base.followingEnabled || base.followingPaused", panel)
+        self.assertIn("width: buttons.width - base.buttonSpacing - followButton.width", panel)
         self.assertIn("indicatorBar.sweepPhase", indicator)
         self.assertIn("busy: false", indicator)
         presentation = (PLUGINS / "PreviewPresentation.py").read_text()
@@ -2317,9 +2322,11 @@ Item {
         self.assertIn('text: "Filament used"', MONITOR_QML)
         self.assertIn('text: "Filament remaining"', MONITOR_QML)
         self.assertLess(MONITOR_QML.index('text: "Finish"'), MONITOR_QML.index('text: "Filament used"'))
-        self.assertIn("filamentReadoutVisible", MONITOR_QML)
-        self.assertIn("filamentReadoutVisible", MONITOR_MODEL)
-        self.assertIn('visible: root.printer != null && root.printer.filamentReadoutVisible', MONITOR_QML)
+        # NO-REFLOW RULE: the rows are permanent — the values read "—"
+        # until Klipper reports them; nothing hides them any more, and
+        # the readout-visibility gate is gone from the model too.
+        self.assertNotIn('visible: root.printer != null && root.printer.filamentReadoutVisible', MONITOR_QML)
+        self.assertNotIn("filamentReadoutVisible", MONITOR_MODEL)
         # The z-offset nudge buttons take an exact quarter of the row
         # (a bound preferred width, not layout distribution): fillWidth
         # alone left "↑ 0.005" wider than "↑ 0.05" (the author's report).
@@ -2355,6 +2362,66 @@ Item {
         # The console pane renders no caret: a blinking cursor made the
         # captures phase-dependent.
         self.assertIn("cursorVisible: false", MONITOR_QML)
+
+    def test_no_controls_disappear_controls_disable(self):
+        # NO-REFLOW RULE (the author's ruling, 2026-09-10): no control
+        # ever disappears — it disables. Nothing reflows unless the
+        # user asked for it (section collapse, resize). The jog-reflow
+        # hazard came from pause/cancel (and other state-gated controls)
+        # vanishing and returning, shifting the pane under the pointer.
+        #
+        # STRUCTURAL pin (the panel's upgrade): every `visible:` in
+        # every plugin QML whose expression is not whitelisted must be
+        # on the explicit allow-list — so a new state-gated visibility
+        # cannot slip through a reformat or a new file.
+        exempt_files = {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml"}
+        whitelist = (
+            "openPopOver", "sectionExpandedMap", "Collapsed", "platformActivity",
+            "previewStageActive", "configuredForFollowing", "modelData.type", "hasWhite",
+            "cameraConfigured", "tooltipText", "sectionIcon", "macroParameters",
+            "webcamNames", "root.busy", "root.progress", "improveEtaProgress",
+            "temperatureChart.series", "allChartSensorsHidden", "selectedChartSensor",
+            "hoverClockProxy",
+        )
+        allowed = {
+            # Capability-static gates (the UX panel's ruling): these
+            # only change on a printer switch, which is user-initiated.
+            "visible: root.printer != null && root.printer.hasQuadGantryLevel",
+            "visible: root.printer != null && root.printer.hasBedMesh",
+            # Carve-outs awaiting the author's ruling (DECISIONS round 6):
+            "visible: base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive && base.pauseAtLayerItems.length > 0",
+            "visible: root.miniChartHasSeries",
+            "visible: root.printer != null && !root.miniChartHasSeries",
+            "visible: root.printer != null && root.printer.temperatureItems.length > 0",
+            "visible: root.printer != null && root.printer.fanItems.length > 0",
+            "visible: root.printer != null && root.printer.filamentSensorItems.length > 0",
+            "visible: root.printer != null && root.printer.mcuItems.length > 0",
+        }
+        for path in sorted(PLUGINS.glob("*.qml")):
+            if path.name in exempt_files:
+                continue  # settings dialogs carve-out (user-opened surfaces)
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                match = re.search(r"(visible:\s*.+)$", line)
+                if not match:
+                    continue
+                expression = match.group(1).rstrip()
+                if any(token in expression for token in whitelist):
+                    continue
+                self.assertIn(expression, allowed,
+                              f"{path.name}:{number}: state-gated visible: {expression}")
+        # The replacement: every SESSION state lives in `enabled`.
+        for enabled in (
+            "enabled: root.printer != null && root.printer.canPausePrint",
+            "enabled: root.printer != null && root.printer.canResumePrint",
+            "enabled: root.printer != null && root.printer.canCancelPrint",
+            "enabled: root.printer != null && !root.printer.actionBusy && root.printer.printActive && !modelData.excluded",
+            "enabled: root.printer != null && root.printer.consoleLines.length > 0",
+            "enabled: base.bedMeshAvailable",
+        ):
+            self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML)
+        # The Preview load button keeps its full width: the follow button
+        # no longer vanishes to widen it.
+        self.assertIn("width: buttons.width - base.buttonSpacing - followButton.width", PREVIEW_CONTROLS_QML)
 
     def test_no_bisect_debris_and_the_console_is_visible(self):
         # The 3.5.0 release shipped with the console behind a

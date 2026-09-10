@@ -297,7 +297,12 @@ its own entry, and no line claims an attribution the store cannot
 support (it pairs by recency only). `CollapsibleSectionHeader` is
 the single header implementation shared by every pane; pane chrome
 (toggles, collapsed strips, plugin-drawn glyphs) is UI-only state in
-the QML files and never mutates printer state directly. The recipes for
+the QML files and never mutates printer state directly. **The no-reflow
+invariant (the author's rule):** a control never disappears — every
+state lives in `enabled`, never `visible`; state-dependent status lines
+occupy permanent single-line slots whose text changes; the layout
+reflows only for user-initiated actions (section collapse, resize).
+The tests pin the banned patterns (`test_no_controls_disappear_controls_disable`). The recipes for
 extending the panes are in `INSTRUCTIONS.md`, not here.
 
 `BedMeshPresenter` alone owns the active scene node and Preview mesh UI. It uses

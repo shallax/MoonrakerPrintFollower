@@ -308,26 +308,34 @@ Component {
 
                             // The mini map is the at-a-glance widget; a
                             // click opens the pop-over detail view with
-                            // the probe-snapping crosshair.
-                            BedMeshMap {
-                                id: meshMiniMap
+                            // the probe-snapping crosshair. NO-REFLOW
+                            // RULE: the 90 px slot is always reserved —
+                            // the map fades in and out, and the
+                            // placeholder is an overlay inside the same
+                            // slot, so the mesh arriving (connect,
+                            // calibrate) never shifts the section.
+                            Item {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 90 * screenScaleFactor
-                                compact: true
-                                printer: root.printer
-                                visible: root.printer != null && root.printer.bedMeshAvailable
-                                tooltipText: root.printer != null ? "Click for the full bed mesh map (" + root.printer.bedMeshRangeText + ")." : "Click for the full bed mesh map."
-                                onClicked: {
-                                    root.openPopOver = root.openPopOver === "mesh" ? "" : "mesh";
-                                }
-                            }
 
-                            UM.Label {
-                                Layout.fillWidth: true
-                                visible: root.printer == null || !root.printer.bedMeshAvailable
-                                text: "No bed mesh to show"
-                                color: UM.Theme.getColor("text_inactive")
-                                wrapMode: Text.WordWrap
+                                BedMeshMap {
+                                    id: meshMiniMap
+                                    anchors.fill: parent
+                                    compact: true
+                                    printer: root.printer
+                                    opacity: root.printer != null && root.printer.bedMeshAvailable ? 1 : 0
+                                    tooltipText: root.printer != null ? "Click for the full bed mesh map (" + root.printer.bedMeshRangeText + ")." : "Click for the full bed mesh map."
+                                    onClicked: {
+                                        root.openPopOver = root.openPopOver === "mesh" ? "" : "mesh";
+                                    }
+                                }
+
+                                UM.Label {
+                                    anchors.centerIn: parent
+                                    opacity: root.printer == null || !root.printer.bedMeshAvailable ? 1 : 0
+                                    text: "No bed mesh to show"
+                                    color: UM.Theme.getColor("text_inactive")
+                                }
                             }
                         }
 
@@ -1181,7 +1189,10 @@ Component {
                                         }
 
                                         UM.Label {
-                                            visible: root.printer == null || root.printer.consoleLines.length === 0
+                                            // NO-REFLOW RULE: the hint
+                                            // overlays the well — it
+                                            // fades, never reshapes it.
+                                            opacity: root.printer == null || root.printer.consoleLines.length === 0 ? 1 : 0
                                             anchors.left: parent.left
                                             anchors.right: parent.right
                                             text: "No commands yet — lines you send appear here."
@@ -1220,7 +1231,7 @@ Component {
                                             }
                                             Cura.SecondaryButton {
                                                 text: "Clear"
-                                                visible: root.printer != null && root.printer.consoleLines.length > 0
+                                                enabled: root.printer != null && root.printer.consoleLines.length > 0
                                                 onClicked: root.printer.clearConsoleHistory()
                                             }
                                         }
@@ -1383,11 +1394,15 @@ Component {
                             }
 
                             UM.Label {
-                                visible: root.printer != null && root.printer.monitorMessage.length > 0
+                                // NO-REFLOW RULE: a permanent slot — an
+                                // M117 message arriving mid-print used to
+                                // shove the grid down and back.
+                                height: 36 * screenScaleFactor
                                 text: root.printer != null ? root.printer.monitorMessage : ""
                                 color: UM.Theme.getColor("text_inactive")
                                 Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
+                                elide: Text.ElideRight
+                                wrapMode: Text.NoWrap
                             }
 
                             OutlineProgressBar {
@@ -1453,16 +1468,18 @@ Component {
                                             }
                                         }
                                         UM.Label {
-                                            visible: root.printer != null && root.printer.monitorLayerProgress >= 0
-                                            text: root.printer != null ? (root.printer.monitorLayerProgress * 100).toFixed(2) + "%" : ""
+                                            text: root.printer != null && root.printer.monitorLayerProgress >= 0 ? (root.printer.monitorLayerProgress * 100).toFixed(2) + "%" : ""
                                             color: UM.Theme.getColor("text_inactive")
                                         }
                                     }
                                     Item {
+                                        // NO-REFLOW RULE: the 8 px bar row
+                                        // is always reserved — it fades in
+                                        // when the index lands mid-print.
                                         Layout.fillWidth: true
                                         Layout.topMargin: UM.Theme.getSize("thin_margin").height
                                         height: 8 * screenScaleFactor
-                                        visible: root.printer != null && root.printer.monitorLayerProgress >= 0
+                                        opacity: root.printer != null && root.printer.monitorLayerProgress >= 0 ? 1 : 0
                                         OutlineProgressBar {
                                             anchors.fill: parent
                                             from: 0
@@ -1521,9 +1538,13 @@ Component {
                                     // improves, shown only while the
                                     // plain blend is the active basis.
                                     Item {
+                                        // NO-REFLOW RULE: the 16 px glyph
+                                        // slot is always reserved — it
+                                        // fades instead of shifting the
+                                        // ETA value sideways.
                                         width: 16 * screenScaleFactor
                                         height: 16 * screenScaleFactor
-                                        visible: root.printer != null && root.printer.printActive && (root.printer.monitorEtaBasis === "blend" || root.printer.improvingEta)
+                                        opacity: root.printer != null && root.printer.printActive && (root.printer.monitorEtaBasis === "blend" || root.printer.improvingEta) ? 1 : 0
                                         UM.TooltipArea {
                                             anchors.fill: parent
                                             text: root.printer != null && root.printer.improvingEta ? "Downloading and indexing the print…" : "Improve the estimate — download and index this print's G-code without loading it into the preview."
@@ -1590,15 +1611,21 @@ Component {
                                 // restarts when the bar resizes so its
                                 // captured endpoints stay current.
                                 RowLayout {
+                                    // NO-REFLOW RULE: the Improve-ETA
+                                    // progress row reserves its space at
+                                    // all times (opacity, never
+                                    // visibility) — its automatic
+                                    // disappearance on completion used to
+                                    // shift the rows beneath it.
                                     Layout.fillWidth: true
                                     Layout.columnSpan: 2
                                     Layout.topMargin: UM.Theme.getSize("narrow_margin").height
                                     spacing: UM.Theme.getSize("narrow_margin").width
-                                    visible: root.printer != null && root.printer.improvingEta
                                     Item {
                                         id: improveEtaBar
                                         Layout.fillWidth: true
                                         Layout.preferredHeight: 8 * screenScaleFactor
+                                        opacity: root.printer != null && root.printer.improvingEta ? 1 : 0
                                         clip: true
                                         // A trivial 0..1 phase animation;
                                         // the sweep's POSITION is a binding
@@ -1650,8 +1677,7 @@ Component {
                                         }
                                     }
                                     UM.Label {
-                                        visible: root.printer != null && root.printer.improvingEta
-                                        text: root.printer != null ? (root.printer.improveEtaPhase + (root.printer.improveEtaProgress >= 0 ? " " + (root.printer.improveEtaProgress * 100).toFixed(0) + "%" : "")) : ""
+                                        text: root.printer != null && root.printer.improvingEta ? (root.printer.improveEtaPhase + (root.printer.improveEtaProgress >= 0 ? " " + (root.printer.improveEtaProgress * 100).toFixed(0) + "%" : "")) : ""
                                         color: UM.Theme.getColor("text_inactive")
                                         Layout.maximumWidth: 140 * screenScaleFactor
                                         elide: Text.ElideRight
@@ -1670,32 +1696,26 @@ Component {
 
                                 // Filament rows sit after Finish, beside
                                 // the progress block they belong to (the
-                                // author's placement). They outlive the
-                                // print: "used" is exactly the figure a
-                                // user wants to record after the job
-                                // completes, so the rows stay through
-                                // complete/cancelled until the next job
-                                // starts (the UX panel). The dash means
-                                // Moonraker did not report a value.
+                                // author's placement). NO-REFLOW RULE:
+                                // the rows are permanent — the values
+                                // read "—" until Klipper reports them, so
+                                // the grid never shifts when a job
+                                // starts or finishes.
                                 UM.Label {
-                                    visible: root.printer != null && root.printer.filamentReadoutVisible
                                     text: "Filament used"
                                     color: UM.Theme.getColor("text_inactive")
                                     Layout.preferredWidth: 110 * screenScaleFactor
                                 }
                                 UM.Label {
-                                    visible: root.printer != null && root.printer.filamentReadoutVisible
                                     text: root.printer != null ? root.printer.filamentUsed : "—"
                                     Layout.fillWidth: true
                                 }
                                 UM.Label {
-                                    visible: root.printer != null && root.printer.filamentReadoutVisible
                                     text: "Filament remaining"
                                     color: UM.Theme.getColor("text_inactive")
                                     Layout.preferredWidth: 110 * screenScaleFactor
                                 }
                                 UM.Label {
-                                    visible: root.printer != null && root.printer.filamentReadoutVisible
                                     text: root.printer != null ? root.printer.filamentRemaining : "—"
                                     Layout.fillWidth: true
                                 }
@@ -1847,8 +1867,12 @@ Component {
                         }
 
                         Column {
+                            // NO-REFLOW RULE: the Objects list arrives
+                            // seconds INTO a print (Klipper reports the
+                            // slicer's EXCLUDE_OBJECT_DEFINE lines only
+                            // when they execute), so the section is
+                            // permanent — empty until then.
                             Layout.fillWidth: true
-                            visible: root.printer != null && root.printer.excludeObjectItems.length > 0
                             CollapsibleSectionHeader {
                                 width: parent.width
                                 printerModel: root.printer
@@ -1876,8 +1900,11 @@ Component {
                                             elide: Text.ElideRight
                                         }
                                         Cura.SecondaryButton {
-                                            visible: root.printer != null && root.printer.printActive && !modelData.excluded
-                                            enabled: root.printer != null && !root.printer.actionBusy
+                                            // NO-REFLOW RULE: the button
+                                            // never disappears — it
+                                            // disables when the object
+                                            // cannot be excluded.
+                                            enabled: root.printer != null && !root.printer.actionBusy && root.printer.printActive && !modelData.excluded
                                             text: "Exclude"
                                             onClicked: {
                                                 excludeObjectDialog.targetName = modelData.name;

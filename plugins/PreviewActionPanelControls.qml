@@ -114,7 +114,8 @@ Item {
                     // wait for the render (the author's "Detach takes a
                     // long time" report). The follower null-checks the
                     // view on every drive, so attaching early is safe.
-                    visible: base.followingEnabled || base.followingPaused
+                    // NO-REFLOW RULE: never hidden — it disables instead
+                    // of vanishing when following changes state.
                     width: Math.round((buttons.width - base.buttonSpacing) * 0.32)
                     height: UM.Theme.getSize("action_button").height
                     text: base.followingPaused ? "Attach" : "Detach"
@@ -125,7 +126,7 @@ Item {
 
                 PreviewSecondaryButton {
                     id: loadButton
-                    width: followButton.visible ? buttons.width - base.buttonSpacing - followButton.width : buttons.width
+                    width: buttons.width - base.buttonSpacing - followButton.width
                     height: UM.Theme.getSize("action_button").height
                     text: "Load current print"
                     tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
@@ -149,9 +150,11 @@ Item {
 
             PreviewSecondaryButton {
                 id: bedMeshButton
-                visible: base.bedMeshAvailable
+                // NO-REFLOW RULE: never hidden — it disables when the
+                // loaded job has no mesh.
                 width: parent.width
-                height: visible ? UM.Theme.getSize("action_button").height : 0
+                height: UM.Theme.getSize("action_button").height
+                enabled: base.bedMeshAvailable
                 text: base.bedMeshVisible ? "Hide bed mesh" : "Show bed mesh"
                 tooltip: "Show the active Klipper bed mesh as a coloured 3D surface on Cura's build plate" + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
                 onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
@@ -171,23 +174,29 @@ Item {
 
             PreviewSecondaryButton {
                 id: pauseAtLayerButton
-                visible: base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive
+                // NO-REFLOW RULE: never hidden — it disables until a
+                // schedulable layer is selected.
                 width: parent.width
-                height: visible ? UM.Theme.getSize("action_button").height : 0
-                enabled: base.pauseAtLayerScheduled || base.pauseAtLayerCanToggle
+                height: UM.Theme.getSize("action_button").height
+                enabled: (base.pauseAtLayerScheduled || base.pauseAtLayerCanToggle) && base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive
                 text: base.pauseAtLayerCandidate <= 0 ? "⏸  Pause at end of selected layer" : (base.pauseAtLayerScheduled ? "Remove pause after layer " + base.pauseAtLayerCandidate : "⏸  Enable pause at end of layer " + base.pauseAtLayerCandidate)
                 tooltip: base.pauseAtLayerScheduled ? "Remove the scheduled end-of-layer PAUSE." : (base.pauseAtLayerCanToggle ? "Call the Klipper PAUSE macro once this layer has finished and Moonraker advances to the following layer." : "Scroll Cura Preview to the current or a future non-final layer to schedule an end-of-layer PAUSE.")
                 onClicked: base.pauseAtLayerRequested(base.pauseAtLayerCandidate)
             }
 
             UM.Label {
-                visible: pauseAtLayerButton.visible && !base.pauseAtLayerScheduled && !base.pauseAtLayerCanToggle && base.pauseAtLayerUnavailableText.length > 0
+                // NO-REFLOW RULE: a permanent single-line slot — the
+                // text fills it with the error reason, or the scheduling
+                // hint while a toolpath exists, never resizes it (the
+                // UX panel: a blank slot read as broken spacing).
                 width: parent.width
-                height: visible ? implicitHeight : 0
-                text: "Can't schedule: " + base.pauseAtLayerUnavailableText
+                height: 36 * screenScaleFactor
+                text: (!base.pauseAtLayerScheduled && !base.pauseAtLayerCanToggle && base.pauseAtLayerUnavailableText.length > 0) ? "Can't schedule: " + base.pauseAtLayerUnavailableText : (base.hasToolpath ? "Scroll Cura Preview to the current or a future non-final layer to schedule an end-of-layer PAUSE." : "")
                 color: UM.Theme.getColor("text_inactive")
                 font: UM.Theme.getFont("default_italic")
                 wrapMode: Text.WordWrap
+                elide: Text.ElideRight
+                clip: true
             }
 
             Column {
@@ -244,9 +253,11 @@ Item {
             }
 
             Column {
-                visible: base.bedMeshAvailable
-                opacity: base.bedMeshVisible ? 1.0 : 0.0
-                enabled: base.bedMeshVisible
+                // NO-REFLOW RULE: the legend keeps its space — it fades
+                // instead of vanishing when the mesh state flips (the
+                // card used to grow +59 px when the mesh arrived).
+                opacity: base.bedMeshAvailable && base.bedMeshVisible ? 1.0 : 0.0
+                enabled: base.bedMeshAvailable && base.bedMeshVisible
                 width: parent.width
                 height: implicitHeight
                 spacing: 2 * screenScaleFactor
