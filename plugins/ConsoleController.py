@@ -77,6 +77,7 @@ class ConsoleController(QObject):
         # lines from its own head (or rebuilds) to stay aligned.
         self._dropped = 0
         self._revisions = 0
+        self._last_connection = None
         # In-flight sends by entry identity. Emergency stop and session
         # invalidation clear the set, so late completions from dead
         # requests can never drain the NEXT session's sends (the
@@ -88,6 +89,10 @@ class ConsoleController(QObject):
         # resolves on the first successful load.
         self._transcript_identity = None
         commands.emergencyStopped.connect(self._emergency_stopped)
+        # Every connection transition writes a "#" note into the feed
+        # (the author's request: the console says when it lost or
+        # regained the printer).
+        data.connectionStateChanged.connect(self._connection_note)
         # A printer switch must not leave phantom pending sends or a
         # "sent" status bleeding across sessions; the transcript is
         # per-printer, so it swaps to the incoming machine's record.
@@ -105,6 +110,16 @@ class ConsoleController(QObject):
             "consoleRevisions": self._revisions,
             "consolePending": len(self._in_flight),
         }
+
+    def _connection_note(self, connected) -> None:
+        # Only genuine TRANSITIONS write a note: a flapping link re-emits
+        # the same state on every failed reconnect attempt, and the feed
+        # must not fill with repeats (the author's live report).
+        connected = bool(connected)
+        if connected == self._last_connection:
+            return
+        self._last_connection = connected
+        self._note("Connected to Moonraker." if connected else "Disconnected from Moonraker.")
 
     def _note(self, text) -> None:
         """A plugin-side note rendered as its own feed line: the pane

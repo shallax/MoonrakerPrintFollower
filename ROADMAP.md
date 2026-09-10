@@ -6,8 +6,8 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release: **3.5.0** (Monitor awareness: temperature charts, bed-mesh
-mini map, G-code console, endstops and the layer-anchored ETA).
+Current release: **3.5.1** (the stability patch over 3.5.0: the no-reflow
+rule and the disconnected state, shipped from the `jog-reflow` branch).
 
 ## Direction
 
@@ -94,13 +94,28 @@ the stream).
 while hammering a toolhead move with some Printer-controls sections open,
 other controls can disappear/reappear and REFLOW the whole pane — the nudge
 button under the pointer can move mid-click. Incredibly dangerous during
-nudges; the pane's content must stop shifting under the jog pad (stable
-layout slots / fixed control heights / deferred section re-layout while a
-jog is in flight — mechanism TBD). Reproduced on the 3.5.0 candidate:
-open Printer controls, expand or collapse another section mid-nudge and
-the pane reflows under the pointer. 3.5.0 ships with it as a known issue;
-the fix lands in a **3.5.x patch release** (the author's ruling) rather
-than delaying 3.5.0.
+nudges; the pane's content must stop shifting under the jog pad.
+
+**The author's rule (2026-09-10, verbatim):** "no controls disappear,
+ever. It's only disablement/ enablement. The rule basically: nothing
+should ever, EVER cause the UI to reflow unless it's explicitly done by
+the user (expanding/ collapsing sections, resizing things, etc)."
+
+Shipped as 3.5.1 (the patch release, live-tested by the author through
+the snapshot loop): every state-gated control (pause/resume/cancel,
+Exclude, the whole Configuration-changes section, the Preview
+follow/bed-mesh/pause-at-layer buttons, the console Clear button, the
+jog feedback row) renders permanently and DISABLES; state-dependent
+status lines are permanent single-line slots whose text changes;
+reserved space uses opacity (Improve-ETA row and bar, the ETA glyph,
+the 90 px mesh-map slot, the layer-progress row, the endstop readout
+moved below the jog pad). Capability-static gates (QGL, mesh
+calibration, the mesh profile selector) keep `visible:` on the UX
+panel's adjudication — they only change on printer switches, which are
+user-initiated. The night's second ruling — disconnected disables every
+Monitor control (the emergency stop included) while the console stays
+readable — shipped with it, and both rules now live in
+`INSTRUCTIONS.md` and `ARCHITECTURE.md`.
 
 **Console sizing (the author's direction):** the console's only expanded
 size is ~28% of the column — a drag handle to resize the pane lands with
@@ -232,3 +247,20 @@ contrast; pairwise hue separation is the residual debt).
   frontends.
 - **Network discovery of Moonraker instances** — a security surface for
   near-zero value; users configure one URL per machine.
+
+## 3.6.0 candidate notes (for the author's review — not built)
+
+Feature-shaped ideas surfaced during the no-reflow night, held back per
+"improvements only — no new features; make a note for the roadmap":
+
+- **Pause-list semantics**: the Preview card's scheduled-pause list
+  collapses when a pause is consumed — including SILENT consumption
+  (failed pause, layer skipped while a pause is in flight). A
+  semantic ruling on when the list may collapse is needed before any
+  further treatment.
+- **Console resize** (already ruled): the drag handle for the console
+  pane, shaped by the pro-user persona.
+- **Scroll-to-prompt after a send** (deferred R5-10 #3): action-
+  initiated follow after sending a command while scrolled up.
+- **Pro-user persona round**: feature-value pass over the Monitor for
+  3.6.0 planning (the author's ruling — joins from this release).

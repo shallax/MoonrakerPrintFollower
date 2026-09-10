@@ -39,6 +39,9 @@ class MonitorData(QObject):
     auxiliaryChanged = pyqtSignal()
     consoleStoreChanged = pyqtSignal()
     commandChanged = pyqtSignal(object)
+    # Fires on every connection-state transition with the new state —
+    # the console logs a "#" note on each (the author's request).
+    connectionStateChanged = pyqtSignal(bool)
 
     def __init__(self, client, parent=None):
         super().__init__(parent)
@@ -47,7 +50,6 @@ class MonitorData(QObject):
         self._generation = 0
         self._timers = {}
         self._console_expanded = False
-        self._console_store_time = 0.0
         self._console_entries = []
         # The store has no cursor API and entries can share a float
         # stamp: dedupe on (time, text) keys instead of the stamp alone.
@@ -75,7 +77,9 @@ class MonitorData(QObject):
     def _session_invalidated(self):
         self.set_active(False)
 
-    def _connection_changed(self, *_args):
+    def _connection_changed(self, *args):
+        connected = bool(args[0]) if args else self.connected
+        self.connectionStateChanged.emit(connected)
         self.changed.emit()
 
     def _clear(self):
@@ -129,7 +133,6 @@ class MonitorData(QObject):
             # polling without a fresh seed).
             self._console_expanded = False
             self._console_seed = None
-            self._console_store_time = 0.0
             self._console_entries = []
             self._clear()
             self.invalidated.emit()
@@ -257,7 +260,6 @@ class MonitorData(QObject):
             self._console_seed = None
             seen = self._console_seen
             responses = []
-            buffer_max = 0.0
             for entry in store:
                 if not isinstance(entry, Mapping) or entry.get("type") != "response":
                     continue
@@ -265,7 +267,6 @@ class MonitorData(QObject):
                 text = str(entry.get("message") or "")
                 if not text:
                     continue
-                buffer_max = max(buffer_max, stamp)
                 if (stamp, text) in seen:
                     continue
                 if seed is not None and stamp <= seed:
@@ -284,17 +285,8 @@ class MonitorData(QObject):
                     "time": stamp,
                 })
             if responses:
-                self._console_store_time = max(self._console_store_time, buffer_max)
                 self._console_entries = responses
                 self.consoleStoreChanged.emit()
-            elif buffer_max and buffer_max < self._console_store_time:
-                # Recovery: the buffer's newest sits BEHIND our watermark
-                # (a clock step back, or a contaminated stamp from another
-                # machine's record) — lower the watermark to the buffer so
-                # the feed self-heals. Nothing unseen is lost: anything
-                # unseen is newer than the old watermark and would have
-                # been emitted above.
-                self._console_store_time = buffer_max
         self.request("console-store", "GET", "server/gcode_store?count=100", finished, category="console")
 
     def refresh_endstops(self):

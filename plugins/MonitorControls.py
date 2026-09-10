@@ -109,7 +109,13 @@ class MonitorControls(QObject):
             "zOffsetText": f"{number(origin[2]) if len(origin) > 2 else 0:+.3f} mm",
             "fanControlItems": fans, "ledItems": leds, "pwmOutputItems": pwm,
             "saveConfigPending": bool(configfile.get("save_config_pending")),
-            "saveConfigSummary": "Unsaved: " + ", ".join(sorted(changes)) if changes else "Unsaved Klipper configuration changes",
+            # The section is permanently visible (no-reflow rule), so a
+            # quiet summary must actually be quiet: the fallback string
+            # only appears when a pending change exists but Klipper
+            # listed no items — never on a clean printer (the panel:
+            # the old default rendered "Unsaved Klipper configuration
+            # changes" permanently beside a dead Save button).
+            "saveConfigSummary": "Unsaved: " + ", ".join(sorted(changes)) if changes else ("Unsaved Klipper configuration changes" if bool(configfile.get("save_config_pending")) else ""),
             "canSaveConfig": setup and bool(configfile.get("save_config_pending")), "bedMeshProfileNames": profiles,
         }
         self.changed.emit()
@@ -150,6 +156,13 @@ class MonitorControls(QObject):
     def firmware_restart(self):
         if not self._data.active or self._commands.print_active: return
         self._commands.script("Firmware restart", "FIRMWARE_RESTART")
+
+    def klipper_restart(self):
+        # A full Klipper restart (Moonraker's RESTART endpoint): reloads
+        # the config, drops the MCU connection and clears Klipper state
+        # — heavier than FIRMWARE_RESTART, lighter than a host reboot.
+        if not self._data.active or self._commands.print_active: return
+        self._commands.request("Klipper restart", "printer/restart", {})
 
     def host_restart(self):
         if not self._data.active or self._commands.print_active: return

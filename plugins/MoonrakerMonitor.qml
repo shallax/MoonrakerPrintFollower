@@ -121,6 +121,7 @@ Component {
         focus: true
         property bool infoCollapsed: root.printer != null ? root.printer.infoCollapsed : false
         property bool statusCollapsed: root.printer != null ? root.printer.statusCollapsed : false
+        property string connectionDotColour: root.printer != null && root.printer.monitorConnected ? "#3fb950" : "#f85149"
 
         ColorDialog {
             id: chartColorDialog
@@ -308,26 +309,34 @@ Component {
 
                             // The mini map is the at-a-glance widget; a
                             // click opens the pop-over detail view with
-                            // the probe-snapping crosshair.
-                            BedMeshMap {
-                                id: meshMiniMap
+                            // the probe-snapping crosshair. NO-REFLOW
+                            // RULE: the 90 px slot is always reserved —
+                            // the map fades in and out, and the
+                            // placeholder is an overlay inside the same
+                            // slot, so the mesh arriving (connect,
+                            // calibrate) never shifts the section.
+                            Item {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 90 * screenScaleFactor
-                                compact: true
-                                printer: root.printer
-                                visible: root.printer != null && root.printer.bedMeshAvailable
-                                tooltipText: root.printer != null ? "Click for the full bed mesh map (" + root.printer.bedMeshRangeText + ")." : "Click for the full bed mesh map."
-                                onClicked: {
-                                    root.openPopOver = root.openPopOver === "mesh" ? "" : "mesh";
-                                }
-                            }
 
-                            UM.Label {
-                                Layout.fillWidth: true
-                                visible: root.printer == null || !root.printer.bedMeshAvailable
-                                text: "No bed mesh to show"
-                                color: UM.Theme.getColor("text_inactive")
-                                wrapMode: Text.WordWrap
+                                BedMeshMap {
+                                    id: meshMiniMap
+                                    anchors.fill: parent
+                                    compact: true
+                                    printer: root.printer
+                                    opacity: root.printer != null && root.printer.bedMeshAvailable ? 1 : 0
+                                    tooltipText: root.printer != null ? "Click for the full bed mesh map (" + root.printer.bedMeshRangeText + ")." : "Click for the full bed mesh map."
+                                    onClicked: {
+                                        root.openPopOver = root.openPopOver === "mesh" ? "" : "mesh";
+                                    }
+                                }
+
+                                UM.Label {
+                                    anchors.centerIn: parent
+                                    opacity: root.printer == null || !root.printer.bedMeshAvailable ? 1 : 0
+                                    text: "No bed mesh to show"
+                                    color: UM.Theme.getColor("text_inactive")
+                                }
                             }
                         }
 
@@ -503,10 +512,13 @@ Component {
                             spacing: 0
 
                             UM.Label {
-                                // The pane title, in the other panes' style.
+                                // The pane title, in the other panes'
+                                // style — the same large bold face as
+                                // Information and Printer status (the
+                                // author's live report).
                                 text: "Webcam"
-                                font: UM.Theme.getFont("medium_bold")
-                                color: UM.Theme.getColor("text_inactive")
+                                font: UM.Theme.getFont("large_bold")
+                                color: UM.Theme.getColor("text")
                                 Layout.fillWidth: true
                                 Layout.topMargin: UM.Theme.getSize("default_margin").height
                                 Layout.leftMargin: UM.Theme.getSize("default_margin").width
@@ -598,6 +610,59 @@ Component {
                                         }
                                     }
                                 }
+
+                                Rectangle {
+                                    // A stale frame must not read as
+                                    // live: while disconnected a heavy
+                                    // neutral-grey wash and an explicit
+                                    // caption cover the camera (the
+                                    // author's live ruling; true
+                                    // per-pixel desaturation needs a
+                                    // shader Cura's Qt 5.15 line cannot
+                                    // guarantee — roadmap note).
+                                    visible: root.cameraConfigured && (root.printer == null || !root.printer.monitorConnected)
+                                    anchors.fill: cameraImage
+                                    color: "#c0202428"
+
+                                    UM.Label {
+                                        anchors.centerIn: parent
+                                        text: "Camera offline"
+                                        font: UM.Theme.getFont("medium_bold")
+                                        color: "#8b949e"
+                                    }
+                                }
+
+                                Rectangle {
+                                    // A red recording dot plus "Live"
+                                    // while the stream is genuinely
+                                    // live (the author's request).
+                                    visible: root.cameraConfigured && root.printer != null && root.printer.monitorConnected
+                                    anchors.top: cameraImage.top
+                                    anchors.left: cameraImage.left
+                                    anchors.topMargin: UM.Theme.getSize("narrow_margin").height
+                                    anchors.leftMargin: UM.Theme.getSize("narrow_margin").height
+                                    height: 20 * screenScaleFactor
+                                    width: liveLabel.width + 20 * screenScaleFactor
+                                    radius: 10 * screenScaleFactor
+                                    color: "#99000000"
+
+                                    RowLayout {
+                                        anchors.centerIn: parent
+                                        spacing: UM.Theme.getSize("narrow_margin").width
+                                        Rectangle {
+                                            width: 8 * screenScaleFactor
+                                            height: 8 * screenScaleFactor
+                                            radius: 4 * screenScaleFactor
+                                            color: "#f85149"
+                                        }
+                                        UM.Label {
+                                            id: liveLabel
+                                            text: "Live"
+                                            color: "#ffffff"
+                                            font: UM.Theme.getFont("small")
+                                        }
+                                    }
+                                }
                             }
 
                             // Camera control bar: a centred "Camera: <webcam>
@@ -653,6 +718,7 @@ Component {
                                             Layout.alignment: Qt.AlignVCenter
                                             width: UM.Theme.getSize("small_button_icon").width
                                             height: UM.Theme.getSize("small_button_icon").height
+                                            enabled: root.printer != null && root.printer.monitorConnected
                                             color: UM.Theme.getColor("text_inactive")
                                             hoverColor: UM.Theme.getColor("text")
                                             iconSource: UM.Theme.getIcon("ArrowDoubleCircleRight")
@@ -822,6 +888,11 @@ Component {
                                 Layout.topMargin: UM.Theme.getSize("narrow_margin").height
                                 Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                                 spacing: UM.Theme.getSize("narrow_margin").height
+                                // The section stays ENABLED while
+                                // disconnected: scrolling, selecting and
+                                // copying the restored history must keep
+                                // working (the author's ruling). Only
+                                // the INPUT surface disables.
                                 enabled: root.printer != null
                                 property int consoleRecallIndex: -1
                                 property string consoleDraft: ""
@@ -1066,6 +1137,7 @@ Component {
                                 // the green ">" keeps its contrast on both
                                 // themes (panel UX P3).
                                 Cura.RoundedRectangle {
+                                    id: consoleWell
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 190 * screenScaleFactor
                                     // The terminal is the pane's
@@ -1073,7 +1145,11 @@ Component {
                                     // to the feed, not to dead space
                                     // under it.
                                     Layout.fillHeight: true
-                                    color: "#161b22"
+                                    // The disconnected state reads in the
+                                    // well itself: grey instead of the
+                                    // terminal black (the author's live
+                                    // ruling).
+                                    color: root.printer != null && root.printer.monitorConnected ? "#161b22" : "#2d333b"
                                     border.color: UM.Theme.getColor("lining")
                                     border.width: UM.Theme.getSize("default_lining").width
                                     radius: UM.Theme.getSize("default_radius").width
@@ -1180,16 +1256,6 @@ Component {
                                             }
                                         }
 
-                                        UM.Label {
-                                            visible: root.printer == null || root.printer.consoleLines.length === 0
-                                            anchors.left: parent.left
-                                            anchors.right: parent.right
-                                            text: "No commands yet — lines you send appear here."
-                                            font.family: consoleSection.monoFamily()
-                                            color: "#7d8590"
-                                            elide: Text.ElideRight
-                                        }
-
                                         Connections {
                                             target: root.printer
                                             function onConsoleChanged() {
@@ -1210,20 +1276,40 @@ Component {
                                                 Layout.fillWidth: true
                                                 placeholderText: "G-code command…"
                                                 font.family: consoleSection.monoFamily()
+                                                enabled: root.printer != null && root.printer.monitorConnected
                                                 Keys.onReturnPressed: consoleSection.consoleSend()
                                                 Keys.onUpPressed: consoleSection.consoleRecall(1)
                                                 Keys.onDownPressed: consoleSection.consoleRecall(-1)
                                             }
                                             Cura.SecondaryButton {
                                                 text: "Send"
+                                                enabled: root.printer != null && root.printer.monitorConnected
                                                 onClicked: consoleSection.consoleSend()
                                             }
                                             Cura.SecondaryButton {
                                                 text: "Clear"
-                                                visible: root.printer != null && root.printer.consoleLines.length > 0
+                                                enabled: root.printer != null && root.printer.monitorConnected && root.printer.consoleLines.length > 0
                                                 onClicked: root.printer.clearConsoleHistory()
                                             }
                                         }
+                                    }
+
+                                    UM.Label {
+                                        // The empty-state hint is an
+                                        // OVERLAY, not a layout child: a
+                                        // layout slot stole a line from
+                                        // the output area and the feed
+                                        // stopped short of the input row
+                                        // (the author's live report).
+                                        anchors.left: consoleFlick.left
+                                        anchors.right: consoleFlick.right
+                                        anchors.bottom: consoleFlick.bottom
+                                        anchors.bottomMargin: 8 * screenScaleFactor
+                                        opacity: root.printer == null || root.printer.consoleLines.length === 0 ? 1 : 0
+                                        text: "No commands yet — lines you send appear here."
+                                        font.family: consoleSection.monoFamily()
+                                        color: "#7d8590"
+                                        elide: Text.ElideRight
                                     }
                                 }
                             }
@@ -1275,6 +1361,23 @@ Component {
                         text: "Printer status"
                         font: UM.Theme.getFont("large_bold")
                         elide: Text.ElideRight
+                    }
+                    Rectangle {
+                        // The connection dot rides the Printer status
+                        // pane's title — the author's chosen spot for
+                        // the always-readable connection state. Green
+                        // when connected, red when not.
+                        Layout.alignment: Qt.AlignVCenter
+                        visible: !root.statusCollapsed
+                        width: 10 * screenScaleFactor
+                        height: 10 * screenScaleFactor
+                        radius: 5 * screenScaleFactor
+                        color: connectionDotColour
+                        UM.TooltipArea {
+                            anchors.fill: parent
+                            text: root.printer != null && root.printer.monitorConnected ? "Connected to Moonraker." : "Disconnected from Moonraker."
+                            acceptedButtons: Qt.NoButton
+                        }
                     }
                     // Open the Moonraker UI in a browser, icon-style in the
                     // title row.
@@ -1383,11 +1486,15 @@ Component {
                             }
 
                             UM.Label {
-                                visible: root.printer != null && root.printer.monitorMessage.length > 0
+                                // NO-REFLOW RULE: a permanent slot — an
+                                // M117 message arriving mid-print used to
+                                // shove the grid down and back.
+                                height: 36 * screenScaleFactor
                                 text: root.printer != null ? root.printer.monitorMessage : ""
                                 color: UM.Theme.getColor("text_inactive")
                                 Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
+                                elide: Text.ElideRight
+                                wrapMode: Text.NoWrap
                             }
 
                             OutlineProgressBar {
@@ -1453,16 +1560,18 @@ Component {
                                             }
                                         }
                                         UM.Label {
-                                            visible: root.printer != null && root.printer.monitorLayerProgress >= 0
-                                            text: root.printer != null ? (root.printer.monitorLayerProgress * 100).toFixed(2) + "%" : ""
+                                            text: root.printer != null && root.printer.monitorLayerProgress >= 0 ? (root.printer.monitorLayerProgress * 100).toFixed(2) + "%" : ""
                                             color: UM.Theme.getColor("text_inactive")
                                         }
                                     }
                                     Item {
+                                        // NO-REFLOW RULE: the 8 px bar row
+                                        // is always reserved — it fades in
+                                        // when the index lands mid-print.
                                         Layout.fillWidth: true
                                         Layout.topMargin: UM.Theme.getSize("thin_margin").height
                                         height: 8 * screenScaleFactor
-                                        visible: root.printer != null && root.printer.monitorLayerProgress >= 0
+                                        opacity: root.printer != null && root.printer.monitorLayerProgress >= 0 ? 1 : 0
                                         OutlineProgressBar {
                                             anchors.fill: parent
                                             from: 0
@@ -1521,9 +1630,13 @@ Component {
                                     // improves, shown only while the
                                     // plain blend is the active basis.
                                     Item {
+                                        // NO-REFLOW RULE: the 16 px glyph
+                                        // slot is always reserved — it
+                                        // fades instead of shifting the
+                                        // ETA value sideways.
                                         width: 16 * screenScaleFactor
                                         height: 16 * screenScaleFactor
-                                        visible: root.printer != null && root.printer.printActive && (root.printer.monitorEtaBasis === "blend" || root.printer.improvingEta)
+                                        opacity: root.printer != null && root.printer.printActive && (root.printer.monitorEtaBasis === "blend" || root.printer.improvingEta) ? 1 : 0
                                         UM.TooltipArea {
                                             anchors.fill: parent
                                             text: root.printer != null && root.printer.improvingEta ? "Downloading and indexing the print…" : "Improve the estimate — download and index this print's G-code without loading it into the preview."
@@ -1568,7 +1681,7 @@ Component {
                                             // legitimate retry, and after a failed download
                                             // the glyph is the ONLY in-UI recovery (the
                                             // hourglass state ends on failure — panel P1-1).
-                                            enabled: root.printer != null
+                                            enabled: root.printer != null && root.printer.monitorConnected
                                             cursorShape: root.printer != null ? Qt.PointingHandCursor : Qt.ArrowCursor
                                             onClicked: root.printer.improveEta()
                                         }
@@ -1590,15 +1703,21 @@ Component {
                                 // restarts when the bar resizes so its
                                 // captured endpoints stay current.
                                 RowLayout {
+                                    // NO-REFLOW RULE: the Improve-ETA
+                                    // progress row reserves its space at
+                                    // all times (opacity, never
+                                    // visibility) — its automatic
+                                    // disappearance on completion used to
+                                    // shift the rows beneath it.
                                     Layout.fillWidth: true
                                     Layout.columnSpan: 2
                                     Layout.topMargin: UM.Theme.getSize("narrow_margin").height
                                     spacing: UM.Theme.getSize("narrow_margin").width
-                                    visible: root.printer != null && root.printer.improvingEta
                                     Item {
                                         id: improveEtaBar
                                         Layout.fillWidth: true
                                         Layout.preferredHeight: 8 * screenScaleFactor
+                                        opacity: root.printer != null && root.printer.improvingEta ? 1 : 0
                                         clip: true
                                         // A trivial 0..1 phase animation;
                                         // the sweep's POSITION is a binding
@@ -1650,8 +1769,7 @@ Component {
                                         }
                                     }
                                     UM.Label {
-                                        visible: root.printer != null && root.printer.improvingEta
-                                        text: root.printer != null ? (root.printer.improveEtaPhase + (root.printer.improveEtaProgress >= 0 ? " " + (root.printer.improveEtaProgress * 100).toFixed(0) + "%" : "")) : ""
+                                        text: root.printer != null && root.printer.improvingEta ? (root.printer.improveEtaPhase + (root.printer.improveEtaProgress >= 0 ? " " + (root.printer.improveEtaProgress * 100).toFixed(0) + "%" : "")) : ""
                                         color: UM.Theme.getColor("text_inactive")
                                         Layout.maximumWidth: 140 * screenScaleFactor
                                         elide: Text.ElideRight
@@ -1670,32 +1788,26 @@ Component {
 
                                 // Filament rows sit after Finish, beside
                                 // the progress block they belong to (the
-                                // author's placement). They outlive the
-                                // print: "used" is exactly the figure a
-                                // user wants to record after the job
-                                // completes, so the rows stay through
-                                // complete/cancelled until the next job
-                                // starts (the UX panel). The dash means
-                                // Moonraker did not report a value.
+                                // author's placement). NO-REFLOW RULE:
+                                // the rows are permanent — the values
+                                // read "—" until Klipper reports them, so
+                                // the grid never shifts when a job
+                                // starts or finishes.
                                 UM.Label {
-                                    visible: root.printer != null && root.printer.filamentReadoutVisible
                                     text: "Filament used"
                                     color: UM.Theme.getColor("text_inactive")
                                     Layout.preferredWidth: 110 * screenScaleFactor
                                 }
                                 UM.Label {
-                                    visible: root.printer != null && root.printer.filamentReadoutVisible
                                     text: root.printer != null ? root.printer.filamentUsed : "—"
                                     Layout.fillWidth: true
                                 }
                                 UM.Label {
-                                    visible: root.printer != null && root.printer.filamentReadoutVisible
                                     text: "Filament remaining"
                                     color: UM.Theme.getColor("text_inactive")
                                     Layout.preferredWidth: 110 * screenScaleFactor
                                 }
                                 UM.Label {
-                                    visible: root.printer != null && root.printer.filamentReadoutVisible
                                     text: root.printer != null ? root.printer.filamentRemaining : "—"
                                     Layout.fillWidth: true
                                 }
@@ -1847,8 +1959,12 @@ Component {
                         }
 
                         Column {
+                            // NO-REFLOW RULE: the Objects list arrives
+                            // seconds INTO a print (Klipper reports the
+                            // slicer's EXCLUDE_OBJECT_DEFINE lines only
+                            // when they execute), so the section is
+                            // permanent — empty until then.
                             Layout.fillWidth: true
-                            visible: root.printer != null && root.printer.excludeObjectItems.length > 0
                             CollapsibleSectionHeader {
                                 width: parent.width
                                 printerModel: root.printer
@@ -1876,8 +1992,11 @@ Component {
                                             elide: Text.ElideRight
                                         }
                                         Cura.SecondaryButton {
-                                            visible: root.printer != null && root.printer.printActive && !modelData.excluded
-                                            enabled: root.printer != null && !root.printer.actionBusy
+                                            // NO-REFLOW RULE: the button
+                                            // never disappears — it
+                                            // disables when the object
+                                            // cannot be excluded.
+                                            enabled: root.printer != null && root.printer.monitorConnected && !root.printer.actionBusy && root.printer.printActive && !modelData.excluded
                                             text: "Exclude"
                                             onClicked: {
                                                 excludeObjectDialog.targetName = modelData.name;
@@ -2089,7 +2208,12 @@ Component {
                     anchors.topMargin: UM.Theme.getSize("thin_margin").height
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: statusCollapsedTitle.implicitHeight
-                    height: statusCollapsedTitle.implicitWidth
+                    // Extra room at the top so the connection dot leads
+                    // the rotated title with a little air between them
+                    // (the author's rulings: the dot comes before the
+                    // word, matching the expanded header's dot-before-
+                    // title order, and the gap reads as a space).
+                    height: statusCollapsedTitle.implicitWidth + 24 * screenScaleFactor
                     UM.Label {
                         id: statusCollapsedTitle
                         text: "Printer status"
@@ -2097,6 +2221,20 @@ Component {
                         color: UM.Theme.getColor("text_inactive")
                         rotation: 90
                         anchors.centerIn: parent
+                        // Shifted down: the dot owns the top band.
+                        anchors.verticalCenterOffset: 12 * screenScaleFactor
+                    }
+                    Rectangle {
+                        // The dot stays visible while the pane is
+                        // collapsed too — leading the title, in its own
+                        // band at the top.
+                        anchors.top: parent.top
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.topMargin: 3 * screenScaleFactor
+                        width: 10 * screenScaleFactor
+                        height: 10 * screenScaleFactor
+                        radius: 5 * screenScaleFactor
+                        color: connectionDotColour
                     }
                 }
             }

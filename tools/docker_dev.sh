@@ -42,7 +42,11 @@ fi
 name="mpf-dev"
 image_id="$(docker image inspect moonraker-print-follower-dev --format '{{.Id}}' 2>/dev/null || true)"
 container_image="$(docker inspect "$name" --format '{{.Image}}' 2>/dev/null || true)"
-if [ -n "$container_image" ] && [ "$container_image" = "$image_id" ]; then
+# docker exec needs an explicit command: a running container has no
+# default command to fall back on (the image's CMD exists only at run
+# time). Zero-argument invocations therefore always take the run path,
+# which starts the gate suite via that CMD.
+if [ "$#" -gt 0 ] && [ -n "$container_image" ] && [ "$container_image" = "$image_id" ]; then
     docker exec -i -w /work "$name" "$@"
 else
     # The stale container must not be torn down while another invocation

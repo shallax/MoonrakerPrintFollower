@@ -95,9 +95,12 @@ Item {
             }
 
             PreviewSecondaryButton {
-                visible: base.bedMeshAvailable
+                // NO-REFLOW RULE: never hidden — it disables when the
+                // running job has no mesh (the card used to grow +95 px
+                // when the mesh arrived mid-job).
                 width: parent.width
-                height: visible ? UM.Theme.getSize("action_button").height : 0
+                height: UM.Theme.getSize("action_button").height
+                enabled: base.bedMeshAvailable
                 text: base.bedMeshVisible ? "Hide bed mesh" : "Show bed mesh"
                 tooltip: "Show the active Klipper bed mesh as a coloured 3D surface on Cura's build plate" + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
                 onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
@@ -116,9 +119,10 @@ Item {
             }
 
             Column {
-                visible: base.bedMeshAvailable
-                opacity: base.bedMeshVisible ? 1.0 : 0.0
-                enabled: base.bedMeshVisible
+                // NO-REFLOW RULE: the legend keeps its space — it fades
+                // instead of vanishing when the mesh state flips.
+                opacity: base.bedMeshAvailable && base.bedMeshVisible ? 1.0 : 0.0
+                enabled: base.bedMeshAvailable && base.bedMeshVisible
                 width: parent.width
                 height: implicitHeight
                 spacing: 2 * screenScaleFactor

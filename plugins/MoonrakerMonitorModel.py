@@ -151,7 +151,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     cameraRefreshChanged = pyqtSignal()
 
     _SIGNAL_KEYS = (
-        ("monitorChanged", ("monitorState", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
+        ("monitorChanged", ("monitorState", "monitorConnected", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
                             "improvingEta", "improveEtaProgress", "improveEtaPhase", "monitorElapsed",
                             "monitorEta", "monitorEtaBasis", "monitorFinish", "monitorSpeed", "monitorFlow",
                             "monitorPosition", "monitorMessage", "monitorLayerSource", "filamentUsed", "filamentRemaining")),
@@ -166,7 +166,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                            "cpuTemperature", "mcuSummary", "mcuItems")),
         ("endstopsChanged", ("endstopItems", "endstopSummary")),
         ("actionChanged", ("printActive", "canPausePrint", "canResumePrint", "canCancelPrint", "actionBusy",
-                           "actionStatus", "emergencyHoldProgress", "filamentReadoutVisible")),
+                           "actionStatus", "emergencyHoldProgress")),
         ("controlsChanged", ("monitorLayerHeight", "macroNames", "hasQuadGantryLevel", "hasBedMesh", "canRunSetup",
                              "temperaturePresetNames", "canApplyTemperaturePreset", "speedFactorPercent", "flowFactorPercent",
                              "zOffset", "zOffsetText", "fanControlItems", "ledItems", "saveConfigPending", "saveConfigSummary",
@@ -295,6 +295,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
         values.update(peripheral_values(self._data.snapshot))
         values.update(endstop_values(self._data.snapshot, self._client.connected))
+        # The no-reflow rule's sibling ruling (the author, 2026-09-10):
+        # while DISCONNECTED every control on the Monitor page disables
+        # — the QML gates its sections and the emergency stop on this.
+        values["monitorConnected"] = self._client.connected
         values.update(self._controls.values)
         values.update(self._camera.values)
         values.update(self._toolhead.values)
@@ -304,12 +308,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             canResumePrint=commands.state == "paused" and not commands.busy,
             canCancelPrint=commands.print_active and not commands.busy, actionBusy=commands.busy,
             actionStatus=commands.status, emergencyStopClicks=commands.clicks,
-            # The filament rows outlive the print: "used" is exactly the
-            # figure a user wants to record after the job COMPLETES, and
-            # the old printActive gate hid it at that moment (the UX
-            # panel). The rows stay through complete/cancelled until the
-            # next job starts.
-            filamentReadoutVisible=commands.print_active or commands.state in ("complete", "cancelled"),
             emergencyHoldProgress=commands.hold_progress, powerDevices=self._controls.power_devices(),
             bedMeshAvailable=bool(mesh), bedMeshProfile=str(mesh.get("profile") or "Current mesh") if mesh else "",
             bedMeshRows=int(mesh.get("rows") or 0), bedMeshColumns=int(mesh.get("columns") or 0),
@@ -353,6 +351,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 getattr(self, signal_name).emit()
 
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
+    monitorConnected = value_property(bool, "monitorConnected", monitorChanged, False)
     monitorFilename = value_property(str, "monitorFilename", monitorChanged, "")
     monitorProgress = value_property(float, "monitorProgress", monitorChanged, 0.0)
     monitorLayer = value_property(str, "monitorLayer", monitorChanged, "—")
@@ -378,7 +377,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     canCancelPrint = value_property(bool, "canCancelPrint", actionChanged, False)
     actionBusy = value_property(bool, "actionBusy", actionChanged, False)
     actionStatus = value_property(str, "actionStatus", actionChanged, "")
-    filamentReadoutVisible = value_property(bool, "filamentReadoutVisible", actionChanged, False)
     temperatureItems = value_property(QVariant, "temperatureItems", peripheralsChanged, [])
     fanItems = value_property(QVariant, "fanItems", peripheralsChanged, [])
     filamentSensorItems = value_property(QVariant, "filamentSensorItems", peripheralsChanged, [])
@@ -693,6 +691,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def saveConfig(self): self._controls.setup("save")
     @pyqtSlot()
     def firmwareRestart(self): self._controls.firmware_restart()
+    @pyqtSlot()
+    def klipperRestart(self): self._controls.klipper_restart()
     @pyqtSlot()
     def hostRestart(self): self._controls.host_restart()
     @pyqtSlot()

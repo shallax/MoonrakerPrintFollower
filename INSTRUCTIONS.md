@@ -166,6 +166,39 @@ change it only when the Cura SDK floor moves (see `tests/test_sdk_compatibility.
 
 ## Monitor controls pane
 
+### Standing UI rules
+
+Two rules govern every control on the Monitor tab; both are pinned by
+`tests/test_monitor.py` (`test_no_controls_disappear_controls_disable`
+and `test_disconnected_disables_every_monitor_control`) — update the
+pins in the same commit as any change to a control.
+
+- **No reflow, ever** (the author's rule, verbatim): "no controls
+  disappear, ever. It's only disablement/enablement... nothing should
+  ever, EVER cause the UI to reflow unless it's explicitly done by the
+  user (expanding/collapsing sections, resizing things, etc)." The
+  reasoning: a control vanishing mid-interaction moves the button
+  under the pointer — genuinely dangerous during jog nudges. So
+  state-gated controls render permanently and toggle `enabled`; status
+  lines are permanent single-line slots (fixed height, elided,
+  no-wrap) whose text changes; and space that must be reserved is held
+  with `opacity`, never `visible`. Capability-static gates (a feature
+  the machine simply lacks, changing only on a printer switch) keep
+  `visible:` — they are whitelisted in the structural test.
+- **Disconnected disables everything** (the author's ruling): while
+  the printer is disconnected every Monitor control disables — the
+  emergency stop included — via section-level
+  `enabled: root.printer == null || (!root.printer.controlsLocked &&
+  root.printer.monitorConnected)` gates. The console is the exception
+  on the input side only: the transcript stays scrollable, selectable
+  and copyable (its section keeps `enabled: root.printer != null`),
+  the well greys out, and only the input row and Send/Clear disable.
+  The camera veils while disconnected and carries a Live badge while
+  live, and the console feed notes every connect/disconnect with its
+  own `#` lines. The reasoning: nothing should look actionable when
+  the printer cannot act on it, while the previous session's feed
+  stays readable evidence.
+
 ### Adding a collapsible section
 
 The controls pane is a column of collapsible sections; `controlContent` in
@@ -220,6 +253,13 @@ QML only allows anchoring to a parent or sibling, so that anchor is
 silently dropped and the title floats. The pins in `tests/test_monitor.py`
 enforce the header-row anchors. The pane widths collapse to
 `<toggle>.width + 2 * thin_margin`.
+
+The Printer status strip adds the connection dot: it leads the rotated
+title in its own 24 px band at the top (the title shifts down 12 px
+via `anchors.verticalCenterOffset`), matching the expanded header's
+dot-before-title order with a space-width gap. The dot binds
+`connectionDotColour` from the pane root; the collapsed-strip pin in
+`tests/test_monitor.py` enforces it.
 The state is a model bool: add it to
 `_read_state`/`_write_state`/`_save_state` in `MoonrakerMonitorModel.py`
 (with a `bool(decoded.get(..., False))` default), a
@@ -402,6 +442,25 @@ they cannot recur silently.
   capture harness seeds `virtual_sdcard.progress` so the bars show a
   fill, and asserts accent-blue pixels inside every visible bar and
   slider — a fill that stops rendering fails the screenshot job.
+- **The no-reflow rule (the author's ruling, 2026-09-10):** a control
+  never disappears — every state lives in `enabled`, never `visible`
+  ("no controls disappear, ever. It's only disablement/enablement").
+  Nothing reflows unless the user asked for it (section collapse,
+  resize): state-dependent status lines occupy permanent single-line
+  slots whose TEXT changes, and reserved space uses opacity, never
+  visibility. **Reasoning:** the jog-reflow hazard (the author's live
+  report, 2026-09-09) — while hammering a toolhead move, the
+  pause/cancel buttons (and other state-gated controls and labels)
+  vanished and reappeared as printer state changed, so the nudge
+  button UNDER THE POINTER could move mid-click. Incredibly dangerous
+  during nudges. Every QML change must therefore keep the geometry
+  constant outside user-initiated actions. `test_no_controls_disappear_controls_disable`
+  pins the banned `visible:` patterns and the replacement `enabled:`
+  bindings; the explicit carve-outs (data-driven section gates —
+  fans/LEDs/macros/power sections on machines without them, the
+  scheduled-pause list, the temp-chart first-data swap) are listed in
+  the test and in `review/DECISIONS.md` round 6 for the author's
+  review.
 
 ### Verifying QML geometry
 
