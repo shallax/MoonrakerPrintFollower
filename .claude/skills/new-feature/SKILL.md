@@ -1,6 +1,6 @@
 ---
 name: new-feature
-description: Plan and build a new MoonrakerPrintFollower release end-to-end — version chat, critic round, four-persona panel, decisions log, implementation, panel re-review, reconciliation, ship. Use when the user proposes a new version or feature for this plugin ("let's do 3.6.0", "next release", "new feature").
+description: Plan and build a new MoonrakerPrintFollower release end-to-end — version chat, critic round, six-persona panel (plus a pro-user persona from 3.6.0), decisions log, implementation, snapshot loop, panel re-review, reconciliation, ship via PR. Use when the user proposes a new version or feature for this plugin ("let's do 3.6.0", "next release", "new feature").
 ---
 
 # New feature / release workflow
@@ -27,8 +27,10 @@ author is in the loop at every decision point when present; when away
    recommendation with every challenge; never silently accept or
    silently override; never report a discussion as an accepted
    decision unless they actually accepted it.
-3. Work on a `vX.Y.Z` branch — never main. No PR until the author
-   explicitly asks; no tag/release without them.
+3. Work on a `vX.Y.Z` branch — NEVER push to main directly, not even
+   one-line fixes: every change to main lands through a PR (the 3.5.0
+   lesson). No PR until the author explicitly asks; no tag/release
+   without them.
 
 ## Phase 1 — Round-1 general critic
 
@@ -48,8 +50,15 @@ is away, apply cheap plan-level wins and log every call in
 
 ## Phase 3 — The panel
 
-Four specialist agents IN PARALLEL: architecture, UX, engineering,
-product. Each brief contains, verbatim where quoted:
+Six read-only agents IN PARALLEL for a release round: architecture, UX,
+engineering, product, security/hardening, and the Klipper/Moonraker/Cura
+domain expert — its protocol archaeology catches end-user bugs no other
+lens can see (the 30 s timeout painted commands red; multi-extruder
+filament read "0.00 m"), so keep its brief on load-bearing claims, not
+exhaustive verification. From 3.6.0 a seventh joins: the 3D-printer
+enthusiast/pro-user persona, on feature value for the NEXT release —
+feeding planning, not gate-calls. Each brief contains, verbatim where
+quoted:
 
 - the agreed ROADMAP scope for the release
 - the author's own words on how it should look and function
@@ -85,6 +94,18 @@ surface lists in tests/test_composed_components.py, section pins.
 Update ARCHITECTURE.md and its contract tests in the same commits as
 the code they describe.
 
+- Every fix lands WITH ITS PROOF: the test, grep or output that shows
+  it works, named in the report. "Done" without evidence is not done.
+- Test pins are written against the actual file content, never a
+  mental model of it.
+- Aesthetic/UI changes: implement the MINIMAL version first — the
+  author tests taste fast, and the full-bore version waits for their
+  nod (the console-colour double-round).
+- Workflow/CI/release changes are NOT verified by the local gates:
+  rehearse them (`act`, or a dry-run of the step in the container)
+  before calling them fixed. The panel's scope includes the release
+  path itself, not just product code.
+
 ## Phase 6 — Panel re-review
 
 Re-engage the SAME four personas over the finished build: their own
@@ -114,13 +135,27 @@ per finding in DECISIONS.md; mark the ROADMAP section shipped.
 - Screenshots regenerated in the pinned container (canonical fonts);
   captures must show the new UI, including empty states and synthetic
   data where the real feed cannot be captured.
-- `make all` green before every push. Push to the `vX.Y.Z` branch only,
-  then the usual push → CI → fix cycle. No PR unless the author asks;
-  no tag/release without the author.
+- `make all` green before every push.
+- THE SNAPSHOT LOOP (the author's invention, their favourite part of
+  the flow): `make snapshot_package` on demand — from the working
+  tree, BEFORE committing ("snapshot me!") — the author SCPs
+  `/tmp/mpf.curapackage` and live-tests; commits and pushes HOLD until
+  the author is happy with what they tested. It keeps the git log
+  clean and skips waiting on GitHub builds.
+- Release flow: PR the branch into main (never push main directly),
+  and tag `vX.Y.Z` on main only when the author says release — the
+  release workflow builds, validates and publishes the artifacts.
+- When the author asks for a compacted history, rebuild with boundary
+  trees and verify the result byte-for-byte against a stashed
+  reference tree before force-pushing.
 
 ## Standing rules (from memory)
 
-- Commit messages: no AI-voice framing, no Co-Authored-By trailers.
+- NO AI ATTRIBUTION ANYWHERE: no Co-Authored-By trailers, no
+  "Generated with Claude Code" footers — not in commits, PR bodies,
+  changelogs, docs, releases, anything ("never, ever to put a
+  'Generated with AI' thing anywhere"). Commit messages stay plain
+  and factual, no AI-voice framing.
 - Repeated command sequences become make targets only when genuinely
   beneficial to other maintainers.
 - Real-Cura capture automation is permanently rejected — hand-capture
