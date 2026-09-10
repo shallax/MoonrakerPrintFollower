@@ -115,12 +115,15 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
 
 New releases follow the `/new-feature` skill (`.claude/skills/new-feature/SKILL.md`):
 plan with verbatim author quotes and real push-back → one round-1 critic
-before going deep → build with tests → a four-persona panel
-(architecture/UX/engineering/product, read-only, findings funnel back
-through the maintainer) — one-off security/hardening and
-Klipper/Moonraker/Cura domain-expert personas join the round on
-releases whose surface warrants them — → decisions logged in
-`review/DECISIONS.md` (git-ignored) → round-3 verification → ship.
+before going deep → build with tests → a six-persona panel
+(architecture/UX/engineering/product/security and the
+Klipper/Moonraker/Cura domain expert, read-only, findings funnel back
+through the maintainer; a 3D-printer enthusiast/pro-user persona joins
+from 3.6.0 on, feeding next-release feature planning rather than
+gate-calls) → decisions logged in `review/DECISIONS.md` (git-ignored) →
+round-3 verification → the snapshot loop (the author live-tests
+`/tmp/mpf.curapackage`; commits and pushes hold until they're happy) →
+ship via PR.
 
 ## Version bump checklist
 
