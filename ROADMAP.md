@@ -669,6 +669,19 @@ on this.
   one full HTTP objects query (no replay). The 3.5.1 disconnected UX
   renders identically in both modes.
 
+**The author's note (2026-09-11, verbatim):** "Just a note to take into
+account, I'm seeing a lot of the panel assess against Cura 5.9.1. The
+current version of Cura is 5.13.x." — every compatibility claim in the
+panel rounds is assessed against CURRENT Cura (5.13.x) and its bundled
+PyQt6. The 5.9.1 pin in the tree is the capture theme only
+(`tests/theme_assets/`, extracted from the 5.9.1 AppImage) — capture
+fidelity, never the runtime baseline. Cura 5.13's bundled PyQt6 is
+stricter than the dev container's newer PyQt6 about re-exports (the
+QHostAddress lesson, pinned by
+`test_qt_imports_name_the_module_that_owns_the_class`): the websocket
+module-availability question must be answered against the real 5.13
+bundle, not the container.
+
 ## 4.1.0 — Printer resilience and console polish
 
 The old 3.6.1 items, re-homed by the author's final ruling
