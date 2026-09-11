@@ -797,8 +797,11 @@ below ships in 4.0.1 — the transport's first follow-up release.
   `server/webcams/list` returns per-camera relative `snapshot_url` /
   `stream_url` (`/webcam2/?action=snapshot`), `enabled` flags and
   `target_fps`.
-- **ETA feed-forward** — prefer the printer's own remaining-time
-  signal when it reports one, falling back to the slicer ETA.
+- ~~**ETA feed-forward**~~ — STRUCK (the author, 2026-09-11): Klipper
+  already feeds the live speed factor back (`gcode_move.speed_factor`)
+  and the follower's ETA math already scales the slicer's per-layer
+  times by it — there is no printer-side remaining-time signal to
+  prefer.
 - **Auto-improve-ETA opt-in** — an explicit setting that lets the
   model adjust the ETA from observed layer progress.
 - **Scroll-to-prompt** — the console scrolls the prompt line into
