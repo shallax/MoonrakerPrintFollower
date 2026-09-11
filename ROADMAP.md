@@ -808,14 +808,21 @@ below ships in 4.0.1 — the transport's first follow-up release.
   view when a command's response lands.
 - **Pause-list verified-pause-only** — the scheduled-pause list shows
   only pauses that were actually verified.
+- ~~**Poll-cadence sliders (the author, 2026-09-11)**~~ — SHIPPED IN
+  4.0.0: the cadence sliders (status update, auxiliary, console) with
+  the 250 ms floor landed as part of the websocket work.
+
+## 4.1.0 — The UI-driving test suite
+
 - **The UI-driving test suite (the author, green-lit 2026-09-11)** —
   real clicks against the real QML with a full Moonraker simulator
   over websocket, driven as automated tests: the startup-order and
   timing races the 4.0.0 live-test round kept surfacing get a
-  deterministic regression net.
-- ~~**Poll-cadence sliders (the author, 2026-09-11)**~~ — SHIPPED IN
-  4.0.0: the cadence sliders (status update, auxiliary, console) with
-  the 250 ms floor landed as part of the websocket work.
+  deterministic regression net. The simulator grows from
+  `tests/ws_loopback.py`; the input-driving harness grows from the
+  capture theme's offscreen rendering; Cura's own SimulationView
+  sliders stay out of reach — the detach scenarios drive at the
+  signal level.
 
 ## 4.2.0 — State & permissions consolidation
 
