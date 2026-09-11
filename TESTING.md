@@ -2,344 +2,430 @@
 
 The 4.0.0 release gate: an automated suite that drives the REAL Cura
 application with REAL clicks against the REAL UI, connected to a full
-Moonraker simulator over websocket, and produces SCREENSHOTS of every
-step as the proof artifact.
+Moonraker simulator over the same websocket and HTTP transports a real
+printer speaks, and produces SCREENSHOTS AND VIDEO of every step as
+the proof artifact.
 
-The author's ruling (2026-09-11, verbatim): "I don't want any fakery
-here. I want you to be able to show me screenshots of the things you're
-doing in the tests as PROOF that the things you've implemented work the
-way you claim they work. We should use Cura 5.13, but it should be
-possible to swap out the Cura version if we need."
+## The mandate (the author's gospel truths, 2026-09-11, verbatim)
+
+1. "It must be REAL Cura, not just you instantiating QML and faking
+   things. The plugin must be installed in Cura and live in the real
+   runtime with a real UI being rendered, just like I'm doing with my
+   live testing."
+2. "You must be able to give me screenshots as evidence of tests
+   passing, even better if they're video recordings (something like
+   cypress tests or Browserstack does?)"
+3. "It must be Cura 5.13 for now, but we should be able to specify the
+   version."
+4. "It must be open enough that we can test everything end-to-end
+   (eventually)"
+5. "I must be able to specify which test to run in case we want to
+   iterate quickly on just one thing."
+6. "It must be able to run in Docker because the host is headless
+   anyway and I don't want you polluting the host."
+7. "It must connect to a Moonraker simulator over both HTTP and
+   Websocket transports. The simulator must behave as per Moonraker's
+   API specs."
+8. "If required, it must be possible to point the test framework at a
+   real printer for when the simulator isn't accurate enough (such as
+   dwell testing?)"
+9. "You shouldn't have to modify the plugin or cura to facilitate
+   testing (except maybe for orchestration - such as logging or
+   performance counters), but you may if you absolutely have to."
+
+Earlier rulings, still binding: screenshots are PROOF ("I don't want
+any fakery here"); the mandate covers ALL functionality end-to-end
+where feasible, starting with the recent failures to prove the
+process; harness work lives on the `v4.0.0-harness` branch (no PRs, no
+releases, sparse commits — work locally).
 
 ## 1. What "real" means
 
 The harness runs the actual Cura application process — the packaged
-AppImage, the real QML engine, the real plugin — under a real window
-server. The ONLY component that is not the production one is the
-network peer: a Moonraker simulator. That substitution is legitimate
-because Moonraker is what the PRINTER runs, not what Cura runs, and a
-scriptable peer is the only way to make Klipper states (print start,
-error, pause, camera streams) repeatable. Everything else — the
-plugin's Python, its QML, Cura's stage machinery, the event loop, the
-rendering — is the real thing.
+AppImage, the real QML engine, the real plugin installed in it — under
+a real X server inside a purpose-built Docker image. The ONLY
+components that are not production ones are the network peer (the
+Moonraker simulator) and the observation channel (a test-only driver
+plugin). Both substitutions are legitimate: the peer replaces what the
+PRINTER runs, never what Cura runs; the driver replaces a camera
+pointed at the screen, never the screen.
 
 Hard rules, in order:
 
-1. No direct slot invocation. A test expresses intent as events
-   (mouse press/release, drag, key) injected through the window's real
-   input path. If a scenario can only be driven by calling a handler
-   directly, the scenario is redesigned, not the rule relaxed.
+1. No direct slot invocation. A test expresses intent as input events
+   injected through the X server's XTEST extension — a real pointer,
+   real focus, real X-level implicit grabs, entering Cura's xcb QPA
+   exactly as a human mouse does.
 2. No stubbing of the plugin's dependencies inside Cura. The model,
    the transport, the socket client, the bridge — all production code.
-3. Screenshots are the deliverable. Every step (input, expected state,
-   observed state) captures the window; every failed assertion keeps
-   its capture. A run's gallery is what the author reviews.
-4. Determinism by environment, not by luck: pinned container, pinned
-   Cura build, pinned fonts, software GL, fixed window geometry.
+3. Screenshots and video are the deliverable. Every step captures;
+   every scenario records; every failed assertion keeps its evidence.
+4. Evidence must be independent of the claim. At least one assertion
+   per scenario reads a peer-side fact (what the simulator received)
+   or rendered pixels (what the X server drew), never only the
+   plugin's own published values.
+5. Determinism by environment, not by luck: pinned image, pinned Cura
+   build with checksum, pinned fonts, software GL, fixed geometry,
+   seeded configuration.
 
 ## 2. Architecture
 
 ```
-┌───────────────────────────── pinned container ─────────────────────────────┐
-│  Xvfb :99 (fixed 1600x1000x24)                                             │
-│   └─ real Cura AppImage (5.13.0 baseline; CURA_VERSION selects others)     │
-│        └─ plugin (production code) ──┐                                     │
-│        └─ HarnessDriver (test-only   │   websocket + HTTP (real protocol)  │
-│           plugin, absent from        ├────────────►  Moonraker simulator    │
-│           shipped packages)          │               (Tornado, scripted)   │
-│   test runner (pytest + scenario     │               ┌─ ws subscribe/push  │
-│   scripts, asserts via the driver)   │               ├─ HTTP endpoints     │
-└───────────────────────────────────────────────────────┴─────────────────────┘
+┌──────────────────────────── harness image (docker) ───────────────────────────┐
+│  Xvfb :99 (fixed 1600x1000x24) + xdotool (XTEST) + ffmpeg (x11grab)          │
+│   └─ real Cura AppImage (5.13.0 baseline; CURA_VERSION selects others)       │
+│        └─ plugin (production code) ──┐  real TCP: websocket + HTTP           │
+│        └─ HarnessDriver (test-only   ├────────────►  Moonraker simulator     │
+│           plugin, never shipped)     │               (Tornado, scripted)     │
+│   test runner (out-of-process,        │         or  ┌─ real printer          │
+│   pytest in the image)               ├────────────► │ (opt-in, read-only)    │
+└───────────────────────────────────────────────────────┴───────────────────────┘
 ```
 
 ### 2.1 The driver: a test-only Cura plugin
 
-`HarnessDriver` ships as a plugin in `tests/harness/` that the package
-build EXCLUDES (verified by the package-parity gate, like the existing
-test files). Running inside the real process gives the tests what a
-sidecar cannot:
+`HarnessDriver` lives in `tests/harness/` and is staged into the Cura
+plugin path at run time only; the package-parity gate and a new
+allowlist pin over `plugins/` contents guarantee it never ships.
 
-- `QApplication`, the QML engine, `Controller`, the scene and the
-  plugin registry — the real objects, addressable directly for
-  ASSERTIONS (reading state is not faking interaction).
-- Item lookup by `objectName`, then by geometry fallback when a Cura
-  version lacks an objectName.
-- Event injection through the real path: `QTest.mouseClick/mouseMove/
-  mousePress/mouseRelease/keyClick` targeted at the window or a
-  located item. These synthesize real `QMouseEvent`s through the QPA
-  input path — the same code path a human mouse uses once the X
-  server delivers it.
-- Screenshot capture: `window.grabWindow()` → PNG into the run
-  directory, with the step manifest.
-
-The driver exposes a small RPC surface (a loopback TCP listener on a
-test-only port) so the OUT-OF-PROCESS runner drives scenarios and
-reads results: `locate(name)`, `click(name|x,y)`, `drag(...)`,
-`key(...)`, `wait(condition, timeout)`, `screenshot(label)`,
-`property(name)`.
-
-ObjectName coverage: every interactive item a scenario needs an
-objectName on. The existing key items already carry them
-(`moonrakerPreviewActionPanelControls`, `cameraControls`,
-`consoleFlick`, …); the catalogue below drives the remaining additions
-— an item that cannot be found reliably gets one, because the tests
-are the consumers.
+- **Assertions** read real objects (QML items, the model, the
+  controller) — reading state is not faking interaction.
+- **Addressing**: objectName-first on the plugin surface (new
+  objectNames added only where a scenario needs them; inert in
+  production), class/property/geometry discovery for Cura's own
+  surface (Cura 5.13 has no objectNames). On the baseline version a
+  geometry fallback hit FAILS the step — fallbacks are per-version,
+  authorized by the version manifest, and every Cura-side click is
+  verified after the fact against Cura's own state (the stage changed,
+  the layer moved by the expected delta). The resolved address (parent
+  chain, class, geometry, text) is recorded in the step manifest.
+- **Input**: the driver maps item→screen coordinates and the runner
+  injects via `xdotool` (XTEST). The driver installs an event filter
+  that records, per injected event, the receiving item and whether the
+  event was accepted; a press that did not reach its intended item
+  fails the step. Before injection, the driver asserts no overlay
+  covers the target's rect.
+- **The RPC surface** is pinned (a structural test; ≤ a dozen generic
+  verbs — find / inspect / inject / capture / trace / relaunch /
+  seed-state; no verb may name a plugin feature). The listener binds
+  loopback port 0 on the GUI thread; `wait(condition, budget)` is a
+  DEFERRED reply armed by a QTimer — the GUI thread never blocks. One
+  in-flight request at a time.
+- **Continuous recording**: for every tracked item property the driver
+  installs change recorders (QML `Connections`/`onXChanged` probes)
+  appending `(monotonic_ts, value)` into a ring buffer; a frame-indexed
+  filmstrip capture fires on each change of the tracked set. Assertions
+  run over the recorded series (`watch(invariant, duration)`), not
+  over polls, and the gallery shows the timeline.
+- **Screenshots and video**: the canonical capture is the X root
+  window (`xwd -root`/`QScreen.grabWindow(0)` from a helper process),
+  synchronized on a frame swap so it can never catch a half-painted
+  frame; ffmpeg records the display for the whole scenario (the video
+  requirement). Captures are frame-stamped; an assertion's capture
+  must postdate the state change it claims.
 
 ### 2.2 The Moonraker simulator
 
 A Tornado-based double (Tornado is Moonraker's own stack) speaking the
-REAL protocols, both of them:
+REAL protocols over real TCP, in both transports:
 
-- **Websocket** (`/websocket`): the full subscribe/push contract the
-  production client implements — subscribe reply carries the complete
-  snapshot ONCE, then `notify_status_update` frames push only changes
-  at a configurable cadence (250 ms default); `notify_klippy_ready` /
-  `notify_klippy_disconnected` broadcasts; RPC responses for the
-  socket lane (`printer.objects.list`, `server.info`, `printer.info`,
-  `server.gcode_store`, `server.webcams.list`, …). This must exercise
-  the hand-rolled RFC 6455 client's edges: frames >125 bytes, masked
-  client frames, fragmented frames, and pings.
-- **Same transport, no shortcuts:** the plugin under test reaches the
-  simulator over REAL TCP — the same hand-rolled RFC 6455 client, the
-  same HTTP transport, the same auth headers a real printer gets. The
-  simulator is never imported in-process by the plugin, and no lane
-  of the production transport is bypassed for test convenience.
-- **HTTP** (`/server/...`, `/printer/...`, `/machine/...`): the lanes
-  that stay HTTP in both modes — commands, the console store, files
-  (list/upload/download/delete/print/start), thumbnails, endstops,
-  power, webcams — plus an MJPEG camera endpoint the bridge can relay,
-  and an optional auth mode (valid key / rejected key / keyless).
+- **Websocket** (`/websocket`): subscribe reply carries the complete
+  snapshot ONCE, then `notify_status_update` frames push only changes;
+  `notify_klippy_ready` / `notify_klippy_disconnected` broadcasts; and
+  — because Moonraker wipes every client subscription on a Klippy
+  restart — the simulator models per-connection subscription state and
+  DROPS it on `klippy_ready`, pushing nothing until a fresh subscribe
+  arrives. RPC responses cover every method the plugin calls.
+- **HTTP**: every endpoint the plugin actually calls, both lanes the
+  plugin uses (commands, console store, files
+  list/upload/download/move/delete/print/start, metascan, metadata,
+  thumbnails, history/recents, database items, endstops, power,
+  restarts, webcams) plus an MJPEG camera endpoint serving two
+  dialects (with/without Content-Length, boundary variants, a slow
+  first frame — the hard variant is the default).
+- **Fidelity is audited, not assumed.** (a) The endpoint table is
+  GENERATED from `MoonrakerProtocol.py`'s pure endpoint builders, and a
+  unit test fails if a production endpoint has no simulator route.
+  (b) The recorded live transcript from the author's Voron
+  (Moonraker v0.13.0-733; 29 frames / 44.9 KB over 6 s) is kept in-tree
+  and replayed verbatim; a conformance scenario asserts the scripted
+  simulator diverges from the transcript nowhere the plugin relies on.
+  (c) The simulator is as STRICT as a real peer where the client's
+  wire behaviour is at stake: unmasked client frames, RSV bits,
+  unknown opcodes, control-frame length, non-minimal encodings, close
+  handshake, per-message caps. Framing edge cases that Tornado cannot
+  emit (fragmented server frames) stay in the pure unit suite
+  (`tests/test_socket_framing.py`); the end-to-end arm covers the
+  extended-length encode path, which is the one that killed the live
+  probe.
+- **Cadence realism**: pushes jitter, batch, and occasionally skip a
+  tick, from a seeded distribution — the metronome is NOT the default.
+- **Capacity model (the dwell instrument)**: the simulator runs a
+  bounded worker pool with measured service time, exposes queue depth,
+  p95 latency and requests/s per endpoint, and records a full request
+  ledger `(monotonic_ts, method, path, category, bytes, in-flight)`.
+  Scenarios assert a request-rate budget over a steady window and the
+  runner records the profile — the honest proxy for the author's
+  printer-side dwell, which itself is only verifiable in real-printer
+  mode (§2.5).
+- **Fault injection**: dropped push frames, a stalled stream, refused
+  subscriptions (both the unauthorized and the structured-refusal
+  shapes), 401s, socket closes, a slow endpoint, and the
+  slow-upgrade / swallowed first objects-list arm that reproduces the
+  connect-time aux-subscription race.
 
-Scenario scripts drive a state machine: `idle → heating → printing
-(layer N, progress) → paused → error("Extrude below minimum temp") →
-recovered`, with fault injection: dropped push frames, a stalled
-stream (no frames for X s), refused subscriptions, 401s, socket closes,
-a slow endpoint (the dwell reproduction).
+### 2.3 Runner, selection and artifacts
 
-### 2.3 Runner and artifacts
-
-`make ui_test` runs Tier 1 by default. The selection surface is
-modular — a subset runs without the rest (the author's ruling,
-2026-09-11: "run tests X, Y and Z rather than having to run everything
-every time"):
+`make ui_test` runs Tier 1 by default. Selection is modular (gospel
+truth #5):
 
 - `make ui_test SCENARIOS=card-stays,m117,camera-first` — named
   scenarios, comma-separated;
 - `make ui_test GROUP=tier1|tier2|console|camera|files|controls|
   preview|settings|soaks` — by surface group;
-- `make ui_test CURA_VERSION=5.12.0 SCENARIOS=…` — any selection
-  under any pinned Cura;
-- `make ui_test --list` — the scenario/group index the selections
-  refer to.
+- `make ui_test CURA_VERSION=5.12.0 SCENARIOS=…` — any selection under
+  any pinned Cura;
+- `make ui_test --list` — the scenario/group index.
 
-1. Boot Xvfb (fixed geometry, no WM needed — Cura's windows are
-   undecorated under Xvfb, which also makes screenshots stable).
-2. Extract the pinned AppImage (`--appimage-extract`, no FUSE) and
-   launch the real binary with the driver plugin staged in.
-3. The runner drives scenarios out-of-process over the driver RPC,
-   with a per-step timeout and a `wait(condition)` model — NO bare
-   sleeps; every wait is "condition became true or the step failed
-   with its screenshot".
-4. Artifacts land in `test-artifacts/<run>/`: `index.html` (step
-   gallery: label, input, assertion, screenshot, duration), the
-   screenshots, the Cura log, and the simulator's scenario log.
-5. Failure mode: the assertion, the final screenshot, and the log are
-   one self-contained page the author can open — a failing run is
-   evidence, not a mystery.
+Lifecycle and isolation (a scenario is a REBIND — the production
+session boundary the plugin already supports): each scenario gets its
+own simulator instance and printer record, its own `HOME`/`XDG_*`
+under the run directory, and its own Cura process; the runner kills by
+process group and reaps before each launch. The single-instance trap
+is closed by a handshake: the runner mints a run nonce, the driver's
+first RPC reply carries `{pid, cura_version, platform_name, plugin_dir,
+xdg_dirs, nonce}`, and the runner verifies it against the process it
+spawned. A `relaunch()` primitive re-handshakes for the persistence
+and reconnect groups.
 
-Rendering determinism: software GL (Mesa llvmpipe) in the pinned
-container, the pinned theme and fonts, fixed window size, and the
-existing capture conventions. Absolute pixel-identity is NOT promised
-(first paint may differ by frame); screenshots are proof of STATE
-(the card is present, the message is in the slot, the button is
-enabled), not of pixels.
+The Cura profile is seeded, not produced by driving Cura's UI: a
+pinned config directory checked into `tests/harness/config` (welcome
+and What's-New dialogs suppressed, machine and printer record
+present, window geometry pinned); a pre-scenario gate asserts the
+expected stage is active and no overlay covers it.
+
+Artifacts land in `/tmp/mpf/ui-artifacts/<run>/`: `index.html` (step
+gallery: label, injected event with coordinates, condition expression,
+the full poll/transition history, the asserted item's scene rect, an
+annotated capture with pointer marker and red rect, the scenario
+video, durations, latency observations with budgets), the Cura log,
+the simulator's ledger and scenario log, and the resolved-address
+manifest.
+
+The runner supervises the app: wall-clock cap, liveness probe, and a
+failure taxonomy — "scenario failed" / "app died" / "app never became
+ready" — each with the log tail and the last capture. When the driver
+is wedged (the dwell case), the runner grabs the X display
+out-of-band, dumps all thread stacks via `faulthandler`, and escalates
+SIGTERM → SIGKILL. A failing run is evidence, not a mystery.
 
 ### 2.4 Cura version swap
 
-`CURA_VERSION` selects the AppImage (URL pattern parameterised;
-5.13.0 is the baseline pin). A per-version manifest records known
-deltas: objectName coverage, theme token names, window chrome. Item
-addressing is objectName-first with a geometry fallback so a version
-swap degrades to a manifest update, not a test rewrite. The simulator
-is version-neutral (it speaks Moonraker's protocol, not Cura's).
+`CURA_VERSION` selects a checksum-pinned AppImage from the cached
+store (never downloaded at test time). The staging step generates the
+driver's `plugin.json` for the target Cura's SDK; the pre-flight
+asserts the plugin AND the driver actually loaded before scenario 1.
+Per-version manifests record SDK verdicts, coordinate maps (Cura's
+sliders have no objectNames — their coordinates are version-pinned and
+authorized per version), theme-token names and known UI deltas.
+Manifests are generated from a live tree dump, so maintenance is
+reviewing a diff.
+
+### 2.5 Real-printer mode (gospel truth #8)
+
+`REAL_MOONRAKER_URL` (plus the key via env, never files) points the
+suite at a real printer. Safety contract: only scenarios marked
+`real_safe` may run — strictly read-only observation, no print start,
+no commands, no restarts; a scenario that would mutate is refused.
+This is the mode for dwell verification when the simulator's capacity
+model isn't accurate enough.
 
 ## 3. The scenario catalogue
 
-The mandate (the author, 2026-09-11, verbatim): "the mandate is not
-JUST the problems we've faced in this release, it should be all of the
-functionality, end-to-end where feasible, connecting to a dummy
-simulated printer over the same transport method that a real Moonraker
-printer uses."
+Two tiers. Tier 1 is the release gate — each scenario must be green
+with its gallery, AND must have been demonstrably red against the
+known-broken revision before it counts as evidence (the red gallery is
+committed with the scenario). Tier 2 is the full functional surface,
+built on the step vocabulary Tier 1 establishes.
 
-So the catalogue is two tiers. Tier 1 is the release gate — every
-scenario must pass with its gallery before 4.0.0 ships. Tier 2 is the
-full functional surface, end-to-end through real clicks against the
-simulated printer, built incrementally after Tier 1 proves the
-honesty contract; each feature's scenario names the clicks, the
-assertions, and the screenshots it owes.
+### Tier 1 — the release gate (recent failures, proving the process)
 
-### Tier 1 — the release gate
-
-1. **Failure state clears itself** — drive the printer to
-   `error("Extrude below minimum temp")` mid-print; assert the Print
-   job section shows the error, the jog pad UNLOCKS, and starting the
-   next print (simulator: cold start → transient error → printing)
-   clears the state with no reconnect and no "Print start failed"
-   verdict. Screenshots: the error state, the unlocked controls, the
-   recovered print. (Guards the author's items 1–2.)
+1. **Failure state clears itself** — the simulator errors the print
+   (`Extrude below minimum temp`), and the START attempt of the NEXT
+   print is armed; the scenario must let the 15 s verdict window fire
+   against a printer that stays broken (red gallery: the verdict
+   fires), then drive the recovery path: cold start → transient error
+   → printing. Assertions: the Print job section shows the error; the
+   jog pad UNLOCKS; the verdict does NOT fire on a transient error
+   that recovers; the peer's ledger shows ONE connection throughout —
+   the state cleared with no reconnect.
 2. **Card stays through load and after render** — enter Preview with
-   nothing loaded (empty card visible), click "Load current print",
-   watch the card through download/parse/render, then go HANDS-OFF:
-   assert the card is still visible 30 s after the render settles.
-   Screenshots: before, mid-load, settled. (Guards item 4.)
-3. **M117 in the Print-job section** — simulator pushes
-   `display_status.message = "meow"`; assert the text appears in the
-   Print job slot. (Guards the M117 item.)
-4. **Camera first load** — a keyless LAN camera on the simulator's
-   MJPEG endpoint renders on the FIRST load of the Monitor, no
-   refresh click. Variants: keyless direct, auth-required bridged.
-   (Guards the camera item.)
-5. **Temperatures at print start** — connect in websocket mode; start
-   a print; assert aux temperatures render within 3 s of the
-   snapshot. (Guards the 30 s temps item.)
-6. **Detach on any layer selection change** — while attached, drag
-   the layer slider and click the layer-step arrows: the follower
-   detaches and STAYS detached until the Attach button. Variants:
-   view-swap away and back re-attaches (the ruling's exception).
-   (Guards the detach saga.)
-7. **Transport handover** — reopen the Monitor repeatedly; assert the
-   Cura log shows no `Operation canceled` warnings and no layout
-   polish loops from the plugin's QML. (Guards the log-noise items.)
-8. **Dwell watchdog** — while the simulator streams at normal
-   cadence, instrument the UI thread: measure frame/render intervals
-   over a 10-minute soak with the console expanded; assert no
-   multi-second stalls. The simulator's slow-endpoint injection arm
-   reproduces the dwell and the test proves the plugin degrades
-   (HTTP fallback) instead of hanging the UI.
+   nothing loaded (the empty card), click "Load current print", and
+   go HANDS-OFF. Assertions, per-card identity, on the recorded
+   change trace: the ACTION card (the one with Detach) is visible
+   continuously from the click to 30 s after settle; the EMPTY card
+   never reappears after the load; a crop of each card's rect
+   corroborates at three instants (clicked / mid-load / settled).
+   The red gallery is the pre-fix revision's vanish.
+3. **M117 in the Print-job section** — the slot label gets an
+   objectName. Simulator pushes `display_status.message` A, then B:
+   the RENDERED label shows B, then A is absent; then the message
+   clears and the slot's previous content returns. Assertions read
+   the rendered label text, not the model property.
+4. **Camera first load** — the HARD ordering: the Monitor is entered
+   while the webcam list is still pending, the list then arrives, and
+   the stream must appear with no interaction. The simulator's MJPEG
+   frames carry a changing, recognizable pattern (proving liveness
+   in the capture); the first variant is the hard dialect with a
+   slow first frame. Variants: keyless direct, auth-required bridged.
+5. **Temperatures at print start** — the RACE form: the simulator
+   holds the websocket upgrade past the bootstrap window while a
+   print is already running (and the variant where Cura connects
+   mid-print), then releases it; the first aux datum must arrive
+   within 3 s of the sync snapshot, timestamped on the simulator's
+   event clock. The red gallery is the swallowed-first-objects-list
+   revision.
+6. **Detach on any layer selection change** — while attached: a drag
+   concurrent with a status push, a drag immediately after a view
+   swap (the unarmed window — the one that must be red pre-fix), and
+   a slow drag spanning several deliveries. Assertions run over the
+   recorded `preview.state.attached` and `expected_layer` series:
+   detach, stays detached until Attach. Variant: view-swap away and
+   back re-attaches (the ruling's exception). NOTE: the oracle for
+   automatic re-attach needs the author's one-line ruling — the
+   codebase's own records disagree on whether any auto re-attach
+   exists.
+7. **Transport handover** — reopen the Monitor repeatedly in
+   websocket mode. The peer's ledger asserts the core-category poll
+   count (websocket mode must not fire the HTTP monitor lane beyond
+   the bootstrap); the log assertions carry positive sentinel
+   controls (the driver emits sentinel lines into the same stream,
+   and the step fails if they are absent).
+8. **Dwell profile** — a 10-minute soak, console expanded, against
+   the capacity-limited simulator: assert the request-rate budget,
+   peak in-flight and per-category rates; measure GUI responsiveness
+   as scheduled-latency (a 100 ms QTimer's actual−scheduled deltas)
+   plus the receipt canary (simulator event timestamp vs the model's
+   apply time). The gallery shows the profile chart. Printer-side
+   stutter itself: real-printer mode (§2.5).
 9. **Pause list verified-only** — schedule an end-of-layer pause;
-   drive the printer past the layer WITHOUT pausing; assert the entry
-   stays listed, restyled as missed. (Guards the verified-pause
-   ruling.)
-10. **Restart arming / e-stop latch** — print → error/cancel; assert
-    the e-stop latch arms and a demonstrably fresh print clears it.
-11. **Scroll-to-prompt** — flood the console; assert the view follows
-    to the prompt on send. (Guards the console item.)
+   drive the printer past the layer WITHOUT pausing; the entry stays
+   listed, restyled as missed.
+10. **Restart arming / e-stop latch** — print → error/cancel; the
+    latch arms; a demonstrably fresh print clears it.
+11. **Scroll-to-prompt** — flood the console; the view follows to the
+    prompt on send; recall history works.
 
 ### Tier 2 — the full functional surface, end-to-end
 
-Grouped by surface. Every feature the plugin ships gets a scenario;
-variants that carry distinct behaviour get named variants. The same
-proof standard applies: real clicks, real assertions, screenshots.
+Coverage is machine-derived, not prose: a generator walks the code —
+every `@pyqtSlot` on the QML-facing objects, every `objectName`'d
+interactive item, every HTTP route from `MoonrakerProtocol.py`, every
+published `MonitorFormatting` key — and produces a
+surface→scenario matrix. A surface with no scenario entry FAILS the
+suite (an explicit, justified exclusion is the only other option).
+The selection rule for what merits a UI scenario: correctness that
+depends on the real Cura/QML wiring, on real timing, on a reported
+live failure, or on an addressable user intent; everything else stays
+in the fast unit/Qt suites, and every scenario cites the ruling it
+pins.
 
-**A. Transport & connection** — WS connect with the dot going green
-only after the first accepted snapshot; HTTP-mode full feed; mode
-switch mid-session (rebind, documented upload abort); silence proof →
-HTTP fallback with its reason; subscribe refusal → HTTP fallback;
-rejected API key (401) → clear verdict, no crash; `notify_klippy_ready`
-→ instant re-subscribe, `notify_klippy_disconnected` → honest failure;
-Reconnect cycles the client; while DISCONNECTED every Monitor control
-disables.
-
-**B. Monitor — printer status** — every print_stats state renders
-(idle/printing/paused/complete/cancelled/error); progress, layer,
-position and elapsed track the simulator's virtual_sdcard; filament
-used/remaining; the Last-action row; M117 (Tier 1 #3).
-
-**C. Monitor — temperatures, fans, sensors** — heater targets and
-percent; fan controls; sensor hide/show and the mini chart; filament
-sensor runout states; endstops after a homing.
-
-**D. Console** — send a command and see the response; error lines red
-and the collapsed bell rings; Clear; scroll-to-prompt (Tier 1 #11);
-recall history up/down; the store backfills once per session, never
-twice.
-
-**E. Camera** — first load (Tier 1 #4); camera selector switches
-streams; rotation/flip persist; stream failure → recovering wash →
-recovered; offline state.
-
-**F. File manager & print start** — browse dirs with thumbnails;
-upload a file and see it listed; delete with confirm; print from file
-through the confirm dialog to the success verdict (no false failure on
-a cold-start error blip — Tier 1 #1's second half); the start
-watchdog's honest failure on a start that never transitions, with the
-printer's message; recents.
-
-**G. Controls** — the jog pad (every axis and distance) reaches the
-simulator as real `G1` moves; Home XYZ / QGL / calibrate mesh / load
-and clear saved mesh; abs/rel toggle and its click gating while
-locked; extrude/retract with distances and speeds; macros run, and
-refuse while printing; pause/resume/cancel during a print; the
-emergency stop's latch and reconnect-after-emergency; the controls
-lock toggle disables everything; power devices on/off; the bed-mesh
-popover.
-
-**H. Preview** — the card in every state (Tier 1 #2); load current
-print end-to-end with the progress phases; attach/detach and the
-follower driving layer/view; detach rules (Tier 1 #6); scene
-change/slicing/load detach; pause-at-layer schedule/remove/clear-all
-and the verified-pause list (Tier 1 #9); bed-mesh show/hide with
-legend; the current-layer slot, the ETA and the drift-learning opt-in;
-the `</>` alignment visual check (backlogged, but capturable).
-
-**I. Settings & persistence** — transport-mode radios with the reason
-line and Test-connection; cadence sliders bounded (250 ms floor) and
-persisted; camera config persisted; the ETA checkbox and its tooltip;
-a full relaunch of Cura keeps every preference applied.
-
-**J. Soaks & faults** — the dwell soak (Tier 1 #8); a slow endpoint →
-degradation, not a hang; dropped push frames and a socket close →
-recovery without data loss; a long simulated print (virtual_sdcard
-progress → layer advance → ETA) run to completion.
+Groups (each feature gets a scenario; variants that carry distinct
+behaviour get named variants): **A** transport & connection (WS
+connect with the dot green only after the first accepted snapshot,
+HTTP-mode full feed, mode switch mid-session, silence proof → HTTP
+fallback, subscribe refusal → HTTP fallback, 401 verdict, klippy
+ready re-subscribe, klippy lost, reconnect, disconnected disables
+every control); **B** printer status (every print_stats state,
+progress/layer/position/elapsed, filament totals, last-action row);
+**C** temperatures/fans/sensors (targets, fan controls, sensor
+hide/show, mini chart, runout, endstops); **D** console (send/response,
+error lines and the collapsed bell, clear, scroll-to-prompt, recall,
+store backfill once, resize); **E** camera (first load, selector,
+rotation/flip persistence, recovering wash, offline); **F** files &
+print start (browse/thumbnails, upload, delete, folder create/rename,
+move, recents, print confirm → start verdict, the honest start
+watchdog); **G** controls (jog pad with peer-verified `G1`s, home/QGL/
+mesh calibrate/load/clear, abs/rel gating, extrude/retract, macros
+refusing while printing, pause/resume/cancel, e-stop latch and
+reconnect-after-emergency, lock toggle, power devices, bed-mesh
+popover); **H** preview (card states, load end-to-end with phases,
+attach/detach rules, scene-change/slicing/load detach, pause
+schedule/remove/clear-all, bed-mesh show/hide with legend,
+current-layer slot, ETA with drift-learning opt-in, the `</>`
+alignment visual check); **I** settings & persistence (transport
+radios with reason line, test connection, cadence sliders bounded at
+250 ms and persisted, camera config, ETA checkbox with tooltip,
+relaunch keeps every preference); **J** soaks & faults (dwell profile,
+slow endpoint → degradation not hang, dropped frames and socket close
+→ recovery without data loss — defined as a concrete set difference of
+received samples, a long simulated print to completion with
+time-warped virtual_sdcard progress).
 
 ## 4. Determinism and flake policy
 
-- Fixed window geometry, software GL, pinned fonts, no WM. Any
-  environment variable the plugin reads is set explicitly.
-- `wait(condition)` everywhere; the condition polls the real QML
-  object state. A step that needs wall-clock time declares its wait
-  in the scenario, never an implicit sleep.
-- A flaky scenario is a FAILING scenario until fixed — no retry
-  allowances. The 4.0.0 live rounds proved timing races are exactly
-  what this suite must catch, so masking them with retries defeats
-  the gate.
+- A dedicated harness image pins Xvfb, Mesa (llvmpipe via
+  `LIBGL_ALWAYS_SOFTWARE=1`; never `QT_QUICK_BACKEND=software`),
+  fontconfig with an explicit fonts.conf, dbus, xdotool, ffmpeg,
+  Tornado and pytest — by exact version, like the rest of the repo.
+  The launcher exports `QT_QPA_PLATFORM=xcb` and `DISPLAY` explicitly;
+  the driver's pre-flight refuses to run unless
+  `platformName() == "xcb"`, the screen geometry matches the pin, and
+  the window is exposed — recorded in the manifest.
+- Timing budgets live in a machine profile, not in scenario prose;
+  each latency assertion prints its observed value against its budget
+  in the gallery.
+- No retries. A flaky scenario is a failing scenario — with machinery
+  so that is survivable: a measured baseline (5 clean runs on a green
+  build before a scenario counts as a gate), INFRA vs PRODUCT failure
+  tags (both fail the run; the banner differs), quarantine with teeth
+  (a dated entry in TESTING.md that still blocks the release; older
+  than N days fails the suite), and per-step evidence (injected event,
+  coordinates, condition, poll history, scene rect, peer-ledger
+  slice).
+- The red-run rule: a scenario that has never been observed failing
+  is not evidence. Every Tier-1 scenario commits its red gallery from
+  the known-broken revision.
 
-## 5. Phasing (each phase ends with screenshots shown to the author)
+## 5. Phasing (each phase ends with screenshots AND video shown to the
+   author)
 
-- **Phase A — the skeleton proof:** boot real Cura under Xvfb, click
-  PREPARE → PREVIEW → MONITOR through the real UI, screenshot each
-  stage. Nothing about the printer yet. This phase proves the
-  honesty contract (real app, real events, real captures) before any
-  scenario work.
-- **Phase B — the simulator:** the websocket + HTTP double with the
-  scenario state machine; the production client connects to it
-  in-process and the Monitor shows scripted data. Proof: a gallery of
-  the Monitor rendering simulator-driven state.
-- **Phase C — Tier 1 first (the author, 2026-09-11):** the recent
-  failures prove the theory and the process — Tier 1 green with
-  galleries before anything else grows.
-- **Phase D — the full surface:** the Tier 2 catalogue lands
-  feature-group by feature-group (transport, status, temperatures,
-  console, camera, files, controls, preview, settings, soaks) until
-  the suite encompasses all testing end-to-end — "I'm fed up of
-  having to re-test everything myself."
-- **Phase E — the version swap and CI:** run the suite under a second
-  Cura version to prove the swap mechanism; wire `make ui_test` into
-  the release gates so fix claims are machine-proven.
+- **Phase A — the skeleton proof:** boot real Cura under Xvfb in the
+  harness image, click PREPARE → PREVIEW → MONITOR through XTEST,
+  capture root-window frames and video, and run one deliberately
+  failing scenario whose failure gallery ships with it. This phase
+  proves the honesty contract before any catalogue work.
+- **Phase B — the simulator:** both transports, the endpoint table
+  generated from the code, the transcript replay, the capacity model,
+  the fault arms. Proof: a gallery of the Monitor rendering
+  scripted data.
+- **Phase C — Tier 1, first (the recent failures prove the process):**
+  the 11 gate scenarios green with galleries AND red galleries against
+  the known-broken revisions; the step vocabulary is a Phase-C
+  deliverable — a Tier-2 scenario must be expressible as a short
+  composition.
+- **Phase D — the full surface:** the Tier-2 matrix lands
+  feature-group by feature-group until the suite encompasses all
+  testing end-to-end.
+- **Phase E — the version swap and CI:** the suite under a second Cura
+  version (swap manifest proven), then `make ui_test` in the release
+  gates, with declared per-tier wall-clock budgets and the soak kept
+  out of any PR-blocking path.
 
 ## 6. Boundaries
 
-- Production-code surface (the author's constraint, 2026-09-11): the
-  harness adds NO production behaviour. The only plugin-side changes
-  are objectNames on the interactive QML items the scenarios address
-  (inert in production) and the transition logging already added for
-  the 4.0.0 diagnostics. The driver, the simulator, the runner and
-  the scenarios all live under `tests/` and never ship.
-- Cura's own SimulationView internals (its sliders' hit areas, its
-  upload pane) are driven by events at known coordinates, never by
-  poking Cura-private state. We test OUR surface; Cura's widgets are
-  black boxes we click.
-- The harness never ships: the package-parity gate keeps it out of
-  `.curapackage` and the marketplace source.
+- Production-code surface (gospel truth #9): the harness adds NO
+  production behaviour. Plugin-side changes are limited to
+  objectNames on the interactive QML items the scenarios address
+  (inert in production) and the orchestration logging already added
+  for the 4.0.0 diagnostics. The driver, simulator, runner, scenarios
+  and manifests live under `tests/` and never ship.
+- Cura's own SimulationView internals are driven by XTEST events at
+  authorized coordinates, verified after the fact against Cura's own
+  state — never by poking Cura-private state.
 - The simulator never touches a real printer; its auth mode uses
-  throwaway keys.
+  throwaway keys. Real-printer mode is read-only by construction.
+- Reversal recorded: INSTRUCTIONS.md's earlier rejection of running
+  real Cura under a virtual display is superseded by the gospel truths
+  (real Cura under Docker is now the mandate); the doc and its pins
+  are updated when the harness lands.
