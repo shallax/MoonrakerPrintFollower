@@ -153,7 +153,7 @@ class SourceContractTests(unittest.TestCase):
             "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice"},
             "MoonrakerPrintFollower": {"FollowerRuntime"},
             "MoonrakerProtocol": set(),
-            "MoonrakerSession": {"MoonrakerTransport"},
+            "MoonrakerSession": {"MoonrakerSocket", "MoonrakerTransport"},
             "MoonrakerSocket": {"SocketFraming"},
             "MoonrakerTransport": {"MoonrakerProtocol"},
             "SocketFraming": set(),

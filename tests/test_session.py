@@ -5,12 +5,25 @@ import unittest
 
 from tests.fake_moonraker import FakeMoonraker
 from plugins.MoonrakerSession import (
+    BindingIdentity,
     MoonrakerSession,
     MoonrakerSessionState,
     PollPolicy,
     RequestCategory,
     RequestCoalescer,
 )
+
+
+class _FakeSocket:
+    def __init__(self) -> None:
+        self.stops = 0
+        self.starts = []
+
+    def stop(self) -> None:
+        self.stops += 1
+
+    def start(self, url, api_key, core_names, aux_names) -> None:
+        self.starts.append((url, api_key))
 
 
 class _FakeTransport:
@@ -62,7 +75,7 @@ class SessionStateTests(unittest.TestCase):
 
     def test_endpoint_or_credential_rebind_invalidates_shared_state(self):
         transport = _FakeTransport()
-        session = MoonrakerSession(transport=transport)
+        session = MoonrakerSession(transport=transport, socket=_FakeSocket())
         self.assertTrue(session.configure("http://printer", "first-key"))
         session.merge_status({"print_stats": {"state": "printing"}}, now=1)
         self.assertTrue(session.coalescer.begin("core"))
@@ -85,11 +98,38 @@ class SessionStateTests(unittest.TestCase):
         self.assertGreater(session.generation, generation)
         self.assertEqual(transport.identity, ("http://other-printer", "second-key"))
 
+    def test_mode_only_change_rebinds_without_touching_the_transport(self):
+        transport = _FakeTransport()
+        socket = _FakeSocket()
+        session = MoonrakerSession(transport=transport, socket=socket)
+        session.configure("http://printer", "key")
+        self.assertEqual(session.feed_mode, "websocket")
+        generation = session.generation
+
+        self.assertTrue(session.configure("http://printer", "key", "http"))
+        self.assertGreater(session.generation, generation)
+        self.assertEqual(session.feed_mode, "http")
+        # The mode change rebinds the session but never reconfigures the
+        # HTTP transport: its lanes have no reason to be invalidated.
+        self.assertEqual(transport.configure_calls, [("http://printer", "key")])
+        self.assertEqual(socket.stops, 2)  # the first bind's reset + the mode change
+
+    def test_feed_mode_none_sentinel_keeps_the_current_mode(self):
+        transport = _FakeTransport()
+        socket = _FakeSocket()
+        session = MoonrakerSession(transport=transport, socket=socket)
+        session.configure("http://printer", "key", "http")
+        generation = session.generation
+        self.assertFalse(session.configure("http://printer", "key"))
+        self.assertEqual(session.generation, generation)
+        self.assertEqual(session.feed_mode, "http")
+        self.assertEqual(session.identity, BindingIdentity("http://printer", "key", "http"))
+
     def test_session_reset_invalidates_old_generation_and_shared_state(self):
         # Drive the production identity path (MoonrakerSession.configure) and
         # then reset, as a rebind does, rather than a test-only state mutation.
         transport = _FakeTransport()
-        session = MoonrakerSession(transport=transport)
+        session = MoonrakerSession(transport=transport, socket=_FakeSocket())
         self.assertTrue(session.configure("http://printer-a", "key"))
         session.merge_status(
             {
@@ -118,7 +158,7 @@ class SessionStateTests(unittest.TestCase):
         # The client reads session.toolhead_guard at configure time and
         # ToolheadController arms it through set_toolhead_guard; both must
         # delegate to the state the configure path resets.
-        session = MoonrakerSession(transport=_FakeTransport())
+        session = MoonrakerSession(transport=_FakeTransport(), socket=_FakeSocket())
         self.assertFalse(session.toolhead_guard)
         self.assertTrue(session.set_toolhead_guard(True))
         self.assertTrue(session.toolhead_guard)

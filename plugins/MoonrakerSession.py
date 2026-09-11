@@ -121,6 +121,20 @@ class RequestCoalescer:
         return bool(self._slots.get(str(key), _RequestSlot()).in_flight)
 
 
+@dataclass(frozen=True)
+class BindingIdentity:
+    """What a session is bound to: URL, key and the status-feed mode.
+
+    The mode is part of the identity — a change rebinds (the author's
+    ruling) — but it never enters ``MoonrakerHttpTransport.identity``:
+    HTTP lanes have no reason to be invalidated by a status-feed change.
+    """
+
+    url: str = ""
+    api_key: str = ""
+    feed_mode: str = "websocket"
+
+
 @dataclass
 class SessionSnapshot:
     status: Dict[str, Any] = field(default_factory=dict)
@@ -265,6 +279,7 @@ class MoonrakerSessionState:
         self.commands = CommandTracker()
         self.generation = 0
         self.base_url = ""
+        self.feed_mode = "websocket"
         self.connected = False
         self.pause_guard = False
         self.toolhead_guard = False
@@ -274,6 +289,7 @@ class MoonrakerSessionState:
         self.connected = False
         self.pause_guard = False
         self.toolhead_guard = False
+        self.feed_mode = "websocket"
         self.snapshot = SessionSnapshot()
         self.commands.clear()
         self.coalescer.clear()
@@ -311,12 +327,16 @@ class MoonrakerSession:
     tests. The Qt transport is imported lazily only when a live session is built.
     """
 
-    def __init__(self, parent=None, *, state: Optional[MoonrakerSessionState] = None, transport=None) -> None:
+    def __init__(self, parent=None, *, state: Optional[MoonrakerSessionState] = None, transport=None, socket=None) -> None:
         self._state = state or MoonrakerSessionState()
         if transport is None:
             from .MoonrakerTransport import MoonrakerHttpTransport
             transport = MoonrakerHttpTransport(parent)
         self.transport = transport
+        if socket is None:
+            from .MoonrakerSocket import MoonrakerSocket
+            socket = MoonrakerSocket(parent)
+        self.socket = socket
         self._api_key = ""
 
     @property
@@ -367,22 +387,45 @@ class MoonrakerSession:
     def toolhead_guard(self) -> bool:
         return self._state.toolhead_guard
 
-    def configure(self, base_url: str, api_key: str) -> bool:
+    def configure(self, base_url: str, api_key: str, feed_mode: Optional[str] = None) -> bool:
+        """Rebind when the URL, the key OR the feed mode changed.
+
+        ``feed_mode=None`` keeps the current mode (the frozen seam's
+        sentinel). A mode-only change rebinds the session — the author's
+        ruling — but never reconfigures the HTTP transport: its lanes
+        have no reason to be invalidated by a status-feed change.
+        """
         target_url = str(base_url or "").rstrip("/")
         target_key = str(api_key or "")
-        changed = (target_url, target_key) != (self._state.base_url, self._api_key)
+        target_mode = str(feed_mode or self._state.feed_mode).strip().lower() or "websocket"
+        changed = (target_url, target_key, target_mode) != (
+            self._state.base_url, self._api_key, self._state.feed_mode,
+        )
         if not changed:
             return False
-        # Transport configure cancels every owner before identity changes. Reset
-        # state in the same transaction so stale authenticated data cannot survive.
-        self.transport.configure(target_url, target_key)
+        if (target_url, target_key) != (self._state.base_url, self._api_key):
+            # Transport configure cancels every owner before identity changes.
+            self.transport.configure(target_url, target_key)
+        # Reset the socket and the shared state in the same transaction so
+        # stale authenticated data cannot survive any kind of rebind.
+        self.socket.stop()
         self._state.reset()
         self._state.base_url = target_url
         self._api_key = target_key
+        self._state.feed_mode = target_mode
         return True
+
+    @property
+    def identity(self) -> BindingIdentity:
+        return BindingIdentity(self._state.base_url, self._api_key, self._state.feed_mode)
+
+    @property
+    def feed_mode(self) -> str:
+        return self._state.feed_mode
 
     def reset(self) -> None:
         self.transport.cancel_all()
+        self.socket.stop()
         self._state.reset()
 
     def set_pause_guard(self, active: bool) -> bool:
