@@ -122,10 +122,10 @@ Component {
         // buttons do not take focus, so the moment the user clicks
         // anything the handler never sees Esc (the file-manager
         // popup's own history — the author's live report: Esc on
-        // the Monitor page did nothing). The shortcut stands down
-        // while the file-manager popup is open — that layer owns
-        // Esc then, and two live shortcuts on one sequence would
-        // both fire.
+        // the Monitor page did nothing). While the file-manager
+        // popup is open THIS shortcut owns the key: an open
+        // confirmation cancels (its content's own handler having
+        // accepted the key first), otherwise the popup closes.
         Shortcut {
             sequence: "Esc"
             // THE one window-level shortcut: the whole Esc ladder in
@@ -2456,6 +2456,22 @@ Component {
                                     text: root.printer != null ? root.printer.moonrakerVersion : "—"
                                     Layout.fillWidth: true
                                     elide: Text.ElideMiddle
+                                }
+                            }
+
+                            // The manual Reconnect (the author's
+                            // live request): the recovery for a UI
+                            // stuck after a printer error or a
+                            // dropped connection — cycles the client
+                            // and re-arms the monitor.
+                            Cura.SecondaryButton {
+                                Layout.alignment: Qt.AlignRight
+                                text: "Reconnect"
+                                enabled: root.printer != null
+                                onClicked: {
+                                    if (root.printer != null) {
+                                        root.printer.reconnect();
+                                    }
                                 }
                             }
                         }

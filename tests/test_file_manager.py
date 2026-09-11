@@ -561,9 +561,48 @@ class FileManagerServiceTests(unittest.TestCase):
         with patch.object(self.service, "_fetch_thumb"):
             self.service.request_thumbnails(rows)
             self.assertEqual(self.service._thumb_active, 3)
-            self.service._abort_thumbs()
+            # The registry must reset BEFORE the aborts fire: an
+            # inline finished handler draining a live registry would
+            # issue fetches the reset then orphans (the adversarial
+            # round's repro).
+            service = self.service
+            seen = []
+            class FakeReply:
+                def abort(self):
+                    seen.append(len(service._thumb_replies))
+                def deleteLater(self):
+                    pass
+            service._thumb_replies = {
+                f"f{i}.gcode": FakeReply() for i in range(3)
+            }
+            service._abort_thumbs()
             self.assertEqual(self.service._thumb_active, 0)
             self.assertEqual(self.service._thumb_queue, [])
+            self.assertTrue(seen)
+            self.assertTrue(all(size == 0 for size in seen))
+
+    def test_clear_walk_error_releases_the_banner(self):
+        # The banner's dismiss (the author's live ruling): the error
+        # clears until the next walk re-reports one.
+        self.service._walk_error = "Walk failed"
+        self.service.clear_walk_error()
+        self.assertIsNone(self.service._walk_error)
+
+    def test_stale_thumbnail_reply_retires_itself(self):
+        # The generation guard's early return must still release the
+        # network reply — otherwise every aborted fetch leaks into
+        # the network access manager (the adversarial round's catch).
+        released = []
+        class FakeReply:
+            def deleteLater(self):
+                released.append(True)
+        reply = FakeReply()
+        self.service._thumb_replies["a.gcode"] = reply
+        self.service._thumb_active = 1
+        self.service._thumb_finished(
+            "a.gcode", reply, self.service._thumb_generation - 1, "/tmp/x.png", False)
+        self.assertTrue(released)
+        self.assertEqual(self.service._thumb_active, 0)
 
 
     """The service against the scripted transport: requests are

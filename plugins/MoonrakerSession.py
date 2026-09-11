@@ -25,7 +25,12 @@ class PollPolicy:
 
     paused_floor_ms: int = 1500
     idle_floor_ms: int = 5000
-    auxiliary_active_ms: int = 1000
+    # The auxiliary objects query while printing/paused: 2.5 s, down
+    # from 1 s — the author's live report (2026-09-11): prints stall
+    # at points while the plugin is connected, and two full state
+    # queries per second are the prime suspect. Temperatures change
+    # slowly enough that the chart loses nothing.
+    auxiliary_active_ms: int = 2500
     auxiliary_idle_ms: int = 2500
     power_ms: int = 5000
     system_ms: int = 10000

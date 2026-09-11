@@ -127,6 +127,15 @@ class MonitorData(QObject):
     def set_toolhead_guard(self, active):
         self._client.set_toolhead_guard(active)
 
+    def reconnect(self) -> None:
+        """The manual Reconnect (the author's live request, 3.6.0):
+        the client cycle of the e-stop recovery, minus the
+        connected-only gate — a manual reconnect exists for when the
+        UI state is STUCK, which includes being disconnected."""
+        self._client.stop()
+        self._client.start()
+        self.set_active(True)
+
     def reconnect_after_emergency(self) -> None:
         """The author's ruling (2026-09-10, live-proven on their
         printer): after an emergency stop the host refuses commands

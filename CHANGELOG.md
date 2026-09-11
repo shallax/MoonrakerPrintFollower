@@ -2,7 +2,40 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
-## 3.5.1
+## 3.6.0
+
+Version 3.6.0 is the file-manager release, closed out with the
+post-review sweep and the adversarial round's fixes.
+
+### Highlights
+- **File manager popup**: the Monitor tab's Files button opens the full
+  store browser — search, filters, paging, per-column sort with
+  resize/show-hide/order (titles never shrink below their own text,
+  cells always elide), frozen left columns over a clipped horizontal
+  scroll (whole-row content width; wheel scrolls over the list),
+  folder chips with a context menu, and a search breadcrumb under the
+  filename so same-named files in different folders stay tellable.
+- **Mutations**: print with a confirmation dialog, download, upload
+  with progress and guards (the printing file and disk shortfalls
+  refuse), rename with live collision checks, delete for files and
+  folders, create-folder, and thumbnail previews through a coalesced,
+  bounded fetch queue.
+- **Dialog discipline**: every dialog's Esc cancels its payload,
+  dialogs close with the popup (nothing survives painted over the
+  dashboard), the upload progress supersedes its confirmation, and
+  cleared payloads can never crash a surviving button.
+- **Print-start watchdog**: the verdict follows the printer's state
+  change, not the filename alone — same-file re-prints are watched
+  properly and heat-soak never reads as a failed start.
+- **Reconnect**: a Reconnect button in the Printer controls' System
+  section cycles the client and re-arms the monitor (works while
+  disconnected).
+- **Console**: the pane resizes by dragging its divider; the error
+  bell stays fed by a slow poll while collapsed; the walk-error
+  banner carries a dismiss.
+- **Host load**: the auxiliary objects query steps down to one per
+  2.5 s while printing — a first step toward the websocket transport.
+
 
 Version 3.5.1 is the stability patch for 3.5.0: the Monitor tab never
 shifts under the pointer, and it behaves sensibly while the printer is

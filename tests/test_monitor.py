@@ -236,7 +236,6 @@ class MonitorModelContractTests(unittest.TestCase):
         # Snapshot 2 live refinements: double-click-to-print, the
         # themed confirmation background.
         self.assertIn("onDoubleClicked", FILE_MANAGER_QML)
-        self.assertIn("fileRequestPrint(modelData.relpath)", FILE_MANAGER_QML)  # recents print
         self.assertIn("fileRequestPrint(modelData.relpath)", FILE_MANAGER_QML)
         self.assertIn('id: printConfirmDialog', FILE_MANAGER_QML)
         self.assertIn('background: Rectangle', FILE_MANAGER_QML)
@@ -255,11 +254,38 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("focus: false", FILE_MANAGER_QML)
         # Esc CANCELS, not just closes: the payload must not survive
         # the dismissal (a dismissed confirmation used to resurrect).
-        self.assertIn("root.printerModel.fileCancelPrint()", FILE_MANAGER_QML)
-        self.assertIn("root.printerModel.fileCancelDelete()", FILE_MANAGER_QML)
-        self.assertIn("root.printerModel.fileCancelRename()", FILE_MANAGER_QML)
-        self.assertIn("root.printerModel.fileCancelUpload()", FILE_MANAGER_QML)
+        # Pinned INSIDE the Esc handlers — a bare substring would
+        # also match the dialogs' Cancel buttons (the adversarial
+        # round's pin-strength point).
+        self.assertIn('''            Keys.onEscapePressed: {
+                printConfirmDialog.close();
+                if (root.printerModel != null) {
+                    root.printerModel.fileCancelPrint();''', FILE_MANAGER_QML)
+        self.assertIn('''            Keys.onEscapePressed: {
+                deleteConfirmDialog.close();
+                if (root.printerModel != null) {
+                    root.printerModel.fileCancelDelete();''', FILE_MANAGER_QML)
+        self.assertIn('''            Keys.onEscapePressed: {
+                renameDialog.close();
+                if (root.printerModel != null) {
+                    root.printerModel.fileCancelRename();''', FILE_MANAGER_QML)
+        self.assertIn('''            Keys.onEscapePressed: {
+                uploadConfirmDialog.close();
+                if (root.printerModel != null) {
+                    root.printerModel.fileCancelUpload();''', FILE_MANAGER_QML)
         self.assertIn("onOpened: printConfirmDialogFocus.forceActiveFocus()", FILE_MANAGER_QML)
+        # Closing the popup closes its dialogs (a surviving dialog
+        # stays painted over the dashboard with dead buttons — the
+        # adversarial round's live repro).
+        self.assertIn('''    Connections {
+        target: root
+        function onOpenChanged() {
+            if (!root.open) {
+                printConfirmDialog.close();''', FILE_MANAGER_QML)
+        # The walk-error banner's dismiss (the author's live ruling:
+        # it overlays the first row, so it must be closable).
+        self.assertIn('text: "✕"', FILE_MANAGER_QML)
+        self.assertIn("root.printerModel.fileClearWalkError()", FILE_MANAGER_QML)
         # The New-folder dialog (the author's live request).
         self.assertIn("id: createFolderDialog", FILE_MANAGER_QML)
         self.assertIn('text: "New folder…"', FILE_MANAGER_QML)
@@ -271,7 +297,10 @@ class MonitorModelContractTests(unittest.TestCase):
         # used to work only over the scrollbar).
         self.assertIn("contentWidth: root.stickyWidth + root.trailingWidth", FILE_MANAGER_QML)
         self.assertIn("ScrollBar.horizontal: ScrollBar {", FILE_MANAGER_QML)
-        self.assertIn("// The frozen columns end here", FILE_MANAGER_QML)
+        self.assertIn('''                            x: root.stickyWidth
+                            width: root.trailingWidth
+                            height: root.rowHeight
+                            clip: true''', FILE_MANAGER_QML)
         self.assertIn("x: -gridHorizontal.contentX", FILE_MANAGER_QML)
         self.assertIn("contentX: gridHorizontal.contentX", FILE_MANAGER_QML)
         self.assertIn("WheelHandler {", FILE_MANAGER_QML)
@@ -536,6 +565,12 @@ class MonitorModelContractTests(unittest.TestCase):
         # Terminal order: the history sits above the input row.
         self.assertLess(MONITOR_QML.index("id: consoleText"), MONITOR_QML.index("id: consoleInput"))
         self.assertIn("All sensors hidden — click to re-enable one in the chart.", MONITOR_QML)
+
+    def test_system_section_has_the_manual_reconnect(self):
+        # The author's live request: a Reconnect in the System
+        # section for a UI stuck after a printer error.
+        self.assertIn('text: "Reconnect"', MONITOR_QML)
+        self.assertIn("root.printer.reconnect()", MONITOR_QML)
 
     def test_system_restart_surface(self):
         for token in ("firmwareRestart", "hostRestart", "FIRMWARE_RESTART", "machine/reboot"):

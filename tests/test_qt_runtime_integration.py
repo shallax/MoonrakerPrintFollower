@@ -339,7 +339,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(timer.interval(), 2500)
         client.session.merge_status({"print_stats": {"state": "printing"}})
         model.updateMoonrakerStatus(client.status)
-        self.assertEqual(timer.interval(), 1000)
+        self.assertEqual(timer.interval(), 2500)
         client.connectionChanged.emit(False, "offline")
         self.assertEqual(model.monitorState, "Disconnected")
 
@@ -950,6 +950,26 @@ class MonitorDataAuxTests(unittest.TestCase):
         self.assertFalse(camera._restore_pending)
         self.assertEqual(camera.values["activeWebcamIndex"], 0)
         self.assertEqual(camera.values["cameraName"], "Rear")
+
+    def test_camera_url_guard_rejects_whitespace_masked_external_hosts(self):
+        # QUrl strips surrounding whitespace per RFC 3986, so a
+        # " //evil.example/x" stream must be rejected on the STRIPPED
+        # form — otherwise a hostile listing points Cura's loader at
+        # an arbitrary host (the adversarial round's catch).
+        from PyQt6.QtCore import QObject, pyqtSignal
+        camera_module = self.qt.load("MonitorCamera")
+        config = self.qt.load("PrinterConfig").PrinterConfig(url="http://printer-a")
+        class FakeData(QObject):
+            changed = pyqtSignal()
+            def __init__(self):
+                super().__init__()
+                self.active = True
+                self.snapshot = SimpleNamespace(webcams=(
+                    {"uid": "front-uid", "name": "Front", "stream_url": " //evil.example/x"},))
+        fake = FakeData()
+        camera = camera_module.MonitorCamera(fake, lambda: config, lambda value: None)
+        self.assertEqual(camera.values["webcamNames"], ["Front"])
+        self.assertEqual(camera.url, "")
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
 class PreviewMotionTests(unittest.TestCase):

@@ -690,6 +690,13 @@ class FileManager(QObject):
         self._print_attempt = None
         self.changed.emit()
 
+    def clear_walk_error(self) -> None:
+        """The banner's dismiss: the error clears until the next walk
+        re-reports one (the author's live ruling — the banner overlays
+        the first row, so it must be closable)."""
+        self._walk_error = None
+        self.changed.emit()
+
     def request_thumbnails(self, rows: Sequence[FileRow], large: bool = False) -> None:
         """The visible rows' thumbnails: one one-shot fetch per row
         per variant, following the METADATA's thumbnail relative_path
@@ -782,7 +789,14 @@ class FileManager(QObject):
         self._thumb_active = max(0, self._thumb_active - 1)
         if generation != self._thumb_generation:
             # The cache was cleared (refresh) or the printer changed:
-            # this reply's bytes belong to the previous view.
+            # this reply's bytes belong to the previous view, and the
+            # reply itself retires HERE — the network access manager
+            # would keep it alive otherwise (the adversarial round's
+            # catch).
+            try:
+                reply.deleteLater()
+            except Exception:
+                pass
             self._drain_thumbs()
             return
         try:
@@ -828,9 +842,15 @@ class FileManager(QObject):
 
     def _abort_thumbs(self) -> None:
         """Hard-stop every in-flight thumbnail fetch (printer change or
-        shutdown). Abort fires each reply's finished handler, which
-        drains the registry itself."""
-        for reply in list(self._thumb_replies.values()):
+        shutdown). The bookkeeping resets FIRST: abort fires each
+        reply's finished handler inline, and a drained registry means
+        those handlers cannot issue new fetches that the reset would
+        orphan into a deleted temp tree."""
+        replies = list(self._thumb_replies.values())
+        self._thumb_replies = {}
+        self._thumb_queue = []
+        self._thumb_active = 0
+        for reply in replies:
             try:
                 reply.abort()
             except Exception:
@@ -839,9 +859,6 @@ class FileManager(QObject):
                 reply.deleteLater()
             except Exception:
                 pass
-        self._thumb_replies = {}
-        self._thumb_queue = []
-        self._thumb_active = 0
 
     def thumbnail_payload(self) -> Dict[str, Dict[str, str]]:
         return {relpath: dict(entry) for relpath, entry in self._thumbs.items()}

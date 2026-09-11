@@ -120,7 +120,7 @@ class FakeMoonraker:
         if "server/files/metadata" in path:
             filename = path.split("filename=", 1)[-1]
             return {"result": deepcopy(self.metadata.get(filename, {}))}
-        if "server/files/directory" in path:
+        if method == "GET" and "server/files/directory" in path:
             # One directory level, Moonraker-shaped: the response does
             # NOT echo the requested path, and entries carry basenames
             # only — the walker must reconstruct (root, relpath) itself

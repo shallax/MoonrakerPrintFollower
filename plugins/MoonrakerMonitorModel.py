@@ -360,6 +360,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # Metascan outcomes land in the console as local notes (the
         # author's live report: the option appeared to do nothing).
         self._file_manager_note = ""
+        self._print_armed_state = ""
         self._file_manager.note.connect(self._on_file_manager_note)
         # Upload progress and outcome feed the popup (the author's
         # live request).
@@ -615,18 +616,28 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     # until the first extrusion, so a heat soak alone
                     # must never read as a failed start.
                     self._file_manager.clear_print_attempt()
+                    self._print_armed_state = ""
                 elif state == "error":
                     message = str(stats.get("message") or "").strip()
                     self._print_start_failed(
                         f"The printer reported an error: {message}" if message
                         else "The printer reported an error starting the print.")
-                elif state in ("complete", "standby", "cancelled"):
-                    # The job for THIS file ended; the verdict is
-                    # moot. A mismatched filename never clears — a
+                elif state and self._print_armed_state and state == self._print_armed_state:
+                    # Unchanged since the confirm: hold. Klipper
+                    # never clears the filename, so a re-print of the
+                    # same file starts from a stale terminal state —
+                    # that must not wipe the fresh attempt (the
+                    # adversarial round's repro).
+                    pass
+                elif state and self._print_armed_state:
+                    # A terminal state that DIFFERS from the armed
+                    # one: the printer moved and ended; the verdict
+                    # is moot. A mismatched filename never clears — a
                     # poll in the window between the confirm and the
                     # printer's state change must not wipe the
                     # attempt.
                     self._file_manager.clear_print_attempt()
+                    self._print_armed_state = ""
             elif time.time() - attempt[1] > self.FILE_PRINT_START_TIMEOUT_S:
                 self._print_start_failed("The printer did not begin printing.")
         # The no-reflow rule's sibling ruling (the author, 2026-09-10):
@@ -709,6 +720,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         jog gate must not lift beside a live nozzle (that assumption
         belongs to the e-stop alone)."""
         self._file_manager.clear_print_attempt()
+        self._print_armed_state = ""
         self._console.note(f"Print start failed — {reason}")
         self._commands.report_status(f"Print start failed — {reason}")
 
@@ -828,6 +840,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     fileManagerHistoryLoaded = value_property(int, "fileManagerHistoryLoaded", fileManagerChanged, 0)
     fileManagerHistoryExhausted = value_property(bool, "fileManagerHistoryExhausted", fileManagerChanged, False)
     fileManagerWalkError = value_property(str, "fileManagerWalkError", fileManagerChanged, "")
+    fileManagerNote = value_property(str, "fileManagerNote", fileManagerChanged, "")
 
     def _printer_name(self):
         try:
@@ -881,8 +894,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def fileConfirmPrint(self):
         confirm = self._file_print_confirm
         self._file_print_confirm = None
-        if confirm is not None:
+        if confirm:
             self._file_manager.start_print(confirm["relpath"])
+            # The state the snapshot held at confirm time: the
+            # matched branch below holds while it stays unchanged, so
+            # a stale terminal state from the SAME file's previous
+            # job can never wipe the fresh attempt (the adversarial
+            # round's repro).
+            stats = self._data.snapshot.core.get("print_stats") or {}
+            self._print_armed_state = str(stats.get("state") or "")
             # The print is on its way: the file manager steps aside
             # NOW and the monitor view returns — the verdict (success
             # or failure) reports to the console and the note line,
@@ -909,6 +929,20 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._file_rename_target = ""
             self._file_upload_confirm = ""
             self._file_upload_progress = ""
+        self._publish()
+
+    @pyqtSlot()
+    def reconnect(self):
+        """The manual Reconnect (the author's live request): cycle
+        the client and re-arm the monitor — the recovery for a UI
+        stuck after a printer error or a dropped connection."""
+        self._commands.report_status("Reconnecting…")
+        self._data.reconnect()
+        self._publish()
+
+    @pyqtSlot()
+    def fileClearWalkError(self):
+        self._file_manager.clear_walk_error()
         self._publish()
 
     @pyqtSlot()
@@ -1158,11 +1192,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._publish()
             return
         try:
-            free = int(self._file_manager.disk_usage.get("free", 0))
+            free = self._file_manager.disk_usage.get("free")
+            free = int(free) if free is not None else None
             needed = os.path.getsize(path)
         except (TypeError, ValueError, OSError):
-            free, needed = 0, 0
-        if free and needed and needed > free:
+            free, needed = None, 0
+        # None means the walk never reported disk usage — the check
+        # stands down. A REAL zero (a full disk) still refuses: the
+        # old guard treated the two alike and a missing report
+        # disabled the check (the adversarial round's catch).
+        if free is not None and needed and needed > free:
             self._console.note(f"Upload refused: {name} needs {needed / 1048576:.0f} MB, "
                                f"{free / 1048576:.0f} MB free on the printer.")
             self._publish()
@@ -1233,7 +1272,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._save_state()
 
     def _on_upload_progress(self, percent):
-        if self._file_upload_progress is None:
+        if not self._file_upload_progress:
             return
         percent = int(percent)
         if percent == self._file_upload_progress["percent"]:
@@ -1245,7 +1284,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._publish()
 
     def _on_upload_finished(self, ok, detail):
-        if self._file_upload_progress is None:
+        if not self._file_upload_progress:
             return
         if ok:
             self._file_upload_progress = dict(self._file_upload_progress,

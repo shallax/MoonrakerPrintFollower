@@ -67,7 +67,21 @@ Item {
                 uploadConfirmDialog.open();
             }
             if (root.printerModel != null && root.printerModel.fileUploadProgress !== "" && !uploadProgressDialog.opened) {
+                uploadConfirmDialog.close();
                 uploadProgressDialog.open();
+            }
+        }
+    }
+    Connections {
+        target: root
+        function onOpenChanged() {
+            if (!root.open) {
+                printConfirmDialog.close();
+                deleteConfirmDialog.close();
+                renameDialog.close();
+                uploadConfirmDialog.close();
+                uploadProgressDialog.close();
+                createFolderDialog.close();
             }
         }
     }
@@ -104,14 +118,12 @@ Item {
         event.accepted = true;
     }
 
-    // Esc ownership moved to the MONITOR root: one window-level
-    // shortcut owns the whole ladder (popup → popover → stage), so
-    // the key can never have two competing claimants (the author's
-    // live report: the popup's own shortcut and the monitor's
-    // fought, and the popup lost). The popup's Keys handlers stay
-    // for the focus-in-popup case; the model's fileManagerOpen is
-    // the single source of truth.
-    property bool innerLayerOwnsEsc: printConfirmDialog.opened || deleteConfirmDialog.opened || renameDialog.opened || uploadConfirmDialog.opened || uploadProgressDialog.opened
+    // Esc has three layers, in order: an open dialog's content owns
+    // the key (Esc CANCELS it — the author's ruling); this root
+    // ladder is the fallback while focus sits on a plain item
+    // inside the popup; the monitor's window-level shortcut owns
+    // the rest of the stage. The model's fileManagerOpen is the
+    // single source of truth for that shortcut's branch.
 
     // A FocusScope that always exists and always accepts focus, so
     // Esc has a home even when the search field does not exist (the
@@ -3001,6 +3013,25 @@ Item {
                         anchors.centerIn: parent
                         text: root.printerModel != null ? root.printerModel.fileManagerWalkError : ""
                         font: UM.Theme.getFont("default")
+                    }
+                    // The dismiss affordance (the author's live
+                    // ruling): the banner overlays the first row, so
+                    // it must be closable, not just transient.
+                    UM.Label {
+                        anchors.right: parent.right
+                        anchors.rightMargin: UM.Theme.getSize("narrow_margin").width
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "✕"
+                        font: UM.Theme.getFont("default")
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (root.printerModel != null) {
+                                    root.printerModel.fileClearWalkError();
+                                }
+                            }
+                        }
                     }
                 }
 

@@ -126,9 +126,13 @@ class MonitorCamera(QObject):
         # Cura's image loader at an arbitrary host (panel security
         # P3). Plain relative paths — the normal webcam case — pass.
         if stream:
-            parsed = QUrl(stream)
-            if stream.startswith("//") or (parsed.isValid() and parsed.scheme()
-                                           and parsed.scheme().lower() not in ("http", "https")):
+            # QUrl strips surrounding whitespace, so the guard runs
+            # on the stripped form too: " //evil.example/x" would
+            # otherwise resolve to a real external host (the
+            # adversarial round's catch).
+            parsed = QUrl(stream.strip())
+            if stream.strip().startswith("//") or (parsed.isValid() and parsed.scheme()
+                                                   and parsed.scheme().lower() not in ("http", "https")):
                 stream = ""
         self._url = urljoin(config.url.rstrip("/") + "/", stream) if stream and self._data.active else ""
         try: rotation = int(camera.get("rotation", config.camera_rotation) or 0)

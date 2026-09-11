@@ -88,7 +88,7 @@ the stream).
   global estimate alone. Falls back to the current blend when the index
   is unavailable.
 
-## 3.6.0 — File manager and the small controls
+## 3.6.0 — File manager and the small controls — SHIPPED (2026-09-11)
 
 **Safety first — the jog reflow bug (the author's live report, 2026-09-09):**
 while hammering a toolhead move with some Printer-controls sections open,
@@ -625,12 +625,23 @@ watchdog's transition-is-success form, the directory delete route,
 the clipped row viewport, the disconnected gates and the popup's own
 note surface).
 
-## 3.6.1 — Printer resilience and console polish
+## 4.0.0 — Websocket transport (the author, 2026-09-11)
 
-Moved here from 3.6.0 by the author's ruling (2026-09-11): "I think we
-then move the remaining things to 3.6.1. It's too late to continue on
-this and too risky." The 3.6.0 scope ends with the file manager and the
-console resize; everything below ships in 3.6.1.
+3.6.0 ends the v3 line. The author's ruling (2026-09-11): the
+per-request HTTP polling is unacceptable in production — prints audibly
+dwell while the plugin is connected (live-proven on their Voron: the
+regression arrived with the 3.5.0 console poll, and every poll adds to
+it). 4.0.0 moves the transport to Moonraker's websocket subscription
+model: Klipper pushes object updates to Moonraker once per interval and
+Moonraker fans them out to subscribers — one serialization shared by
+all clients instead of one per client query. Everything in 4.0.1 waits
+on this.
+
+## 4.1.0 — Printer resilience and console polish
+
+The old 3.6.1 items, re-homed by the author's final ruling
+(2026-09-11): 3.6.0 ends the v3 line, the 4.0.0 websocket transport
+comes first, and everything below ships from 4.1.0 onward.
 
 - **Restart arming** — re-prime the start flow after a print ends or
   is cancelled, so a follow-up start cannot silently fail on stale
@@ -650,8 +661,17 @@ console resize; everything below ships in 3.6.1.
   view when a command's response lands.
 - **Pause-list verified-pause-only** — the scheduled-pause list shows
   only pauses that were actually verified.
+- **Poll-cadence sliders (the author, 2026-09-11)** — the author's
+  live report: prints slow down / pause at points while the plugin is
+  connected; the per-second object queries are the prime suspect.
+  The settings page gets sliders for the poll cadences (core
+  interval — already a preference — plus the auxiliary and console
+  cadences), backed by a relaxed printing policy: the auxiliary query
+  steps down while printing (1 s → 2.5 s or the user's interval) and
+  the per-second refresh stops re-asking save_config_pending on
+  configfile.
 
-## 3.7.0 — State & permissions consolidation
+## 4.2.0 — State & permissions consolidation
 
 **State & permissions consolidation (the author, 2026-09-10):**
 "Can I press this button when I'm printing, when I'm not homed, when
@@ -671,7 +691,7 @@ where the plugin must NOT trust the last poll — it lives at the
 client's observation layer (emitted status reads as cancelled until
 the printer says otherwise) and is documented there.
 
-## 3.7.0 — Physical head in the Preview
+## 4.3.0 — Physical head in the Preview
 
 What a web dashboard cannot do: show the real machine inside the slice.
 
@@ -732,7 +752,7 @@ scope revisit: folder trees — confirm before 3.6.0 ships that files in
 subfolders are at least listable and printable, or the file manager is
 weaker than Mainsail's for anyone with a library.
 
-## 4.0.0 — WebSockets as a transport swap
+## 4.0.0 notes — WebSockets as a transport swap (panel history)
 
 The socket remains the right long-term transport, but the domain panel
 re-sequenced the plan on two facts:
