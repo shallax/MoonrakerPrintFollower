@@ -111,6 +111,16 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   that (running real Cura under a virtual display) was considered and
   deliberately rejected: the cost and fragility are not worth it.
 
+## Repo hygiene — the standing rule on addresses
+
+No real machine addresses go into the git repo (the author's rule,
+2026-09-11). Fictional placeholders (``voron-0.2.local`` in the capture
+fixtures) and unreachable LAN-internal names are tolerable; public
+hostnames, proxy endpoints and any host an outsider could reach are
+not. API keys never enter any tracked file (the gitleaks gate and the
+literal-key pin enforce it). Real deployment details belong in the
+git-ignored ``review/`` log, not in the roadmap, docs or code.
+
 ## Release workflow
 
 New releases follow the `/new-feature` skill (`.claude/skills/new-feature/SKILL.md`):
