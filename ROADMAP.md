@@ -6,8 +6,8 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release: **3.5.1** (the stability patch over 3.5.0: the no-reflow
-rule and the disconnected state, shipped from the `jog-reflow` branch).
+Current release: **3.6.0** (shipped 2026-09-11: the file manager,
+console resize and e-stop reconnect).
 
 ## Direction
 
@@ -636,6 +636,38 @@ model: Klipper pushes object updates to Moonraker once per interval and
 Moonraker fans them out to subscribers — one serialization shared by
 all clients instead of one per client query. Everything in 4.0.1 waits
 on this.
+
+**The author's scope rulings (2026-09-11, verbatim):**
+
+- "v4.0.0 - switch to websockets. This _should_ be a feature
+  transparent change, so if any features do change, I need to know and
+  approve first." — the transport swap is invisible to the user by
+  design; any observable behaviour change stops at the author for
+  explicit approval before it is built.
+- "Also, I think there should probably be the option of enabling
+  websockets vs sticking to HTTP, even though we know HTTP has
+  performance issues." — a user-facing transport-mode choice:
+  websocket subscription or the HTTP poll, both first-class.
+
+**Phase-0 rulings (2026-09-11, walked with the author):**
+
+- The toggle switches the STATUS FEED only: the core and auxiliary
+  status traffic follow the choice. Commands (gcode/script, print/start,
+  macros, file operations), the console store feed, uploads/downloads
+  and thumbnails stay HTTP in both modes — refusal-word surfacing and
+  the e-stop cycle keep today's semantics.
+- Default: websocket (new and upgraded installs), with HTTP selectable
+  and the automatic fallback where the printer cannot subscribe.
+- Guard polls: the 250 ms urgent polls (pause guard, toolhead tracking)
+  stay HTTP — short-lived, only while a guard is latched — so pause
+  confirmation latency and the jog readout do not coarsen.
+- The setting is per-printer (the `PrinterConfig` record pattern, like
+  the chart config): a fleet can mix modes per machine.
+- Design intent for the panel (recommendation, not yet an author
+  ruling): in websocket mode the socket's health is the liveness
+  signal; a reconnect re-identifies, re-subscribes and re-syncs with
+  one full HTTP objects query (no replay). The 3.5.1 disconnected UX
+  renders identically in both modes.
 
 ## 4.1.0 — Printer resilience and console polish
 
