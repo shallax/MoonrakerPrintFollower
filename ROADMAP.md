@@ -781,11 +781,11 @@ walk):**
   Test-connection verdict, interval relabel, reason line, trace label)
   get the author's nod as they are built.
 
-## 4.1.0 — Printer resilience and console polish
+## 4.0.1 — Printer resilience and console polish
 
-The old 3.6.1 items, re-homed by the author's final ruling
-(2026-09-11): 3.6.0 ends the v3 line, the 4.0.0 websocket transport
-comes first, and everything below ships from 4.1.0 onward.
+The old 3.6.1 items (the author's correction, 2026-09-11): 3.6.0 ends
+the v3 line, the 4.0.0 websocket transport comes first, and everything
+below ships in 4.0.1 — the transport's first follow-up release.
 
 - **Restart arming** — re-prime the start flow after a print ends or
   is cancelled, so a follow-up start cannot silently fail on stale
@@ -805,15 +805,14 @@ comes first, and everything below ships from 4.1.0 onward.
   view when a command's response lands.
 - **Pause-list verified-pause-only** — the scheduled-pause list shows
   only pauses that were actually verified.
-- **Poll-cadence sliders (the author, 2026-09-11)** — the author's
-  live report: prints slow down / pause at points while the plugin is
-  connected; the per-second object queries are the prime suspect.
-  The settings page gets sliders for the poll cadences (core
-  interval — already a preference — plus the auxiliary and console
-  cadences), backed by a relaxed printing policy: the auxiliary query
-  steps down while printing (1 s → 2.5 s or the user's interval) and
-  the per-second refresh stops re-asking save_config_pending on
-  configfile.
+- **The UI-driving test suite (the author, green-lit 2026-09-11)** —
+  real clicks against the real QML with a full Moonraker simulator
+  over websocket, driven as automated tests: the startup-order and
+  timing races the 4.0.0 live-test round kept surfacing get a
+  deterministic regression net.
+- ~~**Poll-cadence sliders (the author, 2026-09-11)**~~ — SHIPPED IN
+  4.0.0: the cadence sliders (status update, auxiliary, console) with
+  the 250 ms floor landed as part of the websocket work.
 
 ## 4.2.0 — State & permissions consolidation
 
