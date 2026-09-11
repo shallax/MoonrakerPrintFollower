@@ -48,6 +48,7 @@ class MonitorData(QObject):
         self._client = client
         self._active = False
         self._generation = 0
+        self._connection_detail = ""
         self._timers = {}
         self._console_expanded = False
         self._console_entries = []
@@ -87,8 +88,14 @@ class MonitorData(QObject):
 
     def _connection_changed(self, *args):
         connected = bool(args[0]) if args else self.connected
+        if len(args) > 1:
+            self._connection_detail = str(args[1])
         self.connectionStateChanged.emit(connected)
         self.changed.emit()
+
+    @property
+    def connection_detail(self):
+        return self._connection_detail
 
     def _clear(self):
         empty = freeze({})

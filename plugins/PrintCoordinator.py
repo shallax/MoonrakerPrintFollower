@@ -6,15 +6,9 @@ from dataclasses import replace
 import time
 from urllib.parse import quote
 
-from PyQt6.QtCore import QObject, QTimer
+from PyQt6.QtCore import QObject
 from UM.Logger import Logger
 
-from .CuraAdapter import (
-    preview_current_layer,
-    preview_current_path,
-    preview_minimum_layer,
-    preview_minimum_path,
-)
 from .MonitorFormatting import filament_total_mm_from_file, parse_bed_mesh, result
 from .PreviewFormatting import (
     pause_can_toggle,
@@ -63,17 +57,6 @@ class PrintCoordinator(QObject):
         self._monitor_requested = False
         self._publish_at = 0.0
         self._processing = self._closed = False
-        # An override detach that no further view activity follows is
-        # almost certainly Cura's own restoration (a stage switch or a
-        # window re-activation can hang and land it late) — the watchdog
-        # re-attaches after the view has been quiet, while the user is
-        # still in the Preview stage. Manual toggles cancel it.
-        self._detach_from_override = False
-        self._last_view_position = None
-        self._detach_watchdog = QTimer(self)
-        self._detach_watchdog.setSingleShot(True)
-        self._detach_watchdog.setInterval(3000)
-        self._detach_watchdog.timeout.connect(self._watchdog_reattach)
         client.statusReceived.connect(self.observe)
         client.connectionChanged.connect(self._connection_changed)
         client.sessionInvalidated.connect(self.reset_binding)
@@ -285,8 +268,6 @@ class PrintCoordinator(QObject):
             done, category="metadata")
 
     def reset_binding(self):
-        self._detach_watchdog.stop()
-        self._detach_from_override = False
         self._processing = True
         try:
             self._load_job = None
@@ -346,30 +327,10 @@ class PrintCoordinator(QObject):
         if self._index.phase == "indexing": self._preview.reset_tracking()
         self.refresh()
 
-    def _view_position(self):
-        view = self._cura.view
-        if view is None:
-            return None
-        return (preview_current_layer(view), preview_minimum_layer(view),
-                preview_current_path(view), preview_minimum_path(view))
-
     def _position_changed(self):
         if self._binding.config.enabled:
             if self._preview.detect_override():
                 self._detail = "Detached"
-                self._detach_from_override = True
-                self._last_view_position = self._view_position()
-                self._detach_watchdog.start()
-            elif self._detach_from_override and not self._preview.state.attached:
-                # Any further movement means the user is inspecting, not
-                # Cura restoring: cancel the auto re-attach outright.
-                # Restarting a quiet window instead read a slow drag's
-                # pauses as "quiet" and snapped the follower back under
-                # the author's pointer (their live report).
-                position = self._view_position()
-                if position != self._last_view_position:
-                    self._last_view_position = position
-                    self._detach_watchdog.stop()
         # Cura streams position changes at the render cadence; the
         # panel values do not need that rate. Throttle the ETA and
         # publish to 5 Hz — the author's preview-lag report.
@@ -385,18 +346,6 @@ class PrintCoordinator(QObject):
             self._snapshot = replace(self._snapshot,
                 layer_eta=self._preview.remaining_end(view, self._snapshot.estimated_time))
         self._publish()
-
-    def _watchdog_reattach(self):
-        # Only re-attach when nothing has contradicted the detach: the
-        # user is still in Preview, has not toggled manually, and the view
-        # has been quiet since. Cura's own restoration leaves the view
-        # alone afterwards; an inspecting user keeps moving it.
-        if (not self._detach_from_override or self._preview.state.attached
-                or not self._cura.preview_active or self._closed):
-            return
-        self._detach_from_override = False
-        self._preview.attach(True)
-        self._client.force_refresh()
 
     def _file_loaded(self, path):
         self._preview.invalidate_view()
@@ -440,8 +389,6 @@ class PrintCoordinator(QObject):
     def toggle_attachment(self):
         # A manual toggle is a deliberate choice: it cancels any pending
         # watchdog re-attach.
-        self._detach_watchdog.stop()
-        self._detach_from_override = False
         self._preview.attach(not self._preview.state.attached)
         self.refresh()
         if self._preview.state.attached: self._client.force_refresh()

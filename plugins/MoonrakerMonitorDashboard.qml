@@ -691,7 +691,12 @@ Component {
                                             anchors.fill: parent
                                             cursorShape: root.printer != null && root.printer.jogEnabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                                             onClicked: {
-                                                if (root.printer != null) {
+                                                // The click itself must obey the
+                                                // SAME gate as the styling: while
+                                                // the controls are locked the word
+                                                // reads, it must not act (the
+                                                // author's catch).
+                                                if (root.printer != null && root.printer.jogEnabled) {
                                                     root.printer.setPositionMode(root.printer.positionMode !== "Absolute");
                                                 }
                                             }

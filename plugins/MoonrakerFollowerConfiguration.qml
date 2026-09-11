@@ -399,8 +399,8 @@ Cura.MachineAction {
                         }
                         UM.CheckBox {
                             id: etaLearnBox
-                            text: "Improve ETA from observed progress"
-                            tooltip: "Rescale the remaining-time estimate by the drift between the slicer's per-layer times and what the printer actually took."
+                            text: "Learn ETA drift from observed progress"
+                            tooltip: "Rescale the remaining-time estimate by the drift between the slicer's per-layer times and what the printer actually took. Downloads nothing."
                             checked: manager.settingsEtaLearn
                         }
                         UM.CheckBox {

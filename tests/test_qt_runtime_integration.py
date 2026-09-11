@@ -128,11 +128,11 @@ class QtRuntimeTests(unittest.TestCase):
         for placeholder in ("", "http://", "https://", "http:", "https:"):
             self.assertFalse(binding.usable(self.qt.load("PrinterConfig").normalise_url(placeholder)))
 
-    def test_override_detach_cancels_the_watchdog_on_continued_inspection(self):
-        # The author's live sequence: a drag detaches, and any further
-        # view movement is inspection — the 3 s re-attach watchdog must
-        # cancel outright instead of snapping the follower back under
-        # the pointer.
+    def test_override_detach_stays_detached_until_the_user_reattaches(self):
+        # The author's ruling: ANY layer intervention detaches, and the
+        # detach persists — no watchdog, no snap-back. The view-swap
+        # re-attach (leaving the stage while attached) is the only
+        # automatic one.
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
         follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, feed_mode="http"))
@@ -146,14 +146,15 @@ class QtRuntimeTests(unittest.TestCase):
         app.controller.view = view
         coordinator._cura._view = view
         preview.attach(True)
-        preview._echo_until = 0.0  # steady state long after the attach
         view.layer = 10
         coordinator._position_changed()
         self.assertFalse(preview.state.attached)
-        self.assertTrue(coordinator._detach_watchdog.isActive())
+        # Continued movement and the passage of time change nothing:
+        # the detach holds until the user re-attaches.
         view.layer = 11
         coordinator._position_changed()
-        self.assertFalse(coordinator._detach_watchdog.isActive())
+        self.qt.events(4000)
+        self.assertFalse(preview.state.attached)
 
     def test_pause_entry_leaves_only_when_observed_paused(self):
         # The verified-pause-only ruling: an entry leaves the list only
@@ -962,14 +963,16 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertTrue(preview.state.attached)
         self.assertEqual(preview.state.expected_layer, 0)
 
-        # Cura's late restoration moves the view: within the echo window
-        # (but past the settle grace, which would otherwise mask it) the
-        # mismatch is absorbed instead of detaching.
+        # Cura's late restoration moves the view: with the echo window
+        # gone (the author's ruling — ANY layer intervention detaches),
+        # a late restore detaches like a user action. That spurious
+        # detach is the accepted cost; the swap itself keeps the
+        # attachment.
         self.qt.events(2400)
         second.layer = 10
         second.currentLayerNumChanged.emit()
         self.qt.events()
-        self.assertTrue(preview.state.attached)
+        self.assertFalse(preview.state.attached)
         self.assertIsNone(preview.state.expected_layer)
 
         # A restoration landing outside every window still detaches — but

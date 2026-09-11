@@ -146,7 +146,6 @@ class PreviewFollowerServiceTests(unittest.TestCase):
         self.observe(4)
         self.service.reset_print()
         self.assertEqual(self.service.state.expected_layer, 4)
-        self.service._echo_until = 0.0
         self.cura.view.layer = 10
         self.assertEqual(self.service.detect_override(), "layer")
         self.assertFalse(self.service.state.attached)
@@ -156,38 +155,32 @@ class PreviewFollowerServiceTests(unittest.TestCase):
 
     def test_manual_layer_change_detaches_without_changing_physical_layer(self):
         self.observe(4)
-        self.service._echo_until = 0.0  # the echo window is for Cura's own restores
         self.cura.view.layer = 10
         self.assertEqual(self.service.detect_override(), "layer")
         self.assertFalse(self.service.state.attached)
         self.assertEqual(self.service.state.observed_layer, 4)
 
-    def test_view_restoration_echo_does_not_detach(self):
-        # Cura's own asynchronous restoration (stage switches can hang and
-        # land late) arrives right after an attach: the echo window absorbs
-        # it, drops the expectations and stays attached. The next drive
-        # re-arms on the settled view. The window arms at attach() — never
-        # on a later re-arm, or a slow drag's absorb-rearm cycle would
-        # refresh it forever (the author's live report).
+    def test_any_deviation_detaches_even_right_after_attach(self):
+        # The author's ruling: ANY user intervention to the layer
+        # selection detaches the follower — no absorption window, no
+        # auto re-attach. A deviation immediately after an attach
+        # detaches like any other.
         self.observe(4)
         self.service.attach(True)
         self.cura.view.layer = 10
-        self.assertIsNone(self.service.detect_override())
-        self.assertTrue(self.service.state.attached)
-        self.assertIsNone(self.service.state.expected_layer)
-        self.service._echo_until = 0.0  # a genuine scroll now detaches again
+        self.assertEqual(self.service.detect_override(), "layer")
+        self.assertFalse(self.service.state.attached)
 
     def test_unarmed_change_adopts_a_baseline_and_the_next_deviation_detaches(self):
-        # A drag landing while the follower is unarmed (view swap,
-        # dropped connection, absorbed echo) must not be ignored: the
-        # first change becomes the baseline, the continuing drag detaches.
+        # A drag landing while the follower is unarmed (a view swap or
+        # a dropped connection) must not be ignored: the first change
+        # becomes the baseline, the continuing drag detaches.
         self.observe(4)
         self.service.invalidate_view()
         self.assertIsNone(self.service.state.expected_layer)
         self.cura.view.layer = 10
         self.assertIsNone(self.service.detect_override())
         self.assertEqual(self.service.state.expected_layer, 10)
-        self.service._echo_until = 0.0
         self.cura.view.layer = 11
         self.assertEqual(self.service.detect_override(), "layer")
         self.assertFalse(self.service.state.attached)
@@ -196,24 +189,6 @@ class PreviewFollowerServiceTests(unittest.TestCase):
         self.observe(4)
         self.service.update_eta(self.observe(4), self.index)
         self.assertIn("current print layer", self.service.state.eta_text)
-
-    def test_absorbed_deviation_does_not_refresh_the_echo_window(self):
-        # The absorb->invalidate->observe-rearm loop used to refresh the
-        # echo window on every observe, absorbing a slow drag for the
-        # window's whole 3.5 s (the author's live report). The window
-        # must keep expiring from the attach moment.
-        self.observe(4)
-        self.service.attach(True)
-        armed_at = self.service._echo_until
-        self.cura.view.layer = 10
-        self.assertIsNone(self.service.detect_override())  # absorbed
-        self.observe(4)  # re-drives and re-arms the expectations
-        self.assertEqual(self.service._echo_until, armed_at)
-        self.assertEqual(self.service.state.expected_layer, 4)
-        self.service._echo_until = 0.0  # the window has since expired
-        self.cura.view.layer = 11
-        self.assertEqual(self.service.detect_override(), "layer")
-        self.assertFalse(self.service.state.attached)
 
     def test_eta_learn_rescales_the_end_estimate_by_observed_drift(self):
         # The opt-in: the slicer estimated 100 s per layer but the

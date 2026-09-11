@@ -6,8 +6,7 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release: **3.6.0** (shipped 2026-09-11: the file manager,
-console resize and e-stop reconnect).
+Current release: **4.0.0** (the websocket transport; in finalisation).
 
 ## Direction
 
@@ -815,6 +814,12 @@ empty history.
   signal level.
 
 ## 4.2.0 — State & permissions consolidation
+
+- **The Post-Processing button's vertical alignment (backlogged
+  2026-09-11):** the `</>` button still sits slightly above the card's
+  bottom line — accepted for the 4.0.0 close, carried here so it is
+  not forgotten. The saveButton row's centre-line anchoring is the
+  mechanism (see the 4.0.0 live-test notes).
 
 **State & permissions consolidation (the author, 2026-09-10):**
 "Can I press this button when I'm printing, when I'm not homed, when

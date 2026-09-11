@@ -3100,6 +3100,9 @@ Item {
         self.assertIn("monitorConnected", MONITOR_MODEL)
         self.assertIn("enabled: root.printer != null && root.printer.monitorConnected", DASHBOARD_QML)
         self.assertIn("enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)", DASHBOARD_QML)
+        # The abs/rel word's CLICK obeys the same gate as its styling —
+        # a locked control must not act (the author's catch).
+        self.assertIn("root.printer != null && root.printer.jogEnabled", DASHBOARD_QML)
         self.assertIn("enabled: root.printer != null && root.printer.monitorConnected", MONITOR_QML)
         # The console is special: the SECTION stays enabled while
         # disconnected (scrolling, selecting and copying the restored
@@ -3114,7 +3117,7 @@ Item {
         # the author's chosen spot. Plus the camera's Live badge and
         # the disconnected grey veil over stale frames.
         self.assertIn("connectionDotColour", MONITOR_QML)
-        self.assertIn('text: root.printer != null && root.printer.monitorConnected ? "Connected to Moonraker." : "Disconnected from Moonraker."', MONITOR_QML)
+        self.assertIn('text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."', MONITOR_QML)
         self.assertIn("id: statusCollapsedTitle", MONITOR_QML)
         self.assertIn('text: "Live"', MONITOR_QML)
         self.assertIn('color: "#c0202428"', MONITOR_QML)

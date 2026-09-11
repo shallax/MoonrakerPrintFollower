@@ -52,7 +52,11 @@ Item {
     signal removePauseAtLayerRequested(int layer)
     signal clearPauseAtLayersRequested
 
-    visible: previewStageActive && configuredForFollowing && CuraApplication.platformActivity
+    // NOT gated on CuraApplication.platformActivity: Cura flips that
+    // flag during its own busy/idle cycles and a load — the card
+    // vanished mid-load (the author's report). The stage and the
+    // configuration are the only gates.
+    visible: previewStageActive && configuredForFollowing
     width: visible ? externalGap + followerPanel.width : 0
     // Cura's saveButton row centres its components on a line two thick
     // margins above the action panel's bottom. If this extension

@@ -219,6 +219,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     consoleHeightChanged = pyqtSignal()
     cameraRefreshChanged = pyqtSignal()
     cameraRecoveringChanged = pyqtSignal()
+    connectionDetailChanged = pyqtSignal()
     fileManagerChanged = pyqtSignal()
     fileManagerThumbsChanged = pyqtSignal()
 
@@ -254,6 +255,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
         ("cameraRecoveringChanged", ("cameraRecovering",)),
+        ("connectionDetailChanged", ("connectionDetail",)),
         ("fileManagerChanged", ("fileManagerRows", "fileManagerRecents", "fileManagerDirectory", "fileManagerDirectories", "fileManagerDiskText", "fileManagerNote",
                                 "fileManagerRefreshedAt", "fileManagerShown", "fileManagerPage", "fileManagerPageIndex",
                                 "fileManagerPageCount", "fileManagerPageSize", "fileManagerPageSelection",
@@ -348,6 +350,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # nonce (a URL change is the ONLY thing that restarts Cura's
         # loader) and veils the camera until the stream restarts.
         self._camera_last_refresh_at = 0.0
+        self._camera_last_url = ""
         self._camera_recovering = False
         self._camera.streamFailed.connect(self._on_stream_failed)
         self._camera.streamRecovered.connect(self._on_stream_recovered)
@@ -595,6 +598,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         previous = self._values
         snapshot = self._print_state()
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
+        # The M117 message lives on Klipper's display_status object,
+        # not print_stats — the Print-job slot reads it from the aux
+        # snapshot (the author's report: M117 showed nowhere).
+        display = (self._data.snapshot.auxiliary or {}).get("display_status")
+        if isinstance(display, dict):
+            message = str(display.get("message") or "")
+            if message:
+                values["monitorMessage"] = message
         values.update(peripheral_values(self._data.snapshot))
         values.update(endstop_values(self._data.snapshot, self._client.connected))
         values.update(self._file_manager_values())
@@ -711,6 +722,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             consoleHeight=self._console_height,
             cameraRefreshNonce=self._camera_refresh_nonce,
             cameraRecovering=self._camera_recovering,
+            connectionDetail=self._data.connection_detail,
             sectionExpandedMap=dict(self._sections),
             temperatureChart=self._chart_value(),
             temperatureChartLegend=self._legend_value(),
@@ -729,7 +741,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # The 90 s timer stays as the last resort for a hung pull.
             self._improving_eta = False
         self._values = values
-        try: self.setCameraUrl(QUrl(self._camera.url))
+        try:
+            url = self._camera.url
+            if url and url != self._camera_last_url:
+                # Any camera-URL transition deserves a fresh load: the
+                # first attach's initial request dies silently in the
+                # loader (the author's report — the manual refresh
+                # worked because it changed the URL).
+                self._camera_last_url = url
+                self._camera_refresh_nonce += 1
+            self.setCameraUrl(QUrl(url))
         except AttributeError: pass
 
         # Qt notify signals are part of control ownership. Broadcasting every
@@ -1356,6 +1377,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     consoleHeight = value_property(int, "consoleHeight", consoleHeightChanged, 0)
     cameraRefreshNonce = value_property(int, "cameraRefreshNonce", cameraRefreshChanged, 0)
     cameraRecovering = value_property(bool, "cameraRecovering", cameraRecoveringChanged, False)
+    connectionDetail = value_property(str, "connectionDetail", connectionDetailChanged, "")
     sectionExpandedMap = value_property(QVariant, "sectionExpandedMap", sectionsChanged, {})
 
     @pyqtSlot()

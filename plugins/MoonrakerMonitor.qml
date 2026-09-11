@@ -1739,7 +1739,11 @@ Component {
                         color: connectionDotColour
                         UM.TooltipArea {
                             anchors.fill: parent
-                            text: root.printer != null && root.printer.monitorConnected ? "Connected to Moonraker." : "Disconnected from Moonraker."
+                            // The transport detail rides the dot's
+                            // tooltip: "connected over websocket" or
+                            // "connected over HTTP polling" (the
+                            // author's chosen spot for it).
+                            text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."
                             acceptedButtons: Qt.NoButton
                         }
                     }
