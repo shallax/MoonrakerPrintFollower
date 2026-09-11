@@ -132,7 +132,7 @@ class BindingIdentity:
 
     url: str = ""
     api_key: str = ""
-    feed_mode: str = "websocket"
+    feed_mode: str = "http"
 
 
 @dataclass
@@ -279,17 +279,22 @@ class MoonrakerSessionState:
         self.commands = CommandTracker()
         self.generation = 0
         self.base_url = ""
-        self.feed_mode = "websocket"
+        self.feed_mode = "http"
         self.connected = False
         self.pause_guard = False
         self.toolhead_guard = False
+        # The e-stop's assumption (the author's ruling): session-level
+        # storage so a stale stream can never re-assert an e-stopped
+        # print; the rewrite stays at the client's single admission site.
+        self.assume_print_stopped = False
 
     def reset(self) -> None:
         self.generation += 1
         self.connected = False
         self.pause_guard = False
         self.toolhead_guard = False
-        self.feed_mode = "websocket"
+        self.feed_mode = "http"
+        self.assume_print_stopped = False
         self.snapshot = SessionSnapshot()
         self.commands.clear()
         self.coalescer.clear()
@@ -397,7 +402,7 @@ class MoonrakerSession:
         """
         target_url = str(base_url or "").rstrip("/")
         target_key = str(api_key or "")
-        target_mode = str(feed_mode or self._state.feed_mode).strip().lower() or "websocket"
+        target_mode = str(feed_mode or self._state.feed_mode).strip().lower() or "http"
         changed = (target_url, target_key, target_mode) != (
             self._state.base_url, self._api_key, self._state.feed_mode,
         )

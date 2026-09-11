@@ -103,12 +103,14 @@ class SessionStateTests(unittest.TestCase):
         socket = _FakeSocket()
         session = MoonrakerSession(transport=transport, socket=socket)
         session.configure("http://printer", "key")
-        self.assertEqual(session.feed_mode, "websocket")
+        # The session's sentinel is the pre-4.0.0 behaviour; the product
+        # default lives in PrinterConfig and is passed in explicitly.
+        self.assertEqual(session.feed_mode, "http")
         generation = session.generation
 
-        self.assertTrue(session.configure("http://printer", "key", "http"))
+        self.assertTrue(session.configure("http://printer", "key", "websocket"))
         self.assertGreater(session.generation, generation)
-        self.assertEqual(session.feed_mode, "http")
+        self.assertEqual(session.feed_mode, "websocket")
         # The mode change rebinds the session but never reconfigures the
         # HTTP transport: its lanes have no reason to be invalidated.
         self.assertEqual(transport.configure_calls, [("http://printer", "key")])

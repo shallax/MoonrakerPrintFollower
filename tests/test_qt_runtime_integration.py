@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, Preferences, ScriptedTransport, runtime
+from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, Preferences, ScriptedSocket, ScriptedTransport, runtime
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
@@ -46,7 +46,7 @@ class QtRuntimeTests(unittest.TestCase):
         # Inject transport through the real client's constructor; instantiate all
         # composed services/signals, including the real binding startup.
         with patch.object(self.qt.load("FollowerRuntime"), "MoonrakerClient",
-                          lambda parent: real_client(parent, transport=transport)):
+                          lambda parent: real_client(parent, transport=transport, socket=ScriptedSocket())):
             follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(app)
         self.followers.append(follower)
         return app, follower, transport
@@ -96,7 +96,10 @@ class QtRuntimeTests(unittest.TestCase):
         return model, client, transport
 
     def test_full_follower_bootstrap_migrates_before_first_connection(self):
-        prefs = Preferences({"moonraker/instances": json.dumps({"A": {"url": "http://imported", "api_key": "import-key"}})})
+        prefs = Preferences({
+            "moonraker/instances": json.dumps({"A": {"url": "http://imported", "api_key": "import-key"}}),
+            "moonraker_print_follower/printer_configs_v1": json.dumps({"A": {"feed_mode": "http"}}),
+        })
         app, follower, transport = self.follower(preferences=prefs)
         self.assertEqual(transport.identity, ("http://imported", "import-key"))
         self.assertEqual(follower.client.session.base_url, "http://imported")
@@ -128,11 +131,11 @@ class QtRuntimeTests(unittest.TestCase):
     def test_connection_edit_invalidates_follower_domains(self):
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
-        follower.apply_printer_config(config_type(url="http://printer-a"))
+        follower.apply_printer_config(config_type(url="http://printer-a", feed_mode="http"))
         follower.client.statusReceived.emit({"print_stats": {"state": "printing", "filename": "same.gcode"}, "virtual_sdcard": {"file_size": 100}})
         follower._runtime.pauses.toggle(4, 0, 10)
         generation = follower._runtime.cura.generation
-        follower.apply_printer_config(config_type(url="http://printer-b"))
+        follower.apply_printer_config(config_type(url="http://printer-b", feed_mode="http"))
         self.assertIsNone(follower.print_state.job_key)
         self.assertFalse(follower._runtime.pauses.layers)
         self.assertGreater(follower._runtime.cura.generation, generation)
@@ -151,7 +154,7 @@ class QtRuntimeTests(unittest.TestCase):
     def test_active_print_status_executes_real_follower_metadata_path(self):
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
-        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, path_follow=False))
+        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, path_follow=False, feed_mode="http"))
         # The metadata pull serves the Preview, so it only runs once the
         # print's G-code is loaded in Cura.
         app.controller.view = SimpleNamespace(getActivity=lambda: True)
@@ -168,7 +171,7 @@ class QtRuntimeTests(unittest.TestCase):
         # until the user loads the print.
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
-        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True))
+        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, feed_mode="http"))
         follower.client.statusReceived.emit({"print_stats": {"state": "printing", "filename": "part.gcode",
             "info": {"current_layer": 2}}, "virtual_sdcard": {"file_size": 100}})
         self.assertFalse(any(r.channel == "metadata" for r in transport.requests))
@@ -187,7 +190,7 @@ class QtRuntimeTests(unittest.TestCase):
     def test_same_file_restart_cannot_lose_new_metadata_reservation(self):
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
-        follower.apply_printer_config(config_type(url="http://printer-a", path_follow=False))
+        follower.apply_printer_config(config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
         files = follower._runtime.files
         files.bind(("part.gcode", 100, 1))
         files.request_metadata()
@@ -204,7 +207,7 @@ class QtRuntimeTests(unittest.TestCase):
 
     def test_pending_scheduled_pause_keeps_original_command_identity(self):
         app, follower, transport = self.follower()
-        follower.apply_printer_config(self.qt.load("PrinterConfig").PrinterConfig(url="http://printer-a"))
+        follower.apply_printer_config(self.qt.load("PrinterConfig").PrinterConfig(url="http://printer-a", feed_mode="http"))
         pauses = follower._runtime.pauses
         pauses.bind(("part.gcode", 100, 1))
         pauses.toggle(2, 1, 10)
@@ -816,11 +819,11 @@ class QtRuntimeTests(unittest.TestCase):
         from PyQt6.QtCore import QObject, pyqtSignal
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
-        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True))
+        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, feed_mode="http"))
         follower.client._handle_http_status({"result": {"status": {
             "print_stats": {"state": "printing", "filename": "part.gcode"},
             "virtual_sdcard": {"file_size": 10, "file_position": 2}}}},
-            None, follower.client._generation)
+            None, follower.client._generation, time.monotonic())
         self.qt.events()
         app.controller.stage = SimpleNamespace(getId=lambda: "PreviewStage")
         preview = follower._runtime.coordinator._preview

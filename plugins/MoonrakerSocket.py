@@ -47,6 +47,7 @@ class MoonrakerSocket(QObject):
 
     upgraded = pyqtSignal()  # 101 received and validated
     syncSnapshot = pyqtSignal(object, float)  # subscribe reply: full status, issue stamp
+    subscribeRefused = pyqtSignal(object)  # the subscribe reply's error dict (F3)
     klippyReady = pyqtSignal()
     klippyLost = pyqtSignal(str)  # notify_klippy_shutdown / _disconnected
     failed = pyqtSignal(str)  # terminal failures with a reason, never silent
@@ -87,6 +88,10 @@ class MoonrakerSocket(QObject):
     @property
     def last_auth_reply_at(self) -> float:
         return self._last_auth_reply_at
+
+    @property
+    def is_upgraded(self) -> bool:
+        return self._upgraded
 
     @property
     def subscribed_names(self) -> List[str]:
@@ -138,12 +143,18 @@ class MoonrakerSocket(QObject):
                 return
             self._process_buffer()
 
-        socket.connected.connect(on_ready)
         socket.errorOccurred.connect(on_error)
         socket.readyRead.connect(on_data)
         if isinstance(socket, QSslSocket):
+            # TLS: the upgrade request may only be written once the
+            # encrypted channel exists (a plaintext write would hit a
+            # TLS port and die as a remote close — the live proxy run).
             socket.sslErrors.connect(on_ssl_errors)
-        socket.connectToHost(parsed.host(), parsed.port(443 if use_tls else 80))
+            socket.encrypted.connect(on_ready)
+            socket.connectToHostEncrypted(parsed.host(), parsed.port(443))
+        else:
+            socket.connected.connect(on_ready)
+            socket.connectToHost(parsed.host(), parsed.port(80))
 
     def stop(self) -> None:
         self._generation += 1
@@ -200,6 +211,12 @@ class MoonrakerSocket(QObject):
 
         def on_reply(reply: Dict[str, Any]) -> None:
             self._last_auth_reply_at = time.monotonic()
+            error = reply.get("error")
+            if isinstance(error, dict):
+                # A structured refusal is a capability failure, not a
+                # link failure — never rendered as "Invalid params" (F3).
+                self.subscribeRefused.emit(error)
+                return
             result = reply.get("result")
             status = result.get("status") if isinstance(result, dict) else None
             if isinstance(status, dict):

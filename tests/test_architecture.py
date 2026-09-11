@@ -430,7 +430,13 @@ class CompositionStructureTests(unittest.TestCase):
         self.assertIn("QNetworkAccessManager", transport)
         self.assertNotIn("QNetworkAccessManager", client)
         self.assertNotIn("QWebSocket", client)
-        self.assertNotIn("websocket", client.lower())
+        # The 4.0.0 restatement (H7/E8): the word ban becomes structural
+        # assertions — the mode is a symbol, the socket is reached through
+        # the session (never imported by the client), and both feeds
+        # admit through one entry point.
+        self.assertIn("feed_mode", client)
+        self.assertNotIn("from .MoonrakerSocket", client)
+        self.assertIn("admit_status", client)
 
     def test_output_and_follower_reuse_shared_transport(self):
         output = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")

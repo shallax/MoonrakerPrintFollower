@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from types import SimpleNamespace
 
-from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, ScriptedTransport, runtime
+from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, ScriptedSocket, ScriptedTransport, runtime
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
@@ -26,13 +26,16 @@ class ComposedComponentTests(unittest.TestCase):
         root = self.qt.load("FollowerRuntime")
         real = root.MoonrakerClient
         self.app = self.qt.Application()
-        with patch.object(root, "MoonrakerClient", lambda parent: real(parent, transport=self.transport)):
+        self.socket = ScriptedSocket()
+        with patch.object(root, "MoonrakerClient", lambda parent: real(parent, transport=self.transport, socket=self.socket)):
             self.follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(self.app)
         self.addCleanup(self.qt.events)
         self.addCleanup(self.follower.deinitialize)
         self.parts = self.follower._runtime
         self.config_type = self.qt.load("PrinterConfig").PrinterConfig
-        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        # The harness tests HTTP semantics; the product default stays in
+        # PrinterConfig, never in the harness.
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
 
     def status(self, *, layer=10, filename="part.gcode", duration=30, position=40, state="printing"):
         return {"print_stats": {"filename": filename, "state": state, "print_duration": duration,
@@ -41,8 +44,9 @@ class ComposedComponentTests(unittest.TestCase):
             "gcode_move": {"gcode_position": [1, 1, 2, 10], "speed_factor": 1, "extrude_factor": 1}}
 
     def deliver(self, status):
+        import time
         client = self.follower.client
-        client._handle_http_status({"result": {"status": status}}, None, client._generation)
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
 
     def monitor(self):
         output = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(self.app, self.follower)
@@ -403,7 +407,7 @@ class ComposedComponentTests(unittest.TestCase):
         app = self.qt.Application()
         follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(app)
         self.addCleanup(follower.deinitialize)
-        follower.apply_printer_config(self.config_type(url="http://127.0.0.1:" + str(server.server_port), enabled=True, path_follow=True))
+        follower.apply_printer_config(self.config_type(url="http://127.0.0.1:" + str(server.server_port), enabled=True, path_follow=True, feed_mode="http"))
         parts = follower._runtime
         # An active-but-unloaded print pulls nothing: the metadata and
         # index serve the Preview, which needs the print loaded in Cura.
@@ -522,7 +526,7 @@ class ComposedComponentTests(unittest.TestCase):
         lines = [entry["text"] for entry in model._console.values["consoleLines"]]
         self.assertTrue(any("Print start failed" in line for line in lines))
         self.assertIn("Print start failed", model.actionStatus)
-        self.assertFalse(self.follower.client._assume_print_stopped)
+        self.assertFalse(self.follower.client._session.state.assume_print_stopped)
         # The transition itself is the success (round-2 D4: the POST
         # reply is never it): the filename match with a live state
         # clears immediately, even with zero progress — the

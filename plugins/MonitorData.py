@@ -243,6 +243,13 @@ class MonitorData(QObject):
         self.refresh_aux()
 
     def refresh_aux(self):
+        if self._client.effective_feed_mode == "websocket":
+            # The socket is a source, not a clock (A11): the existing
+            # auxiliary timer drains the accumulated fragments.
+            patch, _stamp = self._client.drain_aux()
+            if patch:
+                self._merge_aux(patch)
+            return
         objects = {name: ["save_config_pending", "save_config_pending_items"] if name == "configfile" else None
                    for name in self._snapshot.objects if self.wants_object(name)}
         if objects: self.request("aux", "POST", "printer/objects/query", self._aux, body={"objects": objects})
@@ -251,10 +258,16 @@ class MonitorData(QObject):
         value = result(payload)
         incoming = value.get("status") if isinstance(value, Mapping) else None
         if error or not isinstance(incoming, Mapping): return
+        self._merge_aux(incoming)
+
+    def _merge_aux(self, incoming):
         # Rebuild from the current wanted set so objects that were renamed or
         # hot-removed stop rendering instead of staying in the snapshot for
         # the rest of the session.
         wanted = {name for name in self._snapshot.objects if self.wants_object(name)}
+        # The wanted set is the subscription's declarative input (A8/F5):
+        # a membership change re-issues the one merged subscription.
+        self._client.set_auxiliary_objects(wanted)
         merged = {name: state for name, state in self._snapshot.auxiliary.items() if name in wanted}
         for name, value in incoming.items():
             if name not in wanted: continue

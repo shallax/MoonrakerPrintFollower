@@ -6,6 +6,8 @@ tests drive the real production components through the shared harness.
 """
 from __future__ import annotations
 
+import time
+
 import ast
 from dataclasses import replace
 import json
@@ -23,7 +25,7 @@ from plugins.MonitorFormatting import (
     parse_mcu_stats,
 )
 from plugins.PrintState import LayerResolver
-from qt_runtime_support import QT_AVAILABLE, ROOT, ScriptedTransport, runtime
+from qt_runtime_support import QT_AVAILABLE, ROOT, ScriptedSocket, ScriptedTransport, runtime
 
 PLUGINS = ROOT / "plugins"
 MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
@@ -1161,12 +1163,12 @@ class MonitorQtTests(unittest.TestCase):
         root = self.qt.load("FollowerRuntime")
         real = root.MoonrakerClient
         self.app = self.qt.Application()
-        with patch.object(root, "MoonrakerClient", lambda parent: real(parent, transport=self.transport)):
+        with patch.object(root, "MoonrakerClient", lambda parent: real(parent, transport=self.transport, socket=ScriptedSocket())):
             self.follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(self.app)
         self.addCleanup(self.qt.events)
         self.addCleanup(self.follower.deinitialize)
         self.config_type = self.qt.load("PrinterConfig").PrinterConfig
-        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
 
     def monitor(self):
         output = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(self.app, self.follower)
@@ -1182,7 +1184,7 @@ class MonitorQtTests(unittest.TestCase):
             "virtual_sdcard": {"file_size": 100, "file_position": 20},
             "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1},
         }
-        client._handle_http_status({"result": {"status": status}}, None, client._generation)
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
 
     def deliver_state(self, state):
         client = self.follower.client
@@ -1194,7 +1196,8 @@ class MonitorQtTests(unittest.TestCase):
                            "absolute_coordinates": True},
             "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
         }
-        client._handle_http_status({"result": {"status": status}}, None, client._generation)
+        import time
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
 
     def scripts(self):
         return [r for r in self.transport.requests if r.path == "printer/gcode/script"]
@@ -1420,7 +1423,7 @@ class MonitorQtTests(unittest.TestCase):
         # The printer's real state supersedes the assumption (the
         # client-level flag clears when the observation lands).
         self.deliver_state("standby")
-        self.assertFalse(self.follower.client._assume_print_stopped)
+        self.assertFalse(self.follower.client._session.state.assume_print_stopped)
         self.assertFalse(model.printActive)
 
     def test_emergency_stop_reconnects_once_automatically(self):
@@ -2343,7 +2346,7 @@ class MonitorQtTests(unittest.TestCase):
         # attached machine — the harness applies config directly, so
         # simulate the attachment and re-apply the config against it.
         self.follower._runtime.binding._machine_id = "printer-a"
-        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
         model.improveEta()
         self.qt.events(1)
         requests = [request for request in self.transport.requests if request.owner == "files"]
@@ -2357,7 +2360,7 @@ class MonitorQtTests(unittest.TestCase):
         self.deliver_state("printing")
         self.qt.events(1)
         self.follower._runtime.binding._machine_id = "printer-a"
-        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
         model.improveEta()
         self.assertTrue(model.improvingEta)
         # While the index builds the phase reads Indexing… and the bar
@@ -2395,7 +2398,7 @@ class MonitorQtTests(unittest.TestCase):
         self.deliver_state("printing")
         self.qt.events(1)
         self.follower._runtime.binding._machine_id = "printer-a"
-        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
         model.improveEta()
         self.qt.events(1)
         self.assertTrue(model.improvingEta)
@@ -2419,7 +2422,7 @@ class MonitorQtTests(unittest.TestCase):
         self.deliver_state("printing")
         self.qt.events(1)
         self.follower._runtime.binding._machine_id = "printer-a"
-        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
         model.improveEta()
         coordinator = self.follower._runtime.coordinator
         self.assertTrue(coordinator._monitor_requested)
@@ -2450,7 +2453,7 @@ class MonitorQtTests(unittest.TestCase):
                                "absolute_coordinates": True},
                 "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
             }
-            client._handle_http_status({"result": {"status": status}}, None, client._generation)
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
 
         tick = [1000.0]
         fake_time = SimpleNamespace(monotonic=lambda: tick[0], time=lambda: 1700000000.0)
@@ -2489,7 +2492,7 @@ class MonitorQtTests(unittest.TestCase):
                            "absolute_coordinates": True},
             "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
         }
-        client._handle_http_status({"result": {"status": status}}, None, client._generation)
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
         self.qt.events(1)
         meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
         self.assertEqual(len(meta), 1)
@@ -2688,7 +2691,7 @@ Item {
         self.deliver_state("printing")
         self.qt.events(1)
         self.follower._runtime.binding._machine_id = "printer-a"
-        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
         coordinator = self.follower._runtime.coordinator
         coordinator.request_load()
         coordinator.refresh()
@@ -2712,7 +2715,7 @@ Item {
         self.deliver_state("printing")
         self.qt.events(1)
         self.follower._runtime.binding._machine_id = "printer-a"
-        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
         coordinator = self.follower._runtime.coordinator
         presentation = self.follower._runtime.presentation
         coordinator.request_load()
@@ -3396,7 +3399,7 @@ Item {
         transport2 = ScriptedTransport()
         runtime_module = self.qt.load("FollowerRuntime")
         real_client = runtime_module.MoonrakerClient
-        with patch.object(runtime_module, "MoonrakerClient", lambda parent: real_client(parent, transport=transport2)):
+        with patch.object(runtime_module, "MoonrakerClient", lambda parent: real_client(parent, transport=transport2, socket=ScriptedSocket())):
             follower2 = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(app2)
         self.addCleanup(follower2.deinitialize)
         self.assertEqual(follower2.current_printer_config().camera_selected, "rear-uid")

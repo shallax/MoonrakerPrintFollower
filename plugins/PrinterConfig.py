@@ -154,6 +154,16 @@ class PrinterConfig:
     # The bed-mesh pop-over's probe-point overlay, per printer.
     show_probe_points: bool = False
 
+    def __post_init__(self) -> None:
+        # Direct constructions (tests, hand-built records) may pass a
+        # plain string; the from_dict coercion is the load path's guard,
+        # this one keeps every path on the enum.
+        if not isinstance(self.feed_mode, FeedMode):
+            try:
+                self.feed_mode = FeedMode(str(self.feed_mode).strip().lower())
+            except (TypeError, ValueError):
+                self.feed_mode = FeedMode.WEBSOCKET
+
     @property
     def frontend_target(self) -> str:
         """The URL a browser should open: the dedicated frontend when set, else the printer."""
