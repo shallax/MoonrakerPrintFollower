@@ -759,6 +759,14 @@ walk):**
   steady-state silence watchdog (silent-while-connected falls back to
   HTTP without a session reset, with a visible reason). The websocket
   default stands on this detection.
+- Camera through the auth-enforcing proxy RULED (2026-09-11, the
+  author): Cura's `NetworkMJPGImage` cannot send the API-key header, so
+  the camera behind a header-auth proxy cannot render — 4.0.0 gains a
+  camera BRIDGE: the plugin fetches the stream with the key and
+  republishes it on a keyless local endpoint for Cura's loader. (Held
+  for now; the camera-URL override field points Cura's loader at the
+  printer's own keyless LAN webcam port, which unblocks live testing
+  without the bridge.)
 - UX adjudication RULED (2026-09-11, the author): the transport-mode
   control is two `Cura.RadioButton`s — "WebSocket subscription" /
   "HTTP polling" — on the Connection tab with a permanent reason
