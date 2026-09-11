@@ -435,6 +435,9 @@ class MoonrakerClient(QObject):
             self.connectionChanged.emit(True, "Moonraker connected")
 
     def _handle_failure(self, reason: str) -> None:
+        # One bounded reason: the console note's label elides long text,
+        # and an unbounded reason (a refusal body's tail) reads as a bug.
+        reason = str(reason or "unknown failure")[:160] + ("…" if len(str(reason or "")) > 160 else "")
         delay = self.RETRY_DELAYS_MS[min(self._retry_index, len(self.RETRY_DELAYS_MS) - 1)]
         self._retry_index = min(self._retry_index + 1, len(self.RETRY_DELAYS_MS) - 1)
         adaptive = self._session.poll_policy.interval_ms(

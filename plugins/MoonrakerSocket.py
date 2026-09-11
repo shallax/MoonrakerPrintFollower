@@ -252,6 +252,8 @@ class MoonrakerSocket(QObject):
         head, rest = self._buffer.split(b"\r\n\r\n", 1)
         ok, reason = verify_handshake(head + b"\r\n\r\n", self._key)
         if not ok:
+            if "HTTP/1.1 401" in reason or "HTTP/1.0 401" in reason:
+                reason = "the API key was rejected (HTTP 401)"
             self.failed.emit(reason)
             self.stop()
             return

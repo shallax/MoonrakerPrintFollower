@@ -418,7 +418,8 @@ class MoonrakerFollowerMachineAction(MachineAction):
         error: Optional[str],
     ) -> None:
         if error:
-            self._set_test_state(f"Connection failed: {error}", busy=False)
+            text = str(error)[:160] + ("…" if len(str(error)) > 160 else "")
+            self._set_test_state(f"Connection failed: {text}", busy=False)
             return
         try:
             self._probe_server_info = (payload or {}).get("result") or {}
