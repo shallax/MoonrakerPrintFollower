@@ -626,6 +626,15 @@ note surface).
 
 ## 4.0.0 — Websocket transport (the author, 2026-09-11)
 
+**RELEASE GATE (2026-09-11, the author's final live-test round):** 4.0.0
+does not release before the author's surgery, and not before the
+real-Cura UI test harness (4.1.0, pulled into scope) clicks through the
+still-broken list with screenshots. Still broken as of the last round:
+the failure state persists until a manual reconnect; the preview card
+only appears after a load; M117 messages still miss the Print-job
+section. The record and the harness design are in the 4.1.0 section and
+`TESTING.md`.
+
 3.6.0 ends the v3 line. The author's ruling (2026-09-11): the
 per-request HTTP polling is unacceptable in production — prints audibly
 dwell while the plugin is connected (live-proven on their Voron). The
@@ -803,15 +812,43 @@ empty history.
 
 ## 4.1.0 — The UI-driving test suite
 
-- **The UI-driving test suite (the author, green-lit 2026-09-11)** —
-  real clicks against the real QML with a full Moonraker simulator
-  over websocket, driven as automated tests: the startup-order and
-  timing races the 4.0.0 live-test round kept surfacing get a
-  deterministic regression net. The simulator grows from
-  `tests/ws_loopback.py`; the input-driving harness grows from the
-  capture theme's offscreen rendering; Cura's own SimulationView
-  sliders stay out of reach — the detach scenarios drive at the
-  signal level.
+**Pulled into scope (2026-09-11, the author):** the 4.0.0 release is
+frozen on this suite — "I don't want any fakery here. I want you to be
+able to show me screenshots of the things you're doing in the tests as
+PROOF that the things you've implemented work the way you claim they
+work. We should use Cura 5.13, but it should be possible to swap out
+the Cura version if we need." Non-negotiables: the REAL Cura
+application, the REAL UI, REAL clicks, and screenshots as the proof
+artifact; the only fake in the system is the network peer (a full
+Moonraker simulator over websocket — Moonraker is what the PRINTER
+runs, not what Cura runs). The design lives in `TESTING.md` and goes
+to a three-persona panel — architect, engineer, and an expert
+automated tester (the author's composition, with explicit go-ahead).
+
+**The release gate (the author's final 4.0.0 live-test round,
+2026-09-11):** the suite must click through, with screenshots:
+
+- the failure state must clear without a manual reconnect (item 2:
+  "the persists and I have to reconnect");
+- the preview card must stay through the load AND after the render
+  settles, without any interaction (item 4: "only comes back after a
+  load");
+- M117 messages must reach the Print-job section;
+- the earlier still-open items: the camera's first load without a
+  refresh click, temperatures arriving within seconds of print start,
+  controls unlocking after an out-of-range failure, and dwell (the
+  author declined to log dwells by hand — the harness captures it).
+
+**Mandate expansion (2026-09-11, the author):** the suite covers ALL of
+the plugin's functionality end-to-end where feasible — not just the
+regression list — "connecting to a dummy simulated printer over the
+same transport method that a real Moonraker printer uses". The
+catalogue in `TESTING.md` is two tiers: the release gate above, then
+the full functional surface (transport, status, temperatures, console,
+camera, files, controls, preview, settings, soaks).
+Phasing (2026-09-11, the author): Tier 1 first — "We can start with
+just the current recent failures to prove the theory/ process" — then
+the full surface so the author stops re-testing everything by hand.
 
 ## 4.2.0 — State & permissions consolidation
 
