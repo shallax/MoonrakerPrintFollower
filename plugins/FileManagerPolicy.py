@@ -338,7 +338,11 @@ def filter_rows(rows: Sequence[FileRow], filters: Dict[str, Any], *, now: float)
         if not _match_print_time(row, filters.get("print_time")):
             continue
         if filters.get("never_printed"):
-            if row.attempts is not None and row.attempts > 0:
+            # The row's own Status decides (last_status, then
+            # print_start_time) — the filter must not contradict the
+            # cell it selects, and membership must not change after
+            # "Load all history" flips attempts.
+            if row.last_status or row.print_start_time is not None:
                 continue
         result.append(row)
     return list(result)
@@ -580,7 +584,7 @@ def filter_option_counts(rows: Sequence[FileRow], *, now: float) -> Dict[str, An
             for bound in ("30", "60", "120", "240", "480"):
                 if row.estimated_time <= float(bound) * 60.0:
                     print_time[bound] += 1
-        if row.attempts is None or row.attempts == 0:
+        if not row.last_status and row.print_start_time is None:
             never_printed += 1
 
     return {

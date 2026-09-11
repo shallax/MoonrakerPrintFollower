@@ -610,35 +610,20 @@ exact face.
 
 Small controls the domain panel ranked as the real Mainsail gaps —
 re-checked against the tree on 2026-09-10; two had shipped since the
-panel's ranking:
+panel's ranking (the speed/flow sliders and Z-babystepping). The rest
+moved to 3.6.1 by the author's ruling on 2026-09-11 ("too late to
+continue on this and too risky") — see the 3.6.1 section for the
+carried items: restart-button arming, the auto-improve-ETA opt-in, the
+webcam liveness watchdog, ETA feed-forward, scroll-to-prompt and the
+pause-list verified-pause-only semantics.
 
-- Speed/flow sliders SHIPPED (the M220/M221 sliders exist); the
-  remaining work is the ETA feed-forward — the author's ruling: "make
-  the ETA take these into account" (an empirical-only ETA misstates for
-  minutes after a speed change).
-- Z-babystepping SHIPPED (the Z-offset nudges — ↑/↓
-  0.005/0.01/0.025/0.05 and Clear Z offset — landed after the panel's
-  ranking). Dropped from 3.6.0.
-- Restart buttons SHIPPED (firmware/host/klipper, added in the 3.5.1
-  patch); the remaining work, per the author: "don't move them, but make
-  them behave the same way as the emergency stop" — the click-twice-
-  then-hold arming pattern, in place.
-- Per-printer opt-in "auto-improve monitor ETA when a print starts" —
-  the no-silent-downloads ruling is respected by the explicit toggle.
-- Webcam liveness watchdog: probe the SNAPSHOT URL, not the stream
-  (round-2 domain D6: mjpg-streamer answers the stream URL with 200 +
-  headers even with a dead camera — the headers are written before any
-  frame exists; the snapshot's failure is silence). Prefer Moonraker's
-  `server.webcams.test` (version-gated, ~1 s timeouts) with a direct
-  short-timeout snapshot GET as fallback; `machine.system_info.
-  service_state` distinguishes "service not running" from "stream
-  stalled". The author's revert policy: auto-revert after 2 consecutive
-  good probes; give up after 3 switches in 10 minutes and stay on the
-  stable camera; manual revert always.
-
-Plus the two no-reflow-night items the author settled 2026-09-10:
-scroll-to-prompt after a console send, and the pause-list semantics
-ruling (verified-pause-only) detailed below.
+Snapshot 3 (2026-09-11): the mutations, uploads with progress and
+verdicts, column config/resize/reorder with title floors, the
+thumbnail queue with coalesced publishes and size-matched fetch, the
+Esc/dialog state machine, and the panel re-review fixes (the print
+watchdog's transition-is-success form, the directory delete route,
+the clipped row viewport, the disconnected gates and the popup's own
+note surface).
 
 ## 3.6.1 — Printer resilience and console polish
 
@@ -666,7 +651,7 @@ console resize; everything below ships in 3.6.1.
 - **Pause-list verified-pause-only** — the scheduled-pause list shows
   only pauses that were actually verified.
 
-## 3.7.0 — Physical head in the Preview
+## 3.7.0 — State & permissions consolidation
 
 **State & permissions consolidation (the author, 2026-09-10):**
 "Can I press this button when I'm printing, when I'm not homed, when

@@ -61,10 +61,16 @@ class ComposedComponentTests(unittest.TestCase):
         model = self.monitor()
         count = []
         model.fileManagerThumbsChanged.connect(lambda: count.append(1))
+        # A real change in the payload, then a burst of signals: the
+        # flush emits once, and a no-change flush emits nothing.
+        model._file_manager._thumbs["x.gcode"] = {"state": "ready", "url": ""}
         for _ in range(3):
             model._file_manager.thumbsChanged.emit()
         self.qt.events(10)
         self.assertEqual(count, [])
+        self.qt.events(200)
+        self.assertEqual(count, [1])
+        model._file_manager.thumbsChanged.emit()
         self.qt.events(200)
         self.assertEqual(count, [1])
 
@@ -497,14 +503,18 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertTrue(confirm["readyText"])
         model.fileConfirmPrint()
         self.assertEqual(model.filePrintConfirm, "")
+        # The confirm dismisses the popup immediately — never a wait
+        # on the watchdog or the transition (the author's ruling).
+        self.assertFalse(model.fileManagerOpen)
         posts = [r for r in self.transport.requests if "print/start" in r.path]
         self.assertEqual(len(posts), 1)
         # The composed fixture's binding carries a base URL: the full
         # form (the service test pins the relative variant).
         self.assertEqual(posts[0].path, "http://printer-a/printer/print/start?filename=benchy.gcode")
         # The watchdog: a start that never transitions explains
-        # itself in the console (the author's live report — an
-        # unhomed printer failed with no indication).
+        # itself in the console, and the verdict NEVER rewrites the
+        # observed printer state (a live print must not read
+        # "cancelled" — the e-stop alone owns that assumption).
         module = self.qt.load("MoonrakerMonitorModel")
         with patch.object(module.MoonrakerMonitorModel, "FILE_PRINT_START_TIMEOUT_S", 0.0):
             model._publish()
@@ -512,20 +522,53 @@ class ComposedComponentTests(unittest.TestCase):
         lines = [entry["text"] for entry in model._console.values["consoleLines"]]
         self.assertTrue(any("Print start failed" in line for line in lines))
         self.assertIn("Print start failed", model.actionStatus)
-        # The awaited transition clears on the print_stats filename
-        # (round-2 D4: the POST reply is never the success).
+        self.assertFalse(self.follower.client._assume_print_stopped)
+        # The transition itself is the success (round-2 D4: the POST
+        # reply is never it): the filename match with a live state
+        # clears immediately, even with zero progress — the
+        # pre-extrusion window pins print_duration at 0.0.
+        model.openFileManager()
+        for request in reversed(self.transport.requests):
+            if "path=gcodes&" in request.path:
+                request.callback({"result": {
+                    "files": [{"filename": "benchy.gcode", "modified": 10.0, "size": 100}],
+                    "dirs": [], "disk_usage": {"total": 800, "used": 600, "free": 200},
+                }}, None)
+                break
+        self.qt.events()
         model.fileRequestPrint("benchy.gcode")
         model.fileConfirmPrint()
         self.assertIsNotNone(model._file_manager.print_attempt)
-        # The filename match alone is NOT the success: the print must
-        # make progress (the author's live report — a frozen start
-        # stayed "active").
-        self.deliver(self.status(filename="benchy.gcode", state="printing", position=40))
-        self.qt.events()
-        self.assertIsNotNone(model._file_manager.print_attempt)
-        self.deliver(self.status(filename="benchy.gcode", state="printing", position=80))
+        self.deliver(self.status(filename="benchy.gcode", state="printing", position=0))
         self.qt.events()
         self.assertIsNone(model._file_manager.print_attempt)
+        # The print is live: the popup steps aside (the author's
+        # live request — the monitor view returns).
+        self.assertFalse(model.fileManagerOpen)
+        # The host's own error verdict surfaces with its words.
+        # The printer stands by first — a confirm against a stale
+        # "printing" snapshot would honestly read as success.
+        self.deliver(self.status(filename="other.gcode", state="standby", position=0))
+        self.qt.events()
+        model.openFileManager()
+        for request in reversed(self.transport.requests):
+            if "path=gcodes&" in request.path:
+                request.callback({"result": {
+                    "files": [{"filename": "benchy.gcode", "modified": 10.0, "size": 100}],
+                    "dirs": [], "disk_usage": {"total": 800, "used": 600, "free": 200},
+                }}, None)
+                break
+        self.qt.events()
+        model.fileRequestPrint("benchy.gcode")
+        model.fileConfirmPrint()
+        self.assertIsNotNone(model._file_manager.print_attempt)
+        status = self.status(filename="benchy.gcode", state="error", position=0)
+        status["print_stats"]["message"] = "Not homed"
+        self.deliver(status)
+        self.qt.events()
+        self.assertIsNone(model._file_manager.print_attempt)
+        lines = [entry["text"] for entry in model._console.values["consoleLines"]]
+        self.assertTrue(any("Not homed" in line for line in lines))
 
     def test_file_request_print_pulls_the_rows_thumbnail(self):
         # The confirmation's large thumbnail (the author's live
@@ -649,6 +692,32 @@ class ComposedComponentTests(unittest.TestCase):
         model.fileUploadDismiss()
         self.assertEqual(model.fileUploadProgress, "")
 
+    def test_upload_refuses_the_printing_file_and_disk_shortfall(self):
+        # The host streams the printing file from disk: replacing it
+        # mid-print truncates the running job, so the upload refuses
+        # outright. The disk guard refuses before the far end fails.
+        model = self.monitor()
+        model.openFileManager()
+        for request in reversed(self.transport.requests):
+            if "path=gcodes&" in request.path:
+                request.callback({"result": {
+                    "files": [{"filename": "a.gcode", "modified": 10.0, "size": 100}],
+                    "dirs": [], "disk_usage": {"total": 800, "used": 600, "free": 200},
+                }}, None)
+                break
+        self.qt.events()
+        self.deliver(self.status(filename="a.gcode", state="printing"))
+        self.qt.events()
+        model.fileUpload("/tmp/a.gcode")
+        self.assertEqual(model.fileUploadConfirm, "")
+        lines = [entry["text"] for entry in model._console.values["consoleLines"]]
+        self.assertTrue(any("currently printing" in line for line in lines))
+        with patch("os.path.getsize", return_value=400 * 1048576):
+            model.fileUpload("/tmp/big.gcode")
+        self.assertEqual(model.fileUploadConfirm, "")
+        lines = [entry["text"] for entry in model._console.values["consoleLines"]]
+        self.assertTrue(any("MB free" in line for line in lines))
+
     def test_file_non_gcode_upload_refuses_without_a_prompt(self):
         model = self.monitor()
         model.openFileManager()
@@ -735,7 +804,7 @@ class ComposedComponentTests(unittest.TestCase):
         properties = "monitorState monitorConnected monitorFilename monitorProgress monitorLayer monitorElapsed monitorEta monitorFinish monitorSpeed monitorFlow monitorPosition monitorMessage printActive canPausePrint canResumePrint canCancelPrint actionBusy actionStatus temperatureItems fanItems filamentSensorItems excludeObjectItems powerDevices klippyState moonrakerVersion klipperVersion hostLoad memoryAvailable cpuTemperature mcuSummary mcuItems webcamNames activeWebcamIndex cameraName cameraRotation cameraFlipHorizontal cameraFlipVertical monitorLayerHeight macroNames hasQuadGantryLevel hasBedMesh canRunSetup temperaturePresetNames temperaturePresetItems canApplyTemperaturePreset speedFactorPercent flowFactorPercent zOffset zOffsetText fanControlItems ledItems pwmOutputItems saveConfigPending saveConfigSummary canSaveConfig emergencyStopClicks bedMeshAvailable bedMeshProfile bedMeshProfileNames bedMeshRows bedMeshColumns bedMeshValues bedMeshMinimum bedMeshMaximum bedMeshRange bedMeshXMin bedMeshXMax bedMeshYMin bedMeshYMax bedMeshRangeText bedMeshPreviewVisible jogEnabled jogDistance extrudeDistance extrudeSpeed homedAxes positionMode jogStatus controlsLocked controlsCollapsed infoCollapsed statusCollapsed consoleHeight cameraRefreshNonce emergencyHoldProgress temperatureChart temperatureChartLegend consoleHistory consolePending consoleErrorBell endstopItems endstopSummary monitorEtaBasis showProbePoints fileManagerRows fileManagerRecents fileManagerDirectory fileManagerDirectories fileManagerDiskText fileManagerRefreshedAt fileManagerShown fileManagerPage fileManagerPageIndex fileManagerPageCount fileManagerPageSize fileManagerPageSelection fileManagerEmptyKind fileManagerSelected fileManagerSortColumn fileManagerSortAscending fileManagerSearch fileManagerOpen fileManagerFilters filePrintConfirm fileDeleteConfirm fileRenameTarget fileRenameConflict fileUploadConfirm fileUploadProgress fileManagerThumbs fileManagerFilterCounts fileManagerFilterOptions fileManagerHistoryLoaded fileManagerHistoryExhausted fileManagerWalkError".split()
         meta = model.metaObject()
         for name in properties: self.assertGreaterEqual(meta.indexOfProperty(name), 0, name)
-        for name in "pausePrint resumePrint cancelPrint refreshAll refreshWebcams selectWebcam runMacro homeAll runQuadGantryLevel calibrateBedMesh applyTemperaturePreset setSpeedFactor setFlowFactor adjustZOffset clearZOffset setFanSpeed setLedBrightness setLedColor setPwmOutput saveConfig emergencyStopClick emergencyHoldStarted emergencyHoldReleased loadBedMeshProfile clearBedMesh setBedMeshPreviewVisible macroParameterDefinitions jog setJogDistance setExtrudeDistance setExtrudeSpeed home motorsOff centerToolhead zToZero extrude heatersOff firmwareRestart klipperRestart hostRestart setControlsLocked setControlsCollapsed setInfoCollapsed setStatusCollapsed setConsoleHeight setTemperatureSensorVisible setTemperatureSensorColor setShowTemperatureTargets setShowTemperaturePower sendConsoleCommand clearConsoleHistory improveEta setShowProbePoints openFileManager refreshFileManager fileNavigateTo setFileSearch setFileSort setFileManagerOpen setPositionMode setFilePageSize setFilePage setFileFilter clearFileFilters toggleFileSelection toggleFilePageSelection clearFileSelection fileLoadAllHistory fileScanMetadata fileRequestDelete fileRequestDeleteFile fileRequestDeleteDir fileConfirmDelete fileCancelDelete fileRequestRename fileRequestRenameDir filePreviewRename fileConfirmRename fileCancelRename fileUpload fileConfirmUpload fileCancelUpload fileUploadDismiss fileRequestVisibleThumbnails".split():
+        for name in "pausePrint resumePrint cancelPrint refreshAll refreshWebcams selectWebcam runMacro homeAll runQuadGantryLevel calibrateBedMesh applyTemperaturePreset setSpeedFactor setFlowFactor adjustZOffset clearZOffset setFanSpeed setLedBrightness setLedColor setPwmOutput saveConfig emergencyStopClick emergencyHoldStarted emergencyHoldReleased loadBedMeshProfile clearBedMesh setBedMeshPreviewVisible macroParameterDefinitions jog setJogDistance setExtrudeDistance setExtrudeSpeed home motorsOff centerToolhead zToZero extrude heatersOff firmwareRestart klipperRestart hostRestart setControlsLocked setControlsCollapsed setInfoCollapsed setStatusCollapsed setConsoleHeight setTemperatureSensorVisible setTemperatureSensorColor setShowTemperatureTargets setShowTemperaturePower sendConsoleCommand clearConsoleHistory improveEta setShowProbePoints openFileManager refreshFileManager fileNavigateTo setFileSearch setFileSort setFileManagerOpen setPositionMode setFilePageSize setFilePage setFileFilter clearFileFilters toggleFileSelection toggleFilePageSelection clearFileSelection fileLoadAllHistory fileScanMetadata fileRequestDelete fileRequestDeleteFile fileRequestDeleteDir fileCreateDirectory fileConfirmDelete fileCancelDelete fileRequestRename fileRequestRenameDir filePreviewRename fileConfirmRename fileCancelRename fileUpload fileConfirmUpload fileCancelUpload fileUploadDismiss fileRequestVisibleThumbnails".split():
             self.assertTrue(any(bytes(meta.method(i).name()).decode() == name for i in range(meta.methodCount())), name)
         self.assertEqual(type(model).__bases__[0].__name__, "PrinterModel")
 

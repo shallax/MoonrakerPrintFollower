@@ -83,7 +83,10 @@ private follower state to either integration.
 | `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
 | `ConsoleController.py` | Console state owner: the bounded per-printer history and the untracked send lane | Model inheritance or formatting |
 | `CuraOutputWriter.py` | Cura-affine preparation of a temporary G-code/UFP file | HTTP upload |
-| `UploadController.py` | One write operation: discovery, readiness, multipart stream and cancellation | Cura application or QML |
+| `UploadController.py` | The Preview upload's write operation: discovery, readiness, multipart stream and cancellation | Cura application or QML |
+| `FileManager.py` | The file-manager state owner: resident walk, view state, mutations and the LOCAL-file upload (its own multipart path) plus the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | MoonrakerMonitorModel |
+| `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
+| `FileDownload.py` | One-shot file streaming from the printer into Cura (the file manager's Download verb) | FollowerRuntime |
 | `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
 | `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection, recents and the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | Model inheritance or formatting |
 | `MoonrakerOutputDevice.py` | Cura output-device signals/dialog/message adapter | Upload state machine |

@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 from plugins.MonitorFormatting import (
     core_values,
     estimate_remaining,
+    file_row_payload,
     infer_macro_parameters,
     parse_bed_mesh,
     parse_mcu_stats,
@@ -235,7 +236,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # Snapshot 2 live refinements: double-click-to-print, the
         # themed confirmation background.
         self.assertIn("onDoubleClicked", FILE_MANAGER_QML)
-        self.assertIn("fileRequestPrint(modelData.name)", FILE_MANAGER_QML)  # recents print
+        self.assertIn("fileRequestPrint(modelData.relpath)", FILE_MANAGER_QML)  # recents print
         self.assertIn("fileRequestPrint(modelData.relpath)", FILE_MANAGER_QML)
         self.assertIn('id: printConfirmDialog', FILE_MANAGER_QML)
         self.assertIn('background: Rectangle', FILE_MANAGER_QML)
@@ -252,8 +253,34 @@ class MonitorModelContractTests(unittest.TestCase):
         # key into the overlay (live-proven), so the content FocusScope
         # answers it.
         self.assertIn("focus: false", FILE_MANAGER_QML)
-        self.assertIn("Keys.onEscapePressed: printConfirmDialog.close()", FILE_MANAGER_QML)
+        # Esc CANCELS, not just closes: the payload must not survive
+        # the dismissal (a dismissed confirmation used to resurrect).
+        self.assertIn("root.printerModel.fileCancelPrint()", FILE_MANAGER_QML)
+        self.assertIn("root.printerModel.fileCancelDelete()", FILE_MANAGER_QML)
+        self.assertIn("root.printerModel.fileCancelRename()", FILE_MANAGER_QML)
+        self.assertIn("root.printerModel.fileCancelUpload()", FILE_MANAGER_QML)
         self.assertIn("onOpened: printConfirmDialogFocus.forceActiveFocus()", FILE_MANAGER_QML)
+        # The New-folder dialog (the author's live request).
+        self.assertIn("id: createFolderDialog", FILE_MANAGER_QML)
+        self.assertIn('text: "New folder…"', FILE_MANAGER_QML)
+        # The left columns are FROZEN (the author's live ruling);
+        # the trailing half slides inside a clip wrapper at the
+        # frozen edge, and the header mirrors it: sticky frozen,
+        # the flick following the strip's contentX. A horizontal
+        # wheel anywhere over the grid scrolls the strip (the wheel
+        # used to work only over the scrollbar).
+        self.assertIn("contentWidth: root.stickyWidth + root.trailingWidth", FILE_MANAGER_QML)
+        self.assertIn("ScrollBar.horizontal: ScrollBar {", FILE_MANAGER_QML)
+        self.assertIn("// The frozen columns end here", FILE_MANAGER_QML)
+        self.assertIn("x: -gridHorizontal.contentX", FILE_MANAGER_QML)
+        self.assertIn("contentX: gridHorizontal.contentX", FILE_MANAGER_QML)
+        self.assertIn("WheelHandler {", FILE_MANAGER_QML)
+        self.assertIn("orientation: Qt.Horizontal", FILE_MANAGER_QML)
+        self.assertIn("wheel.angleDelta.x", FILE_MANAGER_QML)
+        # Search shows the folder breadcrumb under the name (the
+        # author's live request — same-named files in different
+        # folders must be tellable).
+        self.assertIn('visible: root.printerModel != null && root.printerModel.fileManagerSearch.length > 0 && modelData.folder !== ""', FILE_MANAGER_QML)
         # The title floors hold from the first frame (static seed) —
         # headers never elide, wrap or overflow.
         self.assertIn('"thumb": 70', FILE_MANAGER_QML)
@@ -270,7 +297,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("fileRequestRename(modelData.relpath)", FILE_MANAGER_QML)
         # The dialogs are modal over the manager and the rename field
         # pre-selects the stem (the author's live reports).
-        self.assertEqual(FILE_MANAGER_QML.count("modal: true"), 5)
+        self.assertEqual(FILE_MANAGER_QML.count("modal: true"), 6)
         self.assertIn("renameField.select(0, root.renameStemLength(target.name))", FILE_MANAGER_QML)
         # The helper the open handler calls must be DEFINED — a
         # ReferenceError inside onOpened only fires on open, which
@@ -960,6 +987,18 @@ class MonitorFormattingTests(unittest.TestCase):
             self.assertEqual(parse_bed_mesh({"mesh_matrix": matrix, "mesh_min": bounds, "mesh_max": [1, 1]}), {})
         self.assertEqual(parse_mcu_stats("mcu_awake=0.02 nonsense bytes_write=abc bytes_read=123"), {"mcu_awake": 0.02, "bytes_read": 123.0})
 
+    def test_file_row_payload_carries_the_folder_breadcrumb(self):
+        # The search face shows the folder under the name (the
+        # author's live request: same-named files in different
+        # folders must be tellable); root-level files carry "".
+        row = SimpleNamespace(filename="a.gcode", relpath="prints/sub/a.gcode", modified=None,
+                              size=None, attempts=None, last_status=None, print_start_time=None,
+                              object_height=None, layer_height=None, estimated_time=None,
+                              last_print=None, slicer=None, extruder=None, bed=None, filament=None)
+        self.assertEqual(file_row_payload(row, 0)["folder"], "prints/sub")
+        row.relpath = "a.gcode"
+        self.assertEqual(file_row_payload(row, 0)["folder"], "")
+
 
 class MonitorPolicyConsistencyTests(unittest.TestCase):
     """Behavior constants restated as QML prose must not drift."""
@@ -1619,8 +1658,11 @@ class MonitorQtTests(unittest.TestCase):
         model = self.monitor()
         self.deliver_state("standby")
         model.firmwareRestart()
-        self.assertEqual([r.options["body"] for r in self.scripts()], [{"script": "FIRMWARE_RESTART"}])
-        self.scripts()[0].callback({}, None)
+        # The host's own endpoint (the ruled route): the gcode form
+        # disconnects immediately, so its ack never arrives.
+        restarts = [r for r in self.transport.requests if r.path == "printer/firmware_restart"]
+        self.assertEqual(len(restarts), 1)
+        restarts[0].callback({}, None)
         self.qt.events(10)
         model.hostRestart()
         reboot = [r for r in self.transport.requests if r.path == "machine/reboot"]
@@ -1637,7 +1679,7 @@ class MonitorQtTests(unittest.TestCase):
         model.firmwareRestart()
         model.hostRestart()
         model.klipperRestart()
-        self.assertEqual(len([r for r in self.scripts() if "FIRMWARE_RESTART" in str(r.options["body"])]), 1)
+        self.assertEqual(len([r for r in self.transport.requests if r.path == "printer/firmware_restart"]), 1)
         self.assertEqual(len([r for r in self.transport.requests if r.path == "machine/reboot"]), 1)
         self.assertEqual(len([r for r in self.transport.requests if r.path == "printer/restart"]), 1)
 
@@ -2891,8 +2933,8 @@ Item {
         # Monitor files must never be exempt, and the set must not
         # grow silently (round-2 security F13). Inside the popup the
         # chrome still uses enabled/opacity, never visible:.
-        exempt_files = {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml", "FileManager.qml"}
-        self.assertEqual(exempt_files, {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml", "FileManager.qml"})
+        exempt_files = {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml"}
+        self.assertEqual(exempt_files, {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml"})
         for monitor_file in ("MoonrakerMonitor.qml", "MoonrakerMonitorDashboard.qml", "PreviewActionPanelControls.qml"):
             self.assertNotIn(monitor_file, exempt_files)
         whitelist = (
@@ -2933,6 +2975,50 @@ Item {
             # width (the author's live ruling — a resize handle for
             # an expansion that cannot happen is a lie).
             "visible: !consolePanel.tooNarrow",
+            # The file manager's popup: reflow is fine there, nothing critical on it (the author's ruling, ROADMAP 3.6.0) — each state-gated entry lands here by name.
+            "visible: open",
+            "visible: root.thumbStateLarge(root.confirmRelpath()) === \"ready\" && confirmThumb.status !== Image.Error",
+            "visible: root.thumbStateLarge(root.confirmRelpath()) === \"loading\"",
+            "visible: root.thumbStateLarge(root.confirmRelpath()) === \"failed\" || root.thumbStateLarge(root.confirmRelpath()) === \"none\"",
+            "visible: root.deleteBlockedCount() > 0",
+            "visible: root.printerModel != null && root.printerModel.fileRenameConflict",
+            "visible: root.uploadProgressState() === \"uploading\"",
+            "visible: root.uploadProgressState() === \"failed\"",
+            "visible: root.filterValues(modelData.category).indexOf(modelData.key) < 0",
+            "visible: root.filterValues(modelData.category).indexOf(modelData.key) >= 0",
+            "visible: root.thumbState(modelData.relpath) === \"ready\" && recentsThumb.status !== Image.Error",
+            "visible: root.thumbState(modelData.relpath) === \"loading\"",
+            "visible: root.thumbState(modelData.relpath) === \"failed\" || root.thumbState(modelData.relpath) === \"none\"",
+            "visible: !root.narrowMode",
+            "visible: root.printerModel == null || root.printerModel.fileManagerSearch.length === 0",
+            'visible: root.printerModel != null && root.printerModel.fileManagerSearch.length > 0 && modelData.folder !== ""',
+            "visible: root.printerModel != null && root.printerModel.fileManagerHistoryLoaded > 0 && !root.printerModel.fileManagerHistoryExhausted",
+            "visible: searchField.text.length > 0",
+            "visible: root.filterActive(\"slicer\")",
+            "visible: !root.filterActive(\"slicer\")",
+            "visible: root.filterActive(\"modified\")",
+            "visible: !root.filterActive(\"modified\")",
+            "visible: root.filterActive(\"print_time\")",
+            "visible: !root.filterActive(\"print_time\")",
+            "visible: root.filterActive(\"never_printed\")",
+            "visible: !root.filterActive(\"never_printed\")",
+            "visible: !root.narrowMode && root.printerModel != null && root.printerModel.fileManagerSearch.length === 0 && (root.printerModel.fileManagerDirectory.length > 0 || root.activeDirectories.length > 0)",
+            "visible: root.printerModel != null && root.printerModel.fileManagerDirectory.length > 0",
+            "visible: root.narrowMode",
+            "visible: root.pageSelectionState() !== \"none\"",
+            "visible: modelData.printing === true",
+            "visible: root.rowChecked(modelData)",
+            "visible: root.thumbState(modelData.relpath) === \"ready\" && thumbImage.status !== Image.Error",
+            "visible: modelData[0] === \"Status\" && root.rowChecked(rowDelegate.rowData)",
+            "visible: gridVertical.height > 0 && gridVertical.contentY > 2",
+            "visible: gridVertical.height > 0 && gridVertical.contentY < gridVertical.contentHeight - gridVertical.height - 2",
+            "visible: root.printerModel != null && root.printerModel.fileManagerWalkError !== \"\"",
+            "visible: root.printerModel != null && root.activeRows.length === 0",
+            "visible: root.printerModel != null && (root.walkErrorText() !== \"\" || (root.printerModel.fileManagerRefreshedAt !== \"Not yet refreshed\" && root.printerModel.fileManagerEmptyKind === \"over_filtered\"))",
+            "visible: root.printerModel == null || root.printerModel.fileManagerSelected > 0",
+            "visible: root.printerModel == null || root.activeRows.length > 0",
+            "visible: root.printerModel == null || String(root.printerModel.fileManagerPageSize) !== String(modelData)",
+            "visible: root.printerModel != null && String(root.printerModel.fileManagerPageSize) === String(modelData)",
         }
         for path in sorted(PLUGINS.glob("*.qml")):
             if path.name in exempt_files:

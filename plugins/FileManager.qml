@@ -5,13 +5,13 @@ import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
 
-// Snapshot 0 — the file-manager popup as a static mock-up: the real
-// QML surface with hardcoded synthetic rows, no network and no model,
-// so the layout is judged at real size before any machinery exists.
-// The popup is exempt from the no-reflow rule by the author's ruling
-// ("Reflowing the file manager is fine, there's nothing critical on
-// that") — but the CHROME here still uses enabled/opacity, never
-// visible:, reserving visibility for the list region.
+// The file-manager popup (3.6.0): the real QML surface over the
+// published model slice — no synthetic rows ship (the author's
+// ruling). The popup is exempt from the no-reflow rule by the
+// author's ruling ("Reflowing the file manager is fine, there's
+// nothing critical on that"); every state-gated visibility
+// expression lands in the test's line-level allow list citing that
+// ruling.
 Item {
     id: root
 
@@ -51,6 +51,9 @@ Item {
         target: root.printerModel
         enabled: root.printerModel != null
         function onFileManagerChanged() {
+            if (!root.open) {
+                return;
+            }
             if (root.printerModel != null && root.printerModel.filePrintConfirm !== "") {
                 printConfirmDialog.open();
             }
@@ -151,7 +154,12 @@ Item {
         contentItem: Column {
             id: printConfirmDialogFocus
             focus: true
-            Keys.onEscapePressed: printConfirmDialog.close()
+            Keys.onEscapePressed: {
+                printConfirmDialog.close();
+                if (root.printerModel != null) {
+                    root.printerModel.fileCancelPrint();
+                }
+            }
             spacing: UM.Theme.getSize("narrow_margin").height
             width: 320 * screenScaleFactor
             UM.Label {
@@ -297,7 +305,12 @@ Item {
         contentItem: Column {
             id: deleteConfirmDialogFocus
             focus: true
-            Keys.onEscapePressed: deleteConfirmDialog.close()
+            Keys.onEscapePressed: {
+                deleteConfirmDialog.close();
+                if (root.printerModel != null) {
+                    root.printerModel.fileCancelDelete();
+                }
+            }
             spacing: UM.Theme.getSize("narrow_margin").height
             width: 320 * screenScaleFactor
             UM.Label {
@@ -346,6 +359,66 @@ Item {
         }
     }
 
+    // The New-folder dialog (the author's live request): a plain
+    // name, Enter creates, Esc cancels.
+    Popup {
+        id: createFolderDialog
+        anchors.centerIn: root
+        padding: UM.Theme.getSize("default_margin").width
+        modal: true
+        closePolicy: Popup.CloseOnEscape
+        focus: false
+        background: Rectangle {
+            color: UM.Theme.getColor("main_background")
+            border.color: UM.Theme.getColor("lining")
+            border.width: UM.Theme.getSize("default_lining").width
+            radius: UM.Theme.getSize("default_radius").width
+        }
+        onOpened: {
+            createFolderField.text = "";
+            createFolderField.forceActiveFocus();
+        }
+        contentItem: Column {
+            id: createFolderDialogFocus
+            focus: true
+            Keys.onEscapePressed: createFolderDialog.close()
+            spacing: UM.Theme.getSize("narrow_margin").height
+            width: 320 * screenScaleFactor
+            UM.Label {
+                text: "New folder"
+                font: UM.Theme.getFont("large_bold")
+            }
+            TextField {
+                id: createFolderField
+                width: parent.width
+                color: UM.Theme.getColor("text")
+                palette.highlight: UM.Theme.getColor("primary")
+                palette.highlightedText: "white"
+                background: Rectangle {
+                    color: UM.Theme.getColor("setting_category")
+                    border.color: createFolderField.activeFocus ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
+                    border.width: createFolderField.activeFocus ? 2 * screenScaleFactor : UM.Theme.getSize("default_lining").width
+                    radius: UM.Theme.getSize("default_radius").width
+                }
+                Keys.onReturnPressed: root.submitNewFolder()
+                Keys.onEnterPressed: root.submitNewFolder()
+            }
+            RowLayout {
+                width: parent.width
+                Cura.SecondaryButton {
+                    Layout.fillWidth: true
+                    text: "Cancel"
+                    onClicked: createFolderDialog.close()
+                }
+                Cura.PrimaryButton {
+                    Layout.fillWidth: true
+                    text: "Create"
+                    onClicked: root.submitNewFolder()
+                }
+            }
+        }
+    }
+
     // The rename dialog (Snapshot 3): the name field pre-filled on
     // open, a live collision line while typing (the host's move
     // silently overwrites — the dialog asks first, round-1 C2/C3),
@@ -381,7 +454,12 @@ Item {
         contentItem: Column {
             id: renameDialogFocus
             focus: true
-            Keys.onEscapePressed: renameDialog.close()
+            Keys.onEscapePressed: {
+                renameDialog.close();
+                if (root.printerModel != null) {
+                    root.printerModel.fileCancelRename();
+                }
+            }
             spacing: UM.Theme.getSize("narrow_margin").height
             width: 320 * screenScaleFactor
             UM.Label {
@@ -454,6 +532,7 @@ Item {
         id: dirActionsMenu
         property string dirPath: ""
         MenuItem {
+            enabled: root.printerModel != null && root.printerModel.monitorConnected
             text: "Rename"
             onTriggered: {
                 if (root.printerModel != null) {
@@ -462,6 +541,7 @@ Item {
             }
         }
         MenuItem {
+            enabled: root.printerModel != null && root.printerModel.monitorConnected
             text: "Delete"
             onTriggered: {
                 if (root.printerModel != null) {
@@ -492,7 +572,12 @@ Item {
         contentItem: Column {
             id: uploadConfirmDialogFocus
             focus: true
-            Keys.onEscapePressed: uploadConfirmDialog.close()
+            Keys.onEscapePressed: {
+                uploadConfirmDialog.close();
+                if (root.printerModel != null) {
+                    root.printerModel.fileCancelUpload();
+                }
+            }
             spacing: UM.Theme.getSize("narrow_margin").height
             width: 320 * screenScaleFactor
             UM.Label {
@@ -565,7 +650,12 @@ Item {
         contentItem: Column {
             id: uploadProgressDialogFocus
             focus: true
-            Keys.onEscapePressed: uploadProgressDialog.close()
+            Keys.onEscapePressed: {
+                uploadProgressDialog.close();
+                if (root.printerModel != null) {
+                    root.printerModel.fileUploadDismiss();
+                }
+            }
             spacing: UM.Theme.getSize("narrow_margin").height
             width: 320 * screenScaleFactor
             UM.Label {
@@ -597,7 +687,7 @@ Item {
                 color: "#fb8c00"
             }
             RowLayout {
-                // Always visible: closing mid-upload dismisses the
+                // Always present: closing mid-upload dismisses the
                 // popup, and the upload runs on (the author's
                 // ruling: the dialog can never get stuck).
                 width: parent.width
@@ -1036,6 +1126,13 @@ Item {
     function confirmRelpath() {
         return root.printerModel != null && root.printerModel.filePrintConfirm !== "" ? root.printerModel.filePrintConfirm.relpath : "";
     }
+    function submitNewFolder() {
+        var name = createFolderField.text.trim();
+        if (name !== "" && root.printerModel != null) {
+            root.printerModel.fileCreateDirectory(name);
+        }
+        createFolderDialog.close();
+    }
     function deleteConfirm() {
         return root.printerModel != null && root.printerModel.fileDeleteConfirm !== "" ? root.printerModel.fileDeleteConfirm : null;
     }
@@ -1374,8 +1471,8 @@ Item {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        if (root.printerModel != null && root.printStartAllowed()) {
-                                            root.printerModel.fileRequestPrint(modelData.name);
+                                        if (root.printerModel != null && root.printStartAllowed() && root.isGcodeName(modelData.relpath)) {
+                                            root.printerModel.fileRequestPrint(modelData.relpath);
                                         }
                                     }
                                 }
@@ -1846,90 +1943,125 @@ Item {
             // subdirectory of the CURRENT level: a click descends,
             // the breadcrumb climbs. Hidden while a search is
             // active — the scope is then the whole tree.
-            Flow {
+            // The strip scrolls horizontally: a wrapping Flow grew
+            // rows of chips on folder-heavy printers and crushed the
+            // grid (the author's live report).
+            Flickable {
                 visible: !root.narrowMode && root.printerModel != null && root.printerModel.fileManagerSearch.length === 0 && (root.printerModel.fileManagerDirectory.length > 0 || root.activeDirectories.length > 0)
                 Layout.fillWidth: true
-                spacing: UM.Theme.getSize("narrow_margin").width
-                // The up directory (the author's live ruling): a
-                // chip whenever a parent exists — the root view has
-                // nowhere to go. It leads the strip, like a file
-                // manager's ".." entry.
-                Rectangle {
-                    visible: root.printerModel != null && root.printerModel.fileManagerDirectory.length > 0
-                    width: upName.width + 48 * screenScaleFactor
-                    height: 28 * screenScaleFactor
-                    radius: UM.Theme.getSize("default_radius").width
-                    border.color: UM.Theme.getColor("lining")
-                    border.width: UM.Theme.getSize("default_lining").width
-                    color: "transparent"
-                    UM.Label {
-                        anchors.left: parent.left
-                        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "↑"
-                        color: UM.Theme.getColor("primary")
-                        font: UM.Theme.getFont("default")
-                    }
-                    UM.Label {
-                        id: upName
-                        anchors.left: parent.left
-                        anchors.leftMargin: 16 * screenScaleFactor + 2 * UM.Theme.getSize("narrow_margin").width
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: ".."
-                        font: UM.Theme.getFont("default")
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (root.printerModel != null) {
-                                root.printerModel.fileNavigateTo(root.printerModel.fileManagerDirectory, true);
-                            }
-                        }
-                    }
+                Layout.preferredHeight: 28 * screenScaleFactor
+                clip: true
+                contentWidth: chipsRow.width
+                contentHeight: 28 * screenScaleFactor
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.HorizontalFlick
+                ScrollBar.horizontal: ScrollBar {
                 }
-                Repeater {
-                    model: root.activeDirectories
+                Row {
+                    id: chipsRow
+                    spacing: UM.Theme.getSize("narrow_margin").width
+                    // The up directory (the author's live ruling): a
+                    // chip whenever a parent exists — the root view has
+                    // nowhere to go. It leads the strip, like a file
+                    // manager's ".." entry.
                     Rectangle {
-                        width: folderName.width + 48 * screenScaleFactor
+                        visible: root.printerModel != null && root.printerModel.fileManagerDirectory.length > 0
+                        width: upName.width + 48 * screenScaleFactor
                         height: 28 * screenScaleFactor
                         radius: UM.Theme.getSize("default_radius").width
                         border.color: UM.Theme.getColor("lining")
                         border.width: UM.Theme.getSize("default_lining").width
                         color: "transparent"
-                        UM.ColorImage {
+                        UM.Label {
                             anchors.left: parent.left
                             anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: UM.Theme.getIcon("Folder")
+                            text: "↑"
                             color: UM.Theme.getColor("primary")
+                            font: UM.Theme.getFont("default")
                         }
                         UM.Label {
-                            id: folderName
+                            id: upName
                             anchors.left: parent.left
                             anchors.leftMargin: 16 * screenScaleFactor + 2 * UM.Theme.getSize("narrow_margin").width
                             anchors.verticalCenter: parent.verticalCenter
-                            text: modelData
-                            elide: Text.ElideRight
+                            text: ".."
                             font: UM.Theme.getFont("default")
                         }
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                if (root.printerModel == null) {
-                                    return;
+                                if (root.printerModel != null) {
+                                    root.printerModel.fileNavigateTo(root.printerModel.fileManagerDirectory, true);
                                 }
-                                if (mouse.button === Qt.RightButton) {
-                                    // The folder context menu (the
-                                    // author's live request).
-                                    dirActionsMenu.dirPath = root.printerModel.fileManagerDirectory.concat(modelData).join("/");
-                                    dirActionsMenu.popup();
-                                    return;
+                            }
+                        }
+                    }
+                    Repeater {
+                        model: root.activeDirectories
+                        Rectangle {
+                            width: folderName.width + 48 * screenScaleFactor
+                            height: 28 * screenScaleFactor
+                            radius: UM.Theme.getSize("default_radius").width
+                            border.color: UM.Theme.getColor("lining")
+                            border.width: UM.Theme.getSize("default_lining").width
+                            color: "transparent"
+                            UM.ColorImage {
+                                anchors.left: parent.left
+                                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 16 * screenScaleFactor
+                                height: 16 * screenScaleFactor
+                                source: UM.Theme.getIcon("Folder")
+                                color: UM.Theme.getColor("primary")
+                            }
+                            UM.Label {
+                                id: folderName
+                                anchors.left: parent.left
+                                anchors.leftMargin: 16 * screenScaleFactor + 2 * UM.Theme.getSize("narrow_margin").width
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData
+                                elide: Text.ElideRight
+                                font: UM.Theme.getFont("default")
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (root.printerModel == null) {
+                                        return;
+                                    }
+                                    if (mouse.button === Qt.RightButton) {
+                                        // The folder context menu (the
+                                        // author's live request).
+                                        dirActionsMenu.dirPath = root.printerModel.fileManagerDirectory.concat(modelData).join("/");
+                                        dirActionsMenu.popup();
+                                        return;
+                                    }
+                                    root.printerModel.fileNavigateTo(root.printerModel.fileManagerDirectory.concat(modelData), false);
                                 }
-                                root.printerModel.fileNavigateTo(root.printerModel.fileManagerDirectory.concat(modelData), false);
+                            }
+                            // The visible menu affordance: the right-click
+                            // menu alone was undiscoverable (the author
+                            // could not find folder deletion at all).
+                            UM.Label {
+                                anchors.right: parent.right
+                                anchors.rightMargin: UM.Theme.getSize("narrow_margin").width
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "⋮"
+                                font: UM.Theme.getFont("medium_bold")
+                                color: UM.Theme.getColor("primary")
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (root.printerModel != null) {
+                                            dirActionsMenu.dirPath = root.printerModel.fileManagerDirectory.concat(modelData).join("/");
+                                            dirActionsMenu.popup();
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1980,14 +2112,31 @@ Item {
                 // scroller breaks its clip and the rows spill OVER
                 // the column titles (the author's live report).
                 Layout.minimumHeight: root.rowHeight
+                // A horizontal wheel anywhere over the grid scrolls
+                // the strip (the author's live report: the wheel
+                // only worked over the scrollbar). Vertical wheels
+                // pass through to the ListView untouched.
+                WheelHandler {
+                    orientation: Qt.Horizontal
+                    onWheel: wheel => {
+                        if (gridHorizontal.contentWidth > gridHorizontal.width) {
+                            gridHorizontal.contentX = Math.max(0, Math.min(gridHorizontal.contentWidth - gridHorizontal.width, gridHorizontal.contentX - wheel.angleDelta.x));
+                        }
+                    }
+                }
 
-                Row {
+                Item {
                     id: gridHeader
                     objectName: "gridHeader"
                     anchors.top: parent.top
                     anchors.left: parent.left
                     anchors.right: parent.right
                     height: root.rowHeight
+                    // The WHOLE header rides the strip (the
+                    // author's model: the list scrolls as one,
+                    // headers and rows together) and clips at the
+                    // grid edge.
+                    clip: true
                     RowLayout {
                         width: root.stickyWidth
                         height: root.rowHeight
@@ -2302,6 +2451,7 @@ Item {
                     }
                     Flickable {
                         id: headerFlick
+                        x: root.stickyWidth
                         width: parent.width - root.stickyWidth
                         height: root.rowHeight
                         clip: true
@@ -2552,6 +2702,23 @@ Item {
                                             font: UM.Theme.getFont("default")
                                             color: root.rowChecked(modelData) ? "white" : UM.Theme.getColor("text")
                                         }
+                                        // The folder breadcrumb (the
+                                        // author's live request):
+                                        // while a search is active,
+                                        // same-named files in
+                                        // different folders must be
+                                        // tellable — a dimmed,
+                                        // elided path under the
+                                        // name.
+                                        UM.Label {
+                                            visible: root.printerModel != null && root.printerModel.fileManagerSearch.length > 0 && modelData.folder !== ""
+                                            width: parent.width - 6 * screenScaleFactor
+                                            text: modelData.folder
+                                            wrapMode: Text.NoWrap
+                                            elide: Text.ElideMiddle
+                                            font: UM.Theme.getFont("small")
+                                            color: UM.Theme.getColor("text_inactive")
+                                        }
                                         Row {
                                             spacing: 4 * screenScaleFactor
                                             // The printing badge is
@@ -2612,7 +2779,7 @@ Item {
                                             // printing file never
                                             // offers the mutations
                                             // (the author's gate).
-                                            enabled: root.printerModel != null && !modelData.printing
+                                            enabled: root.printerModel != null && root.printerModel.monitorConnected && !modelData.printing
                                             text: "Rename"
                                             onTriggered: {
                                                 if (root.printerModel != null) {
@@ -2632,7 +2799,7 @@ Item {
                                             }
                                         }
                                         MenuItem {
-                                            enabled: root.printerModel != null && !modelData.printing
+                                            enabled: root.printerModel != null && root.printerModel.monitorConnected && !modelData.printing
                                             text: "Delete"
                                             onTriggered: {
                                                 if (root.printerModel != null) {
@@ -2669,7 +2836,7 @@ Item {
                                 cursorShape: Qt.PointingHandCursor
                                 acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 onDoubleClicked: {
-                                    if (root.printerModel != null && root.printStartAllowed()) {
+                                    if (root.printerModel != null && root.printStartAllowed() && root.isGcodeName(modelData.relpath)) {
                                         root.printerModel.fileRequestPrint(modelData.relpath);
                                     }
                                 }
@@ -2681,74 +2848,84 @@ Item {
                             }
                         }
                         Item {
-                            id: rowDelegate
-                            x: root.stickyWidth - gridHorizontal.contentX
+                            // The frozen columns end here: the
+                            // sliding trailing half clips at this
+                            // edge so it can never paint over the
+                            // names (the author's live ruling).
+                            x: root.stickyWidth
                             width: root.trailingWidth
                             height: root.rowHeight
-                            property var rowData: modelData
-                            Rectangle {
-                                anchors.fill: parent
-                                color: root.rowChecked(modelData) ? UM.Theme.getColor("primary") : "transparent"
-                            }
-                            MouseArea {
-                                // Double-click-to-print covers the
-                                // trailing half too (the author's
-                                // live request).
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onDoubleClicked: {
-                                    if (root.printerModel != null && root.printStartAllowed()) {
-                                        root.printerModel.fileRequestPrint(modelData.relpath);
+                            clip: true
+                            Item {
+                                id: rowDelegate
+                                x: -gridHorizontal.contentX
+                                width: root.trailingWidth
+                                height: root.rowHeight
+                                property var rowData: modelData
+                                Rectangle {
+                                    anchors.fill: parent
+                                    color: root.rowChecked(modelData) ? UM.Theme.getColor("primary") : "transparent"
+                                }
+                                MouseArea {
+                                    // Double-click-to-print covers the
+                                    // trailing half too (the author's
+                                    // live request).
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onDoubleClicked: {
+                                        if (root.printerModel != null && root.printStartAllowed() && root.isGcodeName(modelData.relpath)) {
+                                            root.printerModel.fileRequestPrint(modelData.relpath);
+                                        }
                                     }
                                 }
-                            }
-                            Row {
-                                Repeater {
-                                    model: root.visibleTrailingColumns()
-                                    Item {
-                                        width: root.columnWidth(modelData[0], modelData[1])
-                                        height: root.rowHeight
-                                        Row {
-                                            anchors.left: parent.left
-                                            anchors.right: parent.right
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            // Breathing room so an
-                                            // elided cell never reads
-                                            // as joined to its
-                                            // neighbour (the author's
-                                            // live report).
-                                            anchors.leftMargin: 5 * screenScaleFactor
-                                            anchors.rightMargin: 5 * screenScaleFactor
-                                            spacing: 4 * screenScaleFactor
-                                            // On a ticked row the
-                                            // status word goes white
-                                            // and its colour survives
-                                            // as a dot beside it (the
-                                            // author's ruling — the
-                                            // colour coding matters
-                                            // most while curating a
-                                            // bulk delete).
-                                            Rectangle {
-                                                visible: modelData[0] === "Status" && root.rowChecked(rowDelegate.rowData)
+                                Row {
+                                    Repeater {
+                                        model: root.visibleTrailingColumns()
+                                        Item {
+                                            width: root.columnWidth(modelData[0], modelData[1])
+                                            height: root.rowHeight
+                                            Row {
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                width: 8 * screenScaleFactor
-                                                height: 8 * screenScaleFactor
-                                                radius: 4 * screenScaleFactor
-                                                color: rowDelegate.rowData.statusColour === "text_inactive" ? UM.Theme.getColor("text_inactive") : rowDelegate.rowData.statusColour
-                                            }
-                                            UM.Label {
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                text: root.cellText(rowDelegate.rowData, modelData[0])
-                                                color: root.cellColour(rowDelegate.rowData, modelData[0])
-                                                // Cells elide, never wrap or
-                                                // overlap: the cap makes the
-                                                // elide engage (an uncapped
-                                                // label keeps its implicit
-                                                // width), minus the ticked
-                                                // Status dot's 12 px.
-                                                wrapMode: Text.NoWrap
-                                                elide: Text.ElideRight
-                                                width: Math.min(implicitWidth, parent.width - (modelData[0] === "Status" && root.rowChecked(rowDelegate.rowData) ? 12 : 0) * screenScaleFactor)
+                                                // Breathing room so an
+                                                // elided cell never reads
+                                                // as joined to its
+                                                // neighbour (the author's
+                                                // live report).
+                                                anchors.leftMargin: 5 * screenScaleFactor
+                                                anchors.rightMargin: 5 * screenScaleFactor
+                                                spacing: 4 * screenScaleFactor
+                                                // On a ticked row the
+                                                // status word goes white
+                                                // and its colour survives
+                                                // as a dot beside it (the
+                                                // author's ruling — the
+                                                // colour coding matters
+                                                // most while curating a
+                                                // bulk delete).
+                                                Rectangle {
+                                                    visible: modelData[0] === "Status" && root.rowChecked(rowDelegate.rowData)
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    width: 8 * screenScaleFactor
+                                                    height: 8 * screenScaleFactor
+                                                    radius: 4 * screenScaleFactor
+                                                    color: rowDelegate.rowData.statusColour === "text_inactive" ? UM.Theme.getColor("text_inactive") : rowDelegate.rowData.statusColour
+                                                }
+                                                UM.Label {
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    text: root.cellText(rowDelegate.rowData, modelData[0])
+                                                    color: root.cellColour(rowDelegate.rowData, modelData[0])
+                                                    // Cells elide, never wrap or
+                                                    // overlap: the cap makes the
+                                                    // elide engage (an uncapped
+                                                    // label keeps its implicit
+                                                    // width), minus the ticked
+                                                    // Status dot's 12 px.
+                                                    wrapMode: Text.NoWrap
+                                                    elide: Text.ElideRight
+                                                    width: Math.min(implicitWidth, parent.width - (modelData[0] === "Status" && root.rowChecked(rowDelegate.rowData) ? 12 : 0) * screenScaleFactor)
+                                                }
                                             }
                                         }
                                     }
@@ -2771,7 +2948,7 @@ Item {
                     // at all.
                     anchors.bottom: parent.bottom
                     height: 12 * screenScaleFactor
-                    contentWidth: root.trailingWidth
+                    contentWidth: root.stickyWidth + root.trailingWidth
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
                     flickableDirection: Flickable.HorizontalFlick
@@ -2805,6 +2982,26 @@ Item {
                     anchors.bottomMargin: 4 * screenScaleFactor
                     color: UM.Theme.getColor("primary")
                     font: UM.Theme.getFont("medium_bold")
+                }
+
+                // A walk failure with a cached listing still says
+                // so — the error face below needs an EMPTY grid, so
+                // a failed refresh used to read as silence.
+                Item {
+                    visible: root.printerModel != null && root.printerModel.fileManagerWalkError !== ""
+                    anchors.top: gridVertical.top
+                    anchors.left: gridVertical.left
+                    anchors.right: gridVertical.right
+                    height: 24 * screenScaleFactor
+                    Rectangle {
+                        anchors.fill: parent
+                        color: UM.Theme.getColor("warning")
+                    }
+                    UM.Label {
+                        anchors.centerIn: parent
+                        text: root.printerModel != null ? root.printerModel.fileManagerWalkError : ""
+                        font: UM.Theme.getFont("default")
+                    }
                 }
 
                 // The live grid's empty face (Snapshot 1): a walk
@@ -3010,7 +3207,7 @@ Item {
                 Cura.SecondaryButton {
                     visible: root.printerModel == null || root.activeRows.length > 0
                     text: "‹"
-                    enabled: root.printerModel != null && root.printerModel.fileManagerPageIndex > 1
+                    enabled: root.printerModel != null && root.printerModel.monitorConnected && root.printerModel.fileManagerPageIndex > 1
                     onClicked: {
                         if (root.printerModel != null) {
                             root.printerModel.setFilePage(root.printerModel.fileManagerPageIndex - 1);
@@ -3020,7 +3217,7 @@ Item {
                 Cura.SecondaryButton {
                     visible: root.printerModel == null || root.activeRows.length > 0
                     text: "›"
-                    enabled: root.printerModel != null && root.printerModel.fileManagerPageIndex < root.printerModel.fileManagerPageCount
+                    enabled: root.printerModel != null && root.printerModel.monitorConnected && root.printerModel.fileManagerPageIndex < root.printerModel.fileManagerPageCount
                     onClicked: {
                         if (root.printerModel != null) {
                             root.printerModel.setFilePage(root.printerModel.fileManagerPageIndex + 1);
@@ -3036,6 +3233,13 @@ Item {
                 spacing: UM.Theme.getSize("default_margin").width / 2
 
                 Cura.SecondaryButton {
+                    // The New-folder dialog (the author's live
+                    // request).
+                    text: "New folder…"
+                    enabled: root.printerModel != null && root.printerModel.monitorConnected
+                    onClicked: createFolderDialog.open()
+                }
+                Cura.SecondaryButton {
                     // Snapshot 3 upload (the author's ruling): LOCAL
                     // gcode files only — sliced prints already upload
                     // from the Preview view. Bottom-left, beside the
@@ -3050,7 +3254,12 @@ Item {
                 }
                 UM.Label {
                     Layout.fillWidth: true
-                    text: ""
+                    // The latest note (refusals and outcomes — the
+                    // popup's own feedback surface), and the
+                    // right-click hint when nothing needs saying.
+                    text: root.printerModel != null && root.printerModel.fileManagerNote !== "" ? root.printerModel.fileManagerNote : "Right-click a file or folder for actions"
+                    color: UM.Theme.getColor("text_inactive")
+                    elide: Text.ElideRight
                 }
                 Cura.PrimaryButton {
                     text: "Close"

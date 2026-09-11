@@ -236,7 +236,9 @@ file must match the number of sections. Section ids are unique across all
 panes (the map is shared): print, setup, toolhead, macros, profiles,
 tuning, fans, leds, pwm, power, system, save on the controls pane;
 meshmap, job, temps, fansinfo, filament, objects, systeminfo, mcus,
-temphistory on the Information and Printer status panes. Persistence is
+temphistory on the Information and Printer status panes; console
+(the console pane) and fileManager (the file-manager popup) on the
+Monitor's own surface. Persistence is
 automatic — the stored map only records sections the user has touched.
 
 ### Collapsing a whole pane
@@ -288,7 +290,11 @@ reads and writes on unregistered keys, only persists on Cura's own save
 cycle, and mangles values through configparser.
 
 - File shape: `{"sections": {...}, "controlsCollapsed": bool,
-  "controlsLocked": bool, "infoCollapsed": bool, "statusCollapsed": bool}`.
+  "controlsLocked": bool, "infoCollapsed": bool, "statusCollapsed": bool,
+  "consoleHeight": int, "fileManagerColumns": {...}, "temperatureChart": {...},
+  "toolhead": {...}}` — new fields default via `bool(decoded.get(..., False))`
+  and the column config goes through `FileManagerPolicy.normalise_columns`
+  (the file manager owns it; the model only merges and saves).
   The first shipped format was a flat section map; `_read_state` migrates
   it, so new fields must default with `bool(decoded.get(..., False))` and
   never break legacy reads.

@@ -163,8 +163,8 @@ def file_timestamp(value, now) -> str:
     except (ValueError, OverflowError, OSError):
         return "—"
     if stamp.year == reference.year:
-        return stamp.strftime("%-d %b %H:%M")
-    return stamp.strftime("%-d %b %Y")
+        return f"{stamp.day} {stamp:%b %H:%M}"
+    return f"{stamp.day} {stamp:%b %Y}"
 
 
 def file_duration_short(seconds) -> str:
@@ -208,6 +208,7 @@ def file_row_payload(row, now) -> dict:
     return {
         "name": row.filename,
         "relpath": row.relpath,
+        "folder": row.relpath.rsplit("/", 1)[0] if "/" in row.relpath else "",
         "modified": file_timestamp(row.modified, now),
         "size": file_size(row.size) if row.size is not None else "—",
         "attempts": str(row.attempts) if row.attempts else "—",

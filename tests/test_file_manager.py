@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fake_moonraker import FakeMoonraker
 from qt_runtime_support import QT_AVAILABLE, ScriptedTransport
@@ -319,10 +320,20 @@ class FilteringTests(unittest.TestCase):
         result = filter_rows(rows, {"print_time": 30}, now=self.NOW)
         self.assertEqual([r.filename for r in result], ["quick"])
 
-    def test_never_printed_includes_files_with_no_history(self):
-        rows = [make_row("printed", attempts=3), make_row("fresh", attempts=0)]
+    def test_never_printed_matches_the_rows_own_status(self):
+        # The filter and the row's Status column must agree: a
+        # history-joined status or a metadata print_start_time
+        # excludes; only a row that would DISPLAY "Never printed"
+        # belongs in the list (membership must not change after
+        # "Load all history" flips attempts).
+        rows = [
+            make_row("printed", attempts=3, last_status="completed"),
+            make_row("sliced_only", attempts=0),
+            make_row("metadata_says_printed", print_start_time=100.0),
+            make_row("fresh"),
+        ]
         result = filter_rows(rows, {"never_printed": True}, now=self.NOW)
-        self.assertEqual([r.filename for r in result], ["fresh"])
+        self.assertEqual([r.filename for r in result], ["sliced_only", "fresh"])
 
     def test_categories_are_anded_across_each_other(self):
         rows = [
@@ -377,9 +388,14 @@ class FilterOptionCountsTests(unittest.TestCase):
         self.assertEqual(options["120"], 2)   # 10 min and 2 h both fit 2 h
         self.assertEqual(options["480"], 2)   # the unknown duration is excluded
 
-    def test_never_printed_counts_files_without_history(self):
-        rows = [make_row("printed", attempts=3), make_row("fresh", attempts=0)]
-        self.assertEqual(filter_option_counts(rows, now=self.NOW)["never_printed"], 1)
+    def test_never_printed_counts_match_the_rows_own_status(self):
+        rows = [
+            make_row("printed", attempts=3, last_status="completed"),
+            make_row("sliced_only", attempts=0),
+            make_row("metadata_says_printed", print_start_time=100.0),
+            make_row("fresh"),
+        ]
+        self.assertEqual(filter_option_counts(rows, now=self.NOW)["never_printed"], 2)
 
 
 class SearchTests(unittest.TestCase):
@@ -517,6 +533,39 @@ class ViewStateTests(unittest.TestCase):
 
 @unittest.skipUnless(QT_AVAILABLE, "PyQt6 not available")
 class FileManagerServiceTests(unittest.TestCase):
+    def test_thumbnail_fetch_concurrency_is_capped(self):
+        # MAX_THUMB_FETCHES holds: the queue holds the overflow and
+        # a freed slot drains the next row.
+        rows = [FileRow(filename=f"f{i}.gcode", relpath=f"f{i}.gcode",
+                        thumb_path=".thumbs/t-32x32.png") for i in range(6)]
+        with patch.object(self.service, "_fetch_thumb") as fetch:
+            self.service.request_thumbnails(rows)
+            self.assertEqual(fetch.call_count, 3)
+            self.assertEqual(len(self.service._thumb_queue), 3)
+
+    def test_failed_thumbnail_fetch_releases_its_slot(self):
+        # A fetch that cannot even start (mkdtemp failing after a
+        # /tmp cleanup is the realistic trigger) must give its slot
+        # back — three leaked slots would kill every thumbnail for
+        # the rest of the session.
+        rows = [FileRow(filename="a.gcode", relpath="a.gcode",
+                        thumb_path=".thumbs/a-32x32.png")]
+        with patch("tempfile.mkdtemp", side_effect=OSError("tmp gone")):
+            self.service.request_thumbnails(rows)
+        self.assertEqual(self.service._thumb_active, 0)
+        self.assertEqual(self.service.thumbnail_payload()["a.gcode"]["state"], "failed")
+
+    def test_abort_clears_the_queue_and_the_counter(self):
+        rows = [FileRow(filename=f"f{i}.gcode", relpath=f"f{i}.gcode",
+                        thumb_path=".thumbs/t-32x32.png") for i in range(5)]
+        with patch.object(self.service, "_fetch_thumb"):
+            self.service.request_thumbnails(rows)
+            self.assertEqual(self.service._thumb_active, 3)
+            self.service._abort_thumbs()
+            self.assertEqual(self.service._thumb_active, 0)
+            self.assertEqual(self.service._thumb_queue, [])
+
+
     """The service against the scripted transport: requests are
     recorded, tests deliver the replies explicitly, and every request
     must ride the service's own owner channel."""
@@ -787,14 +836,36 @@ class FileManagerServiceTests(unittest.TestCase):
         self.directory("path=gcodes/prints&", [("deep.gcode", {})])
         self.service.navigate_to(["prints"])
         self.assertTrue(self.service.delete_directory("prints"))
-        delete = self.request("server/files/gcodes/prints")
+        delete = self.request("server/files/directory?path=gcodes/prints&force=true")
         self.assertEqual(delete.method, "DELETE")
-        self.deliver("server/files/gcodes/prints", {"result": "ok"})
+        self.deliver("server/files/directory?path=gcodes/prints&force=true", {"result": "ok"})
         self.assertIsNone(self.service.row_for("prints/deep.gcode"))
         self.assertNotIn("prints", self.service.resident_directories())
         # The view sat inside the deleted tree: it pops to the parent.
         self.assertEqual(self.service.directory, [])
         self.assertEqual(notes, ["Deleted folder prints."])
+
+    def test_create_directory_posts_the_host_route_and_notes_outcomes(self):
+        notes = []
+        self.service.note.connect(notes.append)
+        self.service.open()
+        self.directory("path=gcodes&", [])
+        self.service.create_directory("  prints  ")
+        create = self.request("server/files/directory?path=gcodes/prints")
+        self.assertEqual(create.method, "POST")
+        create.callback({"result": {"path": "gcodes/prints"}}, None)
+        self.assertEqual(notes[-1], "Created folder prints.")
+        # A path-shaped or empty name refuses without a request.
+        before = len(self.transport.requests)
+        self.service.create_directory("a/b")
+        self.service.create_directory("")
+        self.assertEqual(len(self.transport.requests), before)
+        self.assertTrue(any("plain folder name" in note for note in notes))
+        # A host refusal surfaces its words.
+        self.service.create_directory("sub")
+        refusal = self.request("server/files/directory?path=gcodes/sub")
+        refusal.callback(None, "Directory exists")
+        self.assertTrue(any("Create refused: Directory exists" in note for note in notes))
 
     def test_selection_toggles_and_reports_three_states(self):
         self.service.open()

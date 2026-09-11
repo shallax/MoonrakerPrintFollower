@@ -252,7 +252,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("sectionsChanged", ("sectionExpandedMap",)),
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
-        ("fileManagerChanged", ("fileManagerRows", "fileManagerRecents", "fileManagerDirectory", "fileManagerDirectories", "fileManagerDiskText",
+        ("fileManagerChanged", ("fileManagerRows", "fileManagerRecents", "fileManagerDirectory", "fileManagerDirectories", "fileManagerDiskText", "fileManagerNote",
                                 "fileManagerRefreshedAt", "fileManagerShown", "fileManagerPage", "fileManagerPageIndex",
                                 "fileManagerPageCount", "fileManagerPageSize", "fileManagerPageSelection",
                                 "fileManagerEmptyKind", "fileManagerSelected", "fileManagerSortColumn",
@@ -289,9 +289,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_rename_conflict = False
         self._file_upload_confirm = None
         self._file_upload_progress = None
-        self._print_match_attempt = None
-        self._print_matched_at = None
-        self._print_baseline = (0.0, 0.0)
         # The "improve ETA" action reuses the facade's load-current-print
         # flow (download + index), passed in as an explicit capability.
         self._request_load = request_load
@@ -362,7 +359,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_manager.set_column_state(self._file_columns_state)
         # Metascan outcomes land in the console as local notes (the
         # author's live report: the option appeared to do nothing).
-        self._file_manager.note.connect(self._console.note)
+        self._file_manager_note = ""
+        self._file_manager.note.connect(self._on_file_manager_note)
         # Upload progress and outcome feed the popup (the author's
         # live request).
         self._file_manager.uploadProgress.connect(self._on_upload_progress)
@@ -396,6 +394,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # e-stop's automatic cycle included).
         self._data.connectionStateChanged.connect(self._on_connection_state)
         self._data.set_active(True)
+        self._publish()
+
+    def _on_file_manager_note(self, text: str) -> None:
+        # The note feeds BOTH the console and the popup's own status
+        # line (refusals must be visible where the action happened).
+        self._console.note(text)
+        self._file_manager_note = str(text)
         self._publish()
 
     def _on_connection_state(self, connected: bool) -> None:
@@ -434,6 +439,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # error lines (the bell's marker counts per-session).
         self._console_errors_seen = 0
         self._console_error_bell = False
+        # The file manager's own lifecycle: deactivation cancels its
+        # lane, aborts its fetches and clears the previous machine's
+        # rows and thumbnails (round-2 A15).
+        self._file_manager.unbind()
         self._publish()
 
     def setMonitoringActive(self, active): self._data.set_active(active)
@@ -522,12 +531,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         }
 
     def _printing_relpath(self):
+        # The ACTIVE print's root-exclusive relpath (round-2 D4), or
+        # "" — the state filter is the load-bearing part: Klipper
+        # never clears print_stats.filename on completion, so a
+        # filename alone would keep the last-printed file badged
+        # "printing" with Delete/Rename disabled forever.
         state = self._data.snapshot.core.get("print_stats") or {}
-        filename = str(state.get("filename") or "")
-        if not filename:
-            return None
-        # print_stats.filename is root-exclusive (round-2 D4).
-        return filename
+        if str(state.get("state") or "") not in ("printing", "paused"):
+            return ""
+        return str(state.get("filename") or "")
 
     def _publish_thumbs(self) -> None:
         """The thumbnail-only publish, COALESCED: landings arrive in
@@ -540,7 +552,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _flush_thumbs(self) -> None:
         self._thumbs_dirty = False
-        self._values["fileManagerThumbs"] = self._file_manager.thumbnail_payload()
+        # A change-compare: an open popup re-requests the recents
+        # strip every poll, and an unchanged payload must not force
+        # a repaint wave once per second.
+        previous = self._values.get("fileManagerThumbs")
+        payload = self._file_manager.thumbnail_payload()
+        if previous == payload:
+            return
+        self._values["fileManagerThumbs"] = payload
         self.fileManagerThumbsChanged.emit()
 
     def _publish(self):
@@ -562,6 +581,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values["fileManagerColumnOrder"] = fm.column_order()
         values["fileManagerColumnHidden"] = fm.column_hidden()
         values["fileManagerThumbs"] = self._file_manager.thumbnail_payload() if self._file_manager_open else {}
+        values["fileManagerNote"] = self._file_manager_note
         # Thumbnails fetch per the RENDER WINDOW, not the page: the
         # QML's visibleRows change drives the request (the author's
         # live report: an "all / page" listing fired hundreds of
@@ -586,27 +606,27 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if attempt is not None:
             stats = self._data.snapshot.core.get("print_stats") or {}
             filename = str(stats.get("filename") or "")
-            if self._print_match_attempt != attempt:
-                self._print_match_attempt = attempt
-                self._print_matched_at = None
+            state = str(stats.get("state") or "")
             if filename == attempt[0]:
-                if self._print_matched_at is None:
-                    self._print_matched_at = time.time()
-                    vdcard = self._data.snapshot.core.get("virtual_sdcard") or {}
-                    self._print_baseline = (
-                        float(stats.get("print_duration") or 0.0),
-                        float(vdcard.get("file_position") or 0.0),
-                    )
-                else:
-                    vdcard = self._data.snapshot.core.get("virtual_sdcard") or {}
-                    duration = float(stats.get("print_duration") or 0.0)
-                    position = float(vdcard.get("file_position") or 0.0)
-                    if duration > self._print_baseline[0] or position > self._print_baseline[1]:
-                        # The print is genuinely moving: the start
-                        # succeeded.
-                        self._file_manager.clear_print_attempt()
-                    elif time.time() - self._print_matched_at > self.FILE_PRINT_START_TIMEOUT_S:
-                        self._print_start_failed("The printer accepted the file but no progress began.")
+                if state in ("printing", "paused"):
+                    # The job is live with the right file: the
+                    # success. No progress test — print_duration
+                    # sits at exactly 0.0 and file_position freezes
+                    # until the first extrusion, so a heat soak alone
+                    # must never read as a failed start.
+                    self._file_manager.clear_print_attempt()
+                elif state == "error":
+                    message = str(stats.get("message") or "").strip()
+                    self._print_start_failed(
+                        f"The printer reported an error: {message}" if message
+                        else "The printer reported an error starting the print.")
+                elif state in ("complete", "standby", "cancelled"):
+                    # The job for THIS file ended; the verdict is
+                    # moot. A mismatched filename never clears — a
+                    # poll in the window between the confirm and the
+                    # printer's state change must not wipe the
+                    # attempt.
+                    self._file_manager.clear_print_attempt()
             elif time.time() - attempt[1] > self.FILE_PRINT_START_TIMEOUT_S:
                 self._print_start_failed("The printer did not begin printing.")
         # The no-reflow rule's sibling ruling (the author, 2026-09-10):
@@ -683,14 +703,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 getattr(self, signal_name).emit()
 
     def _print_start_failed(self, reason) -> None:
-        """The start's failure verdict (the author's live ruling): the
-        console note, the action status, and the assumed-stopped state
-        so the UI is never left claiming an active print."""
+        """The start's failure verdict: the console note and the
+        action status. The observed printer state is NEVER rewritten —
+        a live print must not read "cancelled", and the pause-first
+        jog gate must not lift beside a live nozzle (that assumption
+        belongs to the e-stop alone)."""
         self._file_manager.clear_print_attempt()
-        self._print_matched_at = None
         self._console.note(f"Print start failed — {reason}")
         self._commands.report_status(f"Print start failed — {reason}")
-        self._data.assume_print_stopped()
 
 
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
@@ -861,19 +881,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def fileConfirmPrint(self):
         confirm = self._file_print_confirm
         self._file_print_confirm = None
-        self._print_match_attempt = None
-        self._print_matched_at = None
-        self._print_baseline = (0.0, 0.0)
         if confirm is not None:
             self._file_manager.start_print(confirm["relpath"])
+            # The print is on its way: the file manager steps aside
+            # NOW and the monitor view returns — the verdict (success
+            # or failure) reports to the console and the note line,
+            # never by waiting inside the popup.
+            self.setFileManagerOpen(False)
         self._publish()
 
     @pyqtSlot()
     def fileCancelPrint(self):
         self._file_print_confirm = None
-        self._print_match_attempt = None
-        self._print_matched_at = None
-        self._print_baseline = (0.0, 0.0)
         self._publish()
 
     @pyqtSlot(str)
@@ -884,6 +903,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot(bool)
     def setFileManagerOpen(self, is_open):
         self._file_manager_open = bool(is_open)
+        if not self._file_manager_open:
+            self._file_print_confirm = ""
+            self._file_delete_confirm = ""
+            self._file_rename_target = ""
+            self._file_upload_confirm = ""
+            self._file_upload_progress = ""
         self._publish()
 
     @pyqtSlot()
@@ -892,6 +917,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # (the author's live report: the closed popup must not keep
         # paying the per-poll cost).
         self._file_manager_open = True
+        self._file_manager_note = ""
         try:
             self._file_manager.bind()
             self._file_manager.open()
@@ -980,9 +1006,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_manager.scan_metadata(str(relpath))
 
 
-    def _printing_relpath(self) -> str:
-        return str((self._data.snapshot.core.get("print_stats") or {}).get("filename") or "")
-
     @pyqtSlot()
     def fileRequestDelete(self):
         """The bulk delete from the selection (Snapshot 3): the
@@ -1011,6 +1034,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             "kind": "file",
             "relpaths": [row.relpath], "count": 1, "first": row.filename, "blocked": 0,
         }
+        self._publish()
+
+    @pyqtSlot(str)
+    def fileCreateDirectory(self, name):
+        """The popup's New-folder dialog: the service validates the
+        name and owns the outcome notes."""
+        self._file_manager.create_directory(name)
         self._publish()
 
     @pyqtSlot(str)
@@ -1121,6 +1151,22 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._console.note("Upload refused: only gcode files upload here.")
             return
         target = upload_relpath("/".join(self._file_manager.directory), name)
+        if target == self._printing_relpath():
+            # The host streams the printing file from disk: replacing
+            # it mid-print truncates the running job.
+            self._console.note(f"Upload refused: {name} is currently printing.")
+            self._publish()
+            return
+        try:
+            free = int(self._file_manager.disk_usage.get("free", 0))
+            needed = os.path.getsize(path)
+        except (TypeError, ValueError, OSError):
+            free, needed = 0, 0
+        if free and needed and needed > free:
+            self._console.note(f"Upload refused: {name} needs {needed / 1048576:.0f} MB, "
+                               f"{free / 1048576:.0f} MB free on the printer.")
+            self._publish()
+            return
         if name_collides(self._file_manager.resident_rows(), target):
             self._file_upload_confirm = {"path": path, "filename": name}
             self._publish()

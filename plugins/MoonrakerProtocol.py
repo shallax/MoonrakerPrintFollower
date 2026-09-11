@@ -137,6 +137,25 @@ def delete_endpoint(base_url: str, root: str, filename: str) -> str:
     return path if not str(base_url or "") else f"{str(base_url).rstrip('/')}/{path}"
 
 
+def directory_delete_endpoint(base_url: str, root: str, directory: str) -> str:
+    """HTTP DELETE server/files/directory?path={root}/{directory}
+    &force=true — the host's directory route (the file route rejects
+    every folder with "Invalid file path"; force removes non-empty
+    trees)."""
+    query = f"path={quote(str(root).strip('/') + '/' + str(directory).lstrip('/'), safe='/')}&force=true"
+    path = f"server/files/directory?{query}"
+    return path if not str(base_url or "") else f"{str(base_url).rstrip('/')}/{path}"
+
+
+def directory_create_endpoint(base_url: str, root: str, directory: str) -> str:
+    """POST server/files/directory?path={root}/{directory} — the
+    host's create-folder route (an empty POST; the directory name is
+    the last path segment)."""
+    query = f"path={quote(str(root).strip('/') + '/' + str(directory).lstrip('/'), safe='/')}"
+    path = f"server/files/directory?{query}"
+    return path if not str(base_url or "") else f"{str(base_url).rstrip('/')}/{path}"
+
+
 def move_endpoint(base_url: str) -> str:
     """Rename via the host's move route: POST server/files/move with
     a {source, dest} body, both root-inclusive (round-1 C2/C3: move

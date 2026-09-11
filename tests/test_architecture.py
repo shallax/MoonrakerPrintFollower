@@ -237,6 +237,13 @@ class SourceContractTests(unittest.TestCase):
             manager,
         )
 
+    def test_redirect_policy_guards_the_api_key(self):
+        # The X-Api-Key rides redirects unless the transport pins the
+        # same-origin redirect policy (round-2 security F1) — the pin
+        # exists because a dropped policy is invisible to the suite.
+        transport = (PLUGINS / "MoonrakerTransport.py").read_text()
+        self.assertIn("SameOriginRedirectPolicy", transport)
+
     def test_qt_adapters_do_not_own_worker_or_http_implementations(self):
         for module in ("MoonrakerPrintFollower", "MoonrakerMonitorModel", "MoonrakerOutputDevice"):
             source = (PLUGINS / (module + ".py")).read_text()

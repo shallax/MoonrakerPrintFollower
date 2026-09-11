@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import time
 from typing import Any, Dict, List, Optional, Sequence, Set
@@ -24,6 +25,8 @@ from PyQt6.QtNetwork import QHttpMultiPart, QHttpPart, QNetworkReply, QNetworkRe
 from .MoonrakerProtocol import (
     _moonraker_error_text,
     delete_endpoint,
+    directory_create_endpoint,
+    directory_delete_endpoint,
     move_endpoint,
     print_start_endpoint,
 )
@@ -132,6 +135,13 @@ class FileManager(QObject):
         self._walk_error = None
         self._print_attempt = None
         self._thumbs = {}
+        self._thumb_queue = []
+        self._thumb_active = 0
+        try:
+            shutil.rmtree(self._thumb_root, ignore_errors=True)
+        except Exception:
+            pass
+        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-")
         self._directory = []
         self._selection = set()
         self.changed.emit()
@@ -152,6 +162,13 @@ class FileManager(QObject):
         self._walk_error = None
         self._print_attempt = None
         self._thumbs = {}
+        self._thumb_queue = []
+        self._thumb_active = 0
+        try:
+            shutil.rmtree(self._thumb_root, ignore_errors=True)
+        except Exception:
+            pass
+        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-")
         self._directory = []
         self._selection = set()
         self.changed.emit()
@@ -231,7 +248,7 @@ class FileManager(QObject):
                         self._walk_error = walked_error[0]
                 self.changed.emit()
             started = transport.send_json("file-manager", f"dir:{directory}", "GET",
-                f"server/files/directory?path=gcodes{f'/{directory}' if directory else ''}&extended=true",
+                f"server/files/directory?path={quote('gcodes' + (f'/{directory}' if directory else ''), safe='/')}&extended=true",
                 finished, replace=True)
             if not started:
                 pending -= 1
@@ -317,7 +334,7 @@ class FileManager(QObject):
                 self.changed.emit()
             self.note.emit(f"Metadata refreshed for {relpath.rsplit('/', 1)[-1]}.")
         transport.send_json("file-manager", f"metascan:{relpath}", "POST",
-            f"server/files/metascan?filename={relpath}", finished, replace=True)
+            f"server/files/metascan?filename={quote(relpath, safe='/')}", finished, replace=True)
 
     def row_for(self, relpath: str) -> Optional[FileRow]:
         """The resident row for a root-exclusive relpath, or None."""
@@ -583,9 +600,36 @@ class FileManager(QObject):
             self.changed.emit()
             self.refresh()
         transport.send_json("file-manager", f"delete:{directory}", "DELETE",
-            delete_endpoint(transport.identity[0], "gcodes", directory),
+            directory_delete_endpoint(transport.identity[0], "gcodes", directory),
             finished, replace=True, category="command")
         return True
+
+    def create_directory(self, name: str) -> None:
+        """Create a folder in the current directory (the author's
+        live request): the host's directory route takes the full
+        target path."""
+        name = str(name or "").strip()
+        if not name or "/" in name or "\\" in name or name in (".", ".."):
+            self.note.emit("Create refused: enter a plain folder name.")
+            return
+        directory = "/".join(self._directory)
+        target = f"{directory}/{name}" if directory else name
+        generation = self._generation
+        transport = self._client.transport
+
+        def finished(payload, error) -> None:
+            if generation != self._generation:
+                return
+            if error:
+                self.note.emit(f"Create refused: {error}")
+                self.changed.emit()
+                return
+            self.note.emit(f"Created folder {name}.")
+            self.refresh()
+
+        transport.send_json("file-manager", f"mkdir:{target}", "POST",
+            directory_create_endpoint(transport.identity[0], "gcodes", target),
+            finished, replace=True, category="command")
 
     def _rekey_directory(self, directory: str, target: str) -> None:
         """Point every resident path under ``directory`` at ``target``
@@ -658,6 +702,7 @@ class FileManager(QObject):
         decode stutters the list — and the print dialog asks for the
         large one with ``large=True``. A refresh clears the cache;
         thumbnails regenerate with the file."""
+        changed_any = False
         for row in rows:
             relpath = str(row.relpath)
             entry = self._thumbs.get(relpath) or {}
@@ -665,6 +710,7 @@ class FileManager(QObject):
             url_slot = "url_large" if large else "url"
             if entry.get(slot):
                 continue
+            changed_any = True
             thumb_path = row.thumb_path if large else (row.thumb_small or row.thumb_path)
             entry[slot] = "none" if not thumb_path else "loading"
             entry[url_slot] = ""
@@ -674,7 +720,7 @@ class FileManager(QObject):
                 # bounded concurrency and the hourglass spins until the
                 # callback lands.
                 self._thumb_queue.append((relpath, row.root, thumb_path, large))
-        if rows:
+        if changed_any:
             self.thumbsChanged.emit()
         self._drain_thumbs()
 
@@ -689,8 +735,14 @@ class FileManager(QObject):
         try:
             directory = tempfile.mkdtemp(prefix="thumb-", dir=self._thumb_root)
             path = os.path.join(directory, os.path.basename(thumb_path) or "thumb.png")
+            # relative_path is relative to the gcode FILE's parent: a
+            # folder-resident file's thumbnail lives under
+            # <root>/<dirname(relpath)>/.thumbs/, not <root>/.thumbs/
+            # (live-proven against Moonraker's metadata builder).
+            parent = relpath.rsplit("/", 1)[0] if "/" in relpath else ""
+            prefix = f"{quote(root, safe='/')}/{quote(parent, safe='/')}" if parent else quote(root, safe='/')
             request = self._client.transport.request(
-                f"server/files/{quote(root, safe='/')}/{quote(thumb_path, safe='/')}", timeout_ms=10000)
+                f"server/files/{prefix}/{quote(thumb_path, safe='/')}", timeout_ms=10000)
             request.setRawHeader(b"Accept", b"image/png")
             reply = self._client.transport.network.get(request)
             # The reply rides the registry until its handler runs, and
@@ -715,6 +767,10 @@ class FileManager(QObject):
                 entry["state"] = "failed"
             self._thumbs[relpath] = entry
             self.changed.emit()
+            # The slot must always come back, whatever failed — a
+            # leaked permit is a permanently stuck queue.
+            self._thumb_active = max(0, self._thumb_active - 1)
+            self._drain_thumbs()
 
     def _thumb_finished(self, relpath: str, reply, generation: int, path: str, large: bool) -> None:
         # The identity check keeps a stale reply (a refresh cleared
@@ -761,6 +817,10 @@ class FileManager(QObject):
             else:
                 entry["state"] = "failed"
             self._thumbs[relpath] = entry
+        try:
+            reply.deleteLater()
+        except Exception:
+            pass
         self.thumbsChanged.emit()
         # One slot frees: the queue drains the next waiting row
         # immediately — the fetches fire together, not chained.
@@ -781,6 +841,7 @@ class FileManager(QObject):
                 pass
         self._thumb_replies = {}
         self._thumb_queue = []
+        self._thumb_active = 0
 
     def thumbnail_payload(self) -> Dict[str, Dict[str, str]]:
         return {relpath: dict(entry) for relpath, entry in self._thumbs.items()}
@@ -788,10 +849,19 @@ class FileManager(QObject):
     def clear_thumbnails(self) -> None:
         # In-flight fetches retire through the generation guard — the
         # cache alone resets here, so a refresh genuinely regenerates
-        # every thumbnail with the file.
+        # every thumbnail with the file. The temp tree goes with the
+        # cache: the published file:// URLs die in the same publish,
+        # and stale replies write nothing (the generation guard runs
+        # first).
         self._thumb_generation += 1
         self._thumbs = {}
         self._thumb_queue = []
+        self._thumb_active = 0
+        try:
+            shutil.rmtree(self._thumb_root, ignore_errors=True)
+        except Exception:
+            pass
+        self._thumb_root = tempfile.mkdtemp(prefix="mpf-thumbs-")
         self.thumbsChanged.emit()
 
     def _rejoin_history(self) -> None:

@@ -154,8 +154,11 @@ class MonitorControls(QObject):
         if self._commands.setup_allowed and allowed: self._commands.script(label, script)
 
     def firmware_restart(self):
+        # The host's own endpoint (the ruled route): the FIRMWARE_RESTART
+        # gcode disconnects immediately, so its ack never arrives and
+        # success always read as failure.
         if not self._data.active or self._commands.print_active: return
-        self._commands.script("Firmware restart", "FIRMWARE_RESTART")
+        self._commands.request("Firmware restart", "printer/firmware_restart", {})
 
     def klipper_restart(self):
         # A full Klipper restart (Moonraker's RESTART endpoint): reloads
