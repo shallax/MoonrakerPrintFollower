@@ -3118,7 +3118,7 @@ Item {
         self.assertIn("id: statusCollapsedTitle", MONITOR_QML)
         self.assertIn('text: "Live"', MONITOR_QML)
         self.assertIn('color: "#c0202428"', MONITOR_QML)
-        self.assertIn('text: "Camera offline"', MONITOR_QML)
+        self.assertIn('text: (root.printer != null && root.printer.cameraRecovering) ? "Camera recovering…" : "Camera offline"', MONITOR_QML)
         model = self.monitor()
         # The harness may connect asynchronously during construction —
         # pin the TRANSITIONS, which are synchronous.
