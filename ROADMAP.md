@@ -705,6 +705,23 @@ no new dependency, works on every Cura in the 5.0–5.13 line. Remaining
 certainty gates: a TLS (wss) check and the live-Moonraker test on the
 author's printer during the snapshot loop.
 
+**Live-printer verification (2026-09-11, the author's Voron):** the
+hand-rolled RFC 6455 client, running INSIDE the real Cura 5.13.0
+bundle, completed the handshake against the live Moonraker
+(v0.13.0-733), the subscribe returned all five objects, and 29 frames
+/ 44.9 KB streamed in 6 s (~4.8 Hz — Klipper's 250 ms push cadence,
+live-confirmed) with the predicted `notify_status_update` shape
+([changed objects, eventtime]). The subscribe reply is the full
+snapshot — the reconnect re-sync needs no separate HTTP query. Auth is
+NOT enforced on this printer (any key or none works). Two probe bugs
+died here and are part of the record: the RFC extended-length ENCODE
+form (>125-byte payloads — Tornado silently drops the connection on a
+corrupt header) and a probe recorder that swallowed the evidence. The
+printer is plain http, so the live wss case remains open — the in-bundle
+TLS spike (verified TLS 1.3 + certificate-verification parity with
+today's HTTPS, measured byte-identical) covers the substrate half; a
+live proxied-https test rides the snapshot loop.
+
 **Phase-2 rulings (2026-09-11, walked with the author):**
 - Subscription while idle: FULL-TIME (all five status objects
   whenever connected) with a delivery clock — the socket accumulates
