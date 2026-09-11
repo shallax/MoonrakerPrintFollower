@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-import json
 from dataclasses import asdict, dataclass, field
+from enum import Enum
+import json
 from math import isfinite
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
@@ -78,6 +79,19 @@ def normalise_temperature_chart(value: Any) -> dict:
     }
 
 
+class FeedMode(str, Enum):
+    """The status-feed transport for one printer.
+
+    The value is the persisted spelling. Websocket is the product
+    default for new and upgraded installs; the unknown-value fallback
+    below is the same default, so a corrupt or foreign record never
+    bricks the connection settings.
+    """
+
+    WEBSOCKET = "websocket"
+    HTTP = "http"
+
+
 @dataclass
 class PrinterConfig:
     # Live Preview follower settings.
@@ -91,6 +105,9 @@ class PrinterConfig:
     z_tolerance: float = 0.04
     trace_layer: bool = False
     trace_http: bool = False
+    # The status-feed transport, per printer (mixed fleets mix modes).
+    # The product default lives here, never in a client-side code default.
+    feed_mode: FeedMode = FeedMode.WEBSOCKET
     path_follow: bool = True
     path_smoothing: bool = True
     show_toolhead_indicator: bool = True
@@ -239,6 +256,17 @@ class PrinterConfig:
             data["output_format"] = "gcode"
         else:
             data["output_format"] = data["output_format"].lower()
+
+        # Missing keys are pre-4.0.0 records: the product default (ruled).
+        # A present-but-unknown value falls back the same way, but never
+        # silently when the value merely needs spelling coercion.
+        raw_mode = data.get("feed_mode")
+        if not isinstance(raw_mode, FeedMode):
+            try:
+                raw_mode = FeedMode(str(raw_mode).strip().lower())
+            except (TypeError, ValueError):
+                raw_mode = defaults.feed_mode
+        data["feed_mode"] = raw_mode
 
         data["upload_path"] = data["upload_path"].strip().strip("/")
         data["temperature_chart"] = normalise_temperature_chart(data.get("temperature_chart"))
@@ -439,7 +467,14 @@ class PrinterConfigStore:
         current_id, _ = self.identity()
         key = str(machine_id or current_id)
         data = self._load_all()
-        data[key] = asdict(config)
+        # Read-modify-write of the raw record: keys this version does not
+        # own survive a save, so a downgrade to an older plugin can never
+        # destroy the mode field (or anything newer it does not know).
+        raw = data.get(key)
+        if not isinstance(raw, dict):
+            raw = {}
+        raw.update(asdict(config))
+        data[key] = raw
         self._save_all(data)
 
     def update(self, **changes: Any) -> PrinterConfig:
