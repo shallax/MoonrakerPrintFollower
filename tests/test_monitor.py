@@ -3239,6 +3239,23 @@ Item {
         model.refreshWebcams()
         self.assertEqual(model.cameraRefreshNonce, before + 1)
 
+    def test_webcam_watchdog_veils_and_bumps_the_refresh_nonce(self):
+        # A dead bridge relay bumps the refresh nonce (a URL change is
+        # the only thing that restarts Cura's loader), throttled so a
+        # dead stream cannot spin the loader, with the veil until the
+        # stream restarts.
+        model = self.monitor()
+        model._camera_last_refresh_at = 0.0
+        before = model.cameraRefreshNonce
+        model._on_stream_failed()
+        self.assertTrue(model.cameraRecovering)
+        self.assertEqual(model.cameraRefreshNonce, before + 1)
+        # A second failure inside the throttle window does not bump.
+        model._on_stream_failed()
+        self.assertEqual(model.cameraRefreshNonce, before + 1)
+        model._on_stream_recovered()
+        self.assertFalse(model.cameraRecovering)
+
     def test_setup_scripts_queue_behind_the_in_flight_command(self):
         model = self.monitor()
         self.deliver_state("standby")

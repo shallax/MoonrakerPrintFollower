@@ -703,14 +703,16 @@ Component {
                                     // author's live ruling; true
                                     // per-pixel desaturation needs a
                                     // shader Cura's Qt 5.15 line cannot
-                                    // guarantee — roadmap note).
-                                    visible: root.cameraConfigured && (root.printer == null || !root.printer.monitorConnected)
+                                    // guarantee — roadmap note). The
+                                    // webcam watchdog reuses the same
+                                    // veil while a dead stream restarts.
+                                    visible: root.cameraConfigured && (root.printer == null || !root.printer.monitorConnected || (root.printer != null && root.printer.cameraRecovering))
                                     anchors.fill: cameraImage
                                     color: "#c0202428"
 
                                     UM.Label {
                                         anchors.centerIn: parent
-                                        text: "Camera offline"
+                                        text: (root.printer != null && root.printer.cameraRecovering) ? "Camera recovering…" : "Camera offline"
                                         font: UM.Theme.getFont("medium_bold")
                                         color: "#8b949e"
                                     }

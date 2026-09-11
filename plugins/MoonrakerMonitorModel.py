@@ -218,6 +218,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     statusPaneChanged = pyqtSignal()
     consoleHeightChanged = pyqtSignal()
     cameraRefreshChanged = pyqtSignal()
+    cameraRecoveringChanged = pyqtSignal()
     fileManagerChanged = pyqtSignal()
     fileManagerThumbsChanged = pyqtSignal()
 
@@ -252,6 +253,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("sectionsChanged", ("sectionExpandedMap",)),
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
+        ("cameraRecoveringChanged", ("cameraRecovering",)),
         ("fileManagerChanged", ("fileManagerRows", "fileManagerRecents", "fileManagerDirectory", "fileManagerDirectories", "fileManagerDiskText", "fileManagerNote",
                                 "fileManagerRefreshedAt", "fileManagerShown", "fileManagerPage", "fileManagerPageIndex",
                                 "fileManagerPageCount", "fileManagerPageSize", "fileManagerPageSelection",
@@ -342,6 +344,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._tuning = MonitorTuning(self._data, self._commands, self)
         self._controls = MonitorControls(self._data, self._commands, self._tuning, bed_mesh, config, self)
         self._camera = MonitorCamera(self._data, config, apply_config, self)
+        # The webcam watchdog: a dead bridge relay bumps the refresh
+        # nonce (a URL change is the ONLY thing that restarts Cura's
+        # loader) and veils the camera until the stream restarts.
+        self._camera_last_refresh_at = 0.0
+        self._camera_recovering = False
+        self._camera.streamFailed.connect(self._on_stream_failed)
+        self._camera.streamRecovered.connect(self._on_stream_recovered)
         self._toolhead = ToolheadController(self._data, self._commands, self)
         # The persisted jog/extrude selection (the author's live
         # report) — applied before any publish so the first frame
@@ -408,6 +417,24 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if not connected:
             return
         self._camera_refresh_nonce += 1
+        self._publish()
+
+    def _on_stream_failed(self) -> None:
+        import time
+        now = time.monotonic()
+        # A dead camera fails every reconnect attempt: one nonce bump
+        # per attempt, throttled so a dead stream cannot spin the
+        # loader in a tight loop.
+        if now - self._camera_last_refresh_at >= 10.0:
+            self._camera_last_refresh_at = now
+            self._camera_refresh_nonce += 1
+        self._camera_recovering = True
+        self._publish()
+
+    def _on_stream_recovered(self) -> None:
+        if not self._camera_recovering:
+            return
+        self._camera_recovering = False
         self._publish()
 
     def _on_console_store(self):
@@ -683,6 +710,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             infoCollapsed=self._info_collapsed, statusCollapsed=self._status_collapsed,
             consoleHeight=self._console_height,
             cameraRefreshNonce=self._camera_refresh_nonce,
+            cameraRecovering=self._camera_recovering,
             sectionExpandedMap=dict(self._sections),
             temperatureChart=self._chart_value(),
             temperatureChartLegend=self._legend_value(),
@@ -1327,6 +1355,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     statusCollapsed = value_property(bool, "statusCollapsed", statusPaneChanged, False)
     consoleHeight = value_property(int, "consoleHeight", consoleHeightChanged, 0)
     cameraRefreshNonce = value_property(int, "cameraRefreshNonce", cameraRefreshChanged, 0)
+    cameraRecovering = value_property(bool, "cameraRecovering", cameraRecoveringChanged, False)
     sectionExpandedMap = value_property(QVariant, "sectionExpandedMap", sectionsChanged, {})
 
     @pyqtSlot()

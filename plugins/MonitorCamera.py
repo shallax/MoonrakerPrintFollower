@@ -9,6 +9,11 @@ from .CameraBridge import CameraBridge
 
 class MonitorCamera(QObject):
     changed = pyqtSignal()
+    # The webcam watchdog's signals, forwarded from the bridge: a dead
+    # stream and its restart. Direct (non-bridge) URLs never emit
+    # these — the plugin cannot see a raw stream's health.
+    streamFailed = pyqtSignal()
+    streamRecovered = pyqtSignal()
 
     def __init__(self, data, config, apply_config, parent=None):
         super().__init__(parent)
@@ -167,6 +172,9 @@ class MonitorCamera(QObject):
             return url
         if self._camera_bridge is None:
             self._camera_bridge = CameraBridge(self)
+            # The watchdog's feed-health signals ride the bridge.
+            self._camera_bridge.upstreamFailed.connect(self.streamFailed.emit)
+            self._camera_bridge.upstreamStarted.connect(self.streamRecovered.emit)
         # The upstream is the STREAM'S own origin: an absolute
         # stream_url on another host/port (a separate webcam box) must
         # not be re-homed onto the Moonraker base.
