@@ -129,7 +129,7 @@ unsaved credentials; a probe must not reconfigure the live binding.
 | Core, imminent scheduled PAUSE | min(configured, 250 ms) |
 | Core, paused | At least 1500 ms |
 | Core, idle | At least 5000 ms |
-| Monitor auxiliary, active/paused | 1000 ms |
+| Monitor auxiliary, active/paused | 2500 ms |
 | Monitor auxiliary, idle | 2500 ms |
 | Power | 5000 ms |
 | System | 10000 ms |

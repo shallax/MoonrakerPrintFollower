@@ -895,7 +895,7 @@ re-sequenced the plan on two facts:
   printer data — the old "push chart samples" story conflated it with
   `notify_status_update` deltas of the heater/temperature objects. And
   heater readings update at Klippy's MCU sampling cadence, which is not
-  faster than the 1 s aux poll: the socket buys event edges and lower
+  faster than the 2.5 s aux poll: the socket buys event edges and lower
   polling load, not chart resolution. "High-rate data" is not a promise
   this roadmap makes.
 
@@ -937,7 +937,8 @@ contrast; pairwise hue separation is the residual debt).
 - **A Pi/system-health panel from notify_proc_stat_update** — host stats,
   not printer state; Mainsail/Fluidd already own that surface.
 - **High-rate chart push (10 Hz+)** — MCU temperature sampling caps the
-  source; the 1 s aux poll matches Mainsail's resolution.
+  source; the 2.5 s aux poll (the author's 2026-09-11 step-down from 1 s)
+sets the chart's shipped resolution.
 - **Firmware-update management (Moonraker update_manager)** — dangerous,
   off-brand for a slicer plugin, and per-machine update state is a
   support sink.

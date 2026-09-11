@@ -19,7 +19,8 @@ from typing import Dict, List, Mapping, Optional
 
 from .MonitorFormatting import chart_label, chart_temperature_objects, number
 
-# 30 minutes at the 1 s auxiliary cadence, with headroom for bursts.
+# 30 minutes of samples at the 2.5 s auxiliary cadence; the count cap
+# only binds at faster cadences (headroom for bursts).
 WINDOW_SECONDS = 1800
 MAX_SAMPLES = 1800
 
@@ -174,9 +175,9 @@ class TemperatureHistory:
 
 def _segments(track) -> List[List[List[float]]]:
     """Split a [[elapsed, value], ...] track into contiguous segments at
-    elapsed jumps larger than 4 s (a None-gap or a feed pause). The 1 s
-    printing cadence and the 2.5 s idle cadence both stay well inside
-    that threshold, so only real gaps split."""
+    elapsed jumps larger than 4 s (a None-gap or a feed pause). The 2.5 s
+    auxiliary cadence (flat in all states) stays well inside that
+    threshold, so only real gaps split."""
     segments: List[List[List[float]]] = []
     current: List[List[float]] = []
     previous_elapsed = None

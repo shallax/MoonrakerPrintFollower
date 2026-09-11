@@ -73,7 +73,9 @@ class ArchitectureDocumentTests(unittest.TestCase):
     def test_document_records_polling_cadence_and_migration(self):
         self.assertIn("Legacy follower preferences", ARCH)
         self.assertIn("Standalone Moonraker Connection settings", ARCH)
-        self.assertIn("2500 ms", ARCH)
+        # The exact table row, not the substring: the idle row also says
+        # "2500 ms", so a bare substring cannot catch drift in the active row.
+        self.assertIn("| Monitor auxiliary, active/paused | 2500 ms |", ARCH)
         self.assertIn("`MonitorData` alone applies Monitor timer policy", ARCH)
 
     def test_document_records_output_rebind_cleanup_and_network_law(self):
