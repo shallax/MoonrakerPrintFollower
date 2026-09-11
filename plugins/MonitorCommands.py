@@ -23,6 +23,12 @@ class MonitorCommands(QObject):
     # failure while the printer does exactly what it was asked.
     EXPECTED_TIMEOUT_S = {"Resume": 300}
     MAX_QUEUED_COMMANDS = 16
+    # The post-e-stop reconnect delay (the author's ruling,
+    # 2026-09-10, live-proven on their printer): after the stop the
+    # host refuses commands until the connection is cycled, so the
+    # plugin cycles it ONCE, automatically. The pause lets the stop
+    # POST settle before the disconnect flash.
+    RECONNECT_DELAY_MS = 1500
     # The stop requires two clicks and a held third press: the hold must
     # last this long before the stop fires, so a click spasm cannot fire it
     # while a real emergency stays under a second away.
@@ -39,6 +45,12 @@ class MonitorCommands(QObject):
     def __init__(self, data, parent=None):
         super().__init__(parent)
         self._data = data
+        # Bumped by the emergency stop: the in-flight command's
+        # terminal reply must not overwrite "Emergency stop issued"
+        # with an outcome-unknown verdict (the author's live
+        # request: after the stop the plugin assumes the print was
+        # cancelled and clears everything).
+        self._lifecycle = 0
         self._busy = False
         self._status = self._tracked = ""
         self._live = self._receipt = ""
@@ -90,6 +102,13 @@ class MonitorCommands(QObject):
         # in-flight command, so the user can line them up in succession.
         return bool(self.state) and not self.print_active
 
+    def report_status(self, text) -> None:
+        """A non-command status line for the action pane (the print
+        watchdog's failure verdict — the author's live report: a
+        start that never happens must say so where the user looks)."""
+        self._status = str(text)
+        self.changed.emit()
+
     def reset(self):
         self._busy = False
         self._queue.clear()
@@ -106,6 +125,7 @@ class MonitorCommands(QObject):
         # must never resurface over the fresh lifecycle text or a newer
         # terminal outcome (the engineering panel's receipt resurrection).
         self._clear_receipt()
+        token = self._lifecycle
         self._live = f"{label} requested…"
         expected = self.EXPECTED.get(label)
         self._tracked = label if expected else ""
@@ -113,13 +133,27 @@ class MonitorCommands(QObject):
             timeout_s=self.EXPECTED_TIMEOUT_S.get(label, 10))
         self.changed.emit()
         def finished(payload, error):
+            if token != self._lifecycle:
+                # The emergency stop reset the lane mid-flight: this
+                # reply belongs to the pre-stop world and must not
+                # touch the status.
+                return
             if error:
                 self._busy = False
                 self._live = ""
-                # A connection-level error says nothing about whether the
-                # command executed: the script may already have been
-                # accepted by the printer.
-                self._status = f"{label} outcome unknown: {error}"
+                if payload is not None:
+                    # The server ANSWERED with an error body: the
+                    # command was refused, not lost (the transport's
+                    # refusal-vs-failure distinction). The author's
+                    # live report: a cold extrude showed a bare 400 —
+                    # now it reads the server's own words ("Extrude
+                    # below minimum temp").
+                    self._status = f"{label} refused: {error}"
+                else:
+                    # A connection-level error says nothing about whether
+                    # the command executed: the script may already have
+                    # been accepted by the printer.
+                    self._status = f"{label} outcome unknown: {error}"
                 if expected: self._data.fail_command(label, error)
                 self._tracked = ""
             elif expected:
@@ -245,8 +279,19 @@ class MonitorCommands(QObject):
         # jog queue and any in-flight busy state. The busy release makes
         # gated controls (power toggles, restarts) usable immediately.
         self._suppress_click = True  # the release of this hold is not a click
+        self._lifecycle += 1
+        # The print is ASSUMED stopped at the client's observation
+        # layer (the author's ruling) — one point, every consumer
+        # (guards, jog gate, the follower's coordinator).
+        self._data.assume_print_stopped()
         self.emergencyStopped.emit()
         self.reset()
+        # The author's ruling (2026-09-10, live-proven on their
+        # printer): commands stay refused after the stop until the
+        # connection is cycled — the plugin disconnects and
+        # reconnects ONCE, automatically, instead of leaving the
+        # manual step to the user.
+        QTimer.singleShot(self.RECONNECT_DELAY_MS, self._data.reconnect_after_emergency)
 
     def _reset_clicks(self):
         self._reset_timer.stop()

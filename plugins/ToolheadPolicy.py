@@ -73,6 +73,11 @@ def clamp_relative_move(signed_distance: float, current: float,
     target = current + signed_distance
     if minimum is not None and target < minimum:
         return 0.0
+    if minimum is None and target < 0.0:
+        # Unknown configured floor: never below zero on ANY axis —
+        # the head must not be allowed into negative territory (the
+        # author's live report: microstepping below 0.00 Z).
+        return 0.0
     if maximum is not None and target > maximum:
         result = maximum - current
         return result if result > 0 else 0.0  # already out: no move

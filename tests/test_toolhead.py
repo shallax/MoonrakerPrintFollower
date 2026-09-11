@@ -104,7 +104,8 @@ class ToolheadClampTests(unittest.TestCase):
         self.assertEqual(clamp_relative_move(-25.0, 190.0, 0.0, 200.0), -25.0)
         self.assertEqual(clamp_relative_move(-25.0, 0.0, 0.0, 200.0), 0.0)     # at the limit
         self.assertEqual(clamp_relative_move(25.0, 200.0, 0.0, 200.0), 0.0)
-        self.assertEqual(clamp_relative_move(-25.0, 190.0, None, None), -25.0)  # no bounds
+        self.assertEqual(clamp_relative_move(-25.0, 190.0, None, None), -25.0)  # no bounds, stays positive
+        self.assertEqual(clamp_relative_move(-25.0, 10.0, None, None), 0.0)     # unknown floor: never below zero
         self.assertEqual(clamp_relative_move(-25.0, -5.0, 0.0, 200.0), 0.0)     # already out
         self.assertEqual(clamp_relative_move(25.0, 205.0, 0.0, 200.0), 0.0)
 

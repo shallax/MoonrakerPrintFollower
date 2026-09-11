@@ -11,6 +11,8 @@ from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkReques
 
 from UM.Logger import Logger
 
+from .MoonrakerProtocol import _moonraker_error_text, same_origin
+
 
 JsonCallback = Callable[[Optional[Dict[str, Any]], Optional[str]], None]
 
@@ -56,6 +58,13 @@ class MoonrakerHttpTransport(QObject):
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self._network = QNetworkAccessManager(self)
+        # Round-2 security F1 (proven in the pinned container): the
+        # default redirect policy re-sends custom raw headers —
+        # X-Api-Key included — across cross-origin redirects. Same-
+        # origin only: a cross-origin hop fails the request instead
+        # of leaking the key to the redirect target.
+        if hasattr(self._network, "setRedirectPolicy"):
+            self._network.setRedirectPolicy(QNetworkRequest.RedirectPolicy.SameOriginRedirectPolicy)
         self._base_url = ""
         self._api_key = ""
         self._generation = 0
@@ -110,7 +119,11 @@ class MoonrakerHttpTransport(QObject):
         request = QNetworkRequest(QUrl(target))
         request.setRawHeader(b"Accept", b"application/json")
         request.setRawHeader(b"User-Agent", b"Cura Moonraker Print Follower")
-        if self._api_key:
+        # Round-2 security F2: the key rides ONLY the printer's own
+        # origin. A foreign target (a webcam on another host or port,
+        # a tunnel alias) gets no key — fail-closed, the predicate is
+        # origin-triple equality (scheme, host, effective port).
+        if self._api_key and same_origin(self._base_url, target):
             request.setRawHeader(b"X-Api-Key", self._api_key.encode("utf-8"))
         if hasattr(request, "setTransferTimeout"):
             request.setTransferTimeout(max(1, int(timeout_ms)))
@@ -189,8 +202,17 @@ class MoonrakerHttpTransport(QObject):
 
         if method == "POST":
             reply = self._network.post(request, data)
-        else:
+        elif method == "GET":
             reply = self._network.get(request)
+        elif method == "DELETE":
+            # Round-1 C1 / round-2 E1: file deletion is Moonraker's
+            # HTTP DELETE /server/files/{root}/{filename}. The old
+            # else-branch silently downgraded any unknown verb to a
+            # GET — a mis-wired delete would have DOWNLOADED the
+            # file and reported success.
+            reply = self._network.deleteResource(request)
+        else:
+            raise ValueError(f"unsupported HTTP verb {method!r}")
 
         self._request_serial += 1
         request_id = self._request_serial
@@ -222,7 +244,28 @@ class MoonrakerHttpTransport(QObject):
         error: Optional[str] = None
         try:
             if reply.error() != QNetworkReply.NetworkError.NoError:
+                # Round-2 A2/F4: a 4xx/5xx body is still readable
+                # (proven in-container), and Moonraker's own refusal
+                # message lives there — "File currently in use" on a
+                # 403 delete. Surface the server's words: error set,
+                # payload present, so consumers keep the documented
+                # refusal-vs-transport-failure distinction.
                 error = reply.errorString()
+                try:
+                    raw_error = bytes(reply.read(MAX_REPLY_BYTES + 1))
+                    if 0 < len(raw_error) <= MAX_REPLY_BYTES:
+                        decoded_error = json.loads(raw_error.decode("utf-8", errors="replace"))
+                        if isinstance(decoded_error, dict):
+                            payload = decoded_error
+                            if decoded_error.get("error"):
+                                inner = decoded_error.get("error")
+                                error = _moonraker_error_text(inner) if isinstance(inner, dict) else str(inner)
+                            else:
+                                server_words = _moonraker_error_text(decoded_error)
+                                if server_words:
+                                    error = server_words
+                except Exception:
+                    pass
             else:
                 declared = reply.header(QNetworkRequest.KnownHeaders.ContentLengthHeader)
                 if declared is not None and int(declared) > MAX_REPLY_BYTES:
@@ -241,8 +284,14 @@ class MoonrakerHttpTransport(QObject):
                         # distinguish "the printer refused this" (error
                         # set, payload present) from a transport-level
                         # failure (payload None) — the console's verdict
-                        # colours need exactly that distinction.
-                        error = str(decoded.get("error"))
+                        # colours need exactly that distinction. The
+                        # script endpoint answers HTTP 200 with the
+                        # WHOLE error DICT inside "error" (the author's
+                        # live report: "Extrude refused: {'code': 400,
+                        # 'message': ...}" — str(dict) was the error):
+                        # extract the server's words, never the dict.
+                        inner = decoded.get("error")
+                        error = _moonraker_error_text(inner) if isinstance(inner, dict) else str(inner)
                     payload = decoded
                 else:
                     payload = {}

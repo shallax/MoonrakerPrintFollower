@@ -5,13 +5,13 @@ import json
 import os
 import tempfile
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from qt_runtime_support import QT_AVAILABLE, Preferences, ScriptedTransport, runtime
+from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, Preferences, ScriptedTransport, runtime
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
@@ -433,7 +433,7 @@ class QtRuntimeTests(unittest.TestCase):
 
     def test_real_http_transport_json_errors_and_owner_cancellation(self):
         received = []
-        class Handler(BaseHTTPRequestHandler):
+        class Handler(PipeSafeHandler):
             def do_GET(self):
                 received.append(self.headers.get("X-Api-Key"))
                 body = b"[]" if self.path == "/bad" else b'{"result":{"ok":true}}'
@@ -467,6 +467,343 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertTrue(any(e and "non-object" in e for p, e in results))
         self.assertTrue(all(key == "test-key" for key in received))
         cancelled.assert_not_called()
+
+    def test_real_http_thumbnail_fetch_follows_metadata_path(self):
+        # Live-proven: a real Moonraker answers <file>.png with 404 —
+        # the thumbnail lives at the metadata's relative_path under
+        # .thumbs/. The service must fetch THAT path, land a valid PNG
+        # in its session cache, publish a file:// URL, and never fetch
+        # rows whose metadata has no thumbnail.
+        from PyQt6.QtCore import QUrl
+        requests = []
+        png = bytes.fromhex(
+            "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+            "1f15c4890000000d49444154789c636460f85f0f0002850100af47ba920000000049454e44ae426082"
+        )
+        class Handler(PipeSafeHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                body = png if self.path.endswith(".thumbs/test-300x300.png") else b'{"error": {"code": 404, "message": "Not Found"}}'
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            def log_message(self, *_args): pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
+        transport.configure("http://127.0.0.1:" + str(server.server_port), "test-key")
+        self.addCleanup(transport.cancel_all)
+        manager = self.qt.load("FileManager").FileManager(SimpleNamespace(transport=transport))
+        FileRow = self.qt.load("FileManagerPolicy").FileRow
+        manager.request_thumbnails([
+            FileRow(filename="test.gcode", relpath="test.gcode", root="gcodes",
+                    thumb_path=".thumbs/test-300x300.png"),
+            FileRow(filename="plain.gcode", relpath="plain.gcode", root="gcodes"),
+        ])
+        for _ in range(200):
+            entry = manager.thumbnail_payload().get("test.gcode") or {}
+            if entry.get("state") == "ready":
+                break
+            self.qt.events(10)
+        payload = manager.thumbnail_payload()
+        self.assertEqual(payload["test.gcode"]["state"], "ready")
+        with open(QUrl(payload["test.gcode"]["url"]).toLocalFile(), "rb") as handle:
+            self.assertEqual(handle.read(8), b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(payload["plain.gcode"]["state"], "none")
+        self.assertEqual(requests, ["/server/files/gcodes/.thumbs/test-300x300.png"])
+
+    def test_real_http_delete_files_surfaces_the_refusal_words(self):
+        # Snapshot 3: deleting the printing file draws Moonraker's
+        # 403 — the service must keep the row and put the server's
+        # own words in the note (the author's ruling: refusals
+        # surface, never vanish).
+        class Handler(PipeSafeHandler):
+            def do_DELETE(self):
+                body = b'{"error": {"code": 403, "message": "File currently in use"}}'
+                try:
+                    self.send_response(403)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            def log_message(self, *_args): pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
+        transport.configure("http://127.0.0.1:" + str(server.server_port), "test-key")
+        self.addCleanup(transport.cancel_all)
+        manager = self.qt.load("FileManager").FileManager(SimpleNamespace(transport=transport))
+        # Seed the resident row directly — the delete path needs no
+        # walk.
+        FileRow = self.qt.load("FileManagerPolicy").FileRow
+        manager._rows["gcodes/busy.gcode"] = FileRow(
+            filename="busy.gcode", relpath="busy.gcode", root="gcodes")
+        notes = []
+        manager.note.connect(notes.append)
+        manager.delete_files(["busy.gcode"], "")
+        for _ in range(200):
+            if notes:
+                break
+            self.qt.events(10)
+        self.assertEqual(notes, ["Delete refused: File currently in use"])
+        self.assertIsNotNone(manager.row_for("busy.gcode"))
+
+    def test_real_http_upload_posts_the_multipart_to_the_current_directory(self):
+        # Snapshot 3 upload over a real socket: the multipart body
+        # carries the file, the root and the current directory; a
+        # success notes and refreshes.
+        received = []
+        class Handler(PipeSafeHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                received.append((self.path, self.rfile.read(length)))
+                payload = b'{"result": {"item": {"path": "gcodes/prints/bench.gcode"}}}'
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            def log_message(self, *_args): pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
+        transport.configure("http://127.0.0.1:" + str(server.server_port), "test-key")
+        self.addCleanup(transport.cancel_all)
+        manager = self.qt.load("FileManager").FileManager(SimpleNamespace(transport=transport))
+        manager._directory = ["prints"]
+        notes = []
+        progress_events = []
+        finished_events = []
+        manager.note.connect(notes.append)
+        manager.uploadProgress.connect(progress_events.append)
+        manager.uploadFinished.connect(lambda ok, detail: finished_events.append((ok, detail)))
+        directory = tempfile.mkdtemp()
+        source = os.path.join(directory, "bench.gcode")
+        with open(source, "wb") as handle:
+            handle.write(b"; test gcode\n")
+        self.assertTrue(manager.upload_file(source))
+        for _ in range(300):
+            if finished_events:
+                break
+            self.qt.events(10)
+        self.assertEqual(len(received), 1)
+        path, body = received[0]
+        self.assertEqual(path, "/server/files/upload")
+        self.assertIn(b'name="file"; filename="bench.gcode"', body)
+        self.assertIn(b'name="root"', body)
+        self.assertIn(b"gcodes", body)
+        self.assertIn(b'name="path"', body)
+        self.assertIn(b"prints", body)
+        # The popup's feed: progress reached 100 and the verdict is
+        # the success (the author's live request).
+        self.assertEqual(finished_events, [(True, "bench.gcode")])
+        self.assertEqual(max(progress_events), 100)
+        self.assertEqual(notes, ["Uploaded bench.gcode."])
+
+    def test_real_http_delete_verb_key_stripping_and_refusal_bodies(self):
+        # Round-2 E1/F2/F4 against a real socket: the delete must
+        # arrive as HTTP DELETE at the file's own URL (the in-process
+        # fake cannot prove the verb), the key must never ride a
+        # foreign origin, a 403's JSON body must surface as the
+        # refusal message, and unknown verbs must fail loudly.
+        seen = []
+        class Handler(PipeSafeHandler):
+            def do_DELETE(self):
+                seen.append(("DELETE", self.path, self.headers.get("X-Api-Key")))
+                self._ok(b"{}")
+            def do_GET(self):
+                if self.path == "/refused":
+                    self._respond(403, b'{"error": {"message": "File currently in use"}}')
+                else:
+                    seen.append(("GET", self.path, self.headers.get("X-Api-Key")))
+                    self._ok(b"{}")
+            def _ok(self, body):
+                self._respond(200, body)
+            def _respond(self, status, body):
+                try:
+                    self.send_response(status)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            def log_message(self, *_args):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        foreign_server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        foreign_thread = threading.Thread(target=foreign_server.serve_forever, daemon=True)
+        foreign_thread.start()
+        self.addCleanup(foreign_server.server_close)
+        self.addCleanup(foreign_server.shutdown)
+
+        transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
+        base = "http://127.0.0.1:" + str(server.server_port)
+        transport.configure(base, "test-key")
+        self.addCleanup(transport.cancel_all)
+        results = []
+        transport.send_json("fm", "delete", "DELETE", "server/files/gcodes/foo.gcode", lambda p, e: results.append(("delete", p, e)))
+        transport.send_json("fm", "refused", "GET", "/refused", lambda p, e: results.append(("refused", p, e)))
+        transport.send_json("fm", "foreign", "GET",
+            "http://127.0.0.1:" + str(foreign_server.server_port) + "/x",
+            lambda p, e: results.append(("foreign", p, e)))
+        with self.assertRaises(ValueError):
+            transport.send_json("fm", "bogus", "PATCH", "/x", lambda p, e: None)
+        for _ in range(200):
+            if len(results) == 3:
+                break
+            self.qt.events(10)
+        self.assertEqual(len(results), 3)
+        delete_row = next(row for row in seen if row[0] == "DELETE")
+        self.assertEqual(delete_row[1], "/server/files/gcodes/foo.gcode")
+        self.assertEqual(delete_row[2], "test-key")
+        refused = next(row for row in results if row[0] == "refused")
+        self.assertIsNotNone(refused[1], "the refusal body must stay in the payload")
+        self.assertIn("File currently in use", refused[2] or "")
+        foreign_seen = next(row for row in seen if row[0] == "GET" and row[1] == "/x")
+        self.assertIsNone(foreign_seen[2], "the key must not ride a foreign origin")
+        foreign = next(row for row in results if row[0] == "foreign")
+        self.assertIsNotNone(foreign[1])
+
+    def test_real_http_moonraker_400_surfaces_the_tracebacks_words(self):
+        # The author's live report: a cold extrude surfaced a bare
+        # 400 while Moonraker's real words sat in the traceback tail
+        # ({'code', 'message': 'Unknown', 'traceback'}). The error
+        # must read "Extrude below minimum temp", not a status code
+        # or the whole dict — and the script endpoint answers HTTP
+        # 200 with the error DICT inside "error" (the author's
+        # second report: "Extrude refused: {'code': 400, ...}").
+        def body_with(shape):
+            inner = {
+                "code": 400,
+                "message": (
+                    "Traceback (most recent call last):\n"
+                    "  File \"application.py\", line 707, in _process_http_request\n"
+                    "moonraker.utils.exceptions.ServerError: Extrude below minimum temp\n"
+                    "See the 'min_extrude_temp' config option for details\n"
+                ),
+                "traceback": (
+                    "Traceback (most recent call last):\n\n"
+                    "  File \"application.py\", line 707, in _process_http_request\n"
+                    "    raise tornado.web.HTTPError(\n"
+                    "        e.status_code, reason=str(e)) from e\n"
+                    "tornado.web.HTTPError: HTTP 400: Extrude below minimum temp\n"
+                    "See the 'min_extrude_temp' config option for details\n"
+                ),
+            }
+            return json.dumps(inner if shape == "flat" else {"error": inner}).encode()
+        class Handler(PipeSafeHandler):
+            def do_GET(self):
+                status = 200 if self.path == "/rpc" else 400
+                body = body_with("nested" if self.path == "/rpc" else "flat")
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                try:
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            def log_message(self, *_args):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
+        transport.configure("http://127.0.0.1:" + str(server.server_port), "test-key")
+        self.addCleanup(transport.cancel_all)
+        results = []
+        transport.send_json("fm", "cold", "GET", "/cold", lambda p, e: results.append(("flat", p, e)))
+        transport.send_json("fm", "rpc", "GET", "/rpc", lambda p, e: results.append(("nested", p, e)))
+        for _ in range(200):
+            if len(results) == 2:
+                break
+            self.qt.events(10)
+        self.assertEqual(len(results), 2)
+        for kind, payload, error in results:
+            self.assertIsNotNone(payload, "the refusal body must stay in the payload")
+            self.assertEqual(error, "Extrude below minimum temp", kind)
+
+    def test_one_shot_download_streams_a_file_into_the_temp_root(self):
+        # Snapshot 2: the file-manager Download lane — one file, one
+        # stream, into a fresh temp directory, with the content
+        # intact.
+        body = b"G1 X0\nG1 X10\n"
+        class Handler(PipeSafeHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                try:
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            def log_message(self, *_args):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
+        transport.configure("http://127.0.0.1:" + str(server.server_port), "test-key")
+        self.addCleanup(transport.cancel_all)
+        service = self.qt.load("RemoteFileService").RemoteFileService(transport)
+        self.addCleanup(service.close)
+        results = []
+        service.download_once("prints/benchy.gcode", on_ready=lambda path, error: results.append((path, error)))
+        for _ in range(200):
+            if results:
+                break
+            self.qt.events(10)
+        self.assertEqual(len(results), 1)
+        path, error = results[0]
+        self.assertIsNone(error)
+        with open(path, "rb") as handle:
+            self.assertEqual(handle.read(), body)
+
+    def test_moonraker_error_text_covers_every_known_shape(self):
+        # The author's live request: ALL 400-class errors must read
+        # like the cold-extrude one — the server's words, one line,
+        # never a dict, a code or a whole exception. Pure shapes.
+        from plugins.MoonrakerTransport import _moonraker_error_text
+        traceback = ("Traceback (most recent call last):\n\n"
+                     "moonraker.utils.exceptions.ServerError: Move out of range\n"
+                     "See the 'position_min' config option for details\n"
+                     "tornado.web.HTTPError: HTTP 400: Move out of range\n")
+        self.assertEqual(_moonraker_error_text({"message": "Unknown", "traceback": traceback}),
+                         "Move out of range")
+        self.assertEqual(_moonraker_error_text({"message": "File currently in use"}),
+                         "File currently in use")
+        self.assertEqual(_moonraker_error_text({"message": "Unknown"}), "")
+        self.assertEqual(_moonraker_error_text({}), "")
+        # The whole exception in `message` alone: the marker scan
+        # still finds the one line that matters.
+        message_only = ("Traceback (most recent call last):\n"
+                        "ServerError: Extrude below minimum temp\n"
+                        "See the 'min_extrude_temp' config option for details\n")
+        self.assertEqual(_moonraker_error_text({"message": message_only}),
+                         "Extrude below minimum temp")
 
 
     def test_stage_switch_echoes_do_not_detach_the_follower(self):
@@ -733,7 +1070,8 @@ class PreviewMotionTests(unittest.TestCase):
             traced.write(0, 0.55)
             path = os.path.join(directory, "trace.csv")
             self.assertTrue(os.path.exists(path))
-            content = open(path, encoding="utf-8").read()
+            with open(path, encoding="utf-8") as handle:
+                content = handle.read()
             # The header is written on rollover; observation rows always are.
             self.assertIn(",obs,0,0.500000,", content)
 
@@ -982,20 +1320,59 @@ class ToolheadControllerTests(unittest.TestCase):
         self.controller.jog("z", -1)
         self.controller.jog("z", -1)
         self.assertEqual(self.controller._pending, ())
-        # On the maximum side, rapid taps merge and the tail re-clamps so
-        # the executed move lands exactly on the boundary.
+        # On the maximum side the FIRST tap clamps to the boundary,
+        # and the client-side Z estimate (the author's live report:
+        # stale-poll clamping let rapid taps overshoot) makes the
+        # second tap a no-op.
         self.data.snapshot.core["motion_report"]["live_position"][2] = 195.0
         self.data.changed.emit()
         self.controller.jog("z", 1)
+        self.assertIn("G91\nG1 Z5 F600\nG90", self.scripts())
         self.controller.jog("z", 1)
-        self.assertEqual(self.controller._pending[-1].distance, 5.0)
-        self.assertEqual(self.controller._pending[-1].script, "G91\nG1 Z5 F600\nG90")
+        self.assertEqual(len(self.scripts()), 1)  # at the boundary: no-op
+        self.assertEqual(self.controller._z_estimate, 200.0)
         self.commands.complete()
-        # At the boundary the tap becomes a no-op.
+        # A fresh poll at the boundary keeps the tap a no-op.
         self.data.snapshot.core["motion_report"]["live_position"][2] = 200.0
         self.data.changed.emit()
         self.controller.jog("z", 1)
         self.assertEqual(self.controller._pending, ())
+
+    def test_z_floor_is_zero_even_with_a_negative_configured_minimum(self):
+        # The author's live ruling: the jog pad must never send the
+        # head below 0.00 Z — whatever position_min says (many
+        # printers configure a negative Z minimum for probe travel).
+        self.data.set_state("paused")
+        self.controller.set_distance(1)
+        self.data.snapshot.auxiliary["toolhead"]["axis_minimum"] = [0, 0, -5]
+        self.data.snapshot.core["motion_report"]["live_position"][2] = 0.1
+        self.data.changed.emit()
+        self.controller.jog("z", -1)
+        self.assertEqual(self.scripts(), [])
+        self.assertEqual(self.controller._pending, ())
+
+    def test_rejected_z_nudge_reports_and_notes_once_per_burst(self):
+        # The author's live request: a rejected nudge must explain
+        # itself in the jog status AND the console — the note once
+        # per burst, so a flurry of taps cannot flood the feed.
+        self.data.set_state("paused")
+        self.controller.set_distance(1)
+        notes = []
+        self.controller.rejectedNote.connect(notes.append)
+        self.data.snapshot.core["motion_report"]["live_position"][2] = 0.1
+        self.data.changed.emit()
+        self.controller.jog("z", -1)
+        self.assertEqual(self.controller._status,
+                         "Z nudge rejected — the head would go below 0.00 Z")
+        self.assertEqual(len(notes), 1)
+        self.controller.jog("z", -1)  # same burst: no second note
+        self.assertEqual(len(notes), 1)
+        # An accepted move re-arms the note for the next burst.
+        self.controller.jog("z", 1)
+        self.data.snapshot.core["motion_report"]["live_position"][2] = 0.1
+        self.data.changed.emit()
+        self.controller.jog("z", -1)
+        self.assertEqual(len(notes), 2)
 
     def test_center_and_z0_moves(self):
         self.data.set_state("paused")

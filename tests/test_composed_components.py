@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 import json
 import os
 import pathlib
@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from types import SimpleNamespace
 
-from qt_runtime_support import QT_AVAILABLE, ScriptedTransport, runtime
+from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, ScriptedTransport, runtime
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
@@ -54,6 +54,19 @@ class ComposedComponentTests(unittest.TestCase):
         for name in ("_remote_job_service", "_preview_follower_service", "_simulation_view", "_apply_path_progress", "_config_store"):
             self.assertFalse(hasattr(self.follower, name), name)
         self.assertFalse(any("Mixin" in cls.__name__ for cls in type(self.follower).__mro__))
+
+    def test_thumbnail_publishes_coalesce_onto_one_flush(self):
+        # A burst of landings repaints the QML once, not once per
+        # callback (the landing storm stalled scrolling).
+        model = self.monitor()
+        count = []
+        model.fileManagerThumbsChanged.connect(lambda: count.append(1))
+        for _ in range(3):
+            model._file_manager.thumbsChanged.emit()
+        self.qt.events(10)
+        self.assertEqual(count, [])
+        self.qt.events(200)
+        self.assertEqual(count, [1])
 
     def test_monitor_and_preview_consume_one_physical_observation(self):
         model = self.monitor()
@@ -317,14 +330,17 @@ class ComposedComponentTests(unittest.TestCase):
 
     def test_file_backed_multipart_upload_and_terminal_ordering(self):
         received = []
-        class Handler(BaseHTTPRequestHandler):
+        class Handler(PipeSafeHandler):
             def do_POST(self):
                 received.append(self.rfile.read(int(self.headers["Content-Length"])))
                 body = b'{"result":{"item":{"path":"part.gcode"}}}'
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                try:
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
             def log_message(self, *_args): pass
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -360,7 +376,7 @@ class ComposedComponentTests(unittest.TestCase):
         content = (pathlib.Path(__file__).parent / "fixtures" / "gcode" / "cura.gcode").read_bytes()
         status = self.status(layer=2)
         status["virtual_sdcard"]["file_size"] = len(content)
-        class Handler(BaseHTTPRequestHandler):
+        class Handler(PipeSafeHandler):
             def do_GET(self):
                 if self.path.startswith("/server/files/gcodes/"):
                     body = content
@@ -418,12 +434,308 @@ class ComposedComponentTests(unittest.TestCase):
         self.follower.client.stop()
         self.assertFalse(self.follower.bed_mesh.snapshot)
 
+    def test_file_manager_paging_with_resident_data(self):
+        # The author's live report: the page carousel stopped. This
+        # exercises the REAL model end to end — walk, publish, page
+        # slice — with 30 resident files.
+        model = self.monitor()
+        model.openFileManager()
+        for request in reversed(self.transport.requests):
+            if "path=gcodes&" in request.path:
+                request.callback({"result": {
+                    "files": [{"filename": f"f{i:02d}.gcode", "modified": 10.0, "size": 100}
+                              for i in range(30)],
+                    "dirs": [],
+                    "disk_usage": {"total": 800, "used": 600, "free": 200},
+                }}, None)
+                break
+        self.qt.events()
+
+        def rows():
+            value = model.fileManagerRows
+            return value.value() if hasattr(value, "value") else list(value)
+        self.assertEqual(len(rows()), 25)
+        self.assertEqual(rows()[0]["name"], "f00.gcode")
+        # No print_start_time in the metadata means the file has
+        # genuinely never printed — the status says so even while
+        # the history window is only partially loaded (the author's
+        # live ruling).
+        self.assertEqual(rows()[0]["status"], "Never printed")
+        self.assertEqual(model.fileManagerPageCount, 2)
+        model.setFilePage(2)
+        self.assertEqual(model.fileManagerPageIndex, 2)
+        self.assertEqual(len(rows()), 5)
+        self.assertEqual(rows()[0]["name"], "f25.gcode")
+
+    def test_file_manager_print_confirmation_flow(self):
+        # Snapshot 2: the confirmation carries the row's payload and
+        # the printer's name; confirming POSTs the root-exclusive
+        # print/start; the print_stats transition is the success (the
+        # POST reply is never it — round-2 D4).
+        model = self.monitor()
+        model.openFileManager()
+        for request in reversed(self.transport.requests):
+            if "path=gcodes&" in request.path:
+                request.callback({"result": {
+                    "files": [{"filename": "benchy.gcode", "modified": 10.0, "size": 100,
+                               "estimated_time": 6120.0, "filament_total": 12340.0}],
+                    "dirs": [], "disk_usage": {"total": 800, "used": 600, "free": 200},
+                }}, None)
+                break
+        self.qt.events()
+        model.fileRequestPrint("benchy.gcode")
+        confirm = model.filePrintConfirm
+        if hasattr(confirm, "value"):
+            confirm = confirm.value()
+        self.assertEqual(confirm["name"], "benchy.gcode")
+        self.assertTrue(confirm["printerName"])
+        # The fixture's mock carries no server state and no homing:
+        # the readiness line must say so (the author's live report —
+        # an unhomed printer failed silently).
+        self.assertIn("readyText", confirm)
+        self.assertFalse(confirm["homed"])
+        self.assertTrue(confirm["readyText"])
+        model.fileConfirmPrint()
+        self.assertEqual(model.filePrintConfirm, "")
+        posts = [r for r in self.transport.requests if "print/start" in r.path]
+        self.assertEqual(len(posts), 1)
+        # The composed fixture's binding carries a base URL: the full
+        # form (the service test pins the relative variant).
+        self.assertEqual(posts[0].path, "http://printer-a/printer/print/start?filename=benchy.gcode")
+        # The watchdog: a start that never transitions explains
+        # itself in the console (the author's live report — an
+        # unhomed printer failed with no indication).
+        module = self.qt.load("MoonrakerMonitorModel")
+        with patch.object(module.MoonrakerMonitorModel, "FILE_PRINT_START_TIMEOUT_S", 0.0):
+            model._publish()
+        self.assertIsNone(model._file_manager.print_attempt)
+        lines = [entry["text"] for entry in model._console.values["consoleLines"]]
+        self.assertTrue(any("Print start failed" in line for line in lines))
+        self.assertIn("Print start failed", model.actionStatus)
+        # The awaited transition clears on the print_stats filename
+        # (round-2 D4: the POST reply is never the success).
+        model.fileRequestPrint("benchy.gcode")
+        model.fileConfirmPrint()
+        self.assertIsNotNone(model._file_manager.print_attempt)
+        # The filename match alone is NOT the success: the print must
+        # make progress (the author's live report — a frozen start
+        # stayed "active").
+        self.deliver(self.status(filename="benchy.gcode", state="printing", position=40))
+        self.qt.events()
+        self.assertIsNotNone(model._file_manager.print_attempt)
+        self.deliver(self.status(filename="benchy.gcode", state="printing", position=80))
+        self.qt.events()
+        self.assertIsNone(model._file_manager.print_attempt)
+
+    def test_file_request_print_pulls_the_rows_thumbnail(self):
+        # The confirmation's large thumbnail (the author's live
+        # request): the page-driven cache covers visible rows only,
+        # so opening the dialog for an OFF-PAGE row (the Recents
+        # case) must fetch that row's thumbnail explicitly.
+        model = self.monitor()
+        model.openFileManager()
+        for request in reversed(self.transport.requests):
+            if "path=gcodes&" in request.path:
+                files = [{"filename": f"f{i:02d}.gcode", "modified": 10.0, "size": 100}
+                         for i in range(30)]
+                # Oldest sorts last: page 2, outside the page cache.
+                files.append({"filename": "benchy.gcode", "modified": 1.0, "size": 100,
+                              "thumbnails": [{"width": 300, "height": 300,
+                                              "relative_path": ".thumbs/benchy-300x300.png"}]})
+                request.callback({"result": {
+                    "files": files, "dirs": [],
+                    "disk_usage": {"total": 800, "used": 600, "free": 200},
+                }}, None)
+                break
+        self.qt.events()
+        with patch.object(model._file_manager, "_fetch_thumb") as fetch:
+            model.fileRequestPrint("benchy.gcode")
+            fetch.assert_called_once()
+            # The dialog asks for the LARGE variant (the grid cells
+            # fetch the small one).
+            self.assertEqual(fetch.call_args.args, (
+                "benchy.gcode", "gcodes", ".thumbs/benchy-300x300.png", True))
+
+    def test_file_delete_and_rename_round_trip_through_the_model(self):
+        # Snapshot 3: selection → delete confirmation → DELETE at the
+        # root-inclusive endpoint; rename request → live collision →
+        # overwrite confirm → move with both parts in the body.
+        model = self.monitor()
+        model.openFileManager()
+        for request in reversed(self.transport.requests):
+            if "path=gcodes&" in request.path:
+                request.callback({"result": {
+                    "files": [{"filename": "a.gcode", "modified": 10.0, "size": 100},
+                              {"filename": "b.gcode", "modified": 9.0, "size": 100}],
+                    "dirs": [], "disk_usage": {"total": 800, "used": 600, "free": 200},
+                }}, None)
+                break
+        self.qt.events()
+        model.toggleFileSelection("a.gcode")
+        model.fileRequestDelete()
+        confirm = model.fileDeleteConfirm
+        if hasattr(confirm, "value"):
+            confirm = confirm.value()
+        self.assertEqual(confirm["count"], 1)
+        self.assertEqual(confirm["first"], "a.gcode")
+        self.assertEqual(confirm["blocked"], 0)
+        model.fileConfirmDelete()
+        deletes = [r for r in self.transport.requests if r.method == "DELETE"]
+        self.assertEqual(len(deletes), 1)
+        self.assertEqual(deletes[0].path, "http://printer-a/server/files/gcodes/a.gcode")
+        model.fileRequestRename("b.gcode")
+        model.filePreviewRename("a.gcode")  # collides with the resident row
+        self.assertTrue(model.fileRenameConflict)
+        model.fileConfirmRename()
+        moves = [r for r in self.transport.requests if "server/files/move" in r.path]
+        self.assertEqual(len(moves), 1)
+        self.assertEqual(moves[0].options["body"],
+                         {"source": "gcodes/b.gcode", "dest": "gcodes/a.gcode"})
+
+    def test_file_upload_collision_asks_before_overwriting(self):
+        model = self.monitor()
+        model.openFileManager()
+        for request in reversed(self.transport.requests):
+            if "path=gcodes&" in request.path:
+                request.callback({"result": {
+                    "files": [{"filename": "a.gcode", "modified": 10.0, "size": 100}],
+                    "dirs": [], "disk_usage": {"total": 800, "used": 600, "free": 200},
+                }}, None)
+                break
+        self.qt.events()
+        model.fileUpload("/tmp/a.gcode")
+        confirm = model.fileUploadConfirm
+        if hasattr(confirm, "value"):
+            confirm = confirm.value()
+        self.assertEqual(confirm["filename"], "a.gcode")
+        self.assertEqual(confirm["path"], "/tmp/a.gcode")
+        model.fileConfirmUpload()
+        self.assertEqual(model.fileUploadConfirm, "")
+        # The overwrite upload ran; under the scripted transport (no
+        # raw network) it refuses gracefully — the real-socket test
+        # proves the multipart itself.
+        lines = [entry["text"] for entry in model._console.values["consoleLines"]]
+        self.assertTrue(any("Upload refused" in line for line in lines))
+
+    def test_file_upload_progress_flow_through_the_popup(self):
+        model = self.monitor()
+        model.openFileManager()
+        for request in reversed(self.transport.requests):
+            if "path=gcodes&" in request.path:
+                request.callback({"result": {
+                    "files": [], "dirs": [],
+                    "disk_usage": {"total": 800, "used": 600, "free": 200},
+                }}, None)
+                break
+        self.qt.events()
+        with patch.object(model._file_manager, "upload_file", return_value=True):
+            model.fileUpload("/tmp/bench.gcode")
+        progress = model.fileUploadProgress
+        if hasattr(progress, "value"):
+            progress = progress.value()
+        self.assertEqual(progress["name"], "bench.gcode")
+        self.assertEqual(progress["state"], "uploading")
+        self.assertEqual(progress["percent"], 0)
+        # The service signals drive the transitions (the scripted
+        # transport cannot run the multipart — emit as the service
+        # would; the real-socket test proves the signals' source).
+        model._file_manager.uploadProgress.emit(42)
+        model._file_manager.uploadFinished.emit(True, "bench.gcode")
+        progress = model.fileUploadProgress
+        if hasattr(progress, "value"):
+            progress = progress.value()
+        self.assertEqual(progress["state"], "done")
+        self.assertEqual(progress["percent"], 100)
+        model.fileUploadDismiss()
+        self.assertEqual(model.fileUploadProgress, "")
+
+    def test_file_non_gcode_upload_refuses_without_a_prompt(self):
+        model = self.monitor()
+        model.openFileManager()
+        for request in reversed(self.transport.requests):
+            if "path=gcodes&" in request.path:
+                request.callback({"result": {
+                    "files": [], "dirs": [],
+                    "disk_usage": {"total": 800, "used": 600, "free": 200},
+                }}, None)
+                break
+        self.qt.events()
+        model.fileUpload("/tmp/thing.stl")
+        self.assertEqual(model.fileUploadConfirm, "")
+        lines = [entry["text"] for entry in model._console.values["consoleLines"]]
+        self.assertTrue(any("only gcode files" in line for line in lines))
+
+    def test_file_manager_open_flag_round_trips_through_the_model(self):
+        # The author's live report: the File-manager button stopped
+        # opening the popup once the flag moved into the model. The
+        # flag must publish, read back, AND NOTIFY — the QML binding
+        # re-evaluates on the signal, and a Python-only read passes
+        # even when the notify never fires (the second report's
+        # exact hole: the flag sat outside the signal group).
+        model = self.monitor()
+        self.assertFalse(model.fileManagerOpen)
+        fired = []
+        model.fileManagerChanged.connect(lambda: fired.append(True))
+        model.setFileManagerOpen(True)
+        self.assertTrue(model.fileManagerOpen)
+        self.assertEqual(fired, [True])
+        # A full publish rebuild must not lose the flag.
+        model._publish()
+        self.assertTrue(model.fileManagerOpen)
+        model.setFileManagerOpen(False)
+        self.assertFalse(model.fileManagerOpen)
+        self.assertEqual(fired, [True, True])
+
+    def test_file_manager_view_mutations_republish_immediately(self):
+        # The author's live report: ticking a filter changed nothing
+        # and the page carousel advanced one step then stopped — the
+        # slots mutated the view dataclass without re-publishing, so
+        # nothing re-rendered until an unrelated signal did. Every
+        # view mutation must publish on its own.
+        model = self.monitor()
+        model.setFileSort("size")
+        self.assertEqual(model.fileManagerSortColumn, "size")
+        model.setFileSearch("benchy")
+        self.assertEqual(model.fileManagerSearch, "benchy")
+        model.setFilePageSize("all")
+        self.assertEqual(model.fileManagerPageSize, "all")
+        # No walk data in this fixture: the page index clamps to 1
+        # (never an empty page), but the mutation must still publish.
+        model.setFilePage(2)
+        self.assertEqual(model.fileManagerPageIndex, 1)
+        model.setFileFilter("slicer", ["Cura 5.9"])
+        self.assertEqual(model.fileManagerFilters, {"slicer": ["Cura 5.9"]})
+        self.assertEqual(model.fileManagerFilterCounts, {"slicer": 1})
+        # Single-value categories publish as one-element lists (the
+        # QML's checked bindings) but filter as scalars.
+        model.setFileFilter("modified", ["7d"])
+        self.assertEqual(model.fileManagerFilters, {"slicer": ["Cura 5.9"], "modified": ["7d"]})
+        self.assertEqual(model.fileManagerFilterCounts, {"slicer": 1, "modified": 1})
+        model.setFileFilter("modified", [])
+        self.assertEqual(model.fileManagerFilters, {"slicer": ["Cura 5.9"]})
+        model.clearFileFilters()
+        self.assertEqual(model.fileManagerFilters, {})
+
+    def test_leave_monitor_stage_chooses_preview_or_prepare(self):
+        # The author's live request: Esc on the Monitor page goes to
+        # the Preview stage when anything is sliced, Prepare
+        # otherwise.
+        output = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(self.app, self.follower)
+        output.start()
+        self.addCleanup(output.stop)
+        device = output._current
+        device.leaveMonitorStage()
+        self.assertEqual(self.app.controller.stage, "PrepareStage")
+        device._has_slice = lambda: True
+        device.leaveMonitorStage()
+        self.assertEqual(self.app.controller.stage, "PreviewStage")
+
     def test_qml_public_api_is_present_without_model_subclasses(self):
         model = self.monitor()
-        properties = "monitorState monitorConnected monitorFilename monitorProgress monitorLayer monitorElapsed monitorEta monitorFinish monitorSpeed monitorFlow monitorPosition monitorMessage printActive canPausePrint canResumePrint canCancelPrint actionBusy actionStatus temperatureItems fanItems filamentSensorItems excludeObjectItems powerDevices klippyState moonrakerVersion klipperVersion hostLoad memoryAvailable cpuTemperature mcuSummary mcuItems webcamNames activeWebcamIndex cameraName cameraRotation cameraFlipHorizontal cameraFlipVertical monitorLayerHeight macroNames hasQuadGantryLevel hasBedMesh canRunSetup temperaturePresetNames temperaturePresetItems canApplyTemperaturePreset speedFactorPercent flowFactorPercent zOffset zOffsetText fanControlItems ledItems pwmOutputItems saveConfigPending saveConfigSummary canSaveConfig emergencyStopClicks bedMeshAvailable bedMeshProfile bedMeshProfileNames bedMeshRows bedMeshColumns bedMeshValues bedMeshMinimum bedMeshMaximum bedMeshRange bedMeshXMin bedMeshXMax bedMeshYMin bedMeshYMax bedMeshRangeText bedMeshPreviewVisible jogEnabled jogDistance extrudeDistance extrudeSpeed homedAxes positionMode jogStatus controlsLocked controlsCollapsed infoCollapsed statusCollapsed cameraRefreshNonce emergencyHoldProgress temperatureChart temperatureChartLegend consoleHistory consolePending endstopItems endstopSummary monitorEtaBasis showProbePoints".split()
+        properties = "monitorState monitorConnected monitorFilename monitorProgress monitorLayer monitorElapsed monitorEta monitorFinish monitorSpeed monitorFlow monitorPosition monitorMessage printActive canPausePrint canResumePrint canCancelPrint actionBusy actionStatus temperatureItems fanItems filamentSensorItems excludeObjectItems powerDevices klippyState moonrakerVersion klipperVersion hostLoad memoryAvailable cpuTemperature mcuSummary mcuItems webcamNames activeWebcamIndex cameraName cameraRotation cameraFlipHorizontal cameraFlipVertical monitorLayerHeight macroNames hasQuadGantryLevel hasBedMesh canRunSetup temperaturePresetNames temperaturePresetItems canApplyTemperaturePreset speedFactorPercent flowFactorPercent zOffset zOffsetText fanControlItems ledItems pwmOutputItems saveConfigPending saveConfigSummary canSaveConfig emergencyStopClicks bedMeshAvailable bedMeshProfile bedMeshProfileNames bedMeshRows bedMeshColumns bedMeshValues bedMeshMinimum bedMeshMaximum bedMeshRange bedMeshXMin bedMeshXMax bedMeshYMin bedMeshYMax bedMeshRangeText bedMeshPreviewVisible jogEnabled jogDistance extrudeDistance extrudeSpeed homedAxes positionMode jogStatus controlsLocked controlsCollapsed infoCollapsed statusCollapsed consoleHeight cameraRefreshNonce emergencyHoldProgress temperatureChart temperatureChartLegend consoleHistory consolePending consoleErrorBell endstopItems endstopSummary monitorEtaBasis showProbePoints fileManagerRows fileManagerRecents fileManagerDirectory fileManagerDirectories fileManagerDiskText fileManagerRefreshedAt fileManagerShown fileManagerPage fileManagerPageIndex fileManagerPageCount fileManagerPageSize fileManagerPageSelection fileManagerEmptyKind fileManagerSelected fileManagerSortColumn fileManagerSortAscending fileManagerSearch fileManagerOpen fileManagerFilters filePrintConfirm fileDeleteConfirm fileRenameTarget fileRenameConflict fileUploadConfirm fileUploadProgress fileManagerThumbs fileManagerFilterCounts fileManagerFilterOptions fileManagerHistoryLoaded fileManagerHistoryExhausted fileManagerWalkError".split()
         meta = model.metaObject()
         for name in properties: self.assertGreaterEqual(meta.indexOfProperty(name), 0, name)
-        for name in "pausePrint resumePrint cancelPrint refreshAll refreshWebcams selectWebcam runMacro homeAll runQuadGantryLevel calibrateBedMesh applyTemperaturePreset setSpeedFactor setFlowFactor adjustZOffset clearZOffset setFanSpeed setLedBrightness setLedColor setPwmOutput saveConfig emergencyStopClick emergencyHoldStarted emergencyHoldReleased loadBedMeshProfile clearBedMesh setBedMeshPreviewVisible macroParameterDefinitions jog setJogDistance setExtrudeDistance setExtrudeSpeed home motorsOff centerToolhead zToZero extrude heatersOff firmwareRestart klipperRestart hostRestart setControlsLocked setControlsCollapsed setInfoCollapsed setStatusCollapsed setTemperatureSensorVisible setTemperatureSensorColor setShowTemperatureTargets setShowTemperaturePower sendConsoleCommand clearConsoleHistory improveEta setShowProbePoints".split():
+        for name in "pausePrint resumePrint cancelPrint refreshAll refreshWebcams selectWebcam runMacro homeAll runQuadGantryLevel calibrateBedMesh applyTemperaturePreset setSpeedFactor setFlowFactor adjustZOffset clearZOffset setFanSpeed setLedBrightness setLedColor setPwmOutput saveConfig emergencyStopClick emergencyHoldStarted emergencyHoldReleased loadBedMeshProfile clearBedMesh setBedMeshPreviewVisible macroParameterDefinitions jog setJogDistance setExtrudeDistance setExtrudeSpeed home motorsOff centerToolhead zToZero extrude heatersOff firmwareRestart klipperRestart hostRestart setControlsLocked setControlsCollapsed setInfoCollapsed setStatusCollapsed setConsoleHeight setTemperatureSensorVisible setTemperatureSensorColor setShowTemperatureTargets setShowTemperaturePower sendConsoleCommand clearConsoleHistory improveEta setShowProbePoints openFileManager refreshFileManager fileNavigateTo setFileSearch setFileSort setFileManagerOpen setPositionMode setFilePageSize setFilePage setFileFilter clearFileFilters toggleFileSelection toggleFilePageSelection clearFileSelection fileLoadAllHistory fileScanMetadata fileRequestDelete fileRequestDeleteFile fileRequestDeleteDir fileConfirmDelete fileCancelDelete fileRequestRename fileRequestRenameDir filePreviewRename fileConfirmRename fileCancelRename fileUpload fileConfirmUpload fileCancelUpload fileUploadDismiss fileRequestVisibleThumbnails".split():
             self.assertTrue(any(bytes(meta.method(i).name()).decode() == name for i in range(meta.methodCount())), name)
         self.assertEqual(type(model).__bases__[0].__name__, "PrinterModel")
 

@@ -38,6 +38,8 @@ BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
 POPOVER_QML = (PLUGINS / "MonitorPopOver.qml").read_text()
 TEMP_CHART_QML = (PLUGINS / "TemperatureChart.qml").read_text()
+FILE_MANAGER_QML = (PLUGINS / "FileManager.qml").read_text()
+QMLDIR = (PLUGINS / "qmldir").read_text()
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
 CAPTURE_HARNESS = (ROOT / "tools" / "capture_monitor.py").read_text()
 
@@ -176,10 +178,156 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('sectionIconUrl: Qt.resolvedUrl("Power.svg")', DASHBOARD_QML)
         self.assertIn('text: "Open the Moonraker frontend."', MONITOR_QML)
         self.assertNotIn('text: "Open Moonraker frontend"', MONITOR_QML)
-        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 12)
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 13)
         self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 11)
         self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
+        # The File manager section (Snapshot 0) leads the controls pane
+        # and opens the popup; it uses the plugin glyph, so the
+        # sectionIcon: count is unchanged.
+        self.assertIn('sectionId: "fileManager"', DASHBOARD_QML)
+        self.assertIn('text: "File manager"', DASHBOARD_QML)
+        self.assertIn("fileManagerOpen", DASHBOARD_QML)
+        self.assertIn("FileManager 1.0 FileManager.qml", QMLDIR)
+        # Opening the popup must trigger the walk (the Snapshot 1
+        # live-test regression: the button flipped the flag but
+        # nothing fetched, and the grid sat on "Loading files…").
+        self.assertIn("onOpenChanged", FILE_MANAGER_QML)
+        self.assertIn("openFileManager()", FILE_MANAGER_QML)
+        # The author's live-test rulings: the 250 ms search settle,
+        # the refresh button, the circled search clear, folders as a
+        # strip (never in the metadata list).
+        self.assertIn("interval: 250", FILE_MANAGER_QML)
+        self.assertIn("refreshFileManager()", FILE_MANAGER_QML)
+        self.assertIn('text: "⟳"', FILE_MANAGER_QML)
+        self.assertIn("restoreMode: Binding.RestoreBinding", FILE_MANAGER_QML)
+        self.assertIn("id: searchClear", FILE_MANAGER_QML)
+        self.assertIn("activeDirectories", FILE_MANAGER_QML)
+        self.assertIn('UM.Theme.getIcon("Folder")', FILE_MANAGER_QML)
+        self.assertIn("filterOptionRow", FILE_MANAGER_QML)
+        # Probe-proven engine traps: a Repeater with two bare
+        # children keeps only the last as its delegate, and
+        # Component ids must never be reached through an object
+        # reference (a Loader's sourceComponent silently loads
+        # nothing) — both were the author's live reports.
+        self.assertIn('text: " / "', FILE_MANAGER_QML)
+        # The filter dropdowns (the author's live rulings): radios
+        # for Modified/Print time (single-value model semantics —
+        # the engine's exclusive group only unchecks visually), no
+        # auto-dismiss on selection (Qt menus close on item
+        # activation regardless of closePolicy, so the dropdowns are
+        # Popups — probe-proven), the dropdown below its button, the
+        # faces toggled by visibility (a Loader swap would destroy
+        # the open dropdown), and the up-directory chip in the
+        # folder strip.
+        self.assertIn("setFilterValue", FILE_MANAGER_QML)
+        self.assertIn("modelData.radio", FILE_MANAGER_QML)
+        # The toggle dropdowns close on RELEASE outside (the press
+        # still opens state capture — a press-outside policy closed
+        # before the opener could record it and every dismissal click
+        # re-opened the popup); the dialogs close on Escape only.
+        self.assertIn("closePolicy: Popup.CloseOnEscape | Popup.CloseOnReleaseOutside", FILE_MANAGER_QML)
+        self.assertIn("closePolicy: Popup.CloseOnEscape\n", FILE_MANAGER_QML)
+        self.assertIn("y: parent.height", FILE_MANAGER_QML)
+        self.assertIn("visible: !root.filterActive(\"slicer\")", FILE_MANAGER_QML)
+        self.assertIn('text: ".."', FILE_MANAGER_QML)
+        self.assertIn('text: "<root>"', FILE_MANAGER_QML)
+        # Snapshot 2 live refinements: double-click-to-print, the
+        # themed confirmation background.
+        self.assertIn("onDoubleClicked", FILE_MANAGER_QML)
+        self.assertIn("fileRequestPrint(modelData.name)", FILE_MANAGER_QML)  # recents print
+        self.assertIn("fileRequestPrint(modelData.relpath)", FILE_MANAGER_QML)
+        self.assertIn('id: printConfirmDialog', FILE_MANAGER_QML)
+        self.assertIn('background: Rectangle', FILE_MANAGER_QML)
+        # The confirmation's large thumbnail and the metadata-scan
+        # gate (the author's live reports: the dialog's thumbnail
+        # request, and a scan entry offered where it cannot work).
+        self.assertIn('id: confirmThumb', FILE_MANAGER_QML)
+        # The dialog reads the LARGE variant (the list cells use the
+        # small one) and the thumbnail Images decode off the UI
+        # thread.
+        self.assertIn("thumbUrlLarge(root.confirmRelpath())", FILE_MANAGER_QML)
+        self.assertIn("asynchronous: true", FILE_MANAGER_QML)
+        # The dialogs own their Esc: a popup-held focus swallows the
+        # key into the overlay (live-proven), so the content FocusScope
+        # answers it.
+        self.assertIn("focus: false", FILE_MANAGER_QML)
+        self.assertIn("Keys.onEscapePressed: printConfirmDialog.close()", FILE_MANAGER_QML)
+        self.assertIn("onOpened: printConfirmDialogFocus.forceActiveFocus()", FILE_MANAGER_QML)
+        # The title floors hold from the first frame (static seed) —
+        # headers never elide, wrap or overflow.
+        self.assertIn('"thumb": 70', FILE_MANAGER_QML)
+        # The content cells elide through a width cap (an uncapped
+        # label keeps its implicit width and overflows).
+        self.assertIn('width: Math.min(implicitWidth, parent.width - (modelData[0] === "Status"', FILE_MANAGER_QML)
+        self.assertIn("root.rowNeedsMetadata(modelData)", FILE_MANAGER_QML)
+        # Snapshot 3 mutations: the delete confirmation, the rename
+        # dialog with its live collision line, and the wiring.
+        self.assertIn('id: deleteConfirmDialog', FILE_MANAGER_QML)
+        self.assertIn('id: renameDialog', FILE_MANAGER_QML)
+        self.assertIn("fileRequestDelete()", FILE_MANAGER_QML)
+        self.assertIn("fileRequestDeleteFile(modelData.relpath)", FILE_MANAGER_QML)
+        self.assertIn("fileRequestRename(modelData.relpath)", FILE_MANAGER_QML)
+        # The dialogs are modal over the manager and the rename field
+        # pre-selects the stem (the author's live reports).
+        self.assertEqual(FILE_MANAGER_QML.count("modal: true"), 5)
+        self.assertIn("renameField.select(0, root.renameStemLength(target.name))", FILE_MANAGER_QML)
+        # The helper the open handler calls must be DEFINED — a
+        # ReferenceError inside onOpened only fires on open, which
+        # the engine gate (closed popovers) cannot see; the missing
+        # helper was the author's live "no pre-populated name" report.
+        self.assertIn("function renameTarget()", FILE_MANAGER_QML)
+        self.assertIn('palette.highlight: UM.Theme.getColor("primary")', FILE_MANAGER_QML)
+        # The field takes focus on open and Return confirms (the
+        # author's live requests).
+        self.assertIn("renameField.forceActiveFocus()", FILE_MANAGER_QML)
+        self.assertIn("Keys.onReturnPressed: root.confirmRename()", FILE_MANAGER_QML)
+        # Tab-focus cues: the field's outline flips blue on focus and
+        # the six popup buttons take tab focus (the author's live
+        # report — no cue while tabbing).
+        self.assertIn('border.color: renameField.activeFocus ? UM.Theme.getColor("primary")', FILE_MANAGER_QML)
+        self.assertEqual(FILE_MANAGER_QML.count("focusPolicy: Qt.StrongFocus"), 9)
+        # Snapshot 3 finish: the upload affordance, the local-file
+        # picker, and the folder context menu.
+        self.assertIn('text: "Upload file…"', FILE_MANAGER_QML)
+        self.assertIn('id: filePicker', FILE_MANAGER_QML)
+        self.assertIn('id: dirActionsMenu', FILE_MANAGER_QML)
+        self.assertIn("fileRequestRenameDir(dirActionsMenu.dirPath)", FILE_MANAGER_QML)
+        self.assertIn("fileRequestDeleteDir(dirActionsMenu.dirPath)", FILE_MANAGER_QML)
+        self.assertIn('id: uploadProgressDialog', FILE_MANAGER_QML)
+        self.assertIn("root.uploadProgressState() === \"uploading\"", FILE_MANAGER_QML)
+        # The recents strip: a scrolling 50, no dismissal glyph, and
+        # the strip's own thumbnails (the author's live requests).
+        self.assertIn('id: recentsScroller', FILE_MANAGER_QML)
+        self.assertIn('id: recentsThumb', FILE_MANAGER_QML)
+        self.assertNotIn('fileHideRecent', FILE_MANAGER_QML)
+        self.assertNotIn('text: "×"', FILE_MANAGER_QML)
+        # The console grab bar hides under the auto-collapse width
+        # (the author's live request).
+        self.assertIn("visible: !consolePanel.tooNarrow", MONITOR_QML)
+        # Esc on the Monitor page leaves the stage (the author's
+        # live request): Preview when sliced, Prepare otherwise. The
+        # popover and chart close on the same key first.
+        self.assertIn("leaveMonitorStage", MONITOR_QML)
+        # The console error bell (the author's live request): a red
+        # bell beside the Console header while collapsed until
+        # expanded.
+        self.assertIn("consoleErrorBell", MONITOR_QML)
+        self.assertIn('Qt.resolvedUrl("Bell.svg")', MONITOR_QML)
+        self.assertIn("consoleErrorBell", MONITOR_MODEL)
+        # The extrude distance/speed rows keep their selection
+        # highlighted (the author's live report).
+        self.assertIn("extrudeDistance === 5", DASHBOARD_QML)
+        self.assertIn("extrudeSpeed === 1500", DASHBOARD_QML)
+        # The abs/rel toggle (the author's live request) and the
+        # dropped 15 mm distance button.
+        self.assertIn("setPositionMode", DASHBOARD_QML)
+        self.assertNotIn('"15"', DASHBOARD_QML)
+        # The mode text is the toggle control (the author's live
+        # ruling) and the Move distance combo restores the persisted
+        # selection.
+        self.assertIn('text: " moves"', DASHBOARD_QML)
+        self.assertIn("jogPresets.indexOf", DASHBOARD_QML)
         # Filament state is colour-coded: green detected, orange runout.
         self.assertIn('"#43a047"', MONITOR_QML)
         self.assertIn('"#fb8c00"', MONITOR_QML)
@@ -227,7 +375,11 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn("bedMeshPanelOpen", MONITOR_QML)
         self.assertNotIn("chartPanelOpen", MONITOR_QML)
         self.assertIn("id: outsideClickLayer", MONITOR_QML)
-        self.assertIn("Keys.onEscapePressed", MONITOR_QML)
+        # Esc closes the popovers through the same window-level
+        # Shortcut that leaves the stage (the Keys handler died with
+        # focus — the author's live report).
+        self.assertIn('sequence: "Esc"', MONITOR_QML)
+        self.assertIn("leaveMonitorStage", MONITOR_QML)
         # The legend binds to the legend property (notifies only on real
         # changes, so delegates are never rebuilt at the 1 Hz sample
         # cadence) and toggles on user intent only — re-bound checkboxes
@@ -606,7 +758,13 @@ class MonitorModelContractTests(unittest.TestCase):
     def test_camera_identity_and_selection_are_typed_and_sized(self):
         self.assertIn("def identity(camera", TYPED)
         self.assertIn("camera_selected", TYPED)
+        # The camera bar's final shape (the author's ruling): the
+        # label sits permanently ABOVE the dropdown, centred, no
+        # colon — one label, no conditional layouts, nothing to
+        # overlap the pane at any width.
         self.assertIn("Layout.preferredWidth: 180 * screenScaleFactor", MONITOR_QML)
+        self.assertIn("Layout.minimumWidth: 60 * screenScaleFactor", MONITOR_QML)
+        self.assertEqual(MONITOR_QML.count('text: "Camera"'), 1)
 
     def test_camera_qml_uses_the_activated_signal_index_not_bound_current_index(self):
         self.assertIn("onActivated: function (index)", MONITOR_QML)
@@ -985,7 +1143,13 @@ class MonitorQtTests(unittest.TestCase):
             self.qt.events(10)
             return scripts[-1].options["body"]
         self.assertEqual(next_script(model.jog, "x", 1), {"script": "G91\nG1 X10 F3000\nG90"})
-        self.assertEqual(next_script(model.jog, "z", -1), {"script": "G91\nG1 Z-10 F600\nG90"})
+        # The Z jog from 0.4 by -10 crosses zero with no configured
+        # minimum: forbidden outright (the author's live report —
+        # the head must never microstep below 0.00 Z).
+        before = len(self.scripts())
+        model.jog("z", -1)
+        self.qt.events(10)
+        self.assertEqual(len(self.scripts()), before)
         self.assertEqual(next_script(model.home, "y"), {"script": "G28 Y"})
         self.assertEqual(next_script(model.home, ""), {"script": "G28"})
         self.assertEqual(next_script(model.motorsOff), {"script": "M18"})
@@ -1155,6 +1319,103 @@ class MonitorQtTests(unittest.TestCase):
         self.qt.events(100)
         self.assertEqual(sum(r.channel == "emergency-stop" for r in self.transport.requests), 1)
 
+    def test_emergency_stop_during_a_print_releases_the_print_guards(self):
+        # The author's live report: an e-stop mid-print left the
+        # "disabled during print" guards up and the printer
+        # unrecoverable. The stop ASSUMES the print was cancelled:
+        # the snapshot-derived guards release immediately, and the
+        # snapshot's real state supersedes the assumption when it
+        # lands.
+        model = self.monitor()
+        self.deliver_state("printing")
+        self.assertTrue(model.printActive)
+        self.assertFalse(model.jogEnabled)
+        model._commands._clicks = 2
+        model._commands._hold_timer.setInterval(30)
+        model.emergencyHoldStarted()
+        self.qt.events(100)
+        estops = [r for r in self.transport.requests if "emergency_stop" in r.path]
+        estops[-1].callback({}, None)
+        self.qt.events(10)
+        # The snapshot still says printing — the ASSUMPTION releases
+        # the guards. (The automatic reconnect lands on its own 1.5 s
+        # delay, outside this window — its own test below.)
+        self.assertFalse(model.printActive)
+        self.assertTrue(model.jogEnabled)
+        self.assertFalse(model.canPausePrint)
+        # The printer's real state supersedes the assumption (the
+        # client-level flag clears when the observation lands).
+        self.deliver_state("standby")
+        self.assertFalse(self.follower.client._assume_print_stopped)
+        self.assertFalse(model.printActive)
+
+    def test_emergency_stop_reconnects_once_automatically(self):
+        # The author's ruling (2026-09-10, live-proven on their
+        # printer): after the stop the host refuses commands until
+        # the connection is cycled — the plugin cycles the client
+        # once (stop + start = two generation bumps) and the monitor
+        # comes back armed, reading a fresh status.
+        model = self.monitor()
+        self.deliver_state("printing")
+        self.qt.events(10)
+        generation_before = self.follower.client._generation
+        commands_module = self.qt.load("MonitorCommands")
+        with patch.object(commands_module.MonitorCommands, "RECONNECT_DELAY_MS", 0):
+            model._commands._clicks = 2
+            model._commands._hold_timer.setInterval(30)
+            model.emergencyHoldStarted()
+            self.qt.events(100)
+        self.assertEqual(self.follower.client._generation, generation_before + 2)
+        self.assertTrue(model._data.active)
+        self.deliver_state("standby")
+        self.qt.events(10)
+        self.assertTrue(model.jogEnabled)
+
+    def test_emergency_stop_ignores_the_pre_stop_command_reply(self):
+        # The author's live request: after the stop the plugin
+        # assumes the print was cancelled — the in-flight command's
+        # terminal reply must not overwrite "Emergency stop issued".
+        model = self.monitor()
+        self.deliver_state("standby")
+        model._controls._macros = {"TEST_MACRO": "macro-name"}
+        model.runMacro("TEST_MACRO", "")
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)
+        model._commands._clicks = 2
+        model._commands._hold_timer.setInterval(30)
+        model.emergencyHoldStarted()
+        self.qt.events(100)
+        estops = [r for r in self.transport.requests if "emergency_stop" in r.path]
+        self.assertEqual(len(estops), 1)
+        estops[-1].callback({}, None)
+        self.qt.events(10)
+        self.assertIn("Emergency stop", model.actionStatus)
+        # The pre-stop command's reply lands late: it must be ignored.
+        scripts[0].callback({}, None)
+        self.qt.events(10)
+        self.assertIn("Emergency stop", model.actionStatus)
+        self.assertNotIn("TEST_MACRO", model.actionStatus)
+
+    def test_rapid_z_nudges_cannot_walk_the_head_below_zero(self):
+        # The author's live report: nudge taps outran the poll, each
+        # clamped against the STALE position, and the queue walked
+        # the head below 0.00 Z. The client-side estimate advances
+        # per accepted move: four 0.1 nudges from 0.4 land at zero;
+        # the fifth is forbidden outright.
+        model = self.monitor()
+        self.deliver_state("standby")  # live_position z = 0.4
+        model.setJogDistance(0.1)
+        for _ in range(5):
+            model.jog("z", -1)
+        self.qt.events(10)
+        # Four nudges are accepted (0.4 → 0.0); the fifth is
+        # forbidden by the estimate — the head never goes below zero.
+        # (The drain merges queued taps, so the script COUNT is not
+        # pinned; the estimate is the guard.)
+        self.assertAlmostEqual(model._toolhead._z_estimate, 0.0)
+        z_scripts = [r for r in self.scripts() if "G1 Z" in str(r.options.get("body"))]
+        self.assertGreaterEqual(len(z_scripts), 1)
+
     def test_emergency_stop_clears_pending_jog_queue(self):
         model = self.monitor()
         self.deliver_state("printing")
@@ -1180,6 +1441,95 @@ class MonitorQtTests(unittest.TestCase):
         # may well have executed it.
         scripts[0].callback(None, "Operation canceled")
         self.assertIn("outcome unknown", model.actionStatus)
+
+    def test_extrude_refusal_reads_the_servers_words_in_the_status(self):
+        # The author's live report: a cold extrude showed a bare 400
+        # in the Printer status field. The REAL toolhead path — the
+        # extrude rides the shared commands lane — must surface the
+        # server's words, not a status code.
+        model = self.monitor()
+        self.deliver_state("standby")
+        model.setExtrudeDistance(5)
+        model.extrude(1)
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)
+        scripts[0].callback({"code": 400, "message": "Unknown",
+                             "traceback": "... HTTPError: HTTP 400: Extrude below minimum temp\n"
+                                          "See the 'min_extrude_temp' config option for details"},
+                            "Extrude below minimum temp")
+        self.assertIn("refused", model.actionStatus)
+        self.assertIn("Extrude below minimum temp", model.actionStatus)
+        self.assertNotIn("400", model.actionStatus)
+
+    def test_extrude_and_jog_selection_persists(self):
+        # The author's live report: the chosen extrude options were
+        # not saved between sessions.
+        from plugins.MoonrakerMonitorModel import _read_state
+        model = self.monitor()
+        self.deliver_state("standby")
+        model.setExtrudeDistance(25)
+        model.setExtrudeSpeed(120)
+        model.setJogDistance(10)
+        stored = _read_state()["toolhead"]
+        self.assertEqual(stored["extrudeDistance"], 25.0)
+        self.assertEqual(stored["extrudeSpeed"], 120.0)
+        self.assertEqual(stored["jogDistance"], 10.0)
+
+    def test_collapsed_console_keeps_a_slow_error_poll(self):
+        # The error bell's feed (the author's live request): the
+        # store fetch stops while expanded-only, so a SLOW watch
+        # keeps the bell able to ring while collapsed.
+        model = self.monitor()
+        self.deliver_state("standby")
+        model.setConsoleExpanded(False)
+        self.assertTrue(model._data._console_watch.isActive())
+        stores = lambda: [r for r in self.transport.requests if "gcode_store" in r.path]
+        before = len(stores())
+        model._data.refresh_console_store()  # gated: a no-op while collapsed
+        self.assertEqual(len(stores()), before)
+        model._data._refresh_console_watch()  # the bell's slow poll
+        self.assertEqual(len(stores()), before + 1)
+        model.setConsoleExpanded(True)
+        self.assertFalse(model._data._console_watch.isActive())
+
+    def test_command_reply_with_error_body_is_reported_as_refused(self):
+        # A server ANSWER with an error body is a refusal, not an
+        # unknown: the command did not run (the author's live
+        # report — a cold extrude showed a bare 400).
+        model = self.monitor()
+        self.deliver_state("standby")
+        model._controls._macros = {"TEST_MACRO": "macro-name"}
+        model.runMacro("TEST_MACRO", "")
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 1)
+        scripts[0].callback({"error": "Extrude below minimum temp"}, "Extrude below minimum temp")
+        self.assertIn("refused", model.actionStatus)
+        self.assertIn("Extrude below minimum temp", model.actionStatus)
+        self.assertNotIn("outcome unknown", model.actionStatus)
+
+    def test_console_error_bell_rings_while_collapsed_and_clears_on_expand(self):
+        # The author's live request: an error line landing while the
+        # console is collapsed rings a red bell next to its header
+        # until the console expands. Restored lines never ring.
+        model = self.monitor()
+        self.deliver_state("standby")
+        model._sections["console"] = False
+        model._console._append_entries([{"kind": "command", "text": "!! cold",
+                                         "error": False, "success": False, "restored": True}])
+        model._console.changed.emit()  # the real error path emits through the send callback
+        self.assertFalse(model.consoleErrorBell)
+        model._console._append_entries([{"kind": "command", "text": "!! cold",
+                                         "error": True, "success": False, "restored": False}])
+        model._console.changed.emit()
+        self.assertTrue(model.consoleErrorBell)
+        # Expanding clears it.
+        model._sections["console"] = True
+        model._console.changed.emit()
+        self.assertFalse(model.consoleErrorBell)
+        # Old errors never re-ring after collapsing again.
+        model._sections["console"] = False
+        model._console.changed.emit()
+        self.assertFalse(model.consoleErrorBell)
 
     def test_action_status_receipt_overlays_then_reverts_to_durable(self):
         # The lane's completion receipts are transient: "X sent"
@@ -1313,6 +1663,23 @@ class MonitorQtTests(unittest.TestCase):
                 "controlsLocked": True,
                 "infoCollapsed": True,
                 "statusCollapsed": True,
+                # An undragged console writes 0 — "never dragged", so
+                # the pane renders at its own default size.
+                "consoleHeight": 0,
+                # The column config (Snapshot 3): widths only hold
+                # user-set values; the order is the pinned sequence
+                # until changed.
+                "fileManagerColumns": {
+                    "widths": {},
+                    "order": ["Modified", "Size", "Attempts", "Status", "Object height",
+                              "Layer height", "Est. time", "Last print", "Slicer",
+                              "Extruder", "Bed", "Filament"],
+                    "hidden": [],
+                },
+                # The jog/extrude selection persists too (the
+                # author's live report: the chosen options were not
+                # saved between sessions).
+                "toolhead": {"jogDistance": 25.0, "extrudeDistance": 5.0, "extrudeSpeed": 300.0},
             })
             # The chart config is per-printer now: the global file must
             # not carry it, and the per-printer record defaults empty.
@@ -1326,6 +1693,39 @@ class MonitorQtTests(unittest.TestCase):
         self.assertTrue(second.statusCollapsed)
         second.setSectionExpanded("toolhead", True)
         self.assertEqual(second._sections["toolhead"], True)
+
+    def test_console_height_persists_and_clamps_across_model_instances(self):
+        # 3.6.0: the console's drag handle sets a pane height the model
+        # owns. It round-trips through the plugin-owned JSON file (a Cura
+        # restart rehydrates it before the pane exists), never hydrates
+        # negative, and an unchanged height is not rewritten — a drag
+        # riding its clamp must stop touching the disk.
+        import UM.Resources as UMResourcesModule
+        model_module = self.qt.load("MoonrakerMonitorModel")
+        section_path = UMResourcesModule.Resources.getStoragePath(
+            UMResourcesModule.Resources.Preferences, model_module.SECTIONS_FILE_NAME)
+        model = self.monitor()
+        self.assertEqual(model.consoleHeight, 0)  # never dragged
+        model.setConsoleHeight(240)
+        self.assertEqual(model.consoleHeight, 240)
+        with open(section_path, "r", encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["consoleHeight"], 240)
+        # A fresh model rehydrates it.
+        second = self.monitor()
+        self.assertEqual(second.consoleHeight, 240)
+        # No negative height can ever land, whatever the drag reports.
+        second.setConsoleHeight(-40)
+        self.assertEqual(second.consoleHeight, 0)
+        # Absurd values clamp to the model's ceiling (the pane bounds are
+        # the QML's clamp — it is the only side that can see them).
+        second.setConsoleHeight(999999)
+        self.assertEqual(second.consoleHeight, model_module.CONSOLE_HEIGHT_MAX)
+        with open(section_path, "r", encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["consoleHeight"], model_module.CONSOLE_HEIGHT_MAX)
+        with patch.object(model_module, "_write_state") as write:
+            second.setConsoleHeight(180)
+            second.setConsoleHeight(180)
+            self.assertEqual(write.call_count, 1)
 
     def test_panel_state_migrates_the_legacy_flat_section_file(self):
         # The first shipped format stored the bare section map; it must
@@ -1361,6 +1761,19 @@ class MonitorQtTests(unittest.TestCase):
         self.assertIs(model._sections["setup"], False)
         self.assertIs(model._sections["toolhead"], False)
         self.assertIs(model.controlsLocked, True)
+        # The console height goes through the same discipline: a missing
+        # key is the unset default, junk never raises, and a negative or
+        # non-numeric height can never hydrate.
+        self.assertEqual(model.consoleHeight, 0)
+        for stored in ("-120", "", "tall", None, [], float("inf"), float("nan")):
+            with open(section_path, "w", encoding="utf-8") as handle:
+                json.dump({"consoleHeight": stored}, handle)
+            model = self.monitor()
+            self.assertEqual(model.consoleHeight, 0, stored)
+        with open(section_path, "w", encoding="utf-8") as handle:
+            json.dump({"consoleHeight": "412"}, handle)
+        model = self.monitor()
+        self.assertEqual(model.consoleHeight, 412)
 
     def chart_of(self, model):
         chart = model.temperatureChart
@@ -2352,6 +2765,92 @@ Item {
         self.assertIn('ctx.fillText("0%", labelX, root._plotBottom() - descent - 1)', TEMP_CHART_QML)
         self.assertNotIn("fillRect(chipX", TEMP_CHART_QML)
 
+    def test_console_resize_handle_surface(self):
+        # 3.6.0: the console card's TOP edge is a drag handle. The
+        # load-bearing semantics are pinned here — the pane-bounds clamp
+        # window, the pane-frame drag measurement, the single commit on
+        # release, and the collapse behaviour (the author's request: pull
+        # the pane down to the collapse position and it collapses; drag
+        # back out and it expands).
+        for token in ("id: consoleResizeHandle",
+                      'objectName: "consoleResizeHandle"',
+                      'objectName: "consoleResizeArea"',
+                      "cursorShape: Qt.SizeVerCursor",
+                      # The handle holds its OWN strip: an overlay across
+                      # the header row would eat the collapse toggle's
+                      # hit area.
+                      "Layout.preferredHeight: consolePanel.consoleHandleHeight",
+                      # The pointer is read in the PANE's frame, never the
+                      # handle's own: the handle rides the edge it moves,
+                      # so a local measurement is self-referential (the
+                      # run-away-the-pointer bug).
+                      "mapToItem(cameraArea, mouse.x, mouse.y)",
+                      "consolePanel.consoleResizeStartHeight = consolePanel.height",
+                      "consoleResizeStartHeight + (consoleResizeStartY - paneY)",
+                      "consoleResizeTo",
+                      "consoleResizeCommit",
+                      "onCanceled: consolePanel.consoleResizeCommit()",
+                      # The collapse position is the drag FLOOR, not a
+                      # jump: the height is continuous across it, so the
+                      # edge never detaches from the pointer.
+                      "Math.max(consoleCollapsedHeight, Math.min(consoleMaxHeight, height))",
+                      "consoleSetExpanded(height > consoleCollapsedHeight + 0.5)",
+                      "root.printer.setConsoleHeight(Math.round(height))",
+                      # The clamp window and the stored/effective heights.
+                      "consoleCollapseButton.height + 2 * UM.Theme.getSize(\"thin_margin\").height + consoleHandleHeight",
+                      "root.printer.consoleHeight > 0 ? root.printer.consoleHeight : consoleDefaultHeight",
+                      "Math.max(consoleMinHeight, Math.min(consoleMaxHeight, consoleStoredHeight))",
+                      "consoleDragHeight > 0 ? consoleDragHeight : consoleSettledHeight",
+                      "Layout.preferredHeight: consoleExpanded ? consoleCurrentHeight : consoleCollapsedHeight",
+                      # The tail stays pinned through a resize (a reader
+                      # scrolled up is never yanked — the golden rule).
+                      "consoleFlick.restoreScrollPending = true",
+                      "Drag to resize the console.",
+                      # The grip reads as a grab bar at a glance (the
+                      # author's live ruling: the first one was too
+                      # subtle), and the closing pane fades its body out
+                      # instead of crushing it through the transition.
+                      "width: 72 * screenScaleFactor",
+                      "height: 5 * screenScaleFactor",
+                      "opacity: consolePanel.consoleBodyOpacity",
+                      "consoleBodyOpacity",
+                      # The fade starts where the body stops fitting, not
+                      # at the collapse position: a gradual fade left the
+                      # crushed input row fully opaque for most of the
+                      # travel (the author's second live report).
+                      "readonly property real consoleBodyFadeSpan: 24 * screenScaleFactor",
+                      "(height - (consoleMinHeight - consoleBodyFadeSpan)) / consoleBodyFadeSpan"):
+            self.assertIn(token, MONITOR_QML)
+        for token in ("consoleHeight", "consoleHeightChanged", "def setConsoleHeight(",
+                      "CONSOLE_HEIGHT_MAX", "def _state_height("):
+            self.assertIn(token, MONITOR_MODEL)
+        # The handle sits ABOVE the header row in the layout, never over
+        # it, and the card's height binding owns both states.
+        handle_start = MONITOR_QML.index("id: consoleResizeHandle")
+        button_start = MONITOR_QML.index("id: consoleCollapseButton")
+        self.assertLess(handle_start, button_start)
+        self.assertIn("consoleResizeCommit", MONITOR_QML[handle_start:button_start])
+        # The card clips: mid-drag it is SHORTER than its inner column's
+        # minimum, and its content must never paint over the webcam card.
+        card_start = MONITOR_QML.index("id: consolePanel")
+        self.assertIn("clip: true", MONITOR_QML[card_start:handle_start])
+        # The well clips too, and that is the author's live report: the
+        # prompt, the input and its buttons live INSIDE the black border,
+        # so a squeezed column must cut them at the well's own edge
+        # rather than letting them float outside the terminal's
+        # background. The slice ends at the flick's own clip.
+        well_start = MONITOR_QML.index("id: consoleWell")
+        flick_start = MONITOR_QML.index("id: consoleFlick")
+        self.assertLess(well_start, flick_start)
+        self.assertIn("clip: true", MONITOR_QML[well_start:flick_start])
+        # The pane frame is not optional: a local-coordinate delta is the
+        # bug this pin exists to prevent.
+        self.assertNotIn("consoleResizeStartY = mouse.y", MONITOR_QML)
+        self.assertNotIn("consoleResizeStartY - mouse.y", MONITOR_QML)
+        # The drag commits ONCE, on release — a commit per move would
+        # rewrite the state file at pointer rate.
+        self.assertNotIn("setConsoleHeight(Math.round(height))", MONITOR_QML[handle_start:button_start])
+
     def test_capture_harness_mocks_every_live_input(self):
         # Determinism discipline: the captures must not read ANY live
         # input. The wall clock slipped through once — the formatter's
@@ -2386,7 +2885,16 @@ Item {
         # every plugin QML whose expression is not whitelisted must be
         # on the explicit allow-list — so a new state-gated visibility
         # cannot slip through a reformat or a new file.
-        exempt_files = {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml"}
+        # The file-manager popup joins the carve-out by the author's
+        # round-2 ruling ("Reflowing the file manager is fine, there's
+        # nothing critical on that") — but ONLY its own file: the
+        # Monitor files must never be exempt, and the set must not
+        # grow silently (round-2 security F13). Inside the popup the
+        # chrome still uses enabled/opacity, never visible:.
+        exempt_files = {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml", "FileManager.qml"}
+        self.assertEqual(exempt_files, {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml", "FileManager.qml"})
+        for monitor_file in ("MoonrakerMonitor.qml", "MoonrakerMonitorDashboard.qml", "PreviewActionPanelControls.qml"):
+            self.assertNotIn(monitor_file, exempt_files)
         whitelist = (
             "openPopOver", "sectionExpandedMap", "Collapsed", "platformActivity",
             "previewStageActive", "configuredForFollowing", "modelData.type", "hasWhite",
@@ -2412,6 +2920,19 @@ Item {
             "visible: root.printer != null && root.printer.fanItems.length > 0",
             "visible: root.printer != null && root.printer.filamentSensorItems.length > 0",
             "visible: root.printer != null && root.printer.mcuItems.length > 0",
+            # The console error bell (the author's live request) is a
+            # presence signal, not a session gate: it shows only
+            # while an unseen error waits and the console is
+            # collapsed.
+            "visible: root.printer != null && root.printer.consoleErrorBell",
+            # The Objects section's empty-state line (the author's
+            # live request): the list arrives mid-print, an empty one
+            # says so.
+            "visible: root.printer != null && root.printer.excludeObjectItems.length === 0",
+            # The console grab bar hides under the auto-collapse
+            # width (the author's live ruling — a resize handle for
+            # an expansion that cannot happen is a lie).
+            "visible: !consolePanel.tooNarrow",
         }
         for path in sorted(PLUGINS.glob("*.qml")):
             if path.name in exempt_files:
@@ -2422,6 +2943,13 @@ Item {
                     continue
                 expression = match.group(1).rstrip()
                 if any(token in expression for token in whitelist):
+                    continue
+                # The extrude distance/speed rows highlight their
+                # SELECTION by swapping button faces (the author's
+                # live report: the boxes never stayed highlighted) —
+                # one family, one carve-out, not ten near-identical
+                # whitelist entries.
+                if re.match(r"visible: (root\.printer == null \|\| root\.printer\.(extrudeDistance|extrudeSpeed) !== \d+|root\.printer != null && root\.printer\.(extrudeDistance|extrudeSpeed) === \d+)$", expression):
                     continue
                 self.assertIn(expression, allowed,
                               f"{path.name}:{number}: state-gated visible: {expression}")
@@ -2504,6 +3032,9 @@ Item {
 
     def test_endstop_query_uses_the_documented_get(self):
         model = self.monitor()
+        # The poll is readiness-gated; seed a ready Klippy so the
+        # request fires (see test_endstop_poll_waits_for_klippy_ready).
+        model._data._update(server={"klippy_state": "ready"})
         model._data.refresh_endstops()
         self.qt.events(3)
         requests = [request for request in self.transport.requests
@@ -2543,6 +3074,7 @@ Item {
         # into a false "Not homed yet" while connected; the states
         # blank only on invalidation/disconnect.
         model = self.monitor()
+        model._data._update(server={"klippy_state": "ready"})
         model._data._update(endstops={"x": "TRIGGERED", "y": "open"})
         model._data.refresh_endstops()
         self.qt.events(1)
@@ -2552,6 +3084,25 @@ Item {
         requests[-1].callback(None, "network blip")
         self.qt.events(1)
         self.assertEqual(model._data.snapshot.endstops, {"x": "TRIGGERED", "y": "open"})
+
+    def test_endstop_poll_waits_for_klippy_ready(self):
+        # During a Klippy restart every endstop poll landed in the
+        # gcode store as "!! Internal Error on WebRequest" (the
+        # author's live report) — the poll must hold until server/info
+        # reports ready, and resume on the next readiness.
+        model = self.monitor()
+        model._data._update(server={"klippy_state": "startup"})
+        model._data.refresh_endstops()
+        self.qt.events(1)
+        requests = [request for request in self.transport.requests
+                    if request.path == "printer/query_endstops/status"]
+        self.assertEqual(len(requests), 0)
+        model._data._update(server={"klippy_state": "ready"})
+        model._data.refresh_endstops()
+        self.qt.events(1)
+        requests = [request for request in self.transport.requests
+                    if request.path == "printer/query_endstops/status"]
+        self.assertGreaterEqual(len(requests), 1)
 
     def test_controls_lock_and_camera_refresh_nonce(self):
         model = self.monitor()

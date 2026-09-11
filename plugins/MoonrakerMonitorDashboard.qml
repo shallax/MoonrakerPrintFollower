@@ -20,6 +20,28 @@ Component {
         property var printer: OutputDevice != null ? OutputDevice.activePrinter : null
         property bool controlsCollapsed: root.printer != null ? root.printer.controlsCollapsed : false
         property var macroParameters: []
+        // The file-manager popup's open state (Snapshot 0: the mock).
+        // A printer switch closes it — a stale popup must never carry
+        // actions from one machine to the next (round-2 A15).
+        property bool fileManagerOpen: root.printer != null && root.printer.fileManagerOpen
+        onPrinterChanged: {
+            if (root.printer != null) {
+                root.printer.setFileManagerOpen(false);
+            }
+        }
+        // The document root sits in the bubbling chain of EVERY
+        // focused item in the stage, so Esc closes the popup no
+        // matter where focus actually landed (the author's Snapshot
+        // 0 report: Esc only worked while the search field was
+        // focused).
+        Keys.onEscapePressed: {
+            if (fileManagerOpen) {
+                if (root.printer != null) {
+                    root.printer.setFileManagerOpen(false);
+                }
+                event.accepted = true;
+            }
+        }
 
         Cura.MessageDialog {
             id: cancelPrintDialog
@@ -128,17 +150,58 @@ Component {
                     border.width: 2 * screenScaleFactor
                     clip: true
                     Rectangle {
+                        id: emergencyFill
                         anchors.left: parent.left
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         width: parent.width * Math.min(1.0, (emergencyButton.clicks + (root.printer != null ? root.printer.emergencyHoldProgress : 0)) / 3.0)
                         color: "#d32f2f"
                     }
-                    UM.Label {
-                        anchors.centerIn: parent
-                        text: (root.printer != null && root.printer.emergencyHoldProgress > 0) ? "EMERGENCY STOP — keep holding" : (emergencyButton.clicks === 0 ? "EMERGENCY STOP — click twice, then hold" : (emergencyButton.clicks === 1 ? "EMERGENCY STOP — one more click, then hold" : "EMERGENCY STOP — press and hold to fire"))
-                        font: UM.Theme.getFont("medium_bold")
-                        color: "black"
+                    // The label flips white PROGRESSIVELY as the red
+                    // fill sweeps over it: two copies of the same
+                    // text, the white one clipped to the fill's
+                    // exact width and the black one clipped to the
+                    // remainder. The clip boundary is pixel-exact —
+                    // glyphs cut mid-stroke, so the colour boundary
+                    // follows the fill edge continuously, not letter
+                    // by letter (the author's request).
+                    Item {
+                        id: emergencyTextWhite
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.left: parent.left
+                        width: emergencyFill.width
+                        clip: true
+                        UM.Label {
+                            width: emergencyButton.width
+                            height: parent.height
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            text: (root.printer != null && root.printer.emergencyHoldProgress > 0) ? "EMERGENCY STOP — keep holding" : (emergencyButton.clicks === 0 ? "EMERGENCY STOP — click twice, then hold" : (emergencyButton.clicks === 1 ? "EMERGENCY STOP — one more click, then hold" : "EMERGENCY STOP — press and hold to fire"))
+                            font: UM.Theme.getFont("medium_bold")
+                            color: "white"
+                        }
+                    }
+                    Item {
+                        id: emergencyTextBlack
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.right: parent.right
+                        width: parent.width - emergencyFill.width
+                        clip: true
+                        UM.Label {
+                            width: emergencyButton.width
+                            height: parent.height
+                            // Shifted so the text sits at the SAME
+                            // position as the white copy: the clip
+                            // region starts at the fill's right edge.
+                            x: -emergencyFill.width
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            text: (root.printer != null && root.printer.emergencyHoldProgress > 0) ? "EMERGENCY STOP — keep holding" : (emergencyButton.clicks === 0 ? "EMERGENCY STOP — click twice, then hold" : (emergencyButton.clicks === 1 ? "EMERGENCY STOP — one more click, then hold" : "EMERGENCY STOP — press and hold to fire"))
+                            font: UM.Theme.getFont("medium_bold")
+                            color: "black"
+                        }
                     }
                     MouseArea {
                         anchors.fill: parent
@@ -330,6 +393,47 @@ Component {
                         // collapsed section's hidden content must contribute
                         // nothing, so stacked headers sit flush like Cura's.
                         spacing: 0
+
+                        CollapsibleSectionHeader {
+                            Layout.fillWidth: true
+                            printerModel: root.printer
+                            title: "File manager"
+                            sectionId: "fileManager"
+                            sectionIconUrl: Qt.resolvedUrl("Download.svg")
+                        }
+                        ColumnLayout {
+                            visible: root.printer == null || root.printer.sectionExpandedMap["fileManager"] !== false
+                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
+                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+                            Layout.fillWidth: true
+                            Layout.topMargin: UM.Theme.getSize("default_margin").height
+                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+                            spacing: UM.Theme.getSize("default_margin").height
+
+                            UM.Label {
+                                Layout.fillWidth: true
+                                height: 36 * screenScaleFactor
+                                text: "Browse, print and manage the printer's gcode files."
+                                color: UM.Theme.getColor("text_inactive")
+                                elide: Text.ElideRight
+                                wrapMode: Text.NoWrap
+                            }
+                            Cura.SecondaryButton {
+                                Layout.fillWidth: true
+                                text: "File manager"
+                                enabled: root.printer != null && root.printer.monitorConnected
+                                onClicked: {
+                                    if (root.printer != null) {
+                                        root.printer.setFileManagerOpen(true);
+                                    }
+                                }
+                                UM.TooltipArea {
+                                    anchors.fill: parent
+                                    acceptedButtons: Qt.NoButton
+                                    text: root.printer != null && root.printer.monitorConnected ? "Open the file manager." : "The printer is disconnected."
+                                }
+                            }
+                        }
 
                         CollapsibleSectionHeader {
                             Layout.fillWidth: true
@@ -567,11 +671,36 @@ Component {
                                     color: UM.Theme.getColor("text_inactive")
                                     Layout.preferredWidth: 110 * screenScaleFactor
                                 }
-                                UM.Label {
+                                Row {
                                     Layout.fillWidth: true
-                                    text: root.printer != null ? (root.printer.homedAxes.length > 0 ? root.printer.homedAxes.toUpperCase().split('').join(' ') : "—") + "  ·  " + root.printer.positionMode + " moves" : "—"
-                                    color: UM.Theme.getColor("text")
-                                    elide: Text.ElideRight
+                                    spacing: 4 * screenScaleFactor
+                                    UM.Label {
+                                        text: root.printer != null && root.printer.homedAxes.length > 0 ? root.printer.homedAxes.toUpperCase().split('').join(' ') + "  · " : "—"
+                                        color: UM.Theme.getColor("text")
+                                    }
+                                    // The abs/rel toggle (the author's
+                                    // live ruling: the mode TEXT is the
+                                    // control, never a separate button)
+                                    // — clicking the word switches and
+                                    // sends the real G90/G91 through the
+                                    // command lane.
+                                    UM.Label {
+                                        text: root.printer != null ? root.printer.positionMode : "Absolute"
+                                        color: root.printer != null && root.printer.jogEnabled ? UM.Theme.getColor("primary") : UM.Theme.getColor("text_inactive")
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            cursorShape: root.printer != null && root.printer.jogEnabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                            onClicked: {
+                                                if (root.printer != null) {
+                                                    root.printer.setPositionMode(root.printer.positionMode !== "Absolute");
+                                                }
+                                            }
+                                        }
+                                    }
+                                    UM.Label {
+                                        text: " moves"
+                                        color: UM.Theme.getColor("text")
+                                    }
                                 }
                             }
                             GridLayout {
@@ -608,7 +737,7 @@ Component {
                                     id: jogDistanceSelector
                                     Layout.fillWidth: true
                                     model: toolheadSection.jogPresets
-                                    currentIndex: 5
+                                    currentIndex: toolheadSection.jogPresets.indexOf(root.printer != null ? root.printer.jogDistance : 25)
                                     onActivated: function (index) {
                                         if (root.printer != null) {
                                             root.printer.setJogDistance(toolheadSection.jogPresets[index]);
@@ -791,47 +920,135 @@ Component {
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: UM.Theme.getSize("thin_margin").width
-                                Cura.SecondaryButton {
+                                // The selected distance keeps its
+                                // highlight: the primary face shows
+                                // while it IS the selection (the
+                                // author's live report — the boxes
+                                // never stayed highlighted).
+                                Item {
                                     Layout.fillWidth: true
-                                    text: "5"
-                                    tooltip: "Extrude distance: 5 mm."
-                                    enabled: root.printer != null && root.printer.jogEnabled
-                                    onClicked: root.printer.setExtrudeDistance(5)
+                                    implicitHeight: extrudeDistance5Primary.implicitHeight
+                                    Cura.PrimaryButton {
+                                        id: extrudeDistance5Primary
+                                        anchors.fill: parent
+                                        visible: root.printer != null && root.printer.extrudeDistance === 5
+                                        text: "5"
+                                        tooltip: "Extrude distance: 5 mm."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeDistance(5)
+                                    }
+                                    Cura.SecondaryButton {
+                                        anchors.fill: parent
+                                        visible: root.printer == null || root.printer.extrudeDistance !== 5
+                                        text: "5"
+                                        tooltip: "Extrude distance: 5 mm."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeDistance(5)
+                                    }
                                 }
-                                Cura.SecondaryButton {
+                                // The selected distance keeps its
+                                // highlight: the primary face shows
+                                // while it IS the selection (the
+                                // author's live report — the boxes
+                                // never stayed highlighted).
+                                Item {
                                     Layout.fillWidth: true
-                                    text: "10"
-                                    tooltip: "Extrude distance: 10 mm."
-                                    enabled: root.printer != null && root.printer.jogEnabled
-                                    onClicked: root.printer.setExtrudeDistance(10)
+                                    implicitHeight: extrudeDistance10Primary.implicitHeight
+                                    Cura.PrimaryButton {
+                                        id: extrudeDistance10Primary
+                                        anchors.fill: parent
+                                        visible: root.printer != null && root.printer.extrudeDistance === 10
+                                        text: "10"
+                                        tooltip: "Extrude distance: 10 mm."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeDistance(10)
+                                    }
+                                    Cura.SecondaryButton {
+                                        anchors.fill: parent
+                                        visible: root.printer == null || root.printer.extrudeDistance !== 10
+                                        text: "10"
+                                        tooltip: "Extrude distance: 10 mm."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeDistance(10)
+                                    }
                                 }
-                                Cura.SecondaryButton {
+                                // The selected distance keeps its
+                                // highlight: the primary face shows
+                                // while it IS the selection (the
+                                // author's live report — the boxes
+                                // never stayed highlighted).
+                                Item {
                                     Layout.fillWidth: true
-                                    text: "15"
-                                    tooltip: "Extrude distance: 15 mm."
-                                    enabled: root.printer != null && root.printer.jogEnabled
-                                    onClicked: root.printer.setExtrudeDistance(15)
+                                    implicitHeight: extrudeDistance25Primary.implicitHeight
+                                    Cura.PrimaryButton {
+                                        id: extrudeDistance25Primary
+                                        anchors.fill: parent
+                                        visible: root.printer != null && root.printer.extrudeDistance === 25
+                                        text: "25"
+                                        tooltip: "Extrude distance: 25 mm."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeDistance(25)
+                                    }
+                                    Cura.SecondaryButton {
+                                        anchors.fill: parent
+                                        visible: root.printer == null || root.printer.extrudeDistance !== 25
+                                        text: "25"
+                                        tooltip: "Extrude distance: 25 mm."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeDistance(25)
+                                    }
                                 }
-                                Cura.SecondaryButton {
+                                // The selected distance keeps its
+                                // highlight: the primary face shows
+                                // while it IS the selection (the
+                                // author's live report — the boxes
+                                // never stayed highlighted).
+                                Item {
                                     Layout.fillWidth: true
-                                    text: "25"
-                                    tooltip: "Extrude distance: 25 mm."
-                                    enabled: root.printer != null && root.printer.jogEnabled
-                                    onClicked: root.printer.setExtrudeDistance(25)
+                                    implicitHeight: extrudeDistance75Primary.implicitHeight
+                                    Cura.PrimaryButton {
+                                        id: extrudeDistance75Primary
+                                        anchors.fill: parent
+                                        visible: root.printer != null && root.printer.extrudeDistance === 75
+                                        text: "75"
+                                        tooltip: "Extrude distance: 75 mm."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeDistance(75)
+                                    }
+                                    Cura.SecondaryButton {
+                                        anchors.fill: parent
+                                        visible: root.printer == null || root.printer.extrudeDistance !== 75
+                                        text: "75"
+                                        tooltip: "Extrude distance: 75 mm."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeDistance(75)
+                                    }
                                 }
-                                Cura.SecondaryButton {
+                                // The selected distance keeps its
+                                // highlight: the primary face shows
+                                // while it IS the selection (the
+                                // author's live report — the boxes
+                                // never stayed highlighted).
+                                Item {
                                     Layout.fillWidth: true
-                                    text: "75"
-                                    tooltip: "Extrude distance: 75 mm."
-                                    enabled: root.printer != null && root.printer.jogEnabled
-                                    onClicked: root.printer.setExtrudeDistance(75)
-                                }
-                                Cura.SecondaryButton {
-                                    Layout.fillWidth: true
-                                    text: "100"
-                                    tooltip: "Extrude distance: 100 mm."
-                                    enabled: root.printer != null && root.printer.jogEnabled
-                                    onClicked: root.printer.setExtrudeDistance(100)
+                                    implicitHeight: extrudeDistance100Primary.implicitHeight
+                                    Cura.PrimaryButton {
+                                        id: extrudeDistance100Primary
+                                        anchors.fill: parent
+                                        visible: root.printer != null && root.printer.extrudeDistance === 100
+                                        text: "100"
+                                        tooltip: "Extrude distance: 100 mm."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeDistance(100)
+                                    }
+                                    Cura.SecondaryButton {
+                                        anchors.fill: parent
+                                        visible: root.printer == null || root.printer.extrudeDistance !== 100
+                                        text: "100"
+                                        tooltip: "Extrude distance: 100 mm."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeDistance(100)
+                                    }
                                 }
                                 UM.Label {
                                     // The unit rides the row, like the
@@ -869,33 +1086,101 @@ Component {
                                     text: "Speed"
                                     color: UM.Theme.getColor("text_inactive")
                                 }
-                                Cura.SecondaryButton {
+                                // Same highlight pattern as the
+                                // distance row (the author's live
+                                // report).
+                                Item {
                                     Layout.fillWidth: true
-                                    text: "1"
-                                    tooltip: "Extrusion speed: 1 mm/s."
-                                    enabled: root.printer != null && root.printer.jogEnabled
-                                    onClicked: root.printer.setExtrudeSpeed(60)
+                                    implicitHeight: extrudeSpeed60Primary.implicitHeight
+                                    Cura.PrimaryButton {
+                                        id: extrudeSpeed60Primary
+                                        anchors.fill: parent
+                                        visible: root.printer != null && root.printer.extrudeSpeed === 60
+                                        text: "1"
+                                        tooltip: "Extrusion speed: 1 mm/s."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeSpeed(60)
+                                    }
+                                    Cura.SecondaryButton {
+                                        anchors.fill: parent
+                                        visible: root.printer == null || root.printer.extrudeSpeed !== 60
+                                        text: "1"
+                                        tooltip: "Extrusion speed: 1 mm/s."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeSpeed(60)
+                                    }
                                 }
-                                Cura.SecondaryButton {
+                                // Same highlight pattern as the
+                                // distance row (the author's live
+                                // report).
+                                Item {
                                     Layout.fillWidth: true
-                                    text: "2"
-                                    tooltip: "Extrusion speed: 2 mm/s."
-                                    enabled: root.printer != null && root.printer.jogEnabled
-                                    onClicked: root.printer.setExtrudeSpeed(120)
+                                    implicitHeight: extrudeSpeed120Primary.implicitHeight
+                                    Cura.PrimaryButton {
+                                        id: extrudeSpeed120Primary
+                                        anchors.fill: parent
+                                        visible: root.printer != null && root.printer.extrudeSpeed === 120
+                                        text: "2"
+                                        tooltip: "Extrusion speed: 2 mm/s."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeSpeed(120)
+                                    }
+                                    Cura.SecondaryButton {
+                                        anchors.fill: parent
+                                        visible: root.printer == null || root.printer.extrudeSpeed !== 120
+                                        text: "2"
+                                        tooltip: "Extrusion speed: 2 mm/s."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeSpeed(120)
+                                    }
                                 }
-                                Cura.SecondaryButton {
+                                // Same highlight pattern as the
+                                // distance row (the author's live
+                                // report).
+                                Item {
                                     Layout.fillWidth: true
-                                    text: "5"
-                                    tooltip: "Extrusion speed: 5 mm/s."
-                                    enabled: root.printer != null && root.printer.jogEnabled
-                                    onClicked: root.printer.setExtrudeSpeed(300)
+                                    implicitHeight: extrudeSpeed300Primary.implicitHeight
+                                    Cura.PrimaryButton {
+                                        id: extrudeSpeed300Primary
+                                        anchors.fill: parent
+                                        visible: root.printer != null && root.printer.extrudeSpeed === 300
+                                        text: "5"
+                                        tooltip: "Extrusion speed: 5 mm/s."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeSpeed(300)
+                                    }
+                                    Cura.SecondaryButton {
+                                        anchors.fill: parent
+                                        visible: root.printer == null || root.printer.extrudeSpeed !== 300
+                                        text: "5"
+                                        tooltip: "Extrusion speed: 5 mm/s."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeSpeed(300)
+                                    }
                                 }
-                                Cura.SecondaryButton {
+                                // Same highlight pattern as the
+                                // distance row (the author's live
+                                // report).
+                                Item {
                                     Layout.fillWidth: true
-                                    text: "25"
-                                    tooltip: "Extrusion speed: 25 mm/s."
-                                    enabled: root.printer != null && root.printer.jogEnabled
-                                    onClicked: root.printer.setExtrudeSpeed(1500)
+                                    implicitHeight: extrudeSpeed1500Primary.implicitHeight
+                                    Cura.PrimaryButton {
+                                        id: extrudeSpeed1500Primary
+                                        anchors.fill: parent
+                                        visible: root.printer != null && root.printer.extrudeSpeed === 1500
+                                        text: "25"
+                                        tooltip: "Extrusion speed: 25 mm/s."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeSpeed(1500)
+                                    }
+                                    Cura.SecondaryButton {
+                                        anchors.fill: parent
+                                        visible: root.printer == null || root.printer.extrudeSpeed !== 1500
+                                        text: "25"
+                                        tooltip: "Extrusion speed: 25 mm/s."
+                                        enabled: root.printer != null && root.printer.jogEnabled
+                                        onClicked: root.printer.setExtrudeSpeed(1500)
+                                    }
                                 }
                                 UM.Label {
                                     text: "mm/s"
@@ -1910,6 +2195,24 @@ Component {
                         rotation: 90
                         anchors.centerIn: parent
                     }
+                }
+            }
+        }
+
+        // The file-manager popup: a stage-level sibling of the panes,
+        // stopping above the emergency dock so the e-stop stays
+        // visible and live behind it (the UX panel's placement ruling).
+        FileManager {
+            id: fileManagerCard
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: emergencyDock.top
+            open: root.fileManagerOpen
+            printerModel: root.printer
+            onCloseRequested: {
+                if (root.printer != null) {
+                    root.printer.setFileManagerOpen(false);
                 }
             }
         }

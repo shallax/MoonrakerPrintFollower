@@ -17,6 +17,7 @@ from .PreviewPresentation import PreviewPresentation
 from .PrintCoordinator import PrintCoordinator
 from .PrinterBinding import PrinterBinding
 from .RemoteFileService import RemoteFileService
+from .FileDownload import FileDownload
 
 
 class FollowerRuntime:
@@ -25,6 +26,7 @@ class FollowerRuntime:
         self.binding = PrinterBinding(application, self.client, parent)
         self.cura = CuraIntegration(application, parent)
         self.files = RemoteFileService(self.client.transport, parent)
+        self.file_download = FileDownload(self.files, self.cura, parent)
         cache_dir = os.path.join(Resources.getCacheStoragePath(), "Moonraker_Print_Follower")
         cache = PersistentIndexCache(os.path.join(cache_dir, "indexes"))
         self.index = GCodeIndexService(self.files, cache, parent)

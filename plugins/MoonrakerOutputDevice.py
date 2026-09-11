@@ -28,9 +28,10 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
     DEVICE_PREFIX = "MoonrakerPrintFollower@"
     uploadPathsChanged = pyqtSignal()
 
-    def __init__(self, application, machine_id, *, client, config, apply_config, active_identity):
+    def __init__(self, application, machine_id, *, client, config, apply_config, active_identity, has_slice=None):
         super().__init__(device_id=self.DEVICE_PREFIX + machine_id, connection_type=ConnectionType.NetworkConnection)
         self._application, self._config, self._apply_config = application, config, apply_config
+        self._has_slice = has_slice
         self._writer = CuraOutputWriter(application)
         self._upload = UploadController(client, machine_id, active_identity, self)
         self._dialog = self._message = None
@@ -46,6 +47,17 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         except Exception: extruders = 1
         self._printers = [PrinterOutputModel(MoonrakerOutputController(self), extruders)]
         self.updateConfig(active_identity)
+
+    @pyqtSlot()
+    def leaveMonitorStage(self):
+        """Esc on the Monitor page leaves it (the author's live
+        request): back to the Preview stage when anything is sliced,
+        otherwise to Prepare."""
+        try:
+            sliced = self._has_slice is not None and bool(self._has_slice())
+            self._application.getController().setActiveStage("PreviewStage" if sliced else "PrepareStage")
+        except Exception:
+            Logger.log("w", "Moonraker: could not leave the monitor stage")
 
     def updateConfig(self, identity):
         """Set the device's display name from its binding identity.

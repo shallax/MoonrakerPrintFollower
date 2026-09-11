@@ -125,6 +125,107 @@ def duration(seconds):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
+# The file manager's unit and time formats (UX F10): every string in
+# the popup is produced HERE, on the Python side, so the capture
+# harness's frozen clock covers them — a QML-side formatter would
+# render a live clock into the committed screenshots.
+
+STATUS_COLOURS = {
+    "completed": "#43a047",
+    "error": "#e53935",
+    "cancelled": "#fb8c00",
+    "interrupted": "#5c6bc0",
+    "klippy_shutdown": "#5c6bc0",
+    "server_exit": "#5c6bc0",
+    "in_progress": "#1e88e5",
+    "paused": "#8e24aa",
+}
+
+
+def file_size(value) -> str:
+    size = number(value)
+    if size >= 1000 * 1000 * 1000:
+        return f"{size / 1000000000:.1f} GB"
+    if size >= 1000 * 1000:
+        return f"{size / 1000000:.1f} MB"
+    return f"{size / 1000:.0f} KB"
+
+
+def file_timestamp(value, now) -> str:
+    """Absolute local time: '10 Sep 14:32' within the year, '10 Sep
+    2026' beyond — a pure function of the instant and the frozen now."""
+    instant = number(value)
+    if instant <= 0:
+        return "—"
+    try:
+        stamp = datetime.fromtimestamp(instant)
+        reference = datetime.fromtimestamp(number(now))
+    except (ValueError, OverflowError, OSError):
+        return "—"
+    if stamp.year == reference.year:
+        return stamp.strftime("%-d %b %H:%M")
+    return stamp.strftime("%-d %b %Y")
+
+
+def file_duration_short(seconds) -> str:
+    total = max(0, int(round(number(seconds))))
+    if total <= 0:
+        return "—"
+    hours, rest = divmod(total, 3600)
+    minutes = rest // 60
+    if hours and minutes:
+        return f"{hours} h {minutes:02d} min"
+    if hours:
+        return f"{hours} h"
+    return f"{minutes} min"
+
+
+def file_disk_text(usage) -> str:
+    total, free = number(usage.get("total")), number(usage.get("free"))
+    if total <= 0:
+        return "—"
+    return f"{file_size(free)} free of {file_size(total)}"
+
+
+def file_temperature(value) -> str:
+    degrees = number(value)
+    return f"{int(round(degrees))} °C" if degrees > 0 else "—"
+
+
+def file_filament(value) -> str:
+    millimetres = number(value)
+    return f"{millimetres / 1000:.2f} m" if millimetres > 0 else "—"
+
+
+def file_row_payload(row, now) -> dict:
+    """One QML-ready row dict for the pinned file-manager face.
+
+    The status fallback distinguishes genuinely-never-printed files
+    from files printed beyond the partially-loaded history window
+    (the author's live ruling): the metadata's ``print_start_time``
+    is the honest signal — absent means never printed, present but
+    unjoined means the history hasn't been loaded far enough."""
+    return {
+        "name": row.filename,
+        "relpath": row.relpath,
+        "modified": file_timestamp(row.modified, now),
+        "size": file_size(row.size) if row.size is not None else "—",
+        "attempts": str(row.attempts) if row.attempts else "—",
+        "status": row.last_status if row.last_status else ("Never printed" if row.print_start_time is None else "Missing history"),
+        "statusColour": STATUS_COLOURS.get(row.last_status, "text_inactive"),
+        "objH": f"{number(row.object_height):.2f} mm" if row.object_height is not None else "—",
+        "layerH": f"{number(row.layer_height):.2f} mm" if row.layer_height is not None else "—",
+        "est": file_duration_short(row.estimated_time),
+        "lastPrint": file_timestamp(row.last_print, now),
+        "slicer": row.slicer or "—",
+        "extr": file_temperature(row.extruder),
+        "bed": file_temperature(row.bed),
+        "filament": file_filament(row.filament),
+        "hasThumb": False,  # thumbnails land with the fetch queue
+        "unparsed": row.object_height is None and row.layer_height is None,
+    }
+
+
 def estimate_remaining(elapsed, progress, estimate, complete):
     elapsed, progress, estimate = max(0, number(elapsed)), max(0, min(1, number(progress))), number(estimate)
     # The by-file blend needs only a little progress signal and must

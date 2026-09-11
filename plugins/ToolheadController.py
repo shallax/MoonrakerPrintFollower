@@ -17,6 +17,8 @@ mid-drain.
 """
 from __future__ import annotations
 
+import time
+
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from .ToolheadPolicy import (
@@ -48,16 +50,24 @@ from .ToolheadPolicy import (
 
 class ToolheadController(QObject):
     changed = pyqtSignal()
+    # A move was rejected by the client-side clamp: the model routes
+    # this into the console as a local note (the author's live
+    # request — a rejected nudge must explain itself in BOTH the
+    # jog status and the console feed).
+    rejectedNote = pyqtSignal(str)
 
     def __init__(self, data, commands, parent=None):
         super().__init__(parent)
         self._data = data
         self._commands = commands
         self._pending = ()
+        self._z_rejection_noted = False
         self._jog_distance = JOG_DISTANCE_DEFAULT
         self._extrude_distance = EXTRUDE_DISTANCE_DEFAULT
         self._extrude_speed = EXTRUDE_SPEED_DEFAULT
         self._absolute_coordinates = True
+        self._mode_latch = None
+        self._z_estimate = None
         self._pause_waiting = False
         self._pause_in_flight = False
         self._draining = False
@@ -80,6 +90,11 @@ class ToolheadController(QObject):
         data.invalidated.connect(self._reset)
         data.commandChanged.connect(self._command_changed)
         commands.changed.connect(self._pump)
+        # The assumed-cancelled latch flips through commands.changed:
+        # the jog gate must refresh with it (the author's live
+        # report — the jog pad stayed locked behind a print that no
+        # longer existed).
+        commands.changed.connect(self.observe)
         commands.emergencyStopped.connect(self._reset)
         self.observe()
 
@@ -94,7 +109,22 @@ class ToolheadController(QObject):
         toolhead = auxiliary.get("toolhead") or {}
         gcode_move = core.get("gcode_move") or {}
         absolute = bool(gcode_move.get("absolute_coordinates", True))
-        self._absolute_coordinates = absolute
+        if self._mode_latch is not None and time.monotonic() < self._mode_latch:
+            if absolute == self._absolute_coordinates:
+                # The printer adopted the toggle already.
+                self._mode_latch = None
+            # else: HOLD the user's choice while the G90/G91 rides
+            # the lane — an eager poll revert would bounce the mode
+            # display back and forth (the author's live report:
+            # hysteresis on clicking).
+        else:
+            self._mode_latch = None
+            self._absolute_coordinates = absolute
+        if not any(getattr(op, "axis", None) == "z" for op in self._pending):
+            # The queue has no Z moves left: the poll's position is
+            # the truth again, and the estimate re-syncs (or clears
+            # when the printer reports nothing).
+            self._z_estimate = self._polled_z()
         self._values = {
             # Motion controls are exposed only when moves are immediately
             # allowed: while printing the user must pause explicitly first.
@@ -105,7 +135,7 @@ class ToolheadController(QObject):
             "extrudeDistance": self._extrude_distance,
             "extrudeSpeed": self._extrude_speed,
             "homedAxes": str(toolhead.get("homed_axes") or ""),
-            "positionMode": position_mode_text(absolute),
+            "positionMode": position_mode_text(self._absolute_coordinates),
             "jogStatus": self._status,
         }
         self.changed.emit()
@@ -143,12 +173,59 @@ class ToolheadController(QObject):
         axis = str(axis)
         distance = self._clamp_jog(axis, self._jog_distance * direction)
         if distance == 0.0:
+            if axis == "z" and direction == -1:
+                # The clamp rejected the move (the author's live
+                # request): the jog status says so, and the console
+                # gets a local note — once per burst, so a flurry of
+                # taps cannot flood the feed.
+                self._set_status("Z nudge rejected — the head would go below 0.00 Z")
+                if not self._z_rejection_noted:
+                    self._z_rejection_noted = True
+                    self.rejectedNote.emit("Z nudge rejected — the head would go below 0.00 Z.")
             return  # already at the limit: nothing to move
+        if axis == "z":
+            self._z_rejection_noted = False
         try:
             op = make_jog_op(axis, distance, self._absolute_coordinates)
         except ValueError:
             return
         self._push(op)
+
+    def set_absolute(self, absolute: bool) -> None:
+        """The abs/rel toggle (the author's live request): subsequent
+        jogs, extrudes and parks encode against this mode, and the
+        PRINTER adopts it too — the actual G90/G91 rides the command
+        lane so the next poll's gcode_move agrees instead of
+        reverting a local-only flag."""
+        self._absolute_coordinates = bool(absolute)
+        # Hold the toggle against poll reverts until the printer
+        # reports the new mode (or the window lapses — the latch's
+        # fallback for a lane that never answers).
+        self._mode_latch = time.monotonic() + 5.0
+        self._values["positionMode"] = position_mode_text(self._absolute_coordinates)
+        self.changed.emit()
+        self._commands.send("Absolute mode" if absolute else "Relative mode",
+                            "printer/gcode/script", {"script": "G90" if absolute else "G91"})
+
+    def _polled_z(self):
+        """The freshest Z the poll knows: the live motion report when
+        present, else the gcode position (the Position readout's own
+        source — the author's live report: the plugin KNOWS Z and
+        must guard with it)."""
+        core = self._data.snapshot.core
+        live = (core.get("motion_report") or {}).get("live_position") or ()
+        if len(live) > 2:
+            try:
+                return float(live[2])
+            except (TypeError, ValueError):
+                pass
+        position = (core.get("gcode_move") or {}).get("gcode_position") or ()
+        if len(position) > 2:
+            try:
+                return float(position[2])
+            except (TypeError, ValueError):
+                pass
+        return None
 
     def _clamp_jog(self, axis, distance):
         """Keep relative jogs inside the toolhead's axis limits.
@@ -162,11 +239,28 @@ class ToolheadController(QObject):
         live = (self._data.snapshot.core.get("motion_report") or {}).get("live_position") or ()
         toolhead = self._data.snapshot.auxiliary.get("toolhead") or {}
         try:
-            current = float(live[index])
+            if axis == "z" and self._z_estimate is not None:
+                # The client-side Z projection (the author's live
+                # report: rapid nudge taps outrun the poll, and each
+                # tap clamped against the STALE position let the
+                # merged queue walk the head below zero). The
+                # estimate advances with every queued Z move and
+                # re-syncs from the poll once the queue drains.
+                current = self._z_estimate
+            else:
+                current = float(live[index])
             minimum = toolhead.get("axis_minimum") or ()
             maximum = toolhead.get("axis_maximum") or ()
             minimum = float(minimum[index]) if len(minimum) > index else None
             maximum = float(maximum[index]) if len(maximum) > index else None
+            if axis == "z" and (minimum is None or minimum < 0.0):
+                # The Z floor is ZERO, whatever the configured
+                # position_min says (the author's live ruling:
+                # "you know what clicking nudge would move to. Why
+                # are you allowing it?" — many printers configure a
+                # negative Z minimum for probe travel, but the jog
+                # pad must never send the head below 0.00).
+                minimum = 0.0
         except (TypeError, ValueError, IndexError):
             return distance if distance > 0 else 0.0
         return clamp_relative_move(distance, current, minimum, maximum)
@@ -217,7 +311,18 @@ class ToolheadController(QObject):
         self._pending, status = push_op(self._pending, op, absolute_coordinates=self._absolute_coordinates)
         if status:
             self._set_status(status)
+        # The merged tail re-clamps BEFORE the estimate advances, so
+        # the re-clamp sees the pre-tap position.
         self._pending = self._clamp_tail(self._pending)
+        # The Z projection advances the moment the move is ACCEPTED
+        # into the queue — a later tap clamps against the move its
+        # predecessor already covers, never the stale polled value
+        # (the author's live report: the head could still be nudged
+        # to zero and beyond).
+        if getattr(op, "axis", None) == "z":
+            base = self._z_estimate if self._z_estimate is not None else self._polled_z()
+            if base is not None:
+                self._z_estimate = base + getattr(op, "distance", 0.0)
         if self._pending:
             self._guard_cooldown.stop()
             self._guard_latched = True

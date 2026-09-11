@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 import os
 import pathlib
 import threading
 import unittest
 
-from qt_runtime_support import QT_AVAILABLE, ScriptedTransport, runtime
+from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, ScriptedTransport, runtime
 
 PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
 
@@ -170,14 +170,17 @@ class UploadLifecycleTests(unittest.TestCase):
     def test_dialog_accept_starts_real_http_upload(self):
         received = []
 
-        class Handler(BaseHTTPRequestHandler):
+        class Handler(PipeSafeHandler):
             def do_POST(self):
                 received.append((self.path, self.rfile.read(int(self.headers["Content-Length"]))))
                 body = b'{"result":{"item":{"path":"renamed.gcode"}}}'
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                try:
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
 
             def log_message(self, *_args):
                 pass

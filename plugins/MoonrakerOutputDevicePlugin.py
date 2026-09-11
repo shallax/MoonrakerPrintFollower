@@ -83,6 +83,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 apply_config=self._follower.apply_printer_config,
                 bed_mesh=self._follower.bed_mesh,
                 request_load=self._follower.confirmForceLoadCurrentPrint,
+                request_file_download=self._follower.request_file_download,
                 request_monitor_download=self._follower.confirmDownloadForMonitor,
                 preferences_flushed=self._follower.preferencesFlushed,
                 identity=self._follower.current_printer_identity,
@@ -142,7 +143,8 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                     client=self._follower.client,
                     config=self._follower.current_printer_config,
                     apply_config=self._follower.apply_printer_config,
-                    active_identity=self._follower.current_printer_identity)
+                    active_identity=self._follower.current_printer_identity,
+                    has_slice=self._follower.has_toolpath)
                 self._devices[machine_id] = device
             else:
                 device.updateConfig(self._follower.current_printer_identity)

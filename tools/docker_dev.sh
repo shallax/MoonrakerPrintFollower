@@ -58,5 +58,10 @@ else
     if [ "$(docker inspect "$name" --format '{{.State.Running}}' 2>/dev/null || true)" != "true" ]; then
         docker rm -f "$name" >/dev/null 2>&1 || true
     fi
-    docker run --rm --user "$(id -u):$(id -g)" -v "$root":/work moonraker-print-follower-dev "$@"
+    # /tmp/mpf is the deterministic scratch dir (the author's ruling:
+    # probes, packages and transient files live there, never in the
+    # source tree) — bind-mounted so the container sees the same
+    # files as the host.
+    mkdir -p /tmp/mpf
+    docker run --rm --user "$(id -u):$(id -g)" -v "$root":/work -v /tmp/mpf:/tmp/mpf moonraker-print-follower-dev "$@"
 fi

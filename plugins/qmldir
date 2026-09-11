@@ -5,3 +5,4 @@ CollapsibleSectionHeader 1.0 CollapsibleSectionHeader.qml
 BedMeshMap 1.0 BedMeshMap.qml
 MonitorPopOver 1.0 MonitorPopOver.qml
 TemperatureChart 1.0 TemperatureChart.qml
+FileManager 1.0 FileManager.qml

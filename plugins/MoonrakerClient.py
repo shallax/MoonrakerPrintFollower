@@ -31,6 +31,7 @@ class MoonrakerClient(QObject):
         self._retry_delay_ms = 0
         self._retry_not_before = 0.0
         self._generation = 0
+        self._assume_print_stopped = False
         if isinstance(session, MoonrakerSession):
             self._session = session
         else:
@@ -187,6 +188,20 @@ class MoonrakerClient(QObject):
                 self.force_refresh()
         QTimer.singleShot(0, refresh)
 
+    def assume_print_stopped(self) -> None:
+        """The e-stop's assumption (the author's ruling): the print is
+        over until the printer reports otherwise. The CURRENT snapshot
+        re-emits immediately with the assumed state so every consumer
+        re-evaluates now, not at the next poll — which may never come
+        if the stop wedged Moonraker."""
+        if self._assume_print_stopped:
+            return
+        self._assume_print_stopped = True
+        merged = self._session.snapshot.copy_status()
+        if merged and str((merged.get("print_stats") or {}).get("state") or "").lower() in {"printing", "paused"}:
+            merged["print_stats"]["state"] = "cancelled"
+            self.statusReceived.emit(merged)
+
     def _handle_http_status(
         self,
         payload: Optional[Dict[str, Any]],
@@ -213,6 +228,18 @@ class MoonrakerClient(QObject):
             self._update_status_capabilities(merged)
             if generation != self._generation:
                 return
+            if self._assume_print_stopped:
+                # The e-stop's assumption (the author's ruling): until
+                # the printer reports a real non-printing state, every
+                # emitted status reads as cancelled — the monitor's
+                # guards, the jog gate AND the follower's coordinator
+                # all consume this one observation and need no
+                # per-consumer conditionals.
+                state = str((merged.get("print_stats") or {}).get("state") or "").lower()
+                if state in {"printing", "paused"}:
+                    merged["print_stats"]["state"] = "cancelled"
+                else:
+                    self._assume_print_stopped = False
             self.statusReceived.emit(merged)
             for command in changed_commands:
                 if generation != self._generation:

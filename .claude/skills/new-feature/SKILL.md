@@ -65,16 +65,32 @@ quoted:
 - what exists today and what is planned but unbuilt
 - the round-1 findings relevant to that role
 - rules: CRITIC ONLY — no code changes, nothing written into the repo,
-  everything funnels back through me
+  everything funnels back through me; research downloads (upstream
+  sources, clones) go to a tmp location, NEVER into the source tree
+  (the author's rule, 2026-09-10)
 - findings: NO CAP — surface everything; then name their top 3
 - websocket discipline: socket improvements are tech-debt notes for
   ROADMAP 4.0.0, never scope creep into the current release
 - the UX persona holds explicit adjudication rights on the release's
-  open UX question (the author defers to it)
+  open UX question (the author defers to it) — but adjudication is a
+  RECOMMENDATION: the author has final approval on every ruling,
+  persona verdicts included, before anything is built on them
 
 Keep the panel agents resumable — phase 6 re-engages the SAME personas
 rather than fresh critics, so their re-review is against their own
 recommendations.
+
+## Delta reviews (the author's ruling, 2026-09-10)
+
+At ANY step, if the work has drifted materially from what a persona
+adjudicated — or the author's live rulings re-shaped an adjudication —
+suggest a DELTA review: re-engage the SAME persona (the panel agents
+are resumable for exactly this), constrained to what changed and
+whether the drift breaks the intent of anything it or the author
+previously ruled. Read-only; findings funnel back through me; the
+author has final approval on everything, as always. Be proactive —
+propose one whenever it would catch a contradiction while it is still
+cheap, not after it is built.
 
 ## Phase 4 — Decision making
 
@@ -93,6 +109,30 @@ owner per domain, value_property publishing, atomic state writes,
 surface lists in tests/test_composed_components.py, section pins.
 Update ARCHITECTURE.md and its contract tests in the same commits as
 the code they describe.
+
+**Snapshot sequencing (the author's ruling, 2026-09-10):** large
+surfaces ship as author-testable snapshots, ordered by taste-value, so
+the author tries things early instead of discovering everything at the
+end of a long session:
+
+- **Snapshot 0 — mock-up before wiring**, for any large new UI: the
+  real QML with static synthetic data, no network, no model — packaged
+  through the snapshot loop so the author judges shape, columns and
+  layout at real size before any machinery exists. Their nod gates the
+  functional work.
+- Then the functional slices: the READ-ONLY slice first (everything
+  visible, no mutations), the marquee verb second, the mutations last;
+  independent features ride a separate track so regressions stay
+  attributable.
+- Each snapshot ends with the author's live test
+  (`make snapshot_package` → SCP → try it); the next slice waits for
+  their nod. Plan the snapshot order at the decision walk, not at
+  implementation time.
+- Tight iteration loops use `make snapshot_quick` (format + QML
+  sanity + verified package — no full test suite, no captures); the
+  author's ruling (2026-09-10): during focused iteration a valid
+  build that at least runs beats waiting for a full gate. `make all`
+  stays mandatory before any commit or push.
 
 - Every fix lands WITH ITS PROOF: the test, grep or output that shows
   it works, named in the report. "Done" without evidence is not done.
@@ -161,3 +201,24 @@ per finding in DECISIONS.md; mark the ROADMAP section shipped.
 - Real-Cura capture automation is permanently rejected — hand-capture
   3-D shots.
 - The ROADMAP is the living spec and Claude owns it.
+- Persona adjudication is advisory — the author has final approval on
+  every ruling, persona verdicts included (2026-09-10).
+- Research downloads (upstream sources, clones, doc fetches) never
+  land in the source tree — always a tmp location (2026-09-10).
+- ALL temp files — probes, scratch QML, transient outputs — live in
+  the deterministic scratch dir `/tmp/mpf` (2026-09-10): it keeps
+  things cleanable and the dev container bind-mounts it, so probes
+  run in-container directly. Nothing transient in the source tree.
+- Test pins update IN THE SAME PASS as the change (2026-09-10):
+  grep the tests for the changed token (QML pins, composed surface
+  lists, allowlists, the no-reflow sweep) and rewrite the pin
+  immediately — never leave them for the gates to discover.
+- Combine the run with the error extraction (2026-09-10): one
+  command for the gate/build AND the verdict + failure names +
+  assertion details (grep FAIL:/AssertionError inline in the same
+  tool result) — never `tail -3` first and go looking for errors
+  afterwards.
+- Debugging/probing QML from Python (2026-09-10): QML `id`s never
+  cross the C++ boundary — probe scripts and Qt tests address
+  controls by `objectName`. Key interactive items carry objectName,
+  and probe scripts print names, never class types.

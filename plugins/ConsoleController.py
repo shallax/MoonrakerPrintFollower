@@ -121,6 +121,11 @@ class ConsoleController(QObject):
         self._last_connection = connected
         self._note("Connected to Moonraker." if connected else "Disconnected from Moonraker.")
 
+    def note(self, text) -> None:
+        """The public entry for local notes (the toolhead's rejected
+        moves and other plugin-side explanations)."""
+        self._note(text)
+
     def _note(self, text) -> None:
         """A plugin-side note rendered as its own feed line: the pane
         draws kind "note" with a "#" prefix in amber, unmistakably the
