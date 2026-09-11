@@ -149,7 +149,12 @@ class PrinterBinding(QObject):
         url = normalise_url(config.url)
         # The product default (websocket) lives in PrinterConfig and is
         # passed here explicitly — never a client-side code default.
-        self._client.configure(url, config.api_key, config.poll_interval_ms, feed_mode=config.feed_mode.value)
+        self._client.configure(
+            url, config.api_key, config.poll_interval_ms,
+            feed_mode=config.feed_mode.value,
+            aux_interval_ms=config.aux_interval_ms,
+            console_interval_ms=config.console_interval_ms,
+        )
         if self.configured: self._client.start()
         else: self._client.stop()
         self.changed.emit()

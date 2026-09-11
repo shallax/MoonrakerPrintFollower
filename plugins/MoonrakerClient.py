@@ -33,6 +33,8 @@ class MoonrakerClient(QObject):
         self._generation = 0
         self._aux_names: set = set()
         self._effective_feed_mode = "http"
+        self._aux_interval_ms = 2500
+        self._console_interval_ms = 1000
         self._last_applied_stamp = 0.0
         self._proof_timer = QTimer(self)
         self._proof_timer.setSingleShot(True)
@@ -94,7 +96,8 @@ class MoonrakerClient(QObject):
     def status(self) -> Dict[str, Any]:
         return self._session.snapshot.copy_status()
 
-    def configure(self, base_url: str, api_key: str, poll_interval_ms: int, *, feed_mode=None) -> None:
+    def configure(self, base_url: str, api_key: str, poll_interval_ms: int, *, feed_mode=None,
+                  aux_interval_ms=None, console_interval_ms=None) -> None:
         new_base_url = str(base_url or "").rstrip("/")
         new_api_key = str(api_key or "")
         try:
@@ -118,6 +121,12 @@ class MoonrakerClient(QObject):
         self._base_url = new_base_url
         self._api_key = new_api_key
         self._poll_interval_ms = new_interval
+        for field, value in (("_aux_interval_ms", aux_interval_ms), ("_console_interval_ms", console_interval_ms)):
+            if value is not None:
+                try:
+                    setattr(self, field, max(250, min(60_000, int(value))))
+                except (TypeError, ValueError):
+                    pass
         if rebind:
             self._session.configure(new_base_url, new_api_key, feed_mode)
         self._effective_feed_mode = self._session.feed_mode
@@ -225,7 +234,7 @@ class MoonrakerClient(QObject):
     def _subscribe(self) -> None:
         socket = self._session.socket
         objects = {name: None for name in sorted(set(CORE_OBJECTS) | set(self._aux_names))}
-        socket.subscribe(objects)
+        socket.subscribe(objects, aux_names=set(self._aux_names))
 
     def set_auxiliary_objects(self, names: set) -> None:
         """The Monitor's wanted set feeds the merged subscription (A8/F5);
@@ -235,6 +244,14 @@ class MoonrakerClient(QObject):
         self._aux_names = set(names)
         if self._enabled and self._effective_feed_mode == "websocket":
             self._subscribe()
+
+    @property
+    def aux_interval_ms(self) -> int:
+        return self._aux_interval_ms
+
+    @property
+    def console_interval_ms(self) -> int:
+        return self._console_interval_ms
 
     def rpc_available(self) -> bool:
         """The socket RPC lane: live only when the feed is websocket AND
@@ -456,7 +473,11 @@ class MoonrakerClient(QObject):
         self._session.connected = True
         if not self._connected:
             self._connected = True
-            self.connectionChanged.emit(True, "Moonraker connected")
+            # Name the live transport so the connected state is
+            # verifiable at a glance (the author's ask: confidence
+            # that the websocket is really in use).
+            transport = "websocket" if self._effective_feed_mode == "websocket" else "HTTP polling"
+            self.connectionChanged.emit(True, f"Moonraker connected over {transport}")
 
     def _handle_failure(self, reason: str) -> None:
         # One bounded reason: the console note's label elides long text,

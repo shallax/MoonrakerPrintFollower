@@ -66,7 +66,9 @@ class PollPolicy:
                 return max(configured, self.paused_floor_ms)
             return max(configured, self.idle_floor_ms)
         if category == RequestCategory.AUXILIARY:
-            return self.auxiliary_active_ms if active or paused else self.auxiliary_idle_ms
+            # The user's delivery cadence (the sliders ruling); the
+            # constants are the shipped defaults, not the policy.
+            return max(configured, 250)
         if category == RequestCategory.POWER:
             return self.power_ms
         if category == RequestCategory.SYSTEM:
@@ -77,7 +79,7 @@ class PollPolicy:
             # Live output matters while a print runs; an idle printer
             # does not need a store fetch every second (the domain
             # panel's idle-floor point: ~86k requests/day otherwise).
-            return self.console_ms if (active or paused) else max(self.console_ms, self.console_idle_ms)
+            return max(configured, 250) if (active or paused) else max(configured, self.console_idle_ms)
         if category == RequestCategory.DISCOVERY:
             return self.discovery_ms
         return configured

@@ -767,6 +767,12 @@ walk):**
   for now; the camera-URL override field points Cura's loader at the
   printer's own keyless LAN webcam port, which unblocks live testing
   without the bridge.)
+- Delivery-cadence sliders RULED IN for 4.0.0 (2026-09-11, the
+  author): the push stream arrives at the printer's cadence and the
+  delivery clock hands it to consumers on the client's — with sliders
+  to adjust it. The core interval field is relabelled
+  ("Status update interval") with a mode-aware helper line; the
+  auxiliary and console cadences gain per-printer fields with bounds.
 - UX adjudication RULED (2026-09-11, the author): the transport-mode
   control is two `Cura.RadioButton`s — "WebSocket subscription" /
   "HTTP polling" — on the Connection tab with a permanent reason
@@ -889,6 +895,98 @@ deuteranopia cheap 80% is fixing the default red/green pair. Out-of-
 scope revisit: folder trees — confirm before 3.6.0 ships that files in
 subfolders are at least listable and printable, or the file manager is
 weaker than Mainsail's for anyone with a library.
+
+**Live-test fixes (2026-09-11, the author's snapshot round):**
+
+- The author's live report: dragging the preview's layer-height slider
+  no longer detaches the follower (the path progress bar still does),
+  and the whitespace gap between the bed-mesh and pause buttons turned
+  out to be the current-layer info label, which never fills while
+  attached.
+- Label: `update_eta` showed "current print layer" only while
+  DETACHED, so the slot stayed blank while attached. It now fills in
+  both states — the slot is the current-layer info label while
+  attached; the ETA/already-printed text is unchanged. The QML slot
+  also collapses when there is genuinely nothing to say (idle
+  printer), instead of leaving a blank gap.
+- Detach: `detect_override` passed silently whenever the follower was
+  unarmed (view swap, dropped connection, absorbed echo) — a drag
+  landing in that window was ignored until an observe happened to
+  re-arm. It now adopts the view's position as the baseline, so the
+  next deviation — a continuing drag — detaches. `reset_print` also
+  preserves the armed view baseline — the print stopping does not
+  move Cura's view, and wiping the baseline on every inactive
+  observation left the window between observations permanently
+  unarmed.
+- **The missing Monitor cards (the author's live report): a
+  subscription deadlock.** In websocket mode the auxiliary wanted set
+  only reached the socket after the first aux fragment arrived — and
+  Moonraker only pushes SUBSCRIBED objects, so the first fragment
+  never came: temperatures, fans and sensors vanished (HTTP mode was
+  unaffected — the author's "HTTP brings the cards back"). The wanted
+  set now reaches the socket the moment the object list is known. The
+  RPC lane itself was live-proven against the author's printer (3/3
+  replies on all seven monitor methods, zero errors) before the
+  deadlock was found.
+- **The cadence controls are real sliders now** (the author's ruling
+  and correction): aux + console are linear 250–60000 ms sliders with
+  a 250 ms floor and live value labels; the status update interval is
+  a log-spaced slider (250 ms to ~34 min, each step doubling) that
+  never rewrites an untouched stored value.
+- **The floating controls left of the preview card:** Cura's
+  ActionPanelWidget row centres its components on the row's centre
+  line, and our card's full height made the row centre far above the
+  bottom — Cura's own Post Processing button floated there. The
+  extension root now reports a short strip with the visible card
+  anchored to its bottom (overflowing upward), so the row stays small
+  and every component docks to the bottom line together.
+
+**More live-test fixes (2026-09-11, the author's second round):**
+
+- **Aux data that never changes never arrived:** Moonraker's subscribe
+  response carries the full state ONCE, then pushes only CHANGES. The
+  sync fed the core snapshot only, so a steady temperature never
+  reached the Monitor's aux snapshot ("hitting Reconnect brought it
+  all back" — the resubscribe re-sent the sync). The socket now seeds
+  the aux accumulator from every subscribe response, so the next
+  drain publishes unchanged objects too.
+- **New objects join mid-print (the author's rule):** the aux merge
+  accepted only names from the FIRST objects/list, so a device
+  switched on mid-print was dropped even when its data arrived. The
+  merge now accepts newly-seen names, and the subscription grows to
+  include them.
+- **The detach watchdog snapped back mid-drag:** the 3 s re-attach
+  timer restarted only on a NEW detach — while detached it fired
+  mid-inspection and re-attached under the user's pointer. The quiet
+  window now restarts on every view movement while detached, so the
+  re-attach comes 3 s after the user actually stops moving the view.
+- **The preview's two card versions flipped during Cura's own
+  busy/idle cycles:** the empty "Load current print" card gated on
+  `!CuraApplication.platformActivity`, so it appeared as the "wrong"
+  card whenever Cura flipped its activity flag (which also hides
+  Cura's layer controls). The empty card now gates on toolpath/load
+  state — it means "nothing is loaded", nothing else.
+- **Test-connection 401 wording:** an auth gateway's HTML 401 body
+  (the author's proxy) surfaced as Qt's raw error string. Non-JSON
+  401s now read "the API key was rejected (HTTP 401)", matching the
+  websocket path.
+- **The connected state names the live transport** ("Moonraker
+  connected over websocket" / "… over HTTP polling") — the author's
+  ask for confidence that the websocket is genuinely in use.
+- **The slow-drag detach delay (the author's third report):** the
+  echo window refreshed on every unarmed→armed re-arm, and an absorbed
+  drag deviation unarmed the follower — each observe then re-armed the
+  window, absorbing a slow drag for the window's whole 3.5 s. The
+  window now arms ONLY at attach(); a drag at any other moment
+  detaches immediately. The re-attach watchdog also cancels outright
+  on the first post-detach view movement — a continued drag is
+  inspection, never a restoration echo.
+- **The camera bridge lands (the 4.0.0 ruling):** `CameraBridge`
+  fetches the configured stream WITH the X-Api-Key header and
+  republishes it on an ephemeral keyless loopback port for Cura's
+  loader; `MonitorCamera` rewrites the camera URL through the bridge
+  whenever a key is set and the stream host is remote. Loopback-only
+  listener, header-buffer cap, per-connection upstreams.
 
 ## 4.0.0 notes — WebSockets as a transport swap (panel history)
 

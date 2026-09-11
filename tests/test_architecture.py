@@ -135,7 +135,7 @@ class SourceContractTests(unittest.TestCase):
                 "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService"},
             "GCodeIndex": {"MoonrakerProtocol"},
             "GCodeIndexService": {"GCodeIndex"},
-            "MonitorCamera": set(),
+            "MonitorCamera": {"CameraBridge"},
             "MonitorCommands": set(),
             "MonitorControls": {"MonitorFormatting"},
             "MonitorData": {"ConsolePolicy", "MonitorFormatting", "MoonrakerSession"},
@@ -165,7 +165,7 @@ class SourceContractTests(unittest.TestCase):
             "PreviewMotion": {"CuraAdapter", "PreviewSmoothing"},
             "PreviewPresentation": set(),
             "PreviewSmoothing": set(),
-            "PrintCoordinator": {"MonitorFormatting", "PreviewFormatting", "PrintState", "RemoteJobService"},
+            "PrintCoordinator": {"CuraAdapter", "MonitorFormatting", "PreviewFormatting", "PrintState", "RemoteJobService"},
             "PrinterBinding": {"CuraAdapter", "PrinterConfig"},
             "PrinterConfig": set(),
             "PrintState": {"RemoteJobService"},
@@ -209,6 +209,9 @@ class SourceContractTests(unittest.TestCase):
             self.assertIsNone(re.search(r'(?:getattr|setattr)\([^,]*follower,\s*[\"\']_', source), path.name)
 
     def test_only_shared_transport_constructs_network_managers(self):
+        # CameraBridge is the one sanctioned second owner: the camera
+        # republisher's upstream fetches are its own relay lane, not
+        # a request path of the shared transport.
         owners = []
         for path in PLUGINS.glob("*.py"):
             source = path.read_text()
@@ -216,7 +219,7 @@ class SourceContractTests(unittest.TestCase):
             self.assertNotIn("QWebSocket", source, path.name)
             self.assertNotIn("_pref_str(", source, path.name)
             self.assertNotIn("_pref_bool(", source, path.name)
-        self.assertEqual(owners, ["MoonrakerTransport.py"])
+        self.assertEqual(sorted(owners), ["CameraBridge.py", "MoonrakerTransport.py"])
 
     def test_network_replies_connect_into_bound_handlers_not_bare_closures(self):
         # The author's live crash report: a SIGSEGV in PyQtSlot::call

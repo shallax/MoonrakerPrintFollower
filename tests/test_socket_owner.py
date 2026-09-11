@@ -98,6 +98,28 @@ class SocketOwnerTests(unittest.TestCase):
         request = self.server.requests[0]
         self.assertEqual(sorted(request["params"]["objects"]), sorted(FIVE))
 
+    def test_subscribe_reply_seeds_the_aux_accumulator(self):
+        # The subscribe response carries the full state ONCE; Moonraker
+        # then pushes only changes. Objects that never change must still
+        # reach the Monitor: the sync seeds the aux accumulator so the
+        # next drain publishes them (the author's live report).
+        # The aux names arrive on the RE-SUBSCRIBE (the wanted set is
+        # only known after discovery) — not on start — so the seeding
+        # must use the subscribe call's aux subset.
+        owner = self.socket()
+        owner.start(self.url(), "", set(FIVE), set())
+        self.wait_signal(owner.upgraded)
+        reply = {"result": {"status": dict(SNAPSHOT["status"], heater_bed={"temperature": 60})}}
+        self.server.queue(("reply", reply))
+        owner.subscribe(dict(FIVE, heater_bed=None), aux_names={"heater_bed"})
+        self.assertTrue(self.wait_signal(owner.syncSnapshot))
+        aux, stamp = owner.drain_aux()
+        self.assertIsNotNone(aux)
+        self.assertEqual(aux["heater_bed"]["temperature"], 60)
+        self.assertGreater(stamp, 0)
+        # The core objects from the same sync do NOT seed aux.
+        self.assertNotIn("print_stats", aux)
+
     def test_notify_patches_route_per_class_with_bed_mesh_in_both(self):
         owner = self.socket()
         owner.start(self.url(), "", set(FIVE), {"bed_mesh", "heater_bed"})

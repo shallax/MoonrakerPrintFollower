@@ -205,9 +205,15 @@ class MoonrakerSocket(QObject):
             return 0
         return request_id
 
-    def subscribe(self, objects: Dict[str, Any]) -> None:
+    def subscribe(self, objects: Dict[str, Any], *, aux_names=None) -> None:
         """The merged subscription set, one call per connection (a second
-        subscribe replaces the first wholesale — F4)."""
+        subscribe replaces the first wholesale — F4). The aux subset
+        travels with it: fragment routing AND the sync seeding both
+        depend on knowing which names are auxiliary, and the wanted set
+        can grow mid-print (a device switched on later)."""
+
+        if aux_names is not None:
+            self._aux_names = set(aux_names)
 
         def on_reply(reply: Dict[str, Any]) -> None:
             self._last_auth_reply_at = time.monotonic()
@@ -220,6 +226,16 @@ class MoonrakerSocket(QObject):
             result = reply.get("result")
             status = result.get("status") if isinstance(result, dict) else None
             if isinstance(status, dict):
+                # The subscribe response carries the FULL current state;
+                # Moonraker then pushes only CHANGES. Seed the aux
+                # accumulator from the sync so objects that never change
+                # (a steady temperature) still reach the Monitor on the
+                # next drain (the author's live report).
+                for name in self._aux_names:
+                    if name in status:
+                        self._aux[name] = status[name]
+                if self._aux:
+                    self._aux_stamp = self._issue_stamp
                 self.syncSnapshot.emit(status, self._issue_stamp)
 
         self._issue_stamp = time.monotonic()

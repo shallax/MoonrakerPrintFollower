@@ -54,18 +54,21 @@ Item {
 
     visible: previewStageActive && configuredForFollowing && CuraApplication.platformActivity
     width: visible ? externalGap + followerPanel.width : 0
-    height: visible ? followerPanel.height : 0
+    // Cura's saveButton row centres its components on a line two thick
+    // margins above the action panel's bottom. If this extension
+    // reported the card's full height, the row would grow to it and
+    // Cura's own components (the Post Processing button) would centre
+    // far above the bottom. Report a short strip instead — the visible
+    // card anchors to its bottom and overflows upward — so the row
+    // stays small and everything docks to the bottom. Four thick
+    // margins puts the strip's bottom edge exactly on the action
+    // panel's bottom, keeping the card level with the Upload card.
+    height: visible ? 4 * base.verticalPadding : 0
 
     Rectangle {
         id: followerPanel
         anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
-
-        // Cura vertically centres saveButton extensions around the native output
-        // button, which sits two thick margins above ActionPanelWidget's bottom.
-        // A multi-row extension card therefore hangs too low if simply centred.
-        // Offset it so our card bottom lines up with Cura's native action card.
-        anchors.verticalCenterOffset: (2 * base.verticalPadding) - (height / 2)
+        anchors.bottom: parent.bottom
 
         width: base.contentWidth + 2 * base.horizontalPadding
         height: contentColumn.implicitHeight + 2 * base.verticalPadding
@@ -161,8 +164,12 @@ Item {
             }
 
             UM.Label {
+                // The current-layer info slot (the author's 2026-09-11
+                // ruling): filled while the print is active; when it has
+                // nothing to say the slot collapses instead of leaving a
+                // blank gap between the bed-mesh and pause buttons.
                 width: parent.width
-                height: 36 * screenScaleFactor
+                height: base.selectedLayerEtaText.length > 0 ? 36 * screenScaleFactor : 0
                 text: base.selectedLayerEtaText.length > 0 ? base.selectedLayerEtaText : " "
                 opacity: base.selectedLayerEtaText.length > 0 ? 1.0 : 0.0
                 color: UM.Theme.getColor("text")

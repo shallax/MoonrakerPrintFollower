@@ -2,6 +2,9 @@
 from dataclasses import replace
 from urllib.parse import urljoin
 from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
+from PyQt6.QtNetwork import QHostAddress
+
+from .CameraBridge import CameraBridge
 
 
 class MonitorCamera(QObject):
@@ -16,6 +19,7 @@ class MonitorCamera(QObject):
         self._index = -1
         self._values = {}
         self._url = ""
+        self._camera_bridge = None
         data.changed.connect(self.observe)
         self.observe()
 
@@ -135,6 +139,7 @@ class MonitorCamera(QObject):
                                                    and parsed.scheme().lower() not in ("http", "https")):
                 stream = ""
         self._url = urljoin(config.url.rstrip("/") + "/", stream) if stream and self._data.active else ""
+        self._url = self._bridge_url(config, self._url)
         try: rotation = int(camera.get("rotation", config.camera_rotation) or 0)
         except (TypeError, ValueError): rotation = 0
         self._values = {
@@ -146,6 +151,27 @@ class MonitorCamera(QObject):
             "cameraFlipVertical": bool(camera.get("flip_vertical", False)),
         }
         self.changed.emit()
+
+    @staticmethod
+    def _remote_stream(url):
+        parsed = QUrl(url)
+        return parsed.scheme().lower() in ("http", "https") and not QHostAddress(parsed.host()).isLoopback()
+
+    def _bridge_url(self, config, url):
+        # A camera behind the header-auth proxy cannot render through
+        # Cura's loader (NetworkMJPGImage sends no headers): republish
+        # it on the keyless loopback bridge (the author's 4.0.0
+        # ruling). The key travels with the bridge's own upstream
+        # fetch; the loader sees a plain local URL.
+        if not url or not config.api_key or not self._remote_stream(url):
+            return url
+        if self._camera_bridge is None:
+            self._camera_bridge = CameraBridge(self)
+        if not self._camera_bridge.configure(config.url, config.api_key):
+            return url
+        parsed = QUrl(url)
+        path = parsed.path() + (("?" + parsed.query()) if parsed.query() else "")
+        return self._camera_bridge.local_url(path)
 
     def select(self, index):
         cameras = self._data.snapshot.webcams

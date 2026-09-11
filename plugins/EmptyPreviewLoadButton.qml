@@ -7,7 +7,11 @@ Item {
     objectName: "moonrakerEmptyPreviewLoadControl"
     anchors.fill: parent
     z: 10000
-    visible: previewStageActive && configuredForFollowing && !CuraApplication.platformActivity
+    // NOT gated on CuraApplication.platformActivity: Cura flips that
+    // flag during its own busy/idle cycles, and the empty card must not
+    // appear as the "wrong" card mid-transition. It means "nothing is
+    // loaded", so it follows the toolpath and the load state instead.
+    visible: previewStageActive && configuredForFollowing && !hasToolpath && !loadBusy
 
     property bool previewStageActive: false
     property bool followingPaused: false
@@ -107,8 +111,10 @@ Item {
             }
 
             UM.Label {
+                // Same slot semantics as the action card: collapses when
+                // there is nothing to say (no blank gap above the legend).
                 width: parent.width
-                height: 36 * screenScaleFactor
+                height: base.selectedLayerEtaText.length > 0 ? 36 * screenScaleFactor : 0
                 text: base.selectedLayerEtaText.length > 0 ? base.selectedLayerEtaText : " "
                 opacity: base.selectedLayerEtaText.length > 0 ? 1.0 : 0.0
                 color: UM.Theme.getColor("text")

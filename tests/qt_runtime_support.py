@@ -35,6 +35,7 @@ if QT_AVAILABLE:
             super().__init__()
             self.starts = []
             self.subscriptions = []
+            self.rpcs = []
             self.stops = 0
             self.is_upgraded = False
 
@@ -43,8 +44,14 @@ if QT_AVAILABLE:
             self.is_upgraded = True
             self.upgraded.emit()
 
-        def subscribe(self, objects):
+        def subscribe(self, objects, *, aux_names=None):
             self.subscriptions.append(dict(objects))
+            if aux_names is not None:
+                self.aux_names = set(aux_names)
+
+        def request(self, method, params, callback):
+            self.rpcs.append((method, dict(params), callback))
+            return len(self.rpcs)
 
         def stop(self):
             self.stops += 1

@@ -323,7 +323,11 @@ class QtRuntimeTests(unittest.TestCase):
     def test_monitor_background_timers_fire_during_frequent_status_updates(self):
         model, client, transport = self.monitor()
         policy = self.qt.load("MoonrakerSession").PollPolicy
-        client.session.state.poll_policy = policy(auxiliary_idle_ms=30, power_ms=40, system_ms=50, endstops_ms=70, console_ms=30, console_idle_ms=30, discovery_ms=60)
+        # Auxiliary/console pace from the user's cadence, floored at
+        # 250 ms (the sliders ruling); the policy constants now pace
+        # only power/system/endstops/discovery.
+        client.configure("http://printer-a", "test-key", 750, aux_interval_ms=250, console_interval_ms=250)
+        client.session.state.poll_policy = policy(power_ms=40, system_ms=50, endstops_ms=70, console_idle_ms=250, discovery_ms=60)
         model._data._intervals()
         counts = [0, 0, 0, 0, 0, 0]  # auxiliary, power, system, endstops, console, discovery
         for index, timer in enumerate(model._data._timers.values()):
@@ -332,7 +336,9 @@ class QtRuntimeTests(unittest.TestCase):
         updates.setInterval(5)
         updates.timeout.connect(lambda: model.updateMoonrakerStatus({}))
         updates.start()
-        self.qt.events(160)
+        # The two cadence timers need 250 ms each, so the window must
+        # outlast the floor, not just the short constant timers.
+        self.qt.events(400)
         updates.stop()
         self.assertTrue(all(count >= 1 for count in counts), counts)
 
@@ -470,6 +476,51 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertTrue(any(e and "non-object" in e for p, e in results))
         self.assertTrue(all(key == "test-key" for key in received))
         cancelled.assert_not_called()
+
+    def test_camera_bridge_relays_the_stream_with_the_key(self):
+        # The key-carrying republisher: the loader asks a keyless
+        # loopback port; the bridge fetches the same path upstream WITH
+        # the key and relays the multipart stream verbatim.
+        from PyQt6.QtNetwork import QTcpSocket
+        received = []
+
+        class Handler(PipeSafeHandler):
+            def do_GET(self):
+                received.append((self.path, self.headers.get("X-Api-Key")))
+                body = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8\xff\xd9\r\n"
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            def log_message(self, *_args): pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        bridge = self.qt.load("CameraBridge").CameraBridge()
+        self.assertTrue(bridge.configure("http://127.0.0.1:" + str(server.server_port), "test-key"))
+        self.assertGreater(bridge.port, 0)
+        self.addCleanup(bridge.stop)
+        socket = QTcpSocket()
+        self.addCleanup(socket.abort)
+        socket.connectToHost("127.0.0.1", bridge.port)
+        socket.write(b"GET /webcam/?action=stream HTTP/1.1\r\nHost: local\r\n\r\n")
+        payload = bytearray()
+        for _ in range(200):
+            self.qt.events(10)
+            payload.extend(bytes(socket.readAll()))
+            if b"--frame" in payload:
+                break
+        self.assertIn(b"--frame", bytes(payload))
+        self.assertIn(b"multipart/x-mixed-replace", bytes(payload))
+        self.assertTrue(any(path == "/webcam/?action=stream" and key == "test-key"
+                            for path, key in received), received)
 
     def test_real_http_thumbnail_fetch_follows_metadata_path(self):
         # Live-proven: a real Moonraker answers <file>.png with 404 —
@@ -911,6 +962,58 @@ class MonitorDataAuxTests(unittest.TestCase):
         self.deliver("aux", {"result": {"status": {"heater_bed": {"target": 55}}}})
         self.assertEqual(set(self.data.snapshot.auxiliary), {"heater_bed"})
         self.assertEqual(self.data.snapshot.auxiliary["heater_bed"]["target"], 55)
+
+    def test_aux_accepts_objects_that_appeared_after_the_first_list(self):
+        # A device switched on mid-print never appears in the first
+        # objects/list — its data must still render and join the
+        # subscription instead of being dropped (the author's rule).
+        self.deliver("objects", {"result": {"objects": ["fan"]}})
+        self.deliver("aux", {"result": {"status": {"fan": {"speed": 0.5},
+                                                    "temperature_sensor mcu": {"temperature": 32.0}}}})
+        self.assertEqual(set(self.data.snapshot.auxiliary), {"fan", "temperature_sensor mcu"})
+        self.assertEqual(self.data.snapshot.auxiliary["temperature_sensor mcu"]["temperature"], 32.0)
+
+    def test_websocket_mode_subscribes_aux_objects_before_any_aux_data(self):
+        # Moonraker only pushes subscribed objects, so the wanted set
+        # must reach the socket as soon as the object list is known —
+        # waiting for the first fragment to issue the subscription
+        # deadlocked and the temperatures never appeared.
+        socket = ScriptedSocket()
+        client = self.qt.load("MoonrakerClient").MoonrakerClient(transport=self.transport, socket=socket)
+        self.addCleanup(client.stop)
+        client.configure("http://printer-a", "test-key", 750, feed_mode="websocket")
+        client.start()
+        data = self.qt.load("MonitorData").MonitorData(client, None)
+        data.set_active(True)
+        self.addCleanup(data.set_active, False)
+        data._objects({"result": {"objects": ["fan", "heater_bed"]}}, None)
+        self.assertTrue(any("fan" in subscription and "heater_bed" in subscription
+                            for subscription in socket.subscriptions), socket.subscriptions)
+
+    def test_camera_url_rewrites_through_the_bridge_when_a_key_is_set(self):
+        # A key-carrying camera cannot render through Cura's loader:
+        # the URL is republished on the keyless loopback bridge (the
+        # author's 4.0.0 ruling), key and upstream riding the bridge.
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class FakeData(QObject):
+            changed = pyqtSignal()
+            def __init__(self):
+                super().__init__()
+                self.active = True
+                self.snapshot = SimpleNamespace(webcams=(
+                    {"uid": "front-uid", "name": "Front", "stream_url": "/webcam/?action=stream"},))
+
+        config = self.qt.load("PrinterConfig").PrinterConfig(
+            camera_selected="front-uid", url="http://printer-a", api_key="test-key")
+        camera_module = self.qt.load("MonitorCamera")
+        camera = camera_module.MonitorCamera(FakeData(), lambda: config, lambda value: None)
+        self.addCleanup(lambda: camera._camera_bridge.stop() if camera._camera_bridge else None)
+        # The selection restore is scheduled for the next Qt turn.
+        self.qt.events(1)
+        self.assertTrue(camera.url.startswith("http://127.0.0.1:"), camera.url)
+        self.assertIn("/webcam/?action=stream", camera.url)
+        self.assertTrue(camera._camera_bridge.active)
 
     def test_camera_restore_bails_when_webcams_changed_before_turn(self):
         from PyQt6.QtCore import QObject, pyqtSignal

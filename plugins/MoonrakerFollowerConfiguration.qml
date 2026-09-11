@@ -10,12 +10,19 @@ Cura.MachineAction {
 
     property bool validUrl: manager.validUrl(urlField.text)
     property bool insecureKeyWarning: manager.insecureKeyWarning(urlField.text, apiKeyField.text)
-    property bool validPollInterval: manager.validPollInterval(pollIntervalField.text)
+    // The interval controls are sliders (the author's ruling): bounded
+    // and stepped, so an invalid value can never be entered. The poll
+    // slider is log-spaced; pollIntervalMoved records whether the user
+    // touched it, so an untouched stored value is never rewritten.
+    property bool validPollInterval: true
+    property bool pollIntervalMoved: false
+    property bool validAuxInterval: true
+    property bool validConsoleInterval: true
     property bool validZTolerance: manager.validZTolerance(zToleranceField.text)
     property bool validRetryInterval: manager.validRetryInterval(retryIntervalField.text)
     property bool validTranslation: manager.validTranslation(translateInputField.text, translateOutputField.text)
     property bool connectionRequested: enabledBox.checked || (urlField.text.trim() !== "" && urlField.text.trim() !== "http://" && urlField.text.trim() !== "https://")
-    property bool canSave: validPollInterval && validZTolerance && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
+    property bool canSave: validPollInterval && validAuxInterval && validConsoleInterval && validZTolerance && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
 
     function followMode() {
         if (completedMode.checked)
@@ -35,7 +42,9 @@ Cura.MachineAction {
                 "url": urlField.text,
                 "api_key": apiKeyField.text,
                 "feed_mode": websocketMode.checked ? "websocket" : "http",
-                "poll_interval_ms": pollIntervalField.text,
+                "poll_interval_ms": base.pollIntervalMoved ? Math.round(250 * Math.pow(2, pollIntervalSlider.value)) : manager.settingsPollInterval,
+                "aux_interval_ms": auxIntervalSlider.value,
+                "console_interval_ms": consoleIntervalSlider.value,
                 "follow_mode": followMode(),
                 "moonraker_layer_is_one_based": oneBasedBox.checked,
                 "path_follow": pathFollowBox.checked,
@@ -217,20 +226,93 @@ Cura.MachineAction {
                         }
 
                         UM.Label {
-                            text: "Status polling interval (milliseconds)"
+                            text: "Status update interval (milliseconds)"
                         }
-                        Cura.TextField {
-                            id: pollIntervalField
+                        RowLayout {
                             width: parent.width
-                            text: manager.settingsPollInterval
-                            maximumLength: 12
-                            onTextChanged: base.validPollInterval = manager.validPollInterval(text)
+                            spacing: UM.Theme.getSize("default_margin").width
+                            Slider {
+                                id: pollIntervalSlider
+                                Layout.fillWidth: true
+                                // Log-spaced: each step doubles the interval,
+                                // so the short end keeps usable precision
+                                // while the top end reaches ~34 minutes.
+                                from: 0
+                                to: 13
+                                stepSize: 1
+                                value: Number(manager.settingsPollInterval) > 0 ? Math.max(0, Math.min(13, Math.log2(Number(manager.settingsPollInterval) / 250))) : 1
+                                onMoved: {
+                                    base.pollIntervalMoved = true;
+                                    pollIntervalValueLabel.text = Math.round(250 * Math.pow(2, value)) + " ms";
+                                }
+                            }
+                            UM.Label {
+                                id: pollIntervalValueLabel
+                                Layout.preferredWidth: 90 * screenScaleFactor
+                                horizontalAlignment: Text.AlignRight
+                                text: (Number(manager.settingsPollInterval) > 0 ? Number(manager.settingsPollInterval) : 750) + " ms"
+                                font: UM.Theme.getFont("default")
+                            }
                         }
                         UM.Label {
-                            visible: !base.validPollInterval
-                            text: "Polling interval must be a positive whole number."
-                            color: UM.Theme.getColor("error")
+                            text: manager.settingsTransportMode === "websocket" ? "Status arrives from the printer about every 250 ms; this sets how often Cura applies it. Values below 250 ms show no fresher data and do not affect the printer." : "This is how often Cura asks the printer for a full status update. Each request costs the printer serialization work — values below 250 ms load it heavily with no fresher data."
+                            wrapMode: Text.WordWrap
+                            width: parent.width
                             font: UM.Theme.getFont("default_italic")
+                        }
+
+                        UM.Label {
+                            text: "Auxiliary status interval (milliseconds)"
+                        }
+                        RowLayout {
+                            width: parent.width
+                            spacing: UM.Theme.getSize("default_margin").width
+                            Slider {
+                                id: auxIntervalSlider
+                                Layout.fillWidth: true
+                                from: 250
+                                to: 60000
+                                stepSize: 250
+                                value: Number(manager.settingsAuxInterval) > 0 ? Number(manager.settingsAuxInterval) : 2500
+                                onMoved: auxIntervalValueLabel.text = value + " ms"
+                            }
+                            UM.Label {
+                                id: auxIntervalValueLabel
+                                Layout.preferredWidth: 80 * screenScaleFactor
+                                horizontalAlignment: Text.AlignRight
+                                text: manager.settingsAuxInterval + " ms"
+                                font: UM.Theme.getFont("default")
+                            }
+                        }
+                        UM.Label {
+                            text: "Temperature, fan and sensor updates. Websocket data arrives from the printer about every 250 ms, so values below that show no fresher data."
+                            wrapMode: Text.WordWrap
+                            width: parent.width
+                            font: UM.Theme.getFont("default_italic")
+                        }
+
+                        UM.Label {
+                            text: "Console output interval (milliseconds)"
+                        }
+                        RowLayout {
+                            width: parent.width
+                            spacing: UM.Theme.getSize("default_margin").width
+                            Slider {
+                                id: consoleIntervalSlider
+                                Layout.fillWidth: true
+                                from: 250
+                                to: 60000
+                                stepSize: 250
+                                value: Number(manager.settingsConsoleInterval) > 0 ? Number(manager.settingsConsoleInterval) : 1000
+                                onMoved: consoleIntervalValueLabel.text = value + " ms"
+                            }
+                            UM.Label {
+                                id: consoleIntervalValueLabel
+                                Layout.preferredWidth: 80 * screenScaleFactor
+                                horizontalAlignment: Text.AlignRight
+                                text: manager.settingsConsoleInterval + " ms"
+                                font: UM.Theme.getFont("default")
+                            }
                         }
 
                         RowLayout {

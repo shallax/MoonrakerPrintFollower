@@ -55,11 +55,13 @@ class SessionStateTests(unittest.TestCase):
         self.assertEqual(policy.interval_ms(RequestCategory.CORE, 750, "standby", urgent=True), 250)
         self.assertEqual(policy.interval_ms(RequestCategory.CORE, 750, "paused"), 1500)
         self.assertEqual(policy.interval_ms(RequestCategory.CORE, 750, "standby"), 5000)
-        # The auxiliary printing cadence stepped down to 2.5 s (the
-        # author's live report of print stalls while connected).
-        self.assertEqual(policy.interval_ms(RequestCategory.AUXILIARY, 750, "printing"), 2500)
-        self.assertEqual(policy.interval_ms(RequestCategory.AUXILIARY, 750, "paused"), 2500)
-        self.assertEqual(policy.interval_ms(RequestCategory.AUXILIARY, 750, "standby"), 2500)
+        # The auxiliary cadence is the user's delivery interval (the
+        # sliders ruling) with the printer's own 250 ms cadence as the
+        # floor; 2500 is the shipped default.
+        self.assertEqual(policy.interval_ms(RequestCategory.AUXILIARY, 2500, "printing"), 2500)
+        self.assertEqual(policy.interval_ms(RequestCategory.AUXILIARY, 2500, "standby"), 2500)
+        self.assertEqual(policy.interval_ms(RequestCategory.AUXILIARY, 5000, "printing"), 5000)
+        self.assertEqual(policy.interval_ms(RequestCategory.AUXILIARY, 100, "printing"), 250)
         self.assertEqual(policy.interval_ms(RequestCategory.POWER, 750, "printing"), 5000)
         self.assertEqual(policy.interval_ms(RequestCategory.SYSTEM, 750, "printing"), 10000)
         self.assertEqual(policy.interval_ms(RequestCategory.DISCOVERY, 750, "printing"), 30000)

@@ -9,6 +9,12 @@ from urllib.parse import quote
 from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
 
+from .CuraAdapter import (
+    preview_current_layer,
+    preview_current_path,
+    preview_minimum_layer,
+    preview_minimum_path,
+)
 from .MonitorFormatting import filament_total_mm_from_file, parse_bed_mesh, result
 from .PreviewFormatting import (
     pause_can_toggle,
@@ -63,6 +69,7 @@ class PrintCoordinator(QObject):
         # re-attaches after the view has been quiet, while the user is
         # still in the Preview stage. Manual toggles cancel it.
         self._detach_from_override = False
+        self._last_view_position = None
         self._detach_watchdog = QTimer(self)
         self._detach_watchdog.setSingleShot(True)
         self._detach_watchdog.setInterval(3000)
@@ -339,12 +346,30 @@ class PrintCoordinator(QObject):
         if self._index.phase == "indexing": self._preview.reset_tracking()
         self.refresh()
 
+    def _view_position(self):
+        view = self._cura.view
+        if view is None:
+            return None
+        return (preview_current_layer(view), preview_minimum_layer(view),
+                preview_current_path(view), preview_minimum_path(view))
+
     def _position_changed(self):
         if self._binding.config.enabled:
             if self._preview.detect_override():
                 self._detail = "Detached"
                 self._detach_from_override = True
+                self._last_view_position = self._view_position()
                 self._detach_watchdog.start()
+            elif self._detach_from_override and not self._preview.state.attached:
+                # Any further movement means the user is inspecting, not
+                # Cura restoring: cancel the auto re-attach outright.
+                # Restarting a quiet window instead read a slow drag's
+                # pauses as "quiet" and snapped the follower back under
+                # the author's pointer (their live report).
+                position = self._view_position()
+                if position != self._last_view_position:
+                    self._last_view_position = position
+                    self._detach_watchdog.stop()
         # Cura streams position changes at the render cadence; the
         # panel values do not need that rate. Throttle the ETA and
         # publish to 5 Hz — the author's preview-lag report.

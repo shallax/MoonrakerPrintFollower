@@ -108,6 +108,12 @@ class PrinterConfig:
     # The status-feed transport, per printer (mixed fleets mix modes).
     # The product default lives here, never in a client-side code default.
     feed_mode: FeedMode = FeedMode.WEBSOCKET
+    # The delivery cadences (the author's sliders ruling): the floor is
+    # the printer's own update cadence — below 250 ms there is no
+    # fresher data in either mode, and in HTTP mode each request costs
+    # the printer a full serialization.
+    aux_interval_ms: int = 2500
+    console_interval_ms: int = 1000
     path_follow: bool = True
     path_smoothing: bool = True
     show_toolhead_indicator: bool = True
@@ -199,6 +205,12 @@ class PrinterConfig:
         except (TypeError, ValueError):
             rotation = defaults.camera_rotation
         data["camera_rotation"] = rotation if rotation in {0, 90, 180, 270} else 0
+
+        for key in ("aux_interval_ms", "console_interval_ms"):
+            try:
+                data[key] = max(250, min(60_000, int(data[key])))
+            except (TypeError, ValueError):
+                data[key] = getattr(defaults, key)
 
         data["url"] = normalise_url(data.get("url"))
 

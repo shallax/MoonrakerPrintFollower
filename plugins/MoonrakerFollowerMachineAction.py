@@ -146,6 +146,14 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return self._config().trace_layer
 
     @pyqtProperty(str, notify=settingsChanged)
+    def settingsAuxInterval(self) -> str:
+        return str(self._config().aux_interval_ms)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsConsoleInterval(self) -> str:
+        return str(self._config().console_interval_ms)
+
+    @pyqtProperty(str, notify=settingsChanged)
     def settingsTransportMode(self) -> str:
         return str(getattr(self._config().feed_mode, "value", self._config().feed_mode))
 
@@ -270,7 +278,21 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtSlot(str, result=bool)
     def validPollInterval(self, value: str) -> bool:
         try:
-            return int(str(value).strip()) > 0
+            return 250 <= int(str(value).strip()) <= 3_600_000
+        except (TypeError, ValueError):
+            return False
+
+    @pyqtSlot(str, result=bool)
+    def validAuxInterval(self, value: str) -> bool:
+        try:
+            return 250 <= int(str(value).strip()) <= 60_000
+        except (TypeError, ValueError):
+            return False
+
+    @pyqtSlot(str, result=bool)
+    def validConsoleInterval(self, value: str) -> bool:
+        try:
+            return 250 <= int(str(value).strip()) <= 60_000
         except (TypeError, ValueError):
             return False
 
@@ -301,12 +323,20 @@ class MoonrakerFollowerMachineAction(MachineAction):
             if not isinstance(raw, dict):
                 return False
 
-            interval = int(str(raw.get("poll_interval_ms", "")).strip())
+            # The sliders deliver JS numbers (e.g. 250.0); the legacy
+            # text fields delivered digit strings. Accept both.
+            interval = int(float(str(raw.get("poll_interval_ms", "")).strip()))
+            aux_interval = int(float(str(raw.get("aux_interval_ms", "")).strip()))
+            console_interval = int(float(str(raw.get("console_interval_ms", "")).strip()))
             tolerance = float(str(raw.get("z_tolerance", "")).strip())
             retry_interval = float(str(raw.get("ready_retry_interval_s", "")).strip())
             url = normalise_url(str(raw.get("url", "")))
             enabled = bool(raw.get("enabled", False))
-            if interval <= 0 or not (0.005 <= tolerance <= 0.250):
+            if not (250 <= interval <= 3_600_000):
+                return False
+            if not (250 <= aux_interval <= 60_000) or not (250 <= console_interval <= 60_000):
+                return False
+            if not (0.005 <= tolerance <= 0.250):
                 return False
             if not (0.1 <= retry_interval <= 60.0):
                 return False
@@ -334,6 +364,8 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "url": url,
                 "api_key": str(raw.get("api_key") or "").strip(),
                 "poll_interval_ms": interval,
+                "aux_interval_ms": aux_interval,
+                "console_interval_ms": console_interval,
                 "moonraker_layer_is_one_based": bool(raw.get("moonraker_layer_is_one_based", True)),
                 "auto_preview": bool(raw.get("auto_preview", False)),
                 "z_fallback": bool(raw.get("z_fallback", True)),

@@ -181,8 +181,14 @@ class MonitorData(QObject):
             self.refresh_all()
 
     def _intervals(self):
+        configured = {
+            RequestCategory.CORE: 1000,
+            RequestCategory.AUXILIARY: self._client.aux_interval_ms,
+            RequestCategory.CONSOLE: self._client.console_interval_ms,
+        }
         for category, timer in self._timers.items():
-            interval = self._client.session.poll_policy.interval_ms(category, 1000, self._client.session.snapshot.printer_state)
+            interval = self._client.session.poll_policy.interval_ms(
+                category, configured.get(category, 1000), self._client.session.snapshot.printer_state)
             if timer.interval() != interval: timer.setInterval(interval)
 
     def request(self, channel, method, path, callback, *, body=None, replace=False, category="auxiliary",
@@ -245,11 +251,23 @@ class MonitorData(QObject):
         names = value.get("objects") if isinstance(value, Mapping) else None
         if error or not isinstance(names, (tuple, list)): return
         self._update(objects=tuple(sorted(str(name) for name in names)))
+        self._reconcile_aux_subscription()
         if "configfile" in names:
             self.request("config-static", "POST", "printer/objects/query", self._aux,
                 body={"objects": {"configfile": None}}, replace=True, category="discovery",
                 rpc=("printer.objects.query", {"objects": {"configfile": None}}))
         self.refresh_aux()
+
+    def _reconcile_aux_subscription(self):
+        """The wanted set must reach the socket even before any aux data
+        has arrived: Moonraker only pushes subscribed objects, so waiting
+        for the first fragment to issue the subscription is a deadlock
+        — temperatures never appeared in websocket mode (the author's
+        live report)."""
+        if self._client.effective_feed_mode != "websocket":
+            return
+        wanted = {name for name in self._snapshot.objects if self.wants_object(name)}
+        self._client.set_auxiliary_objects(wanted)
 
     def refresh_aux(self):
         if self._client.effective_feed_mode == "websocket":
@@ -258,6 +276,8 @@ class MonitorData(QObject):
             patch, _stamp = self._client.drain_aux()
             if patch:
                 self._merge_aux(patch)
+            else:
+                self._reconcile_aux_subscription()
             return
         objects = {name: ["save_config_pending", "save_config_pending_items"] if name == "configfile" else None
                    for name in self._snapshot.objects if self.wants_object(name)}
@@ -272,8 +292,11 @@ class MonitorData(QObject):
     def _merge_aux(self, incoming):
         # Rebuild from the current wanted set so objects that were renamed or
         # hot-removed stop rendering instead of staying in the snapshot for
-        # the rest of the session.
+        # the rest of the session. Newly-seen objects join the set even when
+        # the first objects/list missed them — a device switched on
+        # mid-print must show up, not be dropped (the author's rule).
         wanted = {name for name in self._snapshot.objects if self.wants_object(name)}
+        wanted |= {name for name in incoming if self.wants_object(name)}
         # The wanted set is the subscription's declarative input (A8/F5):
         # a membership change re-issues the one merged subscription.
         self._client.set_auxiliary_objects(wanted)

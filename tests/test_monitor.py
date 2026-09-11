@@ -801,7 +801,7 @@ class MonitorModelContractTests(unittest.TestCase):
 
     def test_monitor_consumes_shared_session_poll_policy(self):
         self.assertIn("self._client.session.snapshot.printer_state", DATA)
-        self.assertIn("poll_policy.interval_ms(category, 1000", DATA)
+        self.assertIn("poll_policy.interval_ms(", DATA)
         self.assertIn("if timer.interval() != interval:", DATA)
         for category in (
             "RequestCategory.AUXILIARY",

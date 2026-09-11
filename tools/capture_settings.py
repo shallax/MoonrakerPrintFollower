@@ -102,6 +102,14 @@ class SettingsManager(QObject):
         return "750"
 
     @pyqtProperty(str, notify=settingsChanged)
+    def settingsAuxInterval(self):
+        return "2500"
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsConsoleInterval(self):
+        return "1000"
+
+    @pyqtProperty(str, notify=settingsChanged)
     def settingsTransportMode(self):
         return "websocket"
 
@@ -226,6 +234,14 @@ class SettingsManager(QObject):
     def validUrl(self, value):
         parsed = QUrl(str(value or ""))
         return parsed.isValid() and parsed.scheme() in ("http", "https") and bool(parsed.host())
+
+    @pyqtSlot(str, result=bool)
+    def validAuxInterval(self, value):
+        return True
+
+    @pyqtSlot(str, result=bool)
+    def validConsoleInterval(self, value):
+        return True
 
     @pyqtSlot(str, result=bool)
     def validPollInterval(self, value):

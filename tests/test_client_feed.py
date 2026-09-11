@@ -36,8 +36,10 @@ if QT_AVAILABLE:
             self.is_upgraded = True
             self.upgraded.emit()
 
-        def subscribe(self, objects):
+        def subscribe(self, objects, *, aux_names=None):
             self.subscriptions.append(dict(objects))
+            if aux_names is not None:
+                self.aux_names = set(aux_names)
 
         def stop(self):
             self.stops += 1

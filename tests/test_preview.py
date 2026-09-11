@@ -139,6 +139,18 @@ class PreviewFollowerServiceTests(unittest.TestCase):
         self.assertIsNone(self.service.state.observed_layer)
         self.assertIsNone(self.service.state.path_fraction)
 
+    def test_reset_print_keeps_the_armed_view_baseline(self):
+        # The print stopping does not move Cura's view: the armed
+        # baseline survives, so a drag in the observation gap between
+        # resets still detaches instead of being ignored.
+        self.observe(4)
+        self.service.reset_print()
+        self.assertEqual(self.service.state.expected_layer, 4)
+        self.service._echo_until = 0.0
+        self.cura.view.layer = 10
+        self.assertEqual(self.service.detect_override(), "layer")
+        self.assertFalse(self.service.state.attached)
+
     def test_state_cannot_be_mutated_by_consumers(self):
         with self.assertRaises(FrozenInstanceError): self.service.state.attached = False
 
@@ -152,15 +164,38 @@ class PreviewFollowerServiceTests(unittest.TestCase):
 
     def test_view_restoration_echo_does_not_detach(self):
         # Cura's own asynchronous restoration (stage switches can hang and
-        # land late) arrives right after a re-arm: the echo window absorbs
+        # land late) arrives right after an attach: the echo window absorbs
         # it, drops the expectations and stays attached. The next drive
-        # re-arms on the settled view.
+        # re-arms on the settled view. The window arms at attach() — never
+        # on a later re-arm, or a slow drag's absorb-rearm cycle would
+        # refresh it forever (the author's live report).
         self.observe(4)
+        self.service.attach(True)
         self.cura.view.layer = 10
         self.assertIsNone(self.service.detect_override())
         self.assertTrue(self.service.state.attached)
         self.assertIsNone(self.service.state.expected_layer)
         self.service._echo_until = 0.0  # a genuine scroll now detaches again
+
+    def test_unarmed_change_adopts_a_baseline_and_the_next_deviation_detaches(self):
+        # A drag landing while the follower is unarmed (view swap,
+        # dropped connection, absorbed echo) must not be ignored: the
+        # first change becomes the baseline, the continuing drag detaches.
+        self.observe(4)
+        self.service.invalidate_view()
+        self.assertIsNone(self.service.state.expected_layer)
+        self.cura.view.layer = 10
+        self.assertIsNone(self.service.detect_override())
+        self.assertEqual(self.service.state.expected_layer, 10)
+        self.service._echo_until = 0.0
+        self.cura.view.layer = 11
+        self.assertEqual(self.service.detect_override(), "layer")
+        self.assertFalse(self.service.state.attached)
+
+    def test_attached_label_shows_the_current_print_layer(self):
+        self.observe(4)
+        self.service.update_eta(self.observe(4), self.index)
+        self.assertIn("current print layer", self.service.state.eta_text)
 
     def test_eta_uses_path_progress_and_live_duration_anchor(self):
         self.observe(4, 100)
