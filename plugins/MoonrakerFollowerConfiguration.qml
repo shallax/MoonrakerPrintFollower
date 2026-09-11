@@ -34,6 +34,7 @@ Cura.MachineAction {
                 "enabled": enabledBox.checked,
                 "url": urlField.text,
                 "api_key": apiKeyField.text,
+                "feed_mode": websocketMode.checked ? "websocket" : "http",
                 "poll_interval_ms": pollIntervalField.text,
                 "follow_mode": followMode(),
                 "moonraker_layer_is_one_based": oneBasedBox.checked,
@@ -185,6 +186,34 @@ Cura.MachineAction {
                             color: UM.Theme.getColor("warning")
                             wrapMode: Text.WordWrap
                             width: parent.width
+                        }
+
+                        UM.Label {
+                            text: "Printer status transport"
+                            font: UM.Theme.getFont("medium_bold")
+                        }
+                        ButtonGroup {
+                            id: transportModeGroup
+                        }
+                        Cura.RadioButton {
+                            id: websocketMode
+                            ButtonGroup.group: transportModeGroup
+                            text: "WebSocket subscription"
+                            checked: manager.settingsTransportMode === "websocket"
+                        }
+                        Cura.RadioButton {
+                            id: httpMode
+                            ButtonGroup.group: transportModeGroup
+                            text: "HTTP polling"
+                            checked: manager.settingsTransportMode === "http"
+                        }
+                        UM.Label {
+                            // The permanent reason slot: the text changes,
+                            // the row never appears or disappears.
+                            text: manager.transportStatus
+                            wrapMode: Text.WordWrap
+                            width: parent.width
+                            font: UM.Theme.getFont("default_italic")
                         }
 
                         UM.Label {

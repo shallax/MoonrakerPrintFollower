@@ -102,6 +102,16 @@ class SettingsManager(QObject):
         return "750"
 
     @pyqtProperty(str, notify=settingsChanged)
+    def settingsTransportMode(self):
+        return "websocket"
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def transportStatus(self):
+        return ("WebSocket lets Moonraker push status changes to Cura. "
+                "HTTP polling asks the printer for them at the interval below. "
+                "Commands, uploads and the console always use HTTP.")
+
+    @pyqtProperty(str, notify=settingsChanged)
     def settingsFollowMode(self):
         return "exact"
 

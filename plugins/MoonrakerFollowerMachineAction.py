@@ -146,6 +146,19 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return self._config().trace_layer
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def settingsTransportMode(self) -> str:
+        return str(getattr(self._config().feed_mode, "value", self._config().feed_mode))
+
+    def transportStatus(self) -> str:
+        # The permanent reason slot under the transport radios (the UX
+        # adjudication): the helper sentence until the live feed reports
+        # a capability verdict.
+        return (
+            "WebSocket lets Moonraker push status changes to Cura. "
+            "HTTP polling asks the printer for them at the interval below. "
+            "Commands, uploads and the console always use HTTP."
+        )
+
     def settingsTraceHttp(self) -> bool:
         return self._config().trace_http
 
@@ -308,6 +321,11 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 mode = FollowMode.EXACT.value
 
             current = self._config()
+            # The mode is a validated two-literal choice: an unknown value
+            # keeps the current one — never a silent default (UX-M7).
+            feed_mode = str(raw.get("feed_mode") or "").strip().lower()
+            if feed_mode not in ("websocket", "http"):
+                feed_mode = str(getattr(current.feed_mode, "value", current.feed_mode))
             data = asdict(current)
             data.update({
                 "enabled": enabled,
@@ -323,6 +341,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "show_toolhead_indicator": bool(raw.get("show_toolhead_indicator", True)),
                 "trace_layer": bool(raw.get("trace_layer", False)),
                 "trace_http": bool(raw.get("trace_http", False)),
+                "feed_mode": feed_mode,
                 "follow_mode": mode,
                 "frontend_url": str(raw.get("frontend_url") or "").strip(),
                 "output_format": str(raw.get("output_format") or "gcode").lower(),
