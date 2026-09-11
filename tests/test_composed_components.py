@@ -419,7 +419,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertTrue(parts.cura.loading)
         # The load gives Cura the toolpath; only then does the
         # metadata/index pull start and the index build.
-        app.controller.view = SimpleNamespace(getActivity=lambda: True)
+        app.controller.view = SimpleNamespace(getActivity=lambda: True, getLayerData=lambda: object())
         app.controller.activeViewChanged.emit()
         for _ in range(300):
             if parts.index.view is not None: break
@@ -570,6 +570,12 @@ class ComposedComponentTests(unittest.TestCase):
         status["print_stats"]["message"] = "Not homed"
         self.deliver(status)
         self.qt.events()
+        # A transient error holds the attempt — a cold-start error
+        # must not read as a failed start while the job carries on.
+        self.assertIsNotNone(model._file_manager.print_attempt)
+        module = self.qt.load("MoonrakerMonitorModel")
+        with patch.object(module.MoonrakerMonitorModel, "FILE_PRINT_START_TIMEOUT_S", 0.0):
+            model._publish()
         self.assertIsNone(model._file_manager.print_attempt)
         lines = [entry["text"] for entry in model._console.values["consoleLines"]]
         self.assertTrue(any("Not homed" in line for line in lines))

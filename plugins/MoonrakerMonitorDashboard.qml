@@ -388,7 +388,12 @@ Component {
 
                     ColumnLayout {
                         id: controlContent
-                        width: controlFlick.width - controlScrollbar.width - UM.Theme.getSize("default_margin").width
+                        // The attached scrollbar OVERLAYS the content, and
+                        // its own width swings with visibility — which
+                        // depends on this column's height. Subtracting it
+                        // here closed the loop (the dashboard's layout
+                        // polish loop in every capture).
+                        width: controlFlick.width - UM.Theme.getSize("default_margin").width
                         // Spacing lives on the children, not the layout: a
                         // collapsed section's hidden content must contribute
                         // nothing, so stacked headers sit flush like Cura's.

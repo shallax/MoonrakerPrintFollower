@@ -787,14 +787,14 @@ Component {
                                         spacing: 0
 
                                         UM.Label {
-                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            Layout.alignment: Qt.AlignHCenter
                                             text: "Camera"
                                             font: UM.Theme.getFont("medium")
                                             color: UM.Theme.getColor("text")
                                         }
 
                                         RowLayout {
-                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            Layout.alignment: Qt.AlignHCenter
                                             // The inset keeps the combo
                                             // from ever touching the pane
                                             // edge at the crush (the
@@ -1495,127 +1495,150 @@ Component {
                                         anchors.margins: UM.Theme.getSize("narrow_margin").width
                                         spacing: UM.Theme.getSize("thin_margin").height
 
-                                        Flickable {
-                                            id: consoleFlick
+                                        Item {
+                                            id: consoleOutputHost
                                             Layout.fillWidth: true
                                             Layout.fillHeight: true
-                                            clip: true
-                                            // The restore's tail scroll
-                                            // fires when the metrics
-                                            // SETTLE: the content height
-                                            // updates over several frames
-                                            // after setting the text, and
-                                            // one-shot scrolls measured
-                                            // stale values (the author's
-                                            // reports).
-                                            property bool restoreScrollPending: false
-                                            // Stick-to-end (the author's
-                                            // live report: when the pane
-                                            // is crushed and the text
-                                            // wraps, the sync pins to a
-                                            // height that has not settled,
-                                            // the viewport lands short of
-                                            // the tail, and the next poll
-                                            // snaps back). While the
-                                            // reader was at the end, every
-                                            // metric change re-pins — the
-                                            // wrap's own settle can never
-                                            // leave the viewport stranded
-                                            // above the tail.
-                                            property bool stickToEnd: false
-                                            // The scroll follows every
-                                            // metric change until the
-                                            // layout goes quiet — the
-                                            // text height settles over
-                                            // several frames and a
-                                            // one-shot scroll kept
-                                            // landing off by the command
-                                            // bar (the author's reports).
-                                            Timer {
-                                                id: restoreQuietTimer
-                                                interval: 120
-                                                repeat: false
-                                                onTriggered: consoleFlick.restoreScrollPending = false
-                                            }
-                                            // GOLDEN RULE: the reader's own
-                                            // movement cancels the restore's
-                                            // follow — a user scrolling up
-                                            // mid-history is never yanked
-                                            // (the author's ruling).
-                                            onMovementStarted: {
-                                                restoreScrollPending = false;
-                                                stickToEnd = false;
-                                            }
-                                            onContentHeightChanged: {
-                                                if (restoreScrollPending || stickToEnd) {
-                                                    contentY = contentHeight - height;
-                                                    restoreQuietTimer.restart();
+
+                                            Flickable {
+                                                id: consoleFlick
+                                                anchors.fill: parent
+                                                clip: true
+                                                // The restore's tail scroll
+                                                // fires when the metrics
+                                                // SETTLE: the content height
+                                                // updates over several frames
+                                                // after setting the text, and
+                                                // one-shot scrolls measured
+                                                // stale values (the author's
+                                                // reports).
+                                                property bool restoreScrollPending: false
+                                                // Stick-to-end (the author's
+                                                // live report: when the pane
+                                                // is crushed and the text
+                                                // wraps, the sync pins to a
+                                                // height that has not settled,
+                                                // the viewport lands short of
+                                                // the tail, and the next poll
+                                                // snaps back). While the
+                                                // reader was at the end, every
+                                                // metric change re-pins — the
+                                                // wrap's own settle can never
+                                                // leave the viewport stranded
+                                                // above the tail.
+                                                property bool stickToEnd: false
+                                                // The scroll follows every
+                                                // metric change until the
+                                                // layout goes quiet — the
+                                                // text height settles over
+                                                // several frames and a
+                                                // one-shot scroll kept
+                                                // landing off by the command
+                                                // bar (the author's reports).
+                                                Timer {
+                                                    id: restoreQuietTimer
+                                                    interval: 120
+                                                    repeat: false
+                                                    onTriggered: consoleFlick.restoreScrollPending = false
                                                 }
-                                            }
-                                            onHeightChanged: {
-                                                if (restoreScrollPending || stickToEnd) {
-                                                    contentY = contentHeight - height;
-                                                    restoreQuietTimer.restart();
+                                                // GOLDEN RULE: the reader's own
+                                                // movement cancels the restore's
+                                                // follow — a user scrolling up
+                                                // mid-history is never yanked
+                                                // (the author's ruling).
+                                                onMovementStarted: {
+                                                    restoreScrollPending = false;
+                                                    stickToEnd = false;
                                                 }
-                                            }
-                                            contentWidth: consoleText.width
-                                            contentHeight: Math.max(consoleText.height, consoleFlick.height)
-                                            ScrollBar.vertical: UM.ScrollBar {
-                                                id: consoleScrollbar
-                                                // GOLDEN RULE, scrollbar
-                                                // variant: a handle drag
-                                                // drives contentY directly
-                                                // and never fires
-                                                // onMovementStarted — the
-                                                // reader's drag cancels the
-                                                // pending restore itself
-                                                // (the UX panel).
-                                                onPressedChanged: {
-                                                    if (pressed) {
-                                                        restoreScrollPending = false;
-                                                        consoleFlick.stickToEnd = false;
+                                                onContentHeightChanged: {
+                                                    if (restoreScrollPending || stickToEnd) {
+                                                        contentY = contentHeight - height;
+                                                        restoreQuietTimer.restart();
+                                                    }
+                                                }
+                                                onHeightChanged: {
+                                                    if (restoreScrollPending || stickToEnd) {
+                                                        contentY = contentHeight - height;
+                                                        restoreQuietTimer.restart();
+                                                    }
+                                                }
+                                                contentWidth: consoleText.width
+                                                contentHeight: Math.max(consoleText.height, consoleFlick.height)
+                                                ScrollBar.vertical: UM.ScrollBar {
+                                                    id: consoleScrollbar
+                                                    // GOLDEN RULE, scrollbar
+                                                    // variant: a handle drag
+                                                    // drives contentY directly
+                                                    // and never fires
+                                                    // onMovementStarted — the
+                                                    // reader's drag cancels the
+                                                    // pending restore itself
+                                                    // (the UX panel).
+                                                    onPressedChanged: {
+                                                        if (pressed) {
+                                                            restoreScrollPending = false;
+                                                            consoleFlick.stickToEnd = false;
+                                                        }
+                                                    }
+                                                }
+                                                Column {
+                                                    // The vertical scrollbar
+                                                    // overlays the well's right
+                                                    // edge: the text must stop
+                                                    // short of it or wrapped
+                                                    // lines run underneath (the
+                                                    // author's live report).
+                                                    width: consoleFlick.width - consoleScrollbar.width
+                                                    height: consoleFlick.contentHeight
+                                                    // The spacer pins the sparse
+                                                    // transcript to the shell's
+                                                    // bottom edge; once the text
+                                                    // fills the viewport it scrolls
+                                                    // exactly like a terminal.
+                                                    Item {
+                                                        width: 1
+                                                        height: Math.max(0, consoleFlick.height - consoleText.height)
+                                                    }
+                                                    TextEdit {
+                                                        id: consoleText
+                                                        width: parent.width
+                                                        readOnly: true
+                                                        selectByMouse: true
+                                                        selectByKeyboard: true
+                                                        textFormat: TextEdit.RichText
+                                                        // Long Klipper lines wrap
+                                                        // instead of overflowing the
+                                                        // well; wrapping breaks on
+                                                        // word boundaries (the
+                                                        // author's live report).
+                                                        wrapMode: TextEdit.Wrap
+                                                        font.family: consoleSection.monoFamily()
+                                                        color: "#d9dde3"
+                                                        // No blinking caret: a read-only
+                                                        // terminal pane has no cursor, and
+                                                        // the caret's phase made the
+                                                        // captures nondeterministic.
+                                                        cursorVisible: false
                                                     }
                                                 }
                                             }
-                                            Column {
-                                                // The vertical scrollbar
-                                                // overlays the well's right
-                                                // edge: the text must stop
-                                                // short of it or wrapped
-                                                // lines run underneath (the
-                                                // author's live report).
-                                                width: consoleFlick.width - consoleScrollbar.width
-                                                height: consoleFlick.contentHeight
-                                                // The spacer pins the sparse
-                                                // transcript to the shell's
-                                                // bottom edge; once the text
-                                                // fills the viewport it scrolls
-                                                // exactly like a terminal.
-                                                Item {
-                                                    width: 1
-                                                    height: Math.max(0, consoleFlick.height - consoleText.height)
-                                                }
-                                                TextEdit {
-                                                    id: consoleText
-                                                    width: parent.width
-                                                    readOnly: true
-                                                    selectByMouse: true
-                                                    selectByKeyboard: true
-                                                    textFormat: TextEdit.RichText
-                                                    // Long Klipper lines wrap
-                                                    // instead of overflowing the
-                                                    // well; wrapping breaks on
-                                                    // word boundaries (the
-                                                    // author's live report).
-                                                    wrapMode: TextEdit.Wrap
-                                                    font.family: consoleSection.monoFamily()
-                                                    color: "#d9dde3"
-                                                    // No blinking caret: a read-only
-                                                    // terminal pane has no cursor, and
-                                                    // the caret's phase made the
-                                                    // captures nondeterministic.
-                                                    cursorVisible: false
-                                                }
+
+                                            UM.Label {
+                                                // The empty-state hint is an
+                                                // OVERLAY, not a layout child: a
+                                                // layout slot stole a line from
+                                                // the output area and the feed
+                                                // stopped short of the input row
+                                                // (the author's live report).
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                anchors.bottom: parent.bottom
+                                                anchors.bottomMargin: 8 * screenScaleFactor
+                                                opacity: root.printer == null || root.printer.consoleLines.length === 0 ? 1 : 0
+                                                text: "No commands yet — lines you send appear here."
+                                                font.family: consoleSection.monoFamily()
+                                                color: "#7d8590"
+                                                elide: Text.ElideRight
                                             }
                                         }
 
@@ -1655,24 +1678,6 @@ Component {
                                                 onClicked: root.printer.clearConsoleHistory()
                                             }
                                         }
-                                    }
-
-                                    UM.Label {
-                                        // The empty-state hint is an
-                                        // OVERLAY, not a layout child: a
-                                        // layout slot stole a line from
-                                        // the output area and the feed
-                                        // stopped short of the input row
-                                        // (the author's live report).
-                                        anchors.left: consoleFlick.left
-                                        anchors.right: consoleFlick.right
-                                        anchors.bottom: consoleFlick.bottom
-                                        anchors.bottomMargin: 8 * screenScaleFactor
-                                        opacity: root.printer == null || root.printer.consoleLines.length === 0 ? 1 : 0
-                                        text: "No commands yet — lines you send appear here."
-                                        font.family: consoleSection.monoFamily()
-                                        color: "#7d8590"
-                                        elide: Text.ElideRight
                                     }
                                 }
                             }

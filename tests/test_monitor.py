@@ -3111,7 +3111,7 @@ Item {
         # disconnected state is obvious.
         self.assertIn("enabled: root.printer != null\n                                property int consoleRecallIndex", MONITOR_QML)
         self.assertIn('color: root.printer != null && root.printer.monitorConnected ? "#161b22" : "#2d333b"', MONITOR_QML)
-        self.assertIn("anchors.bottom: consoleFlick.bottom", MONITOR_QML)
+        self.assertIn("anchors.bottom: parent.bottom", MONITOR_QML)
         # The connection DOT rides the Printer status pane's title in
         # BOTH pane states (expanded header and the collapsed strip) —
         # the author's chosen spot. Plus the camera's Live badge and

@@ -5,6 +5,11 @@ from typing import Any, Dict, Iterable, Optional
 
 from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
 
+try:
+    from UM.Logger import Logger
+except ImportError:  # the stdlib-only host suite has no Uranium
+    Logger = None
+
 from .MoonrakerProtocol import CORE_OBJECTS, moonraker_error_text, status_endpoint, websocket_endpoint
 from .MoonrakerSession import MoonrakerSession, MoonrakerSessionState, RequestCategory
 
@@ -36,6 +41,7 @@ class MoonrakerClient(QObject):
         self._aux_interval_ms = 2500
         self._console_interval_ms = 1000
         self._last_applied_stamp = 0.0
+        self._socket_started_at: Optional[float] = None
         self._proof_timer = QTimer(self)
         self._proof_timer.setSingleShot(True)
         self._proof_timer.setInterval(max(10, int(proof_timeout_ms)))
@@ -150,6 +156,8 @@ class MoonrakerClient(QObject):
         })
         self.capabilitiesChanged.emit(dict(self._capabilities))
         self._effective_feed_mode = self._session.feed_mode
+        if Logger is not None:
+            Logger.log("i", "Moonraker feed mode: %s", self._effective_feed_mode)
         self._last_applied_stamp = 0.0
         self._apply_adaptive_interval()
         self._poll_timer.start()
@@ -162,8 +170,14 @@ class MoonrakerClient(QObject):
     def _start_socket(self) -> None:
         socket = self._session.socket
         generation = self._generation
+        self._socket_started_at = time.monotonic()
 
         def on_sync(status, stamp):
+            if self._socket_started_at is not None:
+                if Logger is not None:
+                    Logger.log("i", "Moonraker websocket sync snapshot after %.0f ms",
+                               (time.monotonic() - self._socket_started_at) * 1000.0)
+                self._socket_started_at = None
             self.admit_status(status, origin="sync", stamp=float(stamp), generation=generation)
 
         def on_failed(reason):
@@ -207,7 +221,14 @@ class MoonrakerClient(QObject):
         socket.subscribeRefused.connect(on_refused)
         socket.klippyReady.connect(on_klippy_ready)
         socket.klippyLost.connect(on_klippy_lost)
-        socket.upgraded.connect(lambda: self._subscribe())
+        def on_upgraded():
+            if self._socket_started_at is not None:
+                if Logger is not None:
+                    Logger.log("i", "Moonraker websocket upgraded after %.0f ms",
+                               (time.monotonic() - self._socket_started_at) * 1000.0)
+            self._subscribe()
+
+        socket.upgraded.connect(on_upgraded)
         socket.start(
             websocket_endpoint(self._base_url),
             self._api_key,

@@ -4,6 +4,8 @@ from urllib.parse import urljoin
 from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
 from PyQt6.QtNetwork import QHostAddress
 
+from UM.Logger import Logger
+
 from .CameraBridge import CameraBridge
 
 
@@ -24,6 +26,7 @@ class MonitorCamera(QObject):
         self._index = -1
         self._values = {}
         self._url = ""
+        self._last_url_logged = ""
         self._camera_bridge = None
         data.changed.connect(self.observe)
         self.observe()
@@ -145,6 +148,18 @@ class MonitorCamera(QObject):
                 stream = ""
         self._url = urljoin(config.url.rstrip("/") + "/", stream) if stream and self._data.active else ""
         self._url = self._bridge_url(config, self._url)
+        if self._url != self._last_url_logged:
+            # The first-load failures were invisible in the logs: the
+            # stream decision (direct vs bridged vs none) logs here so
+            # a capture names where the loader went.
+            self._last_url_logged = self._url
+            if self._url:
+                parsed = QUrl(self._url)
+                shown = f"{parsed.scheme()}://{parsed.host()}" + (f":{parsed.port()}" if parsed.port() > 0 else "") + parsed.path()
+                kind = "bridged" if self._camera_bridge is not None and parsed.host() in ("127.0.0.1", "localhost") else "direct"
+                Logger.log("i", "Moonraker camera stream: %s (%s)", shown, kind)
+            else:
+                Logger.log("i", "Moonraker camera stream: none")
         try: rotation = int(camera.get("rotation", config.camera_rotation) or 0)
         except (TypeError, ValueError): rotation = 0
         self._values = {
@@ -175,6 +190,7 @@ class MonitorCamera(QObject):
             # The watchdog's feed-health signals ride the bridge.
             self._camera_bridge.upstreamFailed.connect(self.streamFailed.emit)
             self._camera_bridge.upstreamStarted.connect(self.streamRecovered.emit)
+            Logger.log("i", "Moonraker camera bridge created for the key-carrying stream")
         # The upstream is the STREAM'S own origin: an absolute
         # stream_url on another host/port (a separate webcam box) must
         # not be re-homed onto the Moonraker base.

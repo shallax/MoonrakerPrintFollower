@@ -397,11 +397,13 @@ Cura.MachineAction {
                             enabled: pathFollowBox.checked
                             checked: manager.settingsPathSmoothing
                         }
-                        UM.CheckBox {
-                            id: etaLearnBox
-                            text: "Learn ETA drift from observed progress"
-                            tooltip: "Rescale the remaining-time estimate by the drift between the slicer's per-layer times and what the printer actually took. Downloads nothing."
-                            checked: manager.settingsEtaLearn
+                        UM.TooltipArea {
+                            text: "Rescale the remaining-time estimate by the drift between the slicer's per-layer times and what the printer actually took. Downloads nothing."
+                            UM.CheckBox {
+                                id: etaLearnBox
+                                text: "Learn ETA drift from observed progress"
+                                checked: manager.settingsEtaLearn
+                            }
                         }
                         UM.CheckBox {
                             id: oneBasedBox

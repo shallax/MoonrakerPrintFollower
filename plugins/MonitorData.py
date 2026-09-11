@@ -213,6 +213,13 @@ class MonitorData(QObject):
             rpc_method, rpc_params = rpc
             if self._client.rpc(rpc_method, rpc_params, lambda reply, error: finished(reply, error)):
                 return True
+            # The bootstrap window: websocket mode with the socket not
+            # upgraded yet. Firing HTTP here was the traffic that read
+            # as handover cancellations in the log — the lane's own
+            # timer retries once the RPC lane is live, so skip the
+            # wire instead.
+            if self._client.effective_feed_mode == "websocket":
+                return True
         return self._client.transport.send_json("monitor", channel, method, path, finished,
             body=body, replace=replace, category=category, timeout_ms=timeout_ms)
 

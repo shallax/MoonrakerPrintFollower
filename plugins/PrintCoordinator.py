@@ -35,6 +35,7 @@ class PrintCoordinator(QObject):
         self._snapshot = PrintSnapshot()
         self._status = {}
         self._detail = "Not connected"
+        self._gate_logged = None
         self._load_job = None
         self._load_requested = False
         # Moonraker's file metadata (the slicer header parsed server-side):
@@ -426,6 +427,17 @@ class PrintCoordinator(QObject):
             connected=self._client.connected,
             configured=self._binding.configured,
         )
+        # Transition diagnostics (INFO, only on change): the card's
+        # visibility terms log themselves so a vanish can be traced to
+        # the term that stayed false.
+        gate = (self._binding.configured and config.enabled,
+                self._snapshot.load_active and not self._snapshot.index_ready,
+                self._cura.has_toolpath,
+                self._cura.preview_active)
+        if gate != self._gate_logged:
+            self._gate_logged = gate
+            Logger.log("i", "Moonraker preview card gates: configured=%s loadBusy=%s hasToolpath=%s previewStage=%s",
+                       gate[0], gate[1], gate[2], gate[3])
         self._presentation.publish({
             "followingPaused": not state.attached, "followingEnabled": config.enabled,
             # The preview's load feedback: busy until the load reaches a

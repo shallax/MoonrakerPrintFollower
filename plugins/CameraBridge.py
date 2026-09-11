@@ -20,6 +20,8 @@ from PyQt6.QtNetwork import (
     QTcpSocket,
 )
 
+from UM.Logger import Logger
+
 # The request header arrives in one packet from a local client, but a
 # hostile local process could stream forever: cap the buffered header.
 MAX_REQUEST_HEADER_BYTES = 8192
@@ -64,6 +66,7 @@ class CameraBridge(QObject):
         self._upstream_base, self._api_key = base, key
         if base and not self._server.isListening():
             self._server.listen(QHostAddress.SpecialAddress.LocalHost, 0)
+            Logger.log("i", "Moonraker camera bridge listening on loopback port %d", self._server.serverPort())
         elif not base and self._server.isListening():
             self._server.close()
         return self.port > 0
@@ -145,6 +148,7 @@ class CameraBridge(QObject):
         self._relays[socket] = (reply, buffer, False)
         reply.readyRead.connect(lambda r=reply, s=socket: self._on_upstream_ready(s, r))
         reply.finished.connect(lambda r=reply, s=socket: self._on_upstream_finished(s, r))
+        Logger.log("i", "Moonraker camera bridge relaying %s", str(target.url()).split("?", 1)[0])
         self.upstreamStarted.emit()
 
     @staticmethod
@@ -187,6 +191,7 @@ class CameraBridge(QObject):
         self._relays.pop(socket, None)
         if reply.error() != QNetworkReply.NetworkError.NoError:
             code = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+            Logger.log("i", "Moonraker camera bridge upstream failed: %s (HTTP %s)", reply.errorString(), code)
             self.upstreamFailed.emit(f"camera upstream failed: {reply.errorString()}")
             if code is None or int(code) >= 400:
                 # An auth refusal or a dead stream: nothing useful to

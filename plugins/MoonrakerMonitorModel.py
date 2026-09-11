@@ -373,6 +373,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # author's live report: the option appeared to do nothing).
         self._file_manager_note = ""
         self._print_armed_state = ""
+        self._print_start_error = ""
         self._file_manager.note.connect(self._on_file_manager_note)
         # Upload progress and outcome feed the popup (the author's
         # live request).
@@ -655,11 +656,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     # must never read as a failed start.
                     self._file_manager.clear_print_attempt()
                     self._print_armed_state = ""
+                    self._print_start_error = ""
                 elif state == "error":
-                    message = str(stats.get("message") or "").strip()
-                    self._print_start_failed(
-                        f"The printer reported an error: {message}" if message
-                        else "The printer reported an error starting the print.")
+                    # A cold start raises a transient Klipper error
+                    # (the extruder refuses to move below min temp)
+                    # that the print itself outlives once heated: a
+                    # failure verdict here lies while the job carries
+                    # on. Hold and remember the words — the timeout
+                    # below is the only failure verdict, and it keeps
+                    # the message.
+                    self._print_start_error = str(stats.get("message") or "").strip()
                 elif state and self._print_armed_state and state == self._print_armed_state:
                     # Unchanged since the confirm: hold. Klipper
                     # never clears the filename, so a re-print of the
@@ -676,8 +682,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     # attempt.
                     self._file_manager.clear_print_attempt()
                     self._print_armed_state = ""
-            elif time.time() - attempt[1] > self.FILE_PRINT_START_TIMEOUT_S:
-                self._print_start_failed("The printer did not begin printing.")
+                    self._print_start_error = ""
+            if self._file_manager.print_attempt is not None and time.time() - attempt[1] > self.FILE_PRINT_START_TIMEOUT_S:
+                if self._print_start_error:
+                    self._print_start_failed(f"The printer reported an error: {self._print_start_error}")
+                else:
+                    self._print_start_failed("The printer did not begin printing.")
         # The no-reflow rule's sibling ruling (the author, 2026-09-10):
         # while DISCONNECTED every control on the Monitor page disables
         # — the QML gates its sections and the emergency stop on this.
@@ -770,6 +780,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         belongs to the e-stop alone)."""
         self._file_manager.clear_print_attempt()
         self._print_armed_state = ""
+        self._print_start_error = ""
         self._console.note(f"Print start failed — {reason}")
         self._commands.report_status(f"Print start failed — {reason}")
 
@@ -952,6 +963,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # round's repro).
             stats = self._data.snapshot.core.get("print_stats") or {}
             self._print_armed_state = str(stats.get("state") or "")
+            self._print_start_error = ""
             # The print is on its way: the file manager steps aside
             # NOW and the monitor view returns — the verdict (success
             # or failure) reports to the console and the note line,

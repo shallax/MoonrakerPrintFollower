@@ -336,7 +336,9 @@ class SourceContractTests(unittest.TestCase):
     def test_source_contains_no_private_network_examples_or_literal_api_key(self):
         candidates = list(PLUGINS.rglob("*")) + list((ROOT / "tools").rglob("*")) + list(ROOT.glob("*"))
         text = "\n".join(p.read_text(errors="replace") for p in candidates if p.is_file() and p.suffix.lower() in {".py", ".qml", ".md", ".json", ".txt"})
-        for pattern in (r"\b(?:10|127)\.\d+\.\d+\.\d+\b", r"\b192\.168\.\d+\.\d+\b", r"\b172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+\b"):
+        # 127/8 is always the local machine and stays permitted; the
+        # gate protects against real private LAN ranges leaking.
+        for pattern in (r"\b10\.\d+\.\d+\.\d+\b", r"\b192\.168\.\d+\.\d+\b", r"\b172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+\b"):
             self.assertIsNone(re.search(pattern, text))
         self.assertIsNone(re.search(r"api_key\s*[=:]\s*[\"'][^\"']+[\"']", text, re.I))
 

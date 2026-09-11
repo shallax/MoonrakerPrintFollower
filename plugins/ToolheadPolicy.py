@@ -194,7 +194,9 @@ def jog_gate(state: str) -> str:
     state = str(state or "").strip().lower()
     if state == "printing":
         return "pause-first"
-    if state in {"standby", "paused", "complete", "cancelled"}:
+    # "error" is terminal — the print is over — and the toolhead must
+    # unlock so recovery moves need no manual host-side clear.
+    if state in {"standby", "paused", "complete", "cancelled", "error"}:
         return "allowed"
     return "disabled"
 

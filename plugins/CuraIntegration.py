@@ -81,8 +81,16 @@ class CuraIntegration(QObject):
         view = self._view
         if view is None: return False
         try:
-            if hasattr(view, "getActivity"): return bool(view.getActivity())
-            return view.getLayerData() is not None
+            # getActivity() tracks view ANIMATION, not content: it
+            # drops once the render settles, which took the preview
+            # card down after every load. Layer data is the
+            # toolpath's own signature.
+            if hasattr(view, "getLayerData") and view.getLayerData() is not None:
+                return True
+        except Exception:
+            pass
+        try:
+            return max(0, int(view.getMaxLayers())) > 0
         except Exception:
             return False
     @property

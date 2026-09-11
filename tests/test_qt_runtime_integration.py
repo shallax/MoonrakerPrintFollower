@@ -213,7 +213,7 @@ class QtRuntimeTests(unittest.TestCase):
         follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, path_follow=False, feed_mode="http"))
         # The metadata pull serves the Preview, so it only runs once the
         # print's G-code is loaded in Cura.
-        app.controller.view = SimpleNamespace(getActivity=lambda: True)
+        app.controller.view = SimpleNamespace(getActivity=lambda: True, getLayerData=lambda: object())
         app.controller.activeViewChanged.emit()
         self.qt.events()
         follower.client.statusReceived.emit({"print_stats": {"state": "printing", "filename": "part.gcode",
