@@ -34,6 +34,11 @@ class CameraBridge(QObject):
         self._server = QTcpServer(self)
         self._server.newConnection.connect(self._accept)
         self._nam = QNetworkAccessManager(self)
+        # The default policy re-sends custom raw headers — X-Api-Key
+        # included — across cross-origin redirects. Same-origin only,
+        # exactly like the shared transport (the key must never travel
+        # to a redirect target off the configured host).
+        self._nam.setRedirectPolicy(QNetworkRequest.RedirectPolicy.SameOriginRedirectPolicy)
         self._upstream_base = ""
         self._api_key = ""
         # One entry per local connection: (upstream reply, request
@@ -131,7 +136,11 @@ class CameraBridge(QObject):
             return
         request = QNetworkRequest(target)
         request.setRawHeader(b"X-Api-Key", self._api_key.encode("utf-8"))
+        # Cap the buffered upstream read: if the local client stalls,
+        # this fills and Qt applies TCP backpressure to the camera
+        # instead of growing memory without bound.
         reply = self._nam.get(request)
+        reply.setReadBufferSize(256 * 1024)
         _old_reply, buffer, _sent = self._relays[socket]
         self._relays[socket] = (reply, buffer, False)
         reply.readyRead.connect(lambda r=reply, s=socket: self._on_upstream_ready(s, r))
@@ -164,21 +173,24 @@ class CameraBridge(QObject):
                 head += f"Content-Length: {int(declared)}\r\n"
             head += "Connection: close\r\n\r\n"
             socket.write(head.encode("latin-1"))
-        chunk = bytes(reply.readAll())
-        if chunk:
-            socket.write(chunk)
+        if socket.bytesToWrite() < 1 << 20:
+            chunk = bytes(reply.readAll())
+            if chunk:
+                socket.write(chunk)
 
     def _on_upstream_finished(self, socket: QTcpSocket, reply: QNetworkReply) -> None:
         relay = self._relays.get(socket)
         if relay is None or relay[0] is not reply:
             return
+        # Pop on every exit: the error path previously relied on the
+        # abort->disconnected signal to clean up, a fragile dependency.
+        self._relays.pop(socket, None)
         if reply.error() != QNetworkReply.NetworkError.NoError:
             code = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
             self.upstreamFailed.emit(f"camera upstream failed: {reply.errorString()}")
             if code is None or int(code) >= 400:
                 # An auth refusal or a dead stream: nothing useful to
-                # relay — close so the loader sees the failure and
-                # retries on its own schedule.
+                # relay — close so the loader sees the failure.
                 socket.abort()
                 return
         # Flush any tail and close the response so a snapshot-style
@@ -187,7 +199,6 @@ class CameraBridge(QObject):
         except Exception: pass
         try: socket.disconnectFromHost()
         except Exception: pass
-        self._relays.pop(socket, None)
 
     def _on_socket_closed(self, socket: QTcpSocket) -> None:
         relay = self._relays.pop(socket, None)

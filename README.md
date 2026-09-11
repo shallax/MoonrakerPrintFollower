@@ -8,8 +8,42 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 3.6.0
+- **Release:** 4.0.0
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
+
+## What changed in 4.0.0
+
+Version 4.0.0 is the websocket release: the Moonraker status transport
+moves from per-request HTTP polling to Moonraker's websocket
+subscription. Klipper pushes object updates once per interval and
+Moonraker fans them out to every subscriber — one serialization shared
+by all clients instead of one full query per client per poll, which
+removed the dwells a busy printer showed under polling load. HTTP
+polling stays available per printer (Connection tab toggle, websocket
+default) and engages automatically when the socket cannot deliver,
+with the reason shown.
+
+What else changes, user-visibly:
+
+- **Delivery-cadence sliders** on the Connection tab: status update
+  interval (log-spaced, 250 ms to ~34 min), auxiliary status cadence
+  and console cadence (250 ms–60 s), per printer, with a 250 ms floor
+  and helper text explaining the printer's push cadence.
+- **The connected status names the live transport** ("Moonraker
+  connected over websocket" / "… over HTTP polling").
+- **Camera bridge**: a camera behind a header-auth proxy now renders —
+  the plugin fetches the stream with the API key and republishes it on
+  a keyless loopback endpoint for Cura's loader.
+- **Preview**: the current-layer info label fills while attached (and
+  collapses when there is nothing to say); a scroll or slider drag
+  detaches immediately and stays detached while you keep inspecting;
+  the empty "Load current print" card appears only when nothing is
+  loaded.
+- **Monitor**: temperatures and other unchanged objects appear right
+  after connecting, and a device switched on mid-print shows up
+  without a reconnect.
+- **Settings**: a wrong API key on Test connection reads "the API key
+  was rejected (HTTP 401)".
 
 ## What changed in 3.6.0
 

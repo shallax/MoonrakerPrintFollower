@@ -167,9 +167,15 @@ class MonitorCamera(QObject):
             return url
         if self._camera_bridge is None:
             self._camera_bridge = CameraBridge(self)
-        if not self._camera_bridge.configure(config.url, config.api_key):
-            return url
+        # The upstream is the STREAM'S own origin: an absolute
+        # stream_url on another host/port (a separate webcam box) must
+        # not be re-homed onto the Moonraker base.
         parsed = QUrl(url)
+        upstream = f"{parsed.scheme()}://{parsed.host()}"
+        if parsed.port(0) > 0:
+            upstream += f":{parsed.port(0)}"
+        if not self._camera_bridge.configure(upstream, config.api_key):
+            return url
         path = parsed.path() + (("?" + parsed.query()) if parsed.query() else "")
         return self._camera_bridge.local_url(path)
 

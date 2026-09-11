@@ -128,6 +128,33 @@ class QtRuntimeTests(unittest.TestCase):
         for placeholder in ("", "http://", "https://", "http:", "https:"):
             self.assertFalse(binding.usable(self.qt.load("PrinterConfig").normalise_url(placeholder)))
 
+    def test_override_detach_cancels_the_watchdog_on_continued_inspection(self):
+        # The author's live sequence: a drag detaches, and any further
+        # view movement is inspection — the 3 s re-attach watchdog must
+        # cancel outright instead of snapping the follower back under
+        # the pointer.
+        app, follower, transport = self.follower()
+        config_type = self.qt.load("PrinterConfig").PrinterConfig
+        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, feed_mode="http"))
+        coordinator = follower._runtime.coordinator
+        preview = coordinator._preview
+        view = SimpleNamespace(layer=4, minimum=0, path=0.0, minpath=0)
+        view.getCurrentLayer = lambda: view.layer
+        view.getMinimumLayer = lambda: view.minimum
+        view.getCurrentPath = lambda: view.path
+        view.getMinimumPath = lambda: view.minpath
+        app.controller.view = view
+        coordinator._cura._view = view
+        preview.attach(True)
+        preview._echo_until = 0.0  # steady state long after the attach
+        view.layer = 10
+        coordinator._position_changed()
+        self.assertFalse(preview.state.attached)
+        self.assertTrue(coordinator._detach_watchdog.isActive())
+        view.layer = 11
+        coordinator._position_changed()
+        self.assertFalse(coordinator._detach_watchdog.isActive())
+
     def test_connection_edit_invalidates_follower_domains(self):
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig

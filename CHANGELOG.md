@@ -2,6 +2,58 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.0.0
+
+Version 4.0.0 is the websocket release: the Moonraker status transport
+moves from per-request HTTP polling to Moonraker's websocket
+subscription, with HTTP kept as a selectable, automatic-fallback mode.
+
+### Highlights
+- **Websocket subscription transport**: Klipper pushes object updates
+  once per interval and Moonraker fans them out to every subscriber —
+  one serialization shared by all clients instead of one full query per
+  client per poll. The plugin's hand-rolled RFC 6455 client runs on
+  Cura's bundled QtNetwork (no Cura release ships a QtWebSockets
+  binding). The startup proof (real frames within a few seconds) and
+  a steady-state silence watchdog degrade to HTTP polling with a
+  visible reason rather than a dead UI.
+- **Transport choice**: a WebSocket subscription / HTTP polling toggle
+  on the Connection tab (websocket is the default), per printer, with
+  a permanent reason line explaining the effective mode, and the
+  connected status naming the live transport ("connected over
+  websocket").
+- **The monitor's remaining requests ride the socket RPC lane** in
+  websocket mode (power, system, endstops, discovery, webcams,
+  console), falling back to HTTP eagerly whenever the socket is down.
+- **Delivery-cadence sliders**: the status update interval (log-spaced,
+  250 ms to ~34 min), the auxiliary status cadence and the console
+  cadence (both 250 ms–60 s) — per printer, with live value labels,
+  a 250 ms floor, and helper text explaining that websocket data
+  arrives at the printer's cadence regardless.
+- **Camera bridge**: a camera behind a header-auth proxy cannot render
+  through Cura's loader (NetworkMJPGImage sends no headers), so the
+  plugin fetches the stream with the API key and republishes it on a
+  keyless loopback endpoint for Cura's loader. Loopback-only, with the
+  same same-origin redirect discipline as the shared transport.
+- **Preview behaviour**: the current-layer info label fills while
+  attached and collapses when there is nothing to say; a scroll or
+  slider drag detaches immediately (a continuing drag is inspection —
+  no snap-back — and the auto re-attach only covers a one-off
+  restoration right after an attach); the empty "Load current print"
+  card appears only when nothing is loaded, not during Cura's own
+  busy/idle cycles.
+- **Monitor completeness**: unchanged objects (a steady temperature)
+  and devices switched on mid-print now appear without a reconnect.
+- **Settings polish**: a wrong API key on Test connection reads "the
+  API key was rejected (HTTP 401)".
+
+### Fixes
+- The aux subscription deadlock (the wanted set never reached the
+  socket until data arrived, which could never arrive), the
+  subscribe-sync seeding gap, the slow-drag echo-window absorb loop,
+  the watchdog snap-back mid-drag, and the wrong-card flip during
+  Cura's activity cycles — all found and fixed in the live-test round.
+
 ## 3.6.0
 
 Version 3.6.0 is the file-manager release, closed out with the

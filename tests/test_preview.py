@@ -197,6 +197,24 @@ class PreviewFollowerServiceTests(unittest.TestCase):
         self.service.update_eta(self.observe(4), self.index)
         self.assertIn("current print layer", self.service.state.eta_text)
 
+    def test_absorbed_deviation_does_not_refresh_the_echo_window(self):
+        # The absorb->invalidate->observe-rearm loop used to refresh the
+        # echo window on every observe, absorbing a slow drag for the
+        # window's whole 3.5 s (the author's live report). The window
+        # must keep expiring from the attach moment.
+        self.observe(4)
+        self.service.attach(True)
+        armed_at = self.service._echo_until
+        self.cura.view.layer = 10
+        self.assertIsNone(self.service.detect_override())  # absorbed
+        self.observe(4)  # re-drives and re-arms the expectations
+        self.assertEqual(self.service._echo_until, armed_at)
+        self.assertEqual(self.service.state.expected_layer, 4)
+        self.service._echo_until = 0.0  # the window has since expired
+        self.cura.view.layer = 11
+        self.assertEqual(self.service.detect_override(), "layer")
+        self.assertFalse(self.service.state.attached)
+
     def test_eta_uses_path_progress_and_live_duration_anchor(self):
         self.observe(4, 100)
         self.assertEqual(self.service.remaining(6, self.index), 14)

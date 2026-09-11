@@ -84,7 +84,8 @@ private follower state to either integration.
 | `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
-| `MonitorCamera.py` | Camera selection, transforms and per-printer selection persistence | Private configuration store |
+| `MonitorCamera.py` | Camera selection, transforms, per-printer selection persistence and the bridge URL rewrite | Private configuration store |
+| `CameraBridge.py` | The key-carrying camera republisher: an ephemeral loopback listener relaying the configured stream with the X-Api-Key header, same-origin redirects only, per-connection upstreams | MoonrakerMonitorModel |
 | `MonitorTemperatureHistory.py` | Pure per-sensor temperature ring buffers and the chart payload projection | Qt or networking |
 | `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
 | `ConsoleController.py` | Console state owner: the bounded per-printer history and the untracked send lane | Model inheritance or formatting |
@@ -117,10 +118,15 @@ means that an existing upload may silently move to another printer.
 ## 4. Shared networking and polling
 
 `MoonrakerTransport.py` is the only production module constructing
-`QNetworkAccessManager`. Ordinary JSON uses `(owner, channel)` lanes with explicit
-replacement/cancellation. Request IDs, categories, latency and errors are logged
-without credentials. Streaming downloads and multipart uploads use the same request
-builder/pool but own their replies directly.
+`QNetworkAccessManager` — `CameraBridge.py` is the one sanctioned
+exception: its upstream fetches are the camera republisher's own relay
+lane, not a request path of the shared transport, and it keeps the
+same same-origin redirect discipline so the key never travels to a
+redirect target off the configured host. Ordinary JSON uses
+`(owner, channel)` lanes with explicit replacement/cancellation.
+Request IDs, categories, latency and errors are logged without
+credentials. Streaming downloads and multipart uploads use the same
+request builder/pool but own their replies directly.
 
 `SessionSnapshot` publishes fully detached status copies and stores defensive
 copies of merged patches, so no consumer can mutate session internals through a
