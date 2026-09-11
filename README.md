@@ -337,14 +337,14 @@ The Cura-to-Moonraker upload dialog.
 
 ## Moonraker transport
 
-Follower live status uses HTTP polling only.
+Follower live status uses a Moonraker websocket subscription by default, with HTTP polling selectable per printer (and the automatic fallback where subscriptions are unavailable).
 
 - the configured interval is used while the connection is healthy
 - failed requests back off through 1 s → 2 s → 5 s → 10 s → 30 s
 - the normal interval resumes immediately after a successful response
 - capabilities are inferred from the objects Moonraker actually exposes
 
-Monitor consumes the same core status stream as the follower. Webcam configuration is discovered independently because it changes rarely. Uploads use Moonraker's HTTP file API with multipart form data. Power-device, print-control, printer-readiness and Monitor auxiliary requests also use Moonraker HTTP endpoints. There is no WebSocket transport and no automatic printer discovery.
+Monitor consumes the same core status stream as the follower. Webcam configuration is discovered independently because it changes rarely. Uploads use Moonraker's HTTP file API with multipart form data. Power-device, print-control, printer-readiness and Monitor auxiliary requests also use Moonraker HTTP endpoints. The websocket feed is the default for new and upgraded installs; commands, uploads and the console always use HTTP. There is no automatic printer discovery.
 
 ## Large G-code handling
 

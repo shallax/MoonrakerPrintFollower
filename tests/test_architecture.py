@@ -58,7 +58,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
             "GCodeIndexService.py", "MonitorData.py", "MonitorCommands.py", "MonitorTuning.py",
             "MonitorControls.py", "MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py",
             "BedMeshSceneNode.py", "MoonrakerMonitorModel.py", "MoonrakerFollowerMachineAction.py",
-            "MoonrakerProtocol.py", "UploadController.py", "CuraOutputWriter.py",
+            "MoonrakerProtocol.py", "MoonrakerSocket.py", "SocketFraming.py", "UploadController.py", "CuraOutputWriter.py",
             "ToolheadPolicy.py", "ToolheadController.py", "MonitorTemperatureHistory.py", "ConsolePolicy.py", "ConsoleController.py",
             "FileManagerPolicy.py", "FileManager.py",
         ):
@@ -81,8 +81,8 @@ class ArchitectureDocumentTests(unittest.TestCase):
     def test_document_records_output_rebind_cleanup_and_network_law(self):
         self.assertIn("`MoonrakerClient.sessionInvalidated`", ARCH)
         self.assertIn("QHttpPart.setBodyDevice()", ARCH)
-        self.assertIn("HTTP only", ARCH)
-        self.assertIn("no WebSocket transport", ARCH)
+        self.assertIn("One status feed per printer", ARCH)
+        self.assertIn("hand-built on QtNetwork", ARCH)
 
     def test_document_distinguishes_harness_from_live_cura_validation(self):
         self.assertIn("The harness is not Cura or printer firmware", ARCH)

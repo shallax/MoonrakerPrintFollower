@@ -15,7 +15,11 @@ version bump checklist, live in `INSTRUCTIONS.md`.
 - Immutable observations and read-only query interfaces cross domain boundaries.
 - Cancellation invalidates ownership before aborting work or changing credentials.
 - QML and Cura adapters expose presentation and user intents, not network/index policy.
-- HTTP only — no WebSocket transport. Candidate connection probes are isolated.
+- One status feed per printer — a Moonraker websocket subscription (default) or the HTTP status poll
+  (selectable, and the automatic fallback). The choice covers the status classes only: commands, the
+  console store, uploads/downloads and thumbnails are HTTP in both modes, and the HTTP status path
+  is never removed. The RFC 6455 client is hand-built on QtNetwork — no Qt module outside the Cura
+  bundle's verified bindings may be imported. Candidate connection probes are isolated.
 - No retired runtime implementations, compatibility aliases or dynamic `__getattr__`
   forwarding. Structural tests enforce these rules.
 
@@ -49,6 +53,8 @@ private follower state to either integration.
 | `MoonrakerSession.py` | Binding state, merged core snapshot, polling policy, coalescer, command tracker | UI or G-code files |
 | `MoonrakerTransport.py` | Request builder, credentials, HTTP pool, JSON lanes and metrics | Feature state |
 | `MoonrakerProtocol.py` | Endpoint construction, file identity, coordinate conversion | Networking or UI |
+| `MoonrakerSocket.py` | The websocket connection: handshake, the one merged subscription set, per-class raw-fragment accumulators, the keepalive round-trip and its own generation — never the HTTP pool | Status policy, timers beyond the keepalive, the UI |
+| `SocketFraming.py` | Pure RFC 6455 framing: handshake build/verify, frame codec, extended lengths, size caps, close codes | Qt, sockets, policy |
 | `RemoteJobService.py` | Print observation and same-filename run identity | Preview selection |
 | `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer` and the single `LayerResolver` | QML/Cura writes |
 | `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` | Index algorithms or Cura loading |
@@ -136,7 +142,19 @@ unsaved credentials; a probe must not reconfigure the live binding.
 | Endstops (one-shot query_endstops) | 10000 ms |
 | Discovery/static configuration | 30000 ms or explicit refresh |
 
-`MonitorData` alone applies Monitor timer policy. An unchanged interval is not
+`MonitorData` alone applies Monitor timer policy.
+
+`PollPolicy` is the delivery policy in both modes: in HTTP mode a tick issues
+the category's request; in websocket mode a tick drains that class's
+accumulator (the socket is a source, not a clock), and the socket reconnects
+on the same ladder. Every status write is admitted through one entry point
+with an arrival stamp — a full re-sync applies whole or is dropped whole when
+a newer write is already applied, and a fragment from a previous socket
+generation is dropped. Socket liveness is active: a successful subscribe, an
+admitted write, or a keepalive reply — socket state alone is not liveness.
+A printer that cannot subscribe degrades the status feed to HTTP without a
+session reset (the startup proof and the structured subscribe refusal are
+the two triggers). An unchanged interval is not
 written back to an active QTimer, because that would restart it and starve slower
 polls. Full Klipper configuration is discovered separately; auxiliary polling asks
 only for volatile SAVE_CONFIG fields.

@@ -69,8 +69,9 @@ quoted:
   sources, clones) go to a tmp location, NEVER into the source tree
   (the author's rule, 2026-09-10)
 - findings: NO CAP — surface everything; then name their top 3
-- websocket discipline: socket improvements are tech-debt notes for
-  ROADMAP 4.0.0, never scope creep into the current release
+- websocket discipline: 4.0.0 IS the socket release — the swap stays
+  the status feed only; new socket-driven features are tech-debt notes for
+  later releases
 - the UX persona holds explicit adjudication rights on the release's
   open UX question (the author defers to it) — but adjudication is a
   RECOMMENDATION: the author has final approval on every ruling,
