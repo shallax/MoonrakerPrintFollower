@@ -24,6 +24,7 @@ if QT_AVAILABLE:
             super().__init__()
             self.starts = []
             self.subscriptions = []
+            self.rpcs = []
             self.stops = 0
             self.is_upgraded = False
             self.core_patch = None
@@ -52,6 +53,10 @@ if QT_AVAILABLE:
             patch = self.aux_patch
             self.aux_patch = None
             return patch, 0.0
+
+        def request(self, method, params, callback):
+            self.rpcs.append((method, dict(params), callback))
+            return len(self.rpcs)
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime not available")
@@ -188,6 +193,37 @@ class ClientFeedTests(unittest.TestCase):
         self.assertTrue(invalidated)
         self.assertEqual(self.client.configured_feed_mode, "websocket")
 
+
+    def test_rpc_lane_routes_to_the_socket_when_live(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.socket.syncSnapshot.emit({"print_stats": {"state": "idle"}}, 1.0)
+        replies = []
+        self.assertTrue(self.client.rpc("server.gcode_store", {"count": 100},
+                                        lambda payload, error: replies.append((payload, error))))
+        self.assertEqual(self.socket.rpcs[-1][:2], ("server.gcode_store", {"count": 100}))
+        # The reply shape converts to the transport's convention: the
+        # result passes through, the refusal surfaces the server's words.
+        method, params, callback = self.socket.rpcs[-1]
+        callback({"jsonrpc": "2.0", "result": {"gcode_store": []}, "id": 1})
+        self.assertEqual(replies[-1][0]["result"]["gcode_store"], [])
+        callback({"jsonrpc": "2.0", "error": {"code": -32602, "message": "Unauthorized"}, "id": 2})
+        self.assertIn("Unauthorized", replies[-1][1])
+
+    def test_rpc_lane_falls_back_when_the_socket_is_not_live(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        # The lane opens on the upgrade — an RPC reply is itself an
+        # authenticated reply; the proof governs the status feed only.
+        self.assertTrue(self.client.rpc_available())
+        # It closes when the feed degrades (the proof failure path)...
+        self.client._proof_failed(self.client._generation)
+        self.assertFalse(self.client.rpc_available())
+        self.assertFalse(self.client.rpc("server.info", {}, lambda p, e: None))
+        # ...and in HTTP mode it is never open.
+        self.client.configure("http://p", "k", 750, feed_mode="http")
+        self.client.start()
+        self.assertFalse(self.client.rpc_available())
 
 if __name__ == "__main__":
     unittest.main()

@@ -119,7 +119,9 @@ fixtures) and unreachable LAN-internal names are tolerable; public
 hostnames, proxy endpoints and any host an outsider could reach are
 not. API keys never enter any tracked file (the gitleaks gate and the
 literal-key pin enforce it). Real deployment details belong in the
-git-ignored ``review/`` log, not in the roadmap, docs or code.
+git-ignored ``review/`` log, not in the roadmap, docs or code. If an
+address slips in despite the rule, it is written OUT OF HISTORY, not
+merely fixed forward (the author's amendment, 2026-09-11).
 
 ## Release workflow
 

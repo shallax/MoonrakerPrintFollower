@@ -186,13 +186,20 @@ class MonitorData(QObject):
             if timer.interval() != interval: timer.setInterval(interval)
 
     def request(self, channel, method, path, callback, *, body=None, replace=False, category="auxiliary",
-                timeout_ms=5000):
+                timeout_ms=5000, rpc=None):
         if not self._active or not self._client.session.base_url: return False
         generation = self._generation
         session = self._client.session.generation
         def finished(payload, error):
             if self._active and generation == self._generation and session == self._client.session.generation:
                 callback(payload, error)
+        if rpc is not None:
+            # The socket RPC lane (the author's ruling: ditch the HTTP
+            # polls) — unavailable means the socket is down or the mode
+            # is HTTP, and the same request falls through to the wire.
+            rpc_method, rpc_params = rpc
+            if self._client.rpc(rpc_method, rpc_params, lambda reply, error: finished(reply, error)):
+                return True
         return self._client.transport.send_json("monitor", channel, method, path, finished,
             body=body, replace=replace, category=category, timeout_ms=timeout_ms)
 
@@ -227,10 +234,11 @@ class MonitorData(QObject):
         return wanted_object(name)
 
     def refresh_discovery(self):
-        self.request("objects", "GET", "printer/objects/list", self._objects, category="discovery")
+        self.request("objects", "GET", "printer/objects/list", self._objects, category="discovery", rpc=("printer.objects.list", {}))
         self.request("presets", "GET", "server/database/item?namespace=mainsail&key=presets",
             lambda payload, error: self._update(presets=result(payload).get("value", {})) if not error and isinstance(result(payload), Mapping) else None,
-            category="discovery")
+            category="discovery",
+            rpc=("server.database.get_item", {"namespace": "mainsail", "key": "presets"}))
 
     def _objects(self, payload, error):
         value = result(payload)
@@ -239,7 +247,8 @@ class MonitorData(QObject):
         self._update(objects=tuple(sorted(str(name) for name in names)))
         if "configfile" in names:
             self.request("config-static", "POST", "printer/objects/query", self._aux,
-                body={"objects": {"configfile": None}}, replace=True, category="discovery")
+                body={"objects": {"configfile": None}}, replace=True, category="discovery",
+                rpc=("printer.objects.query", {"objects": {"configfile": None}}))
         self.refresh_aux()
 
     def refresh_aux(self):
@@ -350,7 +359,7 @@ class MonitorData(QObject):
             if responses:
                 self._console_entries = responses
                 self.consoleStoreChanged.emit()
-        self.request("console-store", "GET", "server/gcode_store?count=100", finished, category="console")
+        self.request("console-store", "GET", "server/gcode_store?count=100", finished, category="console", rpc=("server.gcode_store", {"count": 100}))
 
     def refresh_endstops(self):
         # Endstop pin states are NOT part of the objects query; the
@@ -370,18 +379,21 @@ class MonitorData(QObject):
         # states blank only on invalidation/disconnect.
         self.request("endstops", "GET", "printer/query_endstops/status",
             lambda p, e: self._update(endstops=dict(result(p))) if not e and isinstance(result(p), Mapping) else None,
-            category="endstops")
+            category="endstops",
+            rpc=("printer.query_endstops.status", {}))
 
     def refresh_power(self):
         self.request("power-list", "GET", "machine/device_power/devices",
             lambda p, e: self._update(power=result(p).get("devices", ())) if not e and isinstance(result(p), Mapping) else None,
-            category="power")
+            category="power",
+            rpc=("machine.device_power.devices", {}))
 
     def refresh_system(self):
         for channel, path, key in (("server-info", "server/info", "server"), ("printer-info", "printer/info", "printer")):
             self.request(channel, "GET", path,
                 lambda p, e, k=key: self._update(**{k: result(p)}) if not e and isinstance(result(p), Mapping) else None,
-                category="system")
+                category="system",
+                rpc=("server.info" if key == "server" else "printer.info", {}))
 
     def refresh_webcams(self):
         # Same retention principle as endstops: a failed poll must never
@@ -391,6 +403,7 @@ class MonitorData(QObject):
         self.request("webcams", "GET", "server/webcams/list",
             lambda p, e: self._update(webcams=tuple(item for item in result(p).get("webcams", ()) if isinstance(item, dict) and item.get("enabled", True)))
             if not e and isinstance(result(p), Mapping) else None,
-            replace=True, category="discovery")
+            replace=True, category="discovery",
+            rpc=("server.webcams.list", {}))
 
 

@@ -5,7 +5,7 @@ from typing import Any, Dict, Iterable, Optional
 
 from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
 
-from .MoonrakerProtocol import CORE_OBJECTS, status_endpoint, websocket_endpoint
+from .MoonrakerProtocol import CORE_OBJECTS, moonraker_error_text, status_endpoint, websocket_endpoint
 from .MoonrakerSession import MoonrakerSession, MoonrakerSessionState, RequestCategory
 
 
@@ -235,6 +235,30 @@ class MoonrakerClient(QObject):
         self._aux_names = set(names)
         if self._enabled and self._effective_feed_mode == "websocket":
             self._subscribe()
+
+    def rpc_available(self) -> bool:
+        """The socket RPC lane: live only when the feed is websocket AND
+        the socket is upgraded — every caller falls back to HTTP eagerly
+        while the socket is down or the proof has not passed yet."""
+        return self._effective_feed_mode == "websocket" and self._session.socket.is_upgraded
+
+    def rpc(self, method: str, params: Dict[str, Any], callback) -> bool:
+        """One JSON-RPC over the socket lane; False when unavailable.
+
+        The reply shape is converted to the transport's (payload, error)
+        convention so the existing handlers read it unchanged; a JSON-RPC
+        error surface through the refusal-text machinery (F3)."""
+        if not self.rpc_available():
+            return False
+
+        def finished(reply: Dict[str, Any]) -> None:
+            error = reply.get("error")
+            if isinstance(error, dict):
+                callback(reply, moonraker_error_text(error) or "Moonraker refused the request")
+            else:
+                callback(reply, None)
+
+        return bool(self._session.socket.request(method, params or {}, finished))
 
     def drain_aux(self):
         """The Monitor's auxiliary timer drains this accumulator in
