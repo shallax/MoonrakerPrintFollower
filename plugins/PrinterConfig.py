@@ -115,6 +115,9 @@ class PrinterConfig:
     aux_interval_ms: int = 2500
     console_interval_ms: int = 1000
     path_follow: bool = True
+    # Auto-improve-ETA opt-in: the follower learns the print's drift
+    # from observed layer progress and rescales the remaining ETA.
+    eta_learn: bool = False
     path_smoothing: bool = True
     show_toolhead_indicator: bool = True
     follow_mode: str = "exact"
@@ -264,6 +267,7 @@ class PrinterConfig:
         for key in (
             "enabled", "moonraker_layer_is_one_based", "auto_preview",
             "z_fallback", "path_follow", "path_smoothing", "show_toolhead_indicator",
+            "eta_learn",
             "trace_layer", "trace_http",
             "upload_dialog", "upload_start_print", "upload_remember_state",
             "upload_autohide_message", "camera_mirror",

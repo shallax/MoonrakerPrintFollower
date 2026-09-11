@@ -49,6 +49,7 @@ Cura.MachineAction {
                 "moonraker_layer_is_one_based": oneBasedBox.checked,
                 "path_follow": pathFollowBox.checked,
                 "path_smoothing": pathSmoothingBox.checked,
+                "eta_learn": etaLearnBox.checked,
                 "auto_preview": autoPreviewBox.checked,
                 "show_toolhead_indicator": toolheadIndicatorBox.checked,
                 "z_fallback": zFallbackBox.checked,
@@ -395,6 +396,12 @@ Cura.MachineAction {
                             text: "Smooth path progress"
                             enabled: pathFollowBox.checked
                             checked: manager.settingsPathSmoothing
+                        }
+                        UM.CheckBox {
+                            id: etaLearnBox
+                            text: "Improve ETA from observed progress"
+                            tooltip: "Rescale the remaining-time estimate by the drift between the slicer's per-layer times and what the printer actually took."
+                            checked: manager.settingsEtaLearn
                         }
                         UM.CheckBox {
                             id: oneBasedBox

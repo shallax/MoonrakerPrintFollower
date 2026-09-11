@@ -134,6 +134,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return self._config().path_smoothing
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def settingsEtaLearn(self) -> bool:
+        return self._config().eta_learn
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def settingsAutoPreview(self) -> bool:
         return self._config().auto_preview
 
@@ -372,6 +376,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "z_tolerance": tolerance,
                 "path_follow": bool(raw.get("path_follow", True)),
                 "path_smoothing": bool(raw.get("path_smoothing", True)),
+                "eta_learn": bool(raw.get("eta_learn", False)),
                 "show_toolhead_indicator": bool(raw.get("show_toolhead_indicator", True)),
                 "trace_layer": bool(raw.get("trace_layer", False)),
                 "trace_http": bool(raw.get("trace_http", False)),

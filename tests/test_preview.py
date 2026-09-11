@@ -215,6 +215,33 @@ class PreviewFollowerServiceTests(unittest.TestCase):
         self.assertEqual(self.service.detect_override(), "layer")
         self.assertFalse(self.service.state.attached)
 
+    def test_eta_learn_rescales_the_end_estimate_by_observed_drift(self):
+        # The opt-in: the slicer estimated 100 s per layer but the
+        # printer is taking 150 — the remaining end-of-print estimate
+        # scales by the learned 1.5x drift, clamped to [0.5, 2.0].
+        index = SimpleNamespace(
+            ranges=tuple((i, i + 1) for i in range(21)),
+            elapsed_times=tuple((i + 1) * 100 for i in range(21)),
+            hydrated=lambda layer: True,
+            fraction=lambda *args: (0.0, "test"),
+        )
+        service = PreviewFollower(self.cura)
+        config = PrinterConfig(enabled=True, path_follow=False, eta_learn=True)
+        snapshot = PrintSnapshot(("part", 100, 1), PrintObservation("printing", "part", 100, 20, 300),
+                                 PhysicalLayer(2, 21))
+        service.observe(snapshot, {"print_stats": {"print_duration": 300},
+                                   "virtual_sdcard": {"file_position": 0}}, config, index)
+        self.assertEqual(service.state.drift, 1.5)
+        plain = service.remaining_end(index, 2100)
+        self.assertGreater(plain, 0)
+        # Without the opt-in the same observation leaves the estimate
+        # unscaled.
+        service.reset_print()
+        config = PrinterConfig(enabled=True, path_follow=False, eta_learn=False)
+        service.observe(snapshot, {"print_stats": {"print_duration": 150},
+                                   "virtual_sdcard": {"file_position": 0}}, config, index)
+        self.assertIsNone(service.state.drift)
+
     def test_eta_uses_path_progress_and_live_duration_anchor(self):
         self.observe(4, 100)
         self.assertEqual(self.service.remaining(6, self.index), 14)

@@ -136,6 +136,10 @@ class SettingsManager(QObject):
         return True
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def settingsEtaLearn(self):
+        return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def settingsAutoPreview(self):
         return False
 

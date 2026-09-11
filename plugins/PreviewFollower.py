@@ -90,6 +90,10 @@ class PreviewState:
     path_fraction: Optional[float] = None
     speed: float = 1.0
     duration: Optional[float] = None
+    # The auto-improve-ETA opt-in: the learned drift between the
+    # slicer's per-layer estimates and the observed print duration.
+    eta_learn: bool = False
+    drift: Optional[float] = None
     anchor_layer: Optional[int] = None
     anchor_duration: Optional[float] = None
     nozzle_valid: bool = False
@@ -199,11 +203,22 @@ class PreviewFollower:
         try: duration = max(0.0, float(stats.get("print_duration") or 0))
         except (TypeError, ValueError): duration = None
         layer = snapshot.layer.index
-        state = replace(self._state, speed=speed, duration=duration, nozzle_valid=False)
+        state = replace(self._state, speed=speed, duration=duration, nozzle_valid=False,
+                        eta_learn=bool(getattr(config, "eta_learn", False)))
         if layer is not None:
             if layer != state.anchor_layer:
                 state = replace(state, anchor_layer=layer, anchor_duration=duration)
             state = replace(state, observed_layer=layer)
+        # The auto-improve-ETA opt-in (the author's ruling): learn the
+        # print's drift from the slicer's elapsed estimate at the
+        # current layer, clamped so an early-layer wobble cannot swing
+        # the remaining estimate wildly.
+        if state.eta_learn and duration and index is not None and layer is not None:
+            times = index.elapsed_times
+            if times and 0 < layer < len(times):
+                boundary = times[layer - 1]
+                if isinstance(boundary, (int, float)) and boundary and boundary > 60:
+                    state = replace(state, drift=min(2.0, max(0.5, duration / boundary)))
         self._state = state
         if not snapshot.active:
             self.reset_print()
@@ -358,7 +373,10 @@ class PreviewFollower:
                          if times[i] is not None and times[i - 1] is not None]
             if durations:
                 end += sum(durations) / len(durations)
-        return max(0.0, end - now) / state.speed
+        remaining = max(0.0, end - now) / state.speed
+        if state.eta_learn and state.drift:
+            remaining *= state.drift
+        return remaining
 
     def update_eta(self, snapshot, index):
         selected, current = self._cura.selected_layer, self._state.observed_layer
