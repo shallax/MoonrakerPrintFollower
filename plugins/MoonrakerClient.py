@@ -376,6 +376,10 @@ class MoonrakerClient(QObject):
         state.assume_print_stopped = True
         merged = self._session.snapshot.copy_status()
         if merged and str((merged.get("print_stats") or {}).get("state") or "").lower() in {"printing", "paused"}:
+            try:
+                state.assume_print_duration = float((merged.get("print_stats") or {}).get("print_duration") or 0)
+            except (TypeError, ValueError):
+                state.assume_print_duration = None
             merged["print_stats"]["state"] = "cancelled"
             self.statusReceived.emit(merged)
 
@@ -428,6 +432,7 @@ class MoonrakerClient(QObject):
             stamp = time.monotonic()
         if origin == "sync" and stamp <= self._last_applied_stamp:
             return
+        previous_state = self._session.snapshot.printer_state
         merged, changed_commands = self._session.merge_status(patch)
         self._last_applied_stamp = max(self._last_applied_stamp, stamp)
         self._handle_success()
@@ -443,12 +448,33 @@ class MoonrakerClient(QObject):
             # emitted status reads as cancelled — the monitor's
             # guards, the jog gate AND the follower's coordinator
             # all consume this one observation and need no
-            # per-consumer conditionals.
+            # per-conditionals. Restart arming: a demonstrably LOWER
+            # print duration means the printer started a NEW print —
+            # the assumption cannot survive it. (The frozen-duration
+            # case is the wedged-Moonraker wedge the assumption
+            # exists for.)
             state = str((merged.get("print_stats") or {}).get("state") or "").lower()
             if state in {"printing", "paused"}:
-                merged["print_stats"]["state"] = "cancelled"
+                try:
+                    duration = float((merged.get("print_stats") or {}).get("print_duration") or 0)
+                except (TypeError, ValueError):
+                    duration = None
+                latched_at = self._session.state.assume_print_duration
+                if duration is not None and latched_at is not None and duration < latched_at:
+                    self._session.state.assume_print_stopped = False
+                    self._session.state.assume_print_duration = None
+                else:
+                    merged["print_stats"]["state"] = "cancelled"
             else:
                 self._session.state.assume_print_stopped = False
+                self._session.state.assume_print_duration = None
+        # Restart arming: a transition INTO a print means the previous
+        # print's tracked commands are stale.
+        if previous_state not in {"printing", "paused"}:
+            current = str((merged.get("print_stats") or {}).get("state") or "").lower()
+            if current in {"printing", "paused"}:
+                for command in self._session.commands.expire_non_terminal("superseded by a new print"):
+                    self.commandChanged.emit(command.as_dict())
         self.statusReceived.emit(merged)
         for command in changed_commands:
             if generation != self._generation:

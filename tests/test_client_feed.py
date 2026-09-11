@@ -212,6 +212,38 @@ class ClientFeedTests(unittest.TestCase):
         callback({"jsonrpc": "2.0", "error": {"code": -32602, "message": "Unauthorized"}, "id": 2})
         self.assertIn("Unauthorized", replies[-1][1])
 
+    def test_restart_clears_the_estop_assumption_when_the_duration_resets(self):
+        # Restart arming: the latch survives a frozen duration (the
+        # wedged-Moonraker wedge it exists for) but a demonstrably
+        # LOWER duration is a new print — the assumption falls.
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.client.session.merge_status({"print_stats": {"state": "printing", "print_duration": 500}})
+        self.client.assume_print_stopped()
+        self.assertTrue(self.client._session.state.assume_print_stopped)
+        emitted = []
+        self.client.statusReceived.connect(lambda status: emitted.append(status))
+        self.client.admit_status({"print_stats": {"state": "printing", "print_duration": 500}},
+                                 origin="sync", stamp=1.0, generation=self.client._generation)
+        self.assertTrue(self.client._session.state.assume_print_stopped)
+        self.assertEqual(emitted[-1]["print_stats"]["state"], "cancelled")
+        self.client.admit_status({"print_stats": {"state": "printing", "print_duration": 5}},
+                                 origin="sync", stamp=2.0, generation=self.client._generation)
+        self.assertFalse(self.client._session.state.assume_print_stopped)
+        self.assertEqual(emitted[-1]["print_stats"]["state"], "printing")
+
+    def test_new_print_start_expires_stale_tracked_commands(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.client.track_command("ScheduledPause", {"paused"})
+        notes = []
+        self.client.commandChanged.connect(lambda event: notes.append(event))
+        self.client.admit_status({"print_stats": {"state": "printing", "print_duration": 1}},
+                                 origin="sync", stamp=1.0, generation=self.client._generation)
+        self.assertTrue(any(event.get("outcome") == "failed"
+                            and "new print" in str(event.get("detail"))
+                            for event in notes), notes)
+
     def test_rpc_lane_falls_back_when_the_socket_is_not_live(self):
         self.client.configure("http://p", "k", 750, feed_mode="websocket")
         self.client.start()

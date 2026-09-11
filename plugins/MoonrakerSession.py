@@ -212,6 +212,19 @@ class CommandTracker:
         self._commands[command.name] = command
         return command
 
+    def expire_non_terminal(self, detail: str) -> list:
+        """Restart arming: a new print's start transition makes every
+        command tracked for the previous print stale — they must never
+        verdict against the new print's state."""
+        changed = []
+        for command in self._commands.values():
+            if not command.terminal:
+                command.terminal = True
+                command.outcome = "failed"
+                command.detail = str(detail)
+                changed.append(command)
+        return changed
+
     def accepted(self, name: str) -> Optional[CommandAcknowledgement]:
         command = self._commands.get(str(name))
         if command is None or command.terminal:
@@ -289,6 +302,10 @@ class MoonrakerSessionState:
         # storage so a stale stream can never re-assert an e-stopped
         # print; the rewrite stays at the client's single admission site.
         self.assume_print_stopped = False
+        # The print duration observed when the assumption engaged — a
+        # demonstrably LOWER duration afterwards means the printer
+        # started a NEW print (restart arming).
+        self.assume_print_duration = None
 
     def reset(self) -> None:
         self.generation += 1
@@ -297,6 +314,7 @@ class MoonrakerSessionState:
         self.toolhead_guard = False
         self.feed_mode = "http"
         self.assume_print_stopped = False
+        self.assume_print_duration = None
         self.snapshot = SessionSnapshot()
         self.commands.clear()
         self.coalescer.clear()
