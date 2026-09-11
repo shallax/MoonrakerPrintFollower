@@ -155,6 +155,34 @@ class QtRuntimeTests(unittest.TestCase):
         coordinator._position_changed()
         self.assertFalse(coordinator._detach_watchdog.isActive())
 
+    def test_pause_entry_leaves_only_when_observed_paused(self):
+        # The verified-pause-only ruling: an entry leaves the list only
+        # when the printer is OBSERVED paused at that layer; a missed
+        # pause stays listed, marked.
+        client, transport = self.client()
+        pauses = self.qt.load("PauseController").PauseController(client)
+        self.addCleanup(pauses.close)
+        pauses.bind(("part", 100, 1))
+        self.assertTrue(pauses.toggle(4, 0, 10))
+        pauses.observe(5)
+        self.assertEqual(pauses.states, {4: "fired"})
+        self.assertIn(4, pauses.layers)
+        request = next(r for r in transport.requests if r.channel == "scheduled")
+        request.callback({"result": {}}, None)  # the PAUSE script was accepted
+        client._handle_http_status({"result": {"status": {"print_stats": {"state": "paused"}}}},
+                                   None, client._generation, time.monotonic())
+        self.qt.events(1)
+        self.assertNotIn(4, pauses.layers)
+        # A missed pause stays listed, restyled — never silently dropped.
+        self.assertTrue(pauses.toggle(6, 0, 10))
+        pauses.observe(7)
+        self.assertEqual(pauses.states.get(6), "fired")
+        client.session.commands.get("ScheduledPause").issued_at -= 20
+        client.expire_commands()
+        self.qt.events(1)
+        self.assertIn(6, pauses.layers)
+        self.assertEqual(pauses.states.get(6), "timed_out")
+
     def test_connection_edit_invalidates_follower_domains(self):
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig

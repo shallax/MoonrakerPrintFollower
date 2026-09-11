@@ -1431,6 +1431,13 @@ Component {
                                             consoleInput.text = "";
                                             consoleDraft = "";
                                             consoleRecallIndex = -1;
+                                            // A send is the reader signalling
+                                            // they want to follow the tail
+                                            // again: return the view to the
+                                            // prompt even from a scrolled-up
+                                            // position (the author's ruling).
+                                            consoleFlick.stickToEnd = true;
+                                            consoleFlick.contentY = consoleFlick.contentHeight - consoleFlick.height;
                                         }
                                         consoleInput.forceActiveFocus();
                                     }

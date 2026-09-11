@@ -228,12 +228,17 @@ Item {
                         spacing: base.buttonSpacing
                         property int pauseLayer: Number(modelData.layer)
                         property string pauseEta: String(modelData.eta || "")
+                        // "scheduled" | "fired" | "failed" | "timed_out" —
+                        // a missed pause STAYS listed, restyled in the
+                        // error colour (the verified-pause-only ruling).
+                        property string pauseState: String(modelData.state || "scheduled")
+                        readonly property bool pauseMissed: parent.pauseState === "failed" || parent.pauseState === "timed_out"
 
                         UM.Label {
                             width: Math.max(0, parent.width - removePauseButton.width - parent.spacing)
                             height: parent.height
-                            text: "End of layer " + parent.pauseLayer + (parent.pauseEta.length > 0 ? " · " + parent.pauseEta : "")
-                            color: UM.Theme.getColor("text")
+                            text: "End of layer " + parent.pauseLayer + (parent.pauseEta.length > 0 ? " · " + parent.pauseEta : "") + (parent.pauseMissed ? " — pause not taken" : "")
+                            color: parent.pauseMissed ? UM.Theme.getColor("error") : UM.Theme.getColor("text")
                             font: UM.Theme.getFont("default")
                             verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight

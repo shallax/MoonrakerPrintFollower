@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from .PauseScheduleService import PauseScheduleService
+from .PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
 
 
 class PauseController(QObject):
@@ -19,10 +19,18 @@ class PauseController(QObject):
         self._generation = 0
         self._target = None
         self._current = None
+        # Per-layer lifecycle: "fired" while awaiting confirmation,
+        # "failed"/"timed_out" once the verification missed. Entries
+        # leave the list ONLY on observation (the verified-pause-only
+        # ruling) — a missed pause stays, restyled.
+        self._states = {}
         client.commandChanged.connect(self._command_changed)
 
     @property
     def layers(self): return self._schedule.layers
+
+    @property
+    def states(self): return dict(self._states)
 
     def bind(self, job_key):
         if job_key == self._job: return
@@ -31,6 +39,7 @@ class PauseController(QObject):
         self._target = self._current = None
         self._job = job_key
         self._schedule.clear()
+        self._states.clear()
         self._client.set_pause_guard(False)
         self.changed.emit()
 
@@ -48,11 +57,13 @@ class PauseController(QObject):
 
     def remove(self, layer):
         self._schedule.remove(layer)
+        self._states.pop(layer, None)
         self._update_guard(self._current)
         self.changed.emit()
 
     def clear(self):
         self._schedule.clear()
+        self._states.clear()
         self._client.set_pause_guard(False)
         self.changed.emit()
 
@@ -63,11 +74,16 @@ class PauseController(QObject):
         self._current = current
         self._update_guard(current)
         if current is None or self._job is None: return
-        due = self._schedule.consume_due(current)
+        # The entries STAY in the schedule until the pause is actually
+        # observed (the ruling): only layers without a lifecycle state
+        # fire, so a failed pause never re-arms on a later poll.
+        due = [layer for layer in due_end_of_layer_pauses(self.layers, current)
+               if layer not in self._states]
         if not due: return
         self.changed.emit()
         if self._target is not None: return
         self._target = due[0]
+        self._states[self._target] = "fired"
         generation, job, target = self._generation, self._job, self._target
         self._client.track_command(self.COMMAND, {"paused"}, timeout_s=10.0)
         def finished(payload, error):
@@ -85,8 +101,18 @@ class PauseController(QObject):
         outcome = event.get("outcome")
         if outcome == "accepted":
             self.message.emit(f"PAUSE accepted after layer {self._target + 1}; waiting for printer confirmation")
-        elif outcome in {"confirmed", "failed", "timed_out"}:
+        elif outcome == "confirmed":
+            # The printer was OBSERVED paused: the entry leaves the list
+            # now, never merely because the layer was crossed.
+            self.message.emit(f"PAUSE confirmed after layer {self._target + 1}")
+            self._schedule.remove(self._target)
+            self._states.pop(self._target, None)
+            self._target = None
+            self.changed.emit()
+        elif outcome in {"failed", "timed_out"}:
+            # Not verified: the entry stays, restyled missed.
             self.message.emit(f"PAUSE after layer {self._target + 1}: {event.get('detail') or outcome}")
+            self._states[self._target] = outcome
             self._target = None
             self.changed.emit()
 

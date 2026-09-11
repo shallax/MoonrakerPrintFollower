@@ -466,7 +466,8 @@ class PrintCoordinator(QObject):
         items = []
         for layer in sorted(self._pauses.layers):
             remaining = self._preview.remaining(layer, self._index.view, end=True)
-            items.append({"layer": layer + 1, "eta": pause_eta(remaining, self._preview.format_duration)})
+            items.append({"layer": layer + 1, "eta": pause_eta(remaining, self._preview.format_duration),
+                          "state": self._pauses.states.get(layer, "scheduled")})
         compact = status_text(
             detail=self._detail,
             load_requested=self._load_requested,
