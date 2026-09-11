@@ -115,3 +115,6 @@ clean:
 	find . -name "__pycache__" -type d -not -path "./.git/*" -prune -exec rm -rf {} +
 	find . -name "*~" -not -path "./.git/*" -delete
 	rm -rf dist
+
+ui_test:
+	./tools/ui_test.sh

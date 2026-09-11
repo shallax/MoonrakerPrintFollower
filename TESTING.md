@@ -99,12 +99,22 @@ allowlist pin over `plugins/` contents guarantee it never ships.
   verified after the fact against Cura's own state (the stage changed,
   the layer moved by the expected delta). The resolved address (parent
   chain, class, geometry, text) is recorded in the step manifest.
-- **Input**: the driver maps item→screen coordinates and the runner
-  injects via `xdotool` (XTEST). The driver installs an event filter
-  that records, per injected event, the receiving item and whether the
-  event was accepted; a press that did not reach its intended item
-  fails the step. Before injection, the driver asserts no overlay
-  covers the target's rect.
+- **Input (two complementary paths, the author's ruling
+  2026-09-11):** XTEST is the REAL-behaviour path — every canonical
+  click enters through the X server via `xdotool`, exactly as a human
+  mouse. QTest is the CHOREOGRAPHY path — an injected QtTest binding
+  (PyQt6-Qt6 pinned to the SAME version the bundle ships, staged on
+  the interpreter's path at run time, never shipped) synthesizes
+  events directly into Cura's window with exact button/timestamp
+  control, for race windows, precise drag paths and delegate rows
+  that shift coordinates. QTest is optional — the suite degrades to
+  XTEST-only if a Cura version's injection cannot be validated; a
+  per-phase XTEST control proves the window remains human-clickable
+  regardless. Both paths feed the same delivery introspection: the
+  driver's event filter records the receiving item and whether the
+  event was accepted, a press that did not reach its intended item
+  fails the step, and the driver asserts no overlay covers the
+  target's rect before injection.
 - **The RPC surface** is pinned (a structural test; ≤ a dozen generic
   verbs — find / inspect / inject / capture / trace / relaunch /
   seed-state; no verb may name a plugin feature). The listener binds
@@ -291,10 +301,10 @@ built on the step vocabulary Tier 1 establishes.
    a slow drag spanning several deliveries. Assertions run over the
    recorded `preview.state.attached` and `expected_layer` series:
    detach, stays detached until Attach. Variant: view-swap away and
-   back re-attaches (the ruling's exception). NOTE: the oracle for
-   automatic re-attach needs the author's one-line ruling — the
-   codebase's own records disagree on whether any auto re-attach
-   exists.
+   back re-attaches — THE ONLY automatic re-attach (the author's
+   ruling, 2026-09-11: "view-swap re-attach is the ONLY automatic
+   re-attach; any layer-selection change detaches and stays
+   detached").
 7. **Transport handover** — reopen the Monitor repeatedly in
    websocket mode. The peer's ledger asserts the core-category poll
    count (websocket mode must not fire the HTTP monitor lane beyond
@@ -393,8 +403,11 @@ time-warped virtual_sdcard progress).
 - **Phase A — the skeleton proof:** boot real Cura under Xvfb in the
   harness image, click PREPARE → PREVIEW → MONITOR through XTEST,
   capture root-window frames and video, and run one deliberately
-  failing scenario whose failure gallery ships with it. This phase
-  proves the honesty contract before any catalogue work.
+  failing scenario whose failure gallery ships with it. Phase A also
+  validates the QTest injection (the matching QtTest binding imported
+  inside the real bundle interpreter — proven or dropped before any
+  scenario relies on it). This phase proves the honesty contract
+  before any catalogue work.
 - **Phase B — the simulator:** both transports, the endpoint table
   generated from the code, the transcript replay, the capacity model,
   the fault arms. Proof: a gallery of the Monitor rendering

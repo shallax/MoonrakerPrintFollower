@@ -1,0 +1,10 @@
+{
+  "name": "HarnessDriver",
+  "author": "shallax",
+  "version": "0.1.0",
+  "description": "Test-only observation driver for the real-Cura UI harness. Never ships.",
+  "api": 8,
+  "supported_sdk_versions": [
+    "8.12.0"
+  ]
+}
