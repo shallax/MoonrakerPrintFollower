@@ -57,6 +57,14 @@ class MonitorData(QObject):
         # consumed before a drop never backfills again.
         self._console_seen = deque(maxlen=400)
         self._console_seed = None
+        # The error bell's collapsed watch (the author's live
+        # request): the store feed is the only source of error lines,
+        # so while the console is collapsed a SLOW poll keeps the
+        # bell able to ring — one small request every 5 s, nothing
+        # like the expanded cadence.
+        self._console_watch = QTimer(self)
+        self._console_watch.setInterval(5000)
+        self._console_watch.timeout.connect(self._refresh_console_watch)
         self._clear()
         for category, callback in ((RequestCategory.AUXILIARY, self.refresh_aux),
             (RequestCategory.POWER, self.refresh_power), (RequestCategory.SYSTEM, self.refresh_system),
@@ -111,8 +119,36 @@ class MonitorData(QObject):
     def force_refresh(self):
         self._client.force_refresh()
 
+    def assume_print_stopped(self):
+        """The e-stop's assumption rides the client's observation
+        layer (the author's ruling): one point, every consumer."""
+        self._client.assume_print_stopped()
+
     def set_toolhead_guard(self, active):
         self._client.set_toolhead_guard(active)
+
+    def reconnect(self) -> None:
+        """The manual Reconnect (the author's live request, 3.6.0):
+        the client cycle of the e-stop recovery, minus the
+        connected-only gate — a manual reconnect exists for when the
+        UI state is STUCK, which includes being disconnected."""
+        self._client.stop()
+        self._client.start()
+        self.set_active(True)
+
+    def reconnect_after_emergency(self) -> None:
+        """The author's ruling (2026-09-10, live-proven on their
+        printer): after an emergency stop the host refuses commands
+        until the connection is cycled. The plugin cycles the client
+        once and re-arms the monitor — the same sequence as the
+        author's manual disconnect/reconnect that recovered it."""
+        if not self._active or not self._client.connected:
+            return
+        self._client.stop()
+        self._client.start()
+        # The stop invalidated the session and deactivated the
+        # monitor; the manual recovery re-arms it the same way.
+        self.set_active(True)
 
     def _update(self, **patch):
         from dataclasses import replace
@@ -125,6 +161,7 @@ class MonitorData(QObject):
         if not active:
             self._generation += 1
             for timer in self._timers.values(): timer.stop()
+            self._console_watch.stop()
             self._client.transport.cancel_owner("monitor")
             # The console poll state dies with the session so a re-attach
             # is a REAL expand: the backfill seed must re-apply from the
@@ -237,6 +274,10 @@ class MonitorData(QObject):
     def set_console_expanded(self, expanded, stored_time=0.0):
         expanded = bool(expanded)
         if expanded == self._console_expanded:
+            # Started collapsed: the transition never happened, but
+            # the bell's watch still needs to run.
+            if not expanded and not self._console_watch.isActive():
+                self._console_watch.start()
             return
         self._console_expanded = expanded
         if expanded:
@@ -245,10 +286,19 @@ class MonitorData(QObject):
             # other sessions and other clients, and re-adding them was
             # the author's "stale responses without requests" dump.
             self._console_seed = float(stored_time or 0.0)
+            self._console_watch.stop()
             self.refresh_console_store()
+        else:
+            self._console_watch.start()
 
-    def refresh_console_store(self):
-        if not self._console_expanded:
+    def _refresh_console_watch(self):
+        """The collapsed console's slow poll — the error bell's feed."""
+        if not self._active or self._console_expanded:
+            return
+        self.refresh_console_store(force=True)
+
+    def refresh_console_store(self, force=False):
+        if not self._console_expanded and not force:
             return
         def finished(payload, error):
             if error or not isinstance(result(payload), Mapping):
@@ -293,6 +343,14 @@ class MonitorData(QObject):
         # Endstop pin states are NOT part of the objects query; the
         # only live readout is this one-shot status endpoint, polled on
         # a slow cadence (they change at homing, not every second).
+        # The poll waits for Klippy to report ready: during a
+        # firmware/restart every request lands in the gcode store as
+        # "!! Internal Error on WebRequest" (the author's live report
+        # — Moonraker starts fine, the plugin was just noisy about
+        # it), and an unanswered readiness check must not paint the
+        # console red.
+        if (self._snapshot.server or {}).get("klippy_state") != "ready":
+            return
         # A failed poll must never erase last-known states: an empty
         # endstop map reads as "not homed yet" while connected, which is
         # a lie about the printer during a transient network blip. The

@@ -115,12 +115,15 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
 
 New releases follow the `/new-feature` skill (`.claude/skills/new-feature/SKILL.md`):
 plan with verbatim author quotes and real push-back → one round-1 critic
-before going deep → build with tests → a four-persona panel
-(architecture/UX/engineering/product, read-only, findings funnel back
-through the maintainer) — one-off security/hardening and
-Klipper/Moonraker/Cura domain-expert personas join the round on
-releases whose surface warrants them — → decisions logged in
-`review/DECISIONS.md` (git-ignored) → round-3 verification → ship.
+before going deep → build with tests → a six-persona panel
+(architecture/UX/engineering/product/security and the
+Klipper/Moonraker/Cura domain expert, read-only, findings funnel back
+through the maintainer; a 3D-printer enthusiast/pro-user persona joins
+from 3.6.0 on, feeding next-release feature planning rather than
+gate-calls) → decisions logged in `review/DECISIONS.md` (git-ignored) →
+round-3 verification → the snapshot loop (the author live-tests
+`/tmp/mpf.curapackage`; commits and pushes hold until they're happy) →
+ship via PR.
 
 ## Version bump checklist
 
@@ -233,7 +236,9 @@ file must match the number of sections. Section ids are unique across all
 panes (the map is shared): print, setup, toolhead, macros, profiles,
 tuning, fans, leds, pwm, power, system, save on the controls pane;
 meshmap, job, temps, fansinfo, filament, objects, systeminfo, mcus,
-temphistory on the Information and Printer status panes. Persistence is
+temphistory on the Information and Printer status panes; console
+(the console pane) and fileManager (the file-manager popup) on the
+Monitor's own surface. Persistence is
 automatic — the stored map only records sections the user has touched.
 
 ### Collapsing a whole pane
@@ -285,7 +290,11 @@ reads and writes on unregistered keys, only persists on Cura's own save
 cycle, and mangles values through configparser.
 
 - File shape: `{"sections": {...}, "controlsCollapsed": bool,
-  "controlsLocked": bool, "infoCollapsed": bool, "statusCollapsed": bool}`.
+  "controlsLocked": bool, "infoCollapsed": bool, "statusCollapsed": bool,
+  "consoleHeight": int, "fileManagerColumns": {...}, "temperatureChart": {...},
+  "toolhead": {...}}` — new fields default via `bool(decoded.get(..., False))`
+  and the column config goes through `FileManagerPolicy.normalise_columns`
+  (the file manager owns it; the model only merges and saves).
   The first shipped format was a flat section map; `_read_state` migrates
   it, so new fields must default with `bool(decoded.get(..., False))` and
   never break legacy reads.
@@ -398,6 +407,11 @@ they cannot recur silently.
 - Prefer structural edits with exact anchors read from the file over
   text-scan surgery; brace-scanned edits have broken the monitor QML
   twice (naive check_qml and the unit suites both passed).
+- Before ANY scripted text surgery (regex or string replaces over a
+  large span), copy the file to `/tmp/mpf` first — or commit — so a
+  mangle is always revertible. The 2026-09-11 model mangle ate the
+  whole `_publish` function and only the previous package's copy made
+  the restore exact.
 - Before committing QML changes, load the document on the REAL engine
   (the capture harness's theme/materialise setup) — structural errors
   and unresolved names only surface there. A binding's unqualified
@@ -473,6 +487,22 @@ rotated visual bounds (`rotation: 90` maps width→down, height→left
 around `transformOrigin`). The probes used for the collapsed-title and
 anchor diagnoses live in this session's scratch, and the pattern is
 reproducible with only PyQt6.
+
+## Comment discipline
+
+Comments state WHY, briefly:
+
+- One or two lines for the ordinary case; a documented trap may earn
+  four or five; nothing earns ten. If a comment is heading that way,
+  the explanation belongs in `ARCHITECTURE.md` (the design) or here
+  (the lesson), not inline.
+- No play-by-play of what the code plainly does, no restating the
+  design doc, no quoting people (the author's ruling: comments speak
+  in their own voice).
+- The design notes live in `ARCHITECTURE.md` and `ROADMAP.md`; inline
+  comments carry only the local why. New code matches its file's
+  comment density — the ~20% neighbourhood the plugin settled at is
+  the ceiling, not the target.
 
 ## Diagnostics
 

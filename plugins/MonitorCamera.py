@@ -120,13 +120,20 @@ class MonitorCamera(QObject):
 
         camera = cameras[self._index] if self._index >= 0 else {}
         stream = str(camera.get("stream_url") or config.camera_url or "")
-        # Absolute stream URLs may only be http/https (panel security
-        # P3): a hostile Moonraker listing file:// or ftp:// would make
-        # Cura's image loader fetch arbitrary schemes. Relative paths
-        # (the normal webcam case) have no scheme and pass untouched.
-        if stream and QUrl(stream).isValid() and QUrl(stream).scheme() \
-                and QUrl(stream).scheme().lower() not in ("http", "https"):
-            stream = ""
+        # Absolute stream URLs may only be http/https, and
+        # protocol-relative inputs ("//host/...") are rejected
+        # outright: a hostile Moonraker listing could otherwise point
+        # Cura's image loader at an arbitrary host (panel security
+        # P3). Plain relative paths — the normal webcam case — pass.
+        if stream:
+            # QUrl strips surrounding whitespace, so the guard runs
+            # on the stripped form too: " //evil.example/x" would
+            # otherwise resolve to a real external host (the
+            # adversarial round's catch).
+            parsed = QUrl(stream.strip())
+            if stream.strip().startswith("//") or (parsed.isValid() and parsed.scheme()
+                                                   and parsed.scheme().lower() not in ("http", "https")):
+                stream = ""
         self._url = urljoin(config.url.rstrip("/") + "/", stream) if stream and self._data.active else ""
         try: rotation = int(camera.get("rotation", config.camera_rotation) or 0)
         except (TypeError, ValueError): rotation = 0

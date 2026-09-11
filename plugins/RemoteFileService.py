@@ -28,6 +28,83 @@ class FileLease:
             release(self.path)
 
 
+class _OneShotDownload:
+    """The file-manager Download lane: one file, one stream, into a
+    fresh temp directory. Independent of the job-bound state machine
+    (the author's file-manager ruling: Download loads the file into
+    Cura), with the same byte cap and lane discipline."""
+
+    def __init__(self, transport, relpath, root, on_ready):
+        self._transport = transport
+        self._relpath = str(relpath)
+        self._on_ready = on_ready
+        self._received = 0
+        self._done = False
+        try:
+            self._directory = tempfile.mkdtemp(prefix="file-", dir=root)
+            name = os.path.basename(self._relpath.replace("\\", "/")) or "download.gcode"
+            if os.path.splitext(name)[1].lower() not in {".g", ".gcode"}:
+                name += ".gcode"
+            self._path = os.path.join(self._directory, name)
+            self._target = DownloadTarget.open(self._path)
+            request = transport.request(download_endpoint(transport.identity[0], self._relpath), timeout_ms=30000)
+            request.setRawHeader(b"Accept", b"application/octet-stream")
+            self._reply = transport.network.get(request)
+            self._reply.setReadBufferSize(4 * 1024 * 1024)
+            self._reply.readyRead.connect(self._drain)
+            self._reply.finished.connect(self._finish)
+        except Exception as error:
+            self._abort()
+            self._finish_immediately(str(error))
+
+    def _drain(self):
+        if self._done:
+            return
+        try:
+            chunk = bytes(self._reply.readAll())
+            self._received += len(chunk)
+            if self._received > RemoteFileService.MAX_DOWNLOAD_BYTES:
+                self._abort()
+                self._finish_immediately("Download exceeds the size cap")
+                return
+            if chunk:
+                self._target.write(chunk)
+        except Exception as error:
+            self._abort()
+            self._finish_immediately(str(error))
+
+    def _finish(self):
+        if self._done:
+            return
+        self._done = True
+        error = None
+        try:
+            if self._reply.error() != QNetworkReply.NetworkError.NoError:
+                error = self._reply.errorString()
+            else:
+                self._target.flush_close()
+                self._on_ready(self._path, None)
+                return
+        except Exception as exc:
+            error = str(exc)
+        self._abort()
+        self._on_ready(None, error)
+
+    def _finish_immediately(self, error):
+        if self._done:
+            return
+        self._done = True
+        self._abort()
+        self._on_ready(None, error)
+
+    def _abort(self):
+        try:
+            self._target.abort(remove=False)
+        except Exception:
+            pass
+        shutil.rmtree(self._directory, ignore_errors=True)
+
+
 class RemoteFileService(QObject):
     """Own metadata, streamed downloads and leased files; no Cura/index knowledge.
 
@@ -101,6 +178,24 @@ class RemoteFileService(QObject):
         if self._reply is not None: return "downloading"
         if self._metadata_pending: return "resolving"
         return "ready" if self._path else "idle"
+
+    def download_once(self, relpath, *, on_ready):
+        """The file-manager Download capability: stream one file into
+        a fresh temp location and report `on_ready(path, error)` once.
+        The job-bound state machine is untouched."""
+        if not hasattr(self, "_one_shots"):
+            self._one_shots = set()
+        download = None
+        def done(path, error):
+            if download is not None and download in self._one_shots:
+                self._one_shots.discard(download)
+            on_ready(path, error)
+        download = _OneShotDownload(self._transport, relpath, self._root, done)
+        # KEEP THE REFERENCE: the reply's signals hold bound methods
+        # of this object, and a garbage-collected downloader dies
+        # silently mid-stream.
+        self._one_shots.add(download)
+        return download
 
     def bind(self, job_key):
         if self._job == job_key and not self._closed:

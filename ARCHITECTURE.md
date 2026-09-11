@@ -83,7 +83,12 @@ private follower state to either integration.
 | `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
 | `ConsoleController.py` | Console state owner: the bounded per-printer history and the untracked send lane | Model inheritance or formatting |
 | `CuraOutputWriter.py` | Cura-affine preparation of a temporary G-code/UFP file | HTTP upload |
-| `UploadController.py` | One write operation: discovery, readiness, multipart stream and cancellation | Cura application or QML |
+| `UploadController.py` | The Preview upload's write operation: discovery, readiness, multipart stream and cancellation | Cura application or QML |
+| `FileManager.py` | The file-manager state owner: resident walk, view state, mutations and the LOCAL-file upload (its own multipart path) plus the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | MoonrakerMonitorModel |
+| `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
+| `FileDownload.py` | One-shot file streaming from the printer into Cura (the file manager's Download verb) | FollowerRuntime |
+| `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
+| `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection, recents and the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | Model inheritance or formatting |
 | `MoonrakerOutputDevice.py` | Cura output-device signals/dialog/message adapter | Upload state machine |
 
 ## 3. Binding and migration
@@ -143,6 +148,26 @@ A stale completion must not clear the new generation's coalescer slot.
 
 Metrics cover ordinary JSON lanes, not all wire traffic: cancelled requests count
 as started but not completed, and streaming/multipart bytes are outside those counters.
+
+The file manager rides its own `file-manager` lane (never Monitor's `monitor`
+lane): opening walks the directory tree breadth-first (bounded at 50
+directories), the history window fetches once per open, and `Load all history`
+pages until exhausted. A bind/deactivate bumps the service generation and
+cancels the lane, so stale walk callbacks can never publish rows for the wrong
+printer.
+
+Thumbnail fetches (one-shot raw PNGs per visible row) follow the
+METADATA's thumbnail `relative_path` (`.thumbs/<name>-<size>.png`,
+largest entry) — the plain `<file>.png` sibling route 404s on a live
+Moonraker; rows without metadata thumbnails record "none" and are
+never fetched. The fetches own their replies directly under the
+streaming rule above: each reply registers in the service, the signal
+connects into a bound method, the handler validates its generation
+before any read, and bind/unbind aborts and drains the registry. Bare
+closures on network signals are banned — the live crash was a SIGSEGV in
+`PyQtSlot::call` delivered from a QtNetwork signal right after the popup
+opened (2026-09-10); `test_network_replies_connect_into_bound_handlers_not_bare_closures`
+pins the pattern.
 
 ## 5. Physical state and Preview
 

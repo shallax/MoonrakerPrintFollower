@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,85 @@ class RemoteFileIdentity:
         return self.filename == filename and (self.size <= 0 or size <= 0 or self.size == size)
 
 
+def _effective_port(scheme: str, port: Optional[int]) -> int:
+    if port is not None:
+        return port
+    return 443 if scheme == "https" else 80
+
+
+def moonraker_error_text(payload: Dict[str, Any]) -> str:
+    """Moonraker refusal bodies carry their words in two shapes:
+    ``{"error": "..."}`` (handled at the call sites) and
+    ``{"code": 400, "message": "Unknown", "traceback": ...}`` — whose
+    ``message`` is often just "Unknown" while the real text sits in
+    the traceback tail (the author's live report: a cold extrude
+    surfaced a bare 400, hiding "Extrude below minimum temp — see
+    the 'min_extrude_temp' config option")."""
+    message = str(payload.get("message") or "").strip()
+    # The author's live report: "Extrude refused: <the whole
+    # exception>" — some Moonraker builds put the full multi-line
+    # exception in `message`. Only a short single-line message is
+    # usable; anything bigger falls through to the traceback tail.
+    if message and message != "Unknown" and "\n" not in message and len(message) <= 120:
+        return message
+    traceback_text = str(payload.get("traceback") or "")
+    if not traceback_text:
+        # Some builds put the exception into `message` alone — the
+        # same markers live there.
+        traceback_text = message
+    for marker in ("HTTPError: ", "ServerError: "):
+        index = traceback_text.rfind(marker)
+        if index >= 0:
+            tail = traceback_text[index + len(marker):]
+            line = tail.split("\n", 1)[0].strip()
+            if marker == "HTTPError: " and line.startswith("HTTP ") and ": " in line:
+                # "HTTP 400: Extrude below minimum temp" — the code
+                # is transport noise next to the server's words.
+                line = line.split(": ", 1)[1].strip()
+            if line:
+                return line
+    if message:
+        # Last resort: never the whole exception — a traceback's
+        # FIRST line is its header, so take the LAST; a plain long
+        # message keeps its first.
+        lines = [line.strip() for line in message.split("\n") if line.strip()]
+        if lines:
+            pick = lines[-1] if "Traceback" in message else lines[0]
+            return "" if pick == "Unknown" else pick[:120]
+    return ""
+
+
+# The transport's historical import name (kept for its call sites
+# and the real-socket tests that pin the shape).
+_moonraker_error_text = moonraker_error_text
+
+
+def same_origin(base_url: str, target: str) -> bool:
+    """True when ``target`` shares the base URL's origin (scheme, host, port).
+
+    The Moonraker API key may only ride requests to the printer's own
+    origin — a webcam host, a tunnel alias or a redirect target is
+    foreign and must never carry the key. Fail-closed: any parse
+    failure returns False (no key). QUrl does not implement origin
+    comparison; isParentOf is path semantics, not origin semantics
+    (round-2 security F2).
+    """
+    try:
+        base = urlsplit(str(base_url or "").strip())
+        other = urlsplit(str(target or "").strip())
+        if not base.scheme or not base.hostname:
+            return False
+        if not other.scheme or not other.hostname:
+            return False
+        return (
+            base.scheme.lower() == other.scheme.lower()
+            and base.hostname.lower() == other.hostname.lower()
+            and _effective_port(base.scheme, base.port) == _effective_port(other.scheme, other.port)
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 def status_endpoint(base_url: str) -> str:
     return (
         f"{base_url}/printer/objects/query?"
@@ -34,6 +113,54 @@ def metadata_endpoint(base_url: str, filename: str) -> str:
 
 def download_endpoint(base_url: str, filename: str) -> str:
     return f"{base_url}/server/files/gcodes/{quote(filename, safe='/')}"
+
+
+def print_start_path(filename: str) -> str:
+    """The print/start filename is ROOT-EXCLUSIVE: the path as the
+    printer's SD-card layer knows it, WITHOUT the "gcodes/" root the
+    file endpoints carry (round-2 D4 — the printer refuses the
+    rooted form)."""
+    return str(filename).strip().lstrip("/")
+
+
+def print_start_endpoint(base_url: str, filename: str) -> str:
+    path = f"printer/print/start?filename={quote(print_start_path(filename), safe='/')}"
+    return path if not str(base_url or "") else f"{str(base_url).rstrip('/')}/{path}"
+
+
+def delete_endpoint(base_url: str, root: str, filename: str) -> str:
+    """HTTP DELETE /server/files/{root}/{filename} — BOTH parts are
+    included, unlike print/start's root-exclusive filename (round-1
+    C1 / round-2 E1: the only delete route; a POST form does not
+    exist)."""
+    path = f"server/files/{str(root).strip('/')}/{quote(str(filename).lstrip('/'), safe='/')}"
+    return path if not str(base_url or "") else f"{str(base_url).rstrip('/')}/{path}"
+
+
+def directory_delete_endpoint(base_url: str, root: str, directory: str) -> str:
+    """HTTP DELETE server/files/directory?path={root}/{directory}
+    &force=true — the host's directory route (the file route rejects
+    every folder with "Invalid file path"; force removes non-empty
+    trees)."""
+    query = f"path={quote(str(root).strip('/') + '/' + str(directory).lstrip('/'), safe='/')}&force=true"
+    path = f"server/files/directory?{query}"
+    return path if not str(base_url or "") else f"{str(base_url).rstrip('/')}/{path}"
+
+
+def directory_create_endpoint(base_url: str, root: str, directory: str) -> str:
+    """POST server/files/directory?path={root}/{directory} — the
+    host's create-folder route (an empty POST; the directory name is
+    the last path segment)."""
+    query = f"path={quote(str(root).strip('/') + '/' + str(directory).lstrip('/'), safe='/')}"
+    path = f"server/files/directory?{query}"
+    return path if not str(base_url or "") else f"{str(base_url).rstrip('/')}/{path}"
+
+
+def move_endpoint(base_url: str) -> str:
+    """Rename via the host's move route: POST server/files/move with
+    a {source, dest} body, both root-inclusive (round-1 C2/C3: move
+    silently overwrites, so the client prompts first)."""
+    return "server/files/move" if not str(base_url or "") else f"{str(base_url).rstrip('/')}/server/files/move"
 
 
 def server_info_endpoint(base_url: str) -> str:

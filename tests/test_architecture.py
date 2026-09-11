@@ -60,6 +60,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
             "BedMeshSceneNode.py", "MoonrakerMonitorModel.py", "MoonrakerFollowerMachineAction.py",
             "MoonrakerProtocol.py", "UploadController.py", "CuraOutputWriter.py",
             "ToolheadPolicy.py", "ToolheadController.py", "MonitorTemperatureHistory.py", "ConsolePolicy.py", "ConsoleController.py",
+            "FileManagerPolicy.py", "FileManager.py",
         ):
             self.assertIn(f"`{module}`", ARCH)
 
@@ -127,7 +128,7 @@ class SourceContractTests(unittest.TestCase):
             "CuraOutputWriter": set(),
             "DownloadStream": set(),
             "FollowController": set(),
-            "FollowerRuntime": {"BedMeshPresenter", "CuraIntegration", "GCodeIndex", "GCodeIndexService",
+            "FollowerRuntime": {"BedMeshPresenter", "CuraIntegration", "FileDownload", "GCodeIndex", "GCodeIndexService",
                 "MoonrakerClient", "PauseController", "PreviewFollower", "PreviewMotion",
                 "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService"},
             "GCodeIndex": {"MoonrakerProtocol"},
@@ -140,7 +141,7 @@ class SourceContractTests(unittest.TestCase):
             "MonitorTuning": set(),
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
             "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
-            "MoonrakerMonitorModel": {"ConsoleController", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTemperatureHistory", "MonitorTuning", "PrinterConfig", "ToolheadController"},
+            "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTemperatureHistory", "MonitorTuning", "PrinterConfig", "ToolheadController", "ToolheadPolicy"},
             "ConsoleController": {"ConsolePolicy"},
             "ToolheadController": {"ToolheadPolicy"},
             "MonitorTemperatureHistory": {"MonitorFormatting"},
@@ -151,7 +152,7 @@ class SourceContractTests(unittest.TestCase):
             "MoonrakerPrintFollower": {"FollowerRuntime"},
             "MoonrakerProtocol": set(),
             "MoonrakerSession": {"MoonrakerTransport"},
-            "MoonrakerTransport": set(),
+            "MoonrakerTransport": {"MoonrakerProtocol"},
             "NativeNozzleLifecycle": set(),
             "PauseController": {"PauseScheduleService"},
             "PauseScheduleService": set(),
@@ -212,6 +213,36 @@ class SourceContractTests(unittest.TestCase):
             self.assertNotIn("_pref_str(", source, path.name)
             self.assertNotIn("_pref_bool(", source, path.name)
         self.assertEqual(owners, ["MoonrakerTransport.py"])
+
+    def test_network_replies_connect_into_bound_handlers_not_bare_closures(self):
+        # The author's live crash report: a SIGSEGV in PyQtSlot::call
+        # on the main thread, delivered from a QtNetwork signal right
+        # after the file-manager popup opened. A bare closure connected
+        # to QNetworkReply.finished is a use-after-free trap in PyQt —
+        # every reply connection must follow the transport's pattern:
+        # the reply registered in a dict, the signal connected via a
+        # default-argument lambda into a bound method of the owning
+        # QObject, so nothing can be collected mid-flight.
+        for path in PLUGINS.glob("*.py"):
+            source = path.read_text()
+            self.assertIsNone(re.search(r"\.finished\.connect\(finished\)", source), path.name)
+            # PyQt6 enums never equal plain ints: ``error() != 0`` is
+            # ALWAYS true and failed every successful thumbnail fetch
+            # (the author's live report). Compare against the enum.
+            self.assertIsNone(re.search(r"\.error\(\)\s*[!=]=\s*0\b", source), path.name)
+        manager = (PLUGINS / "FileManager.py").read_text()
+        self.assertIn("self._thumb_replies[relpath] = reply", manager)
+        self.assertIn(
+            "lambda r=reply, p=relpath, g=generation, t=path, l=large: self._thumb_finished(p, r, g, t, l)",
+            manager,
+        )
+
+    def test_redirect_policy_guards_the_api_key(self):
+        # The X-Api-Key rides redirects unless the transport pins the
+        # same-origin redirect policy (round-2 security F1) — the pin
+        # exists because a dropped policy is invisible to the suite.
+        transport = (PLUGINS / "MoonrakerTransport.py").read_text()
+        self.assertIn("SameOriginRedirectPolicy", transport)
 
     def test_qt_adapters_do_not_own_worker_or_http_implementations(self):
         for module in ("MoonrakerPrintFollower", "MoonrakerMonitorModel", "MoonrakerOutputDevice"):

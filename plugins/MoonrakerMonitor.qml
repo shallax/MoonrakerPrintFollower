@@ -114,12 +114,87 @@ Component {
             consoleText.text = "";
             consoleSection.consoleSyncLines();
         }
-        Keys.onEscapePressed: {
-            openPopOver = "";
-            selectedChartSensor = "";
-        }
         focus: true
-        property bool infoCollapsed: root.printer != null ? root.printer.infoCollapsed : false
+        // Esc on the Monitor page (the author's live request): the
+        // popover and chart close first, then the page itself —
+        // Preview when anything is sliced, Prepare otherwise. A
+        // WINDOW-LEVEL Shortcut, never a Keys handler: Cura's
+        // buttons do not take focus, so the moment the user clicks
+        // anything the handler never sees Esc (the file-manager
+        // popup's own history — the author's live report: Esc on
+        // the Monitor page did nothing). While the file-manager
+        // popup is open THIS shortcut owns the key: an open
+        // confirmation cancels (its content's own handler having
+        // accepted the key first), otherwise the popup closes.
+        Shortcut {
+            sequence: "Esc"
+            // THE one window-level shortcut: the whole Esc ladder in
+            // one place, so the key can never have two claimants
+            // (the author's live report: the popup's own shortcut
+            // and this one fought, and the popup lost). The popup's
+            // open state lives in the MODEL now — no parent chains,
+            // no focus.
+            onActivated: {
+                if (root.printer != null && root.printer.fileManagerOpen) {
+                    if (root.printer.filePrintConfirm !== "") {
+                        // The print confirmation is the TOP layer: Esc
+                        // cancels it, not the popup (the author's
+                        // ruling).
+                        root.printer.fileCancelPrint();
+                    } else {
+                        root.printer.setFileManagerOpen(false);
+                    }
+                } else if (openPopOver !== "" || selectedChartSensor !== "") {
+                    openPopOver = "";
+                    selectedChartSensor = "";
+                } else if (OutputDevice != null) {
+                    OutputDevice.leaveMonitorStage();
+                }
+            }
+        }
+        // The author's ruling (2026-09-10): when the stage is too
+        // narrow for the Webcam pane at its minimum, the Information
+        // pane auto-collapses to make room. The trigger is computed
+        // from FIXED constants — the expanded Info width, the webcam
+        // pane's label-free minimum and the status pane's minimum —
+        // NEVER from the post-collapse layout, so collapsing
+        // Information cannot move the goal post and no
+        // hysteresis oscillation can form. Re-expansion waits for
+        // the required width PLUS a margin, so the boundary cannot
+        // jitter either.
+        property real infoComfortWidth: (240 + 220 + 410) * screenScaleFactor + 4 * UM.Theme.getSize("default_margin").width
+        property bool infoPersistedCollapsed: root.printer != null ? root.printer.infoCollapsed : false
+        // The author's ruling: fold the Information pane before the
+        // WEBCAM pane starts being crushed. Empirically probed in the
+        // harness (probe3): the camera column squeezes below its
+        // 220 px comfort width at a stage width of ~900 px — the old
+        // release threshold (734 px) sat BELOW the squeeze boundary,
+        // so every shrink released the latch the instant it fired
+        // (and the latch only fires on transitions, so it never
+        // re-armed below that). The comfort width — info 240 +
+        // camera 220 + status 410 + margins — plus a 40 px margin
+        // puts the release ABOVE the squeeze boundary: the latch
+        // holds, and the dead zone between the two prevents
+        // flapping. Both thresholds come from the same fixed
+        // constant, never from the post-collapse layout.
+        property bool webcamSqueezed: cameraViewport.width > 0 && cameraViewport.width < 220 * screenScaleFactor
+        property bool infoAutoCollapsed: false
+        onWebcamSqueezedChanged: {
+            if (webcamSqueezed && !root.infoPersistedCollapsed) {
+                root.infoAutoCollapsed = true;
+            }
+        }
+        onWidthChanged: {
+            if (root.width >= infoComfortWidth + 40 * screenScaleFactor) {
+                root.infoAutoCollapsed = false;
+            }
+        }
+        onInfoAutoCollapsedChanged: {
+            if (infoAutoCollapsed) {
+                root.openPopOver = "";
+            }
+        }
+        property bool infoCollapsed: root.infoPersistedCollapsed || root.infoAutoCollapsed
         property bool statusCollapsed: root.printer != null ? root.printer.statusCollapsed : false
         property string connectionDotColour: root.printer != null && root.printer.monitorConnected ? "#3fb950" : "#f85149"
 
@@ -179,6 +254,7 @@ Component {
 
             Cura.RoundedRectangle {
                 id: infoPanel
+                objectName: "infoPanel"
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
                 Layout.preferredWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 240 * screenScaleFactor)
@@ -239,8 +315,15 @@ Component {
                         // pane collapse buttons uniform). This pane is
                         // leftmost and collapses left.
                         iconSource: root.infoCollapsed ? UM.Theme.getIcon("ChevronSingleRight") : UM.Theme.getIcon("ChevronSingleLeft")
-                        tooltip: root.infoCollapsed ? "Show the information." : "Hide the information."
+                        tooltip: root.infoAutoCollapsed ? "The window is too narrow — widen it to show the information." : (root.infoCollapsed ? "Show the information." : "Hide the information.")
                         onClicked: {
+                            // Auto-collapsed-by-width is not a
+                            // clickable toggle: only a wider window
+                            // restores the pane (the console's
+                            // too-narrow precedent).
+                            if (root.infoAutoCollapsed) {
+                                return;
+                            }
                             // The NEW state is computed locally: the
                             // property binding may not have re-evaluated
                             // yet when this handler reads it back.
@@ -526,6 +609,7 @@ Component {
 
                             Item {
                                 id: cameraViewport
+                                objectName: "cameraViewport"
                                 Layout.fillWidth: true
                                 // The camera fills the pane ONLY while the
                                 // console is collapsed; expanded, the camera
@@ -688,50 +772,69 @@ Component {
                                     Layout.fillWidth: true
                                     height: cameraControls.height + 2 * UM.Theme.getSize("narrow_margin").height
 
-                                    RowLayout {
+                                    // The author's final ruling: the
+                                    // label sits PERMANENTLY above the
+                                    // dropdown, centred, no colon — no
+                                    // conditional layouts, nothing to
+                                    // overlap the pane at any width.
+                                    ColumnLayout {
                                         id: cameraControls
+                                        objectName: "cameraControls"
                                         anchors.centerIn: parent
-                                        spacing: UM.Theme.getSize("narrow_margin").width
+                                        width: parent.width
+                                        spacing: 0
 
                                         UM.Label {
-                                            text: "Camera:"
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            text: "Camera"
                                             font: UM.Theme.getFont("medium")
                                             color: UM.Theme.getColor("text")
                                         }
 
-                                        Cura.ComboBox {
-                                            id: cameraSelector
-                                            visible: root.printer != null && root.printer.webcamNames.length > 1
-                                            Layout.preferredWidth: 180 * screenScaleFactor
-                                            Layout.minimumWidth: 160 * screenScaleFactor
-                                            enabled: visible
-                                            model: root.printer != null ? root.printer.webcamNames : []
-                                            currentIndex: root.printer != null ? root.printer.activeWebcamIndex : -1
-                                            onActivated: function (index) {
-                                                if (root.printer != null) {
-                                                    root.printer.selectWebcam(index);
-                                                }
-                                            }
-                                        }
+                                        RowLayout {
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            // The inset keeps the combo
+                                            // from ever touching the pane
+                                            // edge at the crush (the
+                                            // author's live report).
+                                            width: Math.min(implicitWidth, parent.width - 2 * UM.Theme.getSize("narrow_margin").width)
+                                            spacing: UM.Theme.getSize("narrow_margin").width
 
-                                        UM.SimpleButton {
-                                            Layout.alignment: Qt.AlignVCenter
-                                            width: UM.Theme.getSize("small_button_icon").width
-                                            height: UM.Theme.getSize("small_button_icon").height
-                                            enabled: root.printer != null && root.printer.monitorConnected
-                                            color: UM.Theme.getColor("text_inactive")
-                                            hoverColor: UM.Theme.getColor("text")
-                                            iconSource: UM.Theme.getIcon("ArrowDoubleCircleRight")
-                                            onClicked: {
-                                                if (root.printer != null) {
-                                                    root.printer.refreshWebcams();
+                                            Cura.ComboBox {
+                                                id: cameraSelector
+                                                visible: root.printer != null && root.printer.webcamNames.length > 1
+                                                Layout.preferredWidth: 180 * screenScaleFactor
+                                                Layout.minimumWidth: 60 * screenScaleFactor
+                                                Layout.maximumWidth: 180 * screenScaleFactor
+                                                Layout.fillWidth: true
+                                                enabled: visible
+                                                model: root.printer != null ? root.printer.webcamNames : []
+                                                currentIndex: root.printer != null ? root.printer.activeWebcamIndex : -1
+                                                onActivated: function (index) {
+                                                    if (root.printer != null) {
+                                                        root.printer.selectWebcam(index);
+                                                    }
                                                 }
                                             }
 
-                                            UM.TooltipArea {
-                                                anchors.fill: parent
-                                                text: "Refresh Moonraker's webcam list."
-                                                acceptedButtons: Qt.NoButton
+                                            UM.SimpleButton {
+                                                width: UM.Theme.getSize("small_button_icon").width
+                                                height: UM.Theme.getSize("small_button_icon").height
+                                                enabled: root.printer != null && root.printer.monitorConnected
+                                                color: UM.Theme.getColor("text_inactive")
+                                                hoverColor: UM.Theme.getColor("text")
+                                                iconSource: UM.Theme.getIcon("ArrowDoubleCircleRight")
+                                                onClicked: {
+                                                    if (root.printer != null) {
+                                                        root.printer.refreshWebcams();
+                                                    }
+                                                }
+
+                                                UM.TooltipArea {
+                                                    anchors.fill: parent
+                                                    text: "Refresh Moonraker's webcam list."
+                                                    acceptedButtons: Qt.NoButton
+                                                }
                                             }
                                         }
                                     }
@@ -744,43 +847,169 @@ Component {
                     // Klipper processes the script, and its output
                     // streams back through the gcode store.
                     Cura.RoundedRectangle {
+                        id: consolePanel
                         Layout.fillWidth: true
+                        // Auto-collapse below 350 px (the author's
+                        // live report: the console's buttons overflowed
+                        // when the window was crushed). The persisted
+                        // expand state is untouched — the width decides
+                        // the EFFECTIVE state, and the gcode-store poll
+                        // follows it (poll only while expanded).
+                        readonly property bool tooNarrow: consoleColumn.width < 350 * screenScaleFactor
+                        onTooNarrowChanged: {
+                            if (root.printer != null) {
+                                if (tooNarrow || root.printer.sectionExpandedMap["console"] === false) {
+                                    root.printer.setConsoleExpanded(false);
+                                } else {
+                                    root.printer.setConsoleExpanded(true);
+                                }
+                            }
+                        }
                         // NO fillHeight: the card hugs the webcam card
                         // directly (a fill slot plus a maximum clamp
                         // left a huge gap between the cards — the
-                        // author's live report). Its height is its
-                        // content's, bounded by the hard cap below:
-                        // the author's live test found even 55% of the
-                        // column "way too high" — ~28% it is.
-                        // Collapsed, the card is a header strip sized
-                        // BY THE BUTTON with equal top/bottom margins —
-                        // the button is the largest element and decides
-                        // the strip (the author's ruling). The inner
-                        // column's implicit does not shrink reliably
-                        // once its content hides, so the collapsed
-                        // height is explicit.
+                        // author's live report). Its height is the
+                        // user's, bounded by the clamp window below.
+                        // UNTIL they drag the handle, the card keeps the
+                        // pane default: the author's live test found even
+                        // 55% of the column "way too high" — ~28% it is.
+                        // Collapsed, the card is a header strip sized by
+                        // the HANDLE and the BUTTON with equal top/bottom
+                        // margins — those two are the largest elements and
+                        // decide the strip (the author's ruling). The
+                        // inner column's implicit does not shrink reliably
+                        // once its content hides, so the collapsed height
+                        // is explicit.
                         // EXPLICIT height, never the inner column's
                         // implicit: the real Cura engine computed the
                         // implicit from a collapsed chain and the card
                         // rendered two lines tall with a white gap (the
                         // author's report; the harness engine disagreed).
-                        Layout.preferredHeight: (root.printer != null && root.printer.sectionExpandedMap["console"] !== false) ? Math.max(190 * screenScaleFactor, cameraArea.height * 0.28) : consoleCollapseButton.height + 2 * UM.Theme.getSize("thin_margin").height
-                        Layout.maximumHeight: Math.max(190 * screenScaleFactor, cameraArea.height * 0.28)
+                        // The pane bounds are the clamp window: the
+                        // console's floor keeps the header row and the
+                        // input row usable, and its ceiling leaves the
+                        // webcam card its own header plus a viewport — a
+                        // pane crushed under the pointer is the hazard of
+                        // the author's earlier report. A stored height
+                        // that no longer fits a smaller stage renders
+                        // inside the clamps WITHOUT losing the user's
+                        // intent: the model keeps what they set.
+                        readonly property real consoleHandleHeight: Math.max(12 * screenScaleFactor, UM.Theme.getSize("thin_margin").height)
+                        readonly property real consoleCollapsedHeight: consoleCollapseButton.height + 2 * UM.Theme.getSize("thin_margin").height + consoleHandleHeight
+                        readonly property real consoleMinHeight: 140 * screenScaleFactor
+                        readonly property real consoleWebcamFloor: 150 * screenScaleFactor
+                        readonly property real consoleMaxHeight: Math.max(consoleMinHeight, cameraArea.height - consoleWebcamFloor - UM.Theme.getSize("default_margin").height)
+                        readonly property real consoleDefaultHeight: Math.max(190 * screenScaleFactor, cameraArea.height * 0.28)
+                        readonly property bool consoleExpanded: root.printer != null && root.printer.sectionExpandedMap["console"] !== false && !consolePanel.tooNarrow
+                        // The live drag height (0 = not dragging): the
+                        // drag previews locally and commits ONCE on
+                        // release, like the tuning sliders — a commit per
+                        // move would rewrite the state file ~60 times a
+                        // second for a value nobody reads until the pane
+                        // settles.
+                        property real consoleDragHeight: 0
+                        property real consoleResizeStartY: 0
+                        property real consoleResizeStartHeight: 0
+                        readonly property real consoleStoredHeight: root.printer != null && root.printer.consoleHeight > 0 ? root.printer.consoleHeight : consoleDefaultHeight
+                        readonly property real consoleSettledHeight: Math.max(consoleMinHeight, Math.min(consoleMaxHeight, consoleStoredHeight))
+                        readonly property real consoleCurrentHeight: consoleDragHeight > 0 ? consoleDragHeight : consoleSettledHeight
+                        // Below the pane's own minimum there is no room
+                        // for the body at all: the well cannot hold the
+                        // prompt, the input and its buttons any more, and
+                        // a squeezed column pushed them past the black
+                        // border (the author's live report). The body
+                        // FADES out just below the minimum and is gone for
+                        // the rest of the travel to the collapse position,
+                        // so the closing pane reads as an empty shell
+                        // rather than a crushed one — the fade follows the
+                        // DRAG, so dragging back up brings the console
+                        // straight back. A settled height never lands in
+                        // the band (the clamp floor is the minimum), so it
+                        // is only ever seen mid-drag.
+                        readonly property real consoleBodyFadeSpan: 24 * screenScaleFactor
+                        readonly property real consoleBodyOpacity: Math.max(0, Math.min(1, (height - (consoleMinHeight - consoleBodyFadeSpan)) / consoleBodyFadeSpan))
+                        Layout.preferredHeight: consoleExpanded ? consoleCurrentHeight : consoleCollapsedHeight
+                        Layout.maximumHeight: consoleExpanded ? consoleCurrentHeight : consoleCollapsedHeight
                         border.color: UM.Theme.getColor("lining")
                         border.width: UM.Theme.getSize("default_lining").width
                         color: UM.Theme.getColor("main_background")
                         radius: UM.Theme.getSize("default_radius").width
+                        // The drag passes through heights SHORTER than the
+                        // inner column's minimum (on the way down to the
+                        // collapse position), so the card clips: its
+                        // content must never paint over the webcam card
+                        // above it.
+                        clip: true
+
+                        // One owner for the resize. The pointer is read
+                        // in the PANE's frame, never the handle's: the
+                        // handle rides the edge it is moving, so a local
+                        // measurement feeds the new height back into its
+                        // own delta and the console runs away under the
+                        // pointer. The height the drag reports is
+                        // CONTINUOUS — the collapse position is its floor,
+                        // not a jump — so dragging down shrinks the pane
+                        // to the strip and collapses it, and dragging back
+                        // up expands it at the same spot (the edge never
+                        // detaches from the pointer).
+                        function consoleSetExpanded(expanded) {
+                            if (root.printer == null) {
+                                return;
+                            }
+                            // Only a real crossing writes: a drag that
+                            // wiggles across the threshold must not
+                            // rewrite the state file per event.
+                            if ((root.printer.sectionExpandedMap["console"] !== false) === expanded) {
+                                return;
+                            }
+                            root.printer.setSectionExpanded("console", expanded);
+                            root.printer.setConsoleExpanded(expanded);
+                        }
+                        function consoleResizeTo(paneY) {
+                            var height = consoleResizeStartHeight + (consoleResizeStartY - paneY);
+                            // Up is taller. The collapse position is the
+                            // drag floor, so the pane can never be pulled
+                            // below the strip it collapses into.
+                            height = Math.max(consoleCollapsedHeight, Math.min(consoleMaxHeight, height));
+                            consoleDragHeight = height;
+                            consoleSetExpanded(height > consoleCollapsedHeight + 0.5);
+                        }
+                        function consoleResizeCommit() {
+                            if (consoleDragHeight <= 0) {
+                                return;  // a click on the handle, not a drag
+                            }
+                            var height = consoleDragHeight;
+                            consoleDragHeight = 0;
+                            if (height < consoleMinHeight) {
+                                // Released on the way down, above the
+                                // collapse position: a crushed console is
+                                // not a size to keep. Collapse it, and
+                                // leave the model holding the user's last
+                                // usable height for the next expand.
+                                consoleSetExpanded(false);
+                                return;
+                            }
+                            consoleSetExpanded(true);
+                            if (root.printer != null) {
+                                // Whole pixels: the model's property is an
+                                // int, the drag delta a real.
+                                root.printer.setConsoleHeight(Math.round(height));
+                            }
+                        }
 
                         // While collapsed, a click ANYWHERE on the
                         // strip expands the pane, like the other
                         // panes; the header button sits above this
                         // area and keeps its own clicks.
                         MouseArea {
-                            visible: root.printer != null && root.printer.sectionExpandedMap["console"] === false
+                            visible: root.printer != null && (root.printer.sectionExpandedMap["console"] === false || consolePanel.tooNarrow)
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                if (root.printer != null) {
+                                // Auto-collapsed-by-width is not a
+                                // clickable expand: only a wider window
+                                // restores the panel.
+                                if (root.printer != null && !consolePanel.tooNarrow) {
                                     root.printer.setSectionExpanded("console", true);
                                     root.printer.setConsoleExpanded(true);
                                 }
@@ -791,6 +1020,77 @@ Component {
                             id: consoleColumn
                             anchors.fill: parent
                             spacing: 0
+
+                            // The resize handle: the card's TOP edge. It
+                            // holds its own strip in the layout — never an
+                            // overlay across the header row — so the
+                            // collapse toggle keeps every pixel of its hit
+                            // area. It rides BOTH states: pulling the strip
+                            // down to the collapse position collapses the
+                            // pane, and dragging back out of it expands the
+                            // pane (the author's request).
+                            Item {
+                                id: consoleResizeHandle
+                                objectName: "consoleResizeHandle"
+                                // Hidden while the auto-collapse width
+                                // holds: a grab bar for an expansion
+                                // that cannot happen would be a lie
+                                // (the author's live request).
+                                visible: !consolePanel.tooNarrow
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: consolePanel.consoleHandleHeight
+
+                                MouseArea {
+                                    id: consoleResizeArea
+                                    objectName: "consoleResizeArea"
+                                    anchors.fill: parent
+                                    cursorShape: Qt.SizeVerCursor
+                                    hoverEnabled: true
+                                    onPressed: {
+                                        consolePanel.consoleResizeStartY = mapToItem(cameraArea, mouse.x, mouse.y).y;
+                                        consolePanel.consoleResizeStartHeight = consolePanel.height;
+                                        // A reader at the tail stays at the
+                                        // tail through the resize; one
+                                        // scrolled up is never yanked (the
+                                        // golden rule, drag variant).
+                                        if (consoleFlick.contentY + consoleFlick.height >= consoleFlick.contentHeight - 2) {
+                                            consoleFlick.restoreScrollPending = true;
+                                        }
+                                    }
+                                    onPositionChanged: {
+                                        if (pressed) {
+                                            consolePanel.consoleResizeTo(mapToItem(cameraArea, mouse.x, mouse.y).y);
+                                        }
+                                    }
+                                    onReleased: consolePanel.consoleResizeCommit()
+                                    // A stolen grab (the window losing the
+                                    // pointer, an ancestor's drag) must
+                                    // still land the height the user
+                                    // dragged to.
+                                    onCanceled: consolePanel.consoleResizeCommit()
+                                }
+
+                                // The grip: the strip's affordance — the
+                                // resize cursor alone is invisible until
+                                // the pointer is already on it.
+                                Rectangle {
+                                    anchors.centerIn: parent
+                                    // Wide and thick enough to read as a
+                                    // grab bar at a glance (the author's
+                                    // live ruling — the first grip was
+                                    // too subtle to find).
+                                    width: 72 * screenScaleFactor
+                                    height: 5 * screenScaleFactor
+                                    radius: height / 2
+                                    color: consoleResizeArea.containsMouse ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
+                                }
+
+                                UM.TooltipArea {
+                                    anchors.fill: parent
+                                    text: "Drag to resize the console."
+                                    acceptedButtons: Qt.NoButton
+                                }
+                            }
 
                             RowLayout {
                                 Layout.fillWidth: true
@@ -833,10 +1133,10 @@ Component {
                                     // The accordion convention: DOWN when expanded
                                     // (the author's ruling — the first direction read
                                     // inverted).
-                                    iconSource: root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? UM.Theme.getIcon("ChevronSingleDown") : UM.Theme.getIcon("ChevronSingleUp")
-                                    tooltip: root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? "Collapse the console." : "Expand the console."
+                                    iconSource: root.printer != null && root.printer.sectionExpandedMap["console"] !== false && !consolePanel.tooNarrow ? UM.Theme.getIcon("ChevronSingleDown") : UM.Theme.getIcon("ChevronSingleUp")
+                                    tooltip: consolePanel.tooNarrow ? "The window is too narrow — widen it to expand the console." : (root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? "Collapse the console." : "Expand the console.")
                                     onClicked: {
-                                        if (root.printer != null) {
+                                        if (root.printer != null && !consolePanel.tooNarrow) {
                                             // The poll follows the pane:
                                             // collapsing stops the
                                             // gcode-store fetch (the
@@ -858,13 +1158,30 @@ Component {
                                     // the normal text colour; collapsed
                                     // it greys like the other panes'
                                     // collapsed strips.
-                                    color: root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
+                                    color: root.printer != null && root.printer.sectionExpandedMap["console"] !== false && !consolePanel.tooNarrow ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
+                                }
+                                // The error bell (the author's live
+                                // request): while the console is
+                                // collapsed, a NEW error line rings a
+                                // red bell next to the header until
+                                // the console expands.
+                                UM.ColorImage {
+                                    visible: root.printer != null && root.printer.consoleErrorBell
+                                    Layout.preferredWidth: 14 * screenScaleFactor
+                                    Layout.preferredHeight: 14 * screenScaleFactor
+                                    source: Qt.resolvedUrl("Bell.svg")
+                                    color: "#e53935"
                                 }
                             }
 
                             ColumnLayout {
                                 id: consoleSection
-                                visible: root.printer != null && root.printer.sectionExpandedMap["console"] !== false
+                                visible: root.printer != null && root.printer.sectionExpandedMap["console"] !== false && !consolePanel.tooNarrow
+                                // The body fades as the pane closes (see
+                                // consoleBodyOpacity): a squeezed body
+                                // spilled past the card, and the fade
+                                // keeps the closing pane clean.
+                                opacity: consolePanel.consoleBodyOpacity
                                 // The author's cheat: if the app started
                                 // with the console collapsed, the FIRST
                                 // expand scrolls to the tail once (the
@@ -1097,6 +1414,7 @@ Component {
                                     // the restored commands at the head
                                     // (the author's report).
                                     if (wasAtEnd && consoleRenderedLines > 0) {
+                                        consoleFlick.stickToEnd = true;
                                         consoleFlick.contentY = consoleFlick.contentHeight - consoleFlick.height;
                                     }
                                 }
@@ -1153,6 +1471,15 @@ Component {
                                     border.color: UM.Theme.getColor("lining")
                                     border.width: UM.Theme.getSize("default_lining").width
                                     radius: UM.Theme.getSize("default_radius").width
+                                    // The well is a real CONTAINER, not a
+                                    // backdrop: the prompt, the input and
+                                    // its buttons live inside it, and when
+                                    // the pane is dragged shorter than
+                                    // they need they are cut at the well's
+                                    // own edge instead of floating
+                                    // outside the black border (the
+                                    // author's live report).
+                                    clip: true
 
                                     ColumnLayout {
                                         anchors.fill: parent
@@ -1173,6 +1500,20 @@ Component {
                                             // stale values (the author's
                                             // reports).
                                             property bool restoreScrollPending: false
+                                            // Stick-to-end (the author's
+                                            // live report: when the pane
+                                            // is crushed and the text
+                                            // wraps, the sync pins to a
+                                            // height that has not settled,
+                                            // the viewport lands short of
+                                            // the tail, and the next poll
+                                            // snaps back). While the
+                                            // reader was at the end, every
+                                            // metric change re-pins — the
+                                            // wrap's own settle can never
+                                            // leave the viewport stranded
+                                            // above the tail.
+                                            property bool stickToEnd: false
                                             // The scroll follows every
                                             // metric change until the
                                             // layout goes quiet — the
@@ -1194,15 +1535,16 @@ Component {
                                             // (the author's ruling).
                                             onMovementStarted: {
                                                 restoreScrollPending = false;
+                                                stickToEnd = false;
                                             }
                                             onContentHeightChanged: {
-                                                if (restoreScrollPending) {
+                                                if (restoreScrollPending || stickToEnd) {
                                                     contentY = contentHeight - height;
                                                     restoreQuietTimer.restart();
                                                 }
                                             }
                                             onHeightChanged: {
-                                                if (restoreScrollPending) {
+                                                if (restoreScrollPending || stickToEnd) {
                                                     contentY = contentHeight - height;
                                                     restoreQuietTimer.restart();
                                                 }
@@ -1222,11 +1564,18 @@ Component {
                                                 onPressedChanged: {
                                                     if (pressed) {
                                                         restoreScrollPending = false;
+                                                        consoleFlick.stickToEnd = false;
                                                     }
                                                 }
                                             }
                                             Column {
-                                                width: consoleFlick.width
+                                                // The vertical scrollbar
+                                                // overlays the well's right
+                                                // edge: the text must stop
+                                                // short of it or wrapped
+                                                // lines run underneath (the
+                                                // author's live report).
+                                                width: consoleFlick.width - consoleScrollbar.width
                                                 height: consoleFlick.contentHeight
                                                 // The spacer pins the sparse
                                                 // transcript to the shell's
@@ -1244,7 +1593,12 @@ Component {
                                                     selectByMouse: true
                                                     selectByKeyboard: true
                                                     textFormat: TextEdit.RichText
-                                                    wrapMode: TextEdit.NoWrap
+                                                    // Long Klipper lines wrap
+                                                    // instead of overflowing the
+                                                    // well; wrapping breaks on
+                                                    // word boundaries (the
+                                                    // author's live report).
+                                                    wrapMode: TextEdit.Wrap
                                                     font.family: consoleSection.monoFamily()
                                                     color: "#d9dde3"
                                                     // No blinking caret: a read-only
@@ -1319,6 +1673,7 @@ Component {
             }
             Cura.RoundedRectangle {
                 id: statusPanel
+                objectName: "statusPanel"
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
                 Layout.preferredWidth: (root.statusCollapsed ? statusCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 410 * screenScaleFactor)
@@ -2005,6 +2360,18 @@ Component {
                                         }
                                     }
                                 }
+                                UM.Label {
+                                    // An empty list says so instead of
+                                    // reading as a bug (the author's
+                                    // live request): the objects arrive
+                                    // when the slicer's EXCLUDE_OBJECT
+                                    // lines execute — seconds into a
+                                    // print.
+                                    visible: root.printer != null && root.printer.excludeObjectItems.length === 0
+                                    text: root.printer != null && root.printer.printActive ? "No objects yet — they appear as the print defines them." : "No objects — EXCLUDE_OBJECT data arrives while printing."
+                                    color: UM.Theme.getColor("text_inactive")
+                                    font: UM.Theme.getFont("small")
+                                }
                             }
                         }
 
@@ -2089,6 +2456,22 @@ Component {
                                     text: root.printer != null ? root.printer.moonrakerVersion : "—"
                                     Layout.fillWidth: true
                                     elide: Text.ElideMiddle
+                                }
+                            }
+
+                            // The manual Reconnect (the author's
+                            // live request): the recovery for a UI
+                            // stuck after a printer error or a
+                            // dropped connection — cycles the client
+                            // and re-arms the monitor.
+                            Cura.SecondaryButton {
+                                Layout.alignment: Qt.AlignRight
+                                text: "Reconnect"
+                                enabled: root.printer != null
+                                onClicked: {
+                                    if (root.printer != null) {
+                                        root.printer.reconnect();
+                                    }
                                 }
                             }
                         }

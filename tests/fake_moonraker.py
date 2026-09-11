@@ -41,8 +41,47 @@ class FakeMoonraker:
         self.server_info: Dict[str, Any] = {
             "moonraker_version": "fake",
             "klippy_state": "ready",
+            # History availability is discovered from the components
+            # list; tests remove "history" to simulate it disabled.
+            "components": ["history"],
         }
         self.metadata: Dict[str, Dict[str, Any]] = {}
+        # File-manager state (round-2 E12): relpath -> entry, history
+        # jobs most-recent-first, and the delete trail for assertions.
+        self.files: Dict[str, Dict[str, Any]] = {}
+        self.history_jobs: list[Dict[str, Any]] = []
+        self.deleted: list[str] = []
+
+    def set_file(self, relpath: str, *, name: Optional[str] = None, modified: float = 0.0,
+                 size: int = 0, permissions: str = "rw", **metadata: Any) -> None:
+        # Moonraker-shaped entries: basename only, NO path field —
+        # the listing never echoes the directory (round-2 D3).
+        entry: Dict[str, Any] = {
+            "filename": str(name or relpath.rsplit("/", 1)[-1]),
+            "modified": float(modified),
+            "size": int(size),
+            "permissions": str(permissions),
+        }
+        entry.update(metadata)
+        self.files[str(relpath)] = entry
+
+    def add_history_job(self, filename: str, *, status: str = "completed", exists: bool = True,
+                        start_time: float = 0.0, end_time: Optional[float] = None, **extra: Any) -> None:
+        job: Dict[str, Any] = {
+            "filename": str(filename),
+            "status": str(status),
+            "exists": bool(exists),
+            "start_time": float(start_time),
+            "end_time": float(end_time) if end_time is not None else float(start_time),
+        }
+        job.update(extra)
+        self.history_jobs.insert(0, job)
+
+    @staticmethod
+    def _query_args(path: str) -> Dict[str, str]:
+        if "?" not in path:
+            return {}
+        return dict(pair.split("=", 1) for pair in path.split("?", 1)[1].split("&") if "=" in pair)
 
     def enqueue_status(self, status: Dict[str, Any]) -> None:
         self._statuses.append(deepcopy(status))
@@ -81,6 +120,64 @@ class FakeMoonraker:
         if "server/files/metadata" in path:
             filename = path.split("filename=", 1)[-1]
             return {"result": deepcopy(self.metadata.get(filename, {}))}
+        if method == "GET" and "server/files/directory" in path:
+            # One directory level, Moonraker-shaped: the response does
+            # NOT echo the requested path, and entries carry basenames
+            # only — the walker must reconstruct (root, relpath) itself
+            # (round-2 domain D3).
+            args = self._query_args(path)
+            requested = str(args.get("path", "gcodes") or "gcodes").strip("/")
+            prefix = requested + "/" if requested else ""
+            files = []
+            dirs = []
+            seen_dirs = set()
+            for rel, entry in self.files.items():
+                if not rel.startswith(prefix):
+                    continue
+                rest = rel[len(prefix):]
+                if "/" in rest:
+                    dirname = rest.split("/", 1)[0]
+                    if dirname not in seen_dirs:
+                        seen_dirs.add(dirname)
+                        dirs.append({"dirname": dirname, "modified": 0.0, "size": 0, "permissions": "rw"})
+                    continue
+                files.append(entry)
+            return {"result": {
+                "files": deepcopy(sorted(files, key=lambda item: str(item["filename"]))),
+                "dirs": dirs,
+                "disk_usage": {"total": 8000000000, "used": 6800000000, "free": 1200000000},
+                "root_info": {"name": requested or "gcodes", "permissions": "rw"},
+            }}
+        if "server/history/list" in path:
+            args = self._query_args(path)
+            try:
+                limit = int(args.get("limit", "50"))
+                start = int(args.get("start", "0"))
+            except ValueError:
+                limit, start = 50, 0
+            window = self.history_jobs[start:start + max(0, limit)]
+            return {"result": {"count": len(window), "jobs": deepcopy(window)}}
+        if method == "DELETE" and "server/files/" in path:
+            # DELETE /server/files/{root}/{filename} — root-inclusive,
+            # and the fake keys files by the same root-inclusive
+            # relpath. Moonraker refuses to delete the file being
+            # printed with a 403; the fake models the refusal via
+            # enqueue_error (the real-socket tests own the
+            # HTTP-status truth).
+            rel = path.split("server/files/", 1)[1]
+            if rel in self.files:
+                del self.files[rel]
+                self.deleted.append(rel)
+                return {"result": rel}
+            return {"result": {}}
+        if "server/files/move" in path:
+            source = str((body or {}).get("source") or "")
+            dest = str((body or {}).get("dest") or "")
+            if source in self.files:
+                entry = self.files.pop(source)
+                self.files[dest] = entry
+                return {"result": dest}
+            return {"result": {}}
         if "printer/gcode/script" in path:
             script = ""
             if isinstance(body, dict):

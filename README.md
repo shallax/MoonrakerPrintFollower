@@ -8,10 +8,27 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 3.5.1
+- **Release:** 3.6.0
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
 
-## What changed in 3.5.1
+## What changed in 3.6.0
+
+Version 3.6.0 is the file-manager release. The new **Files** popup on the
+Monitor tab lists, searches, filters and pages the printer's gcode store
+with per-column sort, resize and show/hide (titles can never shrink below
+their own text), frozen left columns over a clipped horizontal scroll, a
+search **breadcrumb** under the filename so same-named files in different
+folders stay tellable, and folder chips with their own context menu.
+Snapshots 2 and 3 add print/download, upload with a progress bar, rename
+with live collision checks, delete (files and folders), create-folder, and
+thumbnail previews with a coalesced fetch queue. A **Reconnect** button in
+the Printer controls' System section cycles the connection and re-arms the
+monitor after a printer error. The console resizes by dragging its divider
+and keeps the error bell fed while collapsed. The print-start watchdog now
+verdicts on the printer's state *change*, so same-file re-prints are
+watched properly. The auxiliary objects query steps down to one per 2.5 s
+while printing (a first step on host load).
+
 
 Version 3.5.1 is the stability patch for 3.5.0. No control on the Monitor
 tab disappears any more — every state-gated button renders permanently and

@@ -6,6 +6,7 @@ stdlib-only development and mandatory in the dedicated CI runtime job.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler
 import importlib
 import importlib.util
 import os
@@ -72,6 +73,24 @@ class ScriptedTransport:
         from PyQt6.QtCore import QUrl
         from PyQt6.QtNetwork import QNetworkRequest
         return QNetworkRequest(QUrl(path if path.startswith("http") else self.identity[0] + "/" + path.lstrip("/")))
+
+
+class PipeSafeHandler(BaseHTTPRequestHandler):
+    """Shared base for every fake Moonraker server in the Qt suites.
+
+    The transport aborts its in-flight replies when a test tears down
+    (the cleanups cancel every lane), so a reply that races the closing
+    socket — including the stdlib's own send_error for a path no
+    handler answers — raises BrokenPipeError inside the server thread
+    and socketserver prints a noisy traceback. The tests never fail on
+    it, but the log must stay clean: swallow it at the write.
+    """
+
+    def send_error(self, *args, **kwargs):
+        try:
+            super().send_error(*args, **kwargs)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
 
 @contextmanager
@@ -197,6 +216,7 @@ def runtime():
             self.view = None
             self.stage = None
         def getScene(self): return self.scene
+        def setActiveStage(self, stage_id): self.stage = stage_id
         def getView(self, _name): return self.view
         def getActiveStage(self): return self.stage
 

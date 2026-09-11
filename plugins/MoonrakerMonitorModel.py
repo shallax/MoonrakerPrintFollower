@@ -1,6 +1,7 @@
 """One Cura Qt model: declarations and composition, not an inheritance stack."""
 from __future__ import annotations
 import json
+import logging
 import os
 import re
 from copy import deepcopy
@@ -31,7 +32,28 @@ from .MonitorCamera import MonitorCamera
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
-from .MonitorFormatting import core_values, endstop_values, peripheral_values
+from datetime import datetime
+
+from .FileManager import FileManager
+from .FileManagerPolicy import (
+    delete_candidates,
+    filter_option_counts,
+    is_gcode_name,
+    name_collides,
+    normalise_columns,
+    path_collides,
+    rename_path,
+    rename_target,
+    upload_relpath,
+)
+from .MonitorFormatting import (
+    core_values,
+    endstop_values,
+    file_disk_text,
+    file_row_payload,
+    file_timestamp,
+    peripheral_values,
+)
 from dataclasses import replace
 
 from .PrinterConfig import normalise_temperature_chart
@@ -39,6 +61,7 @@ from .MonitorTemperatureHistory import TemperatureHistory, chart_payload
 import time
 from .MonitorTuning import MonitorTuning
 from .ToolheadController import ToolheadController
+from .ToolheadPolicy import EXTRUDE_DISTANCE_DEFAULT, EXTRUDE_SPEED_DEFAULT, JOG_DISTANCE_DEFAULT
 
 
 # The monitor's panel state lives in a plugin-owned JSON file next to
@@ -47,6 +70,13 @@ from .ToolheadController import ToolheadController
 # Cura's own save cycle, so the state has proven unreliable there. The
 # file name predates the extra fields and stays for continuity.
 SECTIONS_FILE_NAME = "moonraker_print_follower_sections.json"
+
+# The console pane's user-set height, in screen-scaled pixels; 0 means
+# "never dragged" and renders at the pane's own default size. The model
+# only guards the obvious hazards — a negative or absurd value from a
+# hand-edited file, or a stray drag value. The PANE bounds are the QML's
+# clamp: they depend on the live stage layout, which the model cannot see.
+CONSOLE_HEIGHT_MAX = 2000
 
 
 def _sections_path() -> str:
@@ -61,6 +91,17 @@ def _state_bool(value) -> bool:
     return bool(value)
 
 
+def _state_height(value) -> int:
+    """Coerce a stored console height. Junk in a hand-edited file
+    degrades to the unset default (0) rather than raising, and a
+    NEGATIVE height can never hydrate: the clamp is the model's own
+    floor, whatever the stored value claims."""
+    try:
+        return max(0, min(CONSOLE_HEIGHT_MAX, int(float(value))))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 # The shared chart-config normaliser (PrinterConfig owns the per-printer
 # record; the legacy global JSON still feeds it during migration).
 _chart_state = normalise_temperature_chart
@@ -68,8 +109,9 @@ _chart_state = normalise_temperature_chart
 
 def _read_state() -> dict:
     """The persisted panel state: collapsed sections, the control-pane
-    collapse and the lock-all toggle. The first shipped format was a flat
-    section map, which is migrated to the current shape on read."""
+    collapse, the lock-all toggle and the console's dragged height. The
+    first shipped format was a flat section map, which is migrated to the
+    current shape on read."""
     try:
         with open(_sections_path(), "r", encoding="utf-8") as handle:
             decoded = json.load(handle)
@@ -83,13 +125,36 @@ def _read_state() -> dict:
                 "controlsLocked": _state_bool(decoded.get("controlsLocked", False)),
                 "infoCollapsed": _state_bool(decoded.get("infoCollapsed", False)),
                 "statusCollapsed": _state_bool(decoded.get("statusCollapsed", False)),
+                "consoleHeight": _state_height(decoded.get("consoleHeight", 0)),
+                "fileManagerColumns": normalise_columns(decoded.get("fileManagerColumns")),
                 "temperatureChart": _chart_state(decoded.get("temperatureChart")),
+                "toolhead": _toolhead_state(decoded.get("toolhead")),
             }
     except Exception:
         pass
     return {"sections": {}, "controlsCollapsed": False, "controlsLocked": False,
-            "infoCollapsed": False, "statusCollapsed": False,
-            "temperatureChart": _chart_state({})}
+            "infoCollapsed": False, "statusCollapsed": False, "consoleHeight": 0,
+            "fileManagerColumns": normalise_columns({}),
+            "temperatureChart": _chart_state({}),
+            "toolhead": _toolhead_state(None)}
+
+
+def _toolhead_state(stored) -> dict:
+    """The jog/extrude selection persists (the author's live report:
+    the chosen options were not saved). Values are floats; anything
+    unparsable falls back to the policy defaults."""
+    stored = stored if isinstance(stored, dict) else {}
+    def number(key, default):
+        try:
+            value = float(stored.get(key, default))
+        except (TypeError, ValueError):
+            value = float(default)
+        return value if value > 0 else float(default)
+    return {
+        "jogDistance": number("jogDistance", JOG_DISTANCE_DEFAULT),
+        "extrudeDistance": number("extrudeDistance", EXTRUDE_DISTANCE_DEFAULT),
+        "extrudeSpeed": number("extrudeSpeed", EXTRUDE_SPEED_DEFAULT),
+    }
 
 
 def _write_state(state: dict) -> None:
@@ -127,6 +192,9 @@ def value_property(kind, name, signal, default=None):
 
 
 class MoonrakerMonitorModel(PrinterOutputModel):
+    # The print-start watchdog: how long the print_stats transition
+    # may take before the plugin says the start failed.
+    FILE_PRINT_START_TIMEOUT_S = 15.0
     monitorChanged = pyqtSignal()
     webcamsChanged = pyqtSignal()
     temperatureChartChanged = pyqtSignal()
@@ -148,7 +216,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     controlsLockChanged = pyqtSignal()
     infoPaneChanged = pyqtSignal()
     statusPaneChanged = pyqtSignal()
+    consoleHeightChanged = pyqtSignal()
     cameraRefreshChanged = pyqtSignal()
+    fileManagerChanged = pyqtSignal()
+    fileManagerThumbsChanged = pyqtSignal()
 
     _SIGNAL_KEYS = (
         ("monitorChanged", ("monitorState", "monitorConnected", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
@@ -177,10 +248,24 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("controlsLockChanged", ("controlsLocked", "controlsCollapsed")),
         ("infoPaneChanged", ("infoCollapsed",)),
         ("statusPaneChanged", ("statusCollapsed",)),
+        ("consoleHeightChanged", ("consoleHeight",)),
         ("sectionsChanged", ("sectionExpandedMap",)),
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
-        ("consoleChanged", ("consoleHistory", "consoleLines", "consoleDropped", "consoleRevisions", "consolePending")),
+        ("fileManagerChanged", ("fileManagerRows", "fileManagerRecents", "fileManagerDirectory", "fileManagerDirectories", "fileManagerDiskText", "fileManagerNote",
+                                "fileManagerRefreshedAt", "fileManagerShown", "fileManagerPage", "fileManagerPageIndex",
+                                "fileManagerPageCount", "fileManagerPageSize", "fileManagerPageSelection",
+                                "fileManagerEmptyKind", "fileManagerSelected", "fileManagerSortColumn",
+                                "fileManagerSortAscending", "fileManagerSearch", "fileManagerOpen", "fileManagerFilters",
+                                "filePrintConfirm", "fileDeleteConfirm", "fileRenameTarget",
+                                "fileRenameConflict", "fileUploadConfirm", "fileUploadProgress",
+                                "fileManagerColumnWidths", "fileManagerColumnOrder", "fileManagerColumnHidden",
+                                "fileManagerFilterCounts", "fileManagerFilterOptions", "fileManagerHistoryLoaded",
+                                "fileManagerHistoryExhausted", "fileManagerWalkError")),
+        # Thumbnails publish ALONE (the author's live report: each
+        # scroll-triggered fetch reply rebuilt the whole payload).
+        ("fileManagerThumbsChanged", ("fileManagerThumbs",)),
+        ("consoleChanged", ("consoleHistory", "consoleLines", "consoleDropped", "consoleRevisions", "consolePending", "consoleErrorBell")),
         ("typedControlsChanged", ("temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
                                   "bedMeshProfileNames", "bedMeshRows", "bedMeshColumns", "bedMeshValues", "bedMeshMinimum",
                                   "bedMeshMaximum", "bedMeshRange", "bedMeshXMin", "bedMeshXMax", "bedMeshYMin", "bedMeshYMax",
@@ -188,10 +273,22 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     )
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
-                 request_load=None, request_monitor_download=None, preferences_flushed=None, identity=None):
+                 request_load=None, request_monitor_download=None, request_file_download=None,
+                 preferences_flushed=None, identity=None):
         super().__init__(output_controller, number_of_extruders)
         self._client, self._print_state, self._config, self._apply_config, self._mesh = \
             client, print_state, config, apply_config, bed_mesh
+        self._identity = identity
+        # The file-manager Download capability: the follower owns the
+        # one-shot stream + load-into-Cura (the same lane discipline
+        # as the improve-ETA pull).
+        self._request_file_download = request_file_download
+        self._file_print_confirm = None
+        self._file_delete_confirm = None
+        self._file_rename_target = None
+        self._file_rename_conflict = False
+        self._file_upload_confirm = None
+        self._file_upload_progress = None
         # The "improve ETA" action reuses the facade's load-current-print
         # flow (download + index), passed in as an explicit capability.
         self._request_load = request_load
@@ -208,8 +305,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._controls_collapsed = state["controlsCollapsed"]
         self._info_collapsed = state["infoCollapsed"]
         self._status_collapsed = state["statusCollapsed"]
+        # The console's dragged height (0 = never dragged): a pane SIZE,
+        # not printer data, so it lives in the global chrome file beside
+        # the pane collapses and rehydrates before the pane exists.
+        self._console_height = state["consoleHeight"]
+        # The file-manager's own column config rehydrates when the
+        # service exists (the state file is the model's to READ; the
+        # values are the service's to OWN — the author's ruling that
+        # the file manager is its own thing).
+        self._file_columns_state = state["fileManagerColumns"]
         self._camera_refresh_nonce = 0
         self._sections = state["sections"]
+        self._toolhead_state = state["toolhead"]
         # The chart config is per-printer (sensor names differ between
         # machines): it lives in the PrinterConfig record, adopting the
         # legacy global JSON block once on first upgrade.
@@ -236,13 +343,39 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._controls = MonitorControls(self._data, self._commands, self._tuning, bed_mesh, config, self)
         self._camera = MonitorCamera(self._data, config, apply_config, self)
         self._toolhead = ToolheadController(self._data, self._commands, self)
+        # The persisted jog/extrude selection (the author's live
+        # report) — applied before any publish so the first frame
+        # already shows the saved options.
+        self._toolhead.set_distance(self._toolhead_state["jogDistance"])
+        self._toolhead.set_extrude_distance(self._toolhead_state["extrudeDistance"])
+        self._toolhead.set_extrude_speed(self._toolhead_state["extrudeSpeed"])
         self._console = ConsoleController(self._data, self._commands, config, apply_config, identity, self)
+        # The toolhead's clamp rejections land in the console as
+        # local notes (the author's live request).
+        self._toolhead.rejectedNote.connect(self._console.note)
+        self._console_error_bell = False
+        self._console_errors_seen = 0
+        self._file_manager = FileManager(client, self)
+        self._file_manager.set_column_state(self._file_columns_state)
+        # Metascan outcomes land in the console as local notes (the
+        # author's live report: the option appeared to do nothing).
+        self._file_manager_note = ""
+        self._print_armed_state = ""
+        self._file_manager.note.connect(self._on_file_manager_note)
+        # Upload progress and outcome feed the popup (the author's
+        # live request).
+        self._file_manager.uploadProgress.connect(self._on_upload_progress)
+        self._file_manager.uploadFinished.connect(self._on_upload_finished)
+        # The light publish: thumb transitions never rebuild the rows.
+        self._thumbs_dirty = False
+        self._file_manager.thumbsChanged.connect(self._publish_thumbs)
+        self._file_manager_open = False
         if preferences_flushed is not None:
             # The console marks its sent lines SAVED when the preference
             # file actually flushes (the author's colour ruling).
             preferences_flushed.connect(self._console.mark_saved)
         for signal in (self._data.changed, self._commands.changed, self._controls.changed, self._camera.changed,
-                       self._toolhead.changed, self._console.changed, bed_mesh.changed):
+                       self._toolhead.changed, self._console.changed, self._file_manager.changed, bed_mesh.changed):
             signal.connect(self._publish)
         # The history feeds once per auxiliary reply, not per publish
         # (per-publish feeding duplicated samples and halved the window);
@@ -256,7 +389,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # restored transcript lands the moment the config is readable
         # (the author's "commands never rehydrate" report).
         self._data.changed.connect(self._console.reload_if_empty)
+        # The author's ruling (2026-09-10): after a reconnect the
+        # camera stream restarts — the nonce bump reloads the stream
+        # on every connection transition into connected (the
+        # e-stop's automatic cycle included).
+        self._data.connectionStateChanged.connect(self._on_connection_state)
         self._data.set_active(True)
+        self._publish()
+
+    def _on_file_manager_note(self, text: str) -> None:
+        # The note feeds BOTH the console and the popup's own status
+        # line (refusals must be visible where the action happened).
+        self._console.note(text)
+        self._file_manager_note = str(text)
+        self._publish()
+
+    def _on_connection_state(self, connected: bool) -> None:
+        if not connected:
+            return
+        self._camera_refresh_nonce += 1
         self._publish()
 
     def _on_console_store(self):
@@ -285,16 +436,210 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _on_invalidated(self):
         self._history.reset()
+        # A printer switch must not ring for the previous machine's
+        # error lines (the bell's marker counts per-session).
+        self._console_errors_seen = 0
+        self._console_error_bell = False
+        # The file manager's own lifecycle: deactivation cancels its
+        # lane, aborts its fetches and clears the previous machine's
+        # rows and thumbnails (round-2 A15).
+        self._file_manager.unbind()
         self._publish()
 
     def setMonitoringActive(self, active): self._data.set_active(active)
 
+    def _file_manager_values(self):
+        fm = self._file_manager
+        now = time.time()
+        if not self._file_manager_open:
+            # The popup is closed: the grid's bindings are inert, and
+            # rebuilding the ROW payloads per poll is pure waste —
+            # closing a 400-file listing stalled for seconds (the
+            # author's live report). The cheap view state still
+            # publishes (the view-mutation contract), only the heavy
+            # rows/recents/thumbs/option-scan is skipped. Reopening
+            # refills everything below.
+            return {
+                "fileManagerRows": [],
+                "fileManagerRecents": [],
+                "fileManagerDirectory": fm.directory,
+                "fileManagerDirectories": fm.subdirectories(),
+                "fileManagerDiskText": file_disk_text(fm.disk_usage),
+                "fileManagerRefreshedAt": f"Last refreshed at {datetime.fromtimestamp(fm.refreshed_at).strftime('%H:%M')}" if fm.refreshed_at else "Not yet refreshed",
+                "fileManagerShown": "",
+                "fileManagerPage": f"Page {fm.page_index()} of {fm.page_number()}" if fm.view.page_size != "all" else "",
+                "fileManagerPageIndex": fm.page_index(),
+                "fileManagerPageCount": fm.page_number(),
+                "fileManagerPageSize": str(fm.view.page_size),
+                "fileManagerPageSelection": "none",
+                "fileManagerEmptyKind": "",
+                "fileManagerSelected": len(fm.selection),
+                "fileManagerSortColumn": fm.view.sort_column,
+                "fileManagerSortAscending": fm.view.sort_ascending,
+                "fileManagerSearch": fm.view.search,
+                "fileManagerFilters": {key: (list(value) if isinstance(value, (list, tuple)) else [value]) for key, value in fm.view.filters.items() if value},
+                "fileManagerFilterCounts": {key: len(value) if isinstance(value, (list, tuple)) else 1 for key, value in fm.view.filters.items() if value},
+                "fileManagerFilterOptions": {},
+                "fileManagerHistoryLoaded": fm.history_loaded,
+                "fileManagerHistoryExhausted": fm.history_exhausted,
+                "fileManagerWalkError": fm.walk_error or "",
+            }
+        printing_relpath = self._printing_relpath()
+        selection = fm.selection
+        rows = []
+        for row in fm.page_rows():
+            payload = file_row_payload(row, now)
+            payload["checked"] = row.relpath in selection
+            payload["printing"] = row.relpath == printing_relpath
+            rows.append(payload)
+        total = fm.total_count()
+        size = fm.view.page_size
+        if size == "all":
+            shown = f"Showing 1–{total} of {total}" if total else "Showing 0 of 0"
+        else:
+            start = (fm.page_index() - 1) * size + 1 if total else 0
+            end = min(start + size - 1, total) if total else 0
+            shown = f"Showing {start}–{end} of {total}"
+        return {
+            "fileManagerRows": rows,
+            "fileManagerRecents": [{
+                "name": item["filename"],
+                "time": file_timestamp(item.get("end_time"), now),
+                "relpath": item.get("relpath", ""),
+                "thumb": bool(item.get("thumb")),
+            } for item in fm.recents()],
+            "fileManagerDirectory": fm.directory,
+            "fileManagerDirectories": fm.subdirectories(),
+            "fileManagerDiskText": file_disk_text(fm.disk_usage),
+            "fileManagerRefreshedAt": f"Last refreshed at {datetime.fromtimestamp(fm.refreshed_at).strftime('%H:%M')}" if fm.refreshed_at else "Not yet refreshed",
+            "fileManagerShown": shown,
+            "fileManagerPage": f"Page {fm.page_index()} of {fm.page_number()}" if fm.view.page_size != "all" else "",
+            "fileManagerPageIndex": fm.page_index(),
+            "fileManagerPageCount": fm.page_number(),
+            "fileManagerPageSize": str(fm.view.page_size),
+            "fileManagerPageSelection": fm.selection_state(fm.page_rows()),
+            "fileManagerEmptyKind": fm.empty_state(),
+            "fileManagerSelected": len(selection),
+            "fileManagerSortColumn": fm.view.sort_column,
+            "fileManagerSortAscending": fm.view.sort_ascending,
+            "fileManagerSearch": fm.view.search,
+            "fileManagerFilters": {key: (list(value) if isinstance(value, (list, tuple)) else [value]) for key, value in fm.view.filters.items() if value},
+            "fileManagerFilterCounts": {key: len(value) if isinstance(value, (list, tuple)) else 1 for key, value in fm.view.filters.items() if value},
+            "fileManagerFilterOptions": filter_option_counts(fm.resident_rows(), now=now),
+            "fileManagerHistoryLoaded": fm.history_loaded,
+            "fileManagerHistoryExhausted": fm.history_exhausted,
+            "fileManagerWalkError": fm.walk_error or "",
+        }
+
+    def _printing_relpath(self):
+        # The ACTIVE print's root-exclusive relpath (round-2 D4), or
+        # "" — the state filter is the load-bearing part: Klipper
+        # never clears print_stats.filename on completion, so a
+        # filename alone would keep the last-printed file badged
+        # "printing" with Delete/Rename disabled forever.
+        state = self._data.snapshot.core.get("print_stats") or {}
+        if str(state.get("state") or "") not in ("printing", "paused"):
+            return ""
+        return str(state.get("filename") or "")
+
+    def _publish_thumbs(self) -> None:
+        """The thumbnail-only publish, COALESCED: landings arrive in
+        bursts and each publish forces a QML repaint wave, so a short
+        timer batches a burst into one flush (never the rows payload)."""
+        if self._thumbs_dirty:
+            return
+        self._thumbs_dirty = True
+        QTimer.singleShot(100, self._flush_thumbs)
+
+    def _flush_thumbs(self) -> None:
+        self._thumbs_dirty = False
+        # A change-compare: an open popup re-requests the recents
+        # strip every poll, and an unchanged payload must not force
+        # a repaint wave once per second.
+        previous = self._values.get("fileManagerThumbs")
+        payload = self._file_manager.thumbnail_payload()
+        if previous == payload:
+            return
+        self._values["fileManagerThumbs"] = payload
+        self.fileManagerThumbsChanged.emit()
+
     def _publish(self):
+        fm = self._file_manager
         previous = self._values
         snapshot = self._print_state()
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
         values.update(peripheral_values(self._data.snapshot))
         values.update(endstop_values(self._data.snapshot, self._client.connected))
+        values.update(self._file_manager_values())
+        values["fileManagerOpen"] = self._file_manager_open
+        values["filePrintConfirm"] = self._file_print_confirm or ""
+        values["fileDeleteConfirm"] = self._file_delete_confirm or ""
+        values["fileRenameTarget"] = self._file_rename_target or ""
+        values["fileRenameConflict"] = bool(self._file_rename_conflict)
+        values["fileUploadConfirm"] = self._file_upload_confirm or ""
+        values["fileUploadProgress"] = self._file_upload_progress or ""
+        values["fileManagerColumnWidths"] = fm.column_widths()
+        values["fileManagerColumnOrder"] = fm.column_order()
+        values["fileManagerColumnHidden"] = fm.column_hidden()
+        values["fileManagerThumbs"] = self._file_manager.thumbnail_payload() if self._file_manager_open else {}
+        values["fileManagerNote"] = self._file_manager_note
+        # Thumbnails fetch per the RENDER WINDOW, not the page: the
+        # QML's visibleRows change drives the request (the author's
+        # live report: an "all / page" listing fired hundreds of
+        # thumbnail requests on open — the window bounds them). The
+        # recents strip's own fetch stays here (bounded at 50). The
+        # watchdog below runs regardless — a print confirmed before
+        # the popup closed still needs its verdict.
+        if self._file_manager_open:
+            rows = []
+            for item in self._file_manager.recents():
+                row = self._file_manager.row_for(item.get("relpath") or "") if item.get("relpath") else None
+                if row is not None and row.thumb_path:
+                    rows.append(row)
+            self._file_manager.request_thumbnails(rows)
+        # The awaited print transition (round-2 D4: success is NEVER
+        # the POST reply). A start that never transitions — OR that
+        # matches the filename but never makes PROGRESS (Klipper can
+        # accept the start and freeze before the first motion — the
+        # author's live report: the UI stayed "printing" on a failed
+        # start) — explains itself and drops the assumed-active state.
+        attempt = self._file_manager.print_attempt
+        if attempt is not None:
+            stats = self._data.snapshot.core.get("print_stats") or {}
+            filename = str(stats.get("filename") or "")
+            state = str(stats.get("state") or "")
+            if filename == attempt[0]:
+                if state in ("printing", "paused"):
+                    # The job is live with the right file: the
+                    # success. No progress test — print_duration
+                    # sits at exactly 0.0 and file_position freezes
+                    # until the first extrusion, so a heat soak alone
+                    # must never read as a failed start.
+                    self._file_manager.clear_print_attempt()
+                    self._print_armed_state = ""
+                elif state == "error":
+                    message = str(stats.get("message") or "").strip()
+                    self._print_start_failed(
+                        f"The printer reported an error: {message}" if message
+                        else "The printer reported an error starting the print.")
+                elif state and self._print_armed_state and state == self._print_armed_state:
+                    # Unchanged since the confirm: hold. Klipper
+                    # never clears the filename, so a re-print of the
+                    # same file starts from a stale terminal state —
+                    # that must not wipe the fresh attempt (the
+                    # adversarial round's repro).
+                    pass
+                elif state and self._print_armed_state:
+                    # A terminal state that DIFFERS from the armed
+                    # one: the printer moved and ended; the verdict
+                    # is moot. A mismatched filename never clears — a
+                    # poll in the window between the confirm and the
+                    # printer's state change must not wipe the
+                    # attempt.
+                    self._file_manager.clear_print_attempt()
+                    self._print_armed_state = ""
+            elif time.time() - attempt[1] > self.FILE_PRINT_START_TIMEOUT_S:
+                self._print_start_failed("The printer did not begin printing.")
         # The no-reflow rule's sibling ruling (the author, 2026-09-10):
         # while DISCONNECTED every control on the Monitor page disables
         # — the QML gates its sections and the emergency stop on this.
@@ -303,8 +648,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values.update(self._camera.values)
         values.update(self._toolhead.values)
         values.update(self._console.values)
+        # The console error bell (the author's live request): while
+        # the console is collapsed, a NEW error line rings a red bell
+        # next to its header until the console expands. Restored
+        # lines never ring (they are not new), and the marker counts
+        # every error line seen so collapsing later cannot re-ring
+        # for old errors.
+        lines = values.get("consoleLines") or ()
+        error_count = sum(1 for entry in lines if entry.get("error") and not entry.get("restored"))
+        if self._sections.get("console") is False:
+            if error_count > self._console_errors_seen:
+                self._console_error_bell = True
+        else:
+            self._console_error_bell = False
+        self._console_errors_seen = error_count
+        values["consoleErrorBell"] = self._console_error_bell
         commands, mesh = self._commands, self._mesh.snapshot
-        values.update(printActive=commands.print_active, canPausePrint=commands.state == "printing" and not commands.busy,
+        state_word = commands.state
+        values.update(printActive=commands.print_active,
+            canPausePrint=state_word == "printing" and not commands.busy,
             canResumePrint=commands.state == "paused" and not commands.busy,
             canCancelPrint=commands.print_active and not commands.busy, actionBusy=commands.busy,
             actionStatus=commands.status, emergencyStopClicks=commands.clicks,
@@ -319,6 +681,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             bedMeshPreviewVisible=self._mesh.visible,
             controlsLocked=self._controls_locked, controlsCollapsed=self._controls_collapsed,
             infoCollapsed=self._info_collapsed, statusCollapsed=self._status_collapsed,
+            consoleHeight=self._console_height,
             cameraRefreshNonce=self._camera_refresh_nonce,
             sectionExpandedMap=dict(self._sections),
             temperatureChart=self._chart_value(),
@@ -349,6 +712,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         for signal_name, keys in self._SIGNAL_KEYS:
             if any(previous.get(key) != values.get(key) for key in keys):
                 getattr(self, signal_name).emit()
+
+    def _print_start_failed(self, reason) -> None:
+        """The start's failure verdict: the console note and the
+        action status. The observed printer state is NEVER rewritten —
+        a live print must not read "cancelled", and the pause-first
+        jog gate must not lift beside a live nozzle (that assumption
+        belongs to the e-stop alone)."""
+        self._file_manager.clear_print_attempt()
+        self._print_armed_state = ""
+        self._console.note(f"Print start failed — {reason}")
+        self._commands.report_status(f"Print start failed — {reason}")
+
 
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
     monitorConnected = value_property(bool, "monitorConnected", monitorChanged, False)
@@ -404,6 +779,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     consoleDropped = value_property(int, "consoleDropped", consoleChanged, 0)
     consoleRevisions = value_property(int, "consoleRevisions", consoleChanged, 0)
     consolePending = value_property(int, "consolePending", consoleChanged, 0)
+    consoleErrorBell = value_property(bool, "consoleErrorBell", consoleChanged, False)
     cameraName = value_property(str, "cameraName", cameraTransformChanged, "")
     cameraRotation = value_property(int, "cameraRotation", cameraTransformChanged, 0)
     cameraFlipHorizontal = value_property(bool, "cameraFlipHorizontal", cameraTransformChanged, False)
@@ -427,6 +803,501 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     saveConfigSummary = value_property(str, "saveConfigSummary", controlsChanged, "")
     canSaveConfig = value_property(bool, "canSaveConfig", controlsChanged, False)
     emergencyStopClicks = value_property(int, "emergencyStopClicks", emergencyStopChanged, 0)
+    # The file-manager surface (Snapshot 1): the published page slice,
+    # recents, breadcrumb, disk and view metadata — everything the
+    # pinned FileManager.qml renders comes from these.
+    fileManagerRows = value_property(QVariant, "fileManagerRows", fileManagerChanged, [])
+    fileManagerRecents = value_property(QVariant, "fileManagerRecents", fileManagerChanged, [])
+    fileManagerDirectory = value_property(QVariant, "fileManagerDirectory", fileManagerChanged, [])
+    fileManagerDirectories = value_property(QVariant, "fileManagerDirectories", fileManagerChanged, [])
+    fileManagerDiskText = value_property(str, "fileManagerDiskText", fileManagerChanged, "—")
+    fileManagerRefreshedAt = value_property(str, "fileManagerRefreshedAt", fileManagerChanged, "Not yet refreshed")
+    fileManagerShown = value_property(str, "fileManagerShown", fileManagerChanged, "Showing 0 of 0")
+    fileManagerPage = value_property(str, "fileManagerPage", fileManagerChanged, "")
+    fileManagerPageIndex = value_property(int, "fileManagerPageIndex", fileManagerChanged, 1)
+    fileManagerPageCount = value_property(int, "fileManagerPageCount", fileManagerChanged, 1)
+    fileManagerPageSize = value_property(str, "fileManagerPageSize", fileManagerChanged, "25")
+    fileManagerPageSelection = value_property(str, "fileManagerPageSelection", fileManagerChanged, "none")
+    fileManagerEmptyKind = value_property(str, "fileManagerEmptyKind", fileManagerChanged, "")
+    fileManagerSelected = value_property(int, "fileManagerSelected", fileManagerChanged, 0)
+    fileManagerSortColumn = value_property(str, "fileManagerSortColumn", fileManagerChanged, "modified")
+    fileManagerSortAscending = value_property(bool, "fileManagerSortAscending", fileManagerChanged, False)
+    fileManagerSearch = value_property(str, "fileManagerSearch", fileManagerChanged, "")
+    fileManagerOpen = value_property(bool, "fileManagerOpen", fileManagerChanged, False)
+    filePrintConfirm = value_property(QVariant, "filePrintConfirm", fileManagerChanged, "")
+    fileDeleteConfirm = value_property(QVariant, "fileDeleteConfirm", fileManagerChanged, "")
+    fileRenameTarget = value_property(QVariant, "fileRenameTarget", fileManagerChanged, "")
+    fileRenameConflict = value_property(bool, "fileRenameConflict", fileManagerChanged, False)
+    fileUploadConfirm = value_property(QVariant, "fileUploadConfirm", fileManagerChanged, "")
+    fileUploadProgress = value_property(QVariant, "fileUploadProgress", fileManagerChanged, "")
+    fileManagerColumnWidths = value_property(QVariant, "fileManagerColumnWidths", fileManagerChanged, {})
+    fileManagerColumnOrder = value_property(QVariant, "fileManagerColumnOrder", fileManagerChanged, [])
+    fileManagerColumnHidden = value_property(QVariant, "fileManagerColumnHidden", fileManagerChanged, [])
+    fileManagerThumbs = value_property(QVariant, "fileManagerThumbs", fileManagerThumbsChanged, {})
+    fileManagerFilters = value_property(QVariant, "fileManagerFilters", fileManagerChanged, {})
+    fileManagerFilterCounts = value_property(QVariant, "fileManagerFilterCounts", fileManagerChanged, {})
+    fileManagerFilterOptions = value_property(QVariant, "fileManagerFilterOptions", fileManagerChanged, {})
+    fileManagerHistoryLoaded = value_property(int, "fileManagerHistoryLoaded", fileManagerChanged, 0)
+    fileManagerHistoryExhausted = value_property(bool, "fileManagerHistoryExhausted", fileManagerChanged, False)
+    fileManagerWalkError = value_property(str, "fileManagerWalkError", fileManagerChanged, "")
+    fileManagerNote = value_property(str, "fileManagerNote", fileManagerChanged, "")
+
+    def _printer_name(self):
+        try:
+            _machine_id, name = self._identity()
+            return str(name or "the printer")
+        except Exception:
+            return "the printer"
+
+    def _file_print_confirm_payload(self, relpath):
+        from .MonitorFormatting import file_duration_short, file_filament
+        key = f"gcodes/{relpath}"
+        row = {f"gcodes/{r.relpath}": r for r in self._file_manager.resident_rows()}.get(key)
+        if row is None:
+            return None
+        klippy = self._data.snapshot.server.get("klippy_state")
+        ready = str(klippy or "").lower() == "ready"
+        homed = "xyz" == str((self._data.snapshot.auxiliary.get("toolhead") or {}).get("homed_axes") or "").lower()
+        if ready and not homed:
+            ready_text = "The printer is not homed — the print may not start."
+        elif ready:
+            ready_text = "Printer ready."
+        else:
+            ready_text = f"Printer state: {str(klippy or 'unknown').capitalize()}."
+        return {
+            "relpath": row.relpath,
+            "name": row.filename,
+            "est": file_duration_short(row.estimated_time),
+            "filament": file_filament(row.filament),
+            "printerName": self._printer_name(),
+            "ready": ready and homed,
+            "homed": homed,
+            "readyText": ready_text,
+        }
+
+    @pyqtSlot(str)
+    def fileRequestPrint(self, relpath):
+        payload = self._file_print_confirm_payload(str(relpath))
+        if payload is None:
+            return
+        # The confirmation shows a LARGE thumbnail: make sure THIS
+        # row's large variant is fetched even when it was opened from
+        # Recents — the page-driven cache covers visible rows' small
+        # variants only.
+        row = self._file_manager.row_for(payload["relpath"])
+        if row is not None and row.thumb_path:
+            self._file_manager.request_thumbnails([row], large=True)
+        self._file_print_confirm = payload
+        self._publish()
+
+    @pyqtSlot()
+    def fileConfirmPrint(self):
+        confirm = self._file_print_confirm
+        self._file_print_confirm = None
+        if confirm:
+            self._file_manager.start_print(confirm["relpath"])
+            # The state the snapshot held at confirm time: the
+            # matched branch below holds while it stays unchanged, so
+            # a stale terminal state from the SAME file's previous
+            # job can never wipe the fresh attempt (the adversarial
+            # round's repro).
+            stats = self._data.snapshot.core.get("print_stats") or {}
+            self._print_armed_state = str(stats.get("state") or "")
+            # The print is on its way: the file manager steps aside
+            # NOW and the monitor view returns — the verdict (success
+            # or failure) reports to the console and the note line,
+            # never by waiting inside the popup.
+            self.setFileManagerOpen(False)
+        self._publish()
+
+    @pyqtSlot()
+    def fileCancelPrint(self):
+        self._file_print_confirm = None
+        self._publish()
+
+    @pyqtSlot(str)
+    def fileDownload(self, relpath):
+        if self._request_file_download is not None:
+            self._request_file_download(str(relpath))
+
+    @pyqtSlot(bool)
+    def setFileManagerOpen(self, is_open):
+        self._file_manager_open = bool(is_open)
+        if not self._file_manager_open:
+            self._file_print_confirm = ""
+            self._file_delete_confirm = ""
+            self._file_rename_target = ""
+            self._file_upload_confirm = ""
+            self._file_upload_progress = ""
+        self._publish()
+
+    @pyqtSlot()
+    def reconnect(self):
+        """The manual Reconnect (the author's live request): cycle
+        the client and re-arm the monitor — the recovery for a UI
+        stuck after a printer error or a dropped connection."""
+        self._commands.report_status("Reconnecting…")
+        self._data.reconnect()
+        self._publish()
+
+    @pyqtSlot()
+    def fileClearWalkError(self):
+        self._file_manager.clear_walk_error()
+        self._publish()
+
+    @pyqtSlot()
+    def openFileManager(self):
+        # The open trigger: the flag gates the heavy payload work
+        # (the author's live report: the closed popup must not keep
+        # paying the per-poll cost).
+        self._file_manager_open = True
+        self._file_manager_note = ""
+        try:
+            self._file_manager.bind()
+            self._file_manager.open()
+        except Exception:
+            # A dying slot freezes the whole popup silently (Qt
+            # swallows the traceback) — surface it in the walk-error
+            # state instead of leaving "Loading files…" forever.
+            logging.getLogger(__name__).exception("file manager open failed")
+            self._file_manager.changed.emit()
+
+    @pyqtSlot()
+    def refreshFileManager(self):
+        try:
+            self._file_manager.open()
+        except Exception:
+            logging.getLogger(__name__).exception("file manager refresh failed")
+            self._file_manager.changed.emit()
+
+    @pyqtSlot("QVariantList", bool)
+    def fileNavigateTo(self, segments, isUp):
+        if isUp:
+            self._file_manager.navigate_up()
+        else:
+            self._file_manager.navigate_to([str(segment) for segment in segments])
+
+    @pyqtSlot(str)
+    def setFileSearch(self, query):
+        self._file_manager.view.change_search(str(query))
+        self._file_manager.changed.emit()
+
+    @pyqtSlot(str)
+    def setFileSort(self, column):
+        self._file_manager.view.change_sort(str(column))
+        self._file_manager.changed.emit()
+
+    @pyqtSlot(str)
+    def setFilePageSize(self, size):
+        self._file_manager.view.change_page_size("all" if size == "all" else int(size))
+        self._file_manager.changed.emit()
+
+    @pyqtSlot(int)
+    def setFilePage(self, page):
+        self._file_manager.view.page = max(1, int(page))
+        self._file_manager.changed.emit()
+
+    @pyqtSlot(str, list)
+    def setFileFilter(self, category, values):
+        category = str(category)
+        values = list(values)
+        filters = dict(self._file_manager.view.filters)
+        if category in ("modified", "print_time"):
+            # Single-value categories store a SCALAR (the author's
+            # live report: Print time filtered nothing — the policy
+            # does float(["30"]) and the TypeError fallback matched
+            # every row; Modified's window lookup failed the same
+            # way). One value, or None to clear.
+            filters[category] = values[0] if values else None
+        else:
+            filters[category] = values
+        self._file_manager.view.change_filters(filters)
+        self._file_manager.changed.emit()
+
+    @pyqtSlot()
+    def clearFileFilters(self):
+        self._file_manager.view.change_filters({})
+        self._file_manager.changed.emit()
+
+    @pyqtSlot(str)
+    def toggleFileSelection(self, relpath):
+        self._file_manager.toggle_selection(str(relpath))
+
+    @pyqtSlot()
+    def clearFileSelection(self):
+        self._file_manager.clear_selection()
+
+    @pyqtSlot()
+    def toggleFilePageSelection(self):
+        self._file_manager.toggle_page_selection()
+
+    @pyqtSlot()
+    def fileLoadAllHistory(self):
+        self._file_manager.load_all_history()
+
+    @pyqtSlot(str)
+    def fileScanMetadata(self, relpath):
+        self._file_manager.scan_metadata(str(relpath))
+
+
+    @pyqtSlot()
+    def fileRequestDelete(self):
+        """The bulk delete from the selection (Snapshot 3): the
+        currently-printing file is never offered (the author's gate
+        — the host 403s it anyway, and the client must not ask)."""
+        rows = self._file_manager.resident_rows()
+        selected = [row for row in rows if row.relpath in self._file_manager.selection]
+        candidates = delete_candidates(selected, self._printing_relpath())
+        if not candidates:
+            return
+        self._file_delete_confirm = {
+            "kind": "file",
+            "relpaths": [row.relpath for row in candidates],
+            "count": len(candidates),
+            "first": candidates[0].filename,
+            "blocked": len(selected) - len(candidates),
+        }
+        self._publish()
+
+    @pyqtSlot(str)
+    def fileRequestDeleteFile(self, relpath):
+        row = self._file_manager.row_for(str(relpath))
+        if row is None or row.relpath == self._printing_relpath():
+            return
+        self._file_delete_confirm = {
+            "kind": "file",
+            "relpaths": [row.relpath], "count": 1, "first": row.filename, "blocked": 0,
+        }
+        self._publish()
+
+    @pyqtSlot(str)
+    def fileCreateDirectory(self, name):
+        """The popup's New-folder dialog: the service validates the
+        name and owns the outcome notes."""
+        self._file_manager.create_directory(name)
+        self._publish()
+
+    @pyqtSlot(str)
+    def fileRequestDeleteDir(self, path):
+        """The folder delete (the author's live request — right-click
+        a breadcrumb segment or a strip chip)."""
+        path = str(path).strip("/")
+        if not path:
+            return
+        self._file_delete_confirm = {
+            "kind": "dir", "path": path, "name": path.rsplit("/", 1)[-1],
+            "relpaths": [], "count": 1, "first": path.rsplit("/", 1)[-1], "blocked": 0,
+        }
+        self._publish()
+
+    @pyqtSlot()
+    def fileConfirmDelete(self):
+        confirm = self._file_delete_confirm
+        self._file_delete_confirm = None
+        if confirm:
+            if confirm.get("kind") == "dir":
+                self._file_manager.delete_directory(confirm["path"])
+            else:
+                self._file_manager.delete_files(confirm["relpaths"], self._printing_relpath())
+        self._publish()
+
+    @pyqtSlot()
+    def fileCancelDelete(self):
+        self._file_delete_confirm = None
+        self._publish()
+
+    @pyqtSlot(str)
+    def fileRequestRename(self, relpath):
+        row = self._file_manager.row_for(str(relpath))
+        if row is None or row.relpath == self._printing_relpath():
+            return
+        self._file_rename_target = {"kind": "file", "path": row.relpath, "name": row.filename}
+        self._file_rename_conflict = False
+        self._publish()
+
+    @pyqtSlot(str)
+    def fileRequestRenameDir(self, path):
+        """The folder rename (the author's live request — right-click
+        a breadcrumb segment or a strip chip)."""
+        path = str(path).strip("/")
+        if not path:
+            return
+        self._file_rename_target = {"kind": "dir", "path": path,
+                                    "name": path.rsplit("/", 1)[-1]}
+        self._file_rename_conflict = False
+        self._publish()
+
+    @pyqtSlot(str)
+    def filePreviewRename(self, name):
+        """The live collision check while the name is typed (round-1
+        C2/C3: the host's move silently overwrites — the dialog asks
+        first)."""
+        target = self._file_rename_target
+        if not target:
+            return
+        # REPLACE, never mutate (the same publish-contract rule as
+        # the upload progress).
+        self._file_rename_target = dict(target, name=str(name))
+        target = self._file_rename_target
+        if target.get("kind") == "dir":
+            proposal = rename_path(target["path"], name)
+            self._file_rename_conflict = bool(
+                proposal is not None
+                and path_collides(self._file_manager.resident_directories(), proposal))
+        else:
+            row = self._file_manager.row_for(target["path"])
+            proposal = rename_target(row, name) if row is not None else None
+            self._file_rename_conflict = bool(
+                proposal is not None and name_collides(self._file_manager.resident_rows(), proposal))
+        self._publish()
+
+    @pyqtSlot()
+    def fileConfirmRename(self):
+        target = self._file_rename_target
+        self._file_rename_target = None
+        if target:
+            if target.get("kind") == "dir":
+                self._file_manager.rename_directory(
+                    target["path"], target["name"], overwrite=bool(self._file_rename_conflict))
+            else:
+                self._file_manager.rename_file(
+                    target["path"], target["name"], self._printing_relpath(),
+                    overwrite=bool(self._file_rename_conflict))
+        self._file_rename_conflict = False
+        self._publish()
+
+    @pyqtSlot()
+    def fileCancelRename(self):
+        self._file_rename_target = None
+        self._file_rename_conflict = False
+        self._publish()
+
+    @pyqtSlot(str)
+    def fileUpload(self, path):
+        """Snapshot 3 upload (the author's ruling): LOCAL gcode files
+        only — sliced prints already upload from the Preview view.
+        A name collision asks first; otherwise the upload runs."""
+        # The picker hands over a file:// URL — the service wants a
+        # local path (a plain path passes through unchanged).
+        path = QUrl(str(path or "")).toLocalFile() or str(path or "")
+        name = path.replace("\\", "/").rsplit("/", 1)[-1]
+        if not is_gcode_name(name):
+            self._console.note("Upload refused: only gcode files upload here.")
+            return
+        target = upload_relpath("/".join(self._file_manager.directory), name)
+        if target == self._printing_relpath():
+            # The host streams the printing file from disk: replacing
+            # it mid-print truncates the running job.
+            self._console.note(f"Upload refused: {name} is currently printing.")
+            self._publish()
+            return
+        try:
+            free = self._file_manager.disk_usage.get("free")
+            free = int(free) if free is not None else None
+            needed = os.path.getsize(path)
+        except (TypeError, ValueError, OSError):
+            free, needed = None, 0
+        # None means the walk never reported disk usage — the check
+        # stands down. A REAL zero (a full disk) still refuses: the
+        # old guard treated the two alike and a missing report
+        # disabled the check (the adversarial round's catch).
+        if free is not None and needed and needed > free:
+            self._console.note(f"Upload refused: {name} needs {needed / 1048576:.0f} MB, "
+                               f"{free / 1048576:.0f} MB free on the printer.")
+            self._publish()
+            return
+        if name_collides(self._file_manager.resident_rows(), target):
+            self._file_upload_confirm = {"path": path, "filename": name}
+            self._publish()
+            return
+        self._start_upload(path, name)
+        self._publish()
+
+    def _start_upload(self, path, name, overwrite=False) -> None:
+        # The popup's payload opens on the FIRST publish after this;
+        # the service's progress and outcome signals drive it from
+        # here on (the author's live request: a bar while it runs and
+        # a success/fail verdict at the end).
+        self._file_upload_progress = {"name": name, "percent": 0,
+                                      "state": "uploading", "error": ""}
+        # The overwrite nod MUST ride through: without it the service
+        # re-refuses the colliding name and never emits a verdict —
+        # the popup hung on "uploading" forever (the author's live
+        # report).
+        self._file_manager.upload_file(path, overwrite=overwrite)
+
+    @pyqtSlot()
+    def fileConfirmUpload(self):
+        confirm = self._file_upload_confirm
+        self._file_upload_confirm = None
+        if confirm:
+            self._start_upload(confirm["path"], confirm["filename"], overwrite=True)
+        self._publish()
+
+    @pyqtSlot()
+    def fileUploadDismiss(self):
+        self._file_upload_progress = None
+        self._publish()
+
+    @pyqtSlot(list)
+    def fileRequestVisibleThumbnails(self, relpaths):
+        """The render window's thumbnails (the author's live report:
+        the page-wide fetch fired hundreds of requests on "all /
+        page" — the QML's visible rows bound them)."""
+        if not self._file_manager_open:
+            return
+        rows = []
+        for relpath in (relpaths or []):
+            row = self._file_manager.row_for(str(relpath))
+            if row is not None and row.thumb_path:
+                rows.append(row)
+        self._file_manager.request_thumbnails(rows)
+
+    @pyqtSlot(str, float)
+    def setFileColumnWidth(self, key, width):
+        """Snapshot 3's column resize — the STATE lives in the file
+        manager (the author's ruling: the file manager is its own
+        thing, composed into the Monitor page)."""
+        if self._file_manager.set_column_width(key, width):
+            self._save_state()
+
+    @pyqtSlot(list)
+    def setFileColumnOrder(self, order):
+        if self._file_manager.set_column_order(order):
+            self._save_state()
+
+    @pyqtSlot(str, bool)
+    def setFileColumnVisible(self, key, visible):
+        if self._file_manager.set_column_visible(key, visible):
+            self._save_state()
+
+    def _on_upload_progress(self, percent):
+        if not self._file_upload_progress:
+            return
+        percent = int(percent)
+        if percent == self._file_upload_progress["percent"]:
+            return
+        # REPLACE, never mutate: the publish contract treats the
+        # stored dict as immutable (the QVariant cache keys on
+        # identity), and an in-place edit serves a stale copy.
+        self._file_upload_progress = dict(self._file_upload_progress, percent=percent)
+        self._publish()
+
+    def _on_upload_finished(self, ok, detail):
+        if not self._file_upload_progress:
+            return
+        if ok:
+            self._file_upload_progress = dict(self._file_upload_progress,
+                                              state="done", percent=100, error="")
+        else:
+            self._file_upload_progress = dict(self._file_upload_progress,
+                                              state="failed", error=str(detail))
+        self._publish()
+
+    @pyqtSlot()
+    def fileCancelUpload(self):
+        self._file_upload_confirm = None
+        self._publish()
     emergencyHoldProgress = value_property(float, "emergencyHoldProgress", actionChanged, 0.0)
     bedMeshAvailable = value_property(bool, "bedMeshAvailable", typedControlsChanged, False)
     bedMeshProfile = value_property(str, "bedMeshProfile", typedControlsChanged, "")
@@ -454,6 +1325,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     controlsCollapsed = value_property(bool, "controlsCollapsed", controlsLockChanged, False)
     infoCollapsed = value_property(bool, "infoCollapsed", infoPaneChanged, False)
     statusCollapsed = value_property(bool, "statusCollapsed", statusPaneChanged, False)
+    consoleHeight = value_property(int, "consoleHeight", consoleHeightChanged, 0)
     cameraRefreshNonce = value_property(int, "cameraRefreshNonce", cameraRefreshChanged, 0)
     sectionExpandedMap = value_property(QVariant, "sectionExpandedMap", sectionsChanged, {})
 
@@ -484,6 +1356,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot(bool)
     def setStatusCollapsed(self, collapsed):
         self._status_collapsed = bool(collapsed)
+        self._save_state()
+        self._publish()
+    @pyqtSlot(int)
+    def setConsoleHeight(self, height):
+        # The drag handle's commit: clamped here so no negative or absurd
+        # height can ever reach the file, and skipped when unchanged so a
+        # drag riding its clamp stops rewriting the state file.
+        height = max(0, min(CONSOLE_HEIGHT_MAX, int(height)))
+        if height == self._console_height:
+            return
+        self._console_height = height
         self._save_state()
         self._publish()
     @pyqtSlot(str, bool)
@@ -597,6 +1480,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             "controlsLocked": self._controls_locked,
             "infoCollapsed": self._info_collapsed,
             "statusCollapsed": self._status_collapsed,
+            "consoleHeight": self._console_height,
+            # The chrome-only rewrite in __init__ runs BEFORE the
+            # service exists: rehydrated block then, live state after
+            # (the author's live report: a legacy state file broke
+            # the printer binding — this save raised).
+            "fileManagerColumns": self._file_manager.column_state() if getattr(self, "_file_manager", None) is not None else self._file_columns_state,
+            "toolhead": {
+                "jogDistance": self._values.get("jogDistance", JOG_DISTANCE_DEFAULT),
+                "extrudeDistance": self._values.get("extrudeDistance", EXTRUDE_DISTANCE_DEFAULT),
+                "extrudeSpeed": self._values.get("extrudeSpeed", EXTRUDE_SPEED_DEFAULT),
+            },
         })
     @pyqtSlot(object)
     def updateMoonrakerStatus(self, status): self._data.observe(status)
@@ -711,12 +1605,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def macroParameterDefinitions(self, name): return QVariant(self._controls.macro_parameters(name))
     @pyqtSlot(str, int)
     def jog(self, axis, direction): self._toolhead.jog(axis, direction)
+    @pyqtSlot(bool)
+    def setPositionMode(self, absolute):
+        # The abs/rel toggle (the author's live request).
+        self._toolhead.set_absolute(absolute)
+
     @pyqtSlot(float)
-    def setJogDistance(self, distance): self._toolhead.set_distance(distance)
+    def setJogDistance(self, distance):
+        self._toolhead.set_distance(distance)
+        self._save_state()
+
     @pyqtSlot(float)
-    def setExtrudeDistance(self, distance): self._toolhead.set_extrude_distance(distance)
+    def setExtrudeDistance(self, distance):
+        self._toolhead.set_extrude_distance(distance)
+        self._save_state()
+
     @pyqtSlot(float)
-    def setExtrudeSpeed(self, speed): self._toolhead.set_extrude_speed(speed)
+    def setExtrudeSpeed(self, speed):
+        self._toolhead.set_extrude_speed(speed)
+        self._save_state()
     @pyqtSlot(str)
     def home(self, axis): self._toolhead.home(axis)
     @pyqtSlot()

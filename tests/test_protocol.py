@@ -7,6 +7,7 @@ from plugins.MoonrakerProtocol import (
     metadata_endpoint,
     objects_list_endpoint,
     parse_file_identity,
+    same_origin,
     server_info_endpoint,
     status_endpoint,
 )
@@ -80,6 +81,60 @@ class FileIdentityTests(unittest.TestCase):
         self.assertTrue(identity.matches_job("a.gcode", 0))
         self.assertFalse(identity.matches_job("a.gcode", 101))
         self.assertFalse(identity.matches_job("b.gcode", 100))
+
+
+class PrintStartPathTests(unittest.TestCase):
+    def test_print_start_path_is_root_exclusive(self):
+        # Round-2 D4: print/start wants the SD-card form — never the
+        # "gcodes/" root the file endpoints carry.
+        from plugins.MoonrakerProtocol import print_start_path, print_start_endpoint
+        self.assertEqual(print_start_path("prints/benchy.gcode"), "prints/benchy.gcode")
+        self.assertEqual(print_start_path("/prints/benchy.gcode"), "prints/benchy.gcode")
+        self.assertEqual(print_start_path("  benchy.gcode  "), "benchy.gcode")
+        self.assertEqual(print_start_endpoint("http://printer-a", "prints/a b.gcode"),
+                         "http://printer-a/printer/print/start?filename=prints/a%20b.gcode")
+
+
+class SameOriginTests(unittest.TestCase):
+    """The API key rides only the printer's own origin (round-2 F2)."""
+
+    BASE = "http://printer.local:7125"
+
+    def test_identical_origin_is_same(self):
+        self.assertTrue(same_origin(self.BASE, "http://printer.local:7125/server/files/list"))
+        self.assertTrue(same_origin(self.BASE, "http://printer.local:7125/"))
+
+    def test_default_port_matches_explicit_port(self):
+        self.assertTrue(same_origin("http://printer.local", "http://printer.local:80/x"))
+        self.assertTrue(same_origin("https://printer.local", "https://printer.local:443/x"))
+
+    def test_different_host_is_foreign(self):
+        self.assertFalse(same_origin(self.BASE, "http://cam.local:7125/x"))
+
+    def test_different_port_is_foreign(self):
+        self.assertFalse(same_origin(self.BASE, "http://printer.local:8080/webcam/?action=stream"))
+
+    def test_different_scheme_is_foreign(self):
+        self.assertFalse(same_origin(self.BASE, "https://printer.local:7125/x"))
+
+    def test_embedded_userinfo_is_foreign(self):
+        # http://printer.local:7125@evil.com passes string-prefix
+        # checks but its host is evil.com.
+        self.assertFalse(same_origin(self.BASE, "http://printer.local:7125@evil.com/x"))
+
+    def test_trailing_dot_is_foreign(self):
+        # printer.local. and printer.local are the same host per DNS,
+        # but the predicate fails closed rather than guess.
+        self.assertFalse(same_origin(self.BASE, "http://printer.local.:7125/x"))
+
+    def test_malformed_inputs_are_foreign(self):
+        self.assertFalse(same_origin("", "http://printer.local/x"))
+        self.assertFalse(same_origin(self.BASE, ""))
+        self.assertFalse(same_origin("not a url", self.BASE))
+        self.assertFalse(same_origin(self.BASE, "//printer.local:7125/x"))
+
+    def test_case_variance_is_same_origin(self):
+        self.assertTrue(same_origin(self.BASE, "HTTP://PRINTER.LOCAL:7125/x"))
 
 
 if __name__ == "__main__":
