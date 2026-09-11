@@ -21,10 +21,19 @@ class RemoteFileIdentity:
         return self.filename == filename and (self.size <= 0 or size <= 0 or self.size == size)
 
 
+# The core status objects — one shared list for the HTTP query string,
+# the subscription set and the class routing table (they must not drift).
+CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh")
+
+
+def _secure_scheme(scheme: str) -> bool:
+    return str(scheme).lower() in ("https", "wss")
+
+
 def _effective_port(scheme: str, port: Optional[int]) -> int:
     if port is not None:
         return port
-    return 443 if scheme == "https" else 80
+    return 443 if _secure_scheme(scheme) else 80
 
 
 def moonraker_error_text(payload: Dict[str, Any]) -> str:
@@ -75,7 +84,7 @@ _moonraker_error_text = moonraker_error_text
 
 
 def same_origin(base_url: str, target: str) -> bool:
-    """True when ``target`` shares the base URL's origin (scheme, host, port).
+    """True when ``target`` shares the base URL's origin (scheme family, host, port).
 
     The Moonraker API key may only ride requests to the printer's own
     origin — a webcam host, a tunnel alias or a redirect target is
@@ -83,6 +92,11 @@ def same_origin(base_url: str, target: str) -> bool:
     failure returns False (no key). QUrl does not implement origin
     comparison; isParentOf is path semantics, not origin semantics
     (round-2 security F2).
+
+    Scheme families (round-2 security S2): ws pairs with http and wss
+    with https, and a plain family NEVER matches a secure one — a
+    naive scheme-normalising comparison would hand the key to a
+    cleartext socket for an https-configured printer.
     """
     try:
         base = urlsplit(str(base_url or "").strip())
@@ -92,7 +106,7 @@ def same_origin(base_url: str, target: str) -> bool:
         if not other.scheme or not other.hostname:
             return False
         return (
-            base.scheme.lower() == other.scheme.lower()
+            _secure_scheme(base.scheme) == _secure_scheme(other.scheme)
             and base.hostname.lower() == other.hostname.lower()
             and _effective_port(base.scheme, base.port) == _effective_port(other.scheme, other.port)
         )
@@ -101,10 +115,24 @@ def same_origin(base_url: str, target: str) -> bool:
 
 
 def status_endpoint(base_url: str) -> str:
-    return (
-        f"{base_url}/printer/objects/query?"
-        "print_stats&gcode_move&virtual_sdcard&motion_report&bed_mesh"
-    )
+    return f"{base_url}/printer/objects/query?{'&'.join(CORE_OBJECTS)}"
+
+
+def websocket_endpoint(base_url: str) -> str:
+    """The feed URL for a base URL, by a strict total mapping
+    (round-2 security S1): https→wss, http→ws, anything else fails
+    closed. Never a scheme replace — the cleartext warning keys off the
+    EFFECTIVE transport, so a silent https→ws downgrade is forbidden."""
+    scheme = urlsplit(str(base_url or "").strip()).scheme.lower()
+    if scheme == "https":
+        family = "wss"
+    elif scheme == "http":
+        family = "ws"
+    else:
+        return ""
+    parsed = urlsplit(str(base_url or "").strip())
+    netloc = parsed.netloc or f"{parsed.hostname or ''}:{parsed.port or 80}"
+    return f"{family}://{netloc}/websocket"
 
 
 def metadata_endpoint(base_url: str, filename: str) -> str:
