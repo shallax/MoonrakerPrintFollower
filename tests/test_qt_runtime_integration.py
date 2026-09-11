@@ -973,19 +973,17 @@ class QtRuntimeTests(unittest.TestCase):
         second.currentLayerNumChanged.emit()
         self.qt.events()
         self.assertFalse(preview.state.attached)
-        self.assertIsNone(preview.state.expected_layer)
-
-        # A restoration landing outside every window still detaches — but
-        # the watchdog re-attaches after the view has been quiet and the
-        # user is still in the Preview stage.
-        preview.remember()  # the follower re-arms on the settled view
+        # The detach re-baselines on the deviated view (attach(False)
+        # remembers) — and NOTHING re-attaches automatically.
         self.assertEqual(preview.state.expected_layer, 10)
-        preview._echo_until = 0.0
         second.layer = 42
         second.currentLayerNumChanged.emit()
         self.qt.events()
         self.assertFalse(preview.state.attached)
         self.qt.events(3100)
+        self.assertFalse(preview.state.attached)
+        # Only the user (or a view swap while attached) re-attaches.
+        preview.attach(True)
         self.assertTrue(preview.state.attached)
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
