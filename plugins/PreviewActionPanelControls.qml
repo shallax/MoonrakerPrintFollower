@@ -52,11 +52,12 @@ Item {
     signal removePauseAtLayerRequested(int layer)
     signal clearPauseAtLayersRequested
 
-    // NOT gated on CuraApplication.platformActivity: Cura flips that
-    // flag during its own busy/idle cycles and a load — the card
-    // vanished mid-load (the author's report). The stage and the
-    // configuration are the only gates.
-    visible: previewStageActive && configuredForFollowing
+    // Visible through a load/render (loadBusy) even when Cura's stage
+    // wanders, and whenever a toolpath is loaded on the preview stage;
+    // the empty card owns the idle-nothing-loaded state. Cura's own
+    // platformActivity flag is deliberately NOT a gate — it flipped
+    // mid-load and vanished the card (the author's report).
+    visible: configuredForFollowing && (loadBusy || (previewStageActive && hasToolpath))
     width: visible ? externalGap + followerPanel.width : 0
     // Cura's saveButton row centres its components on a line two thick
     // margins above the action panel's bottom. If this extension
