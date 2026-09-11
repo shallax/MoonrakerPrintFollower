@@ -731,10 +731,32 @@ live proxied-https test rides the snapshot loop.
   the day-one design.
 - Mode switch on a live connection: REBIND — exactly like a URL/key
   change today (session reset, connection cycle). No new behaviour
-  class to spec.
+  class to spec. The author's ruling (2026-09-11): the consequent
+  upload abort is ACCEPTED and DOCUMENTED — flipping the toggle
+  mid-upload cancels it, stated in ARCHITECTURE §3 and the toggle's
+  helper line; no silent behaviour.
 - The round-1 dispositions for C2/C4, H1–H8, M3–M6 and L1–L4 are
   recorded as PROPOSED (the author's nod comes at the round-2 walk);
   the three explicit rulings above and the substrate ruling are fixed.
+
+**Phase-4 rulings (2026-09-11, walked with the author — the panel
+walk):**
+- Guards ride the push stream: in socket mode the 250 ms guard updates
+  come from the delivery clock draining at the urgent interval (the
+  printer already pushes at 250 ms — zero cost); the HTTP guard path
+  remains for HTTP mode and as the socket's fallback. Worst-case
+  readout jitter ~500 ms is a flagged transparency item for the
+  snapshot loop.
+- Data-proven connected: the dot goes green only after the first
+  accepted snapshot; staying green requires a periodic cheap
+  authenticated round-trip over the socket; `notify_klippy_ready`
+  forces an instant re-subscribe (Moonraker wipes subscriptions on
+  every Klippy restart). The socket's own state is NOT liveness.
+- Fallback on silence: a startup proof (real frames within a few
+  seconds of connecting, else bind HTTP and say why) plus a
+  steady-state silence watchdog (silent-while-connected falls back to
+  HTTP without a session reset, with a visible reason). The websocket
+  default stands on this detection.
 
 ## 4.1.0 — Printer resilience and console polish
 
