@@ -629,9 +629,11 @@ note surface).
 
 3.6.0 ends the v3 line. The author's ruling (2026-09-11): the
 per-request HTTP polling is unacceptable in production — prints audibly
-dwell while the plugin is connected (live-proven on their Voron: the
-regression arrived with the 3.5.0 console poll, and every poll adds to
-it). 4.0.0 moves the transport to Moonraker's websocket subscription
+dwell while the plugin is connected (live-proven on their Voron). The
+author's correction (2026-09-11): the diagnosis is the CUMULATIVE
+per-request polling load — the console poll was NOT singled out as the
+cause; the console stays HTTP by ruling, and the measurement arms
+record the console state as a covariate, not a suspect. 4.0.0 moves the transport to Moonraker's websocket subscription
 model: Klipper pushes object updates to Moonraker once per interval and
 Moonraker fans them out to subscribers — one serialization shared by
 all clients instead of one per client query. Everything in 4.0.1 waits
@@ -757,6 +759,13 @@ walk):**
   steady-state silence watchdog (silent-while-connected falls back to
   HTTP without a session reset, with a visible reason). The websocket
   default stands on this detection.
+- UX adjudication RULED (2026-09-11, the author): the transport-mode
+  control is two `Cura.RadioButton`s — "WebSocket subscription" /
+  "HTTP polling" — on the Connection tab with a permanent reason
+  line, per the UX persona's recommendation. The approval-list strings
+  (connection notes naming the transport, one-click revert, mode-aware
+  Test-connection verdict, interval relabel, reason line, trace label)
+  get the author's nod as they are built.
 
 ## 4.1.0 — Printer resilience and console polish
 
