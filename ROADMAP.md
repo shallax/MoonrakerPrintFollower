@@ -682,6 +682,43 @@ QHostAddress lesson, pinned by
 module-availability question must be answered against the real 5.13
 bundle, not the container.
 
+**Substrate verification (2026-09-11, the author demanded certainty):**
+the author's standing rule for this release — "We need to be absolutely
+sure that if we implement websockets, this will work" (a previous
+websocket attempt had failed — explained by the binding being absent).
+Verified against the real Cura 5.13.0 AppImage (latest stable per
+UltiMaker's own update feed; extracted, `X-AppImage-Version=5.13.0`):
+the bundle ships Qt 6.6.0 and exactly 9 PyQt6 bindings (Core, DBus,
+Gui, Network, OpenGL, Qml, Quick, Svg, Widgets) — **no
+`QtWebSockets.abi3.so`**. Cura 5.9.1 ships a loose root-level
+`QtWebSockets.abi3.so`, but its PyQt6 is a namespace package, so the
+binding is unresolvable there too; Cura's own code imports websockets
+in neither version, and no pure-Python websocket library ships as a
+substitute. Confirmed in-process: a spike plugin inside the running
+5.13.0 app recorded `ModuleNotFoundError` for `PyQt6.QtWebSockets` —
+and the substrate spike PASSED: a hand-rolled RFC 6455 client over
+`QTcpSocket` completed the upgrade handshake (Sec-WebSocket-Accept
+verified), sent a masked text frame and read the echo, all inside the
+real bundled runtime. **Ruling:** 4.0.0 builds the websocket client by
+hand on `PyQt6.QtNetwork` (QTcpSocket/QSslSocket) — no new Qt module,
+no new dependency, works on every Cura in the 5.0–5.13 line. Remaining
+certainty gates: a TLS (wss) check and the live-Moonraker test on the
+author's printer during the snapshot loop.
+
+**Phase-2 rulings (2026-09-11, walked with the author):**
+- Subscription while idle: FULL-TIME (all five status objects
+  whenever connected) with a delivery clock — the socket accumulates
+  pushes and the existing `PollPolicy` delivers to consumers at
+  today's cadences. Printer-side cost is measured live in the
+  snapshot loop; per-policy narrowing is the measured fallback, not
+  the day-one design.
+- Mode switch on a live connection: REBIND — exactly like a URL/key
+  change today (session reset, connection cycle). No new behaviour
+  class to spec.
+- The round-1 dispositions for C2/C4, H1–H8, M3–M6 and L1–L4 are
+  recorded as PROPOSED (the author's nod comes at the round-2 walk);
+  the three explicit rulings above and the substrate ruling are fixed.
+
 ## 4.1.0 — Printer resilience and console polish
 
 The old 3.6.1 items, re-homed by the author's final ruling
