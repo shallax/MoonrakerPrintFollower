@@ -351,5 +351,16 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertEqual(record["some_future_field"], 42)
 
 
+    def test_transport_toggle_properties_carry_their_own_decorators(self):
+        # The live crash class: the insertion landed between the bool
+        # decorator and settingsTraceHttp, so the bool property returned
+        # a str — "unable to convert a Python 'str' object to a C++
+        # 'bool' instance" on opening the settings dialogue. Each QML
+        # getter must own its decorator with the right type.
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+        self.assertIn("@pyqtProperty(str, notify=settingsChanged)\n    def settingsTransportMode", action)
+        self.assertIn("@pyqtProperty(str, notify=settingsChanged)\n    def transportStatus", action)
+        self.assertIn("@pyqtProperty(bool, notify=settingsChanged)\n    def settingsTraceHttp", action)
+
 if __name__ == "__main__":
     unittest.main()

@@ -145,10 +145,11 @@ class MoonrakerFollowerMachineAction(MachineAction):
     def settingsTraceLayer(self) -> bool:
         return self._config().trace_layer
 
-    @pyqtProperty(bool, notify=settingsChanged)
+    @pyqtProperty(str, notify=settingsChanged)
     def settingsTransportMode(self) -> str:
         return str(getattr(self._config().feed_mode, "value", self._config().feed_mode))
 
+    @pyqtProperty(str, notify=settingsChanged)
     def transportStatus(self) -> str:
         # The permanent reason slot under the transport radios (the UX
         # adjudication): the helper sentence until the live feed reports
@@ -159,6 +160,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
             "Commands, uploads and the console always use HTTP."
         )
 
+    @pyqtProperty(bool, notify=settingsChanged)
     def settingsTraceHttp(self) -> bool:
         return self._config().trace_http
 
