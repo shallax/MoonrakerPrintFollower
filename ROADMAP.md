@@ -783,31 +783,21 @@ walk):**
 
 ## 4.0.1 — Printer resilience and console polish
 
-The old 3.6.1 items (the author's correction, 2026-09-11): 3.6.0 ends
-the v3 line, the 4.0.0 websocket transport comes first, and everything
-below ships in 4.0.1 — the transport's first follow-up release.
+FOLDED INTO 4.0.0 (the author's ruling, 2026-09-11: "Screw it, do all
+4.0.1 now") — every item below shipped in 4.0.0. This section is now
+empty history.
 
-- **Restart arming** — re-prime the start flow after a print ends or
-  is cancelled, so a follow-up start cannot silently fail on stale
-  state. Medium risk: it touches the print-state transitions.
-- **Webcam watchdog** — detect a dead camera feed and restart the
-  stream, with a veil while it recovers. Medium risk: camera
-  restart/reconnect behaviour needs live-printer proof. The live
-  shapes were captured from the author's Moonraker (2026-09-11):
-  `server/webcams/list` returns per-camera relative `snapshot_url` /
-  `stream_url` (`/webcam2/?action=snapshot`), `enabled` flags and
-  `target_fps`.
+- ~~**Restart arming**~~ — SHIPPED IN 4.0.0.
+- ~~**Webcam watchdog**~~ — SHIPPED IN 4.0.0 (the bridged-stream
+  restart with the veil; direct URLs remain out of scope).
 - ~~**ETA feed-forward**~~ — STRUCK (the author, 2026-09-11): Klipper
   already feeds the live speed factor back (`gcode_move.speed_factor`)
   and the follower's ETA math already scales the slicer's per-layer
   times by it — there is no printer-side remaining-time signal to
   prefer.
-- **Auto-improve-ETA opt-in** — an explicit setting that lets the
-  model adjust the ETA from observed layer progress.
-- **Scroll-to-prompt** — the console scrolls the prompt line into
-  view when a command's response lands.
-- **Pause-list verified-pause-only** — the scheduled-pause list shows
-  only pauses that were actually verified.
+- ~~**Auto-improve-ETA opt-in**~~ — SHIPPED IN 4.0.0.
+- ~~**Scroll-to-prompt**~~ — SHIPPED IN 4.0.0.
+- ~~**Pause-list verified-pause-only**~~ — SHIPPED IN 4.0.0.
 - ~~**Poll-cadence sliders (the author, 2026-09-11)**~~ — SHIPPED IN
   4.0.0: the cadence sliders (status update, auxiliary, console) with
   the 250 ms floor landed as part of the websocket work.

@@ -46,6 +46,17 @@ subscription, with HTTP kept as a selectable, automatic-fallback mode.
   and devices switched on mid-print now appear without a reconnect.
 - **Settings polish**: a wrong API key on Test connection reads "the
   API key was rejected (HTTP 401)".
+- **The 4.0.1 scope folded in (the author's ruling, 2026-09-11)**:
+  scroll-to-prompt (a successful console send returns the view to the
+  prompt), the verified-pause-only list (an entry leaves only when
+  the printer is observed paused; missed pauses stay listed in the
+  error colour), the auto-improve-ETA opt-in (a Following-tab
+  checkbox rescaling the remaining estimate by the learned
+  per-layer drift), the webcam watchdog (a dead bridged stream bumps
+  the loader's URL nonce and veils as "Camera recovering…"), and
+  restart arming (a demonstrably lower print duration clears the
+  e-stop assumption; a new print's start transition expires the
+  previous print's tracked commands).
 
 ### Fixes
 - The aux subscription deadlock (the wanted set never reached the

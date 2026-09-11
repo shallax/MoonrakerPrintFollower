@@ -44,6 +44,22 @@ What else changes, user-visibly:
   without a reconnect.
 - **Settings**: a wrong API key on Test connection reads "the API key
   was rejected (HTTP 401)".
+- **Console**: a successful send returns the view to the prompt even
+  from a scrolled-up position; a refused send keeps your typed draft
+  and your place.
+- **Scheduled pauses**: an entry leaves the Enabled-pauses list only
+  when the printer is actually observed paused at that layer — a
+  missed pause stays listed, marked in red.
+- **ETA**: a new "Improve ETA from observed progress" checkbox on the
+  Following tab (off by default) rescales the remaining estimate by
+  the drift between the slicer's per-layer times and what the printer
+  really took.
+- **Camera**: if a bridged stream dies, the plugin restarts it
+  automatically (throttled) behind a "Camera recovering…" veil.
+- **Restart arming**: a new print clears the previous print's
+  emergency-stop assumption when the printer demonstrably restarts,
+  and the prior print's tracked commands can never verdict against
+  the new one.
 
 ## What changed in 3.6.0
 
