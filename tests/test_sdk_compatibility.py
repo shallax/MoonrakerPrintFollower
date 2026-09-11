@@ -18,6 +18,8 @@ FOLLOWER_SOURCES = (
     "RemoteFileService.py",
     "GCodeIndexService.py",
     "MoonrakerTransport.py",
+    "MoonrakerSocket.py",
+    "SocketFraming.py",
 )
 PLUGIN = "\n".join((PLUGINS / name).read_text() for name in FOLLOWER_SOURCES)
 CLIENT = (PLUGINS / "MoonrakerClient.py").read_text()

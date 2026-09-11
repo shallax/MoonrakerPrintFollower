@@ -154,7 +154,9 @@ class SourceContractTests(unittest.TestCase):
             "MoonrakerPrintFollower": {"FollowerRuntime"},
             "MoonrakerProtocol": set(),
             "MoonrakerSession": {"MoonrakerTransport"},
+            "MoonrakerSocket": {"SocketFraming"},
             "MoonrakerTransport": {"MoonrakerProtocol"},
+            "SocketFraming": set(),
             "NativeNozzleLifecycle": set(),
             "PauseController": {"PauseScheduleService"},
             "PauseScheduleService": set(),
@@ -280,6 +282,9 @@ class SourceContractTests(unittest.TestCase):
         # bundled builds do not.
         owners = {
             "QAbstractListModel": "QtCore",
+            "QAbstractSocket": "QtNetwork",
+            "QTcpSocket": "QtNetwork",
+            "QSslSocket": "QtNetwork",
             "QByteArray": "QtCore",
             "QCoreApplication": "QtCore",
             "QModelIndex": "QtCore",
