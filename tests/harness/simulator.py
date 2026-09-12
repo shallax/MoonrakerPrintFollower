@@ -5,7 +5,7 @@ websocket subscribe/push contract (full snapshot once, changes only
 afterward, subscriptions wiped on klippy_ready) and the HTTP lanes the
 plugin calls. A scripted Klipper state machine drives the pushes;
 fault arms (stalls, drops, refusals, closes) inject the failure modes
-the tier-1 scenarios need. Moonraker is what the PRINTER runs, never
+the gate scenarios need. Moonraker is what the PRINTER runs, never
 what Cura runs — this double is the one permitted fake.
 """
 from __future__ import annotations
@@ -234,7 +234,7 @@ class PrinterState:
 
     def reset(self) -> None:
         """The hermetic scenario boundary: state back to kickoff, every
-        fault arm down, console and ledger cleared. The tier-2 runner
+        fault arm down, console and ledger cleared. The suite runner
         resets between scenarios so one scenario's arms can never leak
         into the next (the group-a cascade that took down the sweep)."""
         self.state = dict(json.loads(json.dumps(KICKOFF_STATE)))
@@ -301,7 +301,7 @@ class PrinterState:
                 self.cold_start = False
                 self.state["virtual_sdcard"].update({"is_active": True})
         # Every state object participates in the changes-only diff, not
-        # just the tier-1 five — configfile, fan, gcode_move and the
+        # just the original five — configfile, fan, gcode_move and the
         # rest ride the same contract (the pump used to drop them and
         # only the HTTP full-state query masked it). Deep-copied so the
         # stored last-frame never aliases the live state's dicts.

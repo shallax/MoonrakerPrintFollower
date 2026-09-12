@@ -193,7 +193,7 @@ REAL protocols over real TCP, in both transports:
   connect-time aux-subscription race.
 - **The hermetic scenario boundary**: `/harness/reset` restores the
   kickoff state, clears every fault arm, the console lines and the
-  request ledger between tier-2 scenarios — one scenario's arms can
+  request ledger between suite scenarios — one scenario's arms can
   never leak into the next (the group-a cascade that took down the
   first calibration sweep). `/harness/state` exposes the full state
   dict plus the counters, so `wait_sim` can assert any object. The
@@ -204,16 +204,18 @@ REAL protocols over real TCP, in both transports:
 
 ### 2.3 Runner, selection and artifacts
 
-`make ui_test` runs Tier 1 by default. Selection is modular (gospel
+`make ui_test` runs the skeleton demo scenario by default; the gates
+run as `MODE=scenario1`..`scenario11`, and the suite as
+`MODE=suite SCENARIO_GROUP=<group>`. Selection is modular (gospel
 truth #5):
 
-- `make ui_test SCENARIOS=card-stays,m117,camera-first` — named
-  scenarios, comma-separated;
-- `make ui_test GROUP=tier1|tier2|console|camera|files|controls|
-  preview|settings|soaks` — by surface group;
-- `make ui_test CURA_VERSION=5.12.0 SCENARIOS=…` — any selection under
-  any pinned Cura;
-- `make ui_test --list` — the scenario/group index.
+- `make ui_test MODE=suite SCENARIO_GROUP=webcams` — one surface
+  group by name (or letter: `a`..`j`): connection, status,
+  temperatures, console, webcams, files, motion, printing, settings,
+  stress;
+- `make ui_test CURA_VERSION=5.12.0 MODE=…` — any selection under any
+  pinned Cura;
+- `make ui_test MODE=discover` — dump stage-menu coordinates.
 
 Lifecycle and isolation (a scenario is a REBIND — the production
 session boundary the plugin already supports): each scenario gets its
@@ -270,13 +272,14 @@ model isn't accurate enough.
 
 ## 3. The scenario catalogue
 
-Two tiers. Tier 1 is the release gate — each scenario must be green
-with its gallery, AND must have been demonstrably red against the
-known-broken revision before it counts as evidence (the red gallery is
-committed with the scenario). Tier 2 is the full functional surface,
-built on the step vocabulary Tier 1 establishes.
+Two layers. **The gates** are the release acceptance scenarios — each
+must be green with its gallery, AND must have been demonstrably red
+against the known-broken revision before it counts as evidence (the
+red gallery is committed with the scenario). **The suite** is the
+full functional surface, built on the step vocabulary the gates
+established.
 
-### Tier 1 — the release gate (recent failures, proving the process)
+### The gates — release acceptance (recent failures, proving the process)
 
 1. **Failure state clears itself** — the simulator errors the print
    (`Extrude below minimum temp`), and the START attempt of the NEXT
@@ -344,7 +347,7 @@ built on the step vocabulary Tier 1 establishes.
 11. **Scroll-to-prompt** — flood the console; the view follows to the
     prompt on send; recall history works.
 
-### Tier 2 — the full functional surface, end-to-end
+### The suite — the full functional surface, end-to-end
 
 Coverage is machine-derived, not prose: a generator walks the code —
 every `@pyqtSlot` on the QML-facing objects, every `objectName`'d
@@ -390,8 +393,8 @@ slow endpoint → degradation not hang, dropped frames and socket close
 received samples, a long simulated print to completion with
 time-warped virtual_sdcard progress).
 
-The step vocabulary (`tier2_scenarios.py`, interpreted in
-`runner.py`'s `tier2_step`): `sim_set`/`sim_arm`/`sim_klippy`/
+The step vocabulary (`scenarios.py`, interpreted in
+`runner.py`'s `suite_step`): `sim_set`/`sim_arm`/`sim_klippy`/
 `sim_drop` drive the harness lane; `sim_ledger` asserts request
 counts with an optional `method` filter; `exec_slot`/`exec_file_slot`
 call a model slot with args, surfacing the driver's real error when
@@ -424,7 +427,12 @@ existed and every later read saw `None`.
   The launcher exports `QT_QPA_PLATFORM=xcb` and `DISPLAY` explicitly;
   the driver's pre-flight refuses to run unless
   `platformName() == "xcb"`, the screen geometry matches the pin, and
-  the window is exposed — recorded in the manifest.
+  the window is exposed — recorded in the manifest. The container runs
+  with `docker run --init` (docker-init as PID 1) so killed children
+  are reaped instead of piling up as zombies, and the launcher
+  (`tools/ui_test.sh`) holds an EXIT trap that kills Cura, the video
+  ffmpeg and the simulator when the run ends — a finished run leaves
+  no processes behind.
 - Timing budgets live in a machine profile, not in scenario prose;
   each latency assertion prints its observed value against its budget
   in the gallery.
@@ -437,7 +445,7 @@ existed and every later read saw `None`.
   coordinates, condition, poll history, scene rect, peer-ledger
   slice).
 - The red-run rule: a scenario that has never been observed failing
-  is not evidence. Every Tier-1 scenario commits its red gallery from
+  is not evidence. Every gate scenario commits its red gallery from
   the known-broken revision.
 
 ## 5. Phasing (each phase ends with screenshots AND video shown to the
@@ -459,17 +467,17 @@ existed and every later read saw `None`.
   generated from the code, the transcript replay, the capacity model,
   the fault arms. Proof: a gallery of the Monitor rendering
   scripted data.
-- **Phase C — Tier 1, first (the recent failures prove the process):**
-  the 11 gate scenarios green with galleries AND red galleries against
-  the known-broken revisions; the step vocabulary is a Phase-C
-  deliverable — a Tier-2 scenario must be expressible as a short
-  composition.
-- **Phase D — the full surface:** the Tier-2 matrix lands
-  feature-group by feature-group until the suite encompasses all
-  testing end-to-end.
+- **Phase C — the gates, first (the recent failures prove the
+  process):** the 11 gate scenarios green with galleries AND red
+  galleries against the known-broken revisions; the step vocabulary
+  is a Phase-C deliverable — a suite scenario must be expressible as
+  a short composition.
+- **Phase D — the full surface:** the suite matrix lands feature-group
+  by feature-group until the suite encompasses all testing
+  end-to-end.
 - **Phase E — the version swap and CI:** the suite under a second Cura
   version (swap manifest proven), then `make ui_test` in the release
-  gates, with declared per-tier wall-clock budgets and the soak kept
+  gates, with declared per-layer wall-clock budgets and the soak kept
   out of any PR-blocking path.
 
 ## 6. Boundaries

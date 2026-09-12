@@ -1,7 +1,7 @@
 """The surface→scenario map (coverage.py's check consumes this).
 
-Values are scenario ids: ``t1-N`` (the Tier-1 gates) or the Tier-2
-spec ids in tier2_scenarios.py (``a1``..``j4``). ``_prefix_rules``
+Values are scenario ids: ``gate-N`` (the release-gate scenarios) or
+the suite spec ids in scenarios.py (``a1``..``j4``). ``_prefix_rules``
 cover whole families with one rule; ``_exclusions`` are justified
 surfaces the unit/Qt suites already own (the design allows an
 explicit, justified exclusion and nothing else).
@@ -33,9 +33,9 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.clearBedMesh": "g2",
     "MoonrakerMonitorModel.clearConsoleHistory": "d3",
     "MoonrakerMonitorModel.clearZOffset": "g4",
-    "MoonrakerMonitorModel.emergencyHoldReleased": "t1-10",
-    "MoonrakerMonitorModel.emergencyHoldStarted": "t1-10",
-    "MoonrakerMonitorModel.emergencyStopClick": "t1-10",
+    "MoonrakerMonitorModel.emergencyHoldReleased": "gate-10",
+    "MoonrakerMonitorModel.emergencyHoldStarted": "gate-10",
+    "MoonrakerMonitorModel.emergencyStopClick": "gate-10",
     "MoonrakerMonitorModel.excludeObject": "b11",
     "MoonrakerMonitorModel.extrude": "g4",
     "MoonrakerMonitorModel.firmwareRestart": "g9b",
@@ -105,9 +105,9 @@ SCENARIO_MAP = {
     "moonrakerJogZPlus": "g1", "moonrakerJogZMinus": "g1",
     "moonrakerHomeX": "g2", "moonrakerHomeY": "g2", "moonrakerHomeZ": "g2",
     "moonrakerLockButton": "g8",
-    "moonrakerEmergencyButton": "t1-10",
+    "moonrakerEmergencyButton": "gate-10",
     "moonrakerConsoleInput": "d1", "moonrakerConsoleSend": "d1",
-    "moonrakerM117Slot": "t1-3",
+    "moonrakerM117Slot": "gate-3",
     "moonrakerPreviewActionPanelControls": "h3",
     "moonrakerEmptyPreviewLoadControl": "h2",
     "consoleResizeHandle": "d5", "consoleResizeArea": "d5",
@@ -151,7 +151,7 @@ PREFIX_RULES = [
     ("key", "mcu", "c4"),
     ("key", "macro", "g5"),
     ("key", "powerDevices", "g9"),
-    ("key", "emergency", "t1-10"),
+    ("key", "emergency", "gate-10"),
     ("key", "controls", "g8"),
     ("key", "infoCollapsed", "d5"),
     ("key", "statusCollapsed", "d5"),

@@ -1,7 +1,7 @@
-"""The Tier-2 scenario specs (TESTING.md 3, the full functional
+"""The suite scenario specs (TESTING.md 3, the full functional
 surface). Each spec is a short composition of the step vocabulary the
-Tier-1 gates established — the runner's tier2 mode executes one group
-per boot with a simulator reset between scenarios. The coverage gate
+gates established — the runner's suite mode executes one group per
+boot with a simulator reset between scenarios. The coverage gate
 (tests/test_coverage.py) proves every surface maps here.
 """
 from __future__ import annotations
@@ -196,8 +196,8 @@ SCENARIOS = [
      ]},
     {"id": "f2", "group": "f", "name": "the upload flow reaches the peer",
      "steps": [
-         {"op": "write_fixture", "path": "/tmp/mpf/tier2-upload.gcode"},
-         {"op": "exec_file_slot", "slot": "fileUpload", "args": ["/tmp/mpf/tier2-upload.gcode"]},
+         {"op": "write_fixture", "path": "/tmp/mpf/scenario-upload.gcode"},
+         {"op": "exec_file_slot", "slot": "fileUpload", "args": ["/tmp/mpf/scenario-upload.gcode"]},
          {"op": "sim_ledger", "needle": "files/upload", "min": 1, "budget": 30},
      ]},
     {"id": "f3", "group": "f", "name": "delete removes the row after the confirm",
@@ -295,7 +295,7 @@ SCENARIOS = [
      ]},
 
     # ─── H: preview ──────────────────────────────────────────────
-    {"id": "h2", "group": "h", "name": "the load end-to-end (the tier-1 flow's surface)",
+    {"id": "h2", "group": "h", "name": "the load end-to-end (the gate flow's surface)",
      "steps": [
          {"op": "click_stage", "stage": "PreviewStage"},
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"},

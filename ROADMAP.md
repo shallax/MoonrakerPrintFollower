@@ -843,10 +843,10 @@ automated tester (the author's composition, with explicit go-ahead).
 the plugin's functionality end-to-end where feasible — not just the
 regression list — "connecting to a dummy simulated printer over the
 same transport method that a real Moonraker printer uses". The
-catalogue in `TESTING.md` is two tiers: the release gate above, then
-the full functional surface (transport, status, temperatures, console,
-camera, files, controls, preview, settings, soaks).
-Phasing (2026-09-11, the author): Tier 1 first — "We can start with
+catalogue in `TESTING.md` is two layers: the release gates, then the
+full functional surface — the suite (transport, status, temperatures,
+console, camera, files, controls, preview, settings, soaks).
+Phasing (2026-09-11, the author): the gates first — "We can start with
 just the current recent failures to prove the theory/ process" — then
 the full surface so the author stops re-testing everything by hand.
 

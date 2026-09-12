@@ -174,7 +174,7 @@ if tornado is not None:
                                                "params": {"objects": {"configfile": None,
                                                                       "fan": None}}, "id": 1}))
                 await conn.read_message()
-                # The regression the tier-2 i6/h6 calibration exposed:
+                # The regression the suite i6/h6 calibration exposed:
                 # the pump once diffed only five hard-coded objects and
                 # silently dropped configfile/fan changes.
                 self.sim.printer.scenario(configfile={"save_config_pending": True,
@@ -275,7 +275,7 @@ if tornado is not None:
 @unittest.skipIf(tornado is None, "tornado is not available in this environment")
 class SimulatorCoverageTests(unittest.TestCase):
     """Every production endpoint builder must be served by the
-    simulator's route table — a silent gap would let tier-2 scenarios
+    simulator's route table — a silent gap would let suite scenarios
     prove nothing about real Moonraker."""
 
     def test_every_protocol_endpoint_has_a_simulator_route(self):

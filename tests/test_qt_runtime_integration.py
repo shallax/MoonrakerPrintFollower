@@ -110,7 +110,7 @@ class QtRuntimeTests(unittest.TestCase):
         # only the manual reconnect re-activated it before — an
         # automatic reconnect (a transport handover) left the model
         # alive but the discovery chain dead forever (the harness's
-        # tier-2 handover scenario caught it: webcams empty,
+        # suite handover scenario caught it: webcams empty,
         # temperatures gone).
         model, client, _transport = self.monitor()
         self.assertTrue(model._data._active)

@@ -309,7 +309,7 @@ class HarnessServer(QObject):
             # stages register, the buttons don't), so the harness's
             # Phase-A gallery drives the stage change through the
             # controller — the same call the missing buttons make —
-            # and the captures show the real UI follow. The tier-1
+            # and the captures show the real UI follow. The gate
             # scenarios still click real buttons; this verb exists
             # only until the header renders.
             wanted = str(request.get("stage") or "")

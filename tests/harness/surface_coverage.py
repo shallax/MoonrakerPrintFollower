@@ -1,4 +1,4 @@
-"""The code-derived coverage matrix (TESTING.md 3, Tier 2).
+"""The code-derived coverage matrix (TESTING.md 3, the suite).
 
 A surface is anything a scenario can address or a user can touch:
 @pyqtSlot verbs on the QML-facing objects, objectName'd interactive
@@ -6,8 +6,8 @@ items, MoonrakerProtocol endpoint builders, and the model's published
 value_property keys. ``extract()`` walks the plugin sources and
 returns every surface; ``check(map_)`` fails for any surface the
 scenario map does not cover (an explicit exclusion is the only other
-option). The map lives in tier2_map.py — the scenarios it names live
-in tier2_scenarios.py.
+option). The map lives in scenario_map.py — the scenarios it names live
+in scenarios.py.
 """
 from __future__ import annotations
 

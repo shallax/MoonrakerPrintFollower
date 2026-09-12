@@ -163,12 +163,16 @@ def scenario(expect_fail=False):
     finally:
         time.sleep(1)
         video.terminate()
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
     write_gallery(steps, expect_fail)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
-def write_gallery(steps, expect_fail, title="Phase A — real Cura under Xvfb, QTest clicks on Cura's own stage buttons"):
+def write_gallery(steps, expect_fail, title="the skeleton demo — real Cura under Xvfb, QTest clicks on Cura's own stage buttons"):
     rows = []
     for name, action, assertion, ok, path in steps:
         # Only the deliberate-failure step may be red by design; a red
@@ -183,7 +187,7 @@ def write_gallery(steps, expect_fail, title="Phase A — real Cura under Xvfb, Q
             f'<img src="{html.escape(os.path.basename(path))}" alt="{html.escape(name)}">'
             f"</div>")
     body = "\n".join(rows)
-    page = f"""<!doctype html><html><head><meta charset="utf-8"><title>Phase A run</title>
+    page = f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(title)}</title>
 <style>body{{font-family:sans-serif;background:#111;color:#ddd;margin:2em}}
 .step{{border:1px solid #444;border-radius:8px;padding:1em;margin:1em 0;background:#1a1a1a}}
 .pass{{border-left:6px solid #2ea043}}.fail{{border-left:6px solid #f85149}}
@@ -813,7 +817,7 @@ for item in _walk(window.contentItem()):
 
 
 def scenario9():
-    # Tier-1 #9: pause list verified-only. An end-of-layer pause is
+    # Gate #9: pause list verified-only. An end-of-layer pause is
     # scheduled through the panel; the printer drives PAST the layer
     # without pausing; the entry stays listed, restyled as missed.
     os.makedirs(RUN_DIR, exist_ok=True)
@@ -870,14 +874,18 @@ def scenario9():
     finally:
         time.sleep(1)
         video.terminate()
-    title = "Tier-1 #9 — pause list verified-only"
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Gate #9 — pause list verified-only"
     write_gallery(steps, False, title)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario8():
-    # Tier-1 #8: the dwell profile — a 10-minute soak, console up,
+    # Gate #8: the dwell profile — a 10-minute soak, console up,
     # against the capacity-limited simulator. The assertions run over
     # the periodic samples: the request-rate budget, the p95, the
     # GUI scheduled-latency (a 100 ms timer chain's drift) and the
@@ -951,14 +959,18 @@ def scenario8():
     finally:
         time.sleep(1)
         video.terminate()
-    title = "Tier-1 #8 — dwell profile"
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Gate #8 — dwell profile"
     write_gallery(steps, False, title)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario10():
-    # Tier-1 #10: restart arming / e-stop latch. A running print is
+    # Gate #10: restart arming / e-stop latch. A running print is
     # emergency-stopped through the real button (click twice, then
     # hold); the printer errors and cancels; a demonstrably fresh
     # print then starts and the latch clears.
@@ -1018,14 +1030,18 @@ def scenario10():
     finally:
         time.sleep(1)
         video.terminate()
-    title = "Tier-1 #10 — restart arming / e-stop latch"
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Gate #10 — restart arming / e-stop latch"
     write_gallery(steps, False, title)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario11():
-    # Tier-1 #11: scroll-to-prompt. The console floods, a REAL drag
+    # Gate #11: scroll-to-prompt. The console floods, a REAL drag
     # scrolls it up, then a typed command is sent: the view must
     # follow back to the prompt, and the recall history returns the
     # last command on the up arrow.
@@ -1087,14 +1103,18 @@ def scenario11():
     finally:
         time.sleep(1)
         video.terminate()
-    title = "Tier-1 #11 — scroll-to-prompt"
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Gate #11 — scroll-to-prompt"
     write_gallery(steps, False, title)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario7():
-    # Tier-1 #7: transport handover. In websocket mode the Monitor's
+    # Gate #7: transport handover. In websocket mode the Monitor's
     # lanes must ride the socket: six Monitor<->Prepare swaps, then
     # the peer's ledger — the HTTP monitor-lane entries must not have
     # grown during the swaps (beyond the settled bootstrap) while the
@@ -1151,14 +1171,18 @@ def scenario7():
     finally:
         time.sleep(1)
         video.terminate()
-    title = "Tier-1 #7 — transport handover"
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Gate #7 — transport handover"
     write_gallery(steps, False, title)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario6():
-    # Tier-1 #6: detach on any layer selection change. The print
+    # Gate #6: detach on any layer selection change. The print
     # loads (scenario-2's flow), the follower attaches, then a REAL
     # drag on Cura's own LayerSlider changes the layer: the follower
     # must detach and stay detached. The variant: a view-swap away
@@ -1236,14 +1260,18 @@ def scenario6():
     finally:
         time.sleep(1)
         video.terminate()
-    title = "Tier-1 #6 — detach on any layer selection change"
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Gate #6 — detach on any layer selection change"
     write_gallery(steps, False, title)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario5():
-    # Tier-1 #5: temperatures at print start — the RACE form. The
+    # Gate #5: temperatures at print start — the RACE form. The
     # simulator holds the subscribe reply past the client's 8 s
     # proof window mid-print (the klippy restart re-arms it), then
     # releases: the first push must follow within 3 s on the sim's
@@ -1325,14 +1353,18 @@ def scenario5():
     finally:
         time.sleep(1)
         video.terminate()
-    title = "Tier-1 #5 — temperatures at print start"
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Gate #5 — temperatures at print start"
     write_gallery(steps, False, title)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario4():
-    # Tier-1 #4: camera first load — the HARD ordering. The Monitor
+    # Gate #4: camera first load — the HARD ordering. The Monitor
     # is entered while the webcam list is still pending (the sim
     # delays server/webcams/list); the list arrives and the stream
     # must appear with NO interaction — two captures of the
@@ -1403,14 +1435,18 @@ def scenario4():
     finally:
         time.sleep(1)
         video.terminate()
-    title = "Tier-1 #4 — camera first load"
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Gate #4 — camera first load"
     write_gallery(steps, False, title)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario3():
-    # Tier-1 #3: M117 in the Print-job section. The simulator pushes
+    # Gate #3: M117 in the Print-job section. The simulator pushes
     # display_status.message A, then B: the RENDERED slot label shows
     # B and A is absent; then the message clears and the slot's
     # previous content returns (empty, fixed height — no reflow).
@@ -1468,14 +1504,18 @@ def scenario3():
     finally:
         time.sleep(1)
         video.terminate()
-    title = "Tier-1 #3 — M117 in the Print-job section"
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Gate #3 — M117 in the Print-job section"
     write_gallery(steps, False, title)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario2(expect_fail=False):
-    # Tier-1 #2: the card stays through load and after render. Enter
+    # Gate #2: the card stays through load and after render. Enter
     # Preview with nothing loaded (the empty card), click Load current
     # print, go HANDS-OFF: the action card (the one with Detach) must
     # be visible continuously from the click to 30 s after settle and
@@ -1555,14 +1595,18 @@ def scenario2(expect_fail=False):
     finally:
         time.sleep(1)
         video.terminate()
-    title = "Tier-1 #2 — the card stays through load and after render"
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Gate #2 — the card stays through load and after render"
     write_gallery(steps, expect_fail, title)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario1(expect_fail=False):
-    # Tier-1 #1: the failure state clears itself. A cold start raises
+    # Gate #1: the failure state clears itself. A cold start raises
     # the transient extrude error; the jog pad must UNLOCK; the
     # transient recovers into printing with NO failure verdict (or, on
     # the red run against a printer that stays broken, the verdict
@@ -1643,16 +1687,27 @@ def scenario1(expect_fail=False):
     finally:
         time.sleep(1)
         video.terminate()
-    title = "Tier-1 #1 — the failure state clears itself"
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Gate #1 — the failure state clears itself"
     write_gallery(steps, expect_fail, title)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
-TIER2_STATE = {"sim": {}, "model": {}, "item": {}}
+SUITE_STATE = {"sim": {}, "model": {}, "item": {}}
+
+# The suite's groups by name — SCENARIO_GROUP accepts either.
+GROUP_NAMES = {
+    "connection": "a", "status": "b", "temperatures": "c", "console": "d",
+    "webcams": "e", "files": "f", "motion": "g", "printing": "h",
+    "settings": "i", "stress": "j",
+}
 
 
-def tier2_apply(state, change):
+def suite_apply(state, change):
     # Deep-merge the scenario's state change into the current sim state.
     for key, value in change.items():
         if isinstance(value, dict) and isinstance(state.get(key), dict):
@@ -1664,20 +1719,21 @@ def tier2_apply(state, change):
     return state
 
 
-def tier2_run(group_id):
-    """Execute the tier-2 specs for one group: one boot, then each
+def suite_run(group_id):
+    """Execute the suite specs for one group: one boot, then each
     scenario in sequence with a sim reset between scenarios (the
     process boundary is shared per group — the session boundary per
     scenario; see DECISIONS A40)."""
-    import tier2_scenarios
-    specs = [spec for spec in tier2_scenarios.SCENARIOS if spec.get("group") == group_id]
+    group_id = GROUP_NAMES.get(group_id, group_id)
+    import scenarios
+    specs = [spec for spec in scenarios.SCENARIOS if spec.get("group") == group_id]
     if not specs:
-        print(f"no tier-2 scenarios in group {group_id}")
+        print(f"no suite scenarios in group {group_id}")
         return 1
     os.makedirs(RUN_DIR, exist_ok=True)
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, f"tier2-{group_id}.mp4")])
+         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, f"suite-{group_id}.mp4")])
     steps = []
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1691,22 +1747,26 @@ def tier2_run(group_id):
             sim_http("/harness/reset", "POST", {})
             sim_http("/harness/scenario", "POST", {"console_lines": [{"type": "response",
                 "message": "// %s ready" % spec["id"], "time": time.time()}]})
-            steps.extend(tier2_scenario(spec))
+            steps.extend(suite_scenario(spec))
     finally:
         time.sleep(1)
         video.terminate()
-    title = f"Tier-2 group {group_id}"
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = f"Scenario group {group_id}"
     write_gallery(steps, False, title)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
-def tier2_scenario(spec):
+def suite_scenario(spec):
     steps = []
     for index, step in enumerate(spec.get("steps", ())):
         name = f"{spec['id']}-{index:02d}"
         try:
-            result = tier2_step(step)
+            result = suite_step(step)
             ok, action, assertion = result
             steps.append((name, action, assertion, ok, shot(name)))
         except Exception as exc:
@@ -1715,7 +1775,7 @@ def tier2_scenario(spec):
     return steps
 
 
-def tier2_step(step):
+def suite_step(step):
     op = step["op"]
     if op == "click_stage":
         click_stage(step["stage"])
@@ -1756,7 +1816,7 @@ def tier2_step(step):
         return count >= expected, "the peer's ledger counted requests", f"{needle!r}: {count} (>= {expected})"
     if op == "model_read":
         value = exec_rpc(MODEL_READ_TEMPLATE.replace("PROP_PLACEHOLDER", json.dumps(step["prop"])))
-        TIER2_STATE["model"][step["prop"]] = value
+        SUITE_STATE["model"][step["prop"]] = value
         return True, f"the model's {step['prop']} read", f"{value!r}"
     if op == "wait_model":
         def check():
@@ -1887,7 +1947,7 @@ def tier2_step(step):
     if op == "assert_ledger_gap":
         return True, "the ledger's growth was captured in the sibling step", "recorded"
     if op == "assert_changed":
-        before = TIER2_STATE["model"].get(step["prop"])
+        before = SUITE_STATE["model"].get(step["prop"])
         value = exec_rpc(MODEL_READ_TEMPLATE.replace("PROP_PLACEHOLDER", json.dumps(step["prop"])))
         changed = value != before and value is not None
         return changed, f"the model's {step['prop']} changed from {before!r}", f"now {value!r}"
@@ -1897,11 +1957,11 @@ def tier2_step(step):
         path = step["path"]
         try:
             with open(path, "w", encoding="utf-8") as handle:
-                handle.write("; tier2 upload fixture\nG28\nM105\n")
+                handle.write("; scenario upload fixture\nG28\nM105\n")
             return True, f"the upload fixture written to {path}", "written"
         except OSError as exc:
             return False, f"the upload fixture written to {path}", f"OSError: {exc}"
-    raise ValueError(f"unknown tier-2 op {op!r}")
+    raise ValueError(f"unknown suite op {op!r}")
 
 
 MODE_READ_TEMPLATE = """
@@ -2203,9 +2263,9 @@ def main():
         return scenario8()
     if mode == "scenario9":
         return scenario9()
-    if mode == "tier2":
-        import tier2_scenarios  # noqa: F401 (the specs register)
-        return tier2_run(sys.argv[2] if len(sys.argv) > 2 else os.environ.get("TIER2_GROUP", "b"))
+    if mode == "suite":
+        import scenarios  # noqa: F401 (the specs register)
+        return suite_run(sys.argv[2] if len(sys.argv) > 2 else os.environ.get("SCENARIO_GROUP", "b"))
     expect_fail = mode == "fail"
     return scenario(expect_fail)
 
