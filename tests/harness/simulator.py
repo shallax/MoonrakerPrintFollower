@@ -117,6 +117,7 @@ class PrinterState:
         # client's proof window, then release — the snapshot must
         # still unlock the aux feed promptly. Stamps on the sim's
         # monotonic event clock.
+        self.require_api_key = False
         self.subscribe_hold_ms = 0.0
         self.subscribe_replied_at = None
         self.subscribe_replied_wall = None
@@ -212,7 +213,8 @@ class PrinterState:
             if name in self.state:
                 self.state[name] = value
             elif name in ("cold_start", "broken_start", "extruder_ramp_deg_s",
-                          "slow_first_frame_ms", "route_delay_ms", "subscribe_hold_ms"):
+                          "slow_first_frame_ms", "route_delay_ms", "subscribe_hold_ms",
+                          "require_api_key", "refuse_subscribe"):
                 setattr(self, name, value)
             elif name == "console_lines":
                 self.console_lines = list(value)
@@ -398,6 +400,9 @@ class StatusHandler(tornado.web.RequestHandler):
         delay = self._printer.service_delay(self.request.path)
         if delay:
             time.sleep(delay / 1000.0)
+        if self._printer.require_api_key and not self.request.headers.get("X-Api-Key"):
+            self.set_status(401)
+            self.finish(json.dumps({"result": {}, "error": {"code": 401, "message": "unauthorized"}}))
 
     def on_finish(self) -> None:
         written = len(getattr(self, "_write_buffer", b"")) or 0
@@ -494,6 +499,13 @@ class ControlHandler(tornado.web.RequestHandler):
                 body = {}
             self._printer.scenario(**body)
             self.write(json.dumps({"result": "ok"}))
+        elif path == "drop_connections":
+            for handler in list(self._printer.handlers):
+                try:
+                    handler.close()
+                except Exception:
+                    pass
+            self.write(json.dumps({"result": "ok"}))
         elif path == "klippy_restart":
             self._printer.klippy_restart()
             self.write(json.dumps({"result": "ok"}))
@@ -515,6 +527,7 @@ class ControlHandler(tornado.web.RequestHandler):
             "cold_start": self._printer.cold_start,
             "broken_start": self._printer.broken_start,
             "webcam_streams": self._printer.webcam_streams,
+            "require_api_key": self._printer.require_api_key,
             "emergency_count": getattr(self._printer, "emergency_count", 0),
             "subscribe_replied_at": self._printer.subscribe_replied_at,
             "subscribe_replied_wall": self._printer.subscribe_replied_wall,

@@ -43,6 +43,9 @@ fi
 cp -r /tmp/mpf/pkg_stage/files/plugins/Moonraker_Print_Follower "$PLUGIN_DIR/"
 cp -r "$root/tests/harness/driver" "$PLUGIN_DIR/HarnessDriver"
 cp "$root/tests/harness/runner.py" /tmp/mpf/harness_runner.py
+cp "$root/tests/harness/tier2_scenarios.py" /tmp/mpf/tier2_scenarios.py
+cp "$root/tests/harness/tier2_map.py" /tmp/mpf/tier2_map.py
+cp "$root/tests/harness/surface_coverage.py" /tmp/mpf/coverage.py
 
 docker exec "$CONTAINER" bash -lc 'pgrep -f "Xvfb :99" >/dev/null || \
   (Xvfb :99 -screen 0 1600x1000x24 -nolisten tcp &)'
@@ -73,7 +76,7 @@ case "$MODE" in
         docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$RUN_DIR" \
             python3 /tmp/mpf/harness_runner.py discover
         ;;
-    scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11)
+    scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|tier2)
         docker exec "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd /tmp/mpf/cura513_xt && \
             DISPLAY=:99 APPDIR=/tmp/mpf/cura513_xt \
             LD_LIBRARY_PATH=/tmp/mpf/cura513_xt:/tmp/mpf/cura513_xt/usr/lib/x86_64-linux-gnu:/tmp/mpf/cura513_xt/lib/x86_64-linux-gnu:/tmp/mpf/cura513_xt/usr/lib:/tmp/mpf/qt6wheel/PyQt6/Qt6/lib \
@@ -84,7 +87,7 @@ case "$MODE" in
         for _ in $(seq 1 120); do [ -s /tmp/mpf/harness_port.txt ] && break; sleep 1; done
         [ -s /tmp/mpf/harness_port.txt ] || { echo "ui_test: the driver never came up"; tail -20 /tmp/mpf/cura_run.log; exit 1; }
         docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$RUN_DIR" \
-            HARNESS_COORDS="$COORDS" python3 /tmp/mpf/harness_runner.py "$MODE"
+            HARNESS_COORDS="$COORDS" python3 /tmp/mpf/harness_runner.py "$MODE" "${TIER2_GROUP:-}"
         ;;
 esac
 echo "ui_test: gallery at $RUN_DIR/index.html"

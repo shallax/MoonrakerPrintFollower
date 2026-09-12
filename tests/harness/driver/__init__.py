@@ -619,6 +619,36 @@ class HarnessServer(QObject):
                 return {"id": request_id, "ok": True, "aim": [x, y], "text": wanted}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "click_item":
+            # Click an objectName'd item at its centre (the A30
+            # controls on the plugin's surface).
+            try:
+                wanted = str(request.get("objectName") or "")
+                window = _main_window()
+                target = None
+                for item in _walk(window.contentItem()):
+                    try:
+                        name = item.property("objectName")
+                    except Exception:
+                        name = None
+                    if name == wanted and bool(item.isVisible()):
+                        target = item
+                        break
+                if target is None:
+                    return {"id": request_id, "ok": False, "error": "no visible item with that objectName",
+                            "objectName": wanted}
+                scene = target.mapToScene(QPointF(0, 0))
+                x = round(scene.x() + target.width() / 2)
+                y = round(scene.y() + target.height() / 2)
+                qtest = _import_qtest()
+                if not qtest:
+                    return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
+                qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton,
+                                       Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+                qtest.QTest.qWait(150)
+                return {"id": request_id, "ok": True, "aim": [x, y], "objectName": wanted}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "confirm_box":
             # Native modal QMessageBoxes block the application until
             # answered (the plugin's replace-confirm uses one). QTest
