@@ -77,6 +77,23 @@ def wait_stage(wanted, timeout_ms=20000):
     return rpc({"id": 1, "cmd": "wait_stage", "stage": wanted, "timeout_ms": timeout_ms}, timeout=timeout_ms / 1000.0 + 5)
 
 
+def ensure_ready():
+    """The boot gate: on a fresh seeded profile Cura's one-shot
+    welcome check can run before the saved machine is restored, and
+    the dialog's grey-out then eats every click. Seed the machine
+    (the Add-printer wizard's own code path) and hide the welcome
+    overlay until the gate is clear. Orchestration only — no
+    plugin-surface claims."""
+    for _ in range(10):
+        reply = rpc({"id": 1, "cmd": "welcome"})
+        if reply.get("ok") and not reply.get("up"):
+            return True
+        rpc({"id": 1, "cmd": "seed_machine"})
+        rpc({"id": 1, "cmd": "hide_welcome"})
+        time.sleep(2)
+    return False
+
+
 def wait_window(timeout_s=90.0):
     deadline = time.time() + timeout_s
     while time.time() < deadline:
@@ -113,9 +130,12 @@ def scenario(expect_fail=False):
         hello = rpc({"id": 1, "cmd": "hello"})
         steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
                       "hello succeeds", True, shot("00-boot")))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
+                      "welcome not up", gate, shot("01-gate")))
         seeded = wait_stage("PrepareStage", timeout_ms=60000)
-        steps.append(("01-seed", "the seeded profile boots on PrepareStage",
-                      "stage == PrepareStage", seeded.get("ok") is True, shot("01-seed")))
+        steps.append(("02-seed", "the seeded profile sits on PrepareStage",
+                      "stage == PrepareStage", seeded.get("ok") is True, shot("02-seed")))
         flow = [("10-click-preview", "PreviewStage"),
                 ("11-click-monitor", "MonitorStage"),
                 ("12-click-prepare", "PrepareStage")]

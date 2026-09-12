@@ -852,51 +852,55 @@ Row {
             # welcome dialog leaves once an active machine exists.
             try:
                 manager = Application.getInstance().getMachineManager()
+                if manager.activeMachine is not None:
+                    return {"id": request_id, "ok": True,
+                            "active": manager.activeMachine.getName(), "created": False}
                 ok = bool(manager.addMachine(str(request.get("definition", "fdmprinter"))))
-                return {"id": request_id, "ok": ok}
+                active = manager.activeMachine.getName() if manager.activeMachine else None
+                return {"id": request_id, "ok": ok, "active": active, "created": True}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "welcome":
+            # The boot gate's probe: is the welcome dialog still up in
+            # the main window? Its visible check is one-shot at startup
+            # in Cura.qml, so a seeded machine restored too late still
+            # leaves the dialog up; the gate seeds + hides.
+            try:
+                window = _main_window()
+                up = False
+                if window is not None:
+                    for child in window.contentItem().childItems():
+                        if "WelcomeDialog" in child.metaObject().className() and bool(child.isVisible()):
+                            up = True
+                return {"id": request_id, "ok": True, "up": up}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "hide_welcome":
-            # The wizard's buttons overflow the window top and cannot
-            # be clicked; hiding the overlay (and its grey-out, which
-            # follows the dialog item's visible) is environment
-            # orchestration, not a claim about the plugin's UI.
+            # The welcome's own buttons overflow the window top and
+            # cannot be clicked under a WM-less Xvfb; hiding the
+            # dialog item and its grey-out (the full-window overlay
+            # that eats every click) is environment orchestration,
+            # not a claim about the plugin's UI.
             try:
                 hidden = []
-                for window in visible_windows:
-                    for item in window.contentItem().findChildren(QQuickItem):
-                        klass = item.metaObject().className()
+                window = _main_window()
+                if window is None:
+                    return {"id": request_id, "ok": False, "error": "no main window"}
+                for child in window.contentItem().childItems():
+                    klass = child.metaObject().className()
+                    if "WelcomeDialog" in klass:
+                        child.setVisible(False)
+                        hidden.append(klass)
+                        continue
+                    if klass == "QQuickRectangle":
                         try:
-                            t = item.property("text")
-                        except Exception:
-                            t = None
-                        if ("WelcomeDialogItem" in klass or "Wizard" in klass
-                                or (isinstance(t, str) and "Cura is developed by" in t)):
-                            item.setProperty("visible", False)
-                            hidden.append(klass)
-                if not hidden:
-                    return {"id": request_id, "ok": False, "error": "welcome items not found"}
-                # The label's ancestors up to the dialog root: the
-                # wizard chrome (Cancel/Ok/Close row) is NOT inside the
-                # The grey-out is the real blocker: a full-window
-                # overlay (opacity 0.7 per Cura.qml) whose MouseArea
-                # eats every click. Hide it, the wizard panel, and the
-                # floating welcome texts — never the window root, the
-                # overlay layer or the plugin's own items.
-                for window in visible_windows:
-                    for item in window.contentItem().findChildren(QQuickItem):
-                        klass = item.metaObject().className()
-                        try:
-                            opacity = float(item.property("opacity"))
+                            opacity = float(child.property("opacity"))
                         except Exception:
                             opacity = 1.0
-                        if abs(opacity - 0.7) < 0.01 and item.width() > 900 and item.height() > 500:
-                            item.setProperty("visible", False)
-                            hidden.append("grey-out: " + klass)
-                        if "WizardPanel" in klass:
-                            item.setProperty("visible", False)
-                            hidden.append("panel: " + klass)
-                return {"id": request_id, "ok": True, "hidden": hidden[:20]}
+                        if abs(opacity - 0.7) < 0.01 and child.width() > 900:
+                            child.setVisible(False)
+                            hidden.append("grey-out")
+                return {"id": request_id, "ok": True, "hidden": hidden}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "complete_welcome":
