@@ -239,7 +239,7 @@ class HarnessServer(QObject):
             # runtime. Reports samples and the object set it received.
             url = str(request.get("url") or "")
             mode = str(request.get("mode") or "websocket")
-            seconds = float(request.get("seconds", 6.0))
+            seconds = float(request.get("seconds", 15.0))
             if not url:
                 return {"id": request_id, "ok": False, "error": "no url"}
             try:
@@ -254,19 +254,29 @@ class HarnessServer(QObject):
                         received.append((time.monotonic(), sorted(status.keys())))
                 client.statusReceived.connect(on_status)
                 client.configure(url, "", 750, feed_mode=mode)
+                # The full Monitor path: MonitorData owns the aux
+                # subscription (the objects list -> wanted set -> aux
+                # feed). Proving IT consumes the simulator's push is
+                # the real proof the 30s-temps class of bug is dead.
+                from Moonraker_Print_Follower.MonitorData import MonitorData
+                data = MonitorData(client, None)
                 client.start()
+                data.set_active(True)
                 slot = {"result": None}
 
                 def finish():
-                    client.stop()
+                    snapshot = data.snapshot
                     objects = sorted({name for _, keys in received for name in keys})
                     slot["result"] = {"id": request_id, "ok": True, "mode": mode,
                                       "samples": len(received),
                                       "objects": objects,
+                                      "aux_objects": sorted(snapshot.auxiliary.keys()),
+                                      "core_state": str((snapshot.core.get("print_stats") or {}).get("state") or ""),
                                       "sample_keys": received[-1][1] if received else []}
+                    client.stop()
 
                 QTimer.singleShot(int(seconds * 1000), finish)
-                self._pending.append((request_id, time.monotonic() + seconds + 15,
+                self._pending.append((request_id, time.monotonic() + seconds + 20,
                                       lambda: slot["result"] is not None,
                                       lambda: slot["result"]))
                 return None
