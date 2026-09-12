@@ -237,7 +237,7 @@ Item {
                         // a missed pause STAYS listed, restyled in the
                         // error colour (the verified-pause-only ruling).
                         property string pauseState: String(modelData.state || "scheduled")
-                        readonly property bool pauseMissed: parent.pauseState === "failed" || parent.pauseState === "timed_out"
+                        readonly property bool pauseMissed: pauseState === "failed" || pauseState === "timed_out"
 
                         UM.Label {
                             width: Math.max(0, parent.width - removePauseButton.width - parent.spacing)

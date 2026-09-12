@@ -112,6 +112,7 @@ class PrinterState:
         self.broken_start = False
         self.extruder_ramp_deg_s = 30.0
         self.connections = 0
+        self._layer_clock_at = time.monotonic()
         # The scenario-5 race: hold the subscribe reply past the
         # client's proof window, then release — the snapshot must
         # still unlock the aux feed promptly. Stamps on the sim's
@@ -232,6 +233,15 @@ class PrinterState:
             sd["file_position"] = int(sd.get("file_size", 0) * sd["progress"])
             stats["print_duration"] = round(float(stats.get("print_duration", 0.0)) + self.push_cadence_ms / 1000.0, 3)
             self.state["display_status"]["progress"] = sd["progress"]
+            # The layer clock: the print crosses one layer every
+            # ~6 s of printing (scenario 9 drives past a scheduled
+            # pause without the printer pausing).
+            info = stats.get("info") or {}
+            if time.monotonic() - self._layer_clock_at > 6.0:
+                self._layer_clock_at = time.monotonic()
+                info["current_layer"] = (int(info.get("current_layer") or 0)) + 1
+                info["total_layer"] = 40
+                stats["info"] = info
         elif stats.get("state") == "error" and self.cold_start:
             # The cold-start error: Klipper refuses below the minimum
             # temperature while Moonraker ramps the heater; once the
@@ -433,6 +443,18 @@ class StatusHandler(tornado.web.RequestHandler):
             wanted = (body.get("objects") or {}).keys()
             status = {name: self._printer.state[name] for name in wanted if name in self._printer.state}
             self.write(json.dumps({"result": {"status": status}}))
+        elif path == "emergency_stop":
+            # The emergency: the printer cancels into an error state
+            # and Moonraker drops the connection (the plugin's
+            # reconnect-after-emergency path).
+            self._printer.scenario(
+                print_stats={**self._printer.state["print_stats"],
+                             "state": "error", "message": "Emergency stop",
+                             "filename": ""},
+                virtual_sdcard={**self._printer.state["virtual_sdcard"],
+                                "is_active": False, "progress": 0.0})
+            self._printer.emergency_count = getattr(self._printer, "emergency_count", 0) + 1
+            self.write(json.dumps({"result": "ok"}))
         elif path == "print/start":
             filename = self.get_argument("filename", "sim.gcode")
             if self._printer.cold_start:
@@ -493,6 +515,7 @@ class ControlHandler(tornado.web.RequestHandler):
             "cold_start": self._printer.cold_start,
             "broken_start": self._printer.broken_start,
             "webcam_streams": self._printer.webcam_streams,
+            "emergency_count": getattr(self._printer, "emergency_count", 0),
             "subscribe_replied_at": self._printer.subscribe_replied_at,
             "subscribe_replied_wall": self._printer.subscribe_replied_wall,
             "first_push_after_reply_at": self._printer.first_push_after_reply_at}}))

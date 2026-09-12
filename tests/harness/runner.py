@@ -729,9 +729,10 @@ for item in _walk(window.contentItem()):
         label = item.property("text")
     except Exception:
         label = None
-    if isinstance(label, str) and "pause not taken" in label and bool(item.isVisible()):
-        result["missed"] = label[:60]
-        break
+    if isinstance(label, str) and bool(item.isVisible()) and "End of layer" in label:
+        result["scheduled"] = label[:60]
+        if "pause not taken" in label:
+            result["missed"] = label[:60]
 """
 
 
