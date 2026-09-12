@@ -355,6 +355,54 @@ for item in _walk(window.contentItem()):
 """
 
 
+ATTACH_EMIT = """
+window = _main_window()
+result = {}
+for item in _walk(window.contentItem()):
+    try:
+        label = item.property("text")
+    except Exception:
+        label = None
+    if label == "Attach" and "Button" in item.metaObject().className() and bool(item.isVisible()):
+        item.clicked.emit()
+        result["emitted"] = True
+        break
+"""
+
+SLIDER_DRAG = """
+from PyQt6.QtCore import QPoint, Qt
+window = _main_window()
+result = {}
+target = None
+for item in _walk(window.contentItem()):
+    if "LayerSlider" in item.metaObject().className() and bool(item.isVisible()):
+        target = item
+        break
+if target is None:
+    result["error"] = "no visible LayerSlider"
+else:
+    # The layer slider is the VERTICAL bar on the preview's right
+    # edge; the layer changes by dragging its UPPER handle (the
+    # 16x16 Rectangle whose MouseArea drives setCurrentLayer).
+    handles = [child for child in target.childItems()
+               if abs(child.width() - 16) < 2 and abs(child.height() - 16) < 2 and bool(child.isVisible())]
+    if not handles:
+        result = {"error": "no slider handles"}
+    else:
+        handle = min(handles, key=lambda item: item.mapToScene(QPointF(0, 0)).y())
+        scene = handle.mapToScene(QPointF(0, 0))
+        handle_x = round(scene.x() + handle.width() / 2)
+        handle_y = round(scene.y() + handle.height() / 2)
+        qtest = _import_qtest()
+        qtest.QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(handle_x, handle_y))
+        for step in range(1, 5):
+            qtest.QTest.mouseMove(window, QPoint(handle_x, handle_y + step * 12))
+            qtest.QTest.qWait(80)
+        qtest.QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(handle_x, handle_y + 48))
+        qtest.QTest.qWait(300)
+        result = {"dragged": True, "from": [handle_x, handle_y], "h": round(target.height())}
+"""
+
 AUX_READ = """
 from UM.Application import Application
 app = Application.getInstance()
@@ -383,6 +431,107 @@ for device in app.getOutputDeviceManager().getOutputDevices():
             result["samples"] = len(hist.points("extruder"))
         break
 """
+
+
+FOLLOW_READ = """
+from UM.Application import Application
+app = Application.getInstance()
+result = {}
+for e in app.getExtensions():
+    if "MoonrakerPrintFollower" in type(e).__name__:
+        rt = e._runtime
+        follower = rt.preview
+        state = getattr(follower, "_state", None)
+        if state is not None:
+            result["attached"] = bool(state.attached)
+            result["expected_layer"] = state.expected_layer
+        break
+"""
+
+
+def scenario6():
+    # Tier-1 #6: detach on any layer selection change. The print
+    # loads (scenario-2's flow), the follower attaches, then a REAL
+    # drag on Cura's own LayerSlider changes the layer: the follower
+    # must detach and stay detached. The variant: a view-swap away
+    # and back re-attaches — THE ONLY automatic re-attach.
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario6.mp4")])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
+                      "hello succeeds", True, shot("00-boot")))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
+                      "welcome not up", gate, shot("01-gate")))
+        wait_stage("PrepareStage", timeout_ms=60000)
+        click_stage("PreviewStage")
+        preview = wait_stage("PreviewStage", timeout_ms=20000)
+        steps.append(("02-preview", "real click on Cura's own PREVIEW header button",
+                      "stage == PreviewStage", preview.get("ok") is True, shot("02-preview")))
+        connected = bool(wait_for(
+            lambda: exec_rpc(MODEL_READ).get("connected"), 60.0))
+        steps.append(("03-connected", "the plugin's websocket client reached the simulator",
+                      "monitorConnected", connected, shot("03-connected")))
+        # The running print + the load (scenario-2's proven flow).
+        state = sim_http("/harness/state")["result"]
+        listing = sim_http("/server/files/directory?path=gcodes&extended=true")
+        gcode_size = listing["result"]["files"][0]["size"]
+        sim_http("/harness/scenario", "POST", {
+            "print_stats": {**state["print_stats"], "state": "printing",
+                            "filename": "scenario1.gcode"},
+            "virtual_sdcard": {**state["virtual_sdcard"], "is_active": True,
+                               "progress": 0.5, "file_size": gcode_size}})
+        empty = bool(wait_for(
+            lambda: exec_rpc(CARD_READ).get("moonrakerEmptyPreviewLoadControl"), 25.0))
+        wait_for(lambda: exec_rpc(LOAD_EMIT).get("emitted"), 10.0, 1.0)
+        confirmed = bool(wait_for(
+            lambda: rpc({"id": 1, "cmd": "confirm_box", "button": "Yes"}).get("ok"),
+            15.0, 1.0))
+        action = bool(wait_for(
+            lambda: exec_rpc(CARD_READ).get("moonrakerPreviewActionPanelControls"), 60.0, 2.0))
+        steps.append(("04-loaded", "the print loaded; the action card appeared",
+                      "moonrakerPreviewActionPanelControls visible", bool(empty and confirmed and action),
+                      shot("04-loaded")))
+        # The follower attaches with the load.
+        attached = bool(wait_for(lambda: exec_rpc(FOLLOW_READ).get("attached"), 15.0, 1.0))
+        steps.append(("05-attached", "the follower attached to the live print",
+                      "preview.state.attached", attached, shot("05-attached")))
+        # The REAL layer-change gesture: drag Cura's own LayerSlider.
+        drag_ok = bool(wait_for(lambda: exec_rpc(SLIDER_DRAG).get("dragged"), 20.0, 1.0))
+        detached = bool(wait_for(
+            lambda: (lambda f: f is not None and not f.get("attached"))(exec_rpc(FOLLOW_READ) or {}),
+            15.0, 1.0))
+        steps.append(("06-drag-detaches", "a real drag on Cura's own LayerSlider",
+                      "the follower detached and stays detached", bool(drag_ok and detached),
+                      shot("06-drag-detaches")))
+        # The manual re-attach: the panel's Attach button.
+        wait_for(lambda: exec_rpc(ATTACH_EMIT).get("emitted"), 10.0, 1.0)
+        attached_again = bool(wait_for(lambda: exec_rpc(FOLLOW_READ).get("attached"), 15.0, 1.0))
+        steps.append(("07-attach-again", "the panel's Attach button re-attaches",
+                      "preview.state.attached", attached_again, shot("07-attach-again")))
+        # The variant (the author's ruling): a view swap while
+        # ATTACHED preserves the attach — switching stages is
+        # navigation, not a detach request. A DETACHED follower must
+        # stay detached across a swap (no automatic re-attach).
+        click_stage("MonitorStage")
+        wait_stage("MonitorStage", timeout_ms=20000)
+        click_stage("PreviewStage")
+        wait_stage("PreviewStage", timeout_ms=20000)
+        preserved = bool(wait_for(lambda: exec_rpc(FOLLOW_READ).get("attached"), 40.0, 2.0))
+        steps.append(("08-swap-preserves-attach", "Monitor -> Preview with no Attach click",
+                      "the attached state survived the view swap (the ONLY automatic re-attach)",
+                      preserved, shot("08-swap-preserves-attach")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+    title = "Tier-1 #6 — detach on any layer selection change"
+    write_gallery(steps, False, title)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario5():
@@ -807,6 +956,8 @@ def main():
         return scenario4()
     if mode == "scenario5":
         return scenario5()
+    if mode == "scenario6":
+        return scenario6()
     expect_fail = mode == "fail"
     return scenario(expect_fail)
 

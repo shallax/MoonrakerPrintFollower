@@ -62,7 +62,7 @@ case "$MODE" in
         docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$RUN_DIR" \
             python3 /tmp/mpf/harness_runner.py discover
         ;;
-    scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5)
+    scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6)
         docker exec "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd /tmp/mpf/cura513_xt && \
             DISPLAY=:99 APPDIR=/tmp/mpf/cura513_xt \
             LD_LIBRARY_PATH=/tmp/mpf/cura513_xt:/tmp/mpf/cura513_xt/usr/lib/x86_64-linux-gnu:/tmp/mpf/cura513_xt/lib/x86_64-linux-gnu:/tmp/mpf/cura513_xt/usr/lib:/tmp/mpf/qt6wheel/PyQt6/Qt6/lib \
