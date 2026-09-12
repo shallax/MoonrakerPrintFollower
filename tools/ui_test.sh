@@ -22,12 +22,23 @@ MODE="${MODE:-scenario}"
 export HARNESS_MODE="$MODE"
 
 # Stage the production plugin and the driver into the run's Cura
-# profile (the XDG data dir the spike established).
+# profile (the XDG data dir the spike established). A RED run stages
+# the plugin built from a known-broken revision — the runner and the
+# driver stay current (the scenario itself must be the same).
 PLUGIN_DIR=/tmp/mpf/xdg/cura/5.13/plugins
 rm -rf "$PLUGIN_DIR/Moonraker_Print_Follower" "$PLUGIN_DIR/HarnessDriver"
 mkdir -p "$PLUGIN_DIR"
+PACKAGE_ROOT="$root/dist"
+if [ -n "${RED_REV:-}" ]; then
+    RED_DIR="/tmp/mpf/red-$RED_REV"
+    if [ ! -f "$RED_DIR/dist/MoonrakerPrintFollower-v4.0.0.curapackage" ]; then
+        git -C "$root" worktree add --detach "$RED_DIR" "$RED_REV" >/dev/null 2>&1 || true
+        (cd "$RED_DIR" && make package >/dev/null 2>&1) || true
+    fi
+    PACKAGE_ROOT="$RED_DIR/dist"
+fi
 (cd /tmp/mpf && rm -rf pkg_stage && mkdir pkg_stage && \
- unzip -q -o "$root/dist/MoonrakerPrintFollower-v4.0.0.curapackage" \
+ unzip -q -o "$PACKAGE_ROOT/MoonrakerPrintFollower-v4.0.0.curapackage" \
    -d pkg_stage 'files/plugins/*')
 cp -r /tmp/mpf/pkg_stage/files/plugins/Moonraker_Print_Follower "$PLUGIN_DIR/"
 cp -r "$root/tests/harness/driver" "$PLUGIN_DIR/HarnessDriver"
