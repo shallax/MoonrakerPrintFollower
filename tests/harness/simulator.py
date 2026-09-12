@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
+import tempfile
 import time
 from typing import Any, Dict, List, Optional
 
@@ -113,6 +116,26 @@ class PrinterState:
         # objects whose values moved since the last frame (the
         # protocol contract the client's masked diff depends on).
         self._last_pushed: Dict[str, Any] = {}
+        # The webcam's MJPEG frames: ffmpeg-generated test patterns
+        # (the moving bar + timestamp prove liveness in captures).
+        self.webcam_streams = 0
+        self.webcam_frames = []
+        self.slow_first_frame_ms = 0.0
+        try:
+            directory = tempfile.mkdtemp(prefix="mpf-frames-")
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error",
+                 "-f", "lavfi", "-i", "testsrc=duration=6:size=320x240:rate=2",
+                 os.path.join(directory, "frame%02d.jpg")],
+                check=False, timeout=30)
+            for name in sorted(os.listdir(directory)):
+                path = os.path.join(directory, name)
+                if not name.endswith(".jpg"):
+                    continue
+                with open(path, "rb") as handle:
+                    self.webcam_frames.append(handle.read())
+        except Exception:
+            self.webcam_frames = []
         # The gcode store the file manager walks.
         self.gcode_bytes = make_gcode(40).encode("utf-8")
         self.files = [
@@ -176,7 +199,8 @@ class PrinterState:
         for name, value in changes.items():
             if name in self.state:
                 self.state[name] = value
-            elif name in ("cold_start", "broken_start", "extruder_ramp_deg_s"):
+            elif name in ("cold_start", "broken_start", "extruder_ramp_deg_s",
+                          "slow_first_frame_ms", "route_delay_ms"):
                 setattr(self, name, value)
 
     def push_patch(self) -> Dict[str, Any]:
@@ -436,7 +460,42 @@ class ControlHandler(tornado.web.RequestHandler):
             "extruder": self._printer.state["extruder"],
             "connections": self._printer.connections,
             "cold_start": self._printer.cold_start,
-            "broken_start": self._printer.broken_start}}))
+            "broken_start": self._printer.broken_start,
+            "webcam_streams": self._printer.webcam_streams}}))
+
+
+class MJPEGHandler(tornado.web.RequestHandler):
+    """A real multipart MJPEG stream: the changing test-pattern
+    frames prove liveness in the harness's captures (scenario 4)."""
+
+    def initialize(self, printer: PrinterState) -> None:
+        self._printer = printer
+
+    async def get(self) -> None:
+        if not self._printer.webcam_frames:
+            self.set_status(404)
+            self.finish()
+            return
+        self._printer.webcam_streams += 1
+        self.set_header("Content-Type", "multipart/x-mixed-replace; boundary=mpfboundary")
+        self.set_header("Cache-Control", "no-store")
+        first = True
+        index = 0
+        while True:
+            frame = self._printer.webcam_frames[index % len(self._printer.webcam_frames)]
+            index += 1
+            if first:
+                first = False
+                if self._printer.slow_first_frame_ms:
+                    await asyncio.sleep(self._printer.slow_first_frame_ms / 1000.0)
+            part = (b"--mpfboundary\r\nContent-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n" + frame + b"\r\n")
+            try:
+                self.write(part)
+                await self.flush()
+            except Exception:
+                return
+            await asyncio.sleep(0.25)
 
 
 class LedgerHandler(tornado.web.RequestHandler):
@@ -453,6 +512,7 @@ def make_app(printer: Optional[PrinterState] = None) -> tornado.web.Application:
     printer = printer or PrinterState()
     routes: List[Any] = [
         (r"/websocket", SimulatorWebSocket, {"printer": printer}),
+        (r"/webcam", MJPEGHandler, {"printer": printer}),
         (r"/ledger", LedgerHandler, {"printer": printer}),
         (r"/harness/(.*)", ControlHandler, {"printer": printer}),
         (r"/printer/(.*)", StatusHandler, {"printer": printer}),

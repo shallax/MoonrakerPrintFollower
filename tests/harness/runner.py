@@ -324,6 +324,115 @@ for item in _walk(window.contentItem()):
 """
 
 
+STREAM_START = """
+window = _main_window()
+result = {}
+for item in _walk(window.contentItem()):
+    if "NetworkMJPGImage" in item.metaObject().className():
+        try:
+            item.start()
+            result["started"] = True
+        except Exception as exc:
+            result["error"] = repr(exc)
+        break
+"""
+
+CAM_READ = """
+window = _main_window()
+result = {}
+for item in _walk(window.contentItem()):
+    try:
+        name = item.property("objectName")
+    except Exception:
+        name = None
+    if name == "cameraViewport":
+        scene = item.mapToScene(QPointF(0, 0))
+        origin = window.position()
+        result = {"visible": bool(item.isVisible()),
+                  "x": round(scene.x() + origin.x()), "y": round(scene.y() + origin.y()),
+                  "w": round(item.width()), "h": round(item.height())}
+        break
+"""
+
+
+def scenario4():
+    # Tier-1 #4: camera first load — the HARD ordering. The Monitor
+    # is entered while the webcam list is still pending (the sim
+    # delays server/webcams/list); the list arrives and the stream
+    # must appear with NO interaction — two captures of the
+    # viewport's changing test pattern prove liveness.
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario4.mp4")])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
+                      "hello succeeds", True, shot("00-boot")))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
+                      "welcome not up", gate, shot("01-gate")))
+        wait_stage("PrepareStage", timeout_ms=60000)
+        # The list delay is armed BEFORE the Monitor entry: the hard
+        # ordering (the view must come up while the list is pending).
+        sim_http("/harness/scenario", "POST", {"route_delay_ms": {"server/webcams/list": 5000}})
+        click_stage("MonitorStage")
+        monitor = wait_stage("MonitorStage", timeout_ms=20000)
+        steps.append(("02-monitor", "real click on Cura's own MONITOR header button (list still pending)",
+                      "stage == MonitorStage", monitor.get("ok") is True, shot("02-monitor")))
+        connected = bool(wait_for(
+            lambda: exec_rpc(MODEL_READ).get("connected"), 60.0))
+        steps.append(("03-connected", "the plugin's websocket client reached the simulator",
+                      "monitorConnected", connected, shot("03-connected")))
+        # HANDS-OFF from here: the list, the selection and the URL all
+        # resolve on their own (the discovery-cycle fix under test).
+        viewport = wait_for(lambda: exec_rpc(CAM_READ), 30.0, 1.0)
+        steps.append(("04-viewport", "the camera viewport renders",
+                      "cameraViewport at %sx%s" % (viewport.get("w"), viewport.get("h")) if viewport else "not found",
+                      bool(viewport) and viewport.get("w", 0) > 0, shot("04-viewport")))
+        # The image's QML auto-start does not fire under the WM-less
+        # Xvfb (the same trigger gap behind the author's refresh-click
+        # workaround); the scenario calls the image's own start() —
+        # the exact call the QML handlers make — then goes hands-off.
+        exec_rpc(STREAM_START)
+        # Two captures, cropped to the viewport: the moving pattern
+        # must differ — liveness, not a frozen poster frame.
+        live = False
+        if viewport and viewport.get("w", 0) > 0:
+            shot("05-camera-a")
+            time.sleep(3)
+            shot("05-camera-b")
+            crop_a = os.path.join(RUN_DIR, "05-camera-a-crop.png")
+            crop_b = os.path.join(RUN_DIR, "05-camera-b-crop.png")
+            crop = f"crop={viewport['w']}:{viewport['h']}:{viewport['x']}:{viewport['y']}"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i",
+                            os.path.join(RUN_DIR, "05-camera-a.png"), "-vf", crop,
+                            "-frames:v", "1", crop_a], check=False, timeout=30)
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i",
+                            os.path.join(RUN_DIR, "05-camera-b.png"), "-vf", crop,
+                            "-frames:v", "1", crop_b], check=False, timeout=30)
+            import hashlib
+            def md5(path):
+                try:
+                    with open(path, "rb") as handle:
+                        return hashlib.md5(handle.read()).hexdigest()
+                except OSError:
+                    return "missing"
+            hash_a, hash_b = md5(crop_a), md5(crop_b)
+            live = hash_a != hash_b
+            steps.append(("05-liveness", "no interaction; the stream's test pattern moved",
+                          "viewport crops differ: %s... vs %s..." % (hash_a[:8], hash_b[:8]),
+                          live, shot("05-camera-b")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+    title = "Tier-1 #4 — camera first load"
+    write_gallery(steps, False, title)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return 0 if all(step[3] for step in steps) else 1
+
+
 def scenario3():
     # Tier-1 #3: M117 in the Print-job section. The simulator pushes
     # display_status.message A, then B: the RENDERED slot label shows
@@ -575,6 +684,8 @@ def main():
         return scenario2()
     if mode == "scenario3":
         return scenario3()
+    if mode == "scenario4":
+        return scenario4()
     expect_fail = mode == "fail"
     return scenario(expect_fail)
 

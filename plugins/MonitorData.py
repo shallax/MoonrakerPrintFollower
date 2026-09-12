@@ -259,6 +259,13 @@ class MonitorData(QObject):
             lambda payload, error: self._update(presets=result(payload).get("value", {})) if not error and isinstance(result(payload), Mapping) else None,
             category="discovery",
             rpc=("server.database.get_item", {"namespace": "mainsail", "key": "presets"}))
+        # The webcam list rides the discovery cycle too: it previously
+        # fired ONLY in the once-per-connect refresh_all, and when the
+        # RPC lane had not upgraded yet that one request was dropped
+        # forever — the camera stayed unselected until a manual
+        # refresh (the author's live report; the harness's scenario 4
+        # caught it).
+        self.refresh_webcams()
 
     def _objects(self, payload, error):
         value = result(payload)
