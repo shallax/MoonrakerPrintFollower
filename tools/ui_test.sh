@@ -9,6 +9,14 @@ cd "$root"
 
 CONTAINER="${HARNESS_CONTAINER:-mpf-cura513}"
 RUN_DIR=/tmp/mpf/ui-artifacts/run-001
+
+# Fresh-seed the run's Cura profile from the pinned config dir: the
+# machine + printer record (pointed at the simulator), welcome and
+# What's-New suppressed. Logs, registry state and probe debris from
+# earlier runs never carry over.
+rm -rf /tmp/mpf/xdg
+mkdir -p /tmp/mpf/xdg
+cp -r "$root/tests/harness/config/." /tmp/mpf/xdg/
 COORDS=/tmp/mpf/harness_coords.json
 MODE="${MODE:-scenario}"
 export HARNESS_MODE="$MODE"
@@ -29,11 +37,14 @@ docker exec "$CONTAINER" bash -lc 'pgrep -f "Xvfb :99" >/dev/null || \
   (Xvfb :99 -screen 0 1600x1000x24 -nolisten tcp &)'
 
 # The simulator: the plugin's network peer for the run. Fixed port so
-# the seeded printer config points at it deterministically.
+# the seeded printer config points at it deterministically. Restarted
+# every run — a long-lived process keeps serving stale simulator code
+# (and pgrep -f patterns match the probing shell itself).
 SIM_PORT=7125
-docker exec "$CONTAINER" bash -lc "pgrep -f simulator_serve >/dev/null || \
-  (cd /tmp/mpf/harness_tests/tests/harness && nohup python3 simulator_serve.py $SIM_PORT \
-   >/tmp/mpf/simulator.log 2>&1 &)"
+docker exec "$CONTAINER" bash -lc "for p in \$(pgrep -f simulator_serve.py); do \
+  [ "\$p" != "\$\$" ] && kill -9 "\$p" 2>/dev/null; done; sleep 0.5; \
+  cd /tmp/mpf/harness_tests/tests/harness && nohup python3 simulator_serve.py $SIM_PORT \
+  >/tmp/mpf/simulator.log 2>&1 &"
 
 rm -f "$RUN_DIR/index.html"
 mkdir -p "$RUN_DIR"

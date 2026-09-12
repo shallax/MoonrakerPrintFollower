@@ -550,6 +550,71 @@ class HarnessServer(QObject):
                 return {"id": request_id, "ok": True, "result": repr(namespace.get("result"))[:2000]}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": repr(exc)}
+        if cmd == "find_text":
+            # Text-based addressing: Cura's own surface has no
+            # objectNames, so the design addresses by rendered text
+            # and geometry. Every visible item whose text property
+            # matches, with screen rects (newest last — later
+            # siblings/dialogs stack on top).
+            try:
+                wanted = str(request.get("text") or "")
+                window = _main_window()
+                matches = []
+                for item in _walk(window.contentItem()):
+                    try:
+                        label = item.property("text")
+                    except Exception:
+                        continue
+                    if label != wanted or not bool(item.isVisible()):
+                        continue
+                    rect = self._rect(item)
+                    matches.append({"x": rect["x"], "y": rect["y"],
+                                    "w": rect["w"], "h": rect["h"],
+                                    "class": item.metaObject().className()})
+                return {"id": request_id, "ok": True, "items": matches}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "click_text":
+            # Click a rendered-text item: prefer the interactive
+            # match (a Button-class item), else the largest one —
+            # labels and tooltips share the text and must never be
+            # the aim point.
+            try:
+                wanted = str(request.get("text") or "")
+                window = _main_window()
+                matches = []
+                for item in _walk(window.contentItem()):
+                    try:
+                        label = item.property("text")
+                    except Exception:
+                        continue
+                    if label == wanted and bool(item.isVisible()):
+                        matches.append(item)
+                if not matches:
+                    return {"id": request_id, "ok": False, "error": "no visible item with that text",
+                            "text": wanted}
+                target = None
+                for item in matches:
+                    if "Button" in item.metaObject().className():
+                        target = item
+                        break
+                if target is None:
+                    target = max(matches, key=lambda item: item.width() * item.height())
+                    return {"id": request_id, "ok": False, "error": "no visible item with that text",
+                            "text": wanted}
+                scene = target.mapToScene(QPointF(0, 0))
+                x = round(scene.x() + target.width() / 2)
+                y = round(scene.y() + target.height() / 2)
+                qtest = _import_qtest()
+                if not qtest:
+                    return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
+                button = Qt.MouseButton.RightButton if str(request.get("button")) == "right" else Qt.MouseButton.LeftButton
+                qtest.QTest.mouseClick(window, button,
+                                       Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+                qtest.QTest.qWait(150)
+                return {"id": request_id, "ok": True, "aim": [x, y], "text": wanted}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "clicked_flag":
             return {"id": request_id, "ok": True, "clicked": self._clicked_flag,
                     "py_clicks": list(self._py_clicks)}
@@ -848,13 +913,23 @@ Row {
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "seed_machine":
-            # The same code path the Add-printer wizard drives; the
-            # welcome dialog leaves once an active machine exists.
+            # Ensure an ACTIVE machine: prefer activating the seeded
+            # machine (the same call startup makes), and add one only
+            # when no machine exists — an added machine gets a new
+            # name and orphans the plugin's per-machine record.
             try:
+                from cura.Settings.CuraContainerRegistry import CuraContainerRegistry
                 manager = Application.getInstance().getMachineManager()
                 if manager.activeMachine is not None:
                     return {"id": request_id, "ok": True,
                             "active": manager.activeMachine.getName(), "created": False}
+                stacks = [s for s in CuraContainerRegistry.getInstance().findContainerStacks()
+                          if s.getMetaDataEntry("type") == "machine"]
+                if stacks:
+                    manager.setActiveMachine(stacks[0].getId())
+                    active = manager.activeMachine.getName() if manager.activeMachine else None
+                    return {"id": request_id, "ok": True, "active": active,
+                            "created": False, "activated": bool(active)}
                 ok = bool(manager.addMachine(str(request.get("definition", "fdmprinter"))))
                 active = manager.activeMachine.getName() if manager.activeMachine else None
                 return {"id": request_id, "ok": ok, "active": active, "created": True}
@@ -966,7 +1041,7 @@ QT_TEST = None
 QT_TEST_ERROR = ""
 
 
-def _walk(root, depth=10):
+def _walk(root, depth=24):
     # Depth-first over QQuickItem.childItems() — the VISUAL tree.
     # findChildren(QQuickItem) instead walks the whole QObject graph
     # (every QML-created object under the root) and stalls Cura's
