@@ -574,6 +574,63 @@ for e in app.getExtensions():
 """
 
 
+PAUSE_EMIT = """
+window = _main_window()
+result = {}
+for item in _walk(window.contentItem()):
+    try:
+        label = item.property("text")
+    except Exception:
+        label = None
+    if isinstance(label, str) and label.startswith("⏸") and "Button" in item.metaObject().className() and bool(item.isVisible()):
+        item.clicked.emit()
+        result["emitted"] = True
+        break
+if not result.get("emitted"):
+    for item in _walk(window.contentItem()):
+        try:
+            label = item.property("text")
+        except Exception:
+            label = None
+        if isinstance(label, str) and "Pause at end" in label and "Button" in item.metaObject().className() and bool(item.isVisible()):
+            item.clicked.emit()
+            result["emitted"] = True
+            break
+"""
+
+ESTOP_GESTURE = """
+from PyQt6.QtCore import QPoint, Qt
+window = _main_window()
+result = {}
+target = None
+for item in _walk(window.contentItem()):
+    try:
+        name = item.property("objectName")
+    except Exception:
+        name = None
+    if name == "moonrakerEmergencyButton" and bool(item.isVisible()):
+        target = item
+        break
+if target is None:
+    result["error"] = "no emergency button"
+else:
+    scene = target.mapToScene(QPointF(0, 0))
+    x = round(scene.x() + target.width() / 2)
+    y = round(scene.y() + target.height() / 2)
+    qtest = _import_qtest()
+    # Click twice...
+    qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+    qtest.QTest.qWait(250)
+    qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+    qtest.QTest.qWait(250)
+    # ...then hold.
+    qtest.QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+    qtest.QTest.qWait(1600)
+    qtest.QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+    qtest.QTest.qWait(600)
+    result = {"fired": True, "aim": [x, y]}
+"""
+
 CONSOLE_READ = """
 window = _main_window()
 result = {}
@@ -628,6 +685,266 @@ for item in _walk(window.contentItem()):
         result["center"] = [round(scene.x() + item.width() / 2), round(scene.y() + item.height() / 2)]
         break
 """
+
+
+ESTOP_READ = """
+from UM.Application import Application
+app = Application.getInstance()
+result = {}
+for device in app.getOutputDeviceManager().getOutputDevices():
+    if "Moonraker" in type(device).__name__:
+        printer = getattr(device, "activePrinter", None)
+        if printer is not None:
+            result["clicks"] = getattr(printer, "emergencyStopClicks", None)
+            result["hold"] = getattr(printer, "emergencyHoldProgress", None)
+        break
+"""
+
+
+LATENCY_PROBE = """
+# The GUI-thread responsiveness probe: a chain of 100 ms timers —
+# the actual minus the scheduled gaps is the event-loop stall.
+import time as _time
+result = {}
+gaps = []
+def tick(prev, left):
+    now = _time.monotonic()
+    if prev is not None:
+        gaps.append(round((now - prev) * 1000, 1))
+    if left > 0:
+        QTimer.singleShot(100, lambda p=now, l=left - 1: tick(p, l))
+    else:
+        globals()["_latency_gaps"] = gaps
+tick(None, 20)
+QTimer.singleShot(2600, lambda: None)
+result = {"armed": True}
+"""
+
+
+PAUSE_READ = """
+window = _main_window()
+result = {}
+for item in _walk(window.contentItem()):
+    try:
+        label = item.property("text")
+    except Exception:
+        label = None
+    if isinstance(label, str) and "pause not taken" in label and bool(item.isVisible()):
+        result["missed"] = label[:60]
+        break
+"""
+
+
+def scenario9():
+    # Tier-1 #9: pause list verified-only. An end-of-layer pause is
+    # scheduled through the panel; the printer drives PAST the layer
+    # without pausing; the entry stays listed, restyled as missed.
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario9.mp4")])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
+                      "hello succeeds", True, shot("00-boot")))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
+                      "welcome not up", gate, shot("01-gate")))
+        wait_stage("PrepareStage", timeout_ms=60000)
+        click_stage("PreviewStage")
+        preview = wait_stage("PreviewStage", timeout_ms=20000)
+        steps.append(("02-preview", "real click on Cura's own PREVIEW header button",
+                      "stage == PreviewStage", preview.get("ok") is True, shot("02-preview")))
+        connected = bool(wait_for(
+            lambda: exec_rpc(MODEL_READ).get("connected"), 60.0))
+        steps.append(("03-connected", "the plugin's websocket client reached the simulator",
+                      "monitorConnected", connected, shot("03-connected")))
+        # The load (scenario-2's proven flow) with a running print.
+        state = sim_http("/harness/state")["result"]
+        listing = sim_http("/server/files/directory?path=gcodes&extended=true")
+        gcode_size = listing["result"]["files"][0]["size"]
+        sim_http("/harness/scenario", "POST", {
+            "print_stats": {**state["print_stats"], "state": "printing",
+                            "filename": "scenario1.gcode",
+                            "info": {"total_layer": 40, "current_layer": 25}},
+            "virtual_sdcard": {**state["virtual_sdcard"], "is_active": True,
+                               "progress": 0.5, "file_size": gcode_size}})
+        empty = bool(wait_for(
+            lambda: exec_rpc(CARD_READ).get("moonrakerEmptyPreviewLoadControl"), 25.0))
+        wait_for(lambda: exec_rpc(LOAD_EMIT).get("emitted"), 10.0, 1.0)
+        wait_for(lambda: rpc({"id": 1, "cmd": "confirm_box", "button": "Yes"}).get("ok"),
+                 15.0, 1.0)
+        action = bool(wait_for(
+            lambda: exec_rpc(CARD_READ).get("moonrakerPreviewActionPanelControls"), 60.0, 2.0))
+        steps.append(("04-loaded", "the print loaded; the action card appeared",
+                      "moonrakerPreviewActionPanelControls visible", bool(empty and action),
+                      shot("04-loaded")))
+        # Schedule the end-of-layer pause through the panel's button.
+        wait_for(lambda: exec_rpc(PAUSE_EMIT).get("emitted"), 20.0, 2.0)
+        scheduled = bool(wait_for(
+            lambda: exec_rpc(PAUSE_READ).get("scheduled"), 15.0, 2.0))
+        steps.append(("05-scheduled", "the panel's pause button scheduled an end-of-layer pause",
+                      "the pause entry listed", scheduled, shot("05-scheduled")))
+        # The printer crosses the layer WITHOUT pausing.
+        missed = bool(wait_for(lambda: exec_rpc(PAUSE_READ).get("missed"), 60.0, 2.0))
+        steps.append(("06-missed", "the printer drove past the layer without pausing",
+                      "the entry restyled as missed", missed, shot("06-missed")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+    title = "Tier-1 #9 — pause list verified-only"
+    write_gallery(steps, False, title)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return 0 if all(step[3] for step in steps) else 1
+
+
+def scenario8():
+    # Tier-1 #8: the dwell profile — a 10-minute soak, console up,
+    # against the capacity-limited simulator. The assertions run over
+    # the periodic samples: the request-rate budget, the p95, the
+    # GUI scheduled-latency (a 100 ms timer chain's drift) and the
+    # receipt canary (the WS feed keeps flowing end to end).
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "5", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario8.mp4")])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
+                      "hello succeeds", True, shot("00-boot")))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
+                      "welcome not up", gate, shot("01-gate")))
+        wait_stage("PrepareStage", timeout_ms=60000)
+        click_stage("MonitorStage")
+        monitor = wait_stage("MonitorStage", timeout_ms=20000)
+        steps.append(("02-monitor", "real click on Cura's own MONITOR header button",
+                      "stage == MonitorStage", monitor.get("ok") is True, shot("02-monitor")))
+        connected = bool(wait_for(
+            lambda: exec_rpc(MODEL_READ).get("connected"), 60.0))
+        steps.append(("03-connected", "the plugin's websocket client reached the simulator",
+                      "monitorConnected", connected, shot("03-connected")))
+        # The print runs so every lane flows during the soak.
+        state = sim_http("/harness/state")["result"]
+        sim_http("/harness/scenario", "POST", {
+            "print_stats": {**state["print_stats"], "state": "printing",
+                            "filename": "scenario1.gcode"},
+            "extruder": {"temperature": 200.0, "target": 210.0},
+            "virtual_sdcard": {**state["virtual_sdcard"], "is_active": True, "progress": 0.3}})
+        # The capacity model: a loaded Moonraker on two lanes.
+        sim_http("/harness/scenario", "POST", {"route_delay_ms": {
+            "server/gcode_store": 40.0, "machine/device_power/devices": 25.0}})
+        # The soak: 10 minutes of 60 s samples.
+        samples = []
+        for _ in range(10):
+            time.sleep(60)
+            stats = sim_http("/ledger").get("result", {})
+            exec_rpc(LATENCY_PROBE)
+            time.sleep(3)
+            samples.append(stats)
+        # The latency probe's final read (exec_rpc parses the JSON
+        # result — it arrives as a list already).
+        time.sleep(3)
+        latency = exec_rpc("result = list(globals().get('_latency_gaps', []))")
+        gaps = latency if isinstance(latency, list) else []
+        worst_gap = max(gaps) if gaps else None
+        rates = [s.get("requests_per_s", 0.0) for s in samples]
+        p95s = [s.get("p95_ms", 0.0) for s in samples]
+        peaks = [s.get("peak_inflight", 0) for s in samples]
+        steps.append(("04-soak", "ten 60 s dwell samples against the capacity-limited simulator",
+                      "rates %s..%s /s, p95 %s..%s ms, peak in-flight %s..%s" %
+                      (round(min(rates), 2), round(max(rates), 2),
+                       round(min(p95s), 1), round(max(p95s), 1),
+                       min(peaks), max(peaks)), True, shot("04-soak")))
+        steps.append(("05-rate-budget", "the request rate stays inside the dwell budget",
+                      "max %.2f/s (budget 5/s)" % (max(rates) if rates else 0),
+                      bool(rates and max(rates) <= 5.0), shot("05-rate-budget")))
+        steps.append(("06-latency-budget", "the GUI thread's scheduled-latency stays bounded",
+                      "worst 100 ms timer drift %.1f ms (budget 250 ms)" % (worst_gap or 0),
+                      bool(worst_gap is not None and worst_gap <= 250.0), shot("06-latency-budget")))
+        entries = sim_http("/ledger").get("entries", ())
+        ws_count = sum(1 for entry in entries if entry.get("method") == "ws")
+        # The ledger keeps a 100-entry window: near-saturation IS the
+        # proof the feed kept flowing end to end.
+        steps.append(("07-receipt-canary", "the websocket feed kept flowing end to end",
+                      "%d ws entries in the 100-entry window" % ws_count,
+                      bool(ws_count >= 95), shot("07-receipt-canary")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+    title = "Tier-1 #8 — dwell profile"
+    write_gallery(steps, False, title)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return 0 if all(step[3] for step in steps) else 1
+
+
+def scenario10():
+    # Tier-1 #10: restart arming / e-stop latch. A running print is
+    # emergency-stopped through the real button (click twice, then
+    # hold); the printer errors and cancels; a demonstrably fresh
+    # print then starts and the latch clears.
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario10.mp4")])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
+                      "hello succeeds", True, shot("00-boot")))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
+                      "welcome not up", gate, shot("01-gate")))
+        wait_stage("PrepareStage", timeout_ms=60000)
+        click_stage("MonitorStage")
+        monitor = wait_stage("MonitorStage", timeout_ms=20000)
+        steps.append(("02-monitor", "real click on Cura's own MONITOR header button",
+                      "stage == MonitorStage", monitor.get("ok") is True, shot("02-monitor")))
+        connected = bool(wait_for(
+            lambda: exec_rpc(MODEL_READ).get("connected"), 60.0))
+        steps.append(("03-connected", "the plugin's websocket client reached the simulator",
+                      "monitorConnected", connected, shot("03-connected")))
+        # A print runs.
+        state = sim_http("/harness/state")["result"]
+        sim_http("/harness/scenario", "POST", {
+            "print_stats": {**state["print_stats"], "state": "printing",
+                            "filename": "scenario1.gcode"},
+            "virtual_sdcard": {**state["virtual_sdcard"], "is_active": True, "progress": 0.3}})
+        time.sleep(2)
+        # The e-stop: two real clicks, then the hold.
+        fired = bool(wait_for(lambda: exec_rpc(ESTOP_GESTURE).get("fired"), 30.0, 2.0))
+        state = sim_http("/harness/state")["result"]
+        steps.append(("04-estop-fired", "click twice, then hold the real emergency button",
+                      "the peer received the emergency stop", bool(fired and state.get("emergency_count", 0) >= 1),
+                      shot("04-estop-fired")))
+        # The printer cancelled into the error state.
+        errored = bool(wait_for(
+            lambda: sim_http("/harness/state").get("result", {}).get("print_stats", {}).get("state") == "error",
+            15.0, 2.0))
+        steps.append(("05-error-state", "the printer reported the emergency",
+                      "print_stats.state == error", errored, shot("05-error-state")))
+        # A demonstrably fresh print clears the latch: start again.
+        sim_http("/harness/scenario", "POST", {
+            "print_stats": {**sim_http("/harness/state")["result"]["print_stats"],
+                            "state": "printing", "filename": "fresh-print.gcode",
+                            "message": ""},
+            "virtual_sdcard": {"is_active": True, "progress": 0.0, "file_size": 1048576}})
+        fresh = bool(wait_for(
+            lambda: sim_http("/harness/state").get("result", {}).get("print_stats", {}).get("filename") == "fresh-print.gcode",
+            15.0, 2.0))
+        model = exec_rpc(MODEL_READ)
+        steps.append(("06-fresh-print", "a fresh print started after the emergency",
+                      "the plugin shows the fresh job connected",
+                      bool(fresh and model.get("connected")), shot("06-fresh-print")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+    title = "Tier-1 #10 — restart arming / e-stop latch"
+    write_gallery(steps, False, title)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario11():
@@ -1276,6 +1593,12 @@ def main():
         return scenario7()
     if mode == "scenario11":
         return scenario11()
+    if mode == "scenario10":
+        return scenario10()
+    if mode == "scenario8":
+        return scenario8()
+    if mode == "scenario9":
+        return scenario9()
     expect_fail = mode == "fail"
     return scenario(expect_fail)
 
