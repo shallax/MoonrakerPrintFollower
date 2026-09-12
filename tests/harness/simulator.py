@@ -71,6 +71,25 @@ class PrinterState:
         self.drop_next = 0           # drop this many pushes
         self.refuse_subscribe = ""   # message to refuse with ("" = accept)
         self.push_cadence_ms = 250
+        # The print lifecycle arms (scenario 1): a cold start raises
+        # the transient extrude error and ramps the heater; a broken
+        # start keeps the error past the client's verdict window.
+        self.cold_start = False
+        self.broken_start = False
+        self.extruder_ramp_deg_s = 30.0
+        self.connections = 0
+        # Changes-only pushes: the patch must carry exactly the
+        # objects whose values moved since the last frame (the
+        # protocol contract the client's masked diff depends on).
+        self._last_pushed: Dict[str, Any] = {}
+        # The gcode store the file manager walks.
+        self.files = [
+            {"filename": "scenario1.gcode", "modified": time.time() - 3600.0,
+             "size": 1048576, "permissions": "rw",
+             "slicer": "MoonrakerPrintFollower-sim", "estimated_time": 3600.0,
+             "layer_height": 0.2, "filament_total": 12.5,
+             "print_start_time": None},
+        ]
         self.seed = 0
         self.klippy_ready_broadcast: Any = None  # set by the app on klippy restart
         # The request ledger: the dwell profile's instrument (every
@@ -125,9 +144,12 @@ class PrinterState:
         for name, value in changes.items():
             if name in self.state:
                 self.state[name] = value
+            elif name in ("cold_start", "broken_start", "extruder_ramp_deg_s"):
+                setattr(self, name, value)
 
     def push_patch(self) -> Dict[str, Any]:
-        """One changed-objects frame, as Moonraker shapes it."""
+        """One changed-objects frame, as Moonraker shapes it: only
+        the objects whose values moved since the last frame."""
         if self.drop_next > 0:
             self.drop_next -= 1
             return {}
@@ -141,8 +163,31 @@ class PrinterState:
             sd["file_position"] = int(sd.get("file_size", 0) * sd["progress"])
             stats["print_duration"] = round(float(stats.get("print_duration", 0.0)) + self.push_cadence_ms / 1000.0, 3)
             self.state["display_status"]["progress"] = sd["progress"]
-        return {"print_stats": dict(stats), "virtual_sdcard": dict(self.state["virtual_sdcard"]),
-                "display_status": dict(self.state["display_status"])}
+        elif stats.get("state") == "error" and self.cold_start:
+            # The cold-start error: Klipper refuses below the minimum
+            # temperature while Moonraker ramps the heater; once the
+            # target is reached the SAME job proceeds to printing
+            # (the transient the verdict must not fire on). A broken
+            # start never reaches the target.
+            extruder = self.state["extruder"]
+            target = float(extruder.get("target") or 0.0)
+            temp = float(extruder.get("temperature") or 0.0)
+            if temp < target and not self.broken_start:
+                extruder["temperature"] = round(min(target, temp + self.extruder_ramp_deg_s * self.push_cadence_ms / 1000.0), 2)
+            if temp >= target and not self.broken_start:
+                stats["state"] = "printing"
+                stats["message"] = ""
+                self.cold_start = False
+                self.state["virtual_sdcard"].update({"is_active": True})
+        candidates = {"print_stats": dict(stats),
+                      "virtual_sdcard": dict(self.state["virtual_sdcard"]),
+                      "display_status": dict(self.state["display_status"]),
+                      "extruder": dict(self.state["extruder"]),
+                      "heater_bed": dict(self.state["heater_bed"])}
+        patch = {name: value for name, value in candidates.items()
+                 if self._last_pushed.get(name) != value}
+        self._last_pushed.update(patch)
+        return patch
 
 
 class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
@@ -156,6 +201,7 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
 
     def open(self) -> None:
         self.set_nodelay(True)
+        self._printer.connections += 1
         self._printer.handlers.add(self)
 
     def on_close(self) -> None:
@@ -211,6 +257,7 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
         # The subscribe reply carries the FULL state ONCE.
         self._respond(request_id, {"status": dict(self._subscribed),
                                    "eventtime": time.time()})
+        self._printer._last_pushed.update({name: dict(value) for name, value in self._subscribed.items()})
         self._printer.subscription_wiped = False
         if self._push_task is None:
             self._push_task = asyncio.create_task(self._pump())
@@ -221,6 +268,11 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
             if self._printer.subscription_wiped:
                 continue
             patch = self._printer.push_patch()
+            if not patch:
+                continue
+            # Pushes carry changed SUBSCRIBED objects only — a real
+            # Moonraker never sends objects the client didn't ask for.
+            patch = {name: value for name, value in patch.items() if name in self._subscribed}
             if not patch:
                 continue
             frame = {"jsonrpc": "2.0", "method": "notify_status_update",
@@ -274,6 +326,13 @@ class StatusHandler(tornado.web.RequestHandler):
             self.write(json.dumps({"result": {"webcams": [{"name": "sim-cam", "stream_url": "/webcam"}]}}))
         elif path == "device_power/devices":
             self.write(json.dumps({"result": {"devices": []}}))
+        elif path == "files/directory":
+            # The walker's extended listing: dirs, files with the
+            # metadata fields directory_rows reads, and disk usage.
+            self.write(json.dumps({"result": {
+                "dirs": [],
+                "files": self._printer.files,
+                "disk_usage": {"total": 32 * 1024**3, "used": 4 * 1024**3, "free": 28 * 1024**3}}}))
         else:
             self.write(json.dumps({"result": {"status": self._printer.state, "objects": objects}}))
 
@@ -288,12 +347,60 @@ class StatusHandler(tornado.web.RequestHandler):
             status = {name: self._printer.state[name] for name in wanted if name in self._printer.state}
             self.write(json.dumps({"result": {"status": status}}))
         elif path == "print/start":
-            self._printer.scenario(print_stats={**self._printer.state["print_stats"],
-                                                "state": "printing", "filename": self.get_argument("filename", "sim.gcode")})
-            self._printer.state["virtual_sdcard"].update({"is_active": True, "progress": 0.0})
+            filename = self.get_argument("filename", "sim.gcode")
+            if self._printer.cold_start:
+                # The real cold start: Moonraker accepts the job and
+                # Klipper reports the transient extrude error until
+                # the heater reaches target — the print proceeds.
+                self._printer.scenario(
+                    print_stats={**self._printer.state["print_stats"],
+                                 "state": "error", "message": "Extrude below minimum temp",
+                                 "filename": filename},
+                    extruder={**self._printer.state["extruder"], "target": 210.0})
+                self._printer.state["virtual_sdcard"].update({"is_active": True, "progress": 0.0,
+                                                              "file_size": 1048576})
+            else:
+                self._printer.scenario(print_stats={**self._printer.state["print_stats"],
+                                                    "state": "printing", "filename": filename})
+                self._printer.state["virtual_sdcard"].update({"is_active": True, "progress": 0.0})
             self.write(json.dumps({"result": "ok"}))
         else:
             self.write(json.dumps({"result": "ok"}))
+
+
+class ControlHandler(tornado.web.RequestHandler):
+    """The runner's control lane: arm fault/lifecycle state and read
+    the printer back. Harness-only routes, never part of Moonraker's
+    protocol."""
+
+    def initialize(self, printer: PrinterState) -> None:
+        self._printer = printer
+
+    def post(self, path: str = "") -> None:
+        self.set_header("Content-Type", "application/json")
+        if path == "scenario":
+            try:
+                body = json.loads(self.request.body or b"{}")
+            except Exception:
+                body = {}
+            self._printer.scenario(**body)
+            self.write(json.dumps({"result": "ok"}))
+        elif path == "reset":
+            arms = ("cold_start", "broken_start")
+            for arm in arms:
+                setattr(self._printer, arm, False)
+            self.write(json.dumps({"result": "ok"}))
+        else:
+            self.write(json.dumps({"result": "ok"}))
+
+    def get(self, path: str = "") -> None:
+        self.set_header("Content-Type", "application/json")
+        self.write(json.dumps({"result": {
+            "print_stats": self._printer.state["print_stats"],
+            "extruder": self._printer.state["extruder"],
+            "connections": self._printer.connections,
+            "cold_start": self._printer.cold_start,
+            "broken_start": self._printer.broken_start}}))
 
 
 class LedgerHandler(tornado.web.RequestHandler):
@@ -311,6 +418,7 @@ def make_app(printer: Optional[PrinterState] = None) -> tornado.web.Application:
     routes: List[Any] = [
         (r"/websocket", SimulatorWebSocket, {"printer": printer}),
         (r"/ledger", LedgerHandler, {"printer": printer}),
+        (r"/harness/(.*)", ControlHandler, {"printer": printer}),
         (r"/printer/(.*)", StatusHandler, {"printer": printer}),
         (r"/server/(.*)", StatusHandler, {"printer": printer}),
         (r"/machine/(.*)", StatusHandler, {"printer": printer}),

@@ -4,6 +4,7 @@ stdlib host and the pinned dev image; the harness image pins it)."""
 from __future__ import annotations
 
 import json
+import time
 import unittest
 
 try:
@@ -68,10 +69,15 @@ if tornado is not None:
                 self.assertEqual(reply["id"], 1)
                 self.assertIn("print_stats", reply["result"]["status"])
                 self.assertIn("virtual_sdcard", reply["result"]["status"])
-                # The pushes that follow are notify frames with CHANGES only.
+                # The pushes that follow are notify frames with CHANGES
+                # only (a real Moonraker never pushes an unchanged
+                # object) — drive a standby change that touches
+                # print_stats alone to make a frame happen.
+                self.sim.printer.scenario(print_stats={**self.sim.printer.state["print_stats"],
+                                                       "message": "sim-note"})
                 frame = json.loads(await conn.read_message())
                 self.assertEqual(frame["method"], "notify_status_update")
-                self.assertEqual(set(frame["params"][0]), {"print_stats", "virtual_sdcard", "display_status"})
+                self.assertEqual(set(frame["params"][0]), {"print_stats"})
                 conn.close()
             self.io_loop.run_sync(exercise)
 
@@ -86,6 +92,66 @@ if tornado is not None:
                 self.assertGreaterEqual(stats["total"], 3)
                 self.assertGreaterEqual(stats["peak_inflight"], 1)
                 self.assertGreaterEqual(len(body["entries"]), 3)
+            self.io_loop.run_sync(exercise)
+
+        def test_cold_start_recovers_to_printing(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                # The pump is the lifecycle clock and it runs for
+                # subscribers (the plugin is always subscribed in the
+                # harness) — subscribe first, then arm the cold start.
+                conn = await tornado.websocket.websocket_connect(
+                    f"ws://127.0.0.1:{self.sim.port}/websocket")
+                conn.write_message(json.dumps({"jsonrpc": "2.0", "method": "printer.objects.subscribe",
+                                               "params": {"objects": {"print_stats": None,
+                                                                      "extruder": None}}, "id": 1}))
+                await conn.read_message()
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"cold_start": True, "extruder_ramp_deg_s": 500.0}))
+                await client.fetch(self.base + "/printer/print/start?filename=scenario1.gcode",
+                                   method="POST", body=b"{}")
+                deadline = time.monotonic() + 5
+                body = None
+                while time.monotonic() < deadline:
+                    body = json.loads((await client.fetch(self.base + "/harness/state")).body)
+                    if body["result"]["print_stats"]["state"] == "printing":
+                        break
+                    await tornado.gen.sleep(0.1)
+                state = body["result"]
+                self.assertEqual(state["print_stats"]["state"], "printing")
+                self.assertEqual(state["print_stats"]["message"], "")
+                self.assertEqual(state["cold_start"], False)
+                conn.close()
+            self.io_loop.run_sync(exercise)
+
+        def test_broken_start_stays_error(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"cold_start": True, "broken_start": True,
+                                                    "extruder_ramp_deg_s": 500.0}))
+                await client.fetch(self.base + "/printer/print/start?filename=scenario1.gcode",
+                                   method="POST", body=b"{}")
+                body = json.loads((await client.fetch(self.base + "/harness/state")).body)
+                state = body["result"]
+                self.assertEqual(state["print_stats"]["state"], "error")
+                self.assertIn("minimum temp", state["print_stats"]["message"])
+            self.io_loop.run_sync(exercise)
+
+        def test_connection_count_and_files_listing(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                conn = await tornado.websocket.websocket_connect(
+                    f"ws://127.0.0.1:{self.sim.port}/websocket")
+                body = json.loads((await client.fetch(self.base + "/harness/state")).body)
+                self.assertEqual(body["result"]["connections"], 1)
+                listing = json.loads((await client.fetch(
+                    self.base + "/server/files/directory?path=gcodes&extended=true")).body)
+                result = listing["result"]
+                self.assertIn("files", result)
+                self.assertIn("disk_usage", result)
+                self.assertEqual(result["files"][0]["filename"], "scenario1.gcode")
+                conn.close()
             self.io_loop.run_sync(exercise)
 
         def test_klippy_restart_wipes_subscriptions(self):
