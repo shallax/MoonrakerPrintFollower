@@ -637,6 +637,16 @@ class HarnessServer(QObject):
                 if target is None:
                     return {"id": request_id, "ok": False, "error": "no visible item with that objectName",
                             "objectName": wanted}
+                # Custom Cura components layer labels over their
+                # clickable region — a coordinate click lands on the
+                # label and never reaches the handler (the
+                # PreviewSecondaryButton quirk). Drive the clicked
+                # signal when the item has one: it is the exact path a
+                # real click drives.
+                signal = getattr(target, "clicked", None)
+                if signal is not None:
+                    signal.emit()
+                    return {"id": request_id, "ok": True, "aim": "clicked.emit()", "objectName": wanted}
                 scene = target.mapToScene(QPointF(0, 0))
                 x = round(scene.x() + target.width() / 2)
                 y = round(scene.y() + target.height() / 2)

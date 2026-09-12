@@ -89,6 +89,11 @@ KICKOFF_STATE: Dict[str, Any] = {
     "extruder": {"temperature": 0.0, "target": 0.0},
     "system_stats": {"sysload": 0.1, "memavail": 1000000},
     "fan": {"speed": 0.0},
+    # The plugin subscribes to configfile for the save-config surface
+    # (saveConfigPending) and to bed_mesh for the mesh render — a
+    # faithful sim must carry both objects even while empty.
+    "configfile": {"save_config_pending": False, "save_config_pending_items": {}},
+    "bed_mesh": {"profile_name": "", "probed_matrix": [], "mesh_min": [], "mesh_max": [], "profiles": {}},
 }
 
 
@@ -130,6 +135,8 @@ class PrinterState:
         # (the moving bar + timestamp prove liveness in captures).
         self.webcam_streams = 0
         self.webcam_frames = []
+        self.webcam_down = False  # the stream-failure arm: /webcam 404s
+        self.webcam_die_after = 0  # serve N frames then close mid-stream
         self.slow_first_frame_ms = 0.0
         try:
             directory = tempfile.mkdtemp(prefix="mpf-frames-")
@@ -156,6 +163,11 @@ class PrinterState:
              "size": len(self.gcode_bytes), "permissions": "rw",
              "slicer": "MoonrakerPrintFollower-sim", "estimated_time": 3600.0,
              "layer_height": 0.2, "filament_total": 12.5,
+             "print_start_time": None},
+            {"filename": "benchy.gcode", "modified": time.time() - 7200.0,
+             "size": len(self.gcode_bytes), "permissions": "rw",
+             "slicer": "MoonrakerPrintFollower-sim", "estimated_time": 1800.0,
+             "layer_height": 0.2, "filament_total": 6.0,
              "print_start_time": None},
         ]
         self.seed = 0
@@ -213,11 +225,39 @@ class PrinterState:
             if name in self.state:
                 self.state[name] = value
             elif name in ("cold_start", "broken_start", "extruder_ramp_deg_s",
-                          "slow_first_frame_ms", "route_delay_ms", "subscribe_hold_ms",
-                          "require_api_key", "refuse_subscribe"):
+                          "slow_first_frame_ms", "webcam_down", "webcam_die_after",
+                          "route_delay_ms", "subscribe_hold_ms", "require_api_key",
+                          "refuse_subscribe"):
                 setattr(self, name, value)
             elif name == "console_lines":
                 self.console_lines = list(value)
+
+    def reset(self) -> None:
+        """The hermetic scenario boundary: state back to kickoff, every
+        fault arm down, console and ledger cleared. The tier-2 runner
+        resets between scenarios so one scenario's arms can never leak
+        into the next (the group-a cascade that took down the sweep)."""
+        self.state = dict(json.loads(json.dumps(KICKOFF_STATE)))
+        self.objects_available = list(self.state)
+        self.subscription_wiped = False
+        self.stall_ms = 0.0
+        self.drop_next = 0
+        self.refuse_subscribe = ""
+        self.push_cadence_ms = 250
+        self.cold_start = False
+        self.broken_start = False
+        self.extruder_ramp_deg_s = 30.0
+        self.require_api_key = False
+        self.subscribe_hold_ms = 0.0
+        self.slow_first_frame_ms = 0.0
+        self.webcam_down = False
+        self.webcam_die_after = 0
+        self.route_delay_ms = {}
+        self._last_pushed = {}
+        self.console_lines = [{"type": "response", "message": "// Klipper state: Ready",
+                               "time": time.time()}]
+        self.ledger = []
+        self.inflight = 0
 
     def push_patch(self) -> Dict[str, Any]:
         """One changed-objects frame, as Moonraker shapes it: only
@@ -260,13 +300,15 @@ class PrinterState:
                 stats["message"] = ""
                 self.cold_start = False
                 self.state["virtual_sdcard"].update({"is_active": True})
-        candidates = {"print_stats": dict(stats),
-                      "virtual_sdcard": dict(self.state["virtual_sdcard"]),
-                      "display_status": dict(self.state["display_status"]),
-                      "extruder": dict(self.state["extruder"]),
-                      "heater_bed": dict(self.state["heater_bed"])}
-        patch = {name: value for name, value in candidates.items()
-                 if self._last_pushed.get(name) != value}
+        # Every state object participates in the changes-only diff, not
+        # just the tier-1 five — configfile, fan, gcode_move and the
+        # rest ride the same contract (the pump used to drop them and
+        # only the HTTP full-state query masked it). Deep-copied so the
+        # stored last-frame never aliases the live state's dicts.
+        snapshot = {name: json.loads(json.dumps(value)) if isinstance(value, (dict, list)) else value
+                    for name, value in self.state.items()}
+        patch = {name: snapshot[name] for name in snapshot
+                 if self._last_pushed.get(name) != snapshot[name]}
         self._last_pushed.update(patch)
         return patch
 
@@ -279,6 +321,14 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
 
     def check_origin(self, origin: str) -> bool:
         return True
+
+    def prepare(self) -> None:
+        # Real Moonraker enforces the API key on the websocket upgrade,
+        # not only on HTTP — a missing key under the arm refuses the
+        # handshake the way the host would.
+        if self._printer.require_api_key and not self.request.headers.get("X-Api-Key"):
+            self.set_status(401)
+            self.finish(json.dumps({"error": {"code": 401, "message": "unauthorized"}}))
 
     def open(self) -> None:
         self.set_nodelay(True)
@@ -347,7 +397,11 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
         # The subscribe reply carries the FULL state ONCE.
         self._respond(request_id, {"status": dict(self._subscribed),
                                    "eventtime": time.time()})
-        self._printer._last_pushed.update({name: dict(value) for name, value in self._subscribed.items()})
+        # Prime the diff deep-copied (matching push_patch's own frame
+        # copies) — a shallow prime aliases the live state's dicts and
+        # in-place mutations would never read as changes again.
+        self._printer._last_pushed.update(
+            {name: json.loads(json.dumps(value)) for name, value in self._subscribed.items()})
         self._printer.subscription_wiped = False
         self._printer.subscribe_replied_at = time.monotonic()
         self._printer.subscribe_replied_wall = time.time()
@@ -438,6 +492,16 @@ class StatusHandler(tornado.web.RequestHandler):
         else:
             self.write(json.dumps({"result": {"status": self._printer.state, "objects": objects}}))
 
+    def delete(self, path: str = "") -> None:
+        # Moonraker's per-file delete: the file leaves the store so a
+        # later walk reflects the removal (the plugin drops the row
+        # client-side only on the host's success).
+        self.set_header("Content-Type", "application/json")
+        name = (path or "").rsplit("/", 1)[-1]
+        self._printer.files = [entry for entry in self._printer.files
+                               if entry.get("filename") != name]
+        self.write(json.dumps({"result": "ok"}))
+
     def post(self, path: str = "") -> None:
         self.set_header("Content-Type", "application/json")
         try:
@@ -459,6 +523,16 @@ class StatusHandler(tornado.web.RequestHandler):
                 virtual_sdcard={**self._printer.state["virtual_sdcard"],
                                 "is_active": False, "progress": 0.0})
             self._printer.emergency_count = getattr(self._printer, "emergency_count", 0) + 1
+            self.write(json.dumps({"result": "ok"}))
+        elif path in ("print/pause", "print/resume", "print/cancel"):
+            # The host's own state machine: the pause/resume/cancel
+            # requests actually move print_stats, so the model's
+            # canPausePrint/canResumePrint gates follow the flow.
+            next_state = {"print/pause": "paused",
+                          "print/resume": "printing",
+                          "print/cancel": "cancelled"}[path]
+            self._printer.scenario(print_stats={**self._printer.state["print_stats"],
+                                                "state": next_state})
             self.write(json.dumps({"result": "ok"}))
         elif path == "print/start":
             filename = self.get_argument("filename", "sim.gcode")
@@ -510,19 +584,15 @@ class ControlHandler(tornado.web.RequestHandler):
             self._printer.klippy_restart()
             self.write(json.dumps({"result": "ok"}))
         elif path == "reset":
-            arms = ("cold_start", "broken_start")
-            for arm in arms:
-                setattr(self._printer, arm, False)
+            self._printer.reset()
             self.write(json.dumps({"result": "ok"}))
         else:
             self.write(json.dumps({"result": "ok"}))
 
     def get(self, path: str = "") -> None:
         self.set_header("Content-Type", "application/json")
-        self.write(json.dumps({"result": {
-            "print_stats": self._printer.state["print_stats"],
-            "virtual_sdcard": self._printer.state["virtual_sdcard"],
-            "extruder": self._printer.state["extruder"],
+        result = dict(self._printer.state)
+        result.update({
             "connections": self._printer.connections,
             "cold_start": self._printer.cold_start,
             "broken_start": self._printer.broken_start,
@@ -531,7 +601,8 @@ class ControlHandler(tornado.web.RequestHandler):
             "emergency_count": getattr(self._printer, "emergency_count", 0),
             "subscribe_replied_at": self._printer.subscribe_replied_at,
             "subscribe_replied_wall": self._printer.subscribe_replied_wall,
-            "first_push_after_reply_at": self._printer.first_push_after_reply_at}}))
+            "first_push_after_reply_at": self._printer.first_push_after_reply_at})
+        self.write(json.dumps({"result": result}))
 
 
 class MJPEGHandler(tornado.web.RequestHandler):
@@ -542,7 +613,7 @@ class MJPEGHandler(tornado.web.RequestHandler):
         self._printer = printer
 
     async def get(self) -> None:
-        if not self._printer.webcam_frames:
+        if not self._printer.webcam_frames or self._printer.webcam_down:
             self.set_status(404)
             self.finish()
             return
@@ -554,6 +625,11 @@ class MJPEGHandler(tornado.web.RequestHandler):
         while True:
             frame = self._printer.webcam_frames[index % len(self._printer.webcam_frames)]
             index += 1
+            # The mid-stream death arm: the connection closes after N
+            # frames, the way a camera dying mid-print reads to the
+            # client (the recovering-state scenario's trigger).
+            if self._printer.webcam_die_after and index > self._printer.webcam_die_after:
+                return
             if first:
                 first = False
                 if self._printer.slow_first_frame_ms:

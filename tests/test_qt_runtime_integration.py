@@ -105,6 +105,20 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(follower.client.session.base_url, "http://imported")
         self.assertTrue(transport.requests)
 
+    def test_reconnect_rearms_the_monitor_data(self):
+        # A session invalidation deactivates the monitor's data feed;
+        # only the manual reconnect re-activated it before — an
+        # automatic reconnect (a transport handover) left the model
+        # alive but the discovery chain dead forever (the harness's
+        # tier-2 handover scenario caught it: webcams empty,
+        # temperatures gone).
+        model, client, _transport = self.monitor()
+        self.assertTrue(model._data._active)
+        client.sessionInvalidated.emit()
+        self.assertFalse(model._data._active)
+        client.connectionChanged.emit(True, "Moonraker connected over websocket")
+        self.assertTrue(model._data._active)
+
     def test_m117_message_publishes_from_the_aux_snapshot(self):
         # The aux snapshot's objects arrive as mappingproxies (the
         # MonitorData contract); the M117 slot reads the message from

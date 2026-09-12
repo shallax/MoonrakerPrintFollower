@@ -83,6 +83,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
         self.assertIn("QHttpPart.setBodyDevice()", ARCH)
         self.assertIn("One status feed per printer", ARCH)
         self.assertIn("hand-built on QtNetwork", ARCH)
+        self.assertIn("The Monitor's data feed deactivates with the session and re-arms", ARCH)
 
     def test_document_distinguishes_harness_from_live_cura_validation(self):
         self.assertIn("The harness is not Cura or printer firmware", ARCH)

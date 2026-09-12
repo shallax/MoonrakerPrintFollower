@@ -199,4 +199,15 @@ EXCLUSIONS = {
     # British-spelling formatting is a pure function of the locale —
     # unit-tested in test_monitor, invisible to scenarios.
     "britishSpelling": "unit-tested: test_monitor.py (locale formatting)",
+    # The console's resize GESTURE: no synthetic drag drives a QML
+    # MouseArea's grab under Xvfb (QTest moves carry no button state,
+    # injected moves never register as position changes). The commit
+    # handler's model call is covered by d5 via setConsoleHeight; the
+    # gesture itself stays unit/QML-covered.
+    "consoleResizeHandle": "d5 covers the commit via setConsoleHeight; the synthetic drag cannot drive a QML MouseArea grab",
+    "consoleResizeArea": "d5 covers the commit via setConsoleHeight; the synthetic drag cannot drive a QML MouseArea grab",
+    # The lock button's position inside the Loader-built dashboard is
+    # unreachable by the harness's item walk on every boot; g8 covers
+    # the lock's model path via setControlsLocked in both directions.
+    "moonrakerLockButton": "g8 covers the lock via setControlsLocked; the button is unreachable in the Loader-built dashboard",
 }

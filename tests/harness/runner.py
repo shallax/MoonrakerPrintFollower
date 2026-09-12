@@ -73,10 +73,33 @@ def ensure_ready():
     for _ in range(10):
         reply = rpc({"id": 1, "cmd": "welcome"})
         if reply.get("ok") and not reply.get("up"):
-            return True
+            break
         rpc({"id": 1, "cmd": "seed_machine"})
         rpc({"id": 1, "cmd": "hide_welcome"})
         time.sleep(2)
+    # The model gate: the plugin's per-machine model appears when the
+    # stack change lands. A boot occasionally restores the machine
+    # before the plugin's listener exists — re-emit the stack change
+    # until the model materializes (a quarter of boots otherwise start
+    # with no model and every later read sees None). The probe's
+    # literal True is the only pass — exec_rpc's {} (a driver error)
+    # must read as absent, not as a model.
+    for _ in range(5):
+        if exec_rpc(PRINTER_PRESENT) is True:
+            break
+        rpc({"id": 1, "cmd": "seed_machine"})
+        exec_rpc(REFRESH_EMIT)
+        time.sleep(10)
+    # The aux gate: the discovery chain (object list -> aux
+    # subscription -> temperatures/webcams) can stay dead on a boot
+    # that has the model — the flake policy declares that boot bad
+    # rather than letting its scenarios fail for the wrong reason.
+    # The re-emit's refresh re-fires the discovery, which heals most.
+    for _ in range(4):
+        if exec_rpc(AUX_READY) is True:
+            return True
+        exec_rpc(REFRESH_EMIT)
+        time.sleep(15)
     return False
 
 
@@ -185,9 +208,11 @@ def sim_http(path, method="GET", body=None, timeout=10.0):
         return json.loads(response.read().decode("utf-8"))
 
 
-def exec_rpc(code, timeout=60.0):
+def exec_rpc(code, timeout=60.0, raise_on_error=False):
     reply = rpc({"id": 1, "cmd": "exec", "code": code}, timeout=timeout)
     if not reply.get("ok"):
+        if raise_on_error:
+            raise RuntimeError(f"driver exec failed: {reply.get('error')}")
         return {}
     try:
         return json.loads(reply.get("result") or "{}")
@@ -196,6 +221,57 @@ def exec_rpc(code, timeout=60.0):
 
 
 # The exec snippets: scenario 1 reads the real model and the real UI.
+PRINTER_PRESENT = """
+from UM.Application import Application
+app = Application.getInstance()
+result = False
+try:
+    for device in app.getOutputDeviceManager().getOutputDevices():
+        if "Moonraker" in type(device).__name__:
+            if getattr(device, "activePrinter", None) is not None:
+                result = True
+            break
+except Exception as exc:
+    # A half-initialized device can raise during iteration — report it
+    # so the gate's retry loop runs instead of passing on a silent {}.
+    result = "error: " + repr(exc)
+"""
+
+AUX_READY = """
+from UM.Application import Application
+app = Application.getInstance()
+result = False
+for device in app.getOutputDeviceManager().getOutputDevices():
+    if "Moonraker" in type(device).__name__:
+        printer = getattr(device, "activePrinter", None)
+        if printer is not None:
+            data = getattr(printer, "_data", None)
+            snapshot = getattr(data, "_snapshot", None)
+            objects = len(getattr(snapshot, "objects", ()) or ())
+            temperatures = getattr(printer, "temperatureItems", None)
+            if hasattr(temperatures, "value"):
+                try:
+                    temperatures = temperatures.value()
+                except Exception:
+                    pass
+            # The aux chain is live only when the discovery delivered
+            # the object list AND the aux feed populated — a boot can
+            # come up with the model present but the discovery chain
+            # dead (the flake policy declares it bad and retries).
+            result = bool(data and data._active and objects > 0 and temperatures)
+        break
+"""
+
+REFRESH_EMIT = """
+from UM.Application import Application
+app = Application.getInstance()
+result = {}
+# The same signal Cura emits when the machine changes: the plugin's
+# listener rebuilds its device/model from the restored machine.
+app.globalContainerStackChanged.emit()
+result["emitted"] = True
+"""
+
 MODEL_READ = """
 from UM.Application import Application
 result = {}
@@ -1672,8 +1748,10 @@ def tier2_step(step):
     if op == "sim_ledger":
         entries = sim_http("/ledger").get("entries", ())
         needle = str(step.get("needle") or "")
+        method = step.get("method")
         count = sum(1 for entry in entries
-                    if needle in str(entry.get("path") or "") or needle in str(entry.get("method") or ""))
+                    if (needle in str(entry.get("path") or "") or needle in str(entry.get("method") or ""))
+                    and (method is None or method == str(entry.get("method") or "")))
         expected = int(step.get("min", 1))
         return count >= expected, "the peer's ledger counted requests", f"{needle!r}: {count} (>= {expected})"
     if op == "model_read":
@@ -1717,16 +1795,20 @@ def tier2_step(step):
         return True, "the simulator dropped every websocket connection", "dropped"
     if op == "exec_mode":
         code = MODE_APPLY_TEMPLATE.replace("MODE_PLACEHOLDER", json.dumps(step["mode"]))
-        reply = exec_rpc(code)
+        reply = exec_rpc(code, raise_on_error=True)
         time.sleep(4)
-        return bool(reply.get("applied")), f"the transport mode applied to {step['mode']}", "applied"
+        if not reply.get("applied"):
+            return False, f"the transport mode applied to {step['mode']}", f"error: {reply.get('error')}"
+        return True, f"the transport mode applied to {step['mode']}", "applied"
     if op == "exec_slot":
         args = step.get("args", [])
         arg_code = ", ".join(repr(arg) for arg in args)
         code = SLOT_TEMPLATE.replace("SLOT_PLACEHOLDER", json.dumps(step["slot"])).replace(
             "ARGS_PLACEHOLDER", arg_code)
-        reply = exec_rpc(code)
+        reply = exec_rpc(code, raise_on_error=True)
         time.sleep(1.5)
+        if reply.get("error"):
+            return False, f"the model slot {step['slot']}({arg_code}) ran", f"error: {reply['error']}"
         return bool(reply.get("called")), f"the model slot {step['slot']}({arg_code}) ran", "called"
     if op == "assert_mode":
         code = MODE_READ_TEMPLATE
@@ -1737,37 +1819,39 @@ def tier2_step(step):
         args = step.get("args", [])
         code = SLOT_TEMPLATE.replace("SLOT_PLACEHOLDER", json.dumps(step["slot"])).replace(
             "ARGS_PLACEHOLDER", ", ".join(repr(arg) for arg in args))
-        reply = exec_rpc(code)
+        reply = exec_rpc(code, raise_on_error=True)
         time.sleep(1.5)
+        if reply.get("error"):
+            return False, f"the model slot {step['slot']}({args!r}) ran", f"error: {reply['error']}"
         return bool(reply.get("called")), f"the model slot {step['slot']}({args!r}) ran", "called"
     if op == "exec_console":
         code = CONSOLE_CMD_TEMPLATE.replace("TEXT_PLACEHOLDER", json.dumps(step["text"]))
-        reply = exec_rpc(code)
+        reply = exec_rpc(code, raise_on_error=True)
         time.sleep(1.5)
         return bool(reply.get("sent")), f"the console sent {step['text']!r}", "sent"
     if op == "exec_console_resize":
-        reply = exec_rpc(CONSOLE_RESIZE_CODE)
+        reply = exec_rpc(CONSOLE_RESIZE_CODE, raise_on_error=True)
         time.sleep(1.0)
         return bool(reply.get("dragged")), "the console's resize handle dragged", "dragged"
     if op == "exec_stream_start":
-        reply = exec_rpc(STREAM_START)
+        reply = exec_rpc(STREAM_START, raise_on_error=True)
         time.sleep(2.0)
         return bool(reply.get("started")), "the camera image's start() ran (the QML auto-start's environment gap)", "started"
     if op == "exec_upload":
-        reply = exec_rpc(UPLOAD_CODE)
+        reply = exec_rpc(UPLOAD_CODE, raise_on_error=True)
         time.sleep(3.0)
         return bool(reply.get("requested")), "the upload flow requested through the plugin's real path", "requested"
     if op == "exec_delete":
-        reply = exec_rpc(DELETE_CODE)
+        reply = exec_rpc(DELETE_CODE, raise_on_error=True)
         time.sleep(2.0)
         return bool(reply.get("requested")), "the delete confirm ran through the plugin's real path", "requested"
     if op == "exec_folder":
         code = FOLDER_CODE.replace("NAME_PLACEHOLDER", json.dumps(step["name"]))
-        reply = exec_rpc(code)
+        reply = exec_rpc(code, raise_on_error=True)
         time.sleep(2.0)
         return bool(reply.get("requested")), "the folder create ran through the plugin's real path", "requested"
     if op == "exec_move":
-        reply = exec_rpc(MOVE_CODE)
+        reply = exec_rpc(MOVE_CODE, raise_on_error=True)
         time.sleep(2.0)
         return bool(reply.get("requested")), "the move ran through the plugin's real path", "requested"
     if op == "click_jog":
@@ -1783,20 +1867,40 @@ def tier2_step(step):
         reply = exec_rpc(code)
         return reply.get("enabled") is False, f"{step['objectName']} disabled while disconnected", f"enabled={reply.get('enabled')}"
     if op == "exec_test_connection":
-        reply = exec_rpc(TEST_CONNECTION_CODE)
+        reply = exec_rpc(TEST_CONNECTION_CODE, raise_on_error=True)
         time.sleep(2.0)
         return bool(reply.get("ran")), "the settings' test connection ran", "ran"
     if op == "exec_validator":
         code = VALIDATOR_TEMPLATE.replace("VALIDATOR_PLACEHOLDER", json.dumps(step["validator"])).replace(
             "ARGS_PLACEHOLDER", repr(step.get("args", [])))
-        reply = exec_rpc(code)
-        return bool(reply.get("ran")), f"the validator {step['validator']} ran", "ran"
+        reply = exec_rpc(code, raise_on_error=True)
+        ok = bool(reply.get("ran"))
+        answer = reply.get("answer")
+        expected = step.get("expect")
+        if expected is not None:
+            ok = ok and answer == expected
+        return ok, f"the validator {step['validator']} ran", f"answer {answer!r}"
     if op == "exec_extrude":
-        reply = exec_rpc(EXTRUDE_CODE)
+        reply = exec_rpc(EXTRUDE_CODE, raise_on_error=True)
         time.sleep(1.5)
         return bool(reply.get("ran")), "the extrude ran through the plugin's real path", "ran"
     if op == "assert_ledger_gap":
         return True, "the ledger's growth was captured in the sibling step", "recorded"
+    if op == "assert_changed":
+        before = TIER2_STATE["model"].get(step["prop"])
+        value = exec_rpc(MODEL_READ_TEMPLATE.replace("PROP_PLACEHOLDER", json.dumps(step["prop"])))
+        changed = value != before and value is not None
+        return changed, f"the model's {step['prop']} changed from {before!r}", f"now {value!r}"
+    if op == "write_fixture":
+        # A local gcode file for the upload flow — the runner and the
+        # simulator share /tmp/mpf, so the path resolves on both sides.
+        path = step["path"]
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("; tier2 upload fixture\nG28\nM105\n")
+            return True, f"the upload fixture written to {path}", "written"
+        except OSError as exc:
+            return False, f"the upload fixture written to {path}", f"OSError: {exc}"
     raise ValueError(f"unknown tier-2 op {op!r}")
 
 
@@ -1813,12 +1917,20 @@ for e in app.getExtensions():
 
 MODE_APPLY_TEMPLATE = """
 from UM.Application import Application
+import time
 app = Application.getInstance()
 result = {}
 for e in app.getExtensions():
     if "MoonrakerPrintFollower" in type(e).__name__:
         follower = e
-        config = follower.current_printer_config()
+        config = None
+        # The config resolves once the machine identity lands — poll
+        # it briefly instead of racing the boot gate.
+        for _ in range(20):
+            config = follower.current_printer_config()
+            if config is not None:
+                break
+            time.sleep(0.5)
         try:
             config.feed_mode = MODE_PLACEHOLDER
             follower.apply_printer_config(config)
@@ -1833,15 +1945,23 @@ SLOT_TEMPLATE = """
 from UM.Application import Application
 app = Application.getInstance()
 result = {}
+found = False
 for device in app.getOutputDeviceManager().getOutputDevices():
     if "Moonraker" in type(device).__name__:
+        found = True
         printer = getattr(device, "activePrinter", None)
         if printer is not None:
             slot = getattr(printer, SLOT_PLACEHOLDER, None)
             if slot is not None:
-                slot(*ARGS_PLACEHOLDER)
+                slot(ARGS_PLACEHOLDER)
                 result["called"] = True
+            else:
+                result["error"] = "no slot " + SLOT_PLACEHOLDER + " on the model"
+        else:
+            result["error"] = "activePrinter is None"
         break
+if not found:
+    result["error"] = "no Moonraker output device registered"
 """
 
 CONSOLE_CMD_TEMPLATE = """
@@ -1859,7 +1979,6 @@ for device in app.getOutputDeviceManager().getOutputDevices():
 """
 
 CONSOLE_RESIZE_CODE = """
-from PyQt6.QtCore import QPoint, Qt
 window = _main_window()
 result = {}
 target = None
@@ -1878,12 +1997,21 @@ else:
     x = round(scene.x() + target.width() / 2)
     y = round(scene.y() + target.height() / 2)
     qtest = _import_qtest()
-    qtest.QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
-    for step in range(1, 5):
-        qtest.QTest.mouseMove(window, QPoint(x, y + step * 20))
-        qtest.QTest.qWait(60)
-    qtest.QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y + 80))
-    qtest.QTest.qWait(300)
+    # QTest's QWindow-level mouseMove carries no button state, so the
+    # grabbed MouseArea never sees the drag moves (the key-event fix's
+    # sibling). Inject the events with explicit buttons — the exact
+    # sequence a real drag produces.
+    def send(kind, pos, buttons):
+        event = QMouseEvent(kind, QPointF(pos), QPointF(window.mapToGlobal(QPoint(pos.x(), pos.y()))),
+                            Qt.MouseButton.LeftButton, buttons, Qt.KeyboardModifier.NoModifier)
+        QGuiApplication.sendEvent(window, event)
+    send(QEvent.Type.MouseButtonPress, QPoint(x, y), Qt.MouseButton.LeftButton)
+    qtest.QTest.qWait(120)
+    for step in range(1, 6):
+        send(QEvent.Type.MouseMove, QPoint(x, y + step * 25), Qt.MouseButton.LeftButton)
+        qtest.QTest.qWait(80)
+    send(QEvent.Type.MouseButtonRelease, QPoint(x, y + 125), Qt.MouseButton.NoButton)
+    qtest.QTest.qWait(400)
     result["dragged"] = True
 """
 
@@ -1975,31 +2103,29 @@ TEST_CONNECTION_CODE = """
 from UM.Application import Application
 app = Application.getInstance()
 result = {}
-for e in app.getExtensions():
-    if "MoonrakerPrintFollower" in type(e).__name__:
-        try:
-            app.getMachineActionManager().getMachineAction("MoonrakerPrintFollower").testConnection()
-            result["ran"] = True
-        except Exception:
-            result["ran"] = False
-        break
+# The registry id is the class name, not the plugin id — Cura's
+# MachineActionManager keys on the action's own identifier.
+action = app.getMachineActionManager().getMachineAction("MoonrakerPrintFollowerConfigureAction")
+if action is None:
+    result["error"] = "machine action not registered"
+else:
+    config = action._config()
+    action.testConnection(str(config.url), str(config.api_key or ""))
+    result["ran"] = True
 """
 
 VALIDATOR_TEMPLATE = """
 from UM.Application import Application
 app = Application.getInstance()
 result = {}
-for e in app.getExtensions():
-    if "MoonrakerPrintFollower" in type(e).__name__:
-        try:
-            action = app.getMachineActionManager().getMachineAction("MoonrakerPrintFollower")
-            validator = getattr(action, VALIDATOR_PLACEHOLDER, None)
-            if validator is not None:
-                validator(*ARGS_PLACEHOLDER)
-                result["ran"] = True
-        except Exception:
-            result["ran"] = False
-        break
+action = app.getMachineActionManager().getMachineAction("MoonrakerPrintFollowerConfigureAction")
+if action is None:
+    result["error"] = "machine action not registered"
+else:
+    validator = getattr(action, VALIDATOR_PLACEHOLDER, None)
+    if validator is not None:
+        result["answer"] = validator(*ARGS_PLACEHOLDER)
+        result["ran"] = True
 """
 
 EXTRUDE_CODE = """

@@ -50,6 +50,13 @@ cp "$root/tests/harness/surface_coverage.py" /tmp/mpf/coverage.py
 docker exec "$CONTAINER" bash -lc 'pgrep -f "Xvfb :99" >/dev/null || \
   (Xvfb :99 -screen 0 1600x1000x24 -nolisten tcp &)'
 
+# Kill any Cura left from a previous run: stale instances share the
+# XDG seed and the display, fight over the per-machine config record
+# and reconnect to the simulator — the sweep's intermittent
+# model-vanishing boots traced back to the pile-up. The bracket in
+# the pattern keeps the pkill from matching its own command line.
+docker exec "$CONTAINER" bash -lc 'pkill -9 -f "UltiMaker-Cur[a]" 2>/dev/null; sleep 1'
+
 # The simulator: the plugin's network peer for the run. Fixed port so
 # the seeded printer config points at it deterministically. Restarted
 # every run — a long-lived process keeps serving stale simulator code

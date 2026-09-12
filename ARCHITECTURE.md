@@ -115,6 +115,11 @@ before the transport changes identity. The coordinator clears print/file/index/
 Preview/pause state, and output/Monitor owners deactivate old work. Rebinding never
 means that an existing upload may silently move to another printer.
 
+The Monitor's data feed deactivates with the session and re-arms itself on the
+next connection transition into connected — an automatic reconnect (a transport
+handover, a socket recovery) must leave the discovery chain live exactly as the
+manual reconnect does.
+
 ## 4. Shared networking and polling
 
 `MoonrakerTransport.py` is the only production module constructing

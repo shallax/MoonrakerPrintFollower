@@ -191,6 +191,16 @@ REAL protocols over real TCP, in both transports:
   shapes), 401s, socket closes, a slow endpoint, and the
   slow-upgrade / swallowed first objects-list arm that reproduces the
   connect-time aux-subscription race.
+- **The hermetic scenario boundary**: `/harness/reset` restores the
+  kickoff state, clears every fault arm, the console lines and the
+  request ledger between tier-2 scenarios — one scenario's arms can
+  never leak into the next (the group-a cascade that took down the
+  first calibration sweep). `/harness/state` exposes the full state
+  dict plus the counters, so `wait_sim` can assert any object. The
+  print routes are faithful: pause/resume/cancel move `print_stats`,
+  DELETE removes the file from the listing, and the API-key arm
+  refuses the websocket upgrade itself (401), not just HTTP — the way
+  the real host does.
 
 ### 2.3 Runner, selection and artifacts
 
@@ -379,6 +389,31 @@ slow endpoint → degradation not hang, dropped frames and socket close
 → recovery without data loss — defined as a concrete set difference of
 received samples, a long simulated print to completion with
 time-warped virtual_sdcard progress).
+
+The step vocabulary (`tier2_scenarios.py`, interpreted in
+`runner.py`'s `tier2_step`): `sim_set`/`sim_arm`/`sim_klippy`/
+`sim_drop` drive the harness lane; `sim_ledger` asserts request
+counts with an optional `method` filter; `exec_slot`/`exec_file_slot`
+call a model slot with args, surfacing the driver's real error when
+one raises (the harness's `slot(*)` bug hid exceptions for weeks —
+the failure now names them); `exec_mode`/`assert_mode` apply and
+verify the transport preference; `exec_validator` captures the
+validator's answer for an `expect` comparison; `exec_test_connection`
+runs the settings action's probe (the registry id is
+`MoonrakerPrintFollowerConfigureAction`, not the plugin id);
+`click_stage`/`click_text`/`click_item` drive the UI — `click_item`
+emits the target's `clicked` signal when it has one, because custom
+Cura components layer labels over their clickable region and a
+coordinate click never reaches the handler; `wait_model`/
+`assert_model`/`model_read`/`assert_changed` read published values;
+`write_fixture` drops a local gcode for the upload flow; and
+`exec_console`/`exec_console_resize`/`exec_stream_start`/`exec_upload`/
+`exec_delete`/`exec_folder`/`exec_move`/`exec_extrude` drive the
+remaining real paths. The boot gate now also waits for the model
+itself (`activePrinter`) and re-emits Cura's
+`globalContainerStackChanged` until it materializes — a quarter of
+fresh boots restored the machine before the plugin's listener
+existed and every later read saw `None`.
 
 ## 4. Determinism and flake policy
 

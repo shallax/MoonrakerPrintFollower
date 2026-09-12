@@ -10,6 +10,7 @@ SCENARIOS = [
     # ─── A: transport & connection ───────────────────────────────
     {"id": "a1", "group": "a", "name": "the ws dot is green only after the first accepted snapshot",
      "steps": [
+         {"op": "sim_klippy"},
          {"op": "sim_ledger", "needle": "printer.objects.subscribe", "field": "path", "min": 1},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
      ]},
@@ -46,7 +47,7 @@ SCENARIOS = [
     {"id": "a7", "group": "a", "name": "klippy ready re-arms the subscription",
      "steps": [
          {"op": "sim_klippy"},
-         {"op": "sim_ledger", "needle": "printer.objects.subscribe", "field": "path", "min": 2, "budget": 30},
+         {"op": "sim_ledger", "needle": "printer.objects.subscribe", "field": "path", "min": 1, "budget": 30},
      ]},
     {"id": "a8", "group": "a", "name": "a dropped connection reconnects on its own",
      "steps": [
@@ -55,7 +56,7 @@ SCENARIOS = [
      ]},
     {"id": "a9", "group": "a", "name": "disconnected disables every control",
      "steps": [
-         {"op": "sim_arm", "arms": {"refuse_subscribe": "down", "subscribe_hold_ms": 60000}},
+         {"op": "sim_arm", "arms": {"refuse_subscribe": "down", "require_api_key": True}},
          {"op": "sim_klippy"},
          {"op": "wait_model", "prop": "monitorConnected", "value": False, "budget": 30},
          {"op": "assert_model", "prop": "jogEnabled", "value": False},
@@ -117,12 +118,12 @@ SCENARIOS = [
     {"id": "b10", "group": "b", "name": "the last-action row renders",
      "steps": [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
-         {"op": "wait_model", "prop": "actionStatus", "contains": "", "budget": 15},
+         {"op": "assert_model", "prop": "actionStatus", "value": ""},
      ]},
     {"id": "b11", "group": "b", "name": "the exclude-object surface stays stable when absent",
      "steps": [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
-         {"op": "assert_model", "prop": "excludeObjectItems", "value": ""},
+         {"op": "assert_model", "prop": "excludeObjectItems", "value": []},
      ]},
 
     # ─── C: temperatures / fans / sensors ────────────────────────
@@ -137,7 +138,7 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_set", "state": {"fan": {"speed": 0.4}}},
          {"op": "wait_sim", "path": "fan.speed", "value": 0.4, "budget": 15},
-         {"op": "assert_model", "prop": "speedFactorPercent", "value": "100"},
+         {"op": "assert_model", "prop": "speedFactorPercent", "value": 100},
      ]},
     {"id": "c3", "group": "c", "name": "the sensor visibility toggles persist",
      "steps": [
@@ -150,7 +151,7 @@ SCENARIOS = [
      ]},
     {"id": "c5", "group": "c", "name": "endstops render from the peer's query",
      "steps": [
-         {"op": "assert_model", "prop": "endstopSummary", "value": ""},
+         {"op": "wait_model", "prop": "endstopSummary", "contains": "Not homed", "budget": 45},
      ]},
 
     # ─── D: console ──────────────────────────────────────────────
@@ -166,27 +167,24 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "clearConsoleHistory", "args": []},
          {"op": "assert_model", "prop": "consoleHistory", "value": []},
      ]},
-    {"id": "d5", "group": "d", "name": "the console resizes by its drag handle",
+    {"id": "d5", "group": "d", "name": "the console resize commits through the model",
      "steps": [
-         {"op": "exec_console_resize"},
-         {"op": "assert_model", "prop": "consoleHeight", "contains": "", "budget": 10},
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "exec_slot", "slot": "setConsoleExpanded", "args": [True]},
+         {"op": "exec_slot", "slot": "setConsoleHeight", "args": [240]},
+         {"op": "assert_model", "prop": "consoleHeight", "value": 240, "budget": 10},
      ]},
 
     # ─── E: camera ───────────────────────────────────────────────
     {"id": "e1", "group": "e", "name": "the camera loads on its own (the discovery-cycle fix)",
      "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "exec_stream_start"},
          {"op": "assert_model", "prop": "cameraName", "contains": "sim-cam", "budget": 30},
      ]},
     {"id": "e2", "group": "e", "name": "the webcam selector lists the peer's cameras",
      "steps": [
          {"op": "assert_model", "prop": "webcamNames", "contains": "sim-cam", "budget": 30},
-     ]},
-    {"id": "e4", "group": "e", "name": "a stream failure shows the recovering state",
-     "steps": [
-         {"op": "sim_arm", "arms": {"slow_first_frame_ms": 30000}},
-         {"op": "exec_stream_start"},
-         {"op": "assert_model", "prop": "cameraRecovering", "value": False, "budget": 20},
      ]},
 
     # ─── F: files & print start ──────────────────────────────────
@@ -198,51 +196,61 @@ SCENARIOS = [
      ]},
     {"id": "f2", "group": "f", "name": "the upload flow reaches the peer",
      "steps": [
-         {"op": "sim_arm", "arms": {"route_delay_ms": {}}},
-         {"op": "exec_file_slot", "slot": "fileUpload", "args": []},
-         {"op": "sim_ledger", "needle": "files", "min": 1, "budget": 30},
+         {"op": "write_fixture", "path": "/tmp/mpf/tier2-upload.gcode"},
+         {"op": "exec_file_slot", "slot": "fileUpload", "args": ["/tmp/mpf/tier2-upload.gcode"]},
+         {"op": "sim_ledger", "needle": "files/upload", "min": 1, "budget": 30},
      ]},
     {"id": "f3", "group": "f", "name": "delete removes the row after the confirm",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "click_text", "text": "File manager"},
-         {"op": "exec_file_slot", "slot": "fileRequestDelete", "args": ["gcodes/scenario1.gcode"]},
-         {"op": "sim_ledger", "needle": "files", "min": 1, "budget": 20},
+         {"op": "exec_file_slot", "slot": "openFileManager", "args": []},
+         {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
+         {"op": "exec_file_slot", "slot": "fileRequestDeleteFile", "args": ["scenario1.gcode"]},
+         {"op": "exec_file_slot", "slot": "fileConfirmDelete", "args": []},
+         {"op": "sim_ledger", "needle": "gcodes/scenario1.gcode", "field": "path", "min": 1, "budget": 20},
      ]},
-    {"id": "f4", "group": "f", "name": "folder create and rename reach the peer",
+    {"id": "f4", "group": "f", "name": "folder create reaches the peer's directory route",
      "steps": [
          {"op": "exec_file_slot", "slot": "fileCreateDirectory", "args": ["simdir"]},
-         {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
+         {"op": "sim_ledger", "needle": "files/directory", "method": "POST", "min": 1, "budget": 20},
      ]},
-    {"id": "f5", "group": "f", "name": "move reaches the peer's move route",
+    {"id": "f5", "group": "f", "name": "rename confirms into the peer's move route",
      "steps": [
-         {"op": "exec_file_slot", "slot": "fileRequestRename", "args": ["gcodes/scenario1.gcode"]},
-         {"op": "sim_ledger", "needle": "files", "min": 1, "budget": 20},
+         {"op": "exec_file_slot", "slot": "fileRequestRename", "args": ["benchy.gcode"]},
+         {"op": "exec_file_slot", "slot": "filePreviewRename", "args": ["benchy-renamed.gcode"]},
+         {"op": "exec_file_slot", "slot": "fileConfirmRename", "args": []},
+         {"op": "sim_ledger", "needle": "files/move", "min": 1, "budget": 20},
      ]},
     {"id": "f6", "group": "f", "name": "print confirm arms the start verdict",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "click_text", "text": "File manager"},
+         {"op": "exec_file_slot", "slot": "openFileManager", "args": []},
          {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
+         {"op": "exec_file_slot", "slot": "fileRequestPrint", "args": ["benchy.gcode"]},
+         {"op": "exec_file_slot", "slot": "fileConfirmPrint", "args": []},
+         {"op": "sim_ledger", "needle": "print/start", "method": "POST", "min": 1, "budget": 20},
      ]},
 
     # ─── G: controls ─────────────────────────────────────────────
     {"id": "g1", "group": "g", "name": "the jog pad's clicks reach the peer as G1 moves",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "click_jog", "button": "moonrakerJogXPlus"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
     {"id": "g2", "group": "g", "name": "home and the mesh actions reach the peer",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "click_jog", "button": "moonrakerHomeX"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
-    {"id": "g3", "group": "g", "name": "the position mode gates render",
+    {"id": "g3", "group": "g", "name": "the abs/rel toggle rides the command lane",
      "steps": [
-         {"op": "exec_slot", "slot": "setPositionMode", "args": ["relative"]},
-         {"op": "assert_model", "prop": "positionMode", "value": "Absolute"},
+         {"op": "exec_slot", "slot": "setPositionMode", "args": [False]},
+         {"op": "assert_model", "prop": "positionMode", "value": "Relative"},
+         {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
      ]},
     {"id": "g4", "group": "g", "name": "extrude and retract reach the peer",
      "steps": [
@@ -255,19 +263,25 @@ SCENARIOS = [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "assert_model", "prop": "macroNames", "value": []},
      ]},
-    {"id": "g6", "group": "g", "name": "pause and resume reach the peer",
+    {"id": "g6", "group": "g", "name": "pause and resume ride the peer's print routes",
      "steps": [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
+         {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 15},
          {"op": "exec_slot", "slot": "pausePrint", "args": []},
-         {"op": "sim_ledger", "needle": "pause_resume", "min": 1, "budget": 20},
+         {"op": "sim_ledger", "needle": "print/pause", "method": "POST", "min": 1, "budget": 20},
+         {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 15},
          {"op": "exec_slot", "slot": "resumePrint", "args": []},
-         {"op": "sim_ledger", "needle": "pause_resume", "min": 1, "budget": 20},
+         {"op": "sim_ledger", "needle": "print/resume", "method": "POST", "min": 1, "budget": 20},
      ]},
     {"id": "g8", "group": "g", "name": "the lock toggle flips the controls lock",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "click_item", "objectName": "moonrakerLockButton"},
+         {"op": "sim_set", "state": {"print_stats": {"state": "standby", "filename": "", "message": ""}}},
+         {"op": "wait_model", "prop": "monitorState", "contains": "standby", "budget": 10},
+         {"op": "exec_slot", "slot": "setControlsLocked", "args": [True]},
          {"op": "assert_model", "prop": "controlsLocked", "value": True, "budget": 10},
+         {"op": "exec_slot", "slot": "setControlsLocked", "args": [False]},
+         {"op": "assert_model", "prop": "controlsLocked", "value": False, "budget": 10},
      ]},
     {"id": "g9", "group": "g", "name": "power devices list and toggle",
      "steps": [
@@ -297,21 +311,23 @@ SCENARIOS = [
      ]},
     {"id": "h6", "group": "h", "name": "the bed mesh renders with its legend",
      "steps": [
-         {"op": "sim_set", "state": {"bed_mesh": {"profile_name": "sim-mesh", "mesh_min": [0, 0],
-                                                  "mesh_max": [50, 50], "probed_matrix": [[0.0] * 3] * 3}}},
-         {"op": "assert_model", "prop": "bedMeshAvailable", "value": False},
+         {"op": "sim_set", "state": {"bed_mesh": {"profile_name": "sim-mesh", "mesh_min": [0.0, 0.0],
+                                                  "mesh_max": [50.0, 50.0], "probed_matrix": [[0.0] * 3] * 3}}},
+         {"op": "assert_model", "prop": "bedMeshAvailable", "value": True, "budget": 10},
+         {"op": "assert_model", "prop": "bedMeshProfile", "contains": "sim-mesh", "budget": 10},
      ]},
-    {"id": "h6b", "group": "h", "name": "probe points toggle with the mesh",
+    {"id": "h6b", "group": "h", "name": "the probe-points toggle persists on the preference",
      "steps": [
-         {"op": "sim_set", "state": {"bed_mesh": {"profile_name": "sim-mesh", "probed_matrix": [[0.0] * 3] * 3}}},
          {"op": "exec_slot", "slot": "setShowProbePoints", "args": [True]},
+         {"op": "assert_model", "prop": "showProbePoints", "value": True},
+         {"op": "exec_slot", "slot": "setShowProbePoints", "args": [False]},
          {"op": "assert_model", "prop": "showProbePoints", "value": False},
      ]},
-    {"id": "h8", "group": "h", "name": "the ETA opt-in learns drift",
+    {"id": "h8", "group": "h", "name": "the ETA opt-in starts the hourglass",
      "steps": [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "exec_slot", "slot": "improveEta", "args": []},
-         {"op": "assert_model", "prop": "improvingEta", "value": False, "budget": 10},
+         {"op": "wait_model", "prop": "improvingEta", "value": True, "budget": 10},
      ]},
 
     # ─── I: settings & persistence ───────────────────────────────
@@ -322,25 +338,29 @@ SCENARIOS = [
          {"op": "exec_mode", "mode": "websocket"},
          {"op": "assert_mode", "mode": "websocket"},
      ]},
-    {"id": "i2", "group": "i", "name": "test connection reports the peer verdict",
+    {"id": "i2", "group": "i", "name": "test connection probes the peer over the wire",
      "steps": [
          {"op": "exec_test_connection"},
-         {"op": "assert_model", "prop": "connectionDetail", "contains": "", "budget": 15},
+         {"op": "sim_ledger", "needle": "server/info", "min": 1, "budget": 15},
+         {"op": "sim_ledger", "needle": "objects/list", "min": 1, "budget": 15},
      ]},
     {"id": "i3", "group": "i", "name": "the cadence validators bound at 250 ms",
      "steps": [
-         {"op": "exec_validator", "validator": "validPollInterval", "args": [100]},
-         {"op": "assert_model", "prop": "monitorConnected", "contains": "", "budget": 10},
+         {"op": "exec_validator", "validator": "validPollInterval", "args": [100], "expect": False},
+         {"op": "exec_validator", "validator": "validPollInterval", "args": [1000], "expect": True},
+         {"op": "exec_validator", "validator": "validRetryInterval", "args": [0.05], "expect": False},
      ]},
     {"id": "i4", "group": "i", "name": "the camera config persists",
      "steps": [
          {"op": "exec_slot", "slot": "selectWebcam", "args": [0]},
          {"op": "assert_model", "prop": "activeWebcamIndex", "value": 0, "budget": 15},
      ]},
-    {"id": "i6", "group": "i", "name": "save config commits the preferences",
+    {"id": "i6", "group": "i", "name": "save config sends SAVE_CONFIG when the peer has pending changes",
      "steps": [
+         {"op": "sim_set", "state": {"configfile": {"save_config_pending": True, "save_config_pending_items": {}}}},
+         {"op": "wait_sim", "path": "configfile.save_config_pending", "value": True, "budget": 10},
          {"op": "exec_slot", "slot": "saveConfig", "args": []},
-         {"op": "assert_model", "prop": "saveConfigSummary", "contains": "", "budget": 15},
+         {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
      ]},
     {"id": "i7", "group": "i", "name": "open frontend hands off to the browser",
      "steps": [

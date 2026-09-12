@@ -90,6 +90,15 @@ class MonitorData(QObject):
         connected = bool(args[0]) if args else self.connected
         if len(args) > 1:
             self._connection_detail = str(args[1])
+        # The automatic reconnect must re-arm the monitor: an
+        # invalidation deactivated it, and only the MANUAL reconnect
+        # paths re-activated it before — a transport handover (or any
+        # reconnect) left the model alive but discovery-dead forever
+        # (webcams empty, temperatures gone; the harness's tier-2
+        # handover scenario caught it). The re-arm is a no-op when
+        # already active.
+        if connected and not self._active:
+            self.set_active(True)
         self.connectionStateChanged.emit(connected)
         self.changed.emit()
 

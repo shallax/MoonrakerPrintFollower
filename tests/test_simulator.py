@@ -166,6 +166,93 @@ if tornado is not None:
                 conn.close()
             self.io_loop.run_sync(exercise)
 
+        def test_push_patch_carries_every_subscribed_object(self):
+            async def exercise():
+                conn = await tornado.websocket.websocket_connect(
+                    f"ws://127.0.0.1:{self.sim.port}/websocket")
+                conn.write_message(json.dumps({"jsonrpc": "2.0", "method": "printer.objects.subscribe",
+                                               "params": {"objects": {"configfile": None,
+                                                                      "fan": None}}, "id": 1}))
+                await conn.read_message()
+                # The regression the tier-2 i6/h6 calibration exposed:
+                # the pump once diffed only five hard-coded objects and
+                # silently dropped configfile/fan changes.
+                self.sim.printer.scenario(configfile={"save_config_pending": True,
+                                                      "save_config_pending_items": {}})
+                frame = json.loads(await conn.read_message())
+                self.assertEqual(frame["method"], "notify_status_update")
+                self.assertIn("configfile", frame["params"][0])
+                self.sim.printer.scenario(fan={"speed": 0.4})
+                frame = json.loads(await conn.read_message())
+                self.assertEqual(frame["method"], "notify_status_update")
+                self.assertIn("fan", frame["params"][0])
+                conn.close()
+            self.io_loop.run_sync(exercise)
+
+        def test_reset_clears_state_arms_and_ledger(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"require_api_key": True,
+                                                    "refuse_subscribe": "down",
+                                                    "console_lines": [{"type": "response",
+                                                                       "message": "// x", "time": 1.0}],
+                                                    "print_stats": {"state": "printing",
+                                                                    "filename": "x.gcode"}}))
+                # The 401 the arm produces still lands in the ledger
+                # (prepare records before the auth gate) — the reset
+                # must clear it.
+                from tornado.httpclient import HTTPClientError
+                try:
+                    await client.fetch(self.base + "/server/info")
+                except HTTPClientError:
+                    pass
+                await client.fetch(self.base + "/harness/reset", method="POST", body=b"{}")
+                state = json.loads((await client.fetch(self.base + "/harness/state")).body)["result"]
+                self.assertFalse(state["require_api_key"])
+                self.assertEqual(state["print_stats"]["state"], "standby")
+                self.assertEqual(self.sim.printer.refuse_subscribe, "")
+                self.assertEqual(self.sim.printer.ledger, [])
+                self.assertLessEqual(len(self.sim.printer.console_lines), 1)
+            self.io_loop.run_sync(exercise)
+
+        def test_pause_resume_cancel_routes_move_print_stats(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"print_stats": {"state": "printing",
+                                                                    "filename": "x.gcode"}}))
+                for route, expected in (("print/pause", "paused"), ("print/resume", "printing"),
+                                        ("print/cancel", "cancelled")):
+                    await client.fetch(self.base + f"/printer/{route}", method="POST", body=b"{}")
+                    state = json.loads((await client.fetch(self.base + "/harness/state")).body)["result"]
+                    self.assertEqual(state["print_stats"]["state"], expected, route)
+            self.io_loop.run_sync(exercise)
+
+        def test_delete_removes_the_file_from_the_listing(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                await client.fetch(self.base + "/server/files/gcodes/scenario1.gcode",
+                                   method="DELETE")
+                listing = json.loads((await client.fetch(
+                    self.base + "/server/files/directory?path=gcodes&extended=true")).body)
+                names = [entry["filename"] for entry in listing["result"]["files"]]
+                self.assertNotIn("scenario1.gcode", names)
+                self.assertIn("benchy.gcode", names)
+            self.io_loop.run_sync(exercise)
+
+        def test_ws_upgrade_refuses_without_the_key(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"require_api_key": True}))
+                from tornado.httpclient import HTTPClientError
+                with self.assertRaises(HTTPClientError) as caught:
+                    await tornado.websocket.websocket_connect(
+                        f"ws://127.0.0.1:{self.sim.port}/websocket")
+                self.assertEqual(caught.exception.code, 401)
+            self.io_loop.run_sync(exercise)
+
         def test_klippy_restart_wipes_subscriptions(self):
             async def exercise():
                 conn = await tornado.websocket.websocket_connect(
