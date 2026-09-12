@@ -232,6 +232,98 @@ class HarnessServer(QObject):
                 return {"id": request_id, "ok": True}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "set_stage":
+            # Environment workaround, NOT a test mechanism: under this
+            # Xvfb Cura's stage-switch header never instantiates (the
+            # stages register, the buttons don't), so the harness's
+            # Phase-A gallery drives the stage change through the
+            # controller — the same call the missing buttons make —
+            # and the captures show the real UI follow. The tier-1
+            # scenarios still click real buttons; this verb exists
+            # only until the header renders.
+            wanted = str(request.get("stage") or "")
+            try:
+                controller = Application.getInstance().getController()
+                before = str(controller.getActiveStage().getId())
+                controller.setActiveStage(wanted)
+                after = str(controller.getActiveStage().getId())
+                return {"id": request_id, "ok": before != after or before == wanted,
+                        "before": before, "after": after}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "stages":
+            try:
+                controller = Application.getInstance().getController()
+                methods = [name for name in ("getStages", "getAllStages", "getRegisteredStages")
+                           if hasattr(controller, name)]
+                for name in methods:
+                    stages = getattr(controller, name)()
+                    ids = [stage.getId() if hasattr(stage, "getId") else str(stage) for stage in stages]
+                    return {"id": request_id, "ok": True, "via": name, "stages": ids}
+                return {"id": request_id, "ok": False, "error": "no stage list API"}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "stage_buttons":
+            # Cura's stage switch: MainWindowHeader's Repeater delegate
+            # carries a stageId property — the reliable handle.
+            rows = []
+            for window in visible_windows:
+                for item in window.contentItem().findChildren(QQuickItem):
+                    try:
+                        stage_id = item.property("stageId")
+                    except Exception:
+                        continue
+                    if isinstance(stage_id, str) and stage_id:
+                        rect = self._rect(item)
+                        rows.append({"stageId": stage_id,
+                                     "class": item.metaObject().className(),
+                                     "x": rect["x"], "y": rect["y"],
+                                     "w": rect["w"], "h": rect["h"],
+                                     "vis": bool(item.isVisible())})
+            rows.sort(key=lambda r: (r["stageId"]))
+            return {"id": request_id, "ok": True, "items": rows}
+        if cmd == "root_children":
+            rows = []
+            for window in visible_windows:
+                for item in window.contentItem().childItems():
+                    try:
+                        opacity = float(item.property("opacity"))
+                    except Exception:
+                        opacity = 1.0
+                    try:
+                        z = float(item.property("z"))
+                    except Exception:
+                        z = 0.0
+                    rows.append({"class": item.metaObject().className(),
+                                 "x": round(item.x()), "y": round(item.y()),
+                                 "w": round(item.width()), "h": round(item.height()),
+                                 "vis": bool(item.isVisible()), "opacity": opacity, "z": z})
+            rows.sort(key=lambda r: (r["z"], r["y"], r["x"]))
+            return {"id": request_id, "ok": True, "items": rows[:30]}
+        if cmd == "stage_menu":
+            # Diagnose the stage-switcher Loader: which component the
+            # active stage provides and whether the Loader instanced it.
+            try:
+                stage = Application.getInstance().getController().getActiveStage()
+                component = str(getattr(stage, "stageMenuComponent", "")) if stage is not None else ""
+                loaders = []
+                for window in visible_windows:
+                    for item in window.contentItem().findChildren(QQuickItem):
+                        if item.metaObject().className().startswith("QQuickLoader"):
+                            try:
+                                status = item.property("status")
+                                status = int(status) if not isinstance(status, str) else status
+                            except Exception:
+                                status = "?"
+                            loaders.append({"source": str(item.property("source")),
+                                            "status": str(status),
+                                            "item": item.property("item") is not None,
+                                            "x": item.x(), "y": item.y(),
+                                            "w": round(item.width()), "h": round(item.height())})
+                return {"id": request_id, "ok": True, "component": component,
+                        "loaders": [l for l in loaders if l["w"] > 50 or l["source"]][:8]}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "probe_feed":
             # The Phase-B transport proof: the PRODUCTION client and
             # session stack (the same code the Monitor uses) against
@@ -297,29 +389,41 @@ class HarnessServer(QObject):
             # follows the dialog item's visible) is environment
             # orchestration, not a claim about the plugin's UI.
             try:
-                target = None
+                hidden = []
                 for window in visible_windows:
                     for item in window.contentItem().findChildren(QQuickItem):
+                        klass = item.metaObject().className()
                         try:
                             t = item.property("text")
                         except Exception:
                             t = None
-                        if isinstance(t, str) and "Cura is developed by" in t:
-                            target = item
-                            break
-                    if target is not None:
-                        break
-                if target is None:
-                    return {"id": request_id, "ok": False, "error": "welcome label not found"}
-                chain = []
-                item = target
-                for _ in range(6):
-                    item.setProperty("visible", False)
-                    chain.append(item.metaObject().className())
-                    item = item.parentItem()
-                    if item is None:
-                        break
-                return {"id": request_id, "ok": True, "chain": chain}
+                        if ("WelcomeDialogItem" in klass or "Wizard" in klass
+                                or (isinstance(t, str) and "Cura is developed by" in t)):
+                            item.setProperty("visible", False)
+                            hidden.append(klass)
+                if not hidden:
+                    return {"id": request_id, "ok": False, "error": "welcome items not found"}
+                # The label's ancestors up to the dialog root: the
+                # wizard chrome (Cancel/Ok/Close row) is NOT inside the
+                # The grey-out is the real blocker: a full-window
+                # overlay (opacity 0.7 per Cura.qml) whose MouseArea
+                # eats every click. Hide it, the wizard panel, and the
+                # floating welcome texts — never the window root, the
+                # overlay layer or the plugin's own items.
+                for window in visible_windows:
+                    for item in window.contentItem().findChildren(QQuickItem):
+                        klass = item.metaObject().className()
+                        try:
+                            opacity = float(item.property("opacity"))
+                        except Exception:
+                            opacity = 1.0
+                        if abs(opacity - 0.7) < 0.01 and item.width() > 900 and item.height() > 500:
+                            item.setProperty("visible", False)
+                            hidden.append("grey-out: " + klass)
+                        if "WizardPanel" in klass:
+                            item.setProperty("visible", False)
+                            hidden.append("panel: " + klass)
+                return {"id": request_id, "ok": True, "hidden": hidden[:20]}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "complete_welcome":
