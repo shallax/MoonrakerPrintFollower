@@ -547,7 +547,11 @@ class HarnessServer(QObject):
                 namespace["windows"] = windows
                 namespace["visible_windows"] = visible_windows
                 exec(compile(code, "<harness-exec>", "exec"), namespace)
-                return {"id": request_id, "ok": True, "result": repr(namespace.get("result"))[:2000]}
+                try:
+                    result = json.dumps(namespace.get("result"))
+                except Exception:
+                    result = repr(namespace.get("result"))
+                return {"id": request_id, "ok": True, "result": result[:4000]}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": repr(exc)}
         if cmd == "find_text":
@@ -595,13 +599,12 @@ class HarnessServer(QObject):
                             "text": wanted}
                 target = None
                 for item in matches:
-                    if "Button" in item.metaObject().className():
+                    klass = item.metaObject().className()
+                    if "Button" in klass or "MenuItem" in klass:
                         target = item
                         break
                 if target is None:
                     target = max(matches, key=lambda item: item.width() * item.height())
-                    return {"id": request_id, "ok": False, "error": "no visible item with that text",
-                            "text": wanted}
                 scene = target.mapToScene(QPointF(0, 0))
                 x = round(scene.x() + target.width() / 2)
                 y = round(scene.y() + target.height() / 2)
