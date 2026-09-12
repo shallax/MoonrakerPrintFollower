@@ -306,6 +306,89 @@ for item in _walk(window.contentItem()):
 """
 
 
+SLOT_READ = """
+window = _main_window()
+result = {}
+for item in _walk(window.contentItem()):
+    try:
+        name = item.property("objectName")
+    except Exception:
+        name = None
+    if name == "moonrakerM117Slot":
+        try:
+            result["text"] = str(item.property("text"))
+            result["height"] = round(item.height())
+        except Exception:
+            pass
+        break
+"""
+
+
+def scenario3():
+    # Tier-1 #3: M117 in the Print-job section. The simulator pushes
+    # display_status.message A, then B: the RENDERED slot label shows
+    # B and A is absent; then the message clears and the slot's
+    # previous content returns (empty, fixed height — no reflow).
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario3.mp4")])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
+                      "hello succeeds", True, shot("00-boot")))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
+                      "welcome not up", gate, shot("01-gate")))
+        wait_stage("PrepareStage", timeout_ms=60000)
+        click_stage("MonitorStage")
+        monitor = wait_stage("MonitorStage", timeout_ms=20000)
+        steps.append(("02-monitor", "real click on Cura's own MONITOR header button",
+                      "stage == MonitorStage", monitor.get("ok") is True, shot("02-monitor")))
+        connected = bool(wait_for(
+            lambda: exec_rpc(MODEL_READ).get("connected"), 60.0))
+        steps.append(("03-connected", "the plugin's websocket client reached the simulator",
+                      "monitorConnected", connected, shot("03-connected")))
+        slot = exec_rpc(SLOT_READ)
+        baseline_height = slot.get("height")
+        steps.append(("04-slot-present", "the permanent M117 slot renders in the Print-job section",
+                      "moonrakerM117Slot found, height %s" % baseline_height,
+                      bool(baseline_height), shot("04-slot-present")))
+        # Message A. The push is idempotent, so a re-push rides over
+        # the aux lane's first-message timing (a user sending another
+        # M117 is re-stimulation, not an assertion retry).
+        saw_a = False
+        for _ in range(3):
+            sim_http("/harness/scenario", "POST", {"display_status": {"message": "sim-m117-a", "progress": 0.5}})
+            if wait_for(lambda: exec_rpc(SLOT_READ).get("text") == "sim-m117-a", 8.0, 1.0):
+                saw_a = True
+                break
+        steps.append(("05-message-a", "the simulator pushes M117 message A",
+                      "the rendered slot shows sim-m117-a", saw_a, shot("05-message-a")))
+        # Message B replaces A.
+        sim_http("/harness/scenario", "POST", {"display_status": {"message": "sim-m117-b", "progress": 0.5}})
+        saw_b = bool(wait_for(lambda: exec_rpc(SLOT_READ).get("text") == "sim-m117-b", 15.0, 1.0))
+        steps.append(("06-message-b", "the simulator pushes M117 message B",
+                      "the rendered slot shows sim-m117-b and A is gone", saw_b, shot("06-message-b")))
+        # The message clears: the slot's previous content returns.
+        sim_http("/harness/scenario", "POST", {"display_status": {"message": "", "progress": 0.5}})
+        cleared_ok = bool(wait_for(lambda: exec_rpc(SLOT_READ).get("text") == "", 15.0, 1.0))
+        cleared = exec_rpc(SLOT_READ)
+        steps.append(("07-cleared", "the M117 message clears",
+                      "the slot is empty again at its fixed height (no reflow): %s" %
+                      ("%spx" % cleared.get("height") if cleared else "no slot"),
+                      bool(cleared_ok) and cleared.get("height") == baseline_height,
+                      shot("07-cleared")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+    title = "Tier-1 #3 — M117 in the Print-job section"
+    write_gallery(steps, False, title)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return 0 if all(step[3] for step in steps) else 1
+
+
 def scenario2(expect_fail=False):
     # Tier-1 #2: the card stays through load and after render. Enter
     # Preview with nothing loaded (the empty card), click Load current
@@ -490,6 +573,8 @@ def main():
         return scenario1(expect_fail=(mode == "scenario1fail"))
     if mode == "scenario2":
         return scenario2()
+    if mode == "scenario3":
+        return scenario3()
     expect_fail = mode == "fail"
     return scenario(expect_fail)
 

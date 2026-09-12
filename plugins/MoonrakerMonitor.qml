@@ -1862,6 +1862,7 @@ Component {
                                 // NO-REFLOW RULE: a permanent slot — an
                                 // M117 message arriving mid-print used to
                                 // shove the grid down and back.
+                                objectName: "moonrakerM117Slot"
                                 height: 36 * screenScaleFactor
                                 text: root.printer != null ? root.printer.monitorMessage : ""
                                 color: UM.Theme.getColor("text_inactive")

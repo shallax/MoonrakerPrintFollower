@@ -105,6 +105,17 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(follower.client.session.base_url, "http://imported")
         self.assertTrue(transport.requests)
 
+    def test_m117_message_publishes_from_the_aux_snapshot(self):
+        # The aux snapshot's objects arrive as mappingproxies (the
+        # MonitorData contract); the M117 slot reads the message from
+        # whatever mapping shape they take. The isinstance(dict)
+        # check never matched the live shape and the message never
+        # reached the slot (the author's live report; the harness's
+        # scenario 3 caught it).
+        model, _client, _transport = self.monitor()
+        model._data._update(auxiliary={"display_status": {"message": "probe-m117-x", "progress": 0.6}})
+        self.assertEqual(model.monitorMessage, "probe-m117-x")
+
     def test_unknown_machine_migration_is_retried_when_stack_appears(self):
         prefs = Preferences({"moonraker_print_follower/url": "http://legacy",
                              "moonraker_print_follower/enabled": True})

@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Mapping
 from copy import deepcopy
 from PyQt6.QtCore import QLocale, QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from UM.Resources import Resources
@@ -603,7 +604,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # not print_stats — the Print-job slot reads it from the aux
         # snapshot (the author's report: M117 showed nowhere).
         display = (self._data.snapshot.auxiliary or {}).get("display_status")
-        if isinstance(display, dict):
+        if isinstance(display, Mapping):
             message = str(display.get("message") or "")
             if message:
                 values["monitorMessage"] = message
