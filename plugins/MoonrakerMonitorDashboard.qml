@@ -135,6 +135,7 @@ Component {
             id: emergencyButtonComponent
             Item {
                 id: emergencyButton
+                objectName: "moonrakerEmergencyButton"
                 property int clicks: root.printer != null ? root.printer.emergencyStopClicks : 0
                 // The author's ruling (2026-09-10): while DISCONNECTED
                 // no Monitor-page control is enabled — the emergency
@@ -322,6 +323,7 @@ Component {
                     // icon (closed = locked), the tooltip carries the action.
                     UM.SimpleButton {
                         id: lockButton
+                        objectName: "moonrakerLockButton"
                         visible: !root.controlsCollapsed
                         Layout.alignment: Qt.AlignVCenter
                         width: 28 * screenScaleFactor
@@ -790,6 +792,7 @@ Component {
                                         text: "↑ Y"
 
                                         tooltip: "Move the toolhead towards the Y maximum."
+                                        objectName: "moonrakerJogYPlus"
 
                                         enabled: root.printer != null && root.printer.jogEnabled
 
@@ -805,6 +808,7 @@ Component {
                                         text: "← X"
 
                                         tooltip: "Move the toolhead towards the X minimum."
+                                        objectName: "moonrakerJogXMinus"
 
                                         enabled: root.printer != null && root.printer.jogEnabled
 
@@ -823,6 +827,7 @@ Component {
                                         text: "→ X"
 
                                         tooltip: "Move the toolhead towards the X maximum."
+                                        objectName: "moonrakerJogXPlus"
 
                                         enabled: root.printer != null && root.printer.jogEnabled
 
@@ -838,6 +843,7 @@ Component {
                                         text: "↓ Y"
 
                                         tooltip: "Move the toolhead towards the Y minimum."
+                                        objectName: "moonrakerJogYMinus"
 
                                         enabled: root.printer != null && root.printer.jogEnabled
 
@@ -854,6 +860,7 @@ Component {
                                         text: "↑ Z"
 
                                         tooltip: "Move the toolhead up."
+                                        objectName: "moonrakerJogZPlus"
 
                                         enabled: root.printer != null && root.printer.jogEnabled
 
@@ -864,6 +871,7 @@ Component {
                                         text: "↓ Z"
 
                                         tooltip: "Move the toolhead down."
+                                        objectName: "moonrakerJogZMinus"
 
                                         enabled: root.printer != null && root.printer.jogEnabled
 
@@ -878,6 +886,7 @@ Component {
                                 Cura.SecondaryButton {
                                     Layout.fillWidth: true
                                     text: "Home X"
+                                    objectName: "moonrakerHomeX"
                                     tooltip: "Home the X axis."
                                     enabled: root.printer != null && root.printer.jogEnabled
                                     onClicked: root.printer.home("x")
@@ -885,6 +894,7 @@ Component {
                                 Cura.SecondaryButton {
                                     Layout.fillWidth: true
                                     text: "Home Y"
+                                    objectName: "moonrakerHomeY"
                                     tooltip: "Home the Y axis."
                                     enabled: root.printer != null && root.printer.jogEnabled
                                     onClicked: root.printer.home("y")
@@ -892,6 +902,7 @@ Component {
                                 Cura.SecondaryButton {
                                     Layout.fillWidth: true
                                     text: "Home Z"
+                                    objectName: "moonrakerHomeZ"
                                     tooltip: "Home the Z axis."
                                     enabled: root.printer != null && root.printer.jogEnabled
                                     onClicked: root.printer.home("z")
