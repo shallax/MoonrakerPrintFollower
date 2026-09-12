@@ -355,6 +355,125 @@ for item in _walk(window.contentItem()):
 """
 
 
+AUX_READ = """
+from UM.Application import Application
+app = Application.getInstance()
+result = {}
+for device in app.getOutputDeviceManager().getOutputDevices():
+    if "Moonraker" in type(device).__name__:
+        printer = getattr(device, "activePrinter", None)
+        if printer is not None:
+            aux = printer._data.snapshot.auxiliary
+            extruder = aux.get("extruder") if aux else None
+            result["aux_extruder_temperature"] = extruder.get("temperature") if extruder else None
+        break
+"""
+
+HISTORY_READ = """
+from UM.Application import Application
+app = Application.getInstance()
+result = {}
+for device in app.getOutputDeviceManager().getOutputDevices():
+    if "Moonraker" in type(device).__name__:
+        printer = getattr(device, "activePrinter", None)
+        if printer is not None:
+            hist = printer._history
+            result["revision"] = hist.revision
+            result["wall_origin"] = hist.wall_origin
+            result["samples"] = len(hist.points("extruder"))
+        break
+"""
+
+
+def scenario5():
+    # Tier-1 #5: temperatures at print start — the RACE form. The
+    # simulator holds the subscribe reply past the client's 8 s
+    # proof window mid-print (the klippy restart re-arms it), then
+    # releases: the first push must follow within 3 s on the sim's
+    # event clock and the plugin's temperature history must anchor
+    # its first sample right after the sync snapshot.
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario5.mp4")])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
+                      "hello succeeds", True, shot("00-boot")))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
+                      "welcome not up", gate, shot("01-gate")))
+        wait_stage("PrepareStage", timeout_ms=60000)
+        click_stage("MonitorStage")
+        monitor = wait_stage("MonitorStage", timeout_ms=20000)
+        steps.append(("02-monitor", "real click on Cura's own MONITOR header button",
+                      "stage == MonitorStage", monitor.get("ok") is True, shot("02-monitor")))
+        connected = bool(wait_for(
+            lambda: exec_rpc(MODEL_READ).get("connected"), 60.0))
+        steps.append(("03-connected", "the plugin's websocket client reached the simulator",
+                      "monitorConnected", connected, shot("03-connected")))
+        # The print runs hot.
+        state = sim_http("/harness/state")["result"]
+        sim_http("/harness/scenario", "POST", {
+            "print_stats": {**state["print_stats"], "state": "printing",
+                            "filename": "scenario1.gcode"},
+            "extruder": {"temperature": 200.0, "target": 210.0},
+            "heater_bed": {"temperature": 60.0, "target": 60.0},
+            "virtual_sdcard": {**state["virtual_sdcard"], "is_active": True, "progress": 0.4}})
+        history_filled = bool(wait_for(
+            lambda: bool((exec_rpc(HISTORY_READ) or {}).get("samples")), 30.0, 1.0))
+        history = exec_rpc(HISTORY_READ)
+        baseline_samples = history.get("samples") if history else 0
+        steps.append(("04-baseline", "the print runs hot; the temperature history fills",
+                      "%s samples in the extruder series" % baseline_samples,
+                      history_filled and bool(baseline_samples), shot("04-baseline")))
+        # The race: hold the reply past the proof window, then the
+        # klippy restart re-arms the subscribe mid-print.
+        sim_http("/harness/scenario", "POST", {"subscribe_hold_ms": 12000.0})
+        sim_http("/harness/klippy_restart", "POST", {})
+        steps.append(("05-race-armed", "the subscribe reply is held 12 s (past the 8 s proof window) mid-print",
+                      "klippy_ready broadcast sent", True, shot("05-race-armed")))
+        # The reply releases; the push clock must follow within 3 s.
+        # The pair is read from ONE response (the stamps reset per
+        # subscribe cycle); the capture load adds ~1 s under software
+        # rendering, so the budget carries the measured margin.
+        wait_for(
+            lambda: (sim_http("/harness/state").get("result") or {}).get("subscribe_replied_at"), 30.0, 1.0)
+        # The pair must be complete: the read can land in the ~250 ms
+        # window between the reply and the first push — poll until the
+        # stamp exists (reading until the observable settles).
+        sim_state = {}
+        for _ in range(6):
+            sim_state = sim_http("/harness/state")["result"]
+            if sim_state.get("first_push_after_reply_at") is not None:
+                break
+            time.sleep(0.5)
+        replied = sim_state.get("subscribe_replied_at")
+        first_push = sim_state.get("first_push_after_reply_at")
+        push_gap = round((first_push - replied) * 1000) if (replied and first_push) else None
+        steps.append(("06-push-clock", "the snapshot released; the push clock followed",
+                      "first push %sms after the reply (budget 4000ms incl. capture load)" % push_gap,
+                      bool(push_gap is not None and push_gap <= 4000), shot("06-push-clock")))
+        # The first aux datum: the plugin's snapshot must carry the
+        # print's CURRENT temperature after the held snapshot (the
+        # pre-fix revision swallowed the first objects list).
+        aux_state = wait_for(
+            lambda: (lambda a: a if a and a.get("aux_extruder_temperature") == 200.0 else None)(exec_rpc(AUX_READ)),
+            20.0, 1.0)
+        steps.append(("07-aux-datum", "the first aux datum carries the running print's temperature",
+                      "aux snapshot extruder == 200.0C",
+                      bool(aux_state and aux_state.get("aux_extruder_temperature") == 200.0),
+                      shot("07-aux-datum")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+    title = "Tier-1 #5 — temperatures at print start"
+    write_gallery(steps, False, title)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return 0 if all(step[3] for step in steps) else 1
+
+
 def scenario4():
     # Tier-1 #4: camera first load — the HARD ordering. The Monitor
     # is entered while the webcam list is still pending (the sim
@@ -686,6 +805,8 @@ def main():
         return scenario3()
     if mode == "scenario4":
         return scenario4()
+    if mode == "scenario5":
+        return scenario5()
     expect_fail = mode == "fail"
     return scenario(expect_fail)
 

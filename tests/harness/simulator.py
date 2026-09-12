@@ -112,6 +112,14 @@ class PrinterState:
         self.broken_start = False
         self.extruder_ramp_deg_s = 30.0
         self.connections = 0
+        # The scenario-5 race: hold the subscribe reply past the
+        # client's proof window, then release — the snapshot must
+        # still unlock the aux feed promptly. Stamps on the sim's
+        # monotonic event clock.
+        self.subscribe_hold_ms = 0.0
+        self.subscribe_replied_at = None
+        self.subscribe_replied_wall = None
+        self.first_push_after_reply_at = None
         # Changes-only pushes: the patch must carry exactly the
         # objects whose values moved since the last frame (the
         # protocol contract the client's masked diff depends on).
@@ -200,7 +208,7 @@ class PrinterState:
             if name in self.state:
                 self.state[name] = value
             elif name in ("cold_start", "broken_start", "extruder_ramp_deg_s",
-                          "slow_first_frame_ms", "route_delay_ms"):
+                          "slow_first_frame_ms", "route_delay_ms", "subscribe_hold_ms"):
                 setattr(self, name, value)
 
     def push_patch(self) -> Dict[str, Any]:
@@ -307,6 +315,16 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
         if self._printer.refuse_subscribe:
             self._respond(request_id, None, {"code": 400, "message": self._printer.refuse_subscribe})
             return
+        if self._printer.subscribe_hold_ms > 0:
+            asyncio.create_task(self._subscribe_after_hold(request_id, params))
+            return
+        self._subscribe_now(request_id, params)
+
+    async def _subscribe_after_hold(self, request_id: int, params: Dict[str, Any]) -> None:
+        await asyncio.sleep(self._printer.subscribe_hold_ms / 1000.0)
+        self._subscribe_now(request_id, params)
+
+    def _subscribe_now(self, request_id: int, params: Dict[str, Any]) -> None:
         wanted = {name: None for name in (params.get("objects") or {})}
         self._subscribed = {name: dict(self._printer.state[name]) for name in wanted
                             if name in self._printer.state}
@@ -315,6 +333,9 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
                                    "eventtime": time.time()})
         self._printer._last_pushed.update({name: dict(value) for name, value in self._subscribed.items()})
         self._printer.subscription_wiped = False
+        self._printer.subscribe_replied_at = time.monotonic()
+        self._printer.subscribe_replied_wall = time.time()
+        self._printer.first_push_after_reply_at = None
         if self._push_task is None:
             self._push_task = asyncio.create_task(self._pump())
 
@@ -331,6 +352,9 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
             patch = {name: value for name, value in patch.items() if name in self._subscribed}
             if not patch:
                 continue
+            if self._printer.subscribe_replied_at is not None and \
+                    self._printer.first_push_after_reply_at is None:
+                self._printer.first_push_after_reply_at = time.monotonic()
             frame = {"jsonrpc": "2.0", "method": "notify_status_update",
                      "params": [patch, time.time()]}
             try:
@@ -444,6 +468,9 @@ class ControlHandler(tornado.web.RequestHandler):
                 body = {}
             self._printer.scenario(**body)
             self.write(json.dumps({"result": "ok"}))
+        elif path == "klippy_restart":
+            self._printer.klippy_restart()
+            self.write(json.dumps({"result": "ok"}))
         elif path == "reset":
             arms = ("cold_start", "broken_start")
             for arm in arms:
@@ -461,7 +488,10 @@ class ControlHandler(tornado.web.RequestHandler):
             "connections": self._printer.connections,
             "cold_start": self._printer.cold_start,
             "broken_start": self._printer.broken_start,
-            "webcam_streams": self._printer.webcam_streams}}))
+            "webcam_streams": self._printer.webcam_streams,
+            "subscribe_replied_at": self._printer.subscribe_replied_at,
+            "subscribe_replied_wall": self._printer.subscribe_replied_wall,
+            "first_push_after_reply_at": self._printer.first_push_after_reply_at}}))
 
 
 class MJPEGHandler(tornado.web.RequestHandler):
