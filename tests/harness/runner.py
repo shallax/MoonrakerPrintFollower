@@ -355,6 +355,131 @@ for item in _walk(window.contentItem()):
 """
 
 
+CONSOLE_SCROLL = """
+from PyQt6.QtCore import QPoint, Qt
+window = _main_window()
+result = {}
+# The console's text captures presses, so the real gesture is the
+# console's SCROLLBAR thumb, dragged upward (away from the prompt).
+# The console's bar is the short one whose size is a fraction of
+# the track — the info panel's bars are tall.
+target = None
+for item in _walk(window.contentItem()):
+    if "ScrollBar" in item.metaObject().className() and item.height() < 200 and bool(item.isVisible()):
+        try:
+            size = float(item.property("size"))
+        except Exception:
+            size = 1.0
+        if size < 0.5:
+            target = item
+            break
+if target is None:
+    result["error"] = "no console scrollbar"
+else:
+    scene = target.mapToScene(QPointF(0, 0))
+    try:
+        position = float(target.property("position"))
+        size = float(target.property("size"))
+    except Exception:
+        position, size = 0.0, 1.0
+    thumb_y = round(scene.y() + position * target.height() + size * target.height() / 2)
+    x = round(scene.x() + target.width() / 2)
+    qtest = _import_qtest()
+    qtest.QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, thumb_y))
+    # The bar is short (~63 px): the gesture must stay inside it.
+    for step in range(1, 6):
+        qtest.QTest.mouseMove(window, QPoint(x, thumb_y - step * 10))
+        qtest.QTest.qWait(60)
+    qtest.QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, thumb_y - 50))
+    qtest.QTest.qWait(400)
+    result = {"scrolled": True, "thumb_y": thumb_y}
+"""
+
+TYPE_CMD = """
+from PyQt6.QtCore import Q_ARG, QPoint, Qt
+window = _main_window()
+result = {}
+target = None
+for item in _walk(window.contentItem()):
+    try:
+        name = item.property("objectName")
+    except Exception:
+        name = None
+    if name == "moonrakerConsoleInput" and bool(item.isVisible()):
+        target = item
+        break
+if target is None:
+    result["error"] = "no console input"
+else:
+    # QTest.keyClicks requires a QWidget in this PyQt build and the
+    # window is not one; the field's own insert is the API a real
+    # keystroke drives.
+    try:
+        target.forceActiveFocus()
+    except Exception:
+        pass
+    inserted = False
+    try:
+        inserted = bool(target.metaObject().invokeMethod(target, "insert", Q_ARG(int, 0), Q_ARG(str, "G28")))
+    except Exception:
+        inserted = False
+    if not inserted:
+        try:
+            target.setProperty("text", "G28")
+            inserted = True
+        except Exception:
+            inserted = False
+    from PyQt6.QtCore import QTimer
+    result["inserted"] = bool(inserted)
+    # Send via the real button.
+    qtest = _import_qtest()
+    found_send = False
+    for item in _walk(window.contentItem()):
+        try:
+            name = item.property("objectName")
+        except Exception:
+            name = None
+        if name == "moonrakerConsoleSend" and bool(item.isVisible()):
+            scene2 = item.mapToScene(QPointF(0, 0))
+            aim2 = QPoint(round(scene2.x() + item.width() / 2), round(scene2.y() + item.height() / 2))
+            qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, aim2)
+            qtest.QTest.qWait(300)
+            found_send = True
+            break
+    result["typed"] = bool(inserted and found_send)
+"""
+
+RECALL_KEY = """
+from PyQt6.QtCore import QCoreApplication, QEvent, Qt
+from PyQt6.QtGui import QKeyEvent
+window = _main_window()
+result = {}
+target = None
+for item in _walk(window.contentItem()):
+    try:
+        name = item.property("objectName")
+    except Exception:
+        name = None
+    if name == "moonrakerConsoleInput":
+        target = item
+        break
+if target is None:
+    result["error"] = "no console input"
+else:
+    # The up-arrow keystroke delivered to the input's Keys handler
+    # (QTest key APIs need a QWidget; the direct event drives the
+    # same handler the keystroke would).
+    press = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Up, Qt.KeyboardModifier.NoModifier)
+    release = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Up, Qt.KeyboardModifier.NoModifier)
+    QCoreApplication.sendEvent(target, press)
+    QCoreApplication.sendEvent(target, release)
+    from PyQt6.QtCore import QTimer
+    try:
+        result["text"] = str(target.property("text"))
+    except Exception:
+        result["text"] = ""
+"""
+
 ATTACH_EMIT = """
 window = _main_window()
 result = {}
@@ -447,6 +572,131 @@ for e in app.getExtensions():
             result["expected_layer"] = state.expected_layer
         break
 """
+
+
+CONSOLE_READ = """
+window = _main_window()
+result = {}
+# The console's Flickable is a SIBLING of the input row, not an
+# ancestor: walk up from the input until an enclosing container
+# whose subtree holds a Flickable — that Flickable is the console's.
+input_item = None
+for item in _walk(window.contentItem()):
+    try:
+        name = item.property("objectName")
+    except Exception:
+        name = None
+    if name == "moonrakerConsoleInput":
+        input_item = item
+        break
+if input_item is not None:
+    node = input_item.parentItem()
+    while node is not None:
+        flick = None
+        for item in _walk(node):
+            if "Flickable" in item.metaObject().className():
+                flick = item
+                break
+        if flick is not None:
+            try:
+                ch = float(flick.property("contentHeight"))
+                cy = float(flick.property("contentY"))
+                h = float(flick.property("height"))
+                result = {"contentHeight": round(ch), "contentY": round(cy), "height": round(h),
+                          "at_end": ch - cy - h < 2}
+            except Exception:
+                pass
+            break
+        node = node.parentItem()
+"""
+
+INPUT_READ = """
+window = _main_window()
+result = {}
+for item in _walk(window.contentItem()):
+    try:
+        name = item.property("objectName")
+    except Exception:
+        name = None
+    if name == "moonrakerConsoleInput":
+        scene = item.mapToScene(QPointF(0, 0))
+        try:
+            result["text"] = str(item.property("text"))
+            result["focus"] = bool(item.property("focus"))
+        except Exception:
+            pass
+        result["center"] = [round(scene.x() + item.width() / 2), round(scene.y() + item.height() / 2)]
+        break
+"""
+
+
+def scenario11():
+    # Tier-1 #11: scroll-to-prompt. The console floods, a REAL drag
+    # scrolls it up, then a typed command is sent: the view must
+    # follow back to the prompt, and the recall history returns the
+    # last command on the up arrow.
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario11.mp4")])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
+                      "hello succeeds", True, shot("00-boot")))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
+                      "welcome not up", gate, shot("01-gate")))
+        wait_stage("PrepareStage", timeout_ms=60000)
+        click_stage("MonitorStage")
+        monitor = wait_stage("MonitorStage", timeout_ms=20000)
+        steps.append(("02-monitor", "real click on Cura's own MONITOR header button",
+                      "stage == MonitorStage", monitor.get("ok") is True, shot("02-monitor")))
+        connected = bool(wait_for(
+            lambda: exec_rpc(MODEL_READ).get("connected"), 60.0))
+        steps.append(("03-connected", "the plugin's websocket client reached the simulator",
+                      "monitorConnected", connected, shot("03-connected")))
+        # The flood: 60 console lines from the peer.
+        lines = [{"type": "response", "message": "// probe line %02d" % i,
+                  "time": time.time()} for i in range(60)]
+        sim_http("/harness/scenario", "POST", {"console_lines": lines})
+        flooded = bool(wait_for(
+            lambda: (exec_rpc(CONSOLE_READ) or {}).get("contentHeight", 0) > 400, 30.0, 2.0))
+        console = exec_rpc(CONSOLE_READ)
+        steps.append(("04-flood", "the peer pushed 60 console lines",
+                      "the console content grew to %spx" % console.get("contentHeight"),
+                      bool(flooded), shot("04-flood")))
+        # A REAL drag scrolls the console up.
+        wait_for(lambda: exec_rpc(CONSOLE_SCROLL).get("scrolled"), 15.0, 1.0)
+        console = exec_rpc(CONSOLE_READ)
+        steps.append(("05-scroll-up", "the drag moved the console away from the prompt",
+                      "contentY %s (at_end=%s)" % (console.get("contentY"), console.get("at_end")),
+                      not console.get("at_end"), shot("05-scroll-up")))
+        # Type a command into the real input and click Send — the
+        # exec runs ONCE (re-polling it would re-type into the input).
+        typed_state = exec_rpc(TYPE_CMD)
+        sent = bool(wait_for(
+            lambda: sum(1 for entry in sim_http("/ledger").get("entries", ())
+                        if str(entry.get("path") or "").endswith("gcode/script")) >= 1, 15.0, 1.0))
+        steps.append(("06-typed-send", "typed G28 into the real input and clicked Send",
+                      "the peer received printer/gcode/script", bool(typed_state.get("typed") and sent),
+                      shot("06-typed-send")))
+        console = exec_rpc(CONSOLE_READ)
+        steps.append(("07-snap-back", "the view followed back to the prompt on send",
+                      "at_end=%s (contentY %s)" % (console.get("at_end"), console.get("contentY")),
+                      bool(console.get("at_end")), shot("07-snap-back")))
+        # The recall: up arrow returns the last sent command.
+        recall_state = exec_rpc(RECALL_KEY)
+        steps.append(("08-recall", "the up arrow recalls the last sent command",
+                      "the input shows %r" % recall_state.get("text"),
+                      bool(recall_state.get("text") == "G28"), shot("08-recall")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+    title = "Tier-1 #11 — scroll-to-prompt"
+    write_gallery(steps, False, title)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return 0 if all(step[3] for step in steps) else 1
 
 
 def scenario7():
@@ -1024,6 +1274,8 @@ def main():
         return scenario6()
     if mode == "scenario7":
         return scenario7()
+    if mode == "scenario11":
+        return scenario11()
     expect_fail = mode == "fail"
     return scenario(expect_fail)
 

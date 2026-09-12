@@ -1659,6 +1659,7 @@ Component {
                                             }
                                             Cura.TextField {
                                                 id: consoleInput
+                                                objectName: "moonrakerConsoleInput"
                                                 Layout.fillWidth: true
                                                 placeholderText: "G-code command…"
                                                 font.family: consoleSection.monoFamily()
@@ -1669,6 +1670,7 @@ Component {
                                             }
                                             Cura.SecondaryButton {
                                                 text: "Send"
+                                                objectName: "moonrakerConsoleSend"
                                                 enabled: root.printer != null && root.printer.monitorConnected
                                                 onClicked: consoleSection.consoleSend()
                                             }

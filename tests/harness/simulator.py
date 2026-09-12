@@ -144,6 +144,9 @@ class PrinterState:
                     self.webcam_frames.append(handle.read())
         except Exception:
             self.webcam_frames = []
+        # The console's gcode-store backfill (scenario 11 floods it).
+        self.console_lines = [{"type": "response", "message": "// Klipper state: Ready",
+                               "time": time.time()}]
         # The gcode store the file manager walks.
         self.gcode_bytes = make_gcode(40).encode("utf-8")
         self.files = [
@@ -210,6 +213,8 @@ class PrinterState:
             elif name in ("cold_start", "broken_start", "extruder_ramp_deg_s",
                           "slow_first_frame_ms", "route_delay_ms", "subscribe_hold_ms"):
                 setattr(self, name, value)
+            elif name == "console_lines":
+                self.console_lines = list(value)
 
     def push_patch(self) -> Dict[str, Any]:
         """One changed-objects frame, as Moonraker shapes it: only
@@ -297,8 +302,7 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
             self._respond(request_id, {"state": self._printer.state["print_stats"]["state"],
                                        "state_message": self._printer.state["print_stats"].get("message", "")})
         elif method == "server.gcode_store":
-            self._respond(request_id, {"gcode_store": [{"type": "response", "message": "// Klipper state: Ready",
-                                                        "time": time.time()}]})
+            self._respond(request_id, {"gcode_store": list(self._printer.console_lines)})
         elif method == "server.webcams.list":
             self._respond(request_id, {"webcams": [{"name": "sim-cam", "location": "printer", "stream_url": "/webcam"}]})
         elif method == "printer.query_endstops.status":
@@ -401,7 +405,7 @@ class StatusHandler(tornado.web.RequestHandler):
         elif path == "info":
             self.write(json.dumps({"result": {"klippy_state": "ready", "components": ["klipper", "moonraker"]}}))
         elif path == "gcode_store":
-            self.write(json.dumps({"result": {"gcode_store": []}}))
+            self.write(json.dumps({"result": {"gcode_store": list(self._printer.console_lines)}}))
         elif path == "webcams/list":
             self.write(json.dumps({"result": {"webcams": [{"name": "sim-cam", "stream_url": "/webcam"}]}}))
         elif path == "device_power/devices":
