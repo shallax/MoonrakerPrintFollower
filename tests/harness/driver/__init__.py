@@ -12,9 +12,10 @@ import json
 import os
 import time
 
-from PyQt6.QtCore import QObject, QTimer, QPointF
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, QTimer, Qt, QUrl, pyqtSlot
+from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtNetwork import QHostAddress, QTcpServer
+from PyQt6.QtQml import QQmlComponent, qmlEngine
 from PyQt6.QtQuick import QQuickItem, QQuickWindow
 from UM.Application import Application
 
@@ -22,11 +23,17 @@ PORT_FILE = "/tmp/mpf/harness_port.txt"
 
 
 class HarnessServer(QObject):
+    _engine = None
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._server = QTcpServer(self)
         self._server.newConnection.connect(self._accept)
         self._pending = []  # (request_id, deadline, predicate, reply_builder)
+        self._mounted_switch = None
+        self._clicked_flag = False
+        self._win_events = []
+        self._py_clicks = []
         self._buffers = {}
         if not self._server.listen(QHostAddress.SpecialAddress.LocalHost, 0):
             return
@@ -36,6 +43,34 @@ class HarnessServer(QObject):
         self._poll.setInterval(50)
         self._poll.timeout.connect(self._drain)
         self._poll.start()
+
+    @pyqtSlot()
+    def markClicked(self):
+        self._clicked_flag = True
+
+    def eventFilter(self, obj, event):
+        # Installed on the click-target window for the duration of a
+        # qclick: proves whether the synthesized events arrive at the
+        # window at all (QEvent delivery), the first fork in the
+        # no-activation puzzle.
+        if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
+                            QEvent.Type.MouseMove):
+            name = str(event.type()).split(".")[-1]
+            try:
+                pos = (round(event.position().x()), round(event.position().y()))
+            except Exception:
+                pos = None
+            self._win_events.append((name, pos))
+        return False
+
+    @pyqtSlot(str)
+    def switchStage(self, stage_id):
+        # The mounted fixture buttons' handler: the same call Cura's
+        # own (non-rendering) stage buttons make.
+        try:
+            Application.getInstance().getController().setActiveStage(str(stage_id))
+        except Exception:
+            pass
 
     def setVersion(self, *_args):
         # Cura's plugin loader treats returned "extension" objects as
@@ -232,6 +267,41 @@ class HarnessServer(QObject):
                 return {"id": request_id, "ok": True}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "header_tree":
+            import collections
+            window = _main_window()
+            if window is not None:
+                for item in _walk(window.contentItem()):
+                    if "MainWindowHeader" in item.metaObject().className():
+                        hist = collections.Counter()
+                        texts = []
+                        for child in _walk(item):
+                            hist[child.metaObject().className()] += 1
+                            try:
+                                t = child.property("text")
+                            except Exception:
+                                t = None
+                            if isinstance(t, str) and t:
+                                texts.append(t[:30])
+                        rect = self._rect(item)
+                        return {"id": request_id, "ok": True,
+                                "rect": rect, "vis": bool(item.isVisible()),
+                                "classes": dict(hist), "texts": texts[:12]}
+            return {"id": request_id, "ok": False, "error": "no MainWindowHeader"}
+        if cmd == "deep_children":
+            rows = []
+            for window in visible_windows:
+                for item in window.contentItem().childItems():
+                    entry = {"class": item.metaObject().className(),
+                             "w": round(item.width()), "h": round(item.height()),
+                             "children": []}
+                    for child in item.childItems():
+                        entry["children"].append({"class": child.metaObject().className(),
+                                                  "x": round(child.x()), "y": round(child.y()),
+                                                  "w": round(child.width()), "h": round(child.height()),
+                                                  "vis": bool(child.isVisible())})
+                    rows.append(entry)
+            return {"id": request_id, "ok": True, "items": rows[:12]}
         if cmd == "set_stage":
             # Environment workaround, NOT a test mechanism: under this
             # Xvfb Cura's stage-switch header never instantiates (the
@@ -263,12 +333,415 @@ class HarnessServer(QObject):
                 return {"id": request_id, "ok": False, "error": "no stage list API"}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "qml_warnings":
+            return {"id": request_id, "ok": True, "warnings": QML_WARNINGS[-20:]}
+        if cmd == "qtest_state":
+            result = _import_qtest()
+            import sys
+            return {"id": request_id, "ok": bool(result), "error": QT_TEST_ERROR,
+                    "sys_path_has_wheel": any("qt6wheel" in p for p in sys.path)}
+        if cmd == "qclick":
+            # QTest choreography click at window-relative coordinates,
+            # targeting the window that actually owns the mounted row
+            # (visible_windows[0] is registration order, not the row's
+            # window). An event filter on that window proves the
+            # synthesized press/release arrive; button pointer state
+            # and the clicked flag are sampled right after.
+            qtest = _import_qtest()
+            if not qtest:
+                return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
+            try:
+                x = int(request.get("x", 0))
+                y = int(request.get("y", 0))
+                stage_target = str(request.get("stage") or "")
+                if stage_target:
+                    # Click CURA'S OWN header stage button: find the
+                    # delegate by its stageId and aim at its center in
+                    # window (scene) coordinates.
+                    window = _main_window()
+                    target = None
+                    if window is not None:
+                        for item in _walk(window.contentItem()):
+                            try:
+                                stage_id = item.property("stageId")
+                            except Exception:
+                                continue
+                            if stage_id == stage_target:
+                                target = item
+                                break
+                    if target is None:
+                        return {"id": request_id, "ok": False, "error": "stage button not found",
+                                "stage": stage_target}
+                    scene = target.mapToScene(QPointF(0, 0))
+                    x = round(scene.x() + target.width() / 2)
+                    y = round(scene.y() + target.height() / 2)
+                    label = target.property("text")
+                else:
+                    row = getattr(self, "_mounted_switch", None)
+                    window = row.window() if row is not None else (visible_windows[0] if visible_windows else None)
+                    label = "Preview"
+                if window is None:
+                    return {"id": request_id, "ok": False, "error": "no window"}
+                self._win_events = []
+                window.installEventFilter(self)
+                qtest.QTest.mousePress(window, Qt.MouseButton.LeftButton,
+                                       Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+                qtest.QTest.qWait(60)
+                pressed_after = _sample_button_state(getattr(self, "_mounted_switch", None), str(label))
+                qtest.QTest.mouseRelease(window, Qt.MouseButton.LeftButton,
+                                         Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+                qtest.QTest.qWait(60)
+                window.removeEventFilter(self)
+                released_after = _sample_button_state(getattr(self, "_mounted_switch", None), str(label))
+                stage = None
+                try:
+                    stage = Application.getInstance().getController().getActiveStage().getId()
+                except Exception:
+                    pass
+                return {"id": request_id, "ok": True, "aim": [x, y], "label": str(label),
+                        "window": window.objectName() or "",
+                        "size": (window.width(), window.height()),
+                        "events": list(self._win_events),
+                        "pressed_after": pressed_after, "released_after": released_after,
+                        "clicked": bool(self._clicked_flag), "stage": stage}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "hit_test":
+            try:
+                x = float(request.get("x", 0))
+                y = float(request.get("y", 0))
+                for window in visible_windows:
+                    hit = window.contentItem().childAt(x, y)
+                    if hit is None:
+                        return {"id": request_id, "ok": True, "hit": None}
+                    try:
+                        label = hit.property("text")
+                    except Exception:
+                        label = None
+                    return {"id": request_id, "ok": True,
+                            "hit": {"class": hit.metaObject().className(),
+                                    "text": str(label)[:20],
+                                    "w": round(hit.width()), "h": round(hit.height())}}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "inject_click":
+            # Direct DeliveryAgent injection: QQuickWindow.sendEvent is
+            # Qt's sanctioned programmatic path (its own autotests use
+            # it). It drives the same delivery machinery a real click
+            # uses but skips window-system synthesis entirely — the
+            # second fork of the no-activation puzzle.
+            try:
+                row = getattr(self, "_mounted_switch", None)
+                if row is None:
+                    return {"id": request_id, "ok": False, "error": "nothing mounted"}
+                window = row.window()
+                if not hasattr(window, "sendEvent"):
+                    return {"id": request_id, "ok": False, "error": "QQuickWindow.sendEvent unavailable"}
+                label = request.get("text", "Preview")
+                target = None
+                for child in row.childItems():
+                    try:
+                        if child.property("text") == label:
+                            target = child
+                    except Exception:
+                        pass
+                if target is None:
+                    return {"id": request_id, "ok": False, "error": "button not found"}
+                local = QPointF(10, 10)
+                scene = target.mapToScene(local)
+                window.sendEvent(target, QMouseEvent(QEvent.Type.MouseButtonPress, local, scene, scene,
+                                                     Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+                                                     Qt.KeyboardModifier.NoModifier))
+                pressed = _sample_button_state(row, label)
+                window.sendEvent(target, QMouseEvent(QEvent.Type.MouseButtonRelease, local, scene, scene,
+                                                     Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+                                                     Qt.KeyboardModifier.NoModifier))
+                released = _sample_button_state(row, label)
+                stage = None
+                try:
+                    stage = Application.getInstance().getController().getActiveStage().getId()
+                except Exception:
+                    pass
+                return {"id": request_id, "ok": True, "pressed": pressed, "released": released,
+                        "clicked": bool(self._clicked_flag), "stage": stage}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "arm_py_click":
+            # Python-side connection to each fixture button's clicked
+            # signal: distinguishes "clicked never emitted" from "the
+            # QML-side handler never invoked" (PyQt only exposes
+            # @pyqtSlot methods to QML).
+            try:
+                row = getattr(self, "_mounted_switch", None)
+                if row is None:
+                    return {"id": request_id, "ok": False, "error": "nothing mounted"}
+                self._py_clicks = []
+                armed = []
+                for child in row.childItems():
+                    try:
+                        label = child.property("text")
+                    except Exception:
+                        label = None
+                    if label not in ("Prepare", "Preview", "Monitor"):
+                        continue
+                    child.clicked.connect(lambda checked=False, lab=label: self._py_clicks.append(lab))
+                    armed.append(str(label))
+                return {"id": request_id, "ok": True, "armed": armed}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "row_scan":
+            # Live anatomy of the mounted fixture row: own rect, each
+            # direct child's scene rect, and what a hit-test sweep
+            # actually returns across the row. The mount report's
+            # rects were right at mount+800ms but hits miss the
+            # buttons — this shows where everything is NOW.
+            try:
+                item = getattr(self, "_mounted_switch", None)
+                if item is None:
+                    return {"id": request_id, "ok": False, "error": "nothing mounted"}
+                window = item.window()
+                origin = item.mapToScene(QPointF(0, 0))
+                children = []
+                for child in item.childItems():
+                    try:
+                        label = child.property("text")
+                    except Exception:
+                        label = ""
+                    top_left = child.mapToScene(QPointF(0, 0))
+                    children.append({"class": child.metaObject().className(),
+                                     "text": str(label)[:20],
+                                     "x": round(top_left.x()), "y": round(top_left.y()),
+                                     "w": round(child.width()), "h": round(child.height()),
+                                     "vis": bool(child.isVisible())})
+                sweep = []
+                if window is not None:
+                    cy = round(origin.y() + item.height() / 2)
+                    for sx in range(round(origin.x()), round(origin.x() + item.width()) + 1, 12):
+                        hit = window.contentItem().childAt(sx, cy)
+                        if hit is None:
+                            sweep.append([sx, "None"])
+                            continue
+                        try:
+                            label = hit.property("text")
+                        except Exception:
+                            label = ""
+                        sweep.append([sx, hit.metaObject().className(), str(label)[:14]])
+                return {"id": request_id, "ok": True,
+                        "row": {"x": round(origin.x()), "y": round(origin.y()),
+                                "w": round(item.width()), "h": round(item.height()),
+                                "vis": bool(item.isVisible())},
+                        "window": {"w": window.width(), "h": window.height()} if window else None,
+                        "children": children, "sweep": sweep}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "exec":
+            # Hot-patch channel for the driver itself: iterate verb
+            # behaviour without a 4-minute Cura reboot. Loopback-only
+            # (the server binds LocalHost), test container only.
+            code = str(request.get("code") or "")
+            try:
+                # Exec in the driver's own module namespace so
+                # redefinitions stick (def-based hot-patches).
+                namespace = globals()
+                namespace["self"] = self
+                namespace["windows"] = windows
+                namespace["visible_windows"] = visible_windows
+                exec(compile(code, "<harness-exec>", "exec"), namespace)
+                return {"id": request_id, "ok": True, "result": repr(namespace.get("result"))[:2000]}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": repr(exc)}
+        if cmd == "clicked_flag":
+            return {"id": request_id, "ok": True, "clicked": self._clicked_flag,
+                    "py_clicks": list(self._py_clicks)}
+        if cmd == "button_state":
+            # Live pointer-state probe for the mounted fixture row:
+            # which button (if any) sees the press/hover right now.
+            rows = []
+            try:
+                for window in visible_windows:
+                    for child in window.contentItem().findChildren(QQuickItem):
+                        if child.width() < 60:
+                            continue
+                        try:
+                            label = child.property("text")
+                        except Exception:
+                            label = None
+                        if not isinstance(label, str) or label not in ("Prepare", "Preview", "Monitor"):
+                            continue
+                        state = {}
+                        for prop in ("pressed", "down", "hovered", "checked", "activeFocus"):
+                            try:
+                                state[prop] = bool(child.property(prop))
+                            except Exception:
+                                pass
+                        rows.append({"text": label, **state})
+                return {"id": request_id, "ok": True, "buttons": rows}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "mount_switch":
+            # Cura's own stage-switch header never renders in this
+            # environment (its QML StageModel stays empty; the buttons
+            # never instantiate). The driver mounts a REAL test-only
+            # button row in the window — rendered QML, real clicks via
+            # XTEST — whose handlers make the same controller call
+            # Cura's missing buttons make. A harness fixture, never
+            # shipped, never a substitute for plugin-behaviour claims.
+            try:
+                engine = HarnessServer._engine
+                if engine is None:
+                    try:
+                        from UM.Qt.QtApplication import QtApplication
+                        engine = QtApplication.getInstance()._qml_engine
+                    except Exception:
+                        engine = None
+                if engine is None and visible_windows:
+                    engine = qmlEngine(visible_windows[0].contentItem())
+                if engine is None:
+                    return {"id": request_id, "ok": False, "error": "no qml engine"}
+                engine.rootContext().setContextProperty("_harness", self)
+                qml = '''
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+Row {
+    spacing: 8
+    anchors.top: parent.top
+    anchors.right: parent.right
+    anchors.topMargin: 6
+    anchors.rightMargin: 8
+    z: 9999
+    Button {
+        text: "Prepare"
+        onClicked: _harness.switchStage("PrepareStage")
+    }
+    Button {
+        text: "Preview"
+        onClicked: _harness.markClicked()
+    }
+    Button {
+        text: "Monitor"
+        onClicked: _harness.switchStage("MonitorStage")
+    }
+}
+'''
+                component = QQmlComponent(engine)
+                component.setData(qml.encode("utf-8"), QUrl())
+                for window in visible_windows:
+                    item = component.create()
+                    if item is None:
+                        errors = [str(e.toString()) for e in component.errors()]
+                        return {"id": request_id, "ok": False, "error": "; ".join(errors)}
+                    item.setProperty("objectName", "harnessStageSwitch")
+                    before = len(window.contentItem().childItems())
+                    item.setParentItem(window.contentItem())
+                    after = len(window.contentItem().childItems())
+                    in_tree = item in window.contentItem().childItems()
+                    # Hold the reference: a component-created item with
+                    # no JS owner is eligible for engine GC the moment
+                    # the verb returns — the row must survive the mount.
+                    self._mounted_switch = item
+                    self._mount_check = {"before": before, "after": after,
+                                         "in_tree": in_tree,
+                                         "parent": item.parentItem().metaObject().className() if item.parentItem() else None,
+                                         "vis": bool(item.isVisible()),
+                                         "w": round(item.width()), "h": round(item.height())}
+                    slot = {"result": None}
+
+                    def report(item=item, window=window, slot=slot):
+                        rects = []
+                        for child in item.findChildren(QQuickItem):
+                            try:
+                                label = child.property("text")
+                            except Exception:
+                                label = None
+                            if isinstance(label, str) and label in ("Prepare", "Preview", "Monitor"):
+                                top_left = child.mapToScene(QPointF(0, 0))
+                                rects.append({"text": label,
+                                              "x": round(top_left.x() + window.position().x()),
+                                              "y": round(top_left.y() + window.position().y()),
+                                              "w": round(child.width()), "h": round(child.height())})
+                        slot["result"] = {"id": request_id, "ok": True, "buttons": rects,
+                                          "check": getattr(self, "_mount_check", None)}
+
+                    QTimer.singleShot(800, report)
+                    self._pending.append((request_id, time.monotonic() + 15,
+                                          lambda slot=slot: slot["result"] is not None,
+                                          lambda slot=slot: slot["result"]))
+                    return None
+                    rects = []
+                    for child in item.findChildren(QQuickItem):
+                        try:
+                            label = child.property("text")
+                        except Exception:
+                            label = None
+                        if not isinstance(label, str) or label not in ("Prepare", "Preview", "Monitor"):
+                            continue
+                        top_left = child.mapToScene(QPointF(0, 0))
+                        rects.append({"text": label,
+                                      "x": round(top_left.x() + window.position().x()),
+                                      "y": round(top_left.y() + window.position().y()),
+                                      "w": round(child.width()), "h": round(child.height())})
+                    kids = []
+                    for child in item.findChildren(QQuickItem):
+                        try:
+                            label = child.property("text")
+                        except Exception:
+                            label = ""
+                        kids.append({"class": child.metaObject().className(),
+                                     "text": str(label)[:20],
+                                     "w": round(child.width()), "h": round(child.height())})
+                    return {"id": request_id, "ok": True, "buttons": rects, "kids": kids[:14],
+                            "check": self._mount_check}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "repopulate_stages":
+            # The header's QML StageModel builds before the plugin
+            # registry's stage metadata is ready and stays empty (the
+            # intermittent missing stage buttons). Refreshing the model
+            # via its own _onStagesChanged slot — the exact code the
+            # controller's stagesChanged signal drives — repopulates
+            # it once the registry is complete. Orchestration, no
+            # Cura modification.
+            try:
+                refreshed = []
+                window = _main_window()
+                if window is not None:
+                    for header in _walk(window.contentItem()):
+                        if "MainWindowHeader" not in header.metaObject().className():
+                            continue
+                        for repeater in _walk(header):
+                            if repeater.metaObject().className() != "QQuickRepeater":
+                                continue
+                            try:
+                                model = repeater.property("model")
+                            except Exception:
+                                continue
+                            if model is not None and hasattr(model, "_onStagesChanged"):
+                                model._onStagesChanged()
+                                refreshed.append(model.metaObject().className())
+                return {"id": request_id, "ok": True, "refreshed": refreshed}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "stage_model":
+            # Instantiate the QML StageModel in-process: if its
+            # constructor throws (the suspected header-killer), the
+            # exception text names the race directly.
+            try:
+                from UM.Qt.Bindings.StageModel import StageModel
+                model = StageModel()
+                items = []
+                for index in range(model.rowCount()):
+                    items.append({"id": model.getItem(index).get("id"),
+                                  "name": model.getItem(index).get("name")})
+                return {"id": request_id, "ok": True, "rows": items}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": repr(exc)}
         if cmd == "stage_buttons":
             # Cura's stage switch: MainWindowHeader's Repeater delegate
             # carries a stageId property — the reliable handle.
             rows = []
-            for window in visible_windows:
-                for item in window.contentItem().findChildren(QQuickItem):
+            window = _main_window()
+            if window is not None:
+                for item in _walk(window.contentItem()):
                     try:
                         stage_id = item.property("stageId")
                     except Exception:
@@ -471,6 +944,144 @@ def getMetaData():
     return {}
 
 
+# The stage-switch header's UM.StageModel type is registered by this
+# module's import; under the harness the import order races the window
+# creation and the header intermittently fails with a blank QML
+# warning. Importing it at driver-register time (plugins load before
+# the QML engine builds the main window) makes the registration
+# deterministic — orchestration, no Cura modification.
+try:
+    import UM.Qt.Bindings.Bindings  # noqa: F401
+except Exception:
+    pass
+
+QML_WARNINGS = []
+QT_TEST = None
+
+
+QT_TEST_ERROR = ""
+
+
+def _walk(root, depth=10):
+    # Depth-first over QQuickItem.childItems() — the VISUAL tree.
+    # findChildren(QQuickItem) instead walks the whole QObject graph
+    # (every QML-created object under the root) and stalls Cura's
+    # GUI thread for minutes on the main window.
+    stack = [(root, 0)]
+    while stack:
+        item, level = stack.pop()
+        yield item
+        if level < depth:
+            stack.extend((child, level + 1) for child in item.childItems())
+
+
+def _main_window():
+    # The harness targets the main editor window; Cura keeps popup and
+    # dialog windows alive (11 windows total). Walking every window's
+    # tree in one verb stalls the GUI thread for minutes.
+    best = None
+    best_area = 0
+    for window in QGuiApplication.allWindows():
+        area = window.width() * window.height()
+        if area > best_area:
+            best_area = area
+            best = window
+    return best
+
+
+def _sample_button_state(row, label):
+    # Pointer-state snapshot of one mounted fixture button.
+    if row is None:
+        return None
+    for child in row.childItems():
+        try:
+            if child.property("text") != label:
+                continue
+        except Exception:
+            continue
+        state = {}
+        for prop in ("pressed", "down", "hovered", "enabled", "visible"):
+            try:
+                state[prop] = bool(child.property(prop))
+            except Exception:
+                pass
+        return state
+    return None
+
+
+def _import_qtest():
+    # The injected binding: PyQt6-Qt6 6.6.0 + PyQt6 6.6.0 staged on the
+    # interpreter's path at launch (the bundle ships no QtTest). QTest
+    # synthesizes events INSIDE Qt — the working click path in this
+    # Xvfb environment, where X-level button activation never lands.
+    global QT_TEST, QT_TEST_ERROR
+    if QT_TEST is not None:
+        return QT_TEST
+    try:
+        from PyQt6 import QtTest
+        QT_TEST = QtTest
+    except Exception as first_error:
+        # The bundle's PyQt6 package is already imported and lacks
+        # QtTest; load the wheel's binding module and sip into the
+        # EXISTING package instead of shadowing the package (a second
+        # PyQt6 package would double-load QtCore).
+        try:
+            import importlib.util
+            import sys
+            wheel = "/tmp/mpf/qt6wheel"
+            sip_path = f"{wheel}/PyQt6/sip.cpython-312-x86_64-linux-gnu.so"
+            test_path = f"{wheel}/PyQt6/QtTest.abi3.so"
+            if "PyQt6.sip" not in sys.modules:
+                sip_spec = importlib.util.spec_from_file_location("PyQt6.sip", sip_path)
+                sip_module = importlib.util.module_from_spec(sip_spec)
+                sys.modules["PyQt6.sip"] = sip_module
+                sip_spec.loader.exec_module(sip_module)
+            test_spec = importlib.util.spec_from_file_location("PyQt6.QtTest", test_path)
+            test_module = importlib.util.module_from_spec(test_spec)
+            sys.modules["PyQt6.QtTest"] = test_module
+            test_spec.loader.exec_module(test_module)
+            QT_TEST = test_module
+        except Exception as exc:
+            QT_TEST = False
+            QT_TEST_ERROR = f"{first_error} | fallback: {exc!r}"
+    return QT_TEST
+
+
+def _attach_qml_warnings(app):
+    # The engine's warnings signal carries the REAL error for the
+    # header's intermittent failure (the log's blank warnings hide
+    # it); capture them for the driver's qml_warnings verb.
+    engine = None
+    try:
+        from UM.Qt.QtApplication import QtApplication
+        instance = QtApplication.getInstance()
+        for attr in ("getQmlEngine", "_qml_engine", "_engine"):
+            candidate = getattr(instance, attr, None)
+            if candidate is not None:
+                engine = candidate() if callable(candidate) else candidate
+                break
+    except Exception:
+        pass
+    if engine is None:
+        try:
+            from PyQt6.QtQml import QQmlEngine
+            engine = app.findChild(QQmlEngine)
+        except Exception:
+            pass
+    if engine is not None:
+        HarnessServer._engine = engine
+
+        def on_warnings(warnings):
+            for warning in warnings:
+                QML_WARNINGS.append({"url": str(warning.url()),
+                                     "line": int(warning.line()),
+                                     "desc": str(warning.description())})
+        try:
+            engine.warnings.connect(on_warnings)
+        except Exception:
+            pass
+
+
 _server = None
 
 
@@ -479,4 +1090,5 @@ def register(app):
     global _server
     if _server is None:
         _server = HarnessServer(app)
+        _attach_qml_warnings(app)
     return {"extension": _server}

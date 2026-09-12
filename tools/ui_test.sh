@@ -42,9 +42,10 @@ case "$MODE" in
     discover)
         docker exec "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd /tmp/mpf/cura513_xt && \
             DISPLAY=:99 APPDIR=/tmp/mpf/cura513_xt \
-            LD_LIBRARY_PATH=/tmp/mpf/cura513_xt:/tmp/mpf/cura513_xt/usr/lib/x86_64-linux-gnu:/tmp/mpf/cura513_xt/lib/x86_64-linux-gnu:/tmp/mpf/cura513_xt/usr/lib \
+            LD_LIBRARY_PATH=/tmp/mpf/cura513_xt:/tmp/mpf/cura513_xt/usr/lib/x86_64-linux-gnu:/tmp/mpf/cura513_xt/lib/x86_64-linux-gnu:/tmp/mpf/cura513_xt/usr/lib:/tmp/mpf/qt6wheel/PyQt6/Qt6/lib \
+            PYTHONPATH=/tmp/mpf/qt6wheel:/tmp/mpf/cura513_xt \
             XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
-            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb timeout 240 \
+            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb timeout 1800 \
             /lib64/ld-linux-x86-64.so.2 ./UltiMaker-Cura" >/tmp/mpf/cura_run.log 2>&1 &'
         # wait for the driver's port, then run the discovery
         for _ in $(seq 1 120); do [ -s /tmp/mpf/harness_port.txt ] && break; sleep 1; done
@@ -54,9 +55,10 @@ case "$MODE" in
     scenario|fail)
         docker exec "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd /tmp/mpf/cura513_xt && \
             DISPLAY=:99 APPDIR=/tmp/mpf/cura513_xt \
-            LD_LIBRARY_PATH=/tmp/mpf/cura513_xt:/tmp/mpf/cura513_xt/usr/lib/x86_64-linux-gnu:/tmp/mpf/cura513_xt/lib/x86_64-linux-gnu:/tmp/mpf/cura513_xt/usr/lib \
+            LD_LIBRARY_PATH=/tmp/mpf/cura513_xt:/tmp/mpf/cura513_xt/usr/lib/x86_64-linux-gnu:/tmp/mpf/cura513_xt/lib/x86_64-linux-gnu:/tmp/mpf/cura513_xt/usr/lib:/tmp/mpf/qt6wheel/PyQt6/Qt6/lib \
+            PYTHONPATH=/tmp/mpf/qt6wheel:/tmp/mpf/cura513_xt \
             XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
-            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb timeout 240 \
+            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb timeout 1800 \
             /lib64/ld-linux-x86-64.so.2 ./UltiMaker-Cura" >/tmp/mpf/cura_run.log 2>&1 &'
         for _ in $(seq 1 120); do [ -s /tmp/mpf/harness_port.txt ] && break; sleep 1; done
         [ -s /tmp/mpf/harness_port.txt ] || { echo "ui_test: the driver never came up"; tail -20 /tmp/mpf/cura_run.log; exit 1; }

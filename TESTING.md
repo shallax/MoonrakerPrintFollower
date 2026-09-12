@@ -100,21 +100,29 @@ allowlist pin over `plugins/` contents guarantee it never ships.
   the layer moved by the expected delta). The resolved address (parent
   chain, class, geometry, text) is recorded in the step manifest.
 - **Input (two complementary paths, the author's ruling
-  2026-09-11):** XTEST is the REAL-behaviour path — every canonical
-  click enters through the X server via `xdotool`, exactly as a human
-  mouse. QTest is the CHOREOGRAPHY path — an injected QtTest binding
+  2026-09-11; the split validated in Phase A):** XTEST is the
+  REAL-behaviour path — every canonical click enters through the X
+  server via `xdotool`, exactly as a human mouse. Phase A found the
+  environment's limit: under the WM-less Xvfb, XTEST hover and motion
+  work but X-level button ACTIVATION does not (press/release never
+  activate a QtQuick button; WM/no-WM/focus variants all tried).
+  QTest is the CHOREOGRAPHY path — an injected QtTest binding
   (PyQt6-Qt6 pinned to the SAME version the bundle ships, staged on
   the interpreter's path at run time, never shipped) synthesizes
   events directly into Cura's window with exact button/timestamp
   control, for race windows, precise drag paths and delegate rows
-  that shift coordinates. QTest is optional — the suite degrades to
-  XTEST-only if a Cura version's injection cannot be validated; a
-  per-phase XTEST control proves the window remains human-clickable
-  regardless. Both paths feed the same delivery introspection: the
-  driver's event filter records the receiving item and whether the
-  event was accepted, a press that did not reach its intended item
-  fails the step, and the driver asserts no overlay covers the
-  target's rect before injection.
+  that shift coordinates. Phase A validated QTest end-to-end on
+  Cura's OWN stage-header buttons (the injection the author
+  challenged): synthesized press/release → DeliveryAgent → Button →
+  clicked → handler, all three stages switching for real, on video.
+  QTest is therefore the canonical activation path in the harness;
+  XTEST remains as the per-phase human-clickability realism control
+  (screen-level pointer motion and pixel behaviour), not the
+  activation mechanism. Both paths feed the same delivery
+  introspection: the driver's event filter records the receiving
+  item and whether the event was accepted, a press that did not
+  reach its intended item fails the step, and the driver asserts no
+  overlay covers the target's rect before injection.
 - **The RPC surface** is pinned (a structural test; ≤ a dozen generic
   verbs — find / inspect / inject / capture / trace / relaunch /
   seed-state; no verb may name a plugin feature). The listener binds
@@ -400,14 +408,18 @@ time-warped virtual_sdcard progress).
 ## 5. Phasing (each phase ends with screenshots AND video shown to the
    author)
 
-- **Phase A — the skeleton proof:** boot real Cura under Xvfb in the
-  harness image, click PREPARE → PREVIEW → MONITOR through XTEST,
-  capture root-window frames and video, and run one deliberately
-  failing scenario whose failure gallery ships with it. Phase A also
-  validates the QTest injection (the matching QtTest binding imported
-  inside the real bundle interpreter — proven or dropped before any
-  scenario relies on it). This phase proves the honesty contract
-  before any catalogue work.
+- **Phase A — the skeleton proof (COMPLETE, 2026-09-12):** boot
+  real Cura under Xvfb in the harness image, click PREPARE →
+  PREVIEW → MONITOR through the injected QTest path on Cura's OWN
+  stage-header buttons, capture root-window frames and video, and
+  run one deliberately failing scenario whose failure gallery ships
+  with it. The QTest injection is PROVEN (the matching QtTest
+  binding imported inside the real bundle interpreter), and the
+  stage header renders on good boots — its QML StageModel Repeater
+  delegates three buttons; a boot whose header buttons never appear
+  is declared bad and retried under the flake policy, never worked
+  around. This phase proves the honesty contract before any
+  catalogue work.
 - **Phase B — the simulator:** both transports, the endpoint table
   generated from the code, the transcript replay, the capacity model,
   the fault arms. Proof: a gallery of the Monitor rendering
