@@ -25,6 +25,37 @@ import tornado.websocket
 # independent of the plugin's code).
 CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh", "display_status")
 
+
+def make_gcode(layers: int = 40) -> str:
+    """A deterministic, Cura-parseable gcode: a square perimeter per
+    layer with extrusion moves and M73 progress. Real parse/render
+    targets for the load pipeline (A25)."""
+    lines = [";FLAVOR:Marlin", ";LAYER_COUNT:%d" % layers, "M73 P0", "G90", "M82"]
+    size = 50.0
+    layer_height = 0.2
+    z = layer_height
+    extruded = 0.0
+    for layer in range(layers):
+        lines.append(";LAYER:%d" % layer)
+        corners = [(100.0, 100.0), (100.0 + size, 100.0),
+                   (100.0 + size, 100.0 + size), (100.0, 100.0 + size)]
+        # Travel to the first corner, then the perimeter.
+        lines.append("G0 X%.2f Y%.2f Z%.2f F6000" % (corners[0][0], corners[0][1], z))
+        for x, y in corners[1:]:
+            extruded += 0.12
+            lines.append("G1 X%.2f Y%.2f E%.4f F1800" % (x, y, extruded))
+        extruded += 0.12
+        lines.append("G1 X%.2f Y%.2f E%.4f F1800" % (corners[0][0], corners[0][1], extruded))
+        # A diagonal infill line for visible geometry.
+        extruded += 0.08
+        lines.append("G1 X%.2f Y%.2f E%.4f F2400" % (100.0 + size, 100.0 + size, extruded))
+        z += layer_height
+        lines.append("M73 P%d" % min(100, int((layer + 1) * 100 / layers)))
+    lines.append("M73 P100")
+    lines.append(";TIME_ELAPSED:1234")
+    return "\n".join(lines) + "\n"
+
+
 # Full state once per subscribe reply; pushes carry changes only.
 KICKOFF_STATE: Dict[str, Any] = {
     "print_stats": {
@@ -83,9 +114,10 @@ class PrinterState:
         # protocol contract the client's masked diff depends on).
         self._last_pushed: Dict[str, Any] = {}
         # The gcode store the file manager walks.
+        self.gcode_bytes = make_gcode(40).encode("utf-8")
         self.files = [
             {"filename": "scenario1.gcode", "modified": time.time() - 3600.0,
-             "size": 1048576, "permissions": "rw",
+             "size": len(self.gcode_bytes), "permissions": "rw",
              "slicer": "MoonrakerPrintFollower-sim", "estimated_time": 3600.0,
              "layer_height": 0.2, "filament_total": 12.5,
              "print_start_time": None},
@@ -326,6 +358,9 @@ class StatusHandler(tornado.web.RequestHandler):
             self.write(json.dumps({"result": {"webcams": [{"name": "sim-cam", "stream_url": "/webcam"}]}}))
         elif path == "device_power/devices":
             self.write(json.dumps({"result": {"devices": []}}))
+        elif path.startswith("files/gcodes/"):
+            self.set_header("Content-Type", "application/octet-stream")
+            self.write(self._printer.gcode_bytes)
         elif path == "files/directory":
             # The walker's extended listing: dirs, files with the
             # metadata fields directory_rows reads, and disk usage.
@@ -397,6 +432,7 @@ class ControlHandler(tornado.web.RequestHandler):
         self.set_header("Content-Type", "application/json")
         self.write(json.dumps({"result": {
             "print_stats": self._printer.state["print_stats"],
+            "virtual_sdcard": self._printer.state["virtual_sdcard"],
             "extruder": self._printer.state["extruder"],
             "connections": self._printer.connections,
             "cold_start": self._printer.cold_start,

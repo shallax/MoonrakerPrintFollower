@@ -59,20 +59,6 @@ def shot(name):
     return path
 
 
-def click_stage(stage_id, attempts=10, settle_s=2.0):
-    """QTest-click Cura's own stage-header button via the driver. The
-    header buttons render a little after the controller reports the
-    stage, so retry while the UI catches up; a boot whose buttons
-    never appear fails loudly (the flake policy declares it bad)."""
-    last = None
-    for _ in range(attempts):
-        last = rpc({"id": 1, "cmd": "qclick", "stage": stage_id}, timeout=30)
-        if last.get("ok") is True:
-            return last
-        time.sleep(settle_s)
-    return last
-
-
 def wait_stage(wanted, timeout_ms=20000):
     return rpc({"id": 1, "cmd": "wait_stage", "stage": wanted, "timeout_ms": timeout_ms}, timeout=timeout_ms / 1000.0 + 5)
 
@@ -268,6 +254,19 @@ result = hits
 """
 
 
+def click_stage(stage_id, attempts=10, settle_s=2.0):
+    """QTest-click Cura's own stage-header button, retrying while the
+    header's Repeater renders (the boot race). A boot whose buttons
+    never appear fails loudly."""
+    last = None
+    for _ in range(attempts):
+        last = rpc({"id": 1, "cmd": "qclick", "stage": stage_id}, timeout=30)
+        if last.get("ok"):
+            return last
+        time.sleep(settle_s)
+    return last
+
+
 def wait_for(check, budget_s, tick_s=2.0):
     deadline = time.time() + budget_s
     while time.time() < deadline:
@@ -276,6 +275,123 @@ def wait_for(check, budget_s, tick_s=2.0):
             return value
         time.sleep(tick_s)
     return check()
+
+LOAD_EMIT = """
+window = _main_window()
+result = {}
+for item in _walk(window.contentItem()):
+    try:
+        label = item.property("text")
+    except Exception:
+        label = None
+    if label == "Load current print" and "Button" in item.metaObject().className() and bool(item.isVisible()):
+        item.clicked.emit()
+        result["emitted"] = True
+        break
+"""
+
+CARD_READ = """
+window = _main_window()
+result = {}
+for item in _walk(window.contentItem()):
+    try:
+        name = item.property("objectName")
+    except Exception:
+        name = None
+    if name in ("moonrakerEmptyPreviewLoadControl", "moonrakerPreviewActionPanelControls"):
+        try:
+            result[name] = bool(item.property("visible"))
+        except Exception:
+            result[name] = False
+"""
+
+
+def scenario2(expect_fail=False):
+    # Tier-1 #2: the card stays through load and after render. Enter
+    # Preview with nothing loaded (the empty card), click Load current
+    # print, go HANDS-OFF: the action card (the one with Detach) must
+    # be visible continuously from the click to 30 s after settle and
+    # the empty card must never reappear.
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario2.mp4")])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
+                      "hello succeeds", True, shot("00-boot")))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
+                      "welcome not up", gate, shot("01-gate")))
+        wait_stage("PrepareStage", timeout_ms=60000)
+        click_stage("PreviewStage")
+        preview = wait_stage("PreviewStage", timeout_ms=20000)
+        steps.append(("02-preview", "real click on Cura's own PREVIEW header button",
+                      "stage == PreviewStage", preview.get("ok") is True, shot("02-preview")))
+        connected = bool(wait_for(
+            lambda: exec_rpc(MODEL_READ).get("connected"), 60.0))
+        steps.append(("03-connected", "the plugin's websocket client reached the simulator",
+                      "monitorConnected", connected, shot("03-connected")))
+        # The simulator's running job: the load target.
+        state = sim_http("/harness/state")["result"]
+        listing = sim_http("/server/files/directory?path=gcodes&extended=true")
+        gcode_size = listing["result"]["files"][0]["size"]
+        sim_http("/harness/scenario", "POST", {
+            "print_stats": {**state["print_stats"], "state": "printing",
+                            "filename": "scenario1.gcode"},
+            "virtual_sdcard": {**state["virtual_sdcard"], "is_active": True,
+                               "progress": 0.5, "file_size": gcode_size}})
+        empty = bool(wait_for(
+            lambda: exec_rpc(CARD_READ).get("moonrakerEmptyPreviewLoadControl"), 25.0))
+        steps.append(("04-empty-card", "the seeded running job makes the empty card show its Load button",
+                      "moonrakerEmptyPreviewLoadControl visible", empty, shot("04-empty-card")))
+        # The card's button: window-level synthesized clicks do not
+        # reach this control under the WM-less Xvfb, so the button's
+        # clicked signal is emitted — the exact QML handler a real
+        # click runs. The replace-confirm QMessageBox that follows is
+        # answered through the classic widget path (confirm_box).
+        wait_for(lambda: exec_rpc(LOAD_EMIT).get("emitted"), 10.0, 1.0)
+        confirmed = bool(wait_for(
+            lambda: rpc({"id": 1, "cmd": "confirm_box", "button": "Yes"}).get("ok"),
+            15.0, 1.0))
+        steps.append(("05-load-click", "Load current print (clicked-signal emission) + replace-confirm Yes — then HANDS-OFF",
+                      "the load was requested and confirmed", bool(confirmed), shot("05-load-click")))
+        # The hands-off trace: samples every 2 s, no interaction.
+        trace = []
+        settled_at = None
+        start = time.time()
+        for _ in range(35):
+            state = exec_rpc(CARD_READ)
+            trace.append((round(time.time() - start, 1),
+                          bool(state.get("moonrakerEmptyPreviewLoadControl")),
+                          bool(state.get("moonrakerPreviewActionPanelControls"))))
+            if state.get("moonrakerPreviewActionPanelControls") and settled_at is None:
+                settled_at = time.time()
+                shot("06-action-card-appears")
+            if settled_at is not None and time.time() - settled_at >= 30:
+                break
+            time.sleep(2)
+        shot("07-settled")
+        appeared_index = next((i for i, sample in enumerate(trace) if sample[2]), None)
+        action_appeared = appeared_index is not None
+        continuous = action_appeared and all(sample[2] for sample in trace[appeared_index:])
+        empty_never_back = action_appeared and not any(sample[1] for sample in trace[1:])
+        steps.append(("06-card-continuous", "the action card appeared and stayed; no hands-on interaction",
+                      "visible at every 2 s sample from first appearance to 30 s after settle: %s" %
+                      (["%.1fs" % sample[0] for sample in trace] if not continuous else "held"),
+                      continuous, shot("06-card-continuous")))
+        steps.append(("07-empty-never-back", "the empty card must never reappear after the load",
+                      "empty card absent in every post-click sample",
+                      empty_never_back and bool(settled_at), shot("07-settled")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+    title = "Tier-1 #2 — the card stays through load and after render"
+    write_gallery(steps, expect_fail, title)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return 0 if all(step[3] for step in steps) else 1
+
 
 def scenario1(expect_fail=False):
     # Tier-1 #1: the failure state clears itself. A cold start raises
@@ -297,7 +413,7 @@ def scenario1(expect_fail=False):
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
         wait_stage("PrepareStage", timeout_ms=60000)
-        rpc({"id": 1, "cmd": "qclick", "stage": "MonitorStage"})
+        click_stage("MonitorStage")
         monitor = wait_stage("MonitorStage", timeout_ms=20000)
         steps.append(("02-monitor", "real click on Cura's own MONITOR header button",
                       "stage == MonitorStage", monitor.get("ok") is True, shot("02-monitor")))
@@ -372,6 +488,8 @@ def main():
         return 0
     if mode in ("scenario1", "scenario1fail"):
         return scenario1(expect_fail=(mode == "scenario1fail"))
+    if mode == "scenario2":
+        return scenario2()
     expect_fail = mode == "fail"
     return scenario(expect_fail)
 

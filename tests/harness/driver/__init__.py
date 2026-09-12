@@ -17,6 +17,7 @@ from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtNetwork import QHostAddress, QTcpServer
 from PyQt6.QtQml import QQmlComponent, qmlEngine
 from PyQt6.QtQuick import QQuickItem, QQuickWindow
+from PyQt6.QtWidgets import QApplication, QMessageBox
 from UM.Application import Application
 
 PORT_FILE = "/tmp/mpf/harness_port.txt"
@@ -616,6 +617,34 @@ class HarnessServer(QObject):
                                        Qt.KeyboardModifier.NoModifier, QPoint(x, y))
                 qtest.QTest.qWait(150)
                 return {"id": request_id, "ok": True, "aim": [x, y], "text": wanted}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "confirm_box":
+            # Native modal QMessageBoxes block the application until
+            # answered (the plugin's replace-confirm uses one). QTest
+            # clicks the QPushButton directly — the classic widget
+            # path, immune to the QML overlay delivery quirks.
+            try:
+                wanted = str(request.get("button") or "Yes")
+                standard = {"Yes": QMessageBox.StandardButton.Yes,
+                            "No": QMessageBox.StandardButton.No,
+                            "Ok": QMessageBox.StandardButton.Ok,
+                            "Cancel": QMessageBox.StandardButton.Cancel}.get(wanted)
+                if standard is None:
+                    return {"id": request_id, "ok": False, "error": "unknown button", "button": wanted}
+                boxes = [w for w in QApplication.topLevelWidgets() if isinstance(w, QMessageBox)]
+                if not boxes:
+                    return {"id": request_id, "ok": False, "error": "no QMessageBox up"}
+                qtest = _import_qtest()
+                clicked = 0
+                for box in boxes:
+                    button = box.button(standard)
+                    if button is None:
+                        continue
+                    qtest.QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+                    qtest.QTest.qWait(80)
+                    clicked += 1
+                return {"id": request_id, "ok": True, "clicked": clicked}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "clicked_flag":

@@ -138,6 +138,18 @@ if tornado is not None:
                 self.assertIn("minimum temp", state["print_stats"]["message"])
             self.io_loop.run_sync(exercise)
 
+        def test_download_serves_parseable_gcode(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                response = await client.fetch(
+                    self.base + "/server/files/gcodes/scenario1.gcode")
+                body = response.body.decode("utf-8")
+                self.assertIn(";LAYER_COUNT:40", body)
+                self.assertIn(";LAYER:39", body)
+                self.assertIn("M73 P100", body)
+                self.assertGreater(len(body), 2000)
+            self.io_loop.run_sync(exercise)
+
         def test_connection_count_and_files_listing(self):
             async def exercise():
                 client = AsyncHTTPClient()
