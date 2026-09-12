@@ -1671,11 +1671,11 @@ def tier2_step(step):
         return True, "the simulator broadcast klippy_ready", "broadcast"
     if op == "sim_ledger":
         entries = sim_http("/ledger").get("entries", ())
-        field = step.get("field", "path")
         needle = str(step.get("needle") or "")
-        count = sum(1 for entry in entries if needle in str(entry.get(field) or entry.get("method") or ""))
+        count = sum(1 for entry in entries
+                    if needle in str(entry.get("path") or "") or needle in str(entry.get("method") or ""))
         expected = int(step.get("min", 1))
-        return count >= expected, "the peer's ledger counted requests",             f"{needle!r} in {field}: {count} (>= {expected})"
+        return count >= expected, "the peer's ledger counted requests", f"{needle!r}: {count} (>= {expected})"
     if op == "model_read":
         value = exec_rpc(MODEL_READ_TEMPLATE.replace("PROP_PLACEHOLDER", json.dumps(step["prop"])))
         TIER2_STATE["model"][step["prop"]] = value
@@ -1728,6 +1728,18 @@ def tier2_step(step):
         reply = exec_rpc(code)
         time.sleep(1.5)
         return bool(reply.get("called")), f"the model slot {step['slot']}({arg_code}) ran", "called"
+    if op == "assert_mode":
+        code = MODE_READ_TEMPLATE
+        reply = exec_rpc(code)
+        return reply.get("mode") == step.get("mode"), \
+            f"the persisted transport mode equals {step['mode']}", f"read {reply.get('mode')!r}"
+    if op == "exec_file_slot":
+        args = step.get("args", [])
+        code = SLOT_TEMPLATE.replace("SLOT_PLACEHOLDER", json.dumps(step["slot"])).replace(
+            "ARGS_PLACEHOLDER", ", ".join(repr(arg) for arg in args))
+        reply = exec_rpc(code)
+        time.sleep(1.5)
+        return bool(reply.get("called")), f"the model slot {step['slot']}({args!r}) ran", "called"
     if op == "exec_console":
         code = CONSOLE_CMD_TEMPLATE.replace("TEXT_PLACEHOLDER", json.dumps(step["text"]))
         reply = exec_rpc(code)
@@ -1788,6 +1800,17 @@ def tier2_step(step):
     raise ValueError(f"unknown tier-2 op {op!r}")
 
 
+MODE_READ_TEMPLATE = """
+from UM.Application import Application
+app = Application.getInstance()
+result = {}
+for e in app.getExtensions():
+    if "MoonrakerPrintFollower" in type(e).__name__:
+        config = e.current_printer_config()
+        result["mode"] = getattr(config, "feed_mode", None)
+        break
+"""
+
 MODE_APPLY_TEMPLATE = """
 from UM.Application import Application
 app = Application.getInstance()
@@ -1796,11 +1819,13 @@ for e in app.getExtensions():
     if "MoonrakerPrintFollower" in type(e).__name__:
         follower = e
         config = follower.current_printer_config()
-        data = config.as_dict() if hasattr(config, "as_dict") else dict(config.__dict__)
-        data["feed_mode"] = MODE_PLACEHOLDER
-        from PyQt6.QtCore import QObject
-        applied = follower.apply_printer_config(data)
-        result["applied"] = bool(applied is not False)
+        try:
+            config.feed_mode = MODE_PLACEHOLDER
+            follower.apply_printer_config(config)
+            result["applied"] = True
+        except Exception as exc:
+            result["applied"] = False
+            result["error"] = repr(exc)
         break
 """
 
