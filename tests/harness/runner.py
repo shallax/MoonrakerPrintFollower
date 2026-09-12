@@ -449,6 +449,70 @@ for e in app.getExtensions():
 """
 
 
+def scenario7():
+    # Tier-1 #7: transport handover. In websocket mode the Monitor's
+    # lanes must ride the socket: six Monitor<->Prepare swaps, then
+    # the peer's ledger — the HTTP monitor-lane entries must not have
+    # grown during the swaps (beyond the settled bootstrap) while the
+    # WS entries grew (the positive sentinel).
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario7.mp4")])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
+                      "hello succeeds", True, shot("00-boot")))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
+                      "welcome not up", gate, shot("01-gate")))
+        wait_stage("PrepareStage", timeout_ms=60000)
+        click_stage("MonitorStage")
+        monitor = wait_stage("MonitorStage", timeout_ms=20000)
+        steps.append(("02-monitor", "real click on Cura's own MONITOR header button",
+                      "stage == MonitorStage", monitor.get("ok") is True, shot("02-monitor")))
+        connected = bool(wait_for(
+            lambda: exec_rpc(MODEL_READ).get("connected"), 60.0))
+        steps.append(("03-connected", "the plugin's websocket client reached the simulator",
+                      "monitorConnected", connected, shot("03-connected")))
+        # The bootstrap settles (the handover window may fire a few
+        # HTTP requests; the swap window must fire none).
+        time.sleep(45)
+        entries = sim_http("/ledger").get("entries", ())
+        baseline_http = sum(1 for entry in entries
+                            if entry.get("method") in ("GET", "POST")
+                            and str(entry.get("path") or "").startswith("/"))
+        baseline_ws = sum(1 for entry in entries if entry.get("method") == "ws")
+        # The swap cycles.
+        for _ in range(6):
+            click_stage("PrepareStage")
+            wait_stage("PrepareStage", timeout_ms=20000)
+            click_stage("MonitorStage")
+            wait_stage("MonitorStage", timeout_ms=20000)
+            time.sleep(2)
+        entries = sim_http("/ledger").get("entries", ())
+        http_after = sum(1 for entry in entries
+                         if entry.get("method") in ("GET", "POST")
+                         and str(entry.get("path") or "").startswith("/"))
+        ws_after = sum(1 for entry in entries if entry.get("method") == "ws")
+        steps.append(("04-swaps", "six real Monitor<->Prepare swaps in websocket mode",
+                      "swaps completed", True, shot("04-swaps")))
+        steps.append(("05-http-lane-quiet", "the HTTP monitor lane stayed silent during the swaps",
+                      "HTTP entries grew %d -> %d (must be 0 growth)" % (baseline_http, http_after),
+                      http_after == baseline_http, shot("05-http-lane-quiet")))
+        steps.append(("06-ws-sentinel", "the websocket lane carried the monitor traffic (positive control)",
+                      "WS entries grew %d -> %d (must grow)" % (baseline_ws, ws_after),
+                      ws_after > baseline_ws, shot("06-ws-sentinel")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+    title = "Tier-1 #7 — transport handover"
+    write_gallery(steps, False, title)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return 0 if all(step[3] for step in steps) else 1
+
+
 def scenario6():
     # Tier-1 #6: detach on any layer selection change. The print
     # loads (scenario-2's flow), the follower attaches, then a REAL
@@ -958,6 +1022,8 @@ def main():
         return scenario5()
     if mode == "scenario6":
         return scenario6()
+    if mode == "scenario7":
+        return scenario7()
     expect_fail = mode == "fail"
     return scenario(expect_fail)
 
