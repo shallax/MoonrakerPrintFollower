@@ -28,6 +28,13 @@ cp "$root/tests/harness/runner.py" /tmp/mpf/harness_runner.py
 docker exec "$CONTAINER" bash -lc 'pgrep -f "Xvfb :99" >/dev/null || \
   (Xvfb :99 -screen 0 1600x1000x24 -nolisten tcp &)'
 
+# The simulator: the plugin's network peer for the run. Fixed port so
+# the seeded printer config points at it deterministically.
+SIM_PORT=7125
+docker exec "$CONTAINER" bash -lc "pgrep -f simulator_serve >/dev/null || \
+  (cd /tmp/mpf/harness_tests/tests/harness && nohup python3 simulator_serve.py $SIM_PORT \
+   >/tmp/mpf/simulator.log 2>&1 &)"
+
 rm -f "$RUN_DIR/index.html"
 mkdir -p "$RUN_DIR"
 

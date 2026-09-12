@@ -73,6 +73,42 @@ class PrinterState:
         self.push_cadence_ms = 250
         self.seed = 0
         self.klippy_ready_broadcast: Any = None  # set by the app on klippy restart
+        # The request ledger: the dwell profile's instrument (every
+        # request with its timestamps, bytes and in-flight depth).
+        self.ledger: List[Dict[str, Any]] = []
+        self.inflight = 0
+        # Per-route service time in ms: the capacity model. A route
+        # with a delay simulates a loaded Moonraker under request load.
+        self.route_delay_ms: Dict[str, float] = {}
+
+    def record_begin(self, method: str, path: str) -> int:
+        self.inflight += 1
+        self.ledger.append({"ts": time.monotonic(), "method": method, "path": path,
+                            "bytes": 0, "ms": 0.0, "inflight": self.inflight})
+        return len(self.ledger) - 1
+
+    def record_end(self, index: int, nbytes: int) -> None:
+        if index is None or index >= len(self.ledger):
+            return
+        entry = self.ledger[index]
+        entry["ms"] = (time.monotonic() - entry["ts"]) * 1000.0
+        entry["bytes"] = nbytes
+        # The entry keeps the depth it STARTED at: peak_inflight reads
+        # what the request itself saw, not the post-completion depth.
+        self.inflight = max(0, self.inflight - 1)
+
+    def service_delay(self, path: str) -> float:
+        for prefix, delay in self.route_delay_ms.items():
+            if path.startswith(prefix):
+                return delay
+        return 0.0
+
+    def ledger_stats(self) -> Dict[str, Any]:
+        entries = self.ledger
+        window = entries[-60:]
+        return {"total": len(entries), "requests_per_s": round(len(window) / max(0.1, window[-1]["ts"] - window[0]["ts"]), 3) if len(window) > 1 else 0.0,
+                "peak_inflight": max((e["inflight"] for e in entries), default=0),
+                "p95_ms": round(sorted(e["ms"] for e in window)[int(len(window) * 0.95)] if window else 0.0, 2)}
 
     def klippy_restart(self) -> None:
         """Moonraker wipes every client subscription on a Klippy
@@ -133,6 +169,7 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
         except Exception:
             return
         method = request.get("method")
+        entry = self._printer.record_begin("ws", method)
         params = request.get("params") or {}
         request_id = request.get("id")
         if method == "printer.objects.subscribe":
@@ -162,6 +199,7 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
             self._respond(request_id, {"value": {}})
         else:
             self._respond(request_id, {"result": {}})
+        self._printer.record_end(entry, 0)
 
     def _subscribe(self, request_id: int, params: Dict[str, Any]) -> None:
         if self._printer.refuse_subscribe:
@@ -207,6 +245,17 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
 class StatusHandler(tornado.web.RequestHandler):
     def initialize(self, printer: PrinterState) -> None:
         self._printer = printer
+        self._entry = None
+
+    def prepare(self) -> None:
+        self._entry = self._printer.record_begin(self.request.method, self.request.path)
+        delay = self._printer.service_delay(self.request.path)
+        if delay:
+            time.sleep(delay / 1000.0)
+
+    def on_finish(self) -> None:
+        written = len(getattr(self, "_write_buffer", b"")) or 0
+        self._printer.record_end(self._entry, written)
 
     def get(self, path: str = "") -> None:
         # The real auth check: the plugin sends X-Api-Key on its own
@@ -247,10 +296,21 @@ class StatusHandler(tornado.web.RequestHandler):
             self.write(json.dumps({"result": "ok"}))
 
 
+class LedgerHandler(tornado.web.RequestHandler):
+    def initialize(self, printer: PrinterState) -> None:
+        self._printer = printer
+
+    def get(self) -> None:
+        self.set_header("Content-Type", "application/json")
+        self.write(json.dumps({"result": self._printer.ledger_stats(),
+                               "entries": self._printer.ledger[-100:]}))
+
+
 def make_app(printer: Optional[PrinterState] = None) -> tornado.web.Application:
     printer = printer or PrinterState()
     routes: List[Any] = [
         (r"/websocket", SimulatorWebSocket, {"printer": printer}),
+        (r"/ledger", LedgerHandler, {"printer": printer}),
         (r"/printer/(.*)", StatusHandler, {"printer": printer}),
         (r"/server/(.*)", StatusHandler, {"printer": printer}),
         (r"/machine/(.*)", StatusHandler, {"printer": printer}),

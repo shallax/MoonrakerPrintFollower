@@ -152,8 +152,11 @@ class HarnessServer(QObject):
         # the window is genuinely on screen: the main window is admitted
         # by title too, and the truly hidden popups are excluded by
         # title as well (their items were polluting the dumps).
+        # The main window is the large one; popup windows inherit the
+        # app title and would pollute every dump with their hidden
+        # content (the welcome's buttons shadowed the real toolbar).
         visible_windows = [w for w in windows
-                           if w.isVisible() or w.title() == "UltiMaker Cura"]
+                           if w.isVisible() and w.width() >= 1000]
         if cmd == "hello":
             return {"id": request_id, "ok": True, "pid": os.getpid(),
                     "platform": QGuiApplication.platformName(),
@@ -229,6 +232,46 @@ class HarnessServer(QObject):
                 return {"id": request_id, "ok": True}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "probe_feed":
+            # The Phase-B transport proof: the PRODUCTION client and
+            # session stack (the same code the Monitor uses) against
+            # the simulator, over the real transports, inside the real
+            # runtime. Reports samples and the object set it received.
+            url = str(request.get("url") or "")
+            mode = str(request.get("mode") or "websocket")
+            seconds = float(request.get("seconds", 6.0))
+            if not url:
+                return {"id": request_id, "ok": False, "error": "no url"}
+            try:
+                from Moonraker_Print_Follower.MoonrakerSession import MoonrakerSession
+                from Moonraker_Print_Follower.MoonrakerClient import MoonrakerClient
+                app = Application.getInstance()
+                session = MoonrakerSession(app)
+                client = MoonrakerClient(app, session=session)
+                received = []
+                def on_status(status):
+                    if isinstance(status, dict):
+                        received.append((time.monotonic(), sorted(status.keys())))
+                client.statusReceived.connect(on_status)
+                client.configure(url, "", 750, feed_mode=mode)
+                client.start()
+                slot = {"result": None}
+
+                def finish():
+                    client.stop()
+                    objects = sorted({name for _, keys in received for name in keys})
+                    slot["result"] = {"id": request_id, "ok": True, "mode": mode,
+                                      "samples": len(received),
+                                      "objects": objects,
+                                      "sample_keys": received[-1][1] if received else []}
+
+                QTimer.singleShot(int(seconds * 1000), finish)
+                self._pending.append((request_id, time.monotonic() + seconds + 15,
+                                      lambda: slot["result"] is not None,
+                                      lambda: slot["result"]))
+                return None
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "seed_machine":
             # The same code path the Add-printer wizard drives; the
             # welcome dialog leaves once an active machine exists.
@@ -239,18 +282,34 @@ class HarnessServer(QObject):
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "hide_welcome":
-            # The first-run wizard's own buttons overflow the window
-            # top under a WM-less Xvfb and cannot be clicked; flipping
-            # the overlay item off is environment orchestration, not a
-            # claim about the plugin's UI.
+            # The wizard's buttons overflow the window top and cannot
+            # be clicked; hiding the overlay (and its grey-out, which
+            # follows the dialog item's visible) is environment
+            # orchestration, not a claim about the plugin's UI.
             try:
-                found = False
+                target = None
                 for window in visible_windows:
                     for item in window.contentItem().findChildren(QQuickItem):
-                        if "WelcomeDialogItem" in item.metaObject().className():
-                            item.setProperty("visible", False)
-                            found = True
-                return {"id": request_id, "ok": found}
+                        try:
+                            t = item.property("text")
+                        except Exception:
+                            t = None
+                        if isinstance(t, str) and "Cura is developed by" in t:
+                            target = item
+                            break
+                    if target is not None:
+                        break
+                if target is None:
+                    return {"id": request_id, "ok": False, "error": "welcome label not found"}
+                chain = []
+                item = target
+                for _ in range(6):
+                    item.setProperty("visible", False)
+                    chain.append(item.metaObject().className())
+                    item = item.parentItem()
+                    if item is None:
+                        break
+                return {"id": request_id, "ok": True, "chain": chain}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "complete_welcome":

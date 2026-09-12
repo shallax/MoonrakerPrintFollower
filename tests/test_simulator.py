@@ -75,6 +75,19 @@ if tornado is not None:
                 conn.close()
             self.io_loop.run_sync(exercise)
 
+        def test_ledger_records_requests_and_stats(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                for _ in range(3):
+                    await client.fetch(self.base + "/server/info")
+                response = await client.fetch(self.base + "/ledger")
+                body = json.loads(response.body)
+                stats = body["result"]
+                self.assertGreaterEqual(stats["total"], 3)
+                self.assertGreaterEqual(stats["peak_inflight"], 1)
+                self.assertGreaterEqual(len(body["entries"]), 3)
+            self.io_loop.run_sync(exercise)
+
         def test_klippy_restart_wipes_subscriptions(self):
             async def exercise():
                 conn = await tornado.websocket.websocket_connect(
