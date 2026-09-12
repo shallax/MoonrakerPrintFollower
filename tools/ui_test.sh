@@ -41,8 +41,7 @@ docker exec "$CONTAINER" bash -lc 'pgrep -f "Xvfb :99" >/dev/null || \
 # every run — a long-lived process keeps serving stale simulator code
 # (and pgrep -f patterns match the probing shell itself).
 SIM_PORT=7125
-docker exec "$CONTAINER" bash -lc "for p in \$(pgrep -f simulator_serve.py); do \
-  [ "\$p" != "\$\$" ] && kill -9 "\$p" 2>/dev/null; done; sleep 0.5; \
+docker exec "$CONTAINER" bash -lc "fuser -k $SIM_PORT/tcp 2>/dev/null; sleep 0.5; \
   cd /tmp/mpf/harness_tests/tests/harness && nohup python3 simulator_serve.py $SIM_PORT \
   >/tmp/mpf/simulator.log 2>&1 &"
 
