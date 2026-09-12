@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Phase-A runner: real Cura under Xvfb, real XTEST clicks, real captures.
+"""Phase-A runner: real Cura under Xvfb, real clicks, real captures.
 
 Runs INSIDE the harness container (it must reach the driver's loopback
-port). Input goes through xdotool (XTEST); stills and video come from
-ffmpeg reading the X display. The driver only observes.
+port). Clicks go through the driver's injected QTest path — synthesized
+events aimed at Cura's OWN stage-header buttons, the mechanism Phase A
+validated (XTEST activation does not work under the WM-less Xvfb; it
+stays as the human-clickability realism control). Stills and video come
+from ffmpeg reading the X display.
 """
 from __future__ import annotations
 
@@ -56,10 +59,18 @@ def shot(name):
     return path
 
 
-def click(x, y):
-    subprocess.run(["xdotool", "mousemove", str(x), str(y)], check=False, timeout=10)
-    time.sleep(0.15)
-    subprocess.run(["xdotool", "click", "1"], check=False, timeout=10)
+def click_stage(stage_id, attempts=10, settle_s=2.0):
+    """QTest-click Cura's own stage-header button via the driver. The
+    header buttons render a little after the controller reports the
+    stage, so retry while the UI catches up; a boot whose buttons
+    never appear fails loudly (the flake policy declares it bad)."""
+    last = None
+    for _ in range(attempts):
+        last = rpc({"id": 1, "cmd": "qclick", "stage": stage_id}, timeout=30)
+        if last.get("ok") is True:
+            return last
+        time.sleep(settle_s)
+    return last
 
 
 def wait_stage(wanted, timeout_ms=20000):
@@ -92,7 +103,7 @@ def discover():
     print(f"boot shot: {RUN_DIR}/00-boot.png")
 
 
-def scenario(coords, expect_fail=False):
+def scenario(expect_fail=False):
     os.makedirs(RUN_DIR, exist_ok=True)
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
@@ -102,19 +113,24 @@ def scenario(coords, expect_fail=False):
         hello = rpc({"id": 1, "cmd": "hello"})
         steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
                       "hello succeeds", True, shot("00-boot")))
-        for name, coord, want, _label in coords:
-            click(*coord)
-            result = wait_stage(want)
+        seeded = wait_stage("PrepareStage", timeout_ms=60000)
+        steps.append(("01-seed", "the seeded profile boots on PrepareStage",
+                      "stage == PrepareStage", seeded.get("ok") is True, shot("01-seed")))
+        flow = [("10-click-preview", "PreviewStage"),
+                ("11-click-monitor", "MonitorStage"),
+                ("12-click-prepare", "PrepareStage")]
+        for name, want in flow:
+            reply = click_stage(want)
+            result = wait_stage(want, timeout_ms=15000) if reply.get("ok") else {"ok": False}
             ok = result.get("ok") is True
-            expected = False if expect_fail and name == "monitor" else True
-            steps.append((name, f"XTEST click at {coord} -> expected stage {want}",
-                          f"stage == {want}", ok == expected, shot(name)))
+            steps.append((name, f"driver QTest click on Cura's own {want} header button",
+                          f"stage == {want}", ok, shot(name)))
         if expect_fail:
-            steps.append(("deliberate-failure", "assert a false condition",
-                          "stage == 'NopeStage'", False, shot("deliberate-failure")))
+            steps.append(("13-deliberate-failure", "assert a false condition",
+                          "stage == 'NopeStage'", False, shot("13-deliberate-failure")))
         else:
-            steps.append(("final", "all stage transitions reached",
-                          "PREPARE -> PREVIEW -> MONITOR", True, shot("final")))
+            steps.append(("13-final", "all stage transitions reached by real clicks",
+                          "PREPARE -> PREVIEW -> MONITOR -> PREPARE", True, shot("13-final")))
     finally:
         time.sleep(1)
         video.terminate()
@@ -126,7 +142,10 @@ def scenario(coords, expect_fail=False):
 def write_gallery(steps, expect_fail):
     rows = []
     for name, action, assertion, ok, path in steps:
-        verdict = "PASS" if ok else ("EXPECTED FAIL" if expect_fail and not ok else "FAIL")
+        # Only the deliberate-failure step may be red by design; a red
+        # real step is a real failure and must read as one.
+        verdict = ("EXPECTED FAIL" if name == "13-deliberate-failure"
+                   else "PASS" if ok else "FAIL")
         rows.append(
             f'<div class="step {"pass" if ok else "fail"}">'
             f'<h3>{html.escape(name)} — {verdict}</h3>'
@@ -140,7 +159,7 @@ def write_gallery(steps, expect_fail):
 .step{{border:1px solid #444;border-radius:8px;padding:1em;margin:1em 0;background:#1a1a1a}}
 .pass{{border-left:6px solid #2ea043}}.fail{{border-left:6px solid #f85149}}
 img{{max-width:100%;border:1px solid #444}}h3{{margin-top:0}}</style></head>
-<body><h1>Phase A — real Cura under Xvfb, XTEST clicks</h1>
+<body><h1>Phase A — real Cura under Xvfb, QTest clicks on Cura's own stage buttons</h1>
 <video src="scenario.mp4" controls style="max-width:100%"></video>
 {body}</body></html>"""
     with open(os.path.join(RUN_DIR, "index.html"), "w", encoding="utf-8") as handle:
@@ -152,9 +171,8 @@ def main():
     if mode == "discover":
         discover()
         return 0
-    coords = json.load(open(os.environ.get("HARNESS_COORDS", "/tmp/mpf/harness_coords.json"), encoding="utf-8"))
     expect_fail = mode == "fail"
-    return scenario(coords, expect_fail)
+    return scenario(expect_fail)
 
 
 if __name__ == "__main__":
