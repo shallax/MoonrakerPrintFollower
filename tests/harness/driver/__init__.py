@@ -92,17 +92,20 @@ class HarnessServer(QObject):
         except Exception:
             pass
 
+    # The registry's post-register bookkeeping calls setVersion,
+    # setMetaData and setPluginId on every returned object; a missing
+    # one marks the driver "could not be loaded" and Cura shows the
+    # corrupted-plugin card over the UI while the already-running
+    # server keeps the suite passing. The server is only an
+    # observation channel, so the bookkeeping is accepted and stored.
     def setVersion(self, *_args):
-        # Cura's plugin loader treats returned "extension" objects as
-        # Cura extensions; the server is only an observation channel.
         pass
 
     def setMetaData(self, *_args):
-        # The registry's post-register bookkeeping calls setMetaData
-        # after setVersion; without it Cura marks the driver "could
-        # not be loaded" and shows the corrupted-plugin card over the
-        # UI while the already-running server keeps the suite passing.
         pass
+
+    def setPluginId(self, plugin_id):
+        self._plugin_id = plugin_id
 
     # -- plumbing ----------------------------------------------------
 
@@ -223,7 +226,8 @@ class HarnessServer(QObject):
             try:
                 from cura.CuraApplication import CuraApplication
                 registry = CuraApplication.getInstance().getPluginRegistry()
-                registered = registry.getPlugin("HarnessDriver") is not None
+                registry.getPluginObject("HarnessDriver")
+                registered = True
             except Exception:
                 registered = False
             return {"id": request_id, "ok": True, "pid": os.getpid(),
