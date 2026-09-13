@@ -248,11 +248,10 @@ case "$MODE" in
             else
                 echo "ui_test: Xvfb is not running"
             fi
-            # The kernel's verdict on the stall: every surviving process
-            # in the boot chain, then the loader's CPU clock and each
-            # thread's wchan/syscall. A frozen clock with a blocked
-            # syscall names the blocker; a growing one means the boot
-            # is still computing.
+            # The kernel's verdict on the stall: the process chain and
+            # every thread's blocked syscall, then a live strace and
+            # gdb backtrace of the loader (SYS_PTRACE is granted at
+            # container start for exactly this).
             docker exec "$CONTAINER" bash -lc '
                 for pid in $(pgrep -f "UltiMaker-Cur[a]"); do
                     cmd=$(tr "\0" " " < /proc/$pid/cmdline 2>/dev/null)
@@ -262,15 +261,30 @@ case "$MODE" in
                         echo "ui_test:   child $c: $(ps -o stat=,args= -p "$c" 2>/dev/null | head -1)"
                     done
                 done
-                pid=$(pgrep -f "^/lib64/ld-linux.*UltiMaker-Cur[a]" | head -1)
-                if [ -n "$pid" ]; then
-                    u1=$(sed -E "s/^[0-9]+ \([^)]*\) //" /proc/$pid/stat | cut -d" " -f12)
-                    sleep 3
-                    rest=$(sed -E "s/^[0-9]+ \([^)]*\) //" /proc/$pid/stat)
-                    echo "ui_test: Cura pid $pid state $(echo "$rest" | cut -d" " -f1), cpu clock $u1 -> $(echo "$rest" | cut -d" " -f12), wchan $(cat /proc/$pid/wchan)"
+                xpid=$(pgrep -f "Xvfb :9[9]" | head -1)
+                if [ -n "$xpid" ]; then
+                    xrest=$(sed -E "s/^[0-9]+ \([^)]*\) //" /proc/$xpid/stat 2>/dev/null)
+                    echo "ui_test: Xvfb pid $xpid state $(echo "$xrest" | cut -d" " -f1) cpu $(echo "$xrest" | cut -d" " -f12)"
+                fi
+                for pid in $(pgrep -f "ld-linux.*UltiMaker-Cur[a]"); do
+                    rest=$(sed -E "s/^[0-9]+ \([^)]*\) //" /proc/$pid/stat 2>/dev/null)
+                    echo "ui_test: ld chain pid $pid state $(echo "$rest" | cut -d" " -f1) cpu $(echo "$rest" | cut -d" " -f12)"
                     for t in /proc/$pid/task/*; do
                         echo "ui_test:   tid $(basename $t): wchan $(cat $t/wchan 2>/dev/null), syscall $(cat $t/syscall 2>/dev/null)"
                     done
+                done
+                for p in $(pgrep -f "ld-linux.*UltiMaker-Cur[a]"); do
+                    case $(tr "\0" " " < /proc/$p/cmdline 2>/dev/null) in
+                        *"timeout 1800"*|*"su ubuntu"*|*"bash -c"*) ;;
+                        *) pid=$p ;;
+                    esac
+                done
+                if [ -n "${pid:-}" ]; then
+                    echo "ui_test: strace of loader pid $pid:"
+                    timeout 8 strace -f -tt -s 100 -p "$pid" -o /tmp/mpf/strace.txt 2>&1 | tail -3
+                    tail -30 /tmp/mpf/strace.txt 2>/dev/null
+                    echo "ui_test: gdb backtrace of loader pid $pid:"
+                    timeout 30 gdb -batch -ex "set pagination off" -ex "thread apply all bt" -p "$pid" 2>&1 | grep -v "^\[New \|^\[Thread " | head -90
                 fi'
             echo "ui_test: cura_run.log ($(wc -c < /tmp/mpf/cura_run.log) bytes):"
             tail -40 /tmp/mpf/cura_run.log

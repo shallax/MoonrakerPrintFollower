@@ -20,7 +20,10 @@ make package >/dev/null
 
 docker build -q -t mpf-cura-harness "$root/tools/harness" >/dev/null
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-docker run -d --init --name "$CONTAINER" \
+# SYS_PTRACE lets the stall diagnostics attach gdb/strace to the
+# hung boot from inside the container (the host's ptrace_scope
+# otherwise blocks a non-parent tracer).
+docker run -d --init --name "$CONTAINER" --cap-add=SYS_PTRACE \
     -v "$HARNESS_DIR:$HARNESS_DIR" mpf-cura-harness sleep infinity >/dev/null
 
 python3 "$root/tools/fetch_cura.py" "$PRIMARY"
