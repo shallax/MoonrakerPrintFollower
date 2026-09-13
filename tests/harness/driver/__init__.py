@@ -21,6 +21,23 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from UM.Application import Application
 
 PORT_FILE = "/tmp/mpf/harness_port.txt"
+TOKEN_FILE = "/tmp/mpf/harness_token.txt"
+
+
+def _mint_token():
+    """A per-run secret for the loopback channel: any same-UID process
+    in the container could otherwise connect and exec arbitrary code
+    inside Cura (the security panel's H1). The runner reads the 0600
+    file and presents the token on every request."""
+    try:
+        import secrets
+        token = secrets.token_hex(16)
+        with open(TOKEN_FILE, "w", encoding="utf-8") as handle:
+            handle.write(token)
+        os.chmod(TOKEN_FILE, 0o600)
+        return token
+    except Exception:
+        return ""
 
 
 class HarnessServer(QObject):
@@ -36,10 +53,12 @@ class HarnessServer(QObject):
         self._win_events = []
         self._py_clicks = []
         self._buffers = {}
+        self._token = _mint_token()
         if not self._server.listen(QHostAddress.SpecialAddress.LocalHost, 0):
             return
         with open(PORT_FILE, "w", encoding="utf-8") as handle:
             handle.write(str(self._server.serverPort()))
+        os.chmod(PORT_FILE, 0o600)
         self._poll = QTimer(self)
         self._poll.setInterval(50)
         self._poll.timeout.connect(self._drain)
@@ -558,6 +577,8 @@ class HarnessServer(QObject):
                         "children": children, "sweep": sweep}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if self._token and str(request.get("token") or "") != self._token:
+            return {"id": request_id, "ok": False, "error": "bad or missing token"}
         if cmd == "exec":
             # Hot-patch channel for the driver itself: iterate verb
             # behaviour without a 4-minute Cura reboot. Loopback-only
@@ -575,7 +596,9 @@ class HarnessServer(QObject):
                     result = json.dumps(namespace.get("result"))
                 except Exception:
                     result = repr(namespace.get("result"))
-                return {"id": request_id, "ok": True, "result": result[:4000]}
+                truncated = len(result) > 4000
+                return {"id": request_id, "ok": True, "result": result[:4000],
+                        "truncated": bool(truncated)}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": repr(exc)}
         if cmd == "find_text":

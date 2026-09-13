@@ -32,15 +32,19 @@ unit() {  # unit <minutes-budget> <cura-version> <description> <mode> [group]
     echo "== $desc (budget ${budget}m per attempt) =="
     green=0
     for attempt in 1 2 3; do
+        # Every attempt keeps its own gallery: a later attempt or unit
+        # must never overwrite an earlier one's proof (the panel's
+        # evidence-survival finding).
+        run_dir="run-$(echo "$desc" | tr ' /.' '--_')-a$attempt"
         if [ -n "$group" ]; then
             if timeout "${budget}m" env CURA_VERSION="$version" \
                 HARNESS_CONTAINER="$CONTAINER" MODE="$mode" \
-                SCENARIO_GROUP="$group" ./tools/ui_test.sh; then
+                SCENARIO_GROUP="$group" RUN_DIR_NAME="$run_dir" ./tools/ui_test.sh; then
                 green=1; break
             fi
         elif timeout "${budget}m" env CURA_VERSION="$version" \
             HARNESS_CONTAINER="$CONTAINER" MODE="$mode" \
-            ./tools/ui_test.sh; then
+            RUN_DIR_NAME="$run_dir" ./tools/ui_test.sh; then
             green=1; break
         fi
         echo "    attempt $attempt failed"
@@ -48,15 +52,20 @@ unit() {  # unit <minutes-budget> <cura-version> <description> <mode> [group]
     if [ "$green" != 1 ]; then
         echo "FAILED: $desc"
         fail=1
+    else
+        [ "$attempt" = 1 ] || echo "    passed on attempt $attempt"
     fi
 }
 
-# The primary version: the gates, then the suite groups —
-# connection through settings, plus the visual pins.
-for n in 1 2 3 4 5 6 7 8 9 10 11; do
+# The primary version: the gates, then the suite groups. Gate 8 is the
+# ten-minute soak — its own budget, sized for its own duration (the
+# panel's arithmetic finding: the uniform 10-minute cap could not
+# contain the soak and the gate was red by construction).
+for n in 1 2 3 4 5 6 7 9 10 11; do
     unit 10 "$PRIMARY" "gate $n on $PRIMARY" "scenario$n"
 done
-for g in connection status temperatures console webcams files motion printing settings visual; do
+unit 16 "$PRIMARY" "gate 8 on $PRIMARY" "scenario8"
+for g in connection status temperatures console webcams files motion printing settings visual preview probe; do
     unit 15 "$PRIMARY" "suite group $g on $PRIMARY" suite "$g"
 done
 # The secondary version: the swap proof — the gates again under it.

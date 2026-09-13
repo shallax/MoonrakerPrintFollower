@@ -150,6 +150,15 @@ class PrinterState:
         # needs bytes arriving on the wire to animate its bar — a
         # pre-request hold delivers nothing and the bar never moves.
         self.gcode_stream_ms = 0
+        # The missed-pause arm: the PAUSE gcode script is refused —
+        # the controller must keep the entry, restyled.
+        self.fail_pause_script = False
+        # The corrupt-frame arm: the next push goes out as garbage —
+        # the client's socket must fail and reconnect (S-corruption).
+        self.corrupt_frame_once = False
+        # Keys the scenario lane could not apply — the runner's
+        # sim_arm/sim_set refuse on these.
+        self.unknown_keys = []
         try:
             directory = tempfile.mkdtemp(prefix="mpf-frames-")
             subprocess.run(
@@ -180,6 +189,14 @@ class PrinterState:
              "size": len(self.gcode_bytes), "permissions": "rw",
              "slicer": "MoonrakerPrintFollower-sim", "estimated_time": 1800.0,
              "layer_height": 0.2, "filament_total": 6.0,
+             "print_start_time": None},
+            # The delete/rename scenarios' disposable target: the
+            # group's own scenarios must not destroy each other's
+            # files (the f3-deletes-scenario1 knock-on lesson).
+            {"filename": "delete-me.gcode", "modified": time.time() - 10800.0,
+             "size": len(self.gcode_bytes), "permissions": "rw",
+             "slicer": "MoonrakerPrintFollower-sim", "estimated_time": 600.0,
+             "layer_height": 0.2, "filament_total": 2.0,
              "print_start_time": None},
         ]
         self.seed = 0
@@ -254,6 +271,15 @@ class PrinterState:
                 self.presets_value = dict(value)
             elif name == "gcode_stream_ms":
                 self.gcode_stream_ms = max(0, int(value))
+            elif name == "fail_pause_script":
+                self.fail_pause_script = bool(value)
+            elif name == "corrupt_frame_once":
+                self.corrupt_frame_once = bool(value)
+            else:
+                # A dropped key silently narrows the very surface the
+                # suite exists to widen — record it so the runner can
+                # refuse (the panel's finding).
+                self.unknown_keys.append(str(name))
 
     def reset(self) -> None:
         """The hermetic scenario boundary: state back to kickoff, every
@@ -279,6 +305,9 @@ class PrinterState:
         self.power_devices = []
         self.presets_value = {}
         self.gcode_stream_ms = 0
+        self.fail_pause_script = False
+        self.corrupt_frame_once = False
+        self.unknown_keys = []
         self._last_pushed = {}
         self.console_lines = [{"type": "response", "message": "// Klipper state: Ready",
                                "time": time.time()}]
@@ -454,7 +483,11 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
             frame = {"jsonrpc": "2.0", "method": "notify_status_update",
                      "params": [patch, time.time()]}
             try:
-                self.write_message(json.dumps(frame))
+                if self._printer.corrupt_frame_once:
+                    self._printer.corrupt_frame_once = False
+                    self.write_message(b"\x00\xff\xfe garbage")
+                else:
+                    self.write_message(json.dumps(frame))
             except Exception:
                 break
 
@@ -475,11 +508,14 @@ class StatusHandler(tornado.web.RequestHandler):
         self._printer = printer
         self._entry = None
 
-    def prepare(self) -> None:
+    async def prepare(self) -> None:
         self._entry = self._printer.record_begin(self.request.method, self.request.path)
         delay = self._printer.service_delay(self.request.path)
         if delay:
-            time.sleep(delay / 1000.0)
+            # Async on purpose: a held route must not stall the whole
+            # sim (the websocket pump included) — the old time.sleep
+            # froze every lane while one route was held.
+            await tornado.gen.sleep(delay / 1000.0)
         if self._printer.require_api_key and not self.request.headers.get("X-Api-Key"):
             self.set_status(401)
             self.finish(json.dumps({"result": {}, "error": {"code": 401, "message": "unauthorized"}}))
@@ -505,6 +541,8 @@ class StatusHandler(tornado.web.RequestHandler):
             self.write(json.dumps({"result": {"webcams": [{"name": "sim-cam", "stream_url": "/webcam"}]}}))
         elif path == "device_power/devices":
             self.write(json.dumps({"result": {"devices": list(self._printer.power_devices)}}))
+        elif path == "database/item":
+            self.write(json.dumps({"result": {"value": self._printer.presets_value}}))
         elif path.startswith("files/gcodes/"):
             self.set_header("Content-Type", "application/octet-stream")
             cadence = self._printer.gcode_stream_ms
@@ -518,6 +556,16 @@ class StatusHandler(tornado.web.RequestHandler):
                     await tornado.gen.sleep(cadence / 1000.0)
             else:
                 self.write(self._printer.gcode_bytes)
+        elif path == "files/metadata":
+            filename = self.get_argument("filename", "")
+            entry = next((item for item in self._printer.files
+                          if item.get("filename") == filename.rsplit("/", 1)[-1]), None)
+            if entry is None:
+                self.write(json.dumps({"result": {},
+                                       "error": {"code": 404, "message": "unknown file"}}))
+            else:
+                self.write(json.dumps({"result": {**entry, "first_layer_height": 0.2,
+                                                  "gcode_start_byte": 0}}))
         elif path == "files/directory":
             # The walker's extended listing: dirs, files with the
             # metadata fields directory_rows reads, and disk usage.
@@ -550,8 +598,8 @@ class StatusHandler(tornado.web.RequestHandler):
             self.write(json.dumps({"result": {"status": status}}))
         elif path == "emergency_stop":
             # The emergency: the printer cancels into an error state
-            # and Moonraker drops the connection (the plugin's
-            # reconnect-after-emergency path).
+            # and Klippy shuts down — the real host announces it (the
+            # plugin's klippyLost path, the domain review).
             self._printer.scenario(
                 print_stats={**self._printer.state["print_stats"],
                              "state": "error", "message": "Emergency stop",
@@ -559,6 +607,12 @@ class StatusHandler(tornado.web.RequestHandler):
                 virtual_sdcard={**self._printer.state["virtual_sdcard"],
                                 "is_active": False, "progress": 0.0})
             self._printer.emergency_count = getattr(self._printer, "emergency_count", 0) + 1
+            frame = {"jsonrpc": "2.0", "method": "notify_klippy_shutdown", "params": [time.time()]}
+            for handler in list(self._printer.handlers):
+                try:
+                    handler.write_message(json.dumps(frame))
+                except Exception:
+                    pass
             self.write(json.dumps({"result": "ok"}))
         elif path in ("print/pause", "print/resume", "print/cancel"):
             # The host's own state machine: the pause/resume/cancel
@@ -590,6 +644,56 @@ class StatusHandler(tornado.web.RequestHandler):
                 self._printer.console_lines.append(
                     {"type": "command", "message": script,
                      "time": time.time()})
+            if self._printer.fail_pause_script and script.strip().upper() == "PAUSE":
+                # The missed-pause arm: the host refuses the command —
+                # the controller must keep the entry, restyled.
+                self.write(json.dumps({"result": {},
+                                       "error": {"code": 400,
+                                                 "message": "simulated PAUSE refusal"}}))
+            else:
+                self.write(json.dumps({"result": "ok"}))
+                if script.strip().upper() == "PAUSE" and \
+                        self._printer.state["print_stats"].get("state") == "printing":
+                    # Real ordering: the ack returns FIRST and the
+                    # state transition lands on a later tick — Klipper
+                    # expands the macro asynchronously. The plugin's
+                    # confirmation must survive that window (the
+                    # domain review's ordering fix).
+                    def flip():
+                        self._printer.scenario(
+                            print_stats={**self._printer.state["print_stats"],
+                                         "state": "paused"})
+                    tornado.ioloop.IOLoop.current().add_callback(flip)
+        elif path == "device_power/device":
+            # The controls pane's toggle. Real Moonraker semantics (the
+            # domain review): the locked refusal fires ONLY while a
+            # print is active — in standby a locked device toggles
+            # fine — a no-op action is a 400, and the reply is keyed
+            # by the device's name.
+            name = str(body.get("device") or "")
+            action = str(body.get("action") or "")
+            device = next((item for item in self._printer.power_devices
+                           if item.get("device") == name), None)
+            printing = self._printer.state["print_stats"].get("state") in ("printing", "paused")
+            if device is None:
+                self.write(json.dumps({"result": {},
+                                       "error": {"code": 404, "message": "unknown device"}}))
+            elif str(device.get("status")) == action:
+                self.write(json.dumps({"result": {},
+                                       "error": {"code": 400,
+                                                 "message": f"Device '{name}' already {action}"}}))
+            elif device.get("locked_while_printing") and printing and not body.get("force"):
+                self.write(json.dumps({"result": {},
+                                       "error": {"code": 403, "message": "locked while printing"}}))
+            else:
+                device["status"] = "on" if action == "on" else "off"
+                self.write(json.dumps({"result": {name: device}}))
+        elif path in ("restart", "firmware_restart"):
+            # The System section's restarts. A firmware restart cycles
+            # Klippy — the host broadcasts klippy_ready on the other
+            # side, which is the watchdog-heal path's input.
+            if path == "firmware_restart":
+                self._printer.klippy_restart()
             self.write(json.dumps({"result": "ok"}))
         elif path == "print/start":
             filename = self.get_argument("filename", "sim.gcode")
@@ -628,8 +732,10 @@ class ControlHandler(tornado.web.RequestHandler):
                 body = json.loads(self.request.body or b"{}")
             except Exception:
                 body = {}
+            self._printer.unknown_keys = []
             self._printer.scenario(**body)
-            self.write(json.dumps({"result": "ok"}))
+            self.write(json.dumps({"result": "ok",
+                                   "unknown": list(self._printer.unknown_keys)}))
         elif path == "drop_connections":
             for handler in list(self._printer.handlers):
                 try:

@@ -135,6 +135,126 @@ if tornado is not None:
                 self.assertGreaterEqual(elapsed, 0.4)
             self.io_loop.run_sync(exercise)
 
+        def test_device_power_post_real_semantics(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"power_devices": [
+                                       {"device": "DFU", "status": "on", "locked_while_printing": False},
+                                       {"device": "Printer", "status": "off", "locked_while_printing": True}]}))
+                response = await client.fetch(self.base + "/machine/device_power/device",
+                                              method="POST",
+                                              body=json.dumps({"device": "DFU", "action": "off"}))
+                # The reply is keyed by the device name (real Moonraker).
+                self.assertEqual(json.loads(response.body)["result"]["DFU"]["status"], "off")
+                # A no-op action is a 400.
+                noop = await client.fetch(self.base + "/machine/device_power/device",
+                                          method="POST",
+                                          body=json.dumps({"device": "DFU", "action": "off"}))
+                self.assertEqual(json.loads(noop.body)["error"]["code"], 400)
+                # In STANDBY a locked device toggles fine (real Moonraker
+                # only refuses while a print is active).
+                standby = await client.fetch(self.base + "/machine/device_power/device",
+                                             method="POST",
+                                             body=json.dumps({"device": "Printer", "action": "on"}))
+                self.assertEqual(json.loads(standby.body)["result"]["Printer"]["status"], "on")
+                # While PRINTING the locked device refuses.
+                self.sim.printer.scenario(print_stats={**self.sim.printer.state["print_stats"],
+                                                       "state": "printing"})
+                refused = await client.fetch(self.base + "/machine/device_power/device",
+                                             method="POST",
+                                             body=json.dumps({"device": "Printer", "action": "off"}))
+                self.assertEqual(json.loads(refused.body)["error"]["code"], 403)
+            self.io_loop.run_sync(exercise)
+
+        def test_database_item_serves_over_http(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"presets_value": {
+                                       "presets": {"fast": {"name": "Fast", "gcode": "M220 S150"}}}}))
+                response = await client.fetch(
+                    self.base + "/server/database/item?namespace=mainsail&key=presets")
+                self.assertEqual(json.loads(response.body)["result"]["value"]["presets"]["fast"]["name"],
+                                 "Fast")
+            self.io_loop.run_sync(exercise)
+
+        def test_pause_script_pauses_and_the_arm_refuses(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                self.sim.printer.scenario(print_stats={**self.sim.printer.state["print_stats"],
+                                                       "state": "printing"})
+                response = await client.fetch(self.base + "/printer/gcode/script",
+                                              method="POST", body=json.dumps({"script": "PAUSE"}))
+                self.assertEqual(json.loads(response.body)["result"], "ok")
+                # The real ordering: the ack first, the state on a
+                # later tick.
+                await tornado.gen.sleep(0.2)
+                self.assertEqual(self.sim.printer.state["print_stats"]["state"], "paused")
+                self.sim.printer.scenario(print_stats={**self.sim.printer.state["print_stats"],
+                                                       "state": "printing"},
+                                          fail_pause_script=True)
+                refused = await client.fetch(self.base + "/printer/gcode/script",
+                                             method="POST", body=json.dumps({"script": "PAUSE"}))
+                self.assertEqual(json.loads(refused.body)["error"]["code"], 400)
+                self.assertEqual(self.sim.printer.state["print_stats"]["state"], "printing")
+            self.io_loop.run_sync(exercise)
+
+        def test_firmware_restart_broadcasts_klippy_ready(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                conn = await tornado.websocket.websocket_connect(
+                    f"ws://127.0.0.1:{self.sim.port}/websocket")
+                await client.fetch(self.base + "/printer/firmware_restart", method="POST", body=b"{}")
+                frame = json.loads(await conn.read_message())
+                self.assertEqual(frame["method"], "notify_klippy_ready")
+                conn.close()
+            self.io_loop.run_sync(exercise)
+
+        def test_route_delay_holds_only_its_route(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                self.sim.printer.scenario(route_delay_ms={"server/info": 600.0})
+                started = time.monotonic()
+                delayed = client.fetch(self.base + "/server/info")
+                fast = client.fetch(self.base + "/server/webcams/list")
+                # The held route must not stall the other lanes: the
+                # fast response lands while server/info still sleeps.
+                await fast
+                fast_elapsed = time.monotonic() - started
+                await delayed
+                delayed_elapsed = time.monotonic() - started
+                self.assertGreaterEqual(delayed_elapsed, 0.5)
+                self.assertLess(fast_elapsed, 0.4)
+            self.io_loop.run_sync(exercise)
+
+        def test_corrupt_frame_arm_sends_garbage_on_the_next_push(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                conn = await tornado.websocket.websocket_connect(
+                    f"ws://127.0.0.1:{self.sim.port}/websocket")
+                conn.write_message(json.dumps({"jsonrpc": "2.0", "method": "printer.objects.subscribe",
+                                               "params": {"objects": {"print_stats": None}}, "id": 1}))
+                await conn.read_message()  # the snapshot reply
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"corrupt_frame_once": True,
+                                                    "print_stats": {"state": "printing"}}))
+                frame = await conn.read_message()
+                self.assertNotIn("notify_status_update", str(frame))
+                conn.close()
+            self.io_loop.run_sync(exercise)
+
+        def test_files_metadata_serves_the_listing_entry(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                response = await client.fetch(
+                    self.base + "/server/files/metadata?filename=scenario1.gcode")
+                body = json.loads(response.body)["result"]
+                self.assertEqual(body["filename"], "scenario1.gcode")
+                self.assertIn("estimated_time", body)
+                self.assertIn("print_start_time", body)
+            self.io_loop.run_sync(exercise)
+
         def test_ledger_records_requests_and_stats(self):
             async def exercise():
                 client = AsyncHTTPClient()

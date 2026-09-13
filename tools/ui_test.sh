@@ -17,7 +17,10 @@ cd "$root"
 PLUGIN_VERSION="$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')"
 
 CONTAINER="${HARNESS_CONTAINER:-mpf-cura513}"
-RUN_DIR=/tmp/mpf/ui-artifacts/run-001
+# Per-unit evidence dir: the release gate gives every unit its own name
+# so a later unit never overwrites an earlier one's proof (the panel's
+# evidence-survival finding).
+RUN_DIR="/tmp/mpf/ui-artifacts/${RUN_DIR_NAME:-run-001}"
 
 # The pinned Cura for this run: any version can be selected; prepare
 # one with tools/fetch_cura.py (the manifest records the swap).
@@ -37,8 +40,14 @@ cleanup() {
         'pkill -9 -f "UltiMaker-Cur[a]" 2>/dev/null; \
          pkill -9 -f "ffmpe[g]" 2>/dev/null; \
          pkill -9 -f "simulator_serve[.]py" 2>/dev/null; true' || true
+    if [ "${MODE:-scenario}" = "real" ]; then
+        # The seeded profile holds the real host and key at runtime:
+        # a real run's debris must not outlive the run (the author's
+        # rule — the key must never sit on disk beyond the session).
+        rm -rf /tmp/mpf/xdg /tmp/mpf/ui-artifacts/"${RUN_DIR_NAME:-run-001}"
+    fi
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 # Fresh-seed the run's Cura profile from the pinned config dir: the
 # machine + printer record (pointed at the simulator), welcome and
@@ -56,12 +65,19 @@ if [ "${MODE:-scenario}" = "real" ]; then
 import sys
 url, key = sys.argv[1], sys.argv[2]
 path = "/tmp/mpf/xdg/config/cura/5.13/cura.cfg"
-text = open(path).read()
+before = open(path).read()
+text = before
 text = text.replace('"url":"http://127.0.0.1:7125"',
                     '"url":"%s"' % url.replace('\\', '\\\\').replace('"', '\\"'))
 text = text.replace('"api_key":""',
                     '"api_key":"%s"' % key.replace('\\', '\\\\').replace('"', '\\"'))
+if text == before:
+    # A silent no-op would run the "real" gallery against the
+    # simulator — the substitution must land or the run must die.
+    raise SystemExit("ui_test: the real-mode seed rewrite did not match the seeded record")
 open(path, "w").write(text)
+import os as _os
+_os.chmod(path, 0o600)
 PY
 fi
 # The seed and plugin dirs live under Cura's per-version data dir;
@@ -149,6 +165,16 @@ if [ "$MODE" != "real" ]; then
     docker exec "$CONTAINER" bash -lc "fuser -k $SIM_PORT/tcp 2>/dev/null; sleep 0.5; \
       cd /tmp/mpf/harness_tests/tests/harness && nohup python3 simulator_serve.py $SIM_PORT \
       >/tmp/mpf/simulator.log 2>&1 &"
+    # Readiness by check, not by luck: the ledger endpoint answers
+    # before the run proceeds (the panel's finding).
+    for _ in $(seq 1 50); do
+        if docker exec "$CONTAINER" python3 -c \
+                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$SIM_PORT/ledger', timeout=2)" \
+                >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.2
+    done
 fi
 
 rm -f "$RUN_DIR/index.html"
@@ -180,10 +206,19 @@ case "$MODE" in
             /lib64/ld-linux-x86-64.so.2 ./UltiMaker-Cura" >/tmp/mpf/cura_run.log 2>&1 &'
         for _ in $(seq 1 120); do [ -s /tmp/mpf/harness_port.txt ] && break; sleep 1; done
         [ -s /tmp/mpf/harness_port.txt ] || { echo "ui_test: the driver never came up"; tail -20 /tmp/mpf/cura_run.log; exit 1; }
-        docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$RUN_DIR" \
-            HARNESS_COORDS="$COORDS" REAL_URL="${REAL_URL:-}" \
-            REAL_API_KEY="${REAL_API_KEY:-}" \
-            python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
+        if [ "$MODE" = "real" ]; then
+            # The host and key ride the container exec ONLY for real
+            # mode — simulator runs never carry them (the panel's
+            # process-table finding).
+            docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$RUN_DIR" \
+                HARNESS_COORDS="$COORDS" REAL_URL="${REAL_URL:-}" \
+                REAL_API_KEY="${REAL_API_KEY:-}" \
+                python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
+        else
+            docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$RUN_DIR" \
+                HARNESS_COORDS="$COORDS" \
+                python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
+        fi
         ;;
 esac
 echo "ui_test: gallery at $RUN_DIR/index.html"

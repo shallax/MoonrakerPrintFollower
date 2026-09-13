@@ -68,6 +68,18 @@ jobs:
       - name: Run the real-Cura scenario gates (primary + swapped Cura)
         run: ./tools/harness_release.sh
         timeout-minutes: 240
+        continue-on-error: true
+
+      # The galleries ARE the release proof (the author's mandate):
+      # without this step every unit's evidence dies with the runner's
+      # /tmp (the panel's finding).
+      - name: Collect the UI-test galleries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-galleries
+          path: /tmp/mpf/ui-artifacts/
+          if-no-files-found: warn
 
       - name: Install gitleaks
         run: |

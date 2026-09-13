@@ -211,6 +211,7 @@ CENSUS_PROBE = (
     "else:\n"
     "    s = printer._data.snapshot\n"
     "    texts = []\n"
+    "    classes = []\n"
     "    names = []\n"
     "    for window in _lookup_windows():\n"
     "        for item in _walk(window.contentItem(), depth=64):\n"
@@ -224,6 +225,7 @@ CENSUS_PROBE = (
     "                label = item.property(\"text\")\n"
     "                if isinstance(label, str) and label.strip():\n"
     "                    texts.append(label)\n"
+    "                    classes.append(item.metaObject().className())\n"
     "            except Exception:\n"
     "                pass\n"
     "    checks = {}\n"
@@ -235,7 +237,8 @@ CENSUS_PROBE = (
     "    checks[\"endstops\"] = not (s.endstops or {}) or any(\n"
     "        any(t.lower().startswith(axis + \":\") for t in texts)\n"
     "        for axis in (\"x\", \"y\", \"z\"))\n"
-    "    toggles = sum(1 for t in texts if t in (\"Turn on\", \"Turn off\"))\n"
+    "    toggles = sum(1 for i, t in enumerate(texts)\n"
+    "                  if t in (\"Turn on\", \"Turn off\") and \"Button\" in classes[i])\n"
     "    checks[\"power\"] = toggles == len(s.power)\n"
     "    checks[\"webcams\"] = not s.webcams or \"cameraViewport\" in names\n"
     "    checks[\"console\"] = \"moonrakerConsoleOutput\" in names\n"
@@ -244,6 +247,190 @@ CENSUS_PROBE = (
     "                                for name in (presets or {}))\n"
     "    result[\"checks\"] = checks\n"
     "    result[\"complete\"] = bool(all(checks.values()))\n"
+    "result")
+
+FM_POPUP_PROBE = (
+    "result = {\"matches\": [], \"fields\": []}\n"
+    "for window in _lookup_windows():\n"
+    "    for item in _walk(window.contentItem(), depth=96):\n"
+    "        if not item.isVisible():\n"
+    "            continue\n"
+    "        cls = item.metaObject().className()\n"
+    "        try:\n"
+    "            label = item.property(\"text\")\n"
+    "        except Exception:\n"
+    "            label = None\n"
+    "        try:\n"
+    "            placeholder = item.property(\"placeholderText\")\n"
+    "        except Exception:\n"
+    "            placeholder = None\n"
+    "        p = item.mapToScene(QPointF(0, 0))\n"
+    "        if isinstance(label, str) and any(k in label for k in (\"benchy\", \"Rename\", \"Cancel\", \"Save\")):\n"
+    "            result[\"matches\"].append([cls[:18], label[:34], round(p.x()), round(p.y()),\n"
+    "                                         round(item.width()), round(item.height())])\n"
+    "        if isinstance(placeholder, str) and placeholder.strip():\n"
+    "            result[\"fields\"].append([cls[:18], placeholder[:30], round(p.x()), round(p.y()),\n"
+    "                                         round(item.width()), round(item.height())])\n"
+    "result")
+
+PRESETS_PROBE = (
+    "from UM.Application import Application\n"
+    "app = Application.getInstance()\n"
+    "result = {\"landed\": False}\n"
+    "for device in app.getOutputDeviceManager().getOutputDevices():\n"
+    "    if \"Moonraker\" in type(device).__name__:\n"
+    "        printer = device.activePrinter\n"
+    "        if printer is not None:\n"
+    "            presets = printer._data.snapshot.presets\n"
+    "            result[\"landed\"] = bool((presets.get(\"presets\") or {}).get(\"fast\"))\n"
+    "        break\n"
+    "result")
+
+P1_PCT_PROBE = (
+    "window = _main_window()\n"
+    "result = {\"pct\": False}\n"
+    "for item in _walk(window.contentItem(), depth=24):\n"
+    "    if not item.isVisible():\n"
+    "        continue\n"
+    "    try:\n"
+    "        label = item.property(\"text\")\n"
+    "    except Exception:\n"
+    "        label = None\n"
+    "    if isinstance(label, str) and label.startswith(\"Downloading\") and \"%\" in label:\n"
+    "        result[\"pct\"] = True\n"
+    "        result[\"label\"] = label[:24]\n"
+    "        break\n"
+    "result")
+
+P_PAUSE_CLICK = (
+    "window = _main_window()\n"
+    "result = {}\n"
+    "for item in _walk(window.contentItem()):\n"
+    "    try:\n"
+    "        label = item.property(\"text\")\n"
+    "    except Exception:\n"
+    "        label = None\n"
+    "    if isinstance(label, str) and label.startswith(\"\\u23f8\") and \"Button\" in item.metaObject().className() and bool(item.isVisible()):\n"
+    "        item.clicked.emit()\n"
+    "        result[\"emitted\"] = True\n"
+    "        break\n"
+    "result")
+
+P_PAUSE_SCHEDULED = (
+    "window = _main_window()\n"
+    "result = {\"scheduled\": False}\n"
+    "for item in _walk(window.contentItem()):\n"
+    "    try:\n"
+    "        label = item.property(\"text\")\n"
+    "    except Exception:\n"
+    "        label = None\n"
+    "    if isinstance(label, str) and label.startswith(\"End of layer\") and bool(item.isVisible()):\n"
+    "        result[\"scheduled\"] = True\n"
+    "        result[\"label\"] = label[:40]\n"
+    "        break\n"
+    "result")
+
+P_ROW_GONE = (
+    "window = _main_window()\n"
+    "result = {\"row_gone\": True}\n"
+    "for item in _walk(window.contentItem()):\n"
+    "    try:\n"
+    "        label = item.property(\"text\")\n"
+    "    except Exception:\n"
+    "        label = None\n"
+    "    if isinstance(label, str) and label.startswith(\"End of layer\") and bool(item.isVisible()):\n"
+    "        result[\"row_gone\"] = False\n"
+    "        break\n"
+    "result")
+
+P_MISSED = (
+    "window = _main_window()\n"
+    "result = {\"missed\": False}\n"
+    "for item in _walk(window.contentItem()):\n"
+    "    try:\n"
+    "        label = item.property(\"text\")\n"
+    "    except Exception:\n"
+    "        label = None\n"
+    "    if isinstance(label, str) and \"pause not taken\" in label and bool(item.isVisible()):\n"
+    "        result[\"missed\"] = True\n"
+    "        break\n"
+    "result")
+
+SCROLL_CONTROLS = (
+    "window = _main_window()\n"
+    "pane = None\n"
+    "for item in _walk(window.contentItem(), depth=64):\n"
+    "    try:\n"
+    "        if item.property(\"objectName\") == \"moonrakerControlsPane\":\n"
+    "            pane = item\n"
+    "            break\n"
+    "    except Exception:\n"
+    "        pass\n"
+    "result = {}\n"
+    "if pane is None:\n"
+    "    result[\"error\"] = \"no controls pane\"\n"
+    "else:\n"
+    "    for item in _walk(pane, depth=64):\n"
+    "        if item.metaObject().className() == \"QQuickFlickable\":\n"
+    "            top = max(0.0, float(item.property(\"contentHeight\")) - float(item.property(\"height\")))\n"
+    "            item.setProperty(\"contentY\", top)\n"
+    "            result[\"scrolled\"] = True\n"
+    "            break\n"
+    "result")
+
+P_TOGGLE_STATE = (
+    "window = _main_window()\n"
+    "result = {\"enabled\": []}\n"
+    "for item in _walk(window.contentItem(), depth=64):\n"
+    "    if not item.isVisible():\n"
+    "        continue\n"
+    "    try:\n"
+    "        label = item.property(\"text\")\n"
+    "    except Exception:\n"
+    "        label = None\n"
+    "    if isinstance(label, str) and label in (\"Turn on\", \"Turn off\") and \"Button\" in item.metaObject().className():\n"
+    "        result[\"enabled\"].append(bool(item.property(\"enabled\")))\n"
+    "result")
+
+P_POWER_FLIP = (
+    "from UM.Application import Application\n"
+    "app = Application.getInstance()\n"
+    "result = {\"status\": None}\n"
+    "for device in app.getOutputDeviceManager().getOutputDevices():\n"
+    "    if \"Moonraker\" in type(device).__name__:\n"
+    "        printer = device.activePrinter\n"
+    "        if printer is not None:\n"
+    "            for d in printer._data.snapshot.power:\n"
+    "                if d.get(\"device\") == \"DFU\":\n"
+    "                    result[\"status\"] = str(d.get(\"status\"))\n"
+    "        break\n"
+    "result")
+
+CLICK_GESTURE = (
+    "from PyQt6.QtCore import QPoint, Qt\n"
+    "window = _main_window()\n"
+    "result = {}\n"
+    "target = None\n"
+    "for item in _walk(window.contentItem()):\n"
+    "    try:\n"
+    "        label = item.property(\"text\")\n"
+    "    except Exception:\n"
+    "        label = None\n"
+    "    if label == \"Turn off\" and \"Button\" in item.metaObject().className() and bool(item.isVisible()):\n"
+    "        target = item\n"
+    "        break\n"
+    "if target is None:\n"
+    "    result[\"error\"] = \"no button\"\n"
+    "else:\n"
+    "    scene = target.mapToScene(QPointF(0, 0))\n"
+    "    x = round(scene.x() + target.width() / 2)\n"
+    "    y = round(scene.y() + target.height() / 2)\n"
+    "    qtest = _import_qtest()\n"
+    "    qtest.QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))\n"
+    "    qtest.QTest.qWait(80)\n"
+    "    qtest.QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))\n"
+    "    qtest.QTest.qWait(200)\n"
+    "    result = {\"clicked\": True, \"aim\": [x, y]}\n"
     "result")
 
 SCENE_PROBE = (
@@ -376,6 +563,24 @@ SCENARIOS = [
          {"op": "assert_model", "prop": "jogEnabled", "value": False},
      ]},
 
+    {"id": "a10", "group": "connection",
+     "name": "HTTP mode still lands the presets",
+     "steps": [
+         {"op": "exec_mode", "mode": "http"},
+         {"op": "sim_arm", "arms": {"presets_value": {"presets": {"fast": {"name": "Fast", "gcode": "M220 S150"}}}}},
+         {"op": "wait_exec", "code": PRESETS_PROBE, "contains": '"landed": true', "budget": 30},
+         {"op": "exec_mode", "mode": "websocket"},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 45},
+     ]},
+    {"id": "a11", "group": "connection",
+     "name": "a corrupt frame fails the socket and the feed reconnects",
+     "steps": [
+         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
+         {"op": "sim_arm", "arms": {"corrupt_frame_once": True}},
+         {"op": "wait_seconds", "seconds": 5},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 60},
+         {"op": "sim_ledger", "needle": "printer.objects.subscribe", "field": "path", "min": 1, "budget": 30},
+     ]},
     # ─── printer status ───────────────────────────────────────
     {"id": "b1", "group": "status", "name": "standby renders its state word",
      "steps": [
@@ -519,9 +724,9 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "exec_file_slot", "slot": "openFileManager", "args": []},
          {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
-         {"op": "exec_file_slot", "slot": "fileRequestDeleteFile", "args": ["scenario1.gcode"]},
+         {"op": "exec_file_slot", "slot": "fileRequestDeleteFile", "args": ["delete-me.gcode"]},
          {"op": "exec_file_slot", "slot": "fileConfirmDelete", "args": []},
-         {"op": "sim_ledger", "needle": "gcodes/scenario1.gcode", "field": "path", "min": 1, "budget": 20},
+         {"op": "sim_ledger", "needle": "gcodes/delete-me.gcode", "field": "path", "min": 1, "budget": 20},
      ]},
     {"id": "f4", "group": "files", "name": "folder create reaches the peer's directory route",
      "steps": [
@@ -530,8 +735,8 @@ SCENARIOS = [
      ]},
     {"id": "f5", "group": "files", "name": "rename confirms into the peer's move route",
      "steps": [
-         {"op": "exec_file_slot", "slot": "fileRequestRename", "args": ["benchy.gcode"]},
-         {"op": "exec_file_slot", "slot": "filePreviewRename", "args": ["benchy-renamed.gcode"]},
+         {"op": "exec_file_slot", "slot": "fileRequestRename", "args": ["scenario1.gcode"]},
+         {"op": "exec_file_slot", "slot": "filePreviewRename", "args": ["scenario1-renamed.gcode"]},
          {"op": "exec_file_slot", "slot": "fileConfirmRename", "args": []},
          {"op": "sim_ledger", "needle": "files/move", "min": 1, "budget": 20},
      ]},
@@ -545,6 +750,18 @@ SCENARIOS = [
          {"op": "sim_ledger", "needle": "print/start", "method": "POST", "min": 1, "budget": 20},
      ]},
 
+    {"id": "f7", "group": "files",
+     "name": "the rename dialog's field and buttons drive the move",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "exec_file_slot", "slot": "openFileManager", "args": []},
+         {"op": "wait_rect", "text": "New folder…", "budget": 30},
+         {"op": "exec_file_slot", "slot": "fileRequestRename", "args": ["benchy.gcode"]},
+         {"op": "wait_rect", "text": "Rename file", "budget": 20},
+         {"op": "exec_code", "code": "from PyQt6.QtCore import Qt\nwindow = _main_window()\nresult = {}\nqtest = _import_qtest()\nqtest.QTest.keyClick(window, Qt.Key.Key_X)\nqtest.QTest.qWait(300)\nfor item in _walk(window.contentItem()):\n    try:\n        label = item.property(\"text\")\n    except Exception:\n        label = None\n    if label == \"Rename\" and \"Button\" in item.metaObject().className() and bool(item.isVisible()):\n        item.clicked.emit()\n        result[\"confirmed\"] = True\n        break\nresult"},
+         {"op": "wait_rect", "text": "Rename file", "absent": True, "budget": 20},
+         {"op": "sim_ledger", "needle": "files/move", "min": 1, "budget": 20},
+     ]},
     # ─── controls ─────────────────────────────────────────────
     {"id": "g1", "group": "motion", "name": "the jog pad's clicks reach the peer as G1 moves",
      "steps": [
@@ -836,6 +1053,60 @@ SCENARIOS = [
      ]},
 
 
+    {"id": "v14", "group": "visual",
+     "name": "the DFU toggle clicks through and the locked device refuses",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 30},
+         {"op": "sim_arm", "arms": {"power_devices": [
+             {"device": "DFU", "status": "on", "locked_while_printing": False},
+             {"device": "Printer", "status": "off", "locked_while_printing": True}]}},
+         {"op": "wait_rect", "text": "Turn off", "budget": 40},
+         {"op": "exec_code", "code": SCROLL_CONTROLS},
+         {"op": "emit_click", "text": "Turn off"},
+         {"op": "wait_exec", "code": P_POWER_FLIP, "contains": '"status": "off"', "budget": 20},
+         {"op": "sim_ledger", "needle": "device_power/device", "method": "POST", "min": 1},
+     ]},
+    {"id": "v15", "group": "visual",
+     "name": "a locked power device disables its toggle while a print runs",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 30},
+         {"op": "sim_arm", "arms": {"power_devices": [
+             {"device": "DFU", "status": "on", "locked_while_printing": False},
+             {"device": "Printer", "status": "off", "locked_while_printing": True}]}},
+         {"op": "sim_set_current_print"},
+         {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 30},
+         {"op": "wait_rect", "text": "Turn off", "budget": 40},
+         {"op": "exec_code", "code": SCROLL_CONTROLS},
+         {"op": "assert_exec", "code": P_TOGGLE_STATE, "contains": '"enabled": [false, true]'},
+     ]},
+    {"id": "v17", "group": "visual",
+     "name": "the data-render census: every data class renders its control",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 30},
+         {"op": "sim_arm", "arms": {
+             "power_devices": [
+                 {"device": "DFU", "status": "on", "locked_while_printing": False},
+                 {"device": "Printer", "status": "off", "locked_while_printing": True}],
+             "presets_value": {"presets": {"fast": {"name": "Fast", "gcode": "M220 S150"}}}}},
+         {"op": "sim_set", "state": {"extruder": {"temperature": 180.0, "target": 200.0},
+                                     "heater_bed": {"temperature": 55.0, "target": 60.0}}},
+         {"op": "census", "budget": 40},
+     ]},
+
+    {"id": "v18", "group": "visual",
+     "name": "the firmware restart reaches the host and heals the feed",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 30},
+         {"op": "exec_code", "code": SCROLL_CONTROLS},
+         {"op": "emit_click", "text": "Firmware restart"},
+         {"op": "sim_ledger", "needle": "firmware_restart", "field": "path", "min": 1, "budget": 20},
+         {"op": "sim_ledger", "needle": "printer.objects.subscribe", "field": "path", "min": 1, "budget": 40},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 60},
+     ]},
     # ─── the preview, end to end (the author's comprehensive list) ───
     {"id": "p1", "group": "preview",
      "name": "the load renders the real toolpath, the indicator, and the card",
@@ -846,6 +1117,7 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerEmptyPreviewLoadControl", "budget": 30},
          {"op": "emit_click", "text": "Load current print"},
          {"op": "confirm_box", "button": "Yes"},
+         {"op": "wait_exec", "code": P1_PCT_PROBE, "contains": '"pct": true', "budget": 20},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
          {"op": "wait_rect", "objectName": "moonrakerPreviewActionPanelControls", "budget": 240},
          {"op": "assert_exec", "code": "view = Application.getInstance().getController().getView(\"SimulationView\")\nresult = {\"max_layers\": int(view.getMaxLayers()) if view else 0}",
@@ -890,6 +1162,30 @@ SCENARIOS = [
          {"op": "wait_exec", "code": P_FOLLOW_READ, "contains": '"attached": true', "budget": 20},
      ]},
 
+    {"id": "p6", "group": "preview",
+     "name": "the scheduled pause fires as the print crosses the layer",
+     "steps": [
+         {"op": "sim_set_current_print"},
+         {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 30},
+         {"op": "wait_seconds", "seconds": 3},
+         {"op": "exec_code", "code": P_PAUSE_CLICK},
+         {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true', "budget": 20},
+         {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 60},
+         {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
+         {"op": "wait_exec", "code": P_ROW_GONE, "contains": '"row_gone": true', "budget": 20},
+     ]},
+    {"id": "p7", "group": "preview",
+     "name": "a refused PAUSE keeps the entry restyled as not taken",
+     "steps": [
+         {"op": "sim_arm", "arms": {"fail_pause_script": True}},
+         {"op": "sim_set_current_print"},
+         {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 30},
+         {"op": "wait_seconds", "seconds": 3},
+         {"op": "exec_code", "code": P_PAUSE_CLICK},
+         {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true', "budget": 20},
+         {"op": "wait_exec", "code": P_MISSED, "contains": '"missed": true', "budget": 60},
+         {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
+     ]},
     # ─── geometry probes (diagnostics, not release gates) ─────────
     {"id": "z1", "group": "probe",
      "name": "the preview stage geometry across empty, model and sliced states",
@@ -905,7 +1201,7 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerPreviewActionPanelControls", "budget": 150},
          {"op": "exec_code", "code": RECT_PROBE},
      ]},
-    {"id": "v11", "group": "visual",
+    {"id": "v13", "group": "visual",
      "name": "the power rows render the armed devices and keep clear of the scrollbar lane",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
@@ -918,7 +1214,7 @@ SCENARIOS = [
          {"op": "dump_visible", "needle": "Turn", "region": [800, 0, 1280, 720]},
      ]},
 
-    {"id": "v12", "group": "visual",
+    {"id": "v16", "group": "visual",
      "name": "the lane census: every polled category's data lands in the snapshot",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
@@ -931,10 +1227,29 @@ SCENARIOS = [
          {"op": "wait_exec", "code": LANE_CENSUS_PROBE, "contains": '"healthy": true', "budget": 30},
      ]},
 
+    {"id": "z4", "group": "probe",
+     "name": "the FM rename dialog's walkable content",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "exec_file_slot", "slot": "openFileManager", "args": []},
+         {"op": "wait_seconds", "seconds": 3},
+         {"op": "exec_file_slot", "slot": "fileRequestRename", "args": ["benchy.gcode"]},
+         {"op": "wait_seconds", "seconds": 2},
+         {"op": "exec_code", "code": FM_POPUP_PROBE},
+     ]},
+
     # ─── real-printer read-only (observation; see TESTING.md §2.5) ───
     # These run ONLY in real mode, where the dispatcher refuses every
     # op outside the read-only allowlist: no commands, no restarts, no
     # print starts — a live print is observed, never touched.
+    {"id": "r5", "group": "real", "real_safe": True,
+     "name": "the data-render census against the real printer",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 60},
+         {"op": "census", "budget": 40},
+     ]},
+
     {"id": "r1", "group": "real", "real_safe": True,
      "name": "the real printer's status renders",
      "steps": [
