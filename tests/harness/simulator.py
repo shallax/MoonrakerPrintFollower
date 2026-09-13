@@ -534,6 +534,27 @@ class StatusHandler(tornado.web.RequestHandler):
             self._printer.scenario(print_stats={**self._printer.state["print_stats"],
                                                 "state": next_state})
             self.write(json.dumps({"result": "ok"}))
+        elif path == "files/move":
+            # Moonraker's move actually renames the file in the store —
+            # the next walk must show the new name (the contract the
+            # DELETE handler already honours for removal).
+            source = body.get("source") or self.get_argument("source", "")
+            dest = body.get("dest") or self.get_argument("dest", "")
+            src_name = source.rsplit("/", 1)[-1]
+            dst_name = dest.rsplit("/", 1)[-1]
+            for entry in self._printer.files:
+                if entry.get("filename") == src_name:
+                    entry["filename"] = dst_name
+                    break
+            self.write(json.dumps({"result": "ok"}))
+        elif path == "gcode/script":
+            # The command echoes into the console, like the real host.
+            script = str((body.get("script") or "")).strip()
+            if script:
+                self._printer.console_lines.append(
+                    {"type": "command", "message": script,
+                     "time": time.time()})
+            self.write(json.dumps({"result": "ok"}))
         elif path == "print/start":
             filename = self.get_argument("filename", "sim.gcode")
             if self._printer.cold_start:

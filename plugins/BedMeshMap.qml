@@ -9,6 +9,8 @@ import UM 1.5 as UM
 // forcing the probe grid square.
 Item {
     id: root
+    // Inert; the harness asserts the rendered mesh view's presence.
+    objectName: "moonrakerBedMeshMap"
 
     property var printer: null
     property bool compact: false

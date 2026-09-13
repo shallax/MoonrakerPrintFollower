@@ -2135,6 +2135,16 @@ def suite_step(step):
             if not reply.get("ok") or "rect" not in reply:
                 raise RuntimeError(f"rect of {key}: {reply.get('error', reply)}")
             return key, reply["rect"]
+        if "symmetric_margins" in step:
+            left_key, a = resolve(step["symmetric_margins"]["left"])
+            right_key, b = resolve(step["symmetric_margins"]["right"])
+            _win_key, win = resolve({"window": True})
+            left_gap = a["x"] - win["x"]
+            right_gap = (win["x"] + win["w"]) - (b["x"] + b["w"])
+            tol = float(step.get("tol", 6))
+            return (abs(left_gap - right_gap) <= tol,
+                    f"{left_key}'s left gap mirrors {right_key}'s right gap",
+                    f"left {left_gap}px vs right {right_gap}px (tol {tol}); a={a} b={b}")
         item_key, a = resolve(step["item"])
         if "no_overlap" in step:
             other_key, b = resolve(step["no_overlap"])
@@ -2160,10 +2170,17 @@ def suite_step(step):
                 f"gap {gap:.1f}px (tol {tol}); a={a} b={b}")
 
     if op == "assert_rendered":
-        reply = rpc({"id": 1, "cmd": "text", "objectName": step["objectName"]})
+        reply = rpc({"id": 1, "cmd": "text", "objectName": step["objectName"],
+                     "all": bool(step.get("any"))})
         if not reply.get("ok"):
             return (False, f"the rendered text of {step['objectName']}",
                     f"driver: {reply.get('error')}")
+        if step.get("any"):
+            rendered = "; ".join(reply.get("texts") or [])
+            needle = step.get("contains")
+            ok = needle is not None and needle in rendered
+            return (ok, f"the rendered text of {step['objectName']} (any instance)",
+                    f"now {rendered[:160]!r}")
         rendered = reply.get("text") or ""
         if step.get("contains") is not None:
             ok = step["contains"] in rendered
@@ -2172,7 +2189,7 @@ def suite_step(step):
         elif step.get("equals") is not None:
             ok = rendered == step["equals"]
         else:
-            ok = bool(rendered)
+            ok = bool(rendered.strip())
         return (ok, f"the rendered text of {step['objectName']}",
                 f"now {rendered!r}")
 
@@ -2181,9 +2198,13 @@ def suite_step(step):
         # text must follow a push — the model being right is not
         # enough (the pause-restyle bug class).
         def check():
-            reply = rpc({"id": 1, "cmd": "text", "objectName": step["objectName"]})
+            reply = rpc({"id": 1, "cmd": "text", "objectName": step["objectName"],
+                         "all": bool(step.get("any"))})
             if not reply.get("ok"):
                 return False
+            if step.get("any"):
+                rendered = "; ".join(reply.get("texts") or [])
+                return step.get("contains", "") in rendered
             rendered = reply.get("text") or ""
             if step.get("contains") is not None:
                 return step["contains"] in rendered
@@ -2191,12 +2212,16 @@ def suite_step(step):
                 return step["not_contains"] not in rendered
             if step.get("equals") is not None:
                 return rendered == step["equals"]
-            return bool(rendered)
+            return bool(rendered.strip())
         ok = bool(wait_for(check, float(step.get("budget", 15)), 1.0))
-        reply = rpc({"id": 1, "cmd": "text", "objectName": step["objectName"]})
-        rendered = reply.get("text") if reply.get("ok") else reply.get("error")
+        reply = rpc({"id": 1, "cmd": "text", "objectName": step["objectName"],
+                     "all": bool(step.get("any"))})
+        if step.get("any"):
+            rendered = "; ".join(reply.get("texts") or []) if reply.get("ok") else reply.get("error")
+        else:
+            rendered = reply.get("text") if reply.get("ok") else reply.get("error")
         return (ok, f"the rendered text of {step['objectName']} followed the push",
-                f"now {rendered!r}")
+                f"now {str(rendered)[:160]!r}")
 
     if op == "wait_rect":
         # An item's presence in the rendered tree — the collapse and
@@ -2228,9 +2253,10 @@ def suite_step(step):
                     and r["y"] + r["h"] > y0]
         hits = [r for r in rows
                 if needle in (r["class"] + r["name"] + r["text"]).lower()]
+        cap = 40 if region else 12
         brief = "; ".join(f"{r['class']}|{r['name']}|{r['text'][:20]!r}"
                           f"@{r['x']},{r['y']} {r['w']}x{r['h']}"
-                          for r in hits[:12])
+                          for r in hits[:cap])
         return True, f"visible items matching {needle!r}", brief or "no matches"
 
     if op == "resize_window":
@@ -2282,6 +2308,15 @@ def suite_step(step):
             SUITE_STATE["rect"][key] = now
         return (ok, f"{key} {direction} by at least {by:.0f}px on {axis}",
                 f"{before} -> {now}")
+
+    if op == "exec_code":
+        # An inline driver probe — the settings dialog's opener uses
+        # the machine-action registry, which no slot exposes.
+        reply = exec_rpc(step["code"])
+        if reply.get("error"):
+            return (False, "the driver executed the inline probe",
+                    f"driver: {reply['error']}")
+        return True, "the driver executed the inline probe", f"{reply}"
 
     raise ValueError(f"unknown suite op {op!r}")
 

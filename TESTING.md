@@ -434,7 +434,16 @@ plugin card's own geometry is pinned (window containment), and the
 defect stays human-verified. The matcher quirk this surfaced: custom
 Cura components layer labels over clickable regions and repeater rows
 share objectNames — rect/text lookups resolve the topmost visible
-instance.
+instance, across every visible window (the file manager is its own
+tree). Two limitations, documented with dump evidence: Cura's native
+action-panel save row never renders under the harness's preview, and
+the file manager's modal popups (the print-confirm dialog) open their
+dimmer but expose no walkable content to the harness — their
+containment stays covered by the model-level flows instead. The
+margin-symmetry pin found a real asymmetry on the current build: the
+left pane column's gap to the window edge is 11px while the right
+controls column's is 33px — pinned red as a finding for the author's
+adjudication (the gallery carries the measured rects).
 
 The step vocabulary (`scenarios.py`, interpreted in
 `runner.py`'s `suite_step`): `sim_set`/`sim_arm`/`sim_klippy`/

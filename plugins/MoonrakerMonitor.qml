@@ -1601,6 +1601,9 @@ Component {
                                                     }
                                                     TextEdit {
                                                         id: consoleText
+                                                        // Inert; the harness's rendered-follows
+                                                        // scenarios read this pane's text.
+                                                        objectName: "moonrakerConsoleOutput"
                                                         width: parent.width
                                                         readOnly: true
                                                         selectByMouse: true
@@ -1848,6 +1851,9 @@ Component {
                             spacing: UM.Theme.getSize("default_margin").height
 
                             UM.Label {
+                                // Inert; the harness's rendered-follows
+                                // scenarios read this label's text.
+                                objectName: "moonrakerStatusStateText"
                                 text: root.printer != null ? root.printer.monitorState : "Not connected"
                                 font: UM.Theme.getFont("medium_bold")
                                 Layout.fillWidth: true

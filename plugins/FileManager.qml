@@ -1496,6 +1496,10 @@ Item {
                                     anchors.leftMargin: 36 * screenScaleFactor + 2 * UM.Theme.getSize("narrow_margin").width
                                     anchors.right: parent.right
                                     anchors.rightMargin: UM.Theme.getSize("narrow_margin").width
+                                    // Inert; the harness's rendered-follows scenarios read
+                                    // this label's text (shared by rows; the
+                                    // lookup resolves any instance).
+                                    objectName: "moonrakerFileRowName"
                                     text: root.displayName(modelData.name)
                                     elide: Text.ElideMiddle
                                     // Elide, never wrap: a wrapped name
@@ -1659,6 +1663,9 @@ Item {
                 implicitHeight: 28 * screenScaleFactor
                 TextField {
                     id: searchField
+                    // Inert; the narrow-mode exercise asserts this
+                    // field's presence in the rendered tree.
+                    objectName: "moonrakerFileSearch"
                     anchors.fill: parent
                     // User typing breaks a plain `text:` binding for
                     // good; a Binding element with RestoreBinding
@@ -2708,6 +2715,10 @@ Item {
                                         spacing: 2 * screenScaleFactor
                                         UM.Label {
                                             width: parent.width - 6 * screenScaleFactor
+                                            // Inert; the harness's rendered-follows scenarios read
+                                            // this label's text (shared by rows; the
+                                            // lookup resolves any instance).
+                                            objectName: "moonrakerFileRowName"
                                             text: root.displayName(modelData.name)
                                             wrapMode: Text.NoWrap
                                             elide: Text.ElideMiddle

@@ -476,6 +476,46 @@ SCENARIOS = [
           "no_overlap": {"objectName": "statusPanel"}},
          {"op": "resize_window", "w": 1280, "h": 720},
      ]},
+
+    {"id": "v9", "group": "v",
+     "name": "the status text, the console and the pane margins follow reality",
+     "steps": [
+         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
+         {"op": "wait_rendered", "objectName": "moonrakerStatusStateText", "contains": "Printing", "budget": 30},
+         {"op": "exec_slot", "slot": "sendConsoleCommand", "args": ["RENDERED-CONSOLE"]},
+         {"op": "wait_rendered", "objectName": "moonrakerConsoleOutput", "contains": "RENDERED-CONSOLE", "budget": 30},
+         {"op": "assert_aligned", "symmetric_margins": {"left": {"objectName": "infoPanel"},
+                                                        "right": {"objectName": "moonrakerJogZPlus"}},
+          "tol": 8},
+     ]},
+    {"id": "v10", "group": "v",
+     "name": "a renamed file's row follows in the rendered list",
+     "steps": [
+         {"op": "exec_slot", "slot": "openFileManager", "args": []},
+         {"op": "exec_slot", "slot": "fileRequestRename", "args": ["benchy.gcode"]},
+         {"op": "exec_slot", "slot": "filePreviewRename", "args": ["benchy-renamed.gcode"]},
+         {"op": "exec_slot", "slot": "fileConfirmRename", "args": []},
+         {"op": "wait_model", "prop": "fileManagerRows", "contains": "benchy-renamed", "budget": 30},
+         {"op": "wait_rendered", "objectName": "moonrakerFileRowName", "any": True,
+          "contains": "benchy-renamed", "budget": 30},
+     ]},
+    {"id": "v11", "group": "v",
+     "name": "the file manager's narrow mode hides the search field, wide restores it",
+     "steps": [
+         {"op": "exec_slot", "slot": "openFileManager", "args": []},
+         {"op": "resize_window", "w": 1000, "h": 700},
+         {"op": "wait_rect", "objectName": "moonrakerFileSearch", "absent": True, "budget": 30},
+         {"op": "resize_window", "w": 1600, "h": 1000},
+         {"op": "wait_rect", "objectName": "moonrakerFileSearch", "budget": 30},
+     ]},
+    {"id": "v12", "group": "v",
+     "name": "the bed mesh view renders in the information pane",
+     "steps": [
+         {"op": "sim_set", "state": {"bed_mesh": {"profile_name": "sim-mesh", "mesh_min": [0.0, 0.0],
+                                                 "mesh_max": [50.0, 50.0],
+                                                 "probed_matrix": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]}}},
+         {"op": "wait_rect", "objectName": "moonrakerBedMeshMap", "budget": 30},
+     ]},
     # ─── R: real-printer read-only (observation; see TESTING.md §2.5) ───
     # These run ONLY in real mode, where the dispatcher refuses every
     # op outside the read-only allowlist: no commands, no restarts, no

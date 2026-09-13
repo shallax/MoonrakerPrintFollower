@@ -244,9 +244,12 @@ class HarnessServer(QObject):
             rows.sort(key=lambda row: (row["x"], row["y"]))
             return {"id": request_id, "ok": True, "items": rows[:60]}
         if cmd == "visible":
+            # The childItems walk, like every lookup: findChildren on
+            # the QObject graph misses popup/overlay content entirely
+            # (it dumped only the overlay while the walk saw the FM).
             rows = []
-            for window in visible_windows:
-                for item in window.contentItem().findChildren(QQuickItem):
+            for window in _lookup_windows():
+                for item in _walk(window.contentItem(), depth=64):
                     # Geometry + the effective-visibility walk: Qt's
                     # isVisible() lies for deep repeater content and
                     # was filtering the whole dump empty.
@@ -699,33 +702,34 @@ class HarnessServer(QObject):
                             "found": "window"}
                 best = None
                 name_matches = []
-                for item in _walk(window.contentItem(), depth=64):
-                    if item.width() < 2 or item.height() < 2:
-                        continue
-                    if not _effectively_visible(item):
-                        continue
-                    try:
-                        name = item.property("objectName")
-                    except Exception:
-                        name = None
-                    if wanted_name and name == wanted_name:
-                        rect = self._rect(item)
-                        name_matches.append((rect["y"], rect["x"], rect))
-                        continue
-                    if wanted_text or wanted_class:
+                for window in _lookup_windows():
+                    for item in _walk(window.contentItem(), depth=64):
+                        if item.width() < 2 or item.height() < 2:
+                            continue
+                        if not _effectively_visible(item):
+                            continue
                         try:
-                            label = item.property("text")
+                            name = item.property("objectName")
                         except Exception:
-                            label = None
-                        klass = item.metaObject().className()
-                        if (wanted_text and label == wanted_text) or \
-                           (wanted_class and klass == wanted_class):
-                            if "Button" in klass:
-                                return {"id": request_id, "ok": True,
-                                        "rect": self._rect(item), "found": klass}
-                            if best is None or (item.width() * item.height() >
-                                                best.width() * best.height()):
-                                best = item
+                            name = None
+                        if wanted_name and name == wanted_name:
+                            rect = self._rect(item)
+                            name_matches.append((rect["y"], rect["x"], rect))
+                            continue
+                        if wanted_text or wanted_class:
+                            try:
+                                label = item.property("text")
+                            except Exception:
+                                label = None
+                            klass = item.metaObject().className()
+                            if (wanted_text and label == wanted_text) or \
+                               (wanted_class and klass == wanted_class):
+                                if "Button" in klass:
+                                    return {"id": request_id, "ok": True,
+                                            "rect": self._rect(item), "found": klass}
+                                if best is None or (item.width() * item.height() >
+                                                    best.width() * best.height()):
+                                    best = item
                 if name_matches:
                     # Repeater rows share the objectName: the topmost
                     # (then leftmost) is the row the user reads first.
@@ -747,21 +751,30 @@ class HarnessServer(QObject):
             # rendered-follows-model probes read this.
             try:
                 wanted = str(request.get("objectName") or "")
-                window = _main_window()
                 matches = []
-                for item in _walk(window.contentItem(), depth=64):
-                    if item.width() < 2 or item.height() < 2:
-                        continue
-                    if not _effectively_visible(item):
-                        continue
-                    try:
-                        name = item.property("objectName")
-                    except Exception:
-                        name = None
-                    if name == wanted:
-                        rect = self._rect(item)
-                        matches.append((rect["y"], rect["x"], item))
+                for window in _lookup_windows():
+                    for item in _walk(window.contentItem(), depth=64):
+                        if item.width() < 2 or item.height() < 2:
+                            continue
+                        if not _effectively_visible(item):
+                            continue
+                        try:
+                            name = item.property("objectName")
+                        except Exception:
+                            name = None
+                        if name == wanted:
+                            rect = self._rect(item)
+                            matches.append((rect["y"], rect["x"], item))
                 if matches:
+                    if request.get("all"):
+                        texts = []
+                        for _y, _x, item in sorted(matches):
+                            try:
+                                label = item.property("text")
+                            except Exception:
+                                label = None
+                            texts.append(str(label))
+                        return {"id": request_id, "ok": True, "texts": texts}
                     # Shared names (repeater rows): the topmost row.
                     matches.sort()
                     item = matches[0][2]
@@ -1227,6 +1240,17 @@ QT_TEST = None
 
 
 QT_TEST_ERROR = ""
+
+
+def _lookup_windows():
+    # The main window first, then every other visible window by size:
+    # the file manager and the dialogs are separate windows, and a
+    # main-window-only walk never finds their items.
+    windows = list(QGuiApplication.topLevelWindows())
+    visible = [w for w in windows if w.isVisible()]
+    visible.sort(key=lambda w: (w is _main_window(), w.width() * w.height()),
+                 reverse=True)
+    return visible
 
 
 def _effectively_visible(item):

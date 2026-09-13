@@ -241,6 +241,31 @@ if tornado is not None:
                 self.assertIn("benchy.gcode", names)
             self.io_loop.run_sync(exercise)
 
+        def test_move_renames_the_file_in_the_listing(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                await client.fetch(self.base + "/server/files/move", method="POST",
+                                   body=json.dumps({"source": "gcodes/benchy.gcode",
+                                                    "dest": "gcodes/benchy-renamed.gcode"}))
+                listing = json.loads((await client.fetch(
+                    self.base + "/server/files/directory?path=gcodes&extended=true")).body)
+                names = [entry["filename"] for entry in listing["result"]["files"]]
+                self.assertIn("benchy-renamed.gcode", names)
+                self.assertNotIn("benchy.gcode", names)
+            self.io_loop.run_sync(exercise)
+
+        def test_gcode_script_echoes_into_the_console(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                await client.fetch(self.base + "/printer/gcode/script", method="POST",
+                                   body=json.dumps({"script": "RENDERED-CONSOLE"}))
+                store = json.loads((await client.fetch(
+                    self.base + "/server/gcode_store")).body)
+                messages = [line.get("message")
+                            for line in store["result"]["gcode_store"]]
+                self.assertIn("RENDERED-CONSOLE", messages)
+            self.io_loop.run_sync(exercise)
+
         def test_ws_upgrade_refuses_without_the_key(self):
             async def exercise():
                 client = AsyncHTTPClient()
