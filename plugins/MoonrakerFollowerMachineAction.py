@@ -134,6 +134,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return self._config().path_smoothing
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def settingsEtaLearn(self) -> bool:
+        return self._config().eta_learn
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def settingsAutoPreview(self) -> bool:
         return self._config().auto_preview
 
@@ -144,6 +148,29 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtProperty(bool, notify=settingsChanged)
     def settingsTraceLayer(self) -> bool:
         return self._config().trace_layer
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsAuxInterval(self) -> str:
+        return str(self._config().aux_interval_ms)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsConsoleInterval(self) -> str:
+        return str(self._config().console_interval_ms)
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def settingsTransportMode(self) -> str:
+        return str(getattr(self._config().feed_mode, "value", self._config().feed_mode))
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def transportStatus(self) -> str:
+        # The permanent reason slot under the transport radios (the UX
+        # adjudication): the helper sentence until the live feed reports
+        # a capability verdict.
+        return (
+            "WebSocket lets Moonraker push status changes to Cura. "
+            "HTTP polling asks the printer for them at the interval below. "
+            "Commands, uploads and the console always use HTTP."
+        )
 
     @pyqtProperty(bool, notify=settingsChanged)
     def settingsTraceHttp(self) -> bool:
@@ -255,7 +282,21 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtSlot(str, result=bool)
     def validPollInterval(self, value: str) -> bool:
         try:
-            return int(str(value).strip()) > 0
+            return 250 <= int(str(value).strip()) <= 3_600_000
+        except (TypeError, ValueError):
+            return False
+
+    @pyqtSlot(str, result=bool)
+    def validAuxInterval(self, value: str) -> bool:
+        try:
+            return 250 <= int(str(value).strip()) <= 60_000
+        except (TypeError, ValueError):
+            return False
+
+    @pyqtSlot(str, result=bool)
+    def validConsoleInterval(self, value: str) -> bool:
+        try:
+            return 250 <= int(str(value).strip()) <= 60_000
         except (TypeError, ValueError):
             return False
 
@@ -286,12 +327,20 @@ class MoonrakerFollowerMachineAction(MachineAction):
             if not isinstance(raw, dict):
                 return False
 
-            interval = int(str(raw.get("poll_interval_ms", "")).strip())
+            # The sliders deliver JS numbers (e.g. 250.0); the legacy
+            # text fields delivered digit strings. Accept both.
+            interval = int(float(str(raw.get("poll_interval_ms", "")).strip()))
+            aux_interval = int(float(str(raw.get("aux_interval_ms", "")).strip()))
+            console_interval = int(float(str(raw.get("console_interval_ms", "")).strip()))
             tolerance = float(str(raw.get("z_tolerance", "")).strip())
             retry_interval = float(str(raw.get("ready_retry_interval_s", "")).strip())
             url = normalise_url(str(raw.get("url", "")))
             enabled = bool(raw.get("enabled", False))
-            if interval <= 0 or not (0.005 <= tolerance <= 0.250):
+            if not (250 <= interval <= 3_600_000):
+                return False
+            if not (250 <= aux_interval <= 60_000) or not (250 <= console_interval <= 60_000):
+                return False
+            if not (0.005 <= tolerance <= 0.250):
                 return False
             if not (0.1 <= retry_interval <= 60.0):
                 return False
@@ -308,21 +357,30 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 mode = FollowMode.EXACT.value
 
             current = self._config()
+            # The mode is a validated two-literal choice: an unknown value
+            # keeps the current one — never a silent default (UX-M7).
+            feed_mode = str(raw.get("feed_mode") or "").strip().lower()
+            if feed_mode not in ("websocket", "http"):
+                feed_mode = str(getattr(current.feed_mode, "value", current.feed_mode))
             data = asdict(current)
             data.update({
                 "enabled": enabled,
                 "url": url,
                 "api_key": str(raw.get("api_key") or "").strip(),
                 "poll_interval_ms": interval,
+                "aux_interval_ms": aux_interval,
+                "console_interval_ms": console_interval,
                 "moonraker_layer_is_one_based": bool(raw.get("moonraker_layer_is_one_based", True)),
                 "auto_preview": bool(raw.get("auto_preview", False)),
                 "z_fallback": bool(raw.get("z_fallback", True)),
                 "z_tolerance": tolerance,
                 "path_follow": bool(raw.get("path_follow", True)),
                 "path_smoothing": bool(raw.get("path_smoothing", True)),
+                "eta_learn": bool(raw.get("eta_learn", False)),
                 "show_toolhead_indicator": bool(raw.get("show_toolhead_indicator", True)),
                 "trace_layer": bool(raw.get("trace_layer", False)),
                 "trace_http": bool(raw.get("trace_http", False)),
+                "feed_mode": feed_mode,
                 "follow_mode": mode,
                 "frontend_url": str(raw.get("frontend_url") or "").strip(),
                 "output_format": str(raw.get("output_format") or "gcode").lower(),
@@ -397,7 +455,8 @@ class MoonrakerFollowerMachineAction(MachineAction):
         error: Optional[str],
     ) -> None:
         if error:
-            self._set_test_state(f"Connection failed: {error}", busy=False)
+            text = str(error)[:160] + ("…" if len(str(error)) > 160 else "")
+            self._set_test_state(f"Connection failed: {text}", busy=False)
             return
         try:
             self._probe_server_info = (payload or {}).get("result") or {}

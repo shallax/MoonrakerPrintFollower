@@ -4,12 +4,13 @@ import Cura 1.0 as Cura
 
 Item {
     id: base
-    objectName: "moonrakerPreviewActionPanelControls"
+    objectName: "moonrakerPreviewCard"
 
     property bool previewStageActive: false
     property bool followingPaused: false
     property bool followingEnabled: false
     property bool configuredForFollowing: false
+    property bool gateVisible: false
     // Declared so the bindings below exist from creation: undeclared
     // dynamic names read as undefined at load time and the bindings
     // are dropped before setProperty can ever reach them.
@@ -17,6 +18,7 @@ Item {
     property real loadProgress: -1
     property string loadPhase: ""
     property bool hasToolpath: false
+    property bool sceneHasObjects: false
     property string activePrinterName: ""
     property string statusText: ""
     property string statusIconName: "Information"
@@ -34,16 +36,20 @@ Item {
     property var pauseAtLayerItems: []
     property string pauseAtLayerUnavailableText: ""
 
-    // ActionPanelWidget already inserts a default margin between saveButton
-    // extension components. Reserve one further default margin inside this
-    // component so the visual gap from Cura's Post Processing </> button to
-    // our card matches the gap from our card to Cura's native action panel.
-    property real externalGap: UM.Theme.getSize("default_margin").width
+    // The root sizes to the panel so each host shell can place it
+    // freely (the panel shell collapses to a strip; the overlay shell
+    // corners it).
+    width: followerPanel.width
+    height: followerPanel.height
     property real horizontalPadding: UM.Theme.getSize("thick_margin").width
     property real verticalPadding: UM.Theme.getSize("thick_margin").height
     property real rowSpacing: UM.Theme.getSize("thin_margin").height
     property real buttonSpacing: UM.Theme.getSize("default_margin").width
     property real contentWidth: 300 * screenScaleFactor
+
+    onLoadBusyChanged: loadIndicator.busy = base.loadBusy
+    onLoadProgressChanged: loadIndicator.progress = base.loadProgress
+    onLoadPhaseChanged: loadIndicator.phase = base.loadPhase
 
     signal loadClicked
     signal pauseClicked
@@ -52,20 +58,31 @@ Item {
     signal removePauseAtLayerRequested(int layer)
     signal clearPauseAtLayersRequested
 
-    visible: previewStageActive && configuredForFollowing && CuraApplication.platformActivity
-    width: visible ? externalGap + followerPanel.width : 0
-    height: visible ? followerPanel.height : 0
+    // THE shared card content: hosted by whichever shell the presenter
+    // places it in (the action-panel shell while Cura's panel exists,
+    // the corner overlay while Cura's platform is idle and its panel
+    // is gone). The gate arrives pre-computed per instance as
+    // gateVisible — bindings on setProperty-fed values go stale on
+    // this dynamically created component (engine-proven), so the
+    // visibility is written imperatively from the change handlers.
+    function updateCardGate() {
+        followerPanel.visible = base.gateVisible;
+    }
+
+    onGateVisibleChanged: updateCardGate()
+
+    Component.onCompleted: updateCardGate()
+
+    // The panel shell's strip sizing reads these.
+    readonly property bool panelVisible: followerPanel.visible
+    property real panelWidth: followerPanel.width
+    property real panelHeight: followerPanel.height
 
     Rectangle {
         id: followerPanel
+        objectName: "moonrakerPreviewCardPanel"
         anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
-
-        // Cura vertically centres saveButton extensions around the native output
-        // button, which sits two thick margins above ActionPanelWidget's bottom.
-        // A multi-row extension card therefore hangs too low if simply centred.
-        // Offset it so our card bottom lines up with Cura's native action card.
-        anchors.verticalCenterOffset: (2 * base.verticalPadding) - (height / 2)
+        anchors.bottom: parent.bottom
 
         width: base.contentWidth + 2 * base.horizontalPadding
         height: contentColumn.implicitHeight + 2 * base.verticalPadding
@@ -141,11 +158,13 @@ Item {
             // full-width indicator inside it painted entirely past the
             // card's right edge and the load feedback was invisible
             // (panel UX P1 — "the second load shows no progress bar").
+            // Fed through the card's change handlers: bindings written
+            // here do not track the card's setProperty-driven updates
+            // (engine-proven), while imperative writes notify and the
+            // indicator's inner bindings on its own properties track.
             LoadProgressIndicator {
+                id: loadIndicator
                 width: parent.width
-                busy: base.loadBusy
-                progress: base.loadProgress
-                phase: base.loadPhase
             }
 
             PreviewSecondaryButton {
@@ -161,8 +180,12 @@ Item {
             }
 
             UM.Label {
+                // The current-layer info slot (the author's 2026-09-11
+                // ruling): filled while the print is active; when it has
+                // nothing to say the slot collapses instead of leaving a
+                // blank gap between the bed-mesh and pause buttons.
                 width: parent.width
-                height: 36 * screenScaleFactor
+                height: base.selectedLayerEtaText.length > 0 ? 36 * screenScaleFactor : 0
                 text: base.selectedLayerEtaText.length > 0 ? base.selectedLayerEtaText : " "
                 opacity: base.selectedLayerEtaText.length > 0 ? 1.0 : 0.0
                 color: UM.Theme.getColor("text")
@@ -185,12 +208,12 @@ Item {
             }
 
             UM.Label {
-                // NO-REFLOW RULE: a permanent single-line slot — the
-                // text fills it with the error reason, or the scheduling
-                // hint while a toolpath exists, never resizes it (the
-                // UX panel: a blank slot read as broken spacing).
+                // The scheduling hint lives only while a toolpath
+                // exists; with the card visible in every state, a
+                // permanent empty slot would read as a gap on an
+                // empty scene.
                 width: parent.width
-                height: 36 * screenScaleFactor
+                height: base.hasToolpath ? 36 * screenScaleFactor : 0
                 text: (!base.pauseAtLayerScheduled && !base.pauseAtLayerCanToggle && base.pauseAtLayerUnavailableText.length > 0) ? "Can't schedule: " + base.pauseAtLayerUnavailableText : (base.hasToolpath ? "Scroll Cura Preview to the current or a future non-final layer to schedule an end-of-layer PAUSE." : "")
                 color: UM.Theme.getColor("text_inactive")
                 font: UM.Theme.getFont("default_italic")
@@ -221,12 +244,17 @@ Item {
                         spacing: base.buttonSpacing
                         property int pauseLayer: Number(modelData.layer)
                         property string pauseEta: String(modelData.eta || "")
+                        // "scheduled" | "fired" | "failed" | "timed_out" —
+                        // a missed pause STAYS listed, restyled in the
+                        // error colour (the verified-pause-only ruling).
+                        property string pauseState: String(modelData.state || "scheduled")
+                        readonly property bool pauseMissed: pauseState === "failed" || pauseState === "timed_out"
 
                         UM.Label {
                             width: Math.max(0, parent.width - removePauseButton.width - parent.spacing)
                             height: parent.height
-                            text: "End of layer " + parent.pauseLayer + (parent.pauseEta.length > 0 ? " · " + parent.pauseEta : "")
-                            color: UM.Theme.getColor("text")
+                            text: "End of layer " + parent.pauseLayer + (parent.pauseEta.length > 0 ? " · " + parent.pauseEta : "") + (parent.pauseMissed ? " — pause not taken" : "")
+                            color: parent.pauseMissed ? UM.Theme.getColor("error") : UM.Theme.getColor("text")
                             font: UM.Theme.getFont("default")
                             verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight

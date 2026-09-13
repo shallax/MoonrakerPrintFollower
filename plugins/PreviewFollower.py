@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-import time
 from typing import Optional
 
 from .CuraAdapter import (
@@ -18,13 +17,6 @@ from .CuraAdapter import (
 )
 from .FollowController import decide_layers
 from .MoonrakerProtocol import live_position_in_gcode_space
-
-
-# A mismatch this soon after the first post-swap re-arm is almost
-# certainly Cura's own asynchronous view restoration (stage switches can
-# hang and land the restore late), not a user action. Must outlast the
-# 2s settle grace, which would otherwise mask it entirely.
-ECHO_WINDOW_S = 3.5
 
 
 def preview_override_kind(
@@ -90,6 +82,10 @@ class PreviewState:
     path_fraction: Optional[float] = None
     speed: float = 1.0
     duration: Optional[float] = None
+    # The auto-improve-ETA opt-in: the learned drift between the
+    # slicer's per-layer estimates and the observed print duration.
+    eta_learn: bool = False
+    drift: Optional[float] = None
     anchor_layer: Optional[int] = None
     anchor_duration: Optional[float] = None
     nozzle_valid: bool = False
@@ -102,7 +98,6 @@ class PreviewFollower:
         self._cura = cura
         self._motion = motion
         self._state = PreviewState()
-        self._echo_until = 0.0
 
     @property
     def state(self): return self._state
@@ -113,7 +108,15 @@ class PreviewFollower:
 
     def reset_print(self):
         self._reset_motion()
-        self._state = PreviewState(attached=self._state.attached)
+        state = self._state
+        # The view handles survive a print-end reset: the print stopping
+        # does not move Cura's view, so the armed baseline stays valid.
+        # Wiping it on every inactive observation left the window
+        # between observations permanently unarmed — drags and scrolls
+        # in that window were ignored (the author's live report).
+        self._state = PreviewState(attached=state.attached,
+            expected_layer=state.expected_layer, expected_minimum=state.expected_minimum,
+            expected_path=state.expected_path, expected_minimum_path=state.expected_minimum_path)
 
     def reset_tracking(self):
         self._reset_motion()
@@ -130,12 +133,6 @@ class PreviewFollower:
             self._reset_motion()
         self._state = replace(self._state, attached=bool(attached), nozzle_valid=False, eta_text="")
         self.remember()
-        if attached:
-            # Attaching arms expectations against whatever the view shows
-            # right now — right after a stage switch that may be Cura's
-            # half-restored state. Absorb the restoration echoes instead
-            # of detaching on them.
-            self._echo_until = time.monotonic() + ECHO_WINDOW_S
 
     def _reset_motion(self):
         if self._motion is not None:
@@ -151,23 +148,27 @@ class PreviewFollower:
 
     def detect_override(self):
         state, view = self._state, self._cura.view
-        if not state.attached or state.expected_layer is None or self._cura.suspended or view is None:
+        if not state.attached or self._cura.suspended or view is None:
             return None
         current = preview_current_layer(view)
         if current is None: return None
+        if state.expected_layer is None:
+            # Unarmed (a view swap, a dropped connection or an absorbed
+            # echo): adopt the view's current position as the baseline
+            # so the NEXT change — a continuing drag — detaches. Passing
+            # forever meant any drag in the unarmed window was ignored
+            # until an observe happened to re-arm.
+            self.remember()
+            return None
         kind = preview_override_kind(expected_layer=state.expected_layer, current_layer=current,
             expected_minimum_layer=state.expected_minimum, current_minimum_layer=preview_minimum_layer(view),
             expected_path=state.expected_path, current_path=preview_current_path(view),
             expected_minimum_path=state.expected_minimum_path, current_minimum_path=preview_minimum_path(view))
         if kind:
-            if time.monotonic() < self._echo_until:
-                # Cura's asynchronous view restoration (stage switches can
-                # hang and land the restore late) must not read as a user
-                # override: drop the expectations and let the next drive
-                # re-arm on the settled view. A genuine user scroll
-                # outlives the window and detaches.
-                self.invalidate_view()
-                return None
+            # The author's ruling: ANY user intervention to the layer
+            # selection detaches the follower — no absorption window,
+            # no auto re-attach. A spurious detach from Cura's own
+            # restoration is the accepted cost; a missed detach is not.
             self.attach(False)
         return kind
 
@@ -183,11 +184,22 @@ class PreviewFollower:
         try: duration = max(0.0, float(stats.get("print_duration") or 0))
         except (TypeError, ValueError): duration = None
         layer = snapshot.layer.index
-        state = replace(self._state, speed=speed, duration=duration, nozzle_valid=False)
+        state = replace(self._state, speed=speed, duration=duration, nozzle_valid=False,
+                        eta_learn=bool(getattr(config, "eta_learn", False)))
         if layer is not None:
             if layer != state.anchor_layer:
                 state = replace(state, anchor_layer=layer, anchor_duration=duration)
             state = replace(state, observed_layer=layer)
+        # The auto-improve-ETA opt-in (the author's ruling): learn the
+        # print's drift from the slicer's elapsed estimate at the
+        # current layer, clamped so an early-layer wobble cannot swing
+        # the remaining estimate wildly.
+        if state.eta_learn and duration and index is not None and layer is not None:
+            times = index.elapsed_times
+            if times and 0 < layer < len(times):
+                boundary = times[layer - 1]
+                if isinstance(boundary, (int, float)) and boundary and boundary > 60:
+                    state = replace(state, drift=min(2.0, max(0.5, duration / boundary)))
         self._state = state
         if not snapshot.active:
             self.reset_print()
@@ -197,7 +209,6 @@ class PreviewFollower:
             self.update_eta(snapshot, index)
             return "Detached", ()
         if self._cura.suspended: return "Cura busy", ()
-        was_unarmed = self._state.expected_layer is None
         view = self._cura.view
         if view is None or not self._cura.has_toolpath: return "Print active", ()
         if layer is None: return "Waiting for layer data", ()
@@ -226,8 +237,13 @@ class PreviewFollower:
             armed = armed and preview_minimum_layer(view) == decision.minimum_layer
         if armed:
             self.remember()
-            if was_unarmed:
-                self._echo_until = time.monotonic() + ECHO_WINDOW_S
+            # NOTE: the echo window is armed ONLY at attach(). It used
+            # to refresh here on every unarmed->armed transition, and
+            # an absorbed drag deviation unarmed the follower — each
+            # observe then re-armed the window, absorbing a slow drag
+            # for the window's whole 3.5 s (the author's live report:
+            # a slow drag detached only after ~3 s). The window now
+            # covers just the moment after an attach.
         self.update_eta(snapshot, index)
         if self._state.nozzle_valid and config.show_toolhead_indicator: self._cura.show_nozzle()
         return "Printer paused" if snapshot.observation.state == "paused" else "Following", hydration
@@ -338,7 +354,10 @@ class PreviewFollower:
                          if times[i] is not None and times[i - 1] is not None]
             if durations:
                 end += sum(durations) / len(durations)
-        return max(0.0, end - now) / state.speed
+        remaining = max(0.0, end - now) / state.speed
+        if state.eta_learn and state.drift:
+            remaining *= state.drift
+        return remaining
 
     def update_eta(self, snapshot, index):
         selected, current = self._cura.selected_layer, self._state.observed_layer
@@ -346,7 +365,7 @@ class PreviewFollower:
         if snapshot.active and selected is not None and current is not None:
             prefix = f"Selected layer {selected + 1} — "
             if selected < current: text = prefix + "already printed"
-            elif selected == current and not self._state.attached: text = prefix + "current print layer"
+            elif selected == current: text = prefix + "current print layer"
             elif selected > current:
                 remaining = self.remaining(selected, index)
                 if remaining is None: text = prefix + "ETA unavailable (no layer timing)"

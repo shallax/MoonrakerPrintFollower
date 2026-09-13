@@ -1,5 +1,5 @@
 """Deterministic Preview-pane captures: render the real
-plugins/PreviewActionPanelControls.qml in an offscreen engine with the
+plugins/MoonrakerPreviewCard.qml in an offscreen engine with the
 real Cura/UM theme components, the real cura-light theme and fake pane
 data, and write a PNG for release notes and layout regression checks.
 
@@ -63,8 +63,9 @@ def pane_values():
     presenters format them (see PrintCoordinator._publish and
     BedMeshPresenter._publish in plugins/)."""
     return {
-        # Visibility chain: previewStageActive && configuredForFollowing
-        # && CuraApplication.platformActivity.
+        # Visibility chain: the presenter's gateVisible (the card shows
+        # in whichever host the presenter places it).
+        "gateVisible": True,
         "previewStageActive": True,
         "configuredForFollowing": True,
         "followingEnabled": True,
@@ -123,13 +124,13 @@ def render(output_dir: str) -> None:
         engine_context.setContextProperty("screenScaleFactor", 1.0)
 
         component = QQmlComponent(engine)
-        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "plugins", "PreviewActionPanelControls.qml")))
+        component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "plugins", "MoonrakerPreviewCard.qml")))
         if component.isError():
             raise RuntimeError(qml_errors(component))
 
         window = QQuickWindow()
         window.resize(600, 500)
-        window.setTitle("moonraker preview action panel capture")
+        window.setTitle("moonraker preview card capture")
         item = component.create()
         if item is None:
             raise RuntimeError(qml_errors(component))

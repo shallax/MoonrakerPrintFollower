@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, Preferences, ScriptedTransport, runtime
+from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, Preferences, ScriptedSocket, ScriptedTransport, runtime
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
@@ -46,7 +46,7 @@ class QtRuntimeTests(unittest.TestCase):
         # Inject transport through the real client's constructor; instantiate all
         # composed services/signals, including the real binding startup.
         with patch.object(self.qt.load("FollowerRuntime"), "MoonrakerClient",
-                          lambda parent: real_client(parent, transport=transport)):
+                          lambda parent: real_client(parent, transport=transport, socket=ScriptedSocket())):
             follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(app)
         self.followers.append(follower)
         return app, follower, transport
@@ -96,11 +96,59 @@ class QtRuntimeTests(unittest.TestCase):
         return model, client, transport
 
     def test_full_follower_bootstrap_migrates_before_first_connection(self):
-        prefs = Preferences({"moonraker/instances": json.dumps({"A": {"url": "http://imported", "api_key": "import-key"}})})
+        prefs = Preferences({
+            "moonraker/instances": json.dumps({"A": {"url": "http://imported", "api_key": "import-key"}}),
+            "moonraker_print_follower/printer_configs_v1": json.dumps({"A": {"feed_mode": "http"}}),
+        })
         app, follower, transport = self.follower(preferences=prefs)
         self.assertEqual(transport.identity, ("http://imported", "import-key"))
         self.assertEqual(follower.client.session.base_url, "http://imported")
         self.assertTrue(transport.requests)
+
+    def test_reconnect_rearms_the_monitor_data(self):
+        # A session invalidation deactivates the monitor's data feed;
+        # only the manual reconnect re-activated it before — an
+        # automatic reconnect (a transport handover) left the model
+        # alive but the discovery chain dead forever (the harness's
+        # suite handover scenario caught it: webcams empty,
+        # temperatures gone).
+        model, client, _transport = self.monitor()
+        self.assertTrue(model._data._active)
+        client.sessionInvalidated.emit()
+        self.assertFalse(model._data._active)
+        client.connectionChanged.emit(True, "Moonraker connected over websocket")
+        self.assertTrue(model._data._active)
+
+    def test_discovery_watchdog_refires_the_dead_chain(self):
+        # On ~30-40% of cold boots the discovery chain arms dead and
+        # stays dead until a reconnect or a Klippy restart (the
+        # harness's boot probes). The watchdog fires 3 s after the
+        # connect and heals it exactly the way the Klippy-ready
+        # broadcast does: the discovery re-fire + the re-subscribe.
+        model, client, transport = self.monitor()
+        self.assertTrue(model._data._active)
+        client.connectionChanged.emit(True, "Moonraker connected over websocket")
+        self.assertTrue(model._data._watchdog.isActive())
+        # The dead state: no objects list, no aux data arrived (the
+        # snapshot is a frozen dataclass — updated through _update).
+        model._data._update(objects=(), auxiliary={})
+        before = len(transport.requests)
+        model._data._watch_discovery()
+        self.assertGreater(len(transport.requests), before,
+                           "the watchdog must re-fire the discovery requests")
+        self.assertFalse(model._data._watchdog.isActive(),
+                         "the watchdog is one-shot per connect")
+
+    def test_m117_message_publishes_from_the_aux_snapshot(self):
+        # The aux snapshot's objects arrive as mappingproxies (the
+        # MonitorData contract); the M117 slot reads the message from
+        # whatever mapping shape they take. The isinstance(dict)
+        # check never matched the live shape and the message never
+        # reached the slot (the author's live report; the harness's
+        # scenario 3 caught it).
+        model, _client, _transport = self.monitor()
+        model._data._update(auxiliary={"display_status": {"message": "probe-m117-x", "progress": 0.6}})
+        self.assertEqual(model.monitorMessage, "probe-m117-x")
 
     def test_unknown_machine_migration_is_retried_when_stack_appears(self):
         prefs = Preferences({"moonraker_print_follower/url": "http://legacy",
@@ -125,14 +173,70 @@ class QtRuntimeTests(unittest.TestCase):
         for placeholder in ("", "http://", "https://", "http:", "https:"):
             self.assertFalse(binding.usable(self.qt.load("PrinterConfig").normalise_url(placeholder)))
 
+    def test_override_detach_stays_detached_until_the_user_reattaches(self):
+        # The author's ruling: ANY layer intervention detaches, and the
+        # detach persists — no watchdog, no snap-back. The view-swap
+        # re-attach (leaving the stage while attached) is the only
+        # automatic one.
+        app, follower, transport = self.follower()
+        config_type = self.qt.load("PrinterConfig").PrinterConfig
+        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, feed_mode="http"))
+        coordinator = follower._runtime.coordinator
+        preview = coordinator._preview
+        view = SimpleNamespace(layer=4, minimum=0, path=0.0, minpath=0)
+        view.getCurrentLayer = lambda: view.layer
+        view.getMinimumLayer = lambda: view.minimum
+        view.getCurrentPath = lambda: view.path
+        view.getMinimumPath = lambda: view.minpath
+        app.controller.view = view
+        coordinator._cura._view = view
+        preview.attach(True)
+        view.layer = 10
+        coordinator._position_changed()
+        self.assertFalse(preview.state.attached)
+        # Continued movement and the passage of time change nothing:
+        # the detach holds until the user re-attaches.
+        view.layer = 11
+        coordinator._position_changed()
+        self.qt.events(4000)
+        self.assertFalse(preview.state.attached)
+
+    def test_pause_entry_leaves_only_when_observed_paused(self):
+        # The verified-pause-only ruling: an entry leaves the list only
+        # when the printer is OBSERVED paused at that layer; a missed
+        # pause stays listed, marked.
+        client, transport = self.client()
+        pauses = self.qt.load("PauseController").PauseController(client)
+        self.addCleanup(pauses.close)
+        pauses.bind(("part", 100, 1))
+        self.assertTrue(pauses.toggle(4, 0, 10))
+        pauses.observe(5)
+        self.assertEqual(pauses.states, {4: "fired"})
+        self.assertIn(4, pauses.layers)
+        request = next(r for r in transport.requests if r.channel == "scheduled")
+        request.callback({"result": {}}, None)  # the PAUSE script was accepted
+        client._handle_http_status({"result": {"status": {"print_stats": {"state": "paused"}}}},
+                                   None, client._generation, time.monotonic())
+        self.qt.events(1)
+        self.assertNotIn(4, pauses.layers)
+        # A missed pause stays listed, restyled — never silently dropped.
+        self.assertTrue(pauses.toggle(6, 0, 10))
+        pauses.observe(7)
+        self.assertEqual(pauses.states.get(6), "fired")
+        client.session.commands.get("ScheduledPause").issued_at -= 20
+        client.expire_commands()
+        self.qt.events(1)
+        self.assertIn(6, pauses.layers)
+        self.assertEqual(pauses.states.get(6), "timed_out")
+
     def test_connection_edit_invalidates_follower_domains(self):
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
-        follower.apply_printer_config(config_type(url="http://printer-a"))
+        follower.apply_printer_config(config_type(url="http://printer-a", feed_mode="http"))
         follower.client.statusReceived.emit({"print_stats": {"state": "printing", "filename": "same.gcode"}, "virtual_sdcard": {"file_size": 100}})
         follower._runtime.pauses.toggle(4, 0, 10)
         generation = follower._runtime.cura.generation
-        follower.apply_printer_config(config_type(url="http://printer-b"))
+        follower.apply_printer_config(config_type(url="http://printer-b", feed_mode="http"))
         self.assertIsNone(follower.print_state.job_key)
         self.assertFalse(follower._runtime.pauses.layers)
         self.assertGreater(follower._runtime.cura.generation, generation)
@@ -151,10 +255,10 @@ class QtRuntimeTests(unittest.TestCase):
     def test_active_print_status_executes_real_follower_metadata_path(self):
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
-        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, path_follow=False))
+        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, path_follow=False, feed_mode="http"))
         # The metadata pull serves the Preview, so it only runs once the
         # print's G-code is loaded in Cura.
-        app.controller.view = SimpleNamespace(getActivity=lambda: True)
+        app.controller.view = SimpleNamespace(getActivity=lambda: True, getLayerData=lambda: object())
         app.controller.activeViewChanged.emit()
         self.qt.events()
         follower.client.statusReceived.emit({"print_stats": {"state": "printing", "filename": "part.gcode",
@@ -168,7 +272,7 @@ class QtRuntimeTests(unittest.TestCase):
         # until the user loads the print.
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
-        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True))
+        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, feed_mode="http"))
         follower.client.statusReceived.emit({"print_stats": {"state": "printing", "filename": "part.gcode",
             "info": {"current_layer": 2}}, "virtual_sdcard": {"file_size": 100}})
         self.assertFalse(any(r.channel == "metadata" for r in transport.requests))
@@ -187,7 +291,7 @@ class QtRuntimeTests(unittest.TestCase):
     def test_same_file_restart_cannot_lose_new_metadata_reservation(self):
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
-        follower.apply_printer_config(config_type(url="http://printer-a", path_follow=False))
+        follower.apply_printer_config(config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
         files = follower._runtime.files
         files.bind(("part.gcode", 100, 1))
         files.request_metadata()
@@ -204,7 +308,7 @@ class QtRuntimeTests(unittest.TestCase):
 
     def test_pending_scheduled_pause_keeps_original_command_identity(self):
         app, follower, transport = self.follower()
-        follower.apply_printer_config(self.qt.load("PrinterConfig").PrinterConfig(url="http://printer-a"))
+        follower.apply_printer_config(self.qt.load("PrinterConfig").PrinterConfig(url="http://printer-a", feed_mode="http"))
         pauses = follower._runtime.pauses
         pauses.bind(("part.gcode", 100, 1))
         pauses.toggle(2, 1, 10)
@@ -320,7 +424,11 @@ class QtRuntimeTests(unittest.TestCase):
     def test_monitor_background_timers_fire_during_frequent_status_updates(self):
         model, client, transport = self.monitor()
         policy = self.qt.load("MoonrakerSession").PollPolicy
-        client.session.state.poll_policy = policy(auxiliary_idle_ms=30, power_ms=40, system_ms=50, endstops_ms=70, console_ms=30, console_idle_ms=30, discovery_ms=60)
+        # Auxiliary/console pace from the user's cadence, floored at
+        # 250 ms (the sliders ruling); the policy constants now pace
+        # only power/system/endstops/discovery.
+        client.configure("http://printer-a", "test-key", 750, aux_interval_ms=250, console_interval_ms=250)
+        client.session.state.poll_policy = policy(power_ms=40, system_ms=50, endstops_ms=70, console_idle_ms=250, discovery_ms=60)
         model._data._intervals()
         counts = [0, 0, 0, 0, 0, 0]  # auxiliary, power, system, endstops, console, discovery
         for index, timer in enumerate(model._data._timers.values()):
@@ -329,7 +437,9 @@ class QtRuntimeTests(unittest.TestCase):
         updates.setInterval(5)
         updates.timeout.connect(lambda: model.updateMoonrakerStatus({}))
         updates.start()
-        self.qt.events(160)
+        # The two cadence timers need 250 ms each, so the window must
+        # outlast the floor, not just the short constant timers.
+        self.qt.events(400)
         updates.stop()
         self.assertTrue(all(count >= 1 for count in counts), counts)
 
@@ -467,6 +577,51 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertTrue(any(e and "non-object" in e for p, e in results))
         self.assertTrue(all(key == "test-key" for key in received))
         cancelled.assert_not_called()
+
+    def test_camera_bridge_relays_the_stream_with_the_key(self):
+        # The key-carrying republisher: the loader asks a keyless
+        # loopback port; the bridge fetches the same path upstream WITH
+        # the key and relays the multipart stream verbatim.
+        from PyQt6.QtNetwork import QTcpSocket
+        received = []
+
+        class Handler(PipeSafeHandler):
+            def do_GET(self):
+                received.append((self.path, self.headers.get("X-Api-Key")))
+                body = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8\xff\xd9\r\n"
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+            def log_message(self, *_args): pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        bridge = self.qt.load("CameraBridge").CameraBridge()
+        self.assertTrue(bridge.configure("http://127.0.0.1:" + str(server.server_port), "test-key"))
+        self.assertGreater(bridge.port, 0)
+        self.addCleanup(bridge.stop)
+        socket = QTcpSocket()
+        self.addCleanup(socket.abort)
+        socket.connectToHost("127.0.0.1", bridge.port)
+        socket.write(b"GET /webcam/?action=stream HTTP/1.1\r\nHost: local\r\n\r\n")
+        payload = bytearray()
+        for _ in range(200):
+            self.qt.events(10)
+            payload.extend(bytes(socket.readAll()))
+            if b"--frame" in payload:
+                break
+        self.assertIn(b"--frame", bytes(payload))
+        self.assertIn(b"multipart/x-mixed-replace", bytes(payload))
+        self.assertTrue(any(path == "/webcam/?action=stream" and key == "test-key"
+                            for path, key in received), received)
 
     def test_real_http_thumbnail_fetch_follows_metadata_path(self):
         # Live-proven: a real Moonraker answers <file>.png with 404 —
@@ -816,11 +971,11 @@ class QtRuntimeTests(unittest.TestCase):
         from PyQt6.QtCore import QObject, pyqtSignal
         app, follower, transport = self.follower()
         config_type = self.qt.load("PrinterConfig").PrinterConfig
-        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True))
+        follower.apply_printer_config(config_type(url="http://printer-a", enabled=True, feed_mode="http"))
         follower.client._handle_http_status({"result": {"status": {
             "print_stats": {"state": "printing", "filename": "part.gcode"},
             "virtual_sdcard": {"file_size": 10, "file_position": 2}}}},
-            None, follower.client._generation)
+            None, follower.client._generation, time.monotonic())
         self.qt.events()
         app.controller.stage = SimpleNamespace(getId=lambda: "PreviewStage")
         preview = follower._runtime.coordinator._preview
@@ -853,27 +1008,27 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertTrue(preview.state.attached)
         self.assertEqual(preview.state.expected_layer, 0)
 
-        # Cura's late restoration moves the view: within the echo window
-        # (but past the settle grace, which would otherwise mask it) the
-        # mismatch is absorbed instead of detaching.
+        # Cura's late restoration moves the view: with the echo window
+        # gone (the author's ruling — ANY layer intervention detaches),
+        # a late restore detaches like a user action. That spurious
+        # detach is the accepted cost; the swap itself keeps the
+        # attachment.
         self.qt.events(2400)
         second.layer = 10
         second.currentLayerNumChanged.emit()
         self.qt.events()
-        self.assertTrue(preview.state.attached)
-        self.assertIsNone(preview.state.expected_layer)
-
-        # A restoration landing outside every window still detaches — but
-        # the watchdog re-attaches after the view has been quiet and the
-        # user is still in the Preview stage.
-        preview.remember()  # the follower re-arms on the settled view
+        self.assertFalse(preview.state.attached)
+        # The detach re-baselines on the deviated view (attach(False)
+        # remembers) — and NOTHING re-attaches automatically.
         self.assertEqual(preview.state.expected_layer, 10)
-        preview._echo_until = 0.0
         second.layer = 42
         second.currentLayerNumChanged.emit()
         self.qt.events()
         self.assertFalse(preview.state.attached)
         self.qt.events(3100)
+        self.assertFalse(preview.state.attached)
+        # Only the user (or a view swap while attached) re-attaches.
+        preview.attach(True)
         self.assertTrue(preview.state.attached)
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
@@ -908,6 +1063,58 @@ class MonitorDataAuxTests(unittest.TestCase):
         self.deliver("aux", {"result": {"status": {"heater_bed": {"target": 55}}}})
         self.assertEqual(set(self.data.snapshot.auxiliary), {"heater_bed"})
         self.assertEqual(self.data.snapshot.auxiliary["heater_bed"]["target"], 55)
+
+    def test_aux_accepts_objects_that_appeared_after_the_first_list(self):
+        # A device switched on mid-print never appears in the first
+        # objects/list — its data must still render and join the
+        # subscription instead of being dropped (the author's rule).
+        self.deliver("objects", {"result": {"objects": ["fan"]}})
+        self.deliver("aux", {"result": {"status": {"fan": {"speed": 0.5},
+                                                    "temperature_sensor mcu": {"temperature": 32.0}}}})
+        self.assertEqual(set(self.data.snapshot.auxiliary), {"fan", "temperature_sensor mcu"})
+        self.assertEqual(self.data.snapshot.auxiliary["temperature_sensor mcu"]["temperature"], 32.0)
+
+    def test_websocket_mode_subscribes_aux_objects_before_any_aux_data(self):
+        # Moonraker only pushes subscribed objects, so the wanted set
+        # must reach the socket as soon as the object list is known —
+        # waiting for the first fragment to issue the subscription
+        # deadlocked and the temperatures never appeared.
+        socket = ScriptedSocket()
+        client = self.qt.load("MoonrakerClient").MoonrakerClient(transport=self.transport, socket=socket)
+        self.addCleanup(client.stop)
+        client.configure("http://printer-a", "test-key", 750, feed_mode="websocket")
+        client.start()
+        data = self.qt.load("MonitorData").MonitorData(client, None)
+        data.set_active(True)
+        self.addCleanup(data.set_active, False)
+        data._objects({"result": {"objects": ["fan", "heater_bed"]}}, None)
+        self.assertTrue(any("fan" in subscription and "heater_bed" in subscription
+                            for subscription in socket.subscriptions), socket.subscriptions)
+
+    def test_camera_url_rewrites_through_the_bridge_when_a_key_is_set(self):
+        # A key-carrying camera cannot render through Cura's loader:
+        # the URL is republished on the keyless loopback bridge (the
+        # author's 4.0.0 ruling), key and upstream riding the bridge.
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class FakeData(QObject):
+            changed = pyqtSignal()
+            def __init__(self):
+                super().__init__()
+                self.active = True
+                self.snapshot = SimpleNamespace(webcams=(
+                    {"uid": "front-uid", "name": "Front", "stream_url": "/webcam/?action=stream"},))
+
+        config = self.qt.load("PrinterConfig").PrinterConfig(
+            camera_selected="front-uid", url="http://printer-a", api_key="test-key")
+        camera_module = self.qt.load("MonitorCamera")
+        camera = camera_module.MonitorCamera(FakeData(), lambda: config, lambda value: None)
+        self.addCleanup(lambda: camera._camera_bridge.stop() if camera._camera_bridge else None)
+        # The selection restore is scheduled for the next Qt turn.
+        self.qt.events(1)
+        self.assertTrue(camera.url.startswith("http://127.0.0.1:"), camera.url)
+        self.assertIn("/webcam/?action=stream", camera.url)
+        self.assertTrue(camera._camera_bridge.active)
 
     def test_camera_restore_bails_when_webcams_changed_before_turn(self):
         from PyQt6.QtCore import QObject, pyqtSignal

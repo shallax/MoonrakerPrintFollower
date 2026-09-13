@@ -49,7 +49,12 @@ VELOCITY_WARM_START = 0.8
 # The clamps absorb one-off scheduling jitter without stretching a ramp.
 INTER_POLL_TAU = 4.0
 INTER_POLL_MIN = 0.1
-INTER_POLL_MAX = 5.0
+# A poll interval beyond the cap made the ramp finish early and the head
+# DWELL at the newest observation for the remainder of every poll — a
+# visible periodic stop on slow feeds (the author's live report, ~10 s).
+# The cap now sits above any realistic poll interval so the glide spans
+# the whole gap between observations.
+INTER_POLL_MAX = 30.0
 # When pure gap decay converges, the remaining gap shrinks asymptotically and
 # the stop condition would never trigger; snap the last invisible sliver so
 # the timer does not tick forever through a pause.

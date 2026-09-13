@@ -17,7 +17,51 @@ Component {
         id: root
 
         property var printer: OutputDevice != null ? OutputDevice.activePrinter : null
-        property bool cameraConfigured: printer != null && printer.cameraUrl != null && printer.cameraUrl.toString().length > 0
+        // NOT a binding: root-level bindings on this dynamically
+        // created document don't re-evaluate when the model's camera
+        // URL lands (engine-proven — the stream sat dead until a
+        // manual refresh). The handlers below maintain it
+        // imperatively, and the inner bindings on it re-evaluate on
+        // every write.
+        property bool cameraConfigured: false
+
+        // The camera image's visible AND source are applied
+        // IMPERATIVELY here: bindings on this dynamically created
+        // document do not reliably re-evaluate when the model's
+        // camera values land (the author's first-entry stream never
+        // starting — the refresh button worked because its nonce
+        // bump is the one path that provably re-drives the image on
+        // their machine). The model bumps the nonce on the first URL
+        // transition too, so the first entry now rides that same
+        // proven path.
+        function updateCameraImage() {
+            var configured = printer != null && printer.cameraUrl != null && printer.cameraUrl.toString().length > 0;
+            if (cameraConfigured !== configured) {
+                cameraConfigured = configured;
+            }
+            if (configured) {
+                var url = printer.cameraUrl;
+                if (printer.cameraRefreshNonce > 0) {
+                    url = url.toString() + (url.toString().indexOf("?") >= 0 ? "&" : "?") + "mpf_reload=" + printer.cameraRefreshNonce;
+                }
+                cameraImage.source = url;
+            } else {
+                cameraImage.source = "";
+            }
+            cameraImage.visible = configured;
+        }
+
+        Component.onCompleted: updateCameraImage()
+
+        Connections {
+            target: root.printer
+            function onCameraUrlChanged() {
+                root.updateCameraImage();
+            }
+            function onCameraRefreshChanged() {
+                root.updateCameraImage();
+            }
+        }
         // One open pop-over at a time ("" | "chart" | "mesh"); every
         // opener and closer writes this, so the shells can never
         // overlap or trap a close button under another card.
@@ -113,6 +157,10 @@ Component {
             consoleSection.consoleRevisionsSeen = root.printer != null ? root.printer.consoleRevisions : 0;
             consoleText.text = "";
             consoleSection.consoleSyncLines();
+            // The camera's configured flag is maintained imperatively
+            // (root bindings here freeze); a printer attach is one of
+            // its triggers.
+            updateCameraImage();
         }
         focus: true
         // Esc on the Monitor page (the author's live request): the
@@ -645,8 +693,9 @@ Component {
 
                                 Cura.NetworkMJPGImage {
                                     id: cameraImage
-                                    visible: root.cameraConfigured
-                                    source: root.cameraConfigured ? (root.printer.cameraRefreshNonce > 0 ? root.printer.cameraUrl.toString() + (root.printer.cameraUrl.toString().indexOf("?") >= 0 ? "&" : "?") + "mpf_reload=" + root.printer.cameraRefreshNonce : root.printer.cameraUrl) : ""
+                                    // visible and source are owned by the
+                                    // root's updateCameraImage() — no
+                                    // bindings here to go stale.
                                     rotation: root.printer != null ? root.printer.cameraRotation : 0
                                     anchors.centerIn: parent
 
@@ -703,14 +752,16 @@ Component {
                                     // author's live ruling; true
                                     // per-pixel desaturation needs a
                                     // shader Cura's Qt 5.15 line cannot
-                                    // guarantee — roadmap note).
-                                    visible: root.cameraConfigured && (root.printer == null || !root.printer.monitorConnected)
+                                    // guarantee — roadmap note). The
+                                    // webcam watchdog reuses the same
+                                    // veil while a dead stream restarts.
+                                    visible: root.cameraConfigured && (root.printer == null || !root.printer.monitorConnected || (root.printer != null && root.printer.cameraRecovering))
                                     anchors.fill: cameraImage
                                     color: "#c0202428"
 
                                     UM.Label {
                                         anchors.centerIn: parent
-                                        text: "Camera offline"
+                                        text: (root.printer != null && root.printer.cameraRecovering) ? "Camera recovering…" : "Camera offline"
                                         font: UM.Theme.getFont("medium_bold")
                                         color: "#8b949e"
                                     }
@@ -785,14 +836,14 @@ Component {
                                         spacing: 0
 
                                         UM.Label {
-                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            Layout.alignment: Qt.AlignHCenter
                                             text: "Camera"
                                             font: UM.Theme.getFont("medium")
                                             color: UM.Theme.getColor("text")
                                         }
 
                                         RowLayout {
-                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            Layout.alignment: Qt.AlignHCenter
                                             // The inset keeps the combo
                                             // from ever touching the pane
                                             // edge at the crush (the
@@ -1431,6 +1482,13 @@ Component {
                                             consoleInput.text = "";
                                             consoleDraft = "";
                                             consoleRecallIndex = -1;
+                                            // A send is the reader signalling
+                                            // they want to follow the tail
+                                            // again: return the view to the
+                                            // prompt even from a scrolled-up
+                                            // position (the author's ruling).
+                                            consoleFlick.stickToEnd = true;
+                                            consoleFlick.contentY = consoleFlick.contentHeight - consoleFlick.height;
                                         }
                                         consoleInput.forceActiveFocus();
                                     }
@@ -1486,127 +1544,153 @@ Component {
                                         anchors.margins: UM.Theme.getSize("narrow_margin").width
                                         spacing: UM.Theme.getSize("thin_margin").height
 
-                                        Flickable {
-                                            id: consoleFlick
+                                        Item {
+                                            id: consoleOutputHost
                                             Layout.fillWidth: true
                                             Layout.fillHeight: true
-                                            clip: true
-                                            // The restore's tail scroll
-                                            // fires when the metrics
-                                            // SETTLE: the content height
-                                            // updates over several frames
-                                            // after setting the text, and
-                                            // one-shot scrolls measured
-                                            // stale values (the author's
-                                            // reports).
-                                            property bool restoreScrollPending: false
-                                            // Stick-to-end (the author's
-                                            // live report: when the pane
-                                            // is crushed and the text
-                                            // wraps, the sync pins to a
-                                            // height that has not settled,
-                                            // the viewport lands short of
-                                            // the tail, and the next poll
-                                            // snaps back). While the
-                                            // reader was at the end, every
-                                            // metric change re-pins — the
-                                            // wrap's own settle can never
-                                            // leave the viewport stranded
-                                            // above the tail.
-                                            property bool stickToEnd: false
-                                            // The scroll follows every
-                                            // metric change until the
-                                            // layout goes quiet — the
-                                            // text height settles over
-                                            // several frames and a
-                                            // one-shot scroll kept
-                                            // landing off by the command
-                                            // bar (the author's reports).
-                                            Timer {
-                                                id: restoreQuietTimer
-                                                interval: 120
-                                                repeat: false
-                                                onTriggered: consoleFlick.restoreScrollPending = false
-                                            }
-                                            // GOLDEN RULE: the reader's own
-                                            // movement cancels the restore's
-                                            // follow — a user scrolling up
-                                            // mid-history is never yanked
-                                            // (the author's ruling).
-                                            onMovementStarted: {
-                                                restoreScrollPending = false;
-                                                stickToEnd = false;
-                                            }
-                                            onContentHeightChanged: {
-                                                if (restoreScrollPending || stickToEnd) {
-                                                    contentY = contentHeight - height;
-                                                    restoreQuietTimer.restart();
+
+                                            Flickable {
+                                                id: consoleFlick
+                                                anchors.fill: parent
+                                                clip: true
+                                                // The restore's tail scroll
+                                                // fires when the metrics
+                                                // SETTLE: the content height
+                                                // updates over several frames
+                                                // after setting the text, and
+                                                // one-shot scrolls measured
+                                                // stale values (the author's
+                                                // reports).
+                                                property bool restoreScrollPending: false
+                                                // Stick-to-end (the author's
+                                                // live report: when the pane
+                                                // is crushed and the text
+                                                // wraps, the sync pins to a
+                                                // height that has not settled,
+                                                // the viewport lands short of
+                                                // the tail, and the next poll
+                                                // snaps back). While the
+                                                // reader was at the end, every
+                                                // metric change re-pins — the
+                                                // wrap's own settle can never
+                                                // leave the viewport stranded
+                                                // above the tail.
+                                                property bool stickToEnd: false
+                                                // The scroll follows every
+                                                // metric change until the
+                                                // layout goes quiet — the
+                                                // text height settles over
+                                                // several frames and a
+                                                // one-shot scroll kept
+                                                // landing off by the command
+                                                // bar (the author's reports).
+                                                Timer {
+                                                    id: restoreQuietTimer
+                                                    interval: 120
+                                                    repeat: false
+                                                    onTriggered: consoleFlick.restoreScrollPending = false
                                                 }
-                                            }
-                                            onHeightChanged: {
-                                                if (restoreScrollPending || stickToEnd) {
-                                                    contentY = contentHeight - height;
-                                                    restoreQuietTimer.restart();
+                                                // GOLDEN RULE: the reader's own
+                                                // movement cancels the restore's
+                                                // follow — a user scrolling up
+                                                // mid-history is never yanked
+                                                // (the author's ruling).
+                                                onMovementStarted: {
+                                                    restoreScrollPending = false;
+                                                    stickToEnd = false;
                                                 }
-                                            }
-                                            contentWidth: consoleText.width
-                                            contentHeight: Math.max(consoleText.height, consoleFlick.height)
-                                            ScrollBar.vertical: UM.ScrollBar {
-                                                id: consoleScrollbar
-                                                // GOLDEN RULE, scrollbar
-                                                // variant: a handle drag
-                                                // drives contentY directly
-                                                // and never fires
-                                                // onMovementStarted — the
-                                                // reader's drag cancels the
-                                                // pending restore itself
-                                                // (the UX panel).
-                                                onPressedChanged: {
-                                                    if (pressed) {
-                                                        restoreScrollPending = false;
-                                                        consoleFlick.stickToEnd = false;
+                                                onContentHeightChanged: {
+                                                    if (restoreScrollPending || stickToEnd) {
+                                                        contentY = contentHeight - height;
+                                                        restoreQuietTimer.restart();
+                                                    }
+                                                }
+                                                onHeightChanged: {
+                                                    if (restoreScrollPending || stickToEnd) {
+                                                        contentY = contentHeight - height;
+                                                        restoreQuietTimer.restart();
+                                                    }
+                                                }
+                                                contentWidth: consoleText.width
+                                                contentHeight: Math.max(consoleText.height, consoleFlick.height)
+                                                ScrollBar.vertical: UM.ScrollBar {
+                                                    id: consoleScrollbar
+                                                    // GOLDEN RULE, scrollbar
+                                                    // variant: a handle drag
+                                                    // drives contentY directly
+                                                    // and never fires
+                                                    // onMovementStarted — the
+                                                    // reader's drag cancels the
+                                                    // pending restore itself
+                                                    // (the UX panel).
+                                                    onPressedChanged: {
+                                                        if (pressed) {
+                                                            restoreScrollPending = false;
+                                                            consoleFlick.stickToEnd = false;
+                                                        }
+                                                    }
+                                                }
+                                                Column {
+                                                    // The vertical scrollbar
+                                                    // overlays the well's right
+                                                    // edge: the text must stop
+                                                    // short of it or wrapped
+                                                    // lines run underneath (the
+                                                    // author's live report).
+                                                    width: consoleFlick.width - consoleScrollbar.width
+                                                    height: consoleFlick.contentHeight
+                                                    // The spacer pins the sparse
+                                                    // transcript to the shell's
+                                                    // bottom edge; once the text
+                                                    // fills the viewport it scrolls
+                                                    // exactly like a terminal.
+                                                    Item {
+                                                        width: 1
+                                                        height: Math.max(0, consoleFlick.height - consoleText.height)
+                                                    }
+                                                    TextEdit {
+                                                        id: consoleText
+                                                        // Inert; the harness's rendered-follows
+                                                        // scenarios read this pane's text.
+                                                        objectName: "moonrakerConsoleOutput"
+                                                        width: parent.width
+                                                        readOnly: true
+                                                        selectByMouse: true
+                                                        selectByKeyboard: true
+                                                        textFormat: TextEdit.RichText
+                                                        // Long Klipper lines wrap
+                                                        // instead of overflowing the
+                                                        // well; wrapping breaks on
+                                                        // word boundaries (the
+                                                        // author's live report).
+                                                        wrapMode: TextEdit.Wrap
+                                                        font.family: consoleSection.monoFamily()
+                                                        color: "#d9dde3"
+                                                        // No blinking caret: a read-only
+                                                        // terminal pane has no cursor, and
+                                                        // the caret's phase made the
+                                                        // captures nondeterministic.
+                                                        cursorVisible: false
                                                     }
                                                 }
                                             }
-                                            Column {
-                                                // The vertical scrollbar
-                                                // overlays the well's right
-                                                // edge: the text must stop
-                                                // short of it or wrapped
-                                                // lines run underneath (the
-                                                // author's live report).
-                                                width: consoleFlick.width - consoleScrollbar.width
-                                                height: consoleFlick.contentHeight
-                                                // The spacer pins the sparse
-                                                // transcript to the shell's
-                                                // bottom edge; once the text
-                                                // fills the viewport it scrolls
-                                                // exactly like a terminal.
-                                                Item {
-                                                    width: 1
-                                                    height: Math.max(0, consoleFlick.height - consoleText.height)
-                                                }
-                                                TextEdit {
-                                                    id: consoleText
-                                                    width: parent.width
-                                                    readOnly: true
-                                                    selectByMouse: true
-                                                    selectByKeyboard: true
-                                                    textFormat: TextEdit.RichText
-                                                    // Long Klipper lines wrap
-                                                    // instead of overflowing the
-                                                    // well; wrapping breaks on
-                                                    // word boundaries (the
-                                                    // author's live report).
-                                                    wrapMode: TextEdit.Wrap
-                                                    font.family: consoleSection.monoFamily()
-                                                    color: "#d9dde3"
-                                                    // No blinking caret: a read-only
-                                                    // terminal pane has no cursor, and
-                                                    // the caret's phase made the
-                                                    // captures nondeterministic.
-                                                    cursorVisible: false
-                                                }
+
+                                            UM.Label {
+                                                // The empty-state hint is an
+                                                // OVERLAY, not a layout child: a
+                                                // layout slot stole a line from
+                                                // the output area and the feed
+                                                // stopped short of the input row
+                                                // (the author's live report).
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                anchors.bottom: parent.bottom
+                                                anchors.bottomMargin: 8 * screenScaleFactor
+                                                opacity: root.printer == null || root.printer.consoleLines.length === 0 ? 1 : 0
+                                                text: "No commands yet — lines you send appear here."
+                                                font.family: consoleSection.monoFamily()
+                                                color: "#7d8590"
+                                                elide: Text.ElideRight
                                             }
                                         }
 
@@ -1627,6 +1711,7 @@ Component {
                                             }
                                             Cura.TextField {
                                                 id: consoleInput
+                                                objectName: "moonrakerConsoleInput"
                                                 Layout.fillWidth: true
                                                 placeholderText: "G-code command…"
                                                 font.family: consoleSection.monoFamily()
@@ -1637,6 +1722,7 @@ Component {
                                             }
                                             Cura.SecondaryButton {
                                                 text: "Send"
+                                                objectName: "moonrakerConsoleSend"
                                                 enabled: root.printer != null && root.printer.monitorConnected
                                                 onClicked: consoleSection.consoleSend()
                                             }
@@ -1646,24 +1732,6 @@ Component {
                                                 onClicked: root.printer.clearConsoleHistory()
                                             }
                                         }
-                                    }
-
-                                    UM.Label {
-                                        // The empty-state hint is an
-                                        // OVERLAY, not a layout child: a
-                                        // layout slot stole a line from
-                                        // the output area and the feed
-                                        // stopped short of the input row
-                                        // (the author's live report).
-                                        anchors.left: consoleFlick.left
-                                        anchors.right: consoleFlick.right
-                                        anchors.bottom: consoleFlick.bottom
-                                        anchors.bottomMargin: 8 * screenScaleFactor
-                                        opacity: root.printer == null || root.printer.consoleLines.length === 0 ? 1 : 0
-                                        text: "No commands yet — lines you send appear here."
-                                        font.family: consoleSection.monoFamily()
-                                        color: "#7d8590"
-                                        elide: Text.ElideRight
                                     }
                                 }
                             }
@@ -1730,7 +1798,11 @@ Component {
                         color: connectionDotColour
                         UM.TooltipArea {
                             anchors.fill: parent
-                            text: root.printer != null && root.printer.monitorConnected ? "Connected to Moonraker." : "Disconnected from Moonraker."
+                            // The transport detail rides the dot's
+                            // tooltip: "connected over websocket" or
+                            // "connected over HTTP polling" (the
+                            // author's chosen spot for it).
+                            text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."
                             acceptedButtons: Qt.NoButton
                         }
                     }
@@ -1827,10 +1899,29 @@ Component {
                             Layout.bottomMargin: UM.Theme.getSize("default_margin").height
                             spacing: UM.Theme.getSize("default_margin").height
 
-                            UM.Label {
-                                text: root.printer != null ? root.printer.monitorState : "Not connected"
-                                font: UM.Theme.getFont("medium_bold")
+                            Row {
                                 Layout.fillWidth: true
+                                spacing: UM.Theme.getSize("default_margin").width
+                                UM.Label {
+                                    // The two status lines carry labels
+                                    // ("Status" and "Message"); the label
+                                    // column stays just wide enough for
+                                    // the words so the values keep the
+                                    // room (the author's ruling).
+                                    width: 64 * screenScaleFactor
+                                    text: "Status"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    font: UM.Theme.getFont("default")
+                                }
+                                UM.Label {
+                                    // Inert; the harness's rendered-follows
+                                    // scenarios read this label's text.
+                                    objectName: "moonrakerStatusStateText"
+                                    width: Math.max(0, parent.width - parent.spacing - 64 * screenScaleFactor)
+                                    text: root.printer != null ? root.printer.monitorState : "Not connected"
+                                    font: UM.Theme.getFont("medium_bold")
+                                    elide: Text.ElideRight
+                                }
                             }
 
                             UM.Label {
@@ -1840,16 +1931,34 @@ Component {
                                 elide: Text.ElideMiddle
                             }
 
-                            UM.Label {
+                            Row {
                                 // NO-REFLOW RULE: a permanent slot — an
                                 // M117 message arriving mid-print used to
-                                // shove the grid down and back.
-                                height: 36 * screenScaleFactor
-                                text: root.printer != null ? root.printer.monitorMessage : ""
-                                color: UM.Theme.getColor("text_inactive")
+                                // shove the grid down and back. The
+                                // objectName stays on the VALUE label so
+                                // the harness's rendered-text assertions
+                                // keep reading the raw message.
                                 Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                wrapMode: Text.NoWrap
+                                spacing: UM.Theme.getSize("default_margin").width
+                                UM.Label {
+                                    width: 64 * screenScaleFactor
+                                    height: 36 * screenScaleFactor
+                                    text: "Message"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    font: UM.Theme.getFont("default")
+                                }
+                                UM.Label {
+                                    objectName: "moonrakerM117Slot"
+                                    width: Math.max(0, parent.width - parent.spacing - 64 * screenScaleFactor)
+                                    height: 36 * screenScaleFactor
+                                    text: root.printer != null ? root.printer.monitorMessage : ""
+                                    // The message is primary content: full
+                                    // text colour, not the inactive grey
+                                    // (the author's ruling).
+                                    color: UM.Theme.getColor("text")
+                                    elide: Text.ElideRight
+                                    wrapMode: Text.NoWrap
+                                }
                             }
 
                             OutlineProgressBar {
@@ -2230,6 +2339,9 @@ Component {
                                             elide: Text.ElideRight
                                         }
                                         UM.Label {
+                                            // Inert; the harness's rendered-follows
+                                            // scenarios read this label's text.
+                                            objectName: "moonrakerTemperatureDetail"
                                             text: modelData.detail
                                         }
                                     }

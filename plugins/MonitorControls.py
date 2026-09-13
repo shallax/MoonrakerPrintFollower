@@ -275,13 +275,14 @@ class MonitorControls(QObject):
             self._commands.script("Clear bed mesh", "BED_MESH_CLEAR")
 
     def power_devices(self):
-        configured = [item.strip() for item in self._config().power_devices.split(",") if item.strip()]
+        # Every device the printer reports renders — the configured
+        # auto-power-on list only drives the print-start power sequence
+        # (UploadController), it never narrows the Monitor display (the
+        # author's ruling: a configured 24v,Bed pair silently hid DFU).
         raw = self._data.snapshot.power
-        by_name = {item.get("device"): item for item in raw}
-        source = [by_name.get(name, {"device": name}) for name in configured] if configured else raw
         return [{"name": item["device"], "status": str(item.get("status") or "unknown"),
             "locked": bool(item.get("locked_while_printing")),
-            "can_toggle": not (item.get("locked_while_printing") and self._commands.print_active)} for item in source if item.get("device")]
+            "can_toggle": not (item.get("locked_while_printing") and self._commands.print_active)} for item in raw if item.get("device")]
 
     def set_power(self, name, on):
         item = next((item for item in self.power_devices() if item["name"] == name and item["can_toggle"]), None)

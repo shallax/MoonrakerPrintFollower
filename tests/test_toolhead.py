@@ -134,9 +134,9 @@ class ToolheadParkTests(unittest.TestCase):
 class ToolheadGateTests(unittest.TestCase):
     def test_state_matrix(self):
         self.assertEqual(jog_gate("printing"), "pause-first")
-        for state in ("standby", "paused", "complete", "cancelled"):
+        for state in ("standby", "paused", "complete", "cancelled", "error"):
             self.assertEqual(jog_gate(state), "allowed", state)
-        for state in ("", "error", "mystery"):
+        for state in ("", "mystery"):
             self.assertEqual(jog_gate(state), "disabled", state)
         self.assertEqual(jog_gate(None), "disabled")
 

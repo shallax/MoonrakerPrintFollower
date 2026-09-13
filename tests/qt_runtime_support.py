@@ -17,6 +17,57 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 QT_AVAILABLE = importlib.util.find_spec("PyQt6") is not None
+
+if QT_AVAILABLE:
+    from PyQt6.QtCore import QObject, pyqtSignal
+
+    class ScriptedSocket(QObject):
+        """The websocket seam for harnesses: inert, records the surface."""
+
+        syncSnapshot = pyqtSignal(object, float)
+        subscribeRefused = pyqtSignal(object)
+        klippyReady = pyqtSignal()
+        klippyLost = pyqtSignal(str)
+        failed = pyqtSignal(str)
+        upgraded = pyqtSignal()
+
+        def __init__(self):
+            super().__init__()
+            self.starts = []
+            self.subscriptions = []
+            self.rpcs = []
+            self.stops = 0
+            self.is_upgraded = False
+
+        def start(self, url, api_key, core_names, aux_names):
+            self.starts.append((url, api_key))
+            self.is_upgraded = True
+            self.upgraded.emit()
+
+        def subscribe(self, objects, *, aux_names=None):
+            self.subscriptions.append(dict(objects))
+            if aux_names is not None:
+                self.aux_names = set(aux_names)
+
+        def request(self, method, params, callback):
+            self.rpcs.append((method, dict(params), callback))
+            return len(self.rpcs)
+
+        def stop(self):
+            self.stops += 1
+            self.is_upgraded = False
+
+        def drain_core(self):
+            return None, 0.0
+
+        def drain_aux(self):
+            return None, 0.0
+
+else:
+    # The host stdlib suite imports the harness modules without Qt; the
+    # Qt-guarded tests skip, but the name must resolve.
+    ScriptedSocket = None  # type: ignore[assignment]
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 

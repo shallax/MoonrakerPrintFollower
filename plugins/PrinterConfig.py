@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-import json
 from dataclasses import asdict, dataclass, field
+from enum import Enum
+import json
 from math import isfinite
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
@@ -78,6 +79,19 @@ def normalise_temperature_chart(value: Any) -> dict:
     }
 
 
+class FeedMode(str, Enum):
+    """The status-feed transport for one printer.
+
+    The value is the persisted spelling. Websocket is the product
+    default for new and upgraded installs; the unknown-value fallback
+    below is the same default, so a corrupt or foreign record never
+    bricks the connection settings.
+    """
+
+    WEBSOCKET = "websocket"
+    HTTP = "http"
+
+
 @dataclass
 class PrinterConfig:
     # Live Preview follower settings.
@@ -91,7 +105,19 @@ class PrinterConfig:
     z_tolerance: float = 0.04
     trace_layer: bool = False
     trace_http: bool = False
+    # The status-feed transport, per printer (mixed fleets mix modes).
+    # The product default lives here, never in a client-side code default.
+    feed_mode: FeedMode = FeedMode.WEBSOCKET
+    # The delivery cadences (the author's sliders ruling): the floor is
+    # the printer's own update cadence — below 250 ms there is no
+    # fresher data in either mode, and in HTTP mode each request costs
+    # the printer a full serialization.
+    aux_interval_ms: int = 2500
+    console_interval_ms: int = 1000
     path_follow: bool = True
+    # Auto-improve-ETA opt-in: the follower learns the print's drift
+    # from observed layer progress and rescales the remaining ETA.
+    eta_learn: bool = False
     path_smoothing: bool = True
     show_toolhead_indicator: bool = True
     follow_mode: str = "exact"
@@ -137,6 +163,16 @@ class PrinterConfig:
     # The bed-mesh pop-over's probe-point overlay, per printer.
     show_probe_points: bool = False
 
+    def __post_init__(self) -> None:
+        # Direct constructions (tests, hand-built records) may pass a
+        # plain string; the from_dict coercion is the load path's guard,
+        # this one keeps every path on the enum.
+        if not isinstance(self.feed_mode, FeedMode):
+            try:
+                self.feed_mode = FeedMode(str(self.feed_mode).strip().lower())
+            except (TypeError, ValueError):
+                self.feed_mode = FeedMode.WEBSOCKET
+
     @property
     def frontend_target(self) -> str:
         """The URL a browser should open: the dedicated frontend when set, else the printer."""
@@ -172,6 +208,12 @@ class PrinterConfig:
         except (TypeError, ValueError):
             rotation = defaults.camera_rotation
         data["camera_rotation"] = rotation if rotation in {0, 90, 180, 270} else 0
+
+        for key in ("aux_interval_ms", "console_interval_ms"):
+            try:
+                data[key] = max(250, min(60_000, int(data[key])))
+            except (TypeError, ValueError):
+                data[key] = getattr(defaults, key)
 
         data["url"] = normalise_url(data.get("url"))
 
@@ -225,6 +267,7 @@ class PrinterConfig:
         for key in (
             "enabled", "moonraker_layer_is_one_based", "auto_preview",
             "z_fallback", "path_follow", "path_smoothing", "show_toolhead_indicator",
+            "eta_learn",
             "trace_layer", "trace_http",
             "upload_dialog", "upload_start_print", "upload_remember_state",
             "upload_autohide_message", "camera_mirror",
@@ -239,6 +282,17 @@ class PrinterConfig:
             data["output_format"] = "gcode"
         else:
             data["output_format"] = data["output_format"].lower()
+
+        # Missing keys are pre-4.0.0 records: the product default (ruled).
+        # A present-but-unknown value falls back the same way, but never
+        # silently when the value merely needs spelling coercion.
+        raw_mode = data.get("feed_mode")
+        if not isinstance(raw_mode, FeedMode):
+            try:
+                raw_mode = FeedMode(str(raw_mode).strip().lower())
+            except (TypeError, ValueError):
+                raw_mode = defaults.feed_mode
+        data["feed_mode"] = raw_mode
 
         data["upload_path"] = data["upload_path"].strip().strip("/")
         data["temperature_chart"] = normalise_temperature_chart(data.get("temperature_chart"))
@@ -439,7 +493,14 @@ class PrinterConfigStore:
         current_id, _ = self.identity()
         key = str(machine_id or current_id)
         data = self._load_all()
-        data[key] = asdict(config)
+        # Read-modify-write of the raw record: keys this version does not
+        # own survive a save, so a downgrade to an older plugin can never
+        # destroy the mode field (or anything newer it does not know).
+        raw = data.get(key)
+        if not isinstance(raw, dict):
+            raw = {}
+        raw.update(asdict(config))
+        data[key] = raw
         self._save_all(data)
 
     def update(self, **changes: Any) -> PrinterConfig:

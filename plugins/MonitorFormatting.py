@@ -55,7 +55,7 @@ FILAMENT_OBJECT_PREFIXES = ("filament_switch_sensor ", "filament_motion_sensor "
 MCU_OBJECT_PREFIXES = ("mcu ",)
 
 _SYSTEM_OBJECTS = {"heater_bed", "fan", "exclude_object", "system_stats", "webhooks", "mcu",
-                   "configfile", "toolhead", "quad_gantry_level", "bed_mesh"}
+                   "configfile", "toolhead", "quad_gantry_level", "bed_mesh", "display_status"}
 
 
 def object_kind(name):

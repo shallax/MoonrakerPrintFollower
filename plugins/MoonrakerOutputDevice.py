@@ -91,6 +91,19 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
     def uploadPathOptions(self): return QVariant(self._upload.paths)
 
     def requestWrite(self, node, fileName=None, *args, **kwargs):
+        if self._upload.busy:
+            # The Enter wedge: a dialog dismissed without resolving its
+            # choice leaves the controller active with a dead dialog —
+            # busy forever, so the dialog never re-opens (the author's
+            # live report). A closed-but-unresolved dialog resets here;
+            # a genuinely busy transfer still refuses.
+            if self._dialog is not None:
+                try:
+                    if not bool(self._dialog.isVisible()):
+                        self._upload.cancel()
+                        self._release_dialog()
+                except RuntimeError:
+                    pass
         if self._upload.busy: raise OutputDeviceError.DeviceBusyError()
         config = self._config()
         try:

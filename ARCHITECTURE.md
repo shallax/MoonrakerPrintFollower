@@ -15,7 +15,11 @@ version bump checklist, live in `INSTRUCTIONS.md`.
 - Immutable observations and read-only query interfaces cross domain boundaries.
 - Cancellation invalidates ownership before aborting work or changing credentials.
 - QML and Cura adapters expose presentation and user intents, not network/index policy.
-- HTTP only — no WebSocket transport. Candidate connection probes are isolated.
+- One status feed per printer — a Moonraker websocket subscription (default) or the HTTP status poll
+  (selectable, and the automatic fallback). The choice covers the status classes only: commands, the
+  console store, uploads/downloads and thumbnails are HTTP in both modes, and the HTTP status path
+  is never removed. The RFC 6455 client is hand-built on QtNetwork — no Qt module outside the Cura
+  bundle's verified bindings may be imported. Candidate connection probes are isolated.
 - No retired runtime implementations, compatibility aliases or dynamic `__getattr__`
   forwarding. Structural tests enforce these rules.
 
@@ -49,6 +53,8 @@ private follower state to either integration.
 | `MoonrakerSession.py` | Binding state, merged core snapshot, polling policy, coalescer, command tracker | UI or G-code files |
 | `MoonrakerTransport.py` | Request builder, credentials, HTTP pool, JSON lanes and metrics | Feature state |
 | `MoonrakerProtocol.py` | Endpoint construction, file identity, coordinate conversion | Networking or UI |
+| `MoonrakerSocket.py` | The websocket connection: handshake, the one merged subscription set, per-class raw-fragment accumulators, the keepalive round-trip and its own generation — never the HTTP pool | Status policy, timers beyond the keepalive, the UI |
+| `SocketFraming.py` | Pure RFC 6455 framing: handshake build/verify, frame codec, extended lengths, size caps, close codes | Qt, sockets, policy |
 | `RemoteJobService.py` | Print observation and same-filename run identity | Preview selection |
 | `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer` and the single `LayerResolver` | QML/Cura writes |
 | `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` | Index algorithms or Cura loading |
@@ -78,7 +84,8 @@ private follower state to either integration.
 | `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
-| `MonitorCamera.py` | Camera selection, transforms and per-printer selection persistence | Private configuration store |
+| `MonitorCamera.py` | Camera selection, transforms, per-printer selection persistence and the bridge URL rewrite | Private configuration store |
+| `CameraBridge.py` | The key-carrying camera republisher: an ephemeral loopback listener relaying the configured stream with the X-Api-Key header, same-origin redirects only, per-connection upstreams | MoonrakerMonitorModel |
 | `MonitorTemperatureHistory.py` | Pure per-sensor temperature ring buffers and the chart payload projection | Qt or networking |
 | `ConsolePolicy.py` | Pure console policy: history bounds, the empty-input guard, the shared-lane pending cap | Qt or networking |
 | `ConsoleController.py` | Console state owner: the bounded per-printer history and the untracked send lane | Model inheritance or formatting |
@@ -108,13 +115,26 @@ before the transport changes identity. The coordinator clears print/file/index/
 Preview/pause state, and output/Monitor owners deactivate old work. Rebinding never
 means that an existing upload may silently move to another printer.
 
+The Monitor's data feed deactivates with the session and re-arms itself on the
+next connection transition into connected — an automatic reconnect (a transport
+handover, a socket recovery) must leave the discovery chain live exactly as the
+manual reconnect does. A discovery watchdog holds the same line for the COLD
+boot: three seconds after the connect, a chain that never armed (the objects
+list empty or no wanted object's data arrived) is re-fired once, through the
+same re-subscribe the Klippy-ready broadcast uses.
+
 ## 4. Shared networking and polling
 
 `MoonrakerTransport.py` is the only production module constructing
-`QNetworkAccessManager`. Ordinary JSON uses `(owner, channel)` lanes with explicit
-replacement/cancellation. Request IDs, categories, latency and errors are logged
-without credentials. Streaming downloads and multipart uploads use the same request
-builder/pool but own their replies directly.
+`QNetworkAccessManager` — `CameraBridge.py` is the one sanctioned
+exception: its upstream fetches are the camera republisher's own relay
+lane, not a request path of the shared transport, and it keeps the
+same same-origin redirect discipline so the key never travels to a
+redirect target off the configured host. Ordinary JSON uses
+`(owner, channel)` lanes with explicit replacement/cancellation.
+Request IDs, categories, latency and errors are logged without
+credentials. Streaming downloads and multipart uploads use the same
+request builder/pool but own their replies directly.
 
 `SessionSnapshot` publishes fully detached status copies and stores defensive
 copies of merged patches, so no consumer can mutate session internals through a
@@ -129,14 +149,26 @@ unsaved credentials; a probe must not reconfigure the live binding.
 | Core, imminent scheduled PAUSE | min(configured, 250 ms) |
 | Core, paused | At least 1500 ms |
 | Core, idle | At least 5000 ms |
-| Monitor auxiliary, active/paused | 1000 ms |
+| Monitor auxiliary, active/paused | 2500 ms |
 | Monitor auxiliary, idle | 2500 ms |
 | Power | 5000 ms |
 | System | 10000 ms |
 | Endstops (one-shot query_endstops) | 10000 ms |
 | Discovery/static configuration | 30000 ms or explicit refresh |
 
-`MonitorData` alone applies Monitor timer policy. An unchanged interval is not
+`MonitorData` alone applies Monitor timer policy.
+
+`PollPolicy` is the delivery policy in both modes: in HTTP mode a tick issues
+the category's request; in websocket mode a tick drains that class's
+accumulator (the socket is a source, not a clock), and the socket reconnects
+on the same ladder. Every status write is admitted through one entry point
+with an arrival stamp — a full re-sync applies whole or is dropped whole when
+a newer write is already applied, and a fragment from a previous socket
+generation is dropped. Socket liveness is active: a successful subscribe, an
+admitted write, or a keepalive reply — socket state alone is not liveness.
+A printer that cannot subscribe degrades the status feed to HTTP without a
+session reset (the startup proof and the structured subscribe refusal are
+the two triggers). An unchanged interval is not
 written back to an active QTimer, because that would restart it and starve slower
 polls. Full Klipper configuration is discovered separately; auxiliary polling asks
 only for volatile SAVE_CONFIG fields.

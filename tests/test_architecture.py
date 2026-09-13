@@ -58,7 +58,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
             "GCodeIndexService.py", "MonitorData.py", "MonitorCommands.py", "MonitorTuning.py",
             "MonitorControls.py", "MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py",
             "BedMeshSceneNode.py", "MoonrakerMonitorModel.py", "MoonrakerFollowerMachineAction.py",
-            "MoonrakerProtocol.py", "UploadController.py", "CuraOutputWriter.py",
+            "MoonrakerProtocol.py", "MoonrakerSocket.py", "SocketFraming.py", "UploadController.py", "CuraOutputWriter.py",
             "ToolheadPolicy.py", "ToolheadController.py", "MonitorTemperatureHistory.py", "ConsolePolicy.py", "ConsoleController.py",
             "FileManagerPolicy.py", "FileManager.py",
         ):
@@ -73,14 +73,20 @@ class ArchitectureDocumentTests(unittest.TestCase):
     def test_document_records_polling_cadence_and_migration(self):
         self.assertIn("Legacy follower preferences", ARCH)
         self.assertIn("Standalone Moonraker Connection settings", ARCH)
-        self.assertIn("2500 ms", ARCH)
+        # The exact table row, not the substring: the idle row also says
+        # "2500 ms", so a bare substring cannot catch drift in the active row.
+        self.assertIn("| Monitor auxiliary, active/paused | 2500 ms |", ARCH)
         self.assertIn("`MonitorData` alone applies Monitor timer policy", ARCH)
 
     def test_document_records_output_rebind_cleanup_and_network_law(self):
         self.assertIn("`MoonrakerClient.sessionInvalidated`", ARCH)
         self.assertIn("QHttpPart.setBodyDevice()", ARCH)
-        self.assertIn("HTTP only", ARCH)
-        self.assertIn("no WebSocket transport", ARCH)
+        self.assertIn("One status feed per printer", ARCH)
+        self.assertIn("hand-built on QtNetwork", ARCH)
+        self.assertIn("The Monitor's data feed deactivates with the session and re-arms", ARCH)
+        self.assertIn("A discovery watchdog holds the same line for the COLD", ARCH)
+        self.assertIn("The layer data's arrival (a slice, the engine's",
+                         (PLUGINS / "CuraIntegration.py").read_text(encoding="utf-8"))
 
     def test_document_distinguishes_harness_from_live_cura_validation(self):
         self.assertIn("The harness is not Cura or printer firmware", ARCH)
@@ -133,7 +139,7 @@ class SourceContractTests(unittest.TestCase):
                 "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService"},
             "GCodeIndex": {"MoonrakerProtocol"},
             "GCodeIndexService": {"GCodeIndex"},
-            "MonitorCamera": set(),
+            "MonitorCamera": {"CameraBridge"},
             "MonitorCommands": set(),
             "MonitorControls": {"MonitorFormatting"},
             "MonitorData": {"ConsolePolicy", "MonitorFormatting", "MoonrakerSession"},
@@ -151,8 +157,10 @@ class SourceContractTests(unittest.TestCase):
             "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice"},
             "MoonrakerPrintFollower": {"FollowerRuntime"},
             "MoonrakerProtocol": set(),
-            "MoonrakerSession": {"MoonrakerTransport"},
+            "MoonrakerSession": {"MoonrakerSocket", "MoonrakerTransport"},
+            "MoonrakerSocket": {"SocketFraming"},
             "MoonrakerTransport": {"MoonrakerProtocol"},
+            "SocketFraming": set(),
             "NativeNozzleLifecycle": set(),
             "PauseController": {"PauseScheduleService"},
             "PauseScheduleService": set(),
@@ -161,7 +169,7 @@ class SourceContractTests(unittest.TestCase):
             "PreviewMotion": {"CuraAdapter", "PreviewSmoothing"},
             "PreviewPresentation": set(),
             "PreviewSmoothing": set(),
-            "PrintCoordinator": {"MonitorFormatting", "PreviewFormatting", "PrintState", "RemoteJobService"},
+            "PrintCoordinator": {"CuraAdapter", "MonitorFormatting", "PreviewFormatting", "PrintState", "RemoteJobService"},
             "PrinterBinding": {"CuraAdapter", "PrinterConfig"},
             "PrinterConfig": set(),
             "PrintState": {"RemoteJobService"},
@@ -205,6 +213,9 @@ class SourceContractTests(unittest.TestCase):
             self.assertIsNone(re.search(r'(?:getattr|setattr)\([^,]*follower,\s*[\"\']_', source), path.name)
 
     def test_only_shared_transport_constructs_network_managers(self):
+        # CameraBridge is the one sanctioned second owner: the camera
+        # republisher's upstream fetches are its own relay lane, not
+        # a request path of the shared transport.
         owners = []
         for path in PLUGINS.glob("*.py"):
             source = path.read_text()
@@ -212,7 +223,7 @@ class SourceContractTests(unittest.TestCase):
             self.assertNotIn("QWebSocket", source, path.name)
             self.assertNotIn("_pref_str(", source, path.name)
             self.assertNotIn("_pref_bool(", source, path.name)
-        self.assertEqual(owners, ["MoonrakerTransport.py"])
+        self.assertEqual(sorted(owners), ["CameraBridge.py", "MoonrakerTransport.py"])
 
     def test_network_replies_connect_into_bound_handlers_not_bare_closures(self):
         # The author's live crash report: a SIGSEGV in PyQtSlot::call
@@ -251,12 +262,13 @@ class SourceContractTests(unittest.TestCase):
                 self.assertNotIn(forbidden, source, module)
 
     def test_preview_qml_keeps_public_workflow(self):
-        panel = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
-        empty = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
-        self.assertIn('text: "Load current print"', panel)
-        self.assertIn('base.followingPaused ? "Attach" : "Detach"', panel)
-        self.assertNotIn('base.followingPaused ? "Attach" : "Detach"', empty)
-        self.assertIn("This does not pause the printer.", panel)
+        card = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
+        self.assertIn('text: "Load current print"', card)
+        self.assertIn('base.followingPaused ? "Attach" : "Detach"', card)
+        self.assertIn("This does not pause the printer.", card)
+        # The ONE-card refactor: no second preview card document exists.
+        self.assertFalse((PLUGINS / "EmptyPreviewLoadButton.qml").exists())
+        self.assertFalse((PLUGINS / "PreviewActionPanelControls.qml").exists())
 
     def test_removed_preference_api_and_private_follower_access_are_absent(self):
         for path in PLUGINS.glob("*.py"):
@@ -278,6 +290,9 @@ class SourceContractTests(unittest.TestCase):
         # bundled builds do not.
         owners = {
             "QAbstractListModel": "QtCore",
+            "QAbstractSocket": "QtNetwork",
+            "QTcpSocket": "QtNetwork",
+            "QSslSocket": "QtNetwork",
             "QByteArray": "QtCore",
             "QCoreApplication": "QtCore",
             "QModelIndex": "QtCore",
@@ -326,7 +341,9 @@ class SourceContractTests(unittest.TestCase):
     def test_source_contains_no_private_network_examples_or_literal_api_key(self):
         candidates = list(PLUGINS.rglob("*")) + list((ROOT / "tools").rglob("*")) + list(ROOT.glob("*"))
         text = "\n".join(p.read_text(errors="replace") for p in candidates if p.is_file() and p.suffix.lower() in {".py", ".qml", ".md", ".json", ".txt"})
-        for pattern in (r"\b(?:10|127)\.\d+\.\d+\.\d+\b", r"\b192\.168\.\d+\.\d+\b", r"\b172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+\b"):
+        # 127/8 is always the local machine and stays permitted; the
+        # gate protects against real private LAN ranges leaking.
+        for pattern in (r"\b10\.\d+\.\d+\.\d+\b", r"\b192\.168\.\d+\.\d+\b", r"\b172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+\b"):
             self.assertIsNone(re.search(pattern, text))
         self.assertIsNone(re.search(r"api_key\s*[=:]\s*[\"'][^\"']+[\"']", text, re.I))
 
@@ -423,7 +440,13 @@ class CompositionStructureTests(unittest.TestCase):
         self.assertIn("QNetworkAccessManager", transport)
         self.assertNotIn("QNetworkAccessManager", client)
         self.assertNotIn("QWebSocket", client)
-        self.assertNotIn("websocket", client.lower())
+        # The 4.0.0 restatement (H7/E8): the word ban becomes structural
+        # assertions — the mode is a symbol, the socket is reached through
+        # the session (never imported by the client), and both feeds
+        # admit through one entry point.
+        self.assertIn("feed_mode", client)
+        self.assertNotIn("from .MoonrakerSocket", client)
+        self.assertIn("admit_status", client)
 
     def test_output_and_follower_reuse_shared_transport(self):
         output = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")

@@ -1,6 +1,7 @@
 import unittest
 
 from plugins.MoonrakerProtocol import (
+    CORE_OBJECTS,
     RemoteFileIdentity,
     download_endpoint,
     live_position_in_gcode_space,
@@ -10,6 +11,7 @@ from plugins.MoonrakerProtocol import (
     same_origin,
     server_info_endpoint,
     status_endpoint,
+    websocket_endpoint,
 )
 
 
@@ -136,6 +138,35 @@ class SameOriginTests(unittest.TestCase):
     def test_case_variance_is_same_origin(self):
         self.assertTrue(same_origin(self.BASE, "HTTP://PRINTER.LOCAL:7125/x"))
 
+
+class WebSocketFamilyTests(unittest.TestCase):
+    """The ws/wss origin family and endpoint derivation (round-2 S1/S2)."""
+
+    def test_ws_matches_http_and_wss_matches_https(self):
+        self.assertTrue(same_origin("http://printer.local:7125", "ws://printer.local:7125/websocket"))
+        self.assertTrue(same_origin("https://printer.local", "wss://printer.local/websocket"))
+        self.assertTrue(same_origin("http://printer.local:80", "ws://printer.local/websocket"))
+
+    def test_plain_never_matches_secure_in_either_direction(self):
+        self.assertFalse(same_origin("https://printer.local", "ws://printer.local/websocket"))
+        self.assertFalse(same_origin("http://printer.local", "wss://printer.local/websocket"))
+        self.assertFalse(same_origin("https://printer.local:80", "ws://printer.local:80/websocket"))
+
+    def test_portless_wss_computes_443(self):
+        self.assertTrue(same_origin("https://printer.local", "wss://printer.local/websocket"))
+        self.assertFalse(same_origin("https://printer.local:443", "wss://printer.local:8443/websocket"))
+
+    def test_foreign_host_gets_no_key(self):
+        self.assertFalse(same_origin("http://printer.local:7125", "ws://other.local:7125/websocket"))
+
+    def test_websocket_endpoint_maps_strictly_and_fails_closed(self):
+        self.assertEqual(websocket_endpoint("http://printer.local:7125"), "ws://printer.local:7125/websocket")
+        self.assertEqual(websocket_endpoint("https://printer.local"), "wss://printer.local/websocket")
+        self.assertEqual(websocket_endpoint("ftp://printer.local"), "")
+        self.assertEqual(websocket_endpoint(""), "")
+
+    def test_status_endpoint_derives_from_the_shared_object_list(self):
+        self.assertEqual(status_endpoint("http://p"), "http://p/printer/objects/query?%s" % "&".join(CORE_OBJECTS))
 
 if __name__ == "__main__":
     unittest.main()

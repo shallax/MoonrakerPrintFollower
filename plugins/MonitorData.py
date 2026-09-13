@@ -48,6 +48,7 @@ class MonitorData(QObject):
         self._client = client
         self._active = False
         self._generation = 0
+        self._connection_detail = ""
         self._timers = {}
         self._console_expanded = False
         self._console_entries = []
@@ -74,6 +75,10 @@ class MonitorData(QObject):
             timer = QTimer(self)
             timer.timeout.connect(callback)
             self._timers[category] = timer
+        self._watchdog = QTimer(self)
+        self._watchdog.setSingleShot(True)
+        self._watchdog.setInterval(3000)
+        self._watchdog.timeout.connect(self._watch_discovery)
         # Use QObject-bound receivers rather than lambdas that capture ``self``.
         # PyQt can automatically disconnect bound QObject receivers when this MonitorData
         # is destroyed; a lambda would outlive the C++ object on the long-lived client.
@@ -87,8 +92,47 @@ class MonitorData(QObject):
 
     def _connection_changed(self, *args):
         connected = bool(args[0]) if args else self.connected
+        if len(args) > 1:
+            self._connection_detail = str(args[1])
+        # The automatic reconnect must re-arm the monitor: an
+        # invalidation deactivated it, and only the MANUAL reconnect
+        # paths re-activated it before — a transport handover (or any
+        # reconnect) left the model alive but discovery-dead forever
+        # (webcams empty, temperatures gone; the harness's suite
+        # handover scenario caught it). The re-arm is a no-op when
+        # already active.
+        if connected and not self._active:
+            self.set_active(True)
+        if connected:
+            # The discovery watchdog: on ~30-40% of cold boots the
+            # discovery chain never arms (webcams empty, temperatures
+            # gone, endstops doubly gated on a system snapshot that
+            # also failed to land) and stays dead until a reconnect
+            # or a Klippy restart. The healthy chain settles in a
+            # couple of seconds, so the check fires 3 s after the
+            # connect: still dead, the same re-subscribe the
+            # Klippy-ready broadcast uses is issued once.
+            self._watchdog.stop()
+            self._watchdog.start()
         self.connectionStateChanged.emit(connected)
         self.changed.emit()
+
+    def _watch_discovery(self):
+        # Dead = the objects list never landed or no wanted object
+        # produced data; both heal via the discovery re-fire + the
+        # subscription re-issue.
+        if not self._active or self._client is None:
+            return
+        snapshot = self._snapshot
+        if not getattr(snapshot, "objects", ()) or \
+           not any(getattr(snapshot, "auxiliary", {}) or {}):
+            self._watchdog.stop()
+            self.refresh_discovery()
+            self._client.resubscribe()
+
+    @property
+    def connection_detail(self):
+        return self._connection_detail
 
     def _clear(self):
         empty = freeze({})
@@ -181,18 +225,38 @@ class MonitorData(QObject):
             self.refresh_all()
 
     def _intervals(self):
+        configured = {
+            RequestCategory.CORE: 1000,
+            RequestCategory.AUXILIARY: self._client.aux_interval_ms,
+            RequestCategory.CONSOLE: self._client.console_interval_ms,
+        }
         for category, timer in self._timers.items():
-            interval = self._client.session.poll_policy.interval_ms(category, 1000, self._client.session.snapshot.printer_state)
+            interval = self._client.session.poll_policy.interval_ms(
+                category, configured.get(category, 1000), self._client.session.snapshot.printer_state)
             if timer.interval() != interval: timer.setInterval(interval)
 
     def request(self, channel, method, path, callback, *, body=None, replace=False, category="auxiliary",
-                timeout_ms=5000):
+                timeout_ms=5000, rpc=None):
         if not self._active or not self._client.session.base_url: return False
         generation = self._generation
         session = self._client.session.generation
         def finished(payload, error):
             if self._active and generation == self._generation and session == self._client.session.generation:
                 callback(payload, error)
+        if rpc is not None:
+            # The socket RPC lane (the author's ruling: ditch the HTTP
+            # polls) — unavailable means the socket is down or the mode
+            # is HTTP, and the same request falls through to the wire.
+            rpc_method, rpc_params = rpc
+            if self._client.rpc(rpc_method, rpc_params, lambda reply, error: finished(reply, error)):
+                return True
+            # The bootstrap window: websocket mode with the socket not
+            # upgraded yet. Firing HTTP here was the traffic that read
+            # as handover cancellations in the log — the lane's own
+            # timer retries once the RPC lane is live, so skip the
+            # wire instead.
+            if self._client.effective_feed_mode == "websocket":
+                return True
         return self._client.transport.send_json("monitor", channel, method, path, finished,
             body=body, replace=replace, category=category, timeout_ms=timeout_ms)
 
@@ -227,22 +291,52 @@ class MonitorData(QObject):
         return wanted_object(name)
 
     def refresh_discovery(self):
-        self.request("objects", "GET", "printer/objects/list", self._objects, category="discovery")
+        self.request("objects", "GET", "printer/objects/list", self._objects, category="discovery", rpc=("printer.objects.list", {}))
         self.request("presets", "GET", "server/database/item?namespace=mainsail&key=presets",
             lambda payload, error: self._update(presets=result(payload).get("value", {})) if not error and isinstance(result(payload), Mapping) else None,
-            category="discovery")
+            category="discovery",
+            rpc=("server.database.get_item", {"namespace": "mainsail", "key": "presets"}))
+        # The webcam list rides the discovery cycle too: it previously
+        # fired ONLY in the once-per-connect refresh_all, and when the
+        # RPC lane had not upgraded yet that one request was dropped
+        # forever — the camera stayed unselected until a manual
+        # refresh (the author's live report; the harness's scenario 4
+        # caught it).
+        self.refresh_webcams()
 
     def _objects(self, payload, error):
         value = result(payload)
         names = value.get("objects") if isinstance(value, Mapping) else None
         if error or not isinstance(names, (tuple, list)): return
         self._update(objects=tuple(sorted(str(name) for name in names)))
+        self._reconcile_aux_subscription()
         if "configfile" in names:
             self.request("config-static", "POST", "printer/objects/query", self._aux,
-                body={"objects": {"configfile": None}}, replace=True, category="discovery")
+                body={"objects": {"configfile": None}}, replace=True, category="discovery",
+                rpc=("printer.objects.query", {"objects": {"configfile": None}}))
         self.refresh_aux()
 
+    def _reconcile_aux_subscription(self):
+        """The wanted set must reach the socket even before any aux data
+        has arrived: Moonraker only pushes subscribed objects, so waiting
+        for the first fragment to issue the subscription is a deadlock
+        — temperatures never appeared in websocket mode (the author's
+        live report)."""
+        if self._client.effective_feed_mode != "websocket":
+            return
+        wanted = {name for name in self._snapshot.objects if self.wants_object(name)}
+        self._client.set_auxiliary_objects(wanted)
+
     def refresh_aux(self):
+        if self._client.effective_feed_mode == "websocket":
+            # The socket is a source, not a clock (A11): the existing
+            # auxiliary timer drains the accumulated fragments.
+            patch, _stamp = self._client.drain_aux()
+            if patch:
+                self._merge_aux(patch)
+            else:
+                self._reconcile_aux_subscription()
+            return
         objects = {name: ["save_config_pending", "save_config_pending_items"] if name == "configfile" else None
                    for name in self._snapshot.objects if self.wants_object(name)}
         if objects: self.request("aux", "POST", "printer/objects/query", self._aux, body={"objects": objects})
@@ -251,10 +345,19 @@ class MonitorData(QObject):
         value = result(payload)
         incoming = value.get("status") if isinstance(value, Mapping) else None
         if error or not isinstance(incoming, Mapping): return
+        self._merge_aux(incoming)
+
+    def _merge_aux(self, incoming):
         # Rebuild from the current wanted set so objects that were renamed or
         # hot-removed stop rendering instead of staying in the snapshot for
-        # the rest of the session.
+        # the rest of the session. Newly-seen objects join the set even when
+        # the first objects/list missed them — a device switched on
+        # mid-print must show up, not be dropped (the author's rule).
         wanted = {name for name in self._snapshot.objects if self.wants_object(name)}
+        wanted |= {name for name in incoming if self.wants_object(name)}
+        # The wanted set is the subscription's declarative input (A8/F5):
+        # a membership change re-issues the one merged subscription.
+        self._client.set_auxiliary_objects(wanted)
         merged = {name: state for name, state in self._snapshot.auxiliary.items() if name in wanted}
         for name, value in incoming.items():
             if name not in wanted: continue
@@ -337,7 +440,7 @@ class MonitorData(QObject):
             if responses:
                 self._console_entries = responses
                 self.consoleStoreChanged.emit()
-        self.request("console-store", "GET", "server/gcode_store?count=100", finished, category="console")
+        self.request("console-store", "GET", "server/gcode_store?count=100", finished, category="console", rpc=("server.gcode_store", {"count": 100}))
 
     def refresh_endstops(self):
         # Endstop pin states are NOT part of the objects query; the
@@ -351,24 +454,35 @@ class MonitorData(QObject):
         # console red.
         if (self._snapshot.server or {}).get("klippy_state") != "ready":
             return
+        # NEVER while a print runs: query_endstops makes Klipper
+        # briefly pause the toolhead while it answers — a 250-500 ms
+        # dwell at the poll's 10 s cadence on the author's live
+        # print (quitting Cura stopped it). The endstop states cannot
+        # change mid-print, so the poll resumes only once idle.
+        state = (self._snapshot.core.get("print_stats") or {}).get("state")
+        if state in ("printing", "paused"):
+            return
         # A failed poll must never erase last-known states: an empty
         # endstop map reads as "not homed yet" while connected, which is
         # a lie about the printer during a transient network blip. The
         # states blank only on invalidation/disconnect.
         self.request("endstops", "GET", "printer/query_endstops/status",
             lambda p, e: self._update(endstops=dict(result(p))) if not e and isinstance(result(p), Mapping) else None,
-            category="endstops")
+            category="endstops",
+            rpc=("printer.query_endstops.status", {}))
 
     def refresh_power(self):
         self.request("power-list", "GET", "machine/device_power/devices",
             lambda p, e: self._update(power=result(p).get("devices", ())) if not e and isinstance(result(p), Mapping) else None,
-            category="power")
+            category="power",
+            rpc=("machine.device_power.devices", {}))
 
     def refresh_system(self):
         for channel, path, key in (("server-info", "server/info", "server"), ("printer-info", "printer/info", "printer")):
             self.request(channel, "GET", path,
                 lambda p, e, k=key: self._update(**{k: result(p)}) if not e and isinstance(result(p), Mapping) else None,
-                category="system")
+                category="system",
+                rpc=("server.info" if key == "server" else "printer.info", {}))
 
     def refresh_webcams(self):
         # Same retention principle as endstops: a failed poll must never
@@ -378,6 +492,7 @@ class MonitorData(QObject):
         self.request("webcams", "GET", "server/webcams/list",
             lambda p, e: self._update(webcams=tuple(item for item in result(p).get("webcams", ()) if isinstance(item, dict) and item.get("enabled", True)))
             if not e and isinstance(result(p), Mapping) else None,
-            replace=True, category="discovery")
+            replace=True, category="discovery",
+            rpc=("server.webcams.list", {}))
 
 

@@ -35,8 +35,10 @@ class PrintCoordinator(QObject):
         self._snapshot = PrintSnapshot()
         self._status = {}
         self._detail = "Not connected"
+        self._gate_logged = None
         self._load_job = None
         self._load_requested = False
+        self._load_requested_at = 0.0
         # Moonraker's file metadata (the slicer header parsed server-side):
         # layer height and slicer estimate for prints the user never
         # loaded. Fetched once per job, retried every 30 s until success.
@@ -55,18 +57,10 @@ class PrintCoordinator(QObject):
         self._header_total_path = ""
         self._layer_trace_at = 0.0
         self._monitor_requested = False
+        self._monitor_requested_at = 0.0
         self._publish_at = 0.0
         self._processing = self._closed = False
-        # An override detach that no further view activity follows is
-        # almost certainly Cura's own restoration (a stage switch or a
-        # window re-activation can hang and land it late) — the watchdog
-        # re-attaches after the view has been quiet, while the user is
-        # still in the Preview stage. Manual toggles cancel it.
-        self._detach_from_override = False
-        self._detach_watchdog = QTimer(self)
-        self._detach_watchdog.setSingleShot(True)
-        self._detach_watchdog.setInterval(3000)
-        self._detach_watchdog.timeout.connect(self._watchdog_reattach)
+        self._had_toolpath = False
         client.statusReceived.connect(self.observe)
         client.connectionChanged.connect(self._connection_changed)
         client.sessionInvalidated.connect(self.reset_binding)
@@ -85,6 +79,12 @@ class PrintCoordinator(QObject):
         cura.loadFailed.connect(self._load_failed)
         pauses.changed.connect(self._publish)
         pauses.message.connect(self._message)
+        # A rebuilt preview stage destroys and recreates the QML
+        # controls (the author's new-build-plate report); the
+        # presentation re-emits after recreating so the fresh card
+        # receives the full value set immediately, before any other
+        # event would republish it.
+        presentation.controlsChanged.connect(self._publish)
         presentation.loadRequested.connect(self.confirm_load)
         presentation.attachmentRequested.connect(self.toggle_attachment)
         presentation.pauseRequested.connect(self.toggle_pause)
@@ -128,7 +128,37 @@ class PrintCoordinator(QObject):
         if self._closed or self._processing: return
         self._processing = True
         try:
+            # A load request against a standby printer never resolves
+            # through observe() — no status frame arrives to clear the
+            # flag (the stuck "Resolving…" report). The snapshot's own
+            # print state settles it here: a known-idle printer clears
+            # once the refresh the request kicked off has had a moment
+            # to land; the 5 s bound catches a stale snapshot.
+            now = time.monotonic()
+            if self._load_requested and now - self._load_requested_at > (2.0 if not self._snapshot.active else 5.0):
+                self._load_requested = False
+                if not self._snapshot.active:
+                    self._detail = "No active Moonraker print to load"
+            if self._monitor_requested and now - self._monitor_requested_at > (2.0 if not self._snapshot.active else 5.0):
+                self._monitor_requested = False
+                if not self._snapshot.active:
+                    self._detail = "No active Moonraker print to load"
             config = self._binding.config
+            # The toolpath's arrival (the plugin's load rendered, or a
+            # slice) is the moment Cura's controls must come up: the
+            # plugin-driven load fires none of Cura's own activity
+            # events, so Cura's panel and slider stay dormant until an
+            # unrelated event (the author's live report). Nudge Cura's
+            # own computation on the edge, and once more after the
+            # render settles.
+            has_toolpath = bool(self._cura.has_toolpath)
+            if has_toolpath and not self._had_toolpath:
+                self._had_toolpath = True
+                self._cura.nudge_cura_activity()
+                self._cura.nudge_layer_view()
+                QTimer.singleShot(1500, self._cura.nudge_cura_activity)
+            elif not has_toolpath:
+                self._had_toolpath = False
             job = self._files.job_key
             view = self._index.view
             if view is not None and view.job_key != job: view = None
@@ -278,8 +308,6 @@ class PrintCoordinator(QObject):
             done, category="metadata")
 
     def reset_binding(self):
-        self._detach_watchdog.stop()
-        self._detach_from_override = False
         self._processing = True
         try:
             self._load_job = None
@@ -343,8 +371,6 @@ class PrintCoordinator(QObject):
         if self._binding.config.enabled:
             if self._preview.detect_override():
                 self._detail = "Detached"
-                self._detach_from_override = True
-                self._detach_watchdog.start()
         # Cura streams position changes at the render cadence; the
         # panel values do not need that rate. Throttle the ETA and
         # publish to 5 Hz — the author's preview-lag report.
@@ -360,18 +386,6 @@ class PrintCoordinator(QObject):
             self._snapshot = replace(self._snapshot,
                 layer_eta=self._preview.remaining_end(view, self._snapshot.estimated_time))
         self._publish()
-
-    def _watchdog_reattach(self):
-        # Only re-attach when nothing has contradicted the detach: the
-        # user is still in Preview, has not toggled manually, and the view
-        # has been quiet since. Cura's own restoration leaves the view
-        # alone afterwards; an inspecting user keeps moving it.
-        if (not self._detach_from_override or self._preview.state.attached
-                or not self._cura.preview_active or self._closed):
-            return
-        self._detach_from_override = False
-        self._preview.attach(True)
-        self._client.force_refresh()
 
     def _file_loaded(self, path):
         self._preview.invalidate_view()
@@ -400,23 +414,25 @@ class PrintCoordinator(QObject):
             self._message("Set a Moonraker URL before improving the monitor estimate")
             return
         self._monitor_requested = True
+        self._monitor_requested_at = time.monotonic()
         self._index.request()
         self._message("Downloading and indexing the print for the monitor…")
         self._client.force_refresh()
+        QTimer.singleShot(2600, self.refresh)
 
     def request_load(self):
         if not self._binding.configured:
             self._message("Set a Moonraker URL before loading the current print")
             return
         self._load_requested = True
+        self._load_requested_at = time.monotonic()
         self._message("Resolving current print…")
         self._client.force_refresh()
+        QTimer.singleShot(2600, self.refresh)
 
     def toggle_attachment(self):
         # A manual toggle is a deliberate choice: it cancels any pending
         # watchdog re-attach.
-        self._detach_watchdog.stop()
-        self._detach_from_override = False
         self._preview.attach(not self._preview.state.attached)
         self.refresh()
         if self._preview.state.attached: self._client.force_refresh()
@@ -441,7 +457,8 @@ class PrintCoordinator(QObject):
         items = []
         for layer in sorted(self._pauses.layers):
             remaining = self._preview.remaining(layer, self._index.view, end=True)
-            items.append({"layer": layer + 1, "eta": pause_eta(remaining, self._preview.format_duration)})
+            items.append({"layer": layer + 1, "eta": pause_eta(remaining, self._preview.format_duration),
+                          "state": self._pauses.states.get(layer, "scheduled")})
         compact = status_text(
             detail=self._detail,
             load_requested=self._load_requested,
@@ -453,6 +470,17 @@ class PrintCoordinator(QObject):
             connected=self._client.connected,
             configured=self._binding.configured,
         )
+        # Transition diagnostics (INFO, only on change): the card's
+        # visibility terms log themselves so a vanish can be traced to
+        # the term that stayed false.
+        gate = (self._binding.configured and config.enabled,
+                self._snapshot.load_active and not self._snapshot.index_ready,
+                self._cura.has_toolpath,
+                self._cura.preview_active)
+        if gate != self._gate_logged:
+            self._gate_logged = gate
+            Logger.log("i", "Moonraker preview card gates: configured=%s loadBusy=%s hasToolpath=%s previewStage=%s",
+                       gate[0], gate[1], gate[2], gate[3])
         self._presentation.publish({
             "followingPaused": not state.attached, "followingEnabled": config.enabled,
             # The preview's load feedback: busy until the load reaches a
@@ -467,7 +495,14 @@ class PrintCoordinator(QObject):
                           else "Rendering…" if self._cura.loading
                           else "Resolving current print…" if self._load_requested or self._monitor_requested else ""),
             "configuredForFollowing": self._binding.configured and config.enabled,
+            # The stage state rides THIS publish path: the presenter's
+            # own refresh-side publish proved unreliable on the
+            # dynamically created cards (the harness probe caught the
+            # value never arriving after a stage click), while every
+            # value in this dict demonstrably lands.
+            "previewStageActive": self._cura.preview_active,
             "activePrinterName": self._binding.identity[1], "hasToolpath": self._cura.has_toolpath,
+            "sceneHasObjects": self._cura.scene_has_objects,
             "statusText": compact, "statusIconName": status_icon(compact),
             "selectedLayerEtaText": state.eta_text,
             "pauseAtLayerActive": snapshot.active, "pauseAtLayerCandidate": selected + 1 if selected is not None else 0,

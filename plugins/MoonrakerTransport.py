@@ -265,7 +265,12 @@ class MoonrakerHttpTransport(QObject):
                                 if server_words:
                                     error = server_words
                 except Exception:
-                    pass
+                    # A non-JSON refusal body is an auth gateway's page
+                    # (the author's proxy answers 401 with HTML): name
+                    # the status so the settings test-connection surface
+                    # reads "the API key was rejected (HTTP 401)".
+                    if reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute) == 401:
+                        error = "the API key was rejected (HTTP 401)"
             else:
                 declared = reply.header(QNetworkRequest.KnownHeaders.ContentLengthHeader)
                 if declared is not None and int(declared) > MAX_REPLY_BYTES:
@@ -304,7 +309,12 @@ class MoonrakerHttpTransport(QObject):
         # (MOONRAKER_FOLLOWER_TRACE_HTTP) — at the poll cadence the
         # unconditional debug log flooded Cura's log.
         if error:
-            Logger.log("w", "MoonrakerHTTP %s %s failed: %s", pending.method, key, error)
+            if reply.error() == QNetworkReply.NetworkError.OperationCanceledError:
+                # A canceled request is teardown/handover noise, never
+                # printer trouble: keep it out of the warning stream.
+                Logger.log("d", "MoonrakerHTTP %s %s canceled", pending.method, key)
+            else:
+                Logger.log("w", "MoonrakerHTTP %s %s failed: %s", pending.method, key, error)
         elif self._trace_http:
             Logger.log(
                 "d",

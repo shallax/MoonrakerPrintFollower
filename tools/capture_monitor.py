@@ -14,6 +14,8 @@ Usage:  python3 tools/capture_monitor.py <output-directory>
 """
 from __future__ import annotations
 
+import time
+
 import os
 import sys
 
@@ -28,7 +30,7 @@ from PyQt6.QtCore import QPointF, QUrl
 from PyQt6.QtGui import QColor, QGuiApplication
 from PyQt6.QtQml import QQmlComponent, QQmlEngine
 
-from qt_runtime_support import ScriptedTransport, runtime
+from qt_runtime_support import ScriptedSocket, ScriptedTransport, runtime
 
 
 def fake_status(state="printing"):
@@ -110,7 +112,7 @@ def main():
         root = qt.load("FollowerRuntime")
         real = root.MoonrakerClient
         follower_app = qt.Application(machine_name="Voron v2.4 250")
-        with patch.object(root, "MoonrakerClient", lambda parent: real(parent, transport=transport)):
+        with patch.object(root, "MoonrakerClient", lambda parent: real(parent, transport=transport, socket=ScriptedSocket())):
             follower = qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(follower_app)
         _freeze_plugin_clocks()
         config_type = qt.load("PrinterConfig").PrinterConfig
@@ -128,7 +130,7 @@ def main():
         model = output._current.activePrinter
 
         client = follower.client
-        client._handle_http_status({"result": {"status": fake_status("printing")}}, None, client._generation)
+        client._handle_http_status({"result": {"status": fake_status("printing")}}, None, client._generation, time.monotonic())
         # The filament readouts need the slicer's total, which arrives
         # with the metadata fetch — answer it like Moonraker would.
         for request in transport.requests:
@@ -222,6 +224,20 @@ def main():
         window.show()
         for _ in range(5):
             app.processEvents()
+        # The shell loads the dashboard asynchronously
+        # (Qt.createComponent); the first grab must wait for the inner
+        # Loader to produce the dashboard, or the capture reads blank
+        # (the determinism gate caught exactly that after the shell
+        # rework).
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            app.processEvents()
+            if any(child.property("objectName") == "moonrakerControlsPane"
+                   for child in item.findChildren(QQuickItem)):
+                break
+            time.sleep(0.05)
+        else:
+            raise RuntimeError("the dashboard never rendered inside the capture shell")
 
         def grab(name):
             image = window.grabWindow()

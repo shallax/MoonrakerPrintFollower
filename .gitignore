@@ -20,4 +20,5 @@ pyproject.toml
 review/
 
 .determinism-check/
-.claude/
+.claude/*
+!.claude/skills/

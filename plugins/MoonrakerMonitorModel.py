@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Mapping
 from copy import deepcopy
 from PyQt6.QtCore import QLocale, QTimer, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from UM.Resources import Resources
@@ -218,6 +219,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     statusPaneChanged = pyqtSignal()
     consoleHeightChanged = pyqtSignal()
     cameraRefreshChanged = pyqtSignal()
+    cameraRecoveringChanged = pyqtSignal()
+    connectionDetailChanged = pyqtSignal()
     fileManagerChanged = pyqtSignal()
     fileManagerThumbsChanged = pyqtSignal()
 
@@ -252,6 +255,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("sectionsChanged", ("sectionExpandedMap",)),
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
+        ("cameraRecoveringChanged", ("cameraRecovering",)),
+        ("connectionDetailChanged", ("connectionDetail",)),
         ("fileManagerChanged", ("fileManagerRows", "fileManagerRecents", "fileManagerDirectory", "fileManagerDirectories", "fileManagerDiskText", "fileManagerNote",
                                 "fileManagerRefreshedAt", "fileManagerShown", "fileManagerPage", "fileManagerPageIndex",
                                 "fileManagerPageCount", "fileManagerPageSize", "fileManagerPageSelection",
@@ -342,6 +347,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._tuning = MonitorTuning(self._data, self._commands, self)
         self._controls = MonitorControls(self._data, self._commands, self._tuning, bed_mesh, config, self)
         self._camera = MonitorCamera(self._data, config, apply_config, self)
+        # The webcam watchdog: a dead bridge relay bumps the refresh
+        # nonce (a URL change is the ONLY thing that restarts Cura's
+        # loader) and veils the camera until the stream restarts.
+        self._camera_last_refresh_at = 0.0
+        self._camera_last_url = ""
+        self._camera_recovering = False
+        self._camera.streamFailed.connect(self._on_stream_failed)
+        self._camera.streamRecovered.connect(self._on_stream_recovered)
         self._toolhead = ToolheadController(self._data, self._commands, self)
         # The persisted jog/extrude selection (the author's live
         # report) — applied before any publish so the first frame
@@ -361,6 +374,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # author's live report: the option appeared to do nothing).
         self._file_manager_note = ""
         self._print_armed_state = ""
+        self._print_start_error = ""
         self._file_manager.note.connect(self._on_file_manager_note)
         # Upload progress and outcome feed the popup (the author's
         # live request).
@@ -408,6 +422,28 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if not connected:
             return
         self._camera_refresh_nonce += 1
+        self._publish()
+
+    def _on_stream_failed(self) -> None:
+        import time
+        now = time.monotonic()
+        # The FIRST failure retries immediately: a camera's first
+        # fetch can die on a cold-start hiccup (DNS or first contact)
+        # while the very next request sails — the author's live
+        # report: leaving and re-entering the Monitor tab, a fresh
+        # request, started the stream. Once a retry cycle is running,
+        # the 10 s cadence keeps a dead stream from spinning the
+        # loader in a tight loop.
+        if not self._camera_recovering or now - self._camera_last_refresh_at >= 10.0:
+            self._camera_last_refresh_at = now
+            self._camera_refresh_nonce += 1
+        self._camera_recovering = True
+        self._publish()
+
+    def _on_stream_recovered(self) -> None:
+        if not self._camera_recovering:
+            return
+        self._camera_recovering = False
         self._publish()
 
     def _on_console_store(self):
@@ -568,6 +604,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         previous = self._values
         snapshot = self._print_state()
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
+        # The M117 message lives on Klipper's display_status object,
+        # not print_stats — the Print-job slot reads it from the aux
+        # snapshot (the author's report: M117 showed nowhere).
+        display = (self._data.snapshot.auxiliary or {}).get("display_status")
+        if isinstance(display, Mapping):
+            message = str(display.get("message") or "")
+            if message:
+                values["monitorMessage"] = message
         values.update(peripheral_values(self._data.snapshot))
         values.update(endstop_values(self._data.snapshot, self._client.connected))
         values.update(self._file_manager_values())
@@ -617,11 +661,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     # must never read as a failed start.
                     self._file_manager.clear_print_attempt()
                     self._print_armed_state = ""
+                    self._print_start_error = ""
                 elif state == "error":
-                    message = str(stats.get("message") or "").strip()
-                    self._print_start_failed(
-                        f"The printer reported an error: {message}" if message
-                        else "The printer reported an error starting the print.")
+                    # A cold start raises a transient Klipper error
+                    # (the extruder refuses to move below min temp)
+                    # that the print itself outlives once heated: a
+                    # failure verdict here lies while the job carries
+                    # on. Hold and remember the words — the timeout
+                    # below is the only failure verdict, and it keeps
+                    # the message.
+                    self._print_start_error = str(stats.get("message") or "").strip()
                 elif state and self._print_armed_state and state == self._print_armed_state:
                     # Unchanged since the confirm: hold. Klipper
                     # never clears the filename, so a re-print of the
@@ -638,8 +687,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     # attempt.
                     self._file_manager.clear_print_attempt()
                     self._print_armed_state = ""
-            elif time.time() - attempt[1] > self.FILE_PRINT_START_TIMEOUT_S:
-                self._print_start_failed("The printer did not begin printing.")
+                    self._print_start_error = ""
+            if self._file_manager.print_attempt is not None and time.time() - attempt[1] > self.FILE_PRINT_START_TIMEOUT_S:
+                if self._print_start_error:
+                    self._print_start_failed(f"The printer reported an error: {self._print_start_error}")
+                else:
+                    self._print_start_failed("The printer did not begin printing.")
         # The no-reflow rule's sibling ruling (the author, 2026-09-10):
         # while DISCONNECTED every control on the Monitor page disables
         # — the QML gates its sections and the emergency stop on this.
@@ -683,6 +736,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             infoCollapsed=self._info_collapsed, statusCollapsed=self._status_collapsed,
             consoleHeight=self._console_height,
             cameraRefreshNonce=self._camera_refresh_nonce,
+            cameraRecovering=self._camera_recovering,
+            connectionDetail=self._data.connection_detail,
             sectionExpandedMap=dict(self._sections),
             temperatureChart=self._chart_value(),
             temperatureChartLegend=self._legend_value(),
@@ -701,7 +756,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # The 90 s timer stays as the last resort for a hung pull.
             self._improving_eta = False
         self._values = values
-        try: self.setCameraUrl(QUrl(self._camera.url))
+        try:
+            url = self._camera.url
+            if url and url != self._camera_last_url:
+                # Any camera-URL transition deserves a fresh load: the
+                # first attach's initial request dies silently in the
+                # loader (the author's report — the manual refresh
+                # worked because it changed the URL).
+                self._camera_last_url = url
+                self._camera_refresh_nonce += 1
+            self.setCameraUrl(QUrl(url))
         except AttributeError: pass
 
         # Qt notify signals are part of control ownership. Broadcasting every
@@ -721,6 +785,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         belongs to the e-stop alone)."""
         self._file_manager.clear_print_attempt()
         self._print_armed_state = ""
+        self._print_start_error = ""
         self._console.note(f"Print start failed — {reason}")
         self._commands.report_status(f"Print start failed — {reason}")
 
@@ -903,6 +968,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # round's repro).
             stats = self._data.snapshot.core.get("print_stats") or {}
             self._print_armed_state = str(stats.get("state") or "")
+            self._print_start_error = ""
             # The print is on its way: the file manager steps aside
             # NOW and the monitor view returns — the verdict (success
             # or failure) reports to the console and the note line,
@@ -1327,6 +1393,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     statusCollapsed = value_property(bool, "statusCollapsed", statusPaneChanged, False)
     consoleHeight = value_property(int, "consoleHeight", consoleHeightChanged, 0)
     cameraRefreshNonce = value_property(int, "cameraRefreshNonce", cameraRefreshChanged, 0)
+    cameraRecovering = value_property(bool, "cameraRecovering", cameraRecoveringChanged, False)
+    connectionDetail = value_property(str, "connectionDetail", connectionDetailChanged, "")
     sectionExpandedMap = value_property(QVariant, "sectionExpandedMap", sectionsChanged, {})
 
     @pyqtSlot()

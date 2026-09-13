@@ -22,8 +22,8 @@ from plugins.RemoteJobService import PrintObservation
 
 PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
 BUTTON = (PLUGINS / "PreviewSecondaryButton.qml").read_text(encoding="utf-8")
-PANEL = (PLUGINS / "PreviewActionPanelControls.qml").read_text(encoding="utf-8")
-EMPTY = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text(encoding="utf-8")
+PANEL = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+EMPTY = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
 
 
 class View:
@@ -139,28 +139,83 @@ class PreviewFollowerServiceTests(unittest.TestCase):
         self.assertIsNone(self.service.state.observed_layer)
         self.assertIsNone(self.service.state.path_fraction)
 
+    def test_reset_print_keeps_the_armed_view_baseline(self):
+        # The print stopping does not move Cura's view: the armed
+        # baseline survives, so a drag in the observation gap between
+        # resets still detaches instead of being ignored.
+        self.observe(4)
+        self.service.reset_print()
+        self.assertEqual(self.service.state.expected_layer, 4)
+        self.cura.view.layer = 10
+        self.assertEqual(self.service.detect_override(), "layer")
+        self.assertFalse(self.service.state.attached)
+
     def test_state_cannot_be_mutated_by_consumers(self):
         with self.assertRaises(FrozenInstanceError): self.service.state.attached = False
 
     def test_manual_layer_change_detaches_without_changing_physical_layer(self):
         self.observe(4)
-        self.service._echo_until = 0.0  # the echo window is for Cura's own restores
         self.cura.view.layer = 10
         self.assertEqual(self.service.detect_override(), "layer")
         self.assertFalse(self.service.state.attached)
         self.assertEqual(self.service.state.observed_layer, 4)
 
-    def test_view_restoration_echo_does_not_detach(self):
-        # Cura's own asynchronous restoration (stage switches can hang and
-        # land late) arrives right after a re-arm: the echo window absorbs
-        # it, drops the expectations and stays attached. The next drive
-        # re-arms on the settled view.
+    def test_any_deviation_detaches_even_right_after_attach(self):
+        # The author's ruling: ANY user intervention to the layer
+        # selection detaches the follower — no absorption window, no
+        # auto re-attach. A deviation immediately after an attach
+        # detaches like any other.
         self.observe(4)
+        self.service.attach(True)
+        self.cura.view.layer = 10
+        self.assertEqual(self.service.detect_override(), "layer")
+        self.assertFalse(self.service.state.attached)
+
+    def test_unarmed_change_adopts_a_baseline_and_the_next_deviation_detaches(self):
+        # A drag landing while the follower is unarmed (a view swap or
+        # a dropped connection) must not be ignored: the first change
+        # becomes the baseline, the continuing drag detaches.
+        self.observe(4)
+        self.service.invalidate_view()
+        self.assertIsNone(self.service.state.expected_layer)
         self.cura.view.layer = 10
         self.assertIsNone(self.service.detect_override())
-        self.assertTrue(self.service.state.attached)
-        self.assertIsNone(self.service.state.expected_layer)
-        self.service._echo_until = 0.0  # a genuine scroll now detaches again
+        self.assertEqual(self.service.state.expected_layer, 10)
+        self.cura.view.layer = 11
+        self.assertEqual(self.service.detect_override(), "layer")
+        self.assertFalse(self.service.state.attached)
+
+    def test_attached_label_shows_the_current_print_layer(self):
+        self.observe(4)
+        self.service.update_eta(self.observe(4), self.index)
+        self.assertIn("current print layer", self.service.state.eta_text)
+
+    def test_eta_learn_rescales_the_end_estimate_by_observed_drift(self):
+        # The opt-in: the slicer estimated 100 s per layer but the
+        # printer is taking 150 — the remaining end-of-print estimate
+        # scales by the learned 1.5x drift, clamped to [0.5, 2.0].
+        index = SimpleNamespace(
+            ranges=tuple((i, i + 1) for i in range(21)),
+            elapsed_times=tuple((i + 1) * 100 for i in range(21)),
+            hydrated=lambda layer: True,
+            fraction=lambda *args: (0.0, "test"),
+        )
+        service = PreviewFollower(self.cura)
+        config = PrinterConfig(enabled=True, path_follow=False, eta_learn=True)
+        snapshot = PrintSnapshot(("part", 100, 1), PrintObservation("printing", "part", 100, 20, 300),
+                                 PhysicalLayer(2, 21))
+        service.observe(snapshot, {"print_stats": {"print_duration": 300},
+                                   "virtual_sdcard": {"file_position": 0}}, config, index)
+        self.assertEqual(service.state.drift, 1.5)
+        plain = service.remaining_end(index, 2100)
+        self.assertGreater(plain, 0)
+        # Without the opt-in the same observation leaves the estimate
+        # unscaled.
+        service.reset_print()
+        config = PrinterConfig(enabled=True, path_follow=False, eta_learn=False)
+        service.observe(snapshot, {"print_stats": {"print_duration": 150},
+                                   "virtual_sdcard": {"file_position": 0}}, config, index)
+        self.assertIsNone(service.state.drift)
 
     def test_eta_uses_path_progress_and_live_duration_anchor(self):
         self.observe(4, 100)
@@ -370,7 +425,7 @@ class PreviewPresentationContractTests(unittest.TestCase):
 
     def test_each_scheduled_pause_has_end_of_layer_eta(self):
         coordinator = (PLUGINS / "PrintCoordinator.py").read_text()
-        qml = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
+        qml = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
         self.assertIn("self._preview.remaining(layer, self._index.view, end=True)", coordinator)
         self.assertIn("property string pauseEta", qml)
         self.assertIn("parent.pauseEta.length > 0", qml)

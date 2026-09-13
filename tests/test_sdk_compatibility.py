@@ -18,6 +18,8 @@ FOLLOWER_SOURCES = (
     "RemoteFileService.py",
     "GCodeIndexService.py",
     "MoonrakerTransport.py",
+    "MoonrakerSocket.py",
+    "SocketFraming.py",
 )
 PLUGIN = "\n".join((PLUGINS / name).read_text() for name in FOLLOWER_SOURCES)
 CLIENT = (PLUGINS / "MoonrakerClient.py").read_text()
@@ -30,8 +32,8 @@ QML_SOURCES = {path.name: path.read_text() for path in PLUGINS.glob("*.qml")}
 CONFIG_QML = QML_SOURCES["MoonrakerFollowerConfiguration.qml"]
 MONITOR_QML = QML_SOURCES["MoonrakerMonitor.qml"]
 UPLOAD_QML = QML_SOURCES["MoonrakerUploadDialog.qml"]
-ACTION_QML = QML_SOURCES["PreviewActionPanelControls.qml"]
-EMPTY_QML = QML_SOURCES["EmptyPreviewLoadButton.qml"]
+ACTION_QML = QML_SOURCES["MoonrakerPreviewCard.qml"]
+EMPTY_QML = QML_SOURCES["MoonrakerPreviewCard.qml"]
 NOZZLE_LIFECYCLE = (PLUGINS / "NativeNozzleLifecycle.py").read_text()
 README = (ROOT / "README.md").read_text()
 

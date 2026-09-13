@@ -135,6 +135,7 @@ Component {
             id: emergencyButtonComponent
             Item {
                 id: emergencyButton
+                objectName: "moonrakerEmergencyButton"
                 property int clicks: root.printer != null ? root.printer.emergencyStopClicks : 0
                 // The author's ruling (2026-09-10): while DISCONNECTED
                 // no Monitor-page control is enabled — the emergency
@@ -269,6 +270,9 @@ Component {
             }
 
             Cura.RoundedRectangle {
+                // Inert; the harness's margin-symmetry pin reads this
+                // pane's outer edge.
+                objectName: "moonrakerControlsPane"
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
                 Layout.preferredWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 390 * screenScaleFactor)
@@ -322,6 +326,7 @@ Component {
                     // icon (closed = locked), the tooltip carries the action.
                     UM.SimpleButton {
                         id: lockButton
+                        objectName: "moonrakerLockButton"
                         visible: !root.controlsCollapsed
                         Layout.alignment: Qt.AlignVCenter
                         width: 28 * screenScaleFactor
@@ -388,7 +393,18 @@ Component {
 
                     ColumnLayout {
                         id: controlContent
-                        width: controlFlick.width - controlScrollbar.width - UM.Theme.getSize("default_margin").width
+                        // The attached scrollbar overlays the content, so
+                        // the column spans the full width while the bar is
+                        // hidden (a constant reservation left a dead band
+                        // on the right — the pane's right gap read three
+                        // margins wide against the left pane's one, the
+                        // harness's margin-symmetry pin). While the bar
+                        // IS visible, the column yields its width so the
+                        // rows' right edges stay clear of it (the
+                        // author's clipping report). Narrower content
+                        // only grows taller, so the visibility never
+                        // oscillates.
+                        width: controlScrollbar.visible ? controlFlick.width - controlScrollbar.width - UM.Theme.getSize("default_margin").width : controlFlick.width
                         // Spacing lives on the children, not the layout: a
                         // collapsed section's hidden content must contribute
                         // nothing, so stacked headers sit flush like Cura's.
@@ -691,7 +707,12 @@ Component {
                                             anchors.fill: parent
                                             cursorShape: root.printer != null && root.printer.jogEnabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                                             onClicked: {
-                                                if (root.printer != null) {
+                                                // The click itself must obey the
+                                                // SAME gate as the styling: while
+                                                // the controls are locked the word
+                                                // reads, it must not act (the
+                                                // author's catch).
+                                                if (root.printer != null && root.printer.jogEnabled) {
                                                     root.printer.setPositionMode(root.printer.positionMode !== "Absolute");
                                                 }
                                             }
@@ -780,6 +801,7 @@ Component {
                                         text: "↑ Y"
 
                                         tooltip: "Move the toolhead towards the Y maximum."
+                                        objectName: "moonrakerJogYPlus"
 
                                         enabled: root.printer != null && root.printer.jogEnabled
 
@@ -795,6 +817,7 @@ Component {
                                         text: "← X"
 
                                         tooltip: "Move the toolhead towards the X minimum."
+                                        objectName: "moonrakerJogXMinus"
 
                                         enabled: root.printer != null && root.printer.jogEnabled
 
@@ -813,6 +836,7 @@ Component {
                                         text: "→ X"
 
                                         tooltip: "Move the toolhead towards the X maximum."
+                                        objectName: "moonrakerJogXPlus"
 
                                         enabled: root.printer != null && root.printer.jogEnabled
 
@@ -828,6 +852,7 @@ Component {
                                         text: "↓ Y"
 
                                         tooltip: "Move the toolhead towards the Y minimum."
+                                        objectName: "moonrakerJogYMinus"
 
                                         enabled: root.printer != null && root.printer.jogEnabled
 
@@ -844,6 +869,7 @@ Component {
                                         text: "↑ Z"
 
                                         tooltip: "Move the toolhead up."
+                                        objectName: "moonrakerJogZPlus"
 
                                         enabled: root.printer != null && root.printer.jogEnabled
 
@@ -854,6 +880,7 @@ Component {
                                         text: "↓ Z"
 
                                         tooltip: "Move the toolhead down."
+                                        objectName: "moonrakerJogZMinus"
 
                                         enabled: root.printer != null && root.printer.jogEnabled
 
@@ -868,6 +895,7 @@ Component {
                                 Cura.SecondaryButton {
                                     Layout.fillWidth: true
                                     text: "Home X"
+                                    objectName: "moonrakerHomeX"
                                     tooltip: "Home the X axis."
                                     enabled: root.printer != null && root.printer.jogEnabled
                                     onClicked: root.printer.home("x")
@@ -875,6 +903,7 @@ Component {
                                 Cura.SecondaryButton {
                                     Layout.fillWidth: true
                                     text: "Home Y"
+                                    objectName: "moonrakerHomeY"
                                     tooltip: "Home the Y axis."
                                     enabled: root.printer != null && root.printer.jogEnabled
                                     onClicked: root.printer.home("y")
@@ -882,6 +911,7 @@ Component {
                                 Cura.SecondaryButton {
                                     Layout.fillWidth: true
                                     text: "Home Z"
+                                    objectName: "moonrakerHomeZ"
                                     tooltip: "Home the Z axis."
                                     enabled: root.printer != null && root.printer.jogEnabled
                                     onClicked: root.printer.home("z")

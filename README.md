@@ -8,8 +8,58 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 3.6.0
+- **Release:** 4.0.0
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
+
+## What changed in 4.0.0
+
+Version 4.0.0 is the websocket release: the Moonraker status transport
+moves from per-request HTTP polling to Moonraker's websocket
+subscription. Klipper pushes object updates once per interval and
+Moonraker fans them out to every subscriber — one serialization shared
+by all clients instead of one full query per client per poll, which
+removed the dwells a busy printer showed under polling load. HTTP
+polling stays available per printer (Connection tab toggle, websocket
+default) and engages automatically when the socket cannot deliver,
+with the reason shown.
+
+What else changes, user-visibly:
+
+- **Delivery-cadence sliders** on the Connection tab: status update
+  interval (log-spaced, 250 ms to ~34 min), auxiliary status cadence
+  and console cadence (250 ms–60 s), per printer, with a 250 ms floor
+  and helper text explaining the printer's push cadence.
+- **The connected status names the live transport** ("Moonraker
+  connected over websocket" / "… over HTTP polling").
+- **Camera bridge**: a camera behind a header-auth proxy now renders —
+  the plugin fetches the stream with the API key and republishes it on
+  a keyless loopback endpoint for Cura's loader.
+- **Preview**: the current-layer info label fills while attached (and
+  collapses when there is nothing to say); a scroll or slider drag
+  detaches immediately and stays detached while you keep inspecting;
+  the empty "Load current print" card appears only when nothing is
+  loaded.
+- **Monitor**: temperatures and other unchanged objects appear right
+  after connecting, and a device switched on mid-print shows up
+  without a reconnect.
+- **Settings**: a wrong API key on Test connection reads "the API key
+  was rejected (HTTP 401)".
+- **Console**: a successful send returns the view to the prompt even
+  from a scrolled-up position; a refused send keeps your typed draft
+  and your place.
+- **Scheduled pauses**: an entry leaves the Enabled-pauses list only
+  when the printer is actually observed paused at that layer — a
+  missed pause stays listed, marked in red.
+- **ETA**: a new "Improve ETA from observed progress" checkbox on the
+  Following tab (off by default) rescales the remaining estimate by
+  the drift between the slicer's per-layer times and what the printer
+  really took.
+- **Camera**: if a bridged stream dies, the plugin restarts it
+  automatically (throttled) behind a "Camera recovering…" veil.
+- **Restart arming**: a new print clears the previous print's
+  emergency-stop assumption when the printer demonstrably restarts,
+  and the prior print's tracked commands can never verdict against
+  the new one.
 
 ## What changed in 3.6.0
 
@@ -337,14 +387,14 @@ The Cura-to-Moonraker upload dialog.
 
 ## Moonraker transport
 
-Follower live status uses HTTP polling only.
+Follower live status uses a Moonraker websocket subscription by default, with HTTP polling selectable per printer (and the automatic fallback where subscriptions are unavailable).
 
 - the configured interval is used while the connection is healthy
 - failed requests back off through 1 s → 2 s → 5 s → 10 s → 30 s
 - the normal interval resumes immediately after a successful response
 - capabilities are inferred from the objects Moonraker actually exposes
 
-Monitor consumes the same core status stream as the follower. Webcam configuration is discovered independently because it changes rarely. Uploads use Moonraker's HTTP file API with multipart form data. Power-device, print-control, printer-readiness and Monitor auxiliary requests also use Moonraker HTTP endpoints. There is no WebSocket transport and no automatic printer discovery.
+Monitor consumes the same core status stream as the follower. Webcam configuration is discovered independently because it changes rarely. Uploads use Moonraker's HTTP file API with multipart form data. Power-device, print-control, printer-readiness and Monitor auxiliary requests also use Moonraker HTTP endpoints. The websocket feed is the default for new and upgraded installs; commands, uploads and the console always use HTTP. There is no automatic printer discovery.
 
 ## Large G-code handling
 

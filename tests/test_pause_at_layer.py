@@ -7,7 +7,7 @@ from plugins.MoonrakerSession import MoonrakerSessionState, PollPolicy, RequestC
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
-QML = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
+QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 
 
 class PauseAtLayerTests(unittest.TestCase):

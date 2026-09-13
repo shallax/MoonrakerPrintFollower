@@ -15,8 +15,8 @@ DASHBOARD = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 MAIN_DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
-PREVIEW_CONTROLS = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
-EMPTY_PREVIEW = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
+PREVIEW_CONTROLS = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
+EMPTY_PREVIEW = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 
 
 class BedMeshTests(unittest.TestCase):
@@ -84,7 +84,7 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("setBedMeshPreviewVisible", TYPED_CONTROLS)
         self.assertIn("self._node", PRESENTER)
         self.assertNotIn("self._follower", PRESENTER)
-        self.assertIn("MoonrakerMonitorDashboard", DASHBOARD)  # the registered shell
+        self.assertIn("Qt.createComponent", DASHBOARD)  # the registered shell's async dashboard load
         self.assertIn("BedMeshMap {", MONITOR_QML)  # the shared mesh canvas
         self.assertIn("Canvas", BED_MESH_MAP_QML)
         self.assertIn('title: "Bed mesh — "', MONITOR_QML)  # the pop-over shell owns the title

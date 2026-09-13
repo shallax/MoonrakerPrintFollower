@@ -19,8 +19,10 @@ RowLayout {
     spacing: UM.Theme.getSize("narrow_margin").width
 
     // The busy gate lives on an INNER row: bindings on the ROOT
-    // object's own visible do not track setProperty-driven changes
-    // (engine-proven — the root stayed hidden while a child flipped).
+    // object do not track setProperty-driven changes (engine-proven).
+    // The card feeds the root's properties through its own change
+    // handlers — imperative writes DO notify, and the inner bindings
+    // on root's properties track them.
     RowLayout {
         id: content
         objectName: "loadIndicatorContent"

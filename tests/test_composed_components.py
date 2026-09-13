@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from types import SimpleNamespace
 
-from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, ScriptedTransport, runtime
+from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, ScriptedSocket, ScriptedTransport, runtime
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
@@ -26,13 +26,16 @@ class ComposedComponentTests(unittest.TestCase):
         root = self.qt.load("FollowerRuntime")
         real = root.MoonrakerClient
         self.app = self.qt.Application()
-        with patch.object(root, "MoonrakerClient", lambda parent: real(parent, transport=self.transport)):
+        self.socket = ScriptedSocket()
+        with patch.object(root, "MoonrakerClient", lambda parent: real(parent, transport=self.transport, socket=self.socket)):
             self.follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(self.app)
         self.addCleanup(self.qt.events)
         self.addCleanup(self.follower.deinitialize)
         self.parts = self.follower._runtime
         self.config_type = self.qt.load("PrinterConfig").PrinterConfig
-        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False))
+        # The harness tests HTTP semantics; the product default stays in
+        # PrinterConfig, never in the harness.
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
 
     def status(self, *, layer=10, filename="part.gcode", duration=30, position=40, state="printing"):
         return {"print_stats": {"filename": filename, "state": state, "print_duration": duration,
@@ -41,8 +44,9 @@ class ComposedComponentTests(unittest.TestCase):
             "gcode_move": {"gcode_position": [1, 1, 2, 10], "speed_factor": 1, "extrude_factor": 1}}
 
     def deliver(self, status):
+        import time
         client = self.follower.client
-        client._handle_http_status({"result": {"status": status}}, None, client._generation)
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
 
     def monitor(self):
         output = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(self.app, self.follower)
@@ -180,6 +184,30 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(len(posts), 1)
         self.assertIn("device=psu", posts[0].path)
         self.assertIn("action=on", posts[0].path)
+
+    def test_endstops_poll_skipped_while_printing(self):
+        # The author's live report: the 10 s endstops poll's
+        # query_endstops paused the toolhead 250-500 ms each time
+        # mid-print; quitting Cura stopped it. The states cannot
+        # change mid-print, so the poll must stand down while active.
+        model = self.monitor()
+        model._data._update(core={"print_stats": {"state": "printing"}})
+        before = len(self.transport.requests)
+        model._data.refresh_endstops()
+        self.assertEqual(len(self.transport.requests), before)
+
+    def test_power_display_lists_every_device_the_printer_reports(self):
+        # The author's ruling: the configured auto-power-on list narrows
+        # the print-start sequence, never the Monitor display — a
+        # configured list silently hid DFU on the real printer.
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", power_devices="24v"))
+        model = self.monitor()
+        model._data._update(power=[
+            {"device": "24v", "status": "on", "locked_while_printing": True},
+            {"device": "DFU", "status": "off", "locked_while_printing": True},
+        ])
+        names = [item["name"] for item in model._controls.power_devices()]
+        self.assertEqual(names, ["24v", "DFU"])
 
     def test_failed_hydration_is_latched_until_a_new_file_arrives(self):
         service, files = self.parts.index, self.parts.files
@@ -403,7 +431,7 @@ class ComposedComponentTests(unittest.TestCase):
         app = self.qt.Application()
         follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(app)
         self.addCleanup(follower.deinitialize)
-        follower.apply_printer_config(self.config_type(url="http://127.0.0.1:" + str(server.server_port), enabled=True, path_follow=True))
+        follower.apply_printer_config(self.config_type(url="http://127.0.0.1:" + str(server.server_port), enabled=True, path_follow=True, feed_mode="http"))
         parts = follower._runtime
         # An active-but-unloaded print pulls nothing: the metadata and
         # index serve the Preview, which needs the print loaded in Cura.
@@ -415,7 +443,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertTrue(parts.cura.loading)
         # The load gives Cura the toolpath; only then does the
         # metadata/index pull start and the index build.
-        app.controller.view = SimpleNamespace(getActivity=lambda: True)
+        app.controller.view = SimpleNamespace(getActivity=lambda: True, getLayerData=lambda: object())
         app.controller.activeViewChanged.emit()
         for _ in range(300):
             if parts.index.view is not None: break
@@ -522,7 +550,7 @@ class ComposedComponentTests(unittest.TestCase):
         lines = [entry["text"] for entry in model._console.values["consoleLines"]]
         self.assertTrue(any("Print start failed" in line for line in lines))
         self.assertIn("Print start failed", model.actionStatus)
-        self.assertFalse(self.follower.client._assume_print_stopped)
+        self.assertFalse(self.follower.client._session.state.assume_print_stopped)
         # The transition itself is the success (round-2 D4: the POST
         # reply is never it): the filename match with a live state
         # clears immediately, even with zero progress — the
@@ -566,6 +594,12 @@ class ComposedComponentTests(unittest.TestCase):
         status["print_stats"]["message"] = "Not homed"
         self.deliver(status)
         self.qt.events()
+        # A transient error holds the attempt — a cold-start error
+        # must not read as a failed start while the job carries on.
+        self.assertIsNotNone(model._file_manager.print_attempt)
+        module = self.qt.load("MoonrakerMonitorModel")
+        with patch.object(module.MoonrakerMonitorModel, "FILE_PRINT_START_TIMEOUT_S", 0.0):
+            model._publish()
         self.assertIsNone(model._file_manager.print_attempt)
         lines = [entry["text"] for entry in model._console.values["consoleLines"]]
         self.assertTrue(any("Not homed" in line for line in lines))
@@ -873,7 +907,7 @@ class ComposedComponentTests(unittest.TestCase):
 
     def test_qml_public_api_is_present_without_model_subclasses(self):
         model = self.monitor()
-        properties = "monitorState monitorConnected monitorFilename monitorProgress monitorLayer monitorElapsed monitorEta monitorFinish monitorSpeed monitorFlow monitorPosition monitorMessage printActive canPausePrint canResumePrint canCancelPrint actionBusy actionStatus temperatureItems fanItems filamentSensorItems excludeObjectItems powerDevices klippyState moonrakerVersion klipperVersion hostLoad memoryAvailable cpuTemperature mcuSummary mcuItems webcamNames activeWebcamIndex cameraName cameraRotation cameraFlipHorizontal cameraFlipVertical monitorLayerHeight macroNames hasQuadGantryLevel hasBedMesh canRunSetup temperaturePresetNames temperaturePresetItems canApplyTemperaturePreset speedFactorPercent flowFactorPercent zOffset zOffsetText fanControlItems ledItems pwmOutputItems saveConfigPending saveConfigSummary canSaveConfig emergencyStopClicks bedMeshAvailable bedMeshProfile bedMeshProfileNames bedMeshRows bedMeshColumns bedMeshValues bedMeshMinimum bedMeshMaximum bedMeshRange bedMeshXMin bedMeshXMax bedMeshYMin bedMeshYMax bedMeshRangeText bedMeshPreviewVisible jogEnabled jogDistance extrudeDistance extrudeSpeed homedAxes positionMode jogStatus controlsLocked controlsCollapsed infoCollapsed statusCollapsed consoleHeight cameraRefreshNonce emergencyHoldProgress temperatureChart temperatureChartLegend consoleHistory consolePending consoleErrorBell endstopItems endstopSummary monitorEtaBasis showProbePoints fileManagerRows fileManagerRecents fileManagerDirectory fileManagerDirectories fileManagerDiskText fileManagerRefreshedAt fileManagerShown fileManagerPage fileManagerPageIndex fileManagerPageCount fileManagerPageSize fileManagerPageSelection fileManagerEmptyKind fileManagerSelected fileManagerSortColumn fileManagerSortAscending fileManagerSearch fileManagerOpen fileManagerFilters filePrintConfirm fileDeleteConfirm fileRenameTarget fileRenameConflict fileUploadConfirm fileUploadProgress fileManagerThumbs fileManagerFilterCounts fileManagerFilterOptions fileManagerHistoryLoaded fileManagerHistoryExhausted fileManagerWalkError fileManagerNote".split()
+        properties = "monitorState monitorConnected connectionDetail monitorFilename monitorProgress monitorLayer monitorElapsed monitorEta monitorFinish monitorSpeed monitorFlow monitorPosition monitorMessage printActive canPausePrint canResumePrint canCancelPrint actionBusy actionStatus temperatureItems fanItems filamentSensorItems excludeObjectItems powerDevices klippyState moonrakerVersion klipperVersion hostLoad memoryAvailable cpuTemperature mcuSummary mcuItems webcamNames activeWebcamIndex cameraName cameraRotation cameraFlipHorizontal cameraFlipVertical monitorLayerHeight macroNames hasQuadGantryLevel hasBedMesh canRunSetup temperaturePresetNames temperaturePresetItems canApplyTemperaturePreset speedFactorPercent flowFactorPercent zOffset zOffsetText fanControlItems ledItems pwmOutputItems saveConfigPending saveConfigSummary canSaveConfig emergencyStopClicks bedMeshAvailable bedMeshProfile bedMeshProfileNames bedMeshRows bedMeshColumns bedMeshValues bedMeshMinimum bedMeshMaximum bedMeshRange bedMeshXMin bedMeshXMax bedMeshYMin bedMeshYMax bedMeshRangeText bedMeshPreviewVisible jogEnabled jogDistance extrudeDistance extrudeSpeed homedAxes positionMode jogStatus controlsLocked controlsCollapsed infoCollapsed statusCollapsed consoleHeight cameraRefreshNonce cameraRecovering emergencyHoldProgress temperatureChart temperatureChartLegend consoleHistory consolePending consoleErrorBell endstopItems endstopSummary monitorEtaBasis showProbePoints fileManagerRows fileManagerRecents fileManagerDirectory fileManagerDirectories fileManagerDiskText fileManagerRefreshedAt fileManagerShown fileManagerPage fileManagerPageIndex fileManagerPageCount fileManagerPageSize fileManagerPageSelection fileManagerEmptyKind fileManagerSelected fileManagerSortColumn fileManagerSortAscending fileManagerSearch fileManagerOpen fileManagerFilters filePrintConfirm fileDeleteConfirm fileRenameTarget fileRenameConflict fileUploadConfirm fileUploadProgress fileManagerThumbs fileManagerFilterCounts fileManagerFilterOptions fileManagerHistoryLoaded fileManagerHistoryExhausted fileManagerWalkError fileManagerNote".split()
         meta = model.metaObject()
         for name in properties: self.assertGreaterEqual(meta.indexOfProperty(name), 0, name)
         for name in "pausePrint resumePrint cancelPrint reconnect refreshAll refreshWebcams selectWebcam runMacro homeAll runQuadGantryLevel calibrateBedMesh applyTemperaturePreset setSpeedFactor setFlowFactor adjustZOffset clearZOffset setFanSpeed setLedBrightness setLedColor setPwmOutput saveConfig emergencyStopClick emergencyHoldStarted emergencyHoldReleased loadBedMeshProfile clearBedMesh setBedMeshPreviewVisible macroParameterDefinitions jog setJogDistance setExtrudeDistance setExtrudeSpeed home motorsOff centerToolhead zToZero extrude heatersOff firmwareRestart klipperRestart hostRestart setControlsLocked setControlsCollapsed setInfoCollapsed setStatusCollapsed setConsoleHeight setTemperatureSensorVisible setTemperatureSensorColor setShowTemperatureTargets setShowTemperaturePower sendConsoleCommand clearConsoleHistory improveEta setShowProbePoints openFileManager refreshFileManager fileNavigateTo setFileSearch setFileSort setFileManagerOpen setPositionMode setFilePageSize setFilePage setFileFilter clearFileFilters toggleFileSelection toggleFilePageSelection clearFileSelection fileLoadAllHistory fileScanMetadata fileRequestDelete fileRequestDeleteFile fileRequestDeleteDir fileCreateDirectory fileConfirmDelete fileCancelDelete fileRequestRename fileRequestRenameDir filePreviewRename fileConfirmRename fileCancelRename fileUpload fileConfirmUpload fileCancelUpload fileUploadDismiss fileClearWalkError fileRequestVisibleThumbnails".split():

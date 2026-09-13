@@ -2,7 +2,7 @@ import json
 import pathlib
 import unittest
 
-from plugins.PrinterConfig import PrinterConfig, PrinterConfigStore, normalise_url
+from plugins.PrinterConfig import FeedMode, PrinterConfig, PrinterConfigStore, normalise_url
 
 PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
 
@@ -319,6 +319,48 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertEqual(PrinterConfig.from_dict({"poll_interval_ms": 10 ** 20}).poll_interval_ms, 3_600_000)
         self.assertEqual(PrinterConfig.from_dict({"poll_interval_ms": 0}).poll_interval_ms, 1)
 
+    def test_feed_mode_defaults_to_websocket_and_round_trips(self):
+        prefs = FakePreferences()
+        active = ["machine-a", "Printer A"]
+        store = PrinterConfigStore(prefs, lambda: tuple(active))
+        self.assertIs(store.get().feed_mode, FeedMode.WEBSOCKET)
+        store.update(feed_mode=FeedMode.HTTP)
+        self.assertIs(store.get().feed_mode, FeedMode.HTTP)
+        self.assertEqual(store.get().feed_mode.value, "http")
+
+    def test_feed_mode_coerces_known_spellings(self):
+        self.assertIs(PrinterConfig.from_dict({"feed_mode": "WebSocket"}).feed_mode, FeedMode.WEBSOCKET)
+        for spelling in ("http", "HTTP", FeedMode.HTTP):
+            self.assertIs(PrinterConfig.from_dict({"feed_mode": spelling}).feed_mode, FeedMode.HTTP)
+        # Missing keys are pre-4.0.0 records and take the ruled product
+        # default; a present-but-unknown value falls back the same way.
+        for bad in ("banana", "", None, 7):
+            self.assertIs(PrinterConfig.from_dict({"feed_mode": bad}).feed_mode, FeedMode.WEBSOCKET)
+
+    def test_set_preserves_unknown_keys_in_the_raw_record(self):
+        prefs = FakePreferences()
+        active = ["machine-a", "Printer A"]
+        store = PrinterConfigStore(prefs, lambda: tuple(active))
+        store.update(feed_mode=FeedMode.HTTP)
+        prefs.values[PrinterConfigStore.PREF_KEY] = json.dumps({
+            "machine-a": {"feed_mode": "http", "some_future_field": 42},
+        })
+        store.update(feed_mode=FeedMode.WEBSOCKET)
+        record = json.loads(prefs.values[PrinterConfigStore.PREF_KEY])["machine-a"]
+        self.assertEqual(record["feed_mode"], "websocket")
+        self.assertEqual(record["some_future_field"], 42)
+
+
+    def test_transport_toggle_properties_carry_their_own_decorators(self):
+        # The live crash class: the insertion landed between the bool
+        # decorator and settingsTraceHttp, so the bool property returned
+        # a str — "unable to convert a Python 'str' object to a C++
+        # 'bool' instance" on opening the settings dialogue. Each QML
+        # getter must own its decorator with the right type.
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+        self.assertIn("@pyqtProperty(str, notify=settingsChanged)\n    def settingsTransportMode", action)
+        self.assertIn("@pyqtProperty(str, notify=settingsChanged)\n    def transportStatus", action)
+        self.assertIn("@pyqtProperty(bool, notify=settingsChanged)\n    def settingsTraceHttp", action)
 
 if __name__ == "__main__":
     unittest.main()

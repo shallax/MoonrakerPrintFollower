@@ -2,10 +2,20 @@
 from dataclasses import replace
 from urllib.parse import urljoin
 from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
+from PyQt6.QtNetwork import QHostAddress
+
+from UM.Logger import Logger
+
+from .CameraBridge import CameraBridge
 
 
 class MonitorCamera(QObject):
     changed = pyqtSignal()
+    # The webcam watchdog's signals, forwarded from the bridge: a dead
+    # stream and its restart. Direct (non-bridge) URLs never emit
+    # these — the plugin cannot see a raw stream's health.
+    streamFailed = pyqtSignal()
+    streamRecovered = pyqtSignal()
 
     def __init__(self, data, config, apply_config, parent=None):
         super().__init__(parent)
@@ -16,6 +26,8 @@ class MonitorCamera(QObject):
         self._index = -1
         self._values = {}
         self._url = ""
+        self._last_url_logged = ""
+        self._camera_bridge = None
         data.changed.connect(self.observe)
         self.observe()
 
@@ -135,6 +147,19 @@ class MonitorCamera(QObject):
                                                    and parsed.scheme().lower() not in ("http", "https")):
                 stream = ""
         self._url = urljoin(config.url.rstrip("/") + "/", stream) if stream and self._data.active else ""
+        self._url = self._bridge_url(config, self._url)
+        if self._url != self._last_url_logged:
+            # The first-load failures were invisible in the logs: the
+            # stream decision (direct vs bridged vs none) logs here so
+            # a capture names where the loader went.
+            self._last_url_logged = self._url
+            if self._url:
+                parsed = QUrl(self._url)
+                shown = f"{parsed.scheme()}://{parsed.host()}" + (f":{parsed.port()}" if parsed.port() > 0 else "") + parsed.path()
+                kind = "bridged" if self._camera_bridge is not None and parsed.host() in ("127.0.0.1", "localhost") else "direct"
+                Logger.log("i", "Moonraker camera stream: %s (%s)", shown, kind)
+            else:
+                Logger.log("i", "Moonraker camera stream: none")
         try: rotation = int(camera.get("rotation", config.camera_rotation) or 0)
         except (TypeError, ValueError): rotation = 0
         self._values = {
@@ -146,6 +171,37 @@ class MonitorCamera(QObject):
             "cameraFlipVertical": bool(camera.get("flip_vertical", False)),
         }
         self.changed.emit()
+
+    @staticmethod
+    def _remote_stream(url):
+        parsed = QUrl(url)
+        return parsed.scheme().lower() in ("http", "https") and not QHostAddress(parsed.host()).isLoopback()
+
+    def _bridge_url(self, config, url):
+        # A camera behind the header-auth proxy cannot render through
+        # Cura's loader (NetworkMJPGImage sends no headers): republish
+        # it on the keyless loopback bridge (the author's 4.0.0
+        # ruling). The key travels with the bridge's own upstream
+        # fetch; the loader sees a plain local URL.
+        if not url or not config.api_key or not self._remote_stream(url):
+            return url
+        if self._camera_bridge is None:
+            self._camera_bridge = CameraBridge(self)
+            # The watchdog's feed-health signals ride the bridge.
+            self._camera_bridge.upstreamFailed.connect(self.streamFailed.emit)
+            self._camera_bridge.upstreamStarted.connect(self.streamRecovered.emit)
+            Logger.log("i", "Moonraker camera bridge created for the key-carrying stream")
+        # The upstream is the STREAM'S own origin: an absolute
+        # stream_url on another host/port (a separate webcam box) must
+        # not be re-homed onto the Moonraker base.
+        parsed = QUrl(url)
+        upstream = f"{parsed.scheme()}://{parsed.host()}"
+        if parsed.port(0) > 0:
+            upstream += f":{parsed.port(0)}"
+        if not self._camera_bridge.configure(upstream, config.api_key):
+            return url
+        path = parsed.path() + (("?" + parsed.query()) if parsed.query() else "")
+        return self._camera_bridge.local_url(path)
 
     def select(self, index):
         cameras = self._data.snapshot.webcams

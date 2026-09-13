@@ -6,8 +6,7 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release: **3.5.1** (the stability patch over 3.5.0: the no-reflow
-rule and the disconnected state, shipped from the `jog-reflow` branch).
+Current release: **4.0.0** (the websocket transport; in finalisation).
 
 ## Direction
 
@@ -627,51 +626,256 @@ note surface).
 
 ## 4.0.0 — Websocket transport (the author, 2026-09-11)
 
+**RELEASE GATE (2026-09-11, the author's final live-test round):** 4.0.0
+does not release before the author's surgery, and not before the
+real-Cura UI test harness (4.1.0, pulled into scope) clicks through the
+still-broken list with screenshots. Still broken as of the last round:
+the failure state persists until a manual reconnect; the preview card
+only appears after a load; M117 messages still miss the Print-job
+section. The record and the harness design are in the 4.1.0 section and
+`TESTING.md`.
+
 3.6.0 ends the v3 line. The author's ruling (2026-09-11): the
 per-request HTTP polling is unacceptable in production — prints audibly
-dwell while the plugin is connected (live-proven on their Voron: the
-regression arrived with the 3.5.0 console poll, and every poll adds to
-it). 4.0.0 moves the transport to Moonraker's websocket subscription
+dwell while the plugin is connected (live-proven on their Voron). The
+author's correction (2026-09-11): the diagnosis is the CUMULATIVE
+per-request polling load — the console poll was NOT singled out as the
+cause; the console stays HTTP by ruling, and the measurement arms
+record the console state as a covariate, not a suspect. 4.0.0 moves the transport to Moonraker's websocket subscription
 model: Klipper pushes object updates to Moonraker once per interval and
 Moonraker fans them out to subscribers — one serialization shared by
 all clients instead of one per client query. Everything in 4.0.1 waits
 on this.
 
-## 4.1.0 — Printer resilience and console polish
+**The author's scope rulings (2026-09-11, verbatim):**
 
-The old 3.6.1 items, re-homed by the author's final ruling
-(2026-09-11): 3.6.0 ends the v3 line, the 4.0.0 websocket transport
-comes first, and everything below ships from 4.1.0 onward.
+- "v4.0.0 - switch to websockets. This _should_ be a feature
+  transparent change, so if any features do change, I need to know and
+  approve first." — the transport swap is invisible to the user by
+  design; any observable behaviour change stops at the author for
+  explicit approval before it is built.
+- "Also, I think there should probably be the option of enabling
+  websockets vs sticking to HTTP, even though we know HTTP has
+  performance issues." — a user-facing transport-mode choice:
+  websocket subscription or the HTTP poll, both first-class.
 
-- **Restart arming** — re-prime the start flow after a print ends or
-  is cancelled, so a follow-up start cannot silently fail on stale
-  state. Medium risk: it touches the print-state transitions.
-- **Webcam watchdog** — detect a dead camera feed and restart the
-  stream, with a veil while it recovers. Medium risk: camera
-  restart/reconnect behaviour needs live-printer proof. The live
-  shapes were captured from the author's Moonraker (2026-09-11):
-  `server/webcams/list` returns per-camera relative `snapshot_url` /
-  `stream_url` (`/webcam2/?action=snapshot`), `enabled` flags and
-  `target_fps`.
-- **ETA feed-forward** — prefer the printer's own remaining-time
-  signal when it reports one, falling back to the slicer ETA.
-- **Auto-improve-ETA opt-in** — an explicit setting that lets the
-  model adjust the ETA from observed layer progress.
-- **Scroll-to-prompt** — the console scrolls the prompt line into
-  view when a command's response lands.
-- **Pause-list verified-pause-only** — the scheduled-pause list shows
-  only pauses that were actually verified.
-- **Poll-cadence sliders (the author, 2026-09-11)** — the author's
-  live report: prints slow down / pause at points while the plugin is
-  connected; the per-second object queries are the prime suspect.
-  The settings page gets sliders for the poll cadences (core
-  interval — already a preference — plus the auxiliary and console
-  cadences), backed by a relaxed printing policy: the auxiliary query
-  steps down while printing (1 s → 2.5 s or the user's interval) and
-  the per-second refresh stops re-asking save_config_pending on
-  configfile.
+**Phase-0 rulings (2026-09-11, walked with the author):**
+
+- The toggle switches the STATUS FEED only: the core and auxiliary
+  status traffic follow the choice. Commands (gcode/script, print/start,
+  macros, file operations), the console store feed, uploads/downloads
+  and thumbnails stay HTTP in both modes — refusal-word surfacing and
+  the e-stop cycle keep today's semantics.
+- Default: websocket (new and upgraded installs), with HTTP selectable
+  and the automatic fallback where the printer cannot subscribe.
+- Guard polls: the 250 ms urgent polls (pause guard, toolhead tracking)
+  stay HTTP — short-lived, only while a guard is latched — so pause
+  confirmation latency and the jog readout do not coarsen.
+- The setting is per-printer (the `PrinterConfig` record pattern, like
+  the chart config): a fleet can mix modes per machine.
+- Design intent for the panel (recommendation, not yet an author
+  ruling): in websocket mode the socket's health is the liveness
+  signal; a reconnect re-identifies, re-subscribes and re-syncs with
+  one full HTTP objects query (no replay). The 3.5.1 disconnected UX
+  renders identically in both modes.
+
+**The author's note (2026-09-11, verbatim):** "Just a note to take into
+account, I'm seeing a lot of the panel assess against Cura 5.9.1. The
+current version of Cura is 5.13.x." — every compatibility claim in the
+panel rounds is assessed against CURRENT Cura (5.13.x) and its bundled
+PyQt6. The 5.9.1 pin in the tree is the capture theme only
+(`tests/theme_assets/`, extracted from the 5.9.1 AppImage) — capture
+fidelity, never the runtime baseline. Cura 5.13's bundled PyQt6 is
+stricter than the dev container's newer PyQt6 about re-exports (the
+QHostAddress lesson, pinned by
+`test_qt_imports_name_the_module_that_owns_the_class`): the websocket
+module-availability question must be answered against the real 5.13
+bundle, not the container.
+
+**Substrate verification (2026-09-11, the author demanded certainty):**
+the author's standing rule for this release — "We need to be absolutely
+sure that if we implement websockets, this will work" (a previous
+websocket attempt had failed — explained by the binding being absent).
+Verified against the real Cura 5.13.0 AppImage (latest stable per
+UltiMaker's own update feed; extracted, `X-AppImage-Version=5.13.0`):
+the bundle ships Qt 6.6.0 and exactly 9 PyQt6 bindings (Core, DBus,
+Gui, Network, OpenGL, Qml, Quick, Svg, Widgets) — **no
+`QtWebSockets.abi3.so`**. Cura 5.9.1 ships a loose root-level
+`QtWebSockets.abi3.so`, but its PyQt6 is a namespace package, so the
+binding is unresolvable there too; Cura's own code imports websockets
+in neither version, and no pure-Python websocket library ships as a
+substitute. Confirmed in-process: a spike plugin inside the running
+5.13.0 app recorded `ModuleNotFoundError` for `PyQt6.QtWebSockets` —
+and the substrate spike PASSED: a hand-rolled RFC 6455 client over
+`QTcpSocket` completed the upgrade handshake (Sec-WebSocket-Accept
+verified), sent a masked text frame and read the echo, all inside the
+real bundled runtime. **Ruling:** 4.0.0 builds the websocket client by
+hand on `PyQt6.QtNetwork` (QTcpSocket/QSslSocket) — no new Qt module,
+no new dependency, works on every Cura in the 5.0–5.13 line. Remaining
+certainty gates: a TLS (wss) check and the live-Moonraker test on the
+author's printer during the snapshot loop.
+
+**Live-printer verification (2026-09-11, the author's Voron):** the
+hand-rolled RFC 6455 client, running INSIDE the real Cura 5.13.0
+bundle, completed the handshake against the live Moonraker
+(v0.13.0-733), the subscribe returned all five objects, and 29 frames
+/ 44.9 KB streamed in 6 s (~4.8 Hz — Klipper's 250 ms push cadence,
+live-confirmed) with the predicted `notify_status_update` shape
+([changed objects, eventtime]). The subscribe reply is the full
+snapshot — the reconnect re-sync needs no separate HTTP query. Auth is
+NOT enforced on this printer (any key or none works). Two probe bugs
+died here and are part of the record: the RFC extended-length ENCODE
+form (>125-byte payloads — Tornado silently drops the connection on a
+corrupt header) and a probe recorder that swallowed the evidence. The
+printer is plain http, so the live wss case remains open — the in-bundle
+TLS spike (verified TLS 1.3 + certificate-verification parity with
+today's HTTPS, measured byte-identical) covers the substrate half; a
+live proxied-https test rides the snapshot loop.
+
+**Phase-2 rulings (2026-09-11, walked with the author):**
+- Subscription while idle: FULL-TIME (all five status objects
+  whenever connected) with a delivery clock — the socket accumulates
+  pushes and the existing `PollPolicy` delivers to consumers at
+  today's cadences. Printer-side cost is measured live in the
+  snapshot loop; per-policy narrowing is the measured fallback, not
+  the day-one design.
+- Mode switch on a live connection: REBIND — exactly like a URL/key
+  change today (session reset, connection cycle). No new behaviour
+  class to spec. The author's ruling (2026-09-11): the consequent
+  upload abort is ACCEPTED and DOCUMENTED — flipping the toggle
+  mid-upload cancels it, stated in ARCHITECTURE §3 and the toggle's
+  helper line; no silent behaviour.
+- The round-1 dispositions for C2/C4, H1–H8, M3–M6 and L1–L4 are
+  recorded as PROPOSED (the author's nod comes at the round-2 walk);
+  the three explicit rulings above and the substrate ruling are fixed.
+
+**Phase-4 rulings (2026-09-11, walked with the author — the panel
+walk):**
+- Guards ride the push stream: in socket mode the 250 ms guard updates
+  come from the delivery clock draining at the urgent interval (the
+  printer already pushes at 250 ms — zero cost); the HTTP guard path
+  remains for HTTP mode and as the socket's fallback. Worst-case
+  readout jitter ~500 ms is a flagged transparency item for the
+  snapshot loop.
+- Data-proven connected: the dot goes green only after the first
+  accepted snapshot; staying green requires a periodic cheap
+  authenticated round-trip over the socket; `notify_klippy_ready`
+  forces an instant re-subscribe (Moonraker wipes subscriptions on
+  every Klippy restart). The socket's own state is NOT liveness.
+- Fallback on silence: a startup proof (real frames within a few
+  seconds of connecting, else bind HTTP and say why) plus a
+  steady-state silence watchdog (silent-while-connected falls back to
+  HTTP without a session reset, with a visible reason). The websocket
+  default stands on this detection.
+- Camera through the auth-enforcing proxy RULED (2026-09-11, the
+  author): Cura's `NetworkMJPGImage` cannot send the API-key header, so
+  the camera behind a header-auth proxy cannot render — 4.0.0 gains a
+  camera BRIDGE: the plugin fetches the stream with the key and
+  republishes it on a keyless local endpoint for Cura's loader. (Held
+  for now; the camera-URL override field points Cura's loader at the
+  printer's own keyless LAN webcam port, which unblocks live testing
+  without the bridge.)
+- Delivery-cadence sliders RULED IN for 4.0.0 (2026-09-11, the
+  author): the push stream arrives at the printer's cadence and the
+  delivery clock hands it to consumers on the client's — with sliders
+  to adjust it. The core interval field is relabelled
+  ("Status update interval") with a mode-aware helper line; the
+  auxiliary and console cadences gain per-printer fields with bounds.
+- UX adjudication RULED (2026-09-11, the author): the transport-mode
+  control is two `Cura.RadioButton`s — "WebSocket subscription" /
+  "HTTP polling" — on the Connection tab with a permanent reason
+  line, per the UX persona's recommendation. The approval-list strings
+  (connection notes naming the transport, one-click revert, mode-aware
+  Test-connection verdict, interval relabel, reason line, trace label)
+  get the author's nod as they are built.
+
+## 4.0.1 — Harness fast-follow (the author, 2026-09-13)
+
+A fast follow after 4.0.0 ships; both items are test-infrastructure only:
+
+- **Dismiss the G-code details warning**: Cura's "Make sure the g-code
+  is suitable for your printer" dialog gets in the way of the UI
+  tests. Dismiss it CONDITIONALLY at boot — never wait for it: tests
+  that load no gcode never see it.
+- **Test the Information pane**: never covered because the harness
+  window (1280x720) squeezes the Monitor's left column. Raise the
+  harness resolution (e.g. 1920x1080) and re-calibrate the geometry
+  probes and click coordinates that assume the current size.
+- **Visible interactions (the author's rule, 2026-09-13)**: wherever
+  possible, anything the scenarios interact with MUST be on screen —
+  scroll the panes to bring the control into the rendered viewport
+  before driving it, so the videos and screenshots SHOW the
+  interaction. "If the user can't see it, assume they can't interact
+  with it."
+
+## 4.0.1 — Printer resilience and console polish
+
+FOLDED INTO 4.0.0 (the author's ruling, 2026-09-11: "Screw it, do all
+4.0.1 now") — every item below shipped in 4.0.0. This section is now
+empty history.
+
+- ~~**Restart arming**~~ — SHIPPED IN 4.0.0.
+- ~~**Webcam watchdog**~~ — SHIPPED IN 4.0.0 (the bridged-stream
+  restart with the veil; direct URLs remain out of scope).
+- ~~**ETA feed-forward**~~ — STRUCK (the author, 2026-09-11): Klipper
+  already feeds the live speed factor back (`gcode_move.speed_factor`)
+  and the follower's ETA math already scales the slicer's per-layer
+  times by it — there is no printer-side remaining-time signal to
+  prefer.
+- ~~**Auto-improve-ETA opt-in**~~ — SHIPPED IN 4.0.0.
+- ~~**Scroll-to-prompt**~~ — SHIPPED IN 4.0.0.
+- ~~**Pause-list verified-pause-only**~~ — SHIPPED IN 4.0.0.
+- ~~**Poll-cadence sliders (the author, 2026-09-11)**~~ — SHIPPED IN
+  4.0.0: the cadence sliders (status update, auxiliary, console) with
+  the 250 ms floor landed as part of the websocket work.
+
+## 4.1.0 — The UI-driving test suite
+
+**Pulled into scope (2026-09-11, the author):** the 4.0.0 release is
+frozen on this suite — "I don't want any fakery here. I want you to be
+able to show me screenshots of the things you're doing in the tests as
+PROOF that the things you've implemented work the way you claim they
+work. We should use Cura 5.13, but it should be possible to swap out
+the Cura version if we need." Non-negotiables: the REAL Cura
+application, the REAL UI, REAL clicks, and screenshots as the proof
+artifact; the only fake in the system is the network peer (a full
+Moonraker simulator over websocket — Moonraker is what the PRINTER
+runs, not what Cura runs). The design lives in `TESTING.md` and goes
+to a three-persona panel — architect, engineer, and an expert
+automated tester (the author's composition, with explicit go-ahead).
+
+**The release gate (the author's final 4.0.0 live-test round,
+2026-09-11):** the suite must click through, with screenshots:
+
+- the failure state must clear without a manual reconnect (item 2:
+  "the persists and I have to reconnect");
+- the preview card must stay through the load AND after the render
+  settles, without any interaction (item 4: "only comes back after a
+  load");
+- M117 messages must reach the Print-job section;
+- the earlier still-open items: the camera's first load without a
+  refresh click, temperatures arriving within seconds of print start,
+  controls unlocking after an out-of-range failure, and dwell (the
+  author declined to log dwells by hand — the harness captures it).
+
+**Mandate expansion (2026-09-11, the author):** the suite covers ALL of
+the plugin's functionality end-to-end where feasible — not just the
+regression list — "connecting to a dummy simulated printer over the
+same transport method that a real Moonraker printer uses". The
+catalogue in `TESTING.md` is two layers: the release gates, then the
+full functional surface — the suite (transport, status, temperatures,
+console, camera, files, controls, preview, settings, soaks).
+Phasing (2026-09-11, the author): the gates first — "We can start with
+just the current recent failures to prove the theory/ process" — then
+the full surface so the author stops re-testing everything by hand.
 
 ## 4.2.0 — State & permissions consolidation
+
+- **The Post-Processing button's vertical alignment (backlogged
+  2026-09-11):** the `</>` button still sits slightly above the card's
+  bottom line — accepted for the 4.0.0 close, carried here so it is
+  not forgotten. The saveButton row's centre-line anchoring is the
+  mechanism (see the 4.0.0 live-test notes).
 
 **State & permissions consolidation (the author, 2026-09-10):**
 "Can I press this button when I'm printing, when I'm not homed, when
@@ -752,6 +956,98 @@ scope revisit: folder trees — confirm before 3.6.0 ships that files in
 subfolders are at least listable and printable, or the file manager is
 weaker than Mainsail's for anyone with a library.
 
+**Live-test fixes (2026-09-11, the author's snapshot round):**
+
+- The author's live report: dragging the preview's layer-height slider
+  no longer detaches the follower (the path progress bar still does),
+  and the whitespace gap between the bed-mesh and pause buttons turned
+  out to be the current-layer info label, which never fills while
+  attached.
+- Label: `update_eta` showed "current print layer" only while
+  DETACHED, so the slot stayed blank while attached. It now fills in
+  both states — the slot is the current-layer info label while
+  attached; the ETA/already-printed text is unchanged. The QML slot
+  also collapses when there is genuinely nothing to say (idle
+  printer), instead of leaving a blank gap.
+- Detach: `detect_override` passed silently whenever the follower was
+  unarmed (view swap, dropped connection, absorbed echo) — a drag
+  landing in that window was ignored until an observe happened to
+  re-arm. It now adopts the view's position as the baseline, so the
+  next deviation — a continuing drag — detaches. `reset_print` also
+  preserves the armed view baseline — the print stopping does not
+  move Cura's view, and wiping the baseline on every inactive
+  observation left the window between observations permanently
+  unarmed.
+- **The missing Monitor cards (the author's live report): a
+  subscription deadlock.** In websocket mode the auxiliary wanted set
+  only reached the socket after the first aux fragment arrived — and
+  Moonraker only pushes SUBSCRIBED objects, so the first fragment
+  never came: temperatures, fans and sensors vanished (HTTP mode was
+  unaffected — the author's "HTTP brings the cards back"). The wanted
+  set now reaches the socket the moment the object list is known. The
+  RPC lane itself was live-proven against the author's printer (3/3
+  replies on all seven monitor methods, zero errors) before the
+  deadlock was found.
+- **The cadence controls are real sliders now** (the author's ruling
+  and correction): aux + console are linear 250–60000 ms sliders with
+  a 250 ms floor and live value labels; the status update interval is
+  a log-spaced slider (250 ms to ~34 min, each step doubling) that
+  never rewrites an untouched stored value.
+- **The floating controls left of the preview card:** Cura's
+  ActionPanelWidget row centres its components on the row's centre
+  line, and our card's full height made the row centre far above the
+  bottom — Cura's own Post Processing button floated there. The
+  extension root now reports a short strip with the visible card
+  anchored to its bottom (overflowing upward), so the row stays small
+  and every component docks to the bottom line together.
+
+**More live-test fixes (2026-09-11, the author's second round):**
+
+- **Aux data that never changes never arrived:** Moonraker's subscribe
+  response carries the full state ONCE, then pushes only CHANGES. The
+  sync fed the core snapshot only, so a steady temperature never
+  reached the Monitor's aux snapshot ("hitting Reconnect brought it
+  all back" — the resubscribe re-sent the sync). The socket now seeds
+  the aux accumulator from every subscribe response, so the next
+  drain publishes unchanged objects too.
+- **New objects join mid-print (the author's rule):** the aux merge
+  accepted only names from the FIRST objects/list, so a device
+  switched on mid-print was dropped even when its data arrived. The
+  merge now accepts newly-seen names, and the subscription grows to
+  include them.
+- **The detach watchdog snapped back mid-drag:** the 3 s re-attach
+  timer restarted only on a NEW detach — while detached it fired
+  mid-inspection and re-attached under the user's pointer. The quiet
+  window now restarts on every view movement while detached, so the
+  re-attach comes 3 s after the user actually stops moving the view.
+- **The preview's two card versions flipped during Cura's own
+  busy/idle cycles:** the empty "Load current print" card gated on
+  `!CuraApplication.platformActivity`, so it appeared as the "wrong"
+  card whenever Cura flipped its activity flag (which also hides
+  Cura's layer controls). The empty card now gates on toolpath/load
+  state — it means "nothing is loaded", nothing else.
+- **Test-connection 401 wording:** an auth gateway's HTML 401 body
+  (the author's proxy) surfaced as Qt's raw error string. Non-JSON
+  401s now read "the API key was rejected (HTTP 401)", matching the
+  websocket path.
+- **The connected state names the live transport** ("Moonraker
+  connected over websocket" / "… over HTTP polling") — the author's
+  ask for confidence that the websocket is genuinely in use.
+- **The slow-drag detach delay (the author's third report):** the
+  echo window refreshed on every unarmed→armed re-arm, and an absorbed
+  drag deviation unarmed the follower — each observe then re-armed the
+  window, absorbing a slow drag for the window's whole 3.5 s. The
+  window now arms ONLY at attach(); a drag at any other moment
+  detaches immediately. The re-attach watchdog also cancels outright
+  on the first post-detach view movement — a continued drag is
+  inspection, never a restoration echo.
+- **The camera bridge lands (the 4.0.0 ruling):** `CameraBridge`
+  fetches the configured stream WITH the X-Api-Key header and
+  republishes it on an ephemeral keyless loopback port for Cura's
+  loader; `MonitorCamera` rewrites the camera URL through the bridge
+  whenever a key is set and the stream host is remote. Loopback-only
+  listener, header-buffer cap, per-connection upstreams.
+
 ## 4.0.0 notes — WebSockets as a transport swap (panel history)
 
 The socket remains the right long-term transport, but the domain panel
@@ -765,7 +1061,7 @@ re-sequenced the plan on two facts:
   printer data — the old "push chart samples" story conflated it with
   `notify_status_update` deltas of the heater/temperature objects. And
   heater readings update at Klippy's MCU sampling cadence, which is not
-  faster than the 1 s aux poll: the socket buys event edges and lower
+  faster than the 2.5 s aux poll: the socket buys event edges and lower
   polling load, not chart resolution. "High-rate data" is not a promise
   this roadmap makes.
 
@@ -807,7 +1103,8 @@ contrast; pairwise hue separation is the residual debt).
 - **A Pi/system-health panel from notify_proc_stat_update** — host stats,
   not printer state; Mainsail/Fluidd already own that surface.
 - **High-rate chart push (10 Hz+)** — MCU temperature sampling caps the
-  source; the 1 s aux poll matches Mainsail's resolution.
+  source; the 2.5 s aux poll (the author's 2026-09-11 step-down from 1 s)
+sets the chart's shipped resolution.
 - **Firmware-update management (Moonraker update_manager)** — dangerous,
   off-brand for a slicer plugin, and per-machine update state is a
   support sink.
