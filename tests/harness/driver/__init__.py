@@ -249,6 +249,17 @@ class HarnessServer(QObject):
             return {"id": request_id, "ok": True,
                     "x": geometry.x(), "y": geometry.y(),
                     "w": geometry.width(), "h": geometry.height()}
+        if cmd == "window_resize":
+            # The boot gate pins the window geometry (Cura's first-boot
+            # size is nondeterministic, and a narrow window collapses
+            # the stage header into an overflow menu).
+            try:
+                window = _main_window()
+                window.resize(int(request.get("w", 1500)), int(request.get("h", 900)))
+                return {"id": request_id, "ok": True,
+                        "size": (window.width(), window.height())}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "windows":
             rows = []
             for window in windows:
@@ -1290,10 +1301,14 @@ QT_TEST_ERROR = ""
 
 
 def _lookup_windows():
-    # The main window first, then every other visible window by size:
-    # the file manager and the dialogs are separate windows, and a
-    # main-window-only walk never finds their items.
-    windows = list(QGuiApplication.topLevelWindows())
+    # The main window first, then every other visible QML window by
+    # size: the file manager and the dialogs are separate windows,
+    # and a main-window-only walk never finds their items. Widget
+    # windows (the QMessageBox) have no contentItem — the QML walks
+    # died on them with AttributeError whenever one happened to be up.
+    from PyQt6.QtQuick import QQuickWindow
+    windows = [w for w in QGuiApplication.topLevelWindows()
+               if isinstance(w, QQuickWindow)]
     visible = [w for w in windows if w.isVisible()]
     visible.sort(key=lambda w: (w is _main_window(), w.width() * w.height()),
                  reverse=True)
