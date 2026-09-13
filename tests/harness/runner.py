@@ -22,6 +22,7 @@ DISPLAY = os.environ.get("HARNESS_DISPLAY", ":99")
 SIZE = "1600x1000"
 RUN_DIR = os.environ.get("HARNESS_RUN_DIR", "/tmp/mpf/ui-artifacts/run-001")
 PORT_FILE = "/tmp/mpf/harness_port.txt"
+TOKEN_FILE = "/tmp/mpf/harness_token.txt"
 DRIVER_HOST = "127.0.0.1"
 
 
@@ -35,6 +36,17 @@ def rpc(request, timeout=20.0):
             time.sleep(1)
             continue
         try:
+            # Present the per-run token on every request: the driver
+            # refuses anything else (the security panel's H1 — an
+            # unauthenticated exec channel in Cura's process).
+            token = ""
+            try:
+                with open(TOKEN_FILE, encoding="utf-8") as handle:
+                    token = handle.read().strip()
+            except OSError:
+                pass
+            request = dict(request)
+            request["token"] = token
             with socket.create_connection((DRIVER_HOST, port), timeout=timeout) as sock:
                 sock.sendall(json.dumps(request).encode("utf-8") + b"\n")
                 sock.settimeout(timeout)
@@ -52,11 +64,23 @@ def rpc(request, timeout=20.0):
 
 
 def shot(name):
+    """One frame into the run dir. A capture that did not happen must
+    read as a failure — a silently missing image would otherwise fall
+    back to a stale frame with the same name (the panel's finding)."""
     path = os.path.join(RUN_DIR, f"{name}.png")
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab",
-                    "-video_size", SIZE, "-i", DISPLAY, "-frames:v", "1", path],
-                   check=False, timeout=30)
-    return path
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    try:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab",
+                        "-video_size", SIZE, "-i", DISPLAY, "-frames:v", "1", path],
+                       check=True, timeout=30)
+    except (subprocess.SubprocessError, OSError) as exc:
+        return (path, f"capture failed: {exc!r}"[:80])
+    if not os.path.exists(path) or os.path.getsize(path) < 100:
+        return (path, "capture failed: empty frame")
+    return (path, None)
 
 
 def wait_stage(wanted, timeout_ms=20000):
@@ -131,6 +155,7 @@ def discover():
 
 def scenario(expect_fail=False):
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "scenario.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
          "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario.mp4")])
@@ -167,33 +192,52 @@ def scenario(expect_fail=False):
             video.wait(timeout=10)
         except subprocess.TimeoutExpired:
             video.kill()
-    write_gallery(steps, expect_fail)
+    write_gallery(steps, expect_fail, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
 
-def write_gallery(steps, expect_fail, title="the skeleton demo — real Cura under Xvfb, QTest clicks on Cura's own stage buttons"):
+def write_gallery(steps, expect_fail, title="the skeleton demo — real Cura under Xvfb, QTest clicks on Cura's own stage buttons",
+                  video=None):
     rows = []
     for name, action, assertion, ok, path in steps:
+        capture_error = None
+        if isinstance(path, tuple):
+            path, capture_error = path
         # Only the deliberate-failure step may be red by design; a red
         # real step is a real failure and must read as one.
         verdict = ("EXPECTED FAIL" if name == "13-deliberate-failure"
                    else "PASS" if ok else "FAIL")
+        if capture_error:
+            verdict = "FAIL"
         rows.append(
-            f'<div class="step {"pass" if ok else "fail"}">'
+            f'<div class="step {"pass" if ok and not capture_error else "fail"}">'
             f'<h3>{html.escape(name)} — {verdict}</h3>'
             f'<p><b>Action:</b> {html.escape(action)}</p>'
             f'<p><b>Assertion:</b> {html.escape(assertion)}</p>'
-            f'<img src="{html.escape(os.path.basename(path))}" alt="{html.escape(name)}">'
-            f"</div>")
+            + (f'<p><b>Capture:</b> {html.escape(capture_error)}</p>' if capture_error else "")
+            + (f'<img src="{html.escape(os.path.basename(path))}" alt="{html.escape(name)}">'
+               if os.path.exists(path) else "")
+            + "</div>")
     body = "\n".join(rows)
+    provenance = " · ".join(part for part in (
+        f"Cura {os.environ.get('CURA_VERSION', '?')}",
+        f"plugin {os.environ.get('PLUGIN_VERSION', '?')}",
+        os.environ.get("HARNESS_MODE", ""),
+        time.strftime("%Y-%m-%d %H:%M"),
+    ) if part)
+    video_tag = (f'<video src="{html.escape(os.path.basename(video))}" controls '
+                 f'style="max-width:100%"></video>'
+                 if video and os.path.exists(video) else
+                 '<p class="note">no recording for this run</p>')
     page = f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(title)}</title>
 <style>body{{font-family:sans-serif;background:#111;color:#ddd;margin:2em}}
 .step{{border:1px solid #444;border-radius:8px;padding:1em;margin:1em 0;background:#1a1a1a}}
 .pass{{border-left:6px solid #2ea043}}.fail{{border-left:6px solid #f85149}}
 img{{max-width:100%;border:1px solid #444}}h3{{margin-top:0}}</style></head>
 <body><h1>{html.escape(title)}</h1>
-<video src="scenario.mp4" controls style="max-width:100%"></video>
+<p class="note">{html.escape(provenance)}</p>
+{video_tag}
 {body}</body></html>"""
     with open(os.path.join(RUN_DIR, "index.html"), "w", encoding="utf-8") as handle:
         handle.write(page)
@@ -218,6 +262,13 @@ def exec_rpc(code, timeout=60.0, raise_on_error=False):
         if raise_on_error:
             raise RuntimeError(f"driver exec failed: {reply.get('error')}")
         return {}
+    if reply.get("truncated"):
+        # A truncated probe result reads as "{}" after parsing — the
+        # silent-data-loss trap the z-group calibration hit twice. Fail
+        # loudly so the probe author sees it, never a false absence.
+        if raise_on_error:
+            raise RuntimeError("driver exec result truncated at 4000 chars")
+        return {"_truncated": True}
     try:
         return json.loads(reply.get("result") or "{}")
     except (TypeError, ValueError):
@@ -821,6 +872,7 @@ def scenario9():
     # scheduled through the panel; the printer drives PAST the layer
     # without pausing; the entry stays listed, restyled as missed.
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "scenario9.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
          "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario9.mp4")])
@@ -879,7 +931,7 @@ def scenario9():
         except subprocess.TimeoutExpired:
             video.kill()
     title = "Gate #9 — pause list verified-only"
-    write_gallery(steps, False, title)
+    write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -891,6 +943,7 @@ def scenario8():
     # GUI scheduled-latency (a 100 ms timer chain's drift) and the
     # receipt canary (the WS feed keeps flowing end to end).
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "scenario8.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
          "-framerate", "5", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario8.mp4")])
@@ -964,7 +1017,7 @@ def scenario8():
         except subprocess.TimeoutExpired:
             video.kill()
     title = "Gate #8 — dwell profile"
-    write_gallery(steps, False, title)
+    write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -975,6 +1028,7 @@ def scenario10():
     # hold); the printer errors and cancels; a demonstrably fresh
     # print then starts and the latch clears.
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "scenario10.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
          "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario10.mp4")])
@@ -1035,7 +1089,7 @@ def scenario10():
         except subprocess.TimeoutExpired:
             video.kill()
     title = "Gate #10 — restart arming / e-stop latch"
-    write_gallery(steps, False, title)
+    write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -1046,6 +1100,7 @@ def scenario11():
     # follow back to the prompt, and the recall history returns the
     # last command on the up arrow.
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "scenario11.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
          "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario11.mp4")])
@@ -1108,7 +1163,7 @@ def scenario11():
         except subprocess.TimeoutExpired:
             video.kill()
     title = "Gate #11 — scroll-to-prompt"
-    write_gallery(steps, False, title)
+    write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -1120,6 +1175,7 @@ def scenario7():
     # grown during the swaps (beyond the settled bootstrap) while the
     # WS entries grew (the positive sentinel).
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "scenario7.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
          "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario7.mp4")])
@@ -1176,7 +1232,7 @@ def scenario7():
         except subprocess.TimeoutExpired:
             video.kill()
     title = "Gate #7 — transport handover"
-    write_gallery(steps, False, title)
+    write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -1188,6 +1244,7 @@ def scenario6():
     # must detach and stay detached. The variant: a view-swap away
     # and back re-attaches — THE ONLY automatic re-attach.
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "scenario6.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
          "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario6.mp4")])
@@ -1265,7 +1322,7 @@ def scenario6():
         except subprocess.TimeoutExpired:
             video.kill()
     title = "Gate #6 — detach on any layer selection change"
-    write_gallery(steps, False, title)
+    write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -1278,6 +1335,7 @@ def scenario5():
     # event clock and the plugin's temperature history must anchor
     # its first sample right after the sync snapshot.
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "scenario5.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
          "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario5.mp4")])
@@ -1358,7 +1416,7 @@ def scenario5():
         except subprocess.TimeoutExpired:
             video.kill()
     title = "Gate #5 — temperatures at print start"
-    write_gallery(steps, False, title)
+    write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -1370,6 +1428,7 @@ def scenario4():
     # must appear with NO interaction — two captures of the
     # viewport's changing test pattern prove liveness.
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "scenario4.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
          "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario4.mp4")])
@@ -1440,7 +1499,7 @@ def scenario4():
         except subprocess.TimeoutExpired:
             video.kill()
     title = "Gate #4 — camera first load"
-    write_gallery(steps, False, title)
+    write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -1451,6 +1510,7 @@ def scenario3():
     # B and A is absent; then the message clears and the slot's
     # previous content returns (empty, fixed height — no reflow).
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "scenario3.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
          "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario3.mp4")])
@@ -1509,7 +1569,7 @@ def scenario3():
         except subprocess.TimeoutExpired:
             video.kill()
     title = "Gate #3 — M117 in the Print-job section"
-    write_gallery(steps, False, title)
+    write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -1521,6 +1581,7 @@ def scenario2(expect_fail=False):
     # be visible continuously from the click to 30 s after settle and
     # the empty card must never reappear.
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "scenario2.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
          "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario2.mp4")])
@@ -1600,7 +1661,7 @@ def scenario2(expect_fail=False):
         except subprocess.TimeoutExpired:
             video.kill()
     title = "Gate #2 — the card stays through load and after render"
-    write_gallery(steps, expect_fail, title)
+    write_gallery(steps, expect_fail, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -1613,6 +1674,7 @@ def scenario1(expect_fail=False):
     # window must fire) — and the peer's ledger shows ONE connection
     # throughout.
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "scenario1.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
          "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "scenario1.mp4")])
@@ -1692,7 +1754,7 @@ def scenario1(expect_fail=False):
         except subprocess.TimeoutExpired:
             video.kill()
     title = "Gate #1 — the failure state clears itself"
-    write_gallery(steps, expect_fail, title)
+    write_gallery(steps, expect_fail, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -1740,9 +1802,10 @@ def suite_run(group_id):
         print(f"no suite scenarios in group {group_id}")
         return 1
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, f"suite-{group_id}.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, f"suite-{group_id}.mp4")])
+         "-framerate", "15", "-i", DISPLAY, video_path])
     steps = []
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1765,7 +1828,7 @@ def suite_run(group_id):
         except subprocess.TimeoutExpired:
             video.kill()
     title = f"Scenario group {group_id}"
-    write_gallery(steps, False, title)
+    write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -1800,6 +1863,12 @@ REAL_SAFE_SLOTS = {
     "clearConsoleHistory",
 }
 
+# Real-mode click targets: a text click on a mutating control would
+# drive the live printer. The allowlisted texts are stage/observation
+# only (the panel's finding).
+REAL_MUTATING_TEXT = ("pause", "resume", "cancel", "start", "restart",
+                      "turn on", "turn off", "emergency", "jog", "home",
+                      "extrude", "delete", "rename", "upload", "print")
 REAL_SAFE_OPS = {"click_stage", "click_text", "model_read",
                  "wait_model", "assert_model", "exec_slot", "dwell",
                  "rect_of", "assert_aligned", "assert_rendered",
@@ -1876,6 +1945,10 @@ def real_step(step):
     if op == "exec_slot" and step["slot"] not in REAL_SAFE_SLOTS:
         return (False, f"{step['slot']} (real mode)",
                 f"REFUSED: slot {step['slot']!r} is not read-only")
+    if op == "click_text" and any(word in str(step.get("text") or "").lower()
+                                  for word in REAL_MUTATING_TEXT):
+        return (False, f"click_text {step['text']!r} (real mode)",
+                "REFUSED: the label names a mutating control")
     return suite_step(step)
 
 
@@ -1887,13 +1960,19 @@ def real_run():
     no print starts."""
     import scenarios
     specs = [spec for spec in scenarios.SCENARIOS if spec.get("group") == "real"]
+    for spec in specs:
+        if not spec.get("real_safe"):
+            print(f"refusing real-mode scenario {spec.get('id')}: not real_safe")
+            return 1
     if not specs:
         print("no real-printer scenarios")
         return 1
     os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "real.mp4")
+    video_path = os.path.join(RUN_DIR, "real.mp4")
     video = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
-         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "real.mp4")])
+         "-framerate", "15", "-i", DISPLAY, video_path])
     steps = []
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
@@ -1913,7 +1992,7 @@ def real_run():
         except subprocess.TimeoutExpired:
             video.kill()
     title = "Real-printer read-only — observation, no commands"
-    write_gallery(steps, False, title)
+    write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
     return 0 if all(step[3] for step in steps) else 1
 
@@ -1940,22 +2019,39 @@ def suite_step(step):
         time.sleep(0.5)
         return reply.get("ok") is True, f"the {step.get('button', 'Yes')} on the plugin's QMessageBox", "answered"
     if op == "sim_set":
-        sim_http("/harness/scenario", "POST", step["state"])
+        reply = sim_http("/harness/scenario", "POST", step["state"])
+        unknown = reply.get("unknown") or []
         time.sleep(1.5)
-        return True, "the simulator's state changed to %s" % json.dumps(step["state"])[:60], "applied"
+        return (not unknown, "the simulator's state changed to %s" % json.dumps(step["state"])[:60],
+                "applied" if not unknown else f"REFUSED: unknown keys {unknown}")
     if op == "sim_arm":
-        sim_http("/harness/scenario", "POST", step["arms"])
-        return True, "the simulator armed %s" % json.dumps(step["arms"])[:60], "armed"
+        reply = sim_http("/harness/scenario", "POST", step["arms"])
+        unknown = reply.get("unknown") or []
+        return (not unknown, "the simulator armed %s" % json.dumps(step["arms"])[:60],
+                "armed" if not unknown else f"REFUSED: unknown arms {unknown}")
     if op == "sim_klippy":
         sim_http("/harness/klippy_restart", "POST", {})
         return True, "the simulator broadcast klippy_ready", "broadcast"
     if op == "sim_ledger":
-        entries = sim_http("/ledger").get("entries", ())
+        # The one-shot-read footgun, fixed: the declared budget now
+        # MEANS the wait window, and `field` actually filters (the
+        # panel's finding — 30 steps declared a budget that was never
+        # read, 16 declared an unread field).
         needle = str(step.get("needle") or "")
         method = step.get("method")
-        matched = [entry for entry in entries
-                   if (needle in str(entry.get("path") or "") or needle in str(entry.get("method") or ""))
-                   and (method is None or method == str(entry.get("method") or ""))]
+        field = str(step.get("field") or "")
+        def matched_count():
+            entries = sim_http("/ledger").get("entries", ())
+            matched = [entry for entry in entries
+                       if ((not field and (needle in str(entry.get("path") or "")
+                                           or needle in str(entry.get("method") or "")))
+                           or (field and needle in str(entry.get(field) or "")))
+                       and (method is None or method == str(entry.get("method") or ""))]
+            return matched
+        matched = wait_for(lambda: (matched_count() or None),
+                           float(step.get("budget", 15)), 1.0)
+        if not matched:
+            matched = matched_count()
         expected = int(step.get("min", 1))
         detail = "; ".join(f"{e['method']} {e['path']} {e['ms']:.0f}ms"
                            for e in matched[-6:])
@@ -2078,15 +2174,19 @@ def suite_step(step):
     if op == "click_jog":
         reply = rpc({"id": 1, "cmd": "click_item", "objectName": step["button"]})
         time.sleep(1.5)
-        return bool(reply.get("ok")), f"a real click on {step['button']}", "clicked"
+        aim = str(reply.get("aim") or "clicked")
+        label = "a real click on" if "emit" not in aim else "the clicked signal of"
+        return bool(reply.get("ok")), f"{label} {step['button']} ({aim})", "clicked"
     if op == "click_item":
         reply = rpc({"id": 1, "cmd": "click_item", "objectName": step["objectName"]})
         time.sleep(1.5)
-        return bool(reply.get("ok")), f"a real click on {step['objectName']}", "clicked"
+        aim = str(reply.get("aim") or "clicked")
+        label = "a real click on" if "emit" not in aim else "the clicked signal of"
+        return bool(reply.get("ok")), f"{label} {step['objectName']} ({aim})", "clicked"
     if op == "item_disabled":
         code = ITEM_STATE_TEMPLATE.replace("NAME_PLACEHOLDER", json.dumps(step["objectName"]))
         reply = exec_rpc(code)
-        return reply.get("enabled") is False, f"{step['objectName']} disabled while disconnected", f"enabled={reply.get('enabled')}"
+        return reply.get("enabled") is False, f"{step['objectName']} disabled", f"enabled={reply.get('enabled')}"
     if op == "exec_test_connection":
         reply = exec_rpc(TEST_CONNECTION_CODE, raise_on_error=True)
         time.sleep(2.0)
@@ -2237,12 +2337,18 @@ def suite_step(step):
 
     if op == "wait_rect":
         # An item's presence in the rendered tree — the collapse and
-        # resize scenarios wait on this.
+        # resize scenarios wait on this. An ABSENT wait that never
+        # observed the item at all is labeled: "absent" must mean
+        # "the product hid it", not "the probe never resolved it"
+        # (the panel's finding).
         ref = {k: step[k] for k in ("objectName", "text", "className") if k in step}
         key = next(iter(ref.values()))
+        observed = bool(SUITE_STATE["rect"].get(("seen", key)))
 
         def check():
             reply = rpc({"id": 1, "cmd": "rect", **ref})
+            if reply.get("ok"):
+                SUITE_STATE["rect"][("seen", key)] = True
             if step.get("absent"):
                 return not reply.get("ok")
             return reply.get("ok")
@@ -2250,8 +2356,10 @@ def suite_step(step):
                            float(step.get("poll", 1.0))))
         reply = rpc({"id": 1, "cmd": "rect", **ref})
         now = "absent" if not reply.get("ok") else reply["rect"]
+        seen_note = ("observed earlier" if (observed or SUITE_STATE["rect"].get(("seen", key)))
+                     else "never observed in this scenario")
         return (ok, f"{key} {'left the rendered tree' if step.get('absent') else 'entered the rendered tree'}",
-                f"now {now}")
+                f"now {now} ({seen_note})")
 
     if op == "census":
         # The data-render census: every data class present in the
@@ -2366,7 +2474,7 @@ def suite_step(step):
                 "    result[\"read\"] = True\n"
                 "except Exception as exc:\n"
                 "    result[\"error\"] = repr(exc)")
-        reply = exec_rpc(code)
+        reply = exec_rpc(code, raise_on_error=True)
         if reply.get("error"):
             return (False, "the Voron cube inserted through Cura's reader chain",
                     f"driver: {reply['error']}")
@@ -2384,7 +2492,8 @@ def suite_step(step):
                          "    app.getBackend().forceSlice()\n"
                          "    result[\"slice\"] = True\n"
                          "except Exception as exc:\n"
-                         "    result[\"error\"] = repr(exc)")
+                         "    result[\"error\"] = repr(exc)",
+                         raise_on_error=True)
         if reply.get("error"):
             return (False, "the scene sliced by the engine",
                     f"driver: {reply['error']}")
@@ -2394,7 +2503,8 @@ def suite_step(step):
         # Activate a post-processing script through the plugin's own
         # manager — Cura's save-area `</>` button only renders while a
         # script is active (the author's insert-a-pause flow).
-        reply = exec_rpc("from UM.Application import Application\napp = Application.getInstance()\nresult = {}\nplugin = app.getPluginRegistry().getPluginObject(\"PostProcessingPlugin\")\ntry:\n    plugin.addScriptToList(\"PauseAtHeight\")\n    result[\"added\"] = True\nexcept Exception as exc:\n    result[\"error\"] = repr(exc)")
+        reply = exec_rpc("from UM.Application import Application\napp = Application.getInstance()\nresult = {}\nplugin = app.getPluginRegistry().getPluginObject(\"PostProcessingPlugin\")\ntry:\n    plugin.addScriptToList(\"PauseAtHeight\")\n    result[\"added\"] = True\nexcept Exception as exc:\n    result[\"error\"] = repr(exc)",
+                         raise_on_error=True)
         if reply.get("error"):
             return (False, "the post-processing script activated",
                     f"driver: {reply['error']}")

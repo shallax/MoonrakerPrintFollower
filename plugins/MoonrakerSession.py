@@ -184,6 +184,10 @@ class CommandAcknowledgement:
     terminal: bool = False
     outcome: str = "pending"
     detail: str = ""
+    # The snapshot revision at issue time: an ack may only confirm
+    # against a state merged AFTER the command went out — a cached
+    # state from before must not (the expiry test's contract).
+    issued_revision: int = 0
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -202,12 +206,14 @@ class CommandTracker:
     def __init__(self) -> None:
         self._commands: Dict[str, CommandAcknowledgement] = {}
 
-    def issue(self, name: str, expected_states: Iterable[str] = (), *, timeout_s: float = 10.0, now: Optional[float] = None) -> CommandAcknowledgement:
+    def issue(self, name: str, expected_states: Iterable[str] = (), *, timeout_s: float = 10.0, now: Optional[float] = None,
+              revision: int = 0) -> CommandAcknowledgement:
         command = CommandAcknowledgement(
             name=str(name),
             expected_states={str(item).strip().lower() for item in expected_states if str(item).strip()},
             issued_at=time.monotonic() if now is None else float(now),
             timeout_s=max(0.1, float(timeout_s)),
+            issued_revision=int(revision),
         )
         self._commands[command.name] = command
         return command

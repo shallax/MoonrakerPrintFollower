@@ -562,12 +562,27 @@ class MoonrakerClient(QObject):
         self.connectionChanged.emit(False, f"{reason}; retrying in {retry_interval / 1000:g}s")
 
     def track_command(self, name: str, expected_states: Iterable[str] = (), *, timeout_s: float = 10.0) -> None:
-        command = self._session.commands.issue(name, expected_states, timeout_s=timeout_s)
+        command = self._session.commands.issue(name, expected_states, timeout_s=timeout_s,
+                                               revision=self._session.snapshot.revision)
         self._command_timer.start()
         self.commandChanged.emit(command.as_dict())
 
     def accept_command(self, name: str) -> None:
         command = self._session.commands.accepted(name)
+        if command is not None and not command.terminal:
+            # The ack can land AFTER the confirming state frame was
+            # already merged: Klipper pushes the state once and never
+            # re-sends it, so without this re-observation the command
+            # times out and the UI reads "pause not taken" while the
+            # printer IS paused (the harness domain review found the
+            # race the old flow could never win). Only a state merged
+            # AFTER the command went out may confirm it — a cached
+            # state from before must not (the expiry test's contract).
+            if self._session.snapshot.revision > command.issued_revision:
+                reobserved = self._session.commands.observe(
+                    self._session.snapshot.printer_state)
+                if reobserved:
+                    command = reobserved[0]
         if command is not None:
             self.commandChanged.emit(command.as_dict())
         self.force_refresh()
