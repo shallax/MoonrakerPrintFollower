@@ -408,14 +408,17 @@ def wait_for(check, budget_s, tick_s=2.0):
 
 
 def boot_step(hello):
-    """The boot record for every gallery: Cura's liveness plus the
-    QtTest injection state — the click path's availability is the one
-    thing that separates a healthy harness from a broken one."""
+    """The boot record for every gallery: Cura's liveness, the driver
+    plugin's registration in Cura's registry (a broken registration
+    once let the whole suite pass while Cura flagged the driver as
+    failed to load), and the QtTest injection state."""
     qtest_state = rpc({"id": 1, "cmd": "qtest_state"})
+    registered = hello.get("registered")
     note = (f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}"
+            f" · registered={registered}"
             f" · qtest: ok={qtest_state.get('ok')} err={qtest_state.get('error')}"
             f" wheel={qtest_state.get('sys_path_has_wheel')}")
-    return ("00-boot", note, "hello succeeds", True, shot("00-boot"))
+    return ("00-boot", note, "hello succeeds", registered is True, shot("00-boot"))
 
 LOAD_EMIT = """
 window = _main_window()

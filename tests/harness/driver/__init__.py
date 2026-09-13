@@ -97,6 +97,13 @@ class HarnessServer(QObject):
         # Cura extensions; the server is only an observation channel.
         pass
 
+    def setMetaData(self, *_args):
+        # The registry's post-register bookkeeping calls setMetaData
+        # after setVersion; without it Cura marks the driver "could
+        # not be loaded" and shows the corrupted-plugin card over the
+        # UI while the already-running server keeps the suite passing.
+        pass
+
     # -- plumbing ----------------------------------------------------
 
     def _accept(self):
@@ -213,9 +220,16 @@ class HarnessServer(QObject):
         visible_windows = [w for w in windows
                            if w.isVisible() and w.width() >= 1000]
         if cmd == "hello":
+            try:
+                from cura.CuraApplication import CuraApplication
+                registry = CuraApplication.getInstance().getPluginRegistry()
+                registered = registry.getPlugin("HarnessDriver") is not None
+            except Exception:
+                registered = False
             return {"id": request_id, "ok": True, "pid": os.getpid(),
                     "platform": QGuiApplication.platformName(),
-                    "stage": self._stage(), "windows": len(windows)}
+                    "stage": self._stage(), "windows": len(windows),
+                    "registered": registered}
         if cmd == "stage":
             return {"id": request_id, "ok": True, "stage": self._stage()}
         if cmd == "wait_stage":
