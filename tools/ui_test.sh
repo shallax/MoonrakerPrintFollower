@@ -145,6 +145,10 @@ fi
    -d pkg_stage 'files/plugins/*')
 cp -r /tmp/mpf/pkg_stage/files/plugins/Moonraker_Print_Follower "$PLUGIN_DIR/"
 cp -r "$root/tests/harness/driver" "$PLUGIN_DIR/HarnessDriver"
+# The container's root re-opens the seeded tree as the last staging
+# act: whatever uid skew survives between the host-side chmod and the
+# boot's view, the tree the boot actually sees ends up world-writable.
+docker exec "$CONTAINER" chmod -R 777 /tmp/mpf/xdg
 cp "$root/tests/harness/runner.py" /tmp/mpf/harness_runner.py
 cp "$root/tests/harness/scenarios.py" /tmp/mpf/scenarios.py
 cp "$root/tests/harness/scenario_map.py" /tmp/mpf/scenario_map.py
@@ -254,6 +258,26 @@ case "$MODE" in
             else
                 echo "ui_test: Xvfb is not running"
             fi
+            # The tree's state as the host seeded it and as the
+            # container sees it, the boot process's real uid, and a
+            # live write probe — an EACCES loop must be explainable by
+            # one of these.
+            for d in /tmp/mpf /tmp/mpf/xdg /tmp/mpf/xdg/cura /tmp/mpf/xdg/cura/5.13; do
+                echo "ui_test: host  $(stat -c "%a %U %G" "$d" 2>/dev/null) $d"
+            done
+            docker exec "$CONTAINER" bash -lc '
+                for d in /tmp/mpf /tmp/mpf/xdg /tmp/mpf/xdg/cura /tmp/mpf/xdg/cura/5.13; do
+                    echo "ui_test: container  $(stat -c "%a %U %G" "$d" 2>/dev/null) $d"
+                done
+                echo "ui_test: ubuntu user: $(su ubuntu -s /bin/bash -c "id -u; id -g" | tr "\n" " ")"
+                if su ubuntu -s /bin/bash -c "touch /tmp/mpf/xdg/cura/5.13/harness-probe" 2>/dev/null; then
+                    echo "ui_test: write probe as ubuntu: ok"
+                else
+                    echo "ui_test: write probe as ubuntu: FAILED"
+                fi
+                for p in $(pgrep -f "ld-linux.*UltiMaker-Cur[a]"); do
+                    echo "ui_test: $(grep "^Uid:" /proc/$p/status 2>/dev/null) of pid $p"
+                done'
             # The kernel's verdict on the stall: the process chain and
             # every thread's blocked syscall, then a live strace and
             # gdb backtrace of the loader (SYS_PTRACE is granted at
