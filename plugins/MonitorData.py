@@ -75,6 +75,10 @@ class MonitorData(QObject):
             timer = QTimer(self)
             timer.timeout.connect(callback)
             self._timers[category] = timer
+        self._watchdog = QTimer(self)
+        self._watchdog.setSingleShot(True)
+        self._watchdog.setInterval(3000)
+        self._watchdog.timeout.connect(self._watch_discovery)
         # Use QObject-bound receivers rather than lambdas that capture ``self``.
         # PyQt can automatically disconnect bound QObject receivers when this MonitorData
         # is destroyed; a lambda would outlive the C++ object on the long-lived client.
@@ -99,8 +103,32 @@ class MonitorData(QObject):
         # already active.
         if connected and not self._active:
             self.set_active(True)
+        if connected:
+            # The discovery watchdog: on ~30-40% of cold boots the
+            # discovery chain never arms (webcams empty, temperatures
+            # gone, endstops doubly gated on a system snapshot that
+            # also failed to land) and stays dead until a reconnect
+            # or a Klippy restart. The healthy chain settles in a
+            # couple of seconds, so the check fires 3 s after the
+            # connect: still dead, the same re-subscribe the
+            # Klippy-ready broadcast uses is issued once.
+            self._watchdog.stop()
+            self._watchdog.start()
         self.connectionStateChanged.emit(connected)
         self.changed.emit()
+
+    def _watch_discovery(self):
+        # Dead = the objects list never landed or no wanted object
+        # produced data; both heal via the discovery re-fire + the
+        # subscription re-issue.
+        if not self._active or self._client is None:
+            return
+        snapshot = self._snapshot
+        if not getattr(snapshot, "objects", ()) or \
+           not any(getattr(snapshot, "auxiliary", {}) or {}):
+            self._watchdog.stop()
+            self.refresh_discovery()
+            self._client.resubscribe()
 
     @property
     def connection_detail(self):

@@ -496,6 +496,18 @@ existed and every later read saw `None`.
   than N days fails the suite), and per-step evidence (injected event,
   coordinates, condition, poll history, scene rect, peer-ledger
   slice).
+- The boot-time discovery intermittency (2026-09-13): the cold-boot
+  race that kept the endstops (and sometimes webcams and
+  temperatures) empty is closed on two fronts. The plugin now runs a
+  discovery watchdog — three seconds after the connect, a chain that
+  never armed (no objects list, no wanted object's data) is re-fired
+  once through the same re-subscribe the Klippy-ready broadcast uses
+  (ARCHITECTURE.md pins the contract; the Qt suite tests the heal).
+  And the c-group's red turned out to be a miscalibrated
+  expectation, not the race: the endstop summary only says "Not
+  homed yet" when the items are EMPTY while connected, so the
+  scenario now asserts the rendered items — group c runs green
+  consistently.
 - The red-run rule: a scenario that has never been observed failing
   is not evidence. Every gate scenario commits its red gallery from
   the known-broken revision.

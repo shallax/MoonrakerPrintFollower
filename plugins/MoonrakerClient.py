@@ -257,6 +257,15 @@ class MoonrakerClient(QObject):
         objects = {name: None for name in sorted(set(CORE_OBJECTS) | set(self._aux_names))}
         socket.subscribe(objects, aux_names=set(self._aux_names))
 
+    def resubscribe(self) -> None:
+        """Re-issue the socket subscription exactly as the Klippy-ready
+        broadcast does — the heal for a subscription that raced the
+        upgrade or was wiped. The harness's boot probes traced the
+        discovery intermittency to the chain never arming; this is the
+        path that always heals it."""
+        if self._enabled and self._effective_feed_mode == "websocket":
+            self._subscribe()
+
     def set_auxiliary_objects(self, names: set) -> None:
         """The Monitor's wanted set feeds the merged subscription (A8/F5);
         a membership change re-issues the one subscription."""

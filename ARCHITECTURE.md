@@ -118,7 +118,10 @@ means that an existing upload may silently move to another printer.
 The Monitor's data feed deactivates with the session and re-arms itself on the
 next connection transition into connected — an automatic reconnect (a transport
 handover, a socket recovery) must leave the discovery chain live exactly as the
-manual reconnect does.
+manual reconnect does. A discovery watchdog holds the same line for the COLD
+boot: three seconds after the connect, a chain that never armed (the objects
+list empty or no wanted object's data arrived) is re-fired once, through the
+same re-subscribe the Klippy-ready broadcast uses.
 
 ## 4. Shared networking and polling
 

@@ -119,6 +119,26 @@ class QtRuntimeTests(unittest.TestCase):
         client.connectionChanged.emit(True, "Moonraker connected over websocket")
         self.assertTrue(model._data._active)
 
+    def test_discovery_watchdog_refires_the_dead_chain(self):
+        # On ~30-40% of cold boots the discovery chain arms dead and
+        # stays dead until a reconnect or a Klippy restart (the
+        # harness's boot probes). The watchdog fires 3 s after the
+        # connect and heals it exactly the way the Klippy-ready
+        # broadcast does: the discovery re-fire + the re-subscribe.
+        model, client, transport = self.monitor()
+        self.assertTrue(model._data._active)
+        client.connectionChanged.emit(True, "Moonraker connected over websocket")
+        self.assertTrue(model._data._watchdog.isActive())
+        # The dead state: no objects list, no aux data arrived (the
+        # snapshot is a frozen dataclass — updated through _update).
+        model._data._update(objects=(), auxiliary={})
+        before = len(transport.requests)
+        model._data._watch_discovery()
+        self.assertGreater(len(transport.requests), before,
+                           "the watchdog must re-fire the discovery requests")
+        self.assertFalse(model._data._watchdog.isActive(),
+                         "the watchdog is one-shot per connect")
+
     def test_m117_message_publishes_from_the_aux_snapshot(self):
         # The aux snapshot's objects arrive as mappingproxies (the
         # MonitorData contract); the M117 slot reads the message from

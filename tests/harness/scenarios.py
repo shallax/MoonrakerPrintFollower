@@ -151,7 +151,7 @@ SCENARIOS = [
      ]},
     {"id": "c5", "group": "c", "name": "endstops render from the peer's query",
      "steps": [
-         {"op": "wait_model", "prop": "endstopSummary", "contains": "Not homed", "budget": 45},
+         {"op": "wait_model", "prop": "endstopItems", "contains": "X", "budget": 45},
      ]},
 
     # ─── D: console ──────────────────────────────────────────────
