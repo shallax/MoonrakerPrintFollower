@@ -485,7 +485,7 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "sendConsoleCommand", "args": ["RENDERED-CONSOLE"]},
          {"op": "wait_rendered", "objectName": "moonrakerConsoleOutput", "contains": "RENDERED-CONSOLE", "budget": 30},
          {"op": "assert_aligned", "symmetric_margins": {"left": {"objectName": "infoPanel"},
-                                                        "right": {"objectName": "moonrakerJogZPlus"}},
+                                                        "right": {"objectName": "moonrakerControlsPane"}},
           "tol": 8},
      ]},
     {"id": "v10", "group": "v",

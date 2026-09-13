@@ -270,6 +270,9 @@ Component {
             }
 
             Cura.RoundedRectangle {
+                // Inert; the harness's margin-symmetry pin reads this
+                // pane's outer edge.
+                objectName: "moonrakerControlsPane"
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
                 Layout.preferredWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 390 * screenScaleFactor)
@@ -390,12 +393,13 @@ Component {
 
                     ColumnLayout {
                         id: controlContent
-                        // The attached scrollbar OVERLAYS the content, and
-                        // its own width swings with visibility — which
-                        // depends on this column's height. Subtracting it
-                        // here closed the loop (the dashboard's layout
-                        // polish loop in every capture).
-                        width: controlFlick.width - UM.Theme.getSize("default_margin").width
+                        // The attached scrollbar overlays the content, so
+                        // the column spans the full width: reserving the
+                        // scrollbar's width here left a dead band on the
+                        // right when it was hidden — the pane's right gap
+                        // read three margins wide against the left pane's
+                        // one (the harness's margin-symmetry pin).
+                        width: controlFlick.width
                         // Spacing lives on the children, not the layout: a
                         // collapsed section's hidden content must contribute
                         // nothing, so stacked headers sit flush like Cura's.

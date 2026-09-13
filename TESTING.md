@@ -440,10 +440,13 @@ action-panel save row never renders under the harness's preview, and
 the file manager's modal popups (the print-confirm dialog) open their
 dimmer but expose no walkable content to the harness — their
 containment stays covered by the model-level flows instead. The
-margin-symmetry pin found a real asymmetry on the current build: the
-left pane column's gap to the window edge is 11px while the right
-controls column's is 33px — pinned red as a finding for the author's
-adjudication (the gallery carries the measured rects).
+margin-symmetry pin caught and closed a real asymmetry: the controls
+pane reserved the scrollbar's width inside itself even when the
+scrollbar was hidden, so the right gap read three margins wide
+against the left pane's one (the author's doubled-edge class, the
+right side this time). The reservation is gone (the scrollbar
+overlays), and the pin now measures the panes' true outer edges:
+11px vs 11px, green.
 
 The step vocabulary (`scenarios.py`, interpreted in
 `runner.py`'s `suite_step`): `sim_set`/`sim_arm`/`sim_klippy`/

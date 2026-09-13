@@ -101,6 +101,7 @@ SCENARIO_MAP = {
     "MoonrakerPrintFollower.toggleFollowingPause": "h3",
     # The interactive items by objectName.
     "moonrakerTemperatureDetail": "v6",
+    "moonrakerControlsPane": "v9",
     "moonrakerStatusStateText": "v9", "moonrakerConsoleOutput": "v9",
     "moonrakerFileRowName": "v10", "moonrakerFileSearch": "v11",
     "moonrakerBedMeshMap": "v12",
