@@ -140,6 +140,9 @@ cp "$root/tests/harness/surface_coverage.py" /tmp/mpf/coverage.py
 # tree's version must be what the run peers against — a stale staged
 # copy once served old protocol shapes for days and every arm on a
 # new field silently no-oped (the power-arm calibration lesson).
+# The destination is created here: the CI runners start without the
+# harness_tests tree, and the copy used to fail every unit at staging.
+mkdir -p /tmp/mpf/harness_tests/tests/harness
 cp "$root/tests/harness/simulator.py" "$root/tests/harness/simulator_serve.py" \
     "$root/tests/test_simulator.py" /tmp/mpf/harness_tests/tests/harness/
 
