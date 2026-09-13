@@ -14,6 +14,10 @@ RUN_ROOT="$HARNESS_DIR/ui-artifacts/runs/$(date +%Y-%m-%d-%H%M%S)"
 
 mkdir -p "$HARNESS_DIR" "$RUN_ROOT"
 
+# The harness stages the plugin from dist/, and a fresh CI checkout has
+# no dist/ — the dev loop's make package doesn't exist here. Build it.
+make package >/dev/null
+
 docker build -q -t mpf-cura-harness "$root/tools/harness" >/dev/null
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 docker run -d --init --name "$CONTAINER" \
