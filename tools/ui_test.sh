@@ -248,6 +248,21 @@ case "$MODE" in
             else
                 echo "ui_test: Xvfb is not running"
             fi
+            # The kernel's verdict on the stall: a frozen CPU clock
+            # means the boot is blocked (the wchan/syscall names the
+            # blocker); a growing one means it is still computing.
+            docker exec "$CONTAINER" bash -lc '
+                pid=$(pgrep -f "^/lib64/ld-linux.*UltiMaker-Cur[a]" | head -1)
+                if [ -n "$pid" ]; then
+                    u1=$(sed -E "s/^[0-9]+ \([^)]*\) //" /proc/$pid/stat | cut -d" " -f12)
+                    sleep 3
+                    rest=$(sed -E "s/^[0-9]+ \([^)]*\) //" /proc/$pid/stat)
+                    u2=$(echo "$rest" | cut -d" " -f12)
+                    echo "ui_test: Cura pid $pid state $(echo "$rest" | cut -d" " -f1), cpu clock $u1 -> $u2, wchan $(cat /proc/$pid/wchan)"
+                    for t in /proc/$pid/task/*; do
+                        echo "ui_test:   tid $(basename $t): wchan $(cat $t/wchan 2>/dev/null), syscall $(cat $t/syscall 2>/dev/null)"
+                    done
+                fi'
             echo "ui_test: cura_run.log ($(wc -c < /tmp/mpf/cura_run.log) bytes):"
             tail -40 /tmp/mpf/cura_run.log
             exit 1
