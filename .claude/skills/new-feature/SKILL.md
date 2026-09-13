@@ -16,9 +16,9 @@ author is in the loop at every decision point when present; when away
 1. The author gives a version number; read that section of ROADMAP.md
    (create it if absent — Claude owns the roadmap) and chat about the
    feature: how they think it should look and function. Capture their
-   EXACT words — verbatim quotes go into the ROADMAP section and into
-   every persona brief. The personas critique the author's vision, not
-   my paraphrase.
+   intent in a careful paraphrase — never verbatim quotes, in the
+   ROADMAP section, persona briefs, comments or anywhere in the repo.
+   The personas critique the vision itself.
 2. Validate their thinking — NOT rubber-stamping. Challenge, question
    and push back until there is a mutual understanding: surface
    trade-offs they may not have seen, argue the counter-case where the
@@ -35,8 +35,8 @@ author is in the loop at every decision point when present; when away
 ## Phase 1 — Round-1 general critic
 
 ONE read-only critic agent BEFORE any implementation: point it at the
-ROADMAP section, ARCHITECTURE.md, INSTRUCTIONS.md, the verbatim author
-quotes and the intended implementation. Mandate: criticism before code,
+ROADMAP section, ARCHITECTURE.md, INSTRUCTIONS.md and the intended
+implementation. Mandate: criticism before code,
 no holds barred; read-only (no code changes, no repo edits — findings
 funnel back through me); severity-ordered findings, no cap, plus its
 top priorities.
@@ -57,17 +57,16 @@ lens can see (the 30 s timeout painted commands red; multi-extruder
 filament read "0.00 m"), so keep its brief on load-bearing claims, not
 exhaustive verification. From 3.6.0 a seventh joins: the 3D-printer
 enthusiast/pro-user persona, on feature value for the NEXT release —
-feeding planning, not gate-calls. Each brief contains, verbatim where
-quoted:
+feeding planning, not gate-calls. Each brief contains:
 
 - the agreed ROADMAP scope for the release
-- the author's own words on how it should look and function
+- a paraphrase of how it should look and function
 - what exists today and what is planned but unbuilt
 - the round-1 findings relevant to that role
 - rules: CRITIC ONLY — no code changes, nothing written into the repo,
   everything funnels back through me; research downloads (upstream
   sources, clones) go to a tmp location, NEVER into the source tree
-  (the author's rule, 2026-09-10)
+  (2026-09-10)
 - findings: NO CAP — surface everything; then name their top 3
 - websocket discipline: 4.0.0 IS the socket release — the swap stays
   the status feed only; new socket-driven features are tech-debt notes for
@@ -81,10 +80,10 @@ Keep the panel agents resumable — phase 6 re-engages the SAME personas
 rather than fresh critics, so their re-review is against their own
 recommendations.
 
-## Delta reviews (the author's ruling, 2026-09-10)
+## Delta reviews (2026-09-10)
 
 At ANY step, if the work has drifted materially from what a persona
-adjudicated — or the author's live rulings re-shaped an adjudication —
+adjudicated — or live rulings re-shaped an adjudication —
 suggest a DELTA review: re-engage the SAME persona (the panel agents
 are resumable for exactly this), constrained to what changed and
 whether the drift breaks the intent of anything it or the author
@@ -111,7 +110,7 @@ surface lists in tests/test_composed_components.py, section pins.
 Update ARCHITECTURE.md and its contract tests in the same commits as
 the code they describe.
 
-**Snapshot sequencing (the author's ruling, 2026-09-10):** large
+**Snapshot sequencing (2026-09-10):** large
 surfaces ship as author-testable snapshots, ordered by taste-value, so
 the author tries things early instead of discovering everything at the
 end of a long session:

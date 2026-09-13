@@ -51,7 +51,7 @@ INTER_POLL_TAU = 4.0
 INTER_POLL_MIN = 0.1
 # A poll interval beyond the cap made the ramp finish early and the head
 # DWELL at the newest observation for the remainder of every poll — a
-# visible periodic stop on slow feeds (the author's live report, ~10 s).
+# visible periodic stop on slow feeds (the live report, ~10 s).
 # The cap now sits above any realistic poll interval so the glide spans
 # the whole gap between observations.
 INTER_POLL_MAX = 30.0

@@ -28,7 +28,7 @@ Component {
         // The camera image's visible AND source are applied
         // IMPERATIVELY here: bindings on this dynamically created
         // document do not reliably re-evaluate when the model's
-        // camera values land (the author's first-entry stream never
+        // camera values land (the first-entry stream never
         // starting — the refresh button worked because its nonce
         // bump is the one path that provably re-drives the image on
         // their machine). The model bumps the nonce on the first URL
@@ -71,7 +71,7 @@ Component {
         // The mini widget's series: primary sensors (extruders, bed,
         // chamber heater) by default; when EVERY primary is hidden,
         // up to two of the remaining visible sensors stand in so the
-        // preview never goes blank while data exists (the author's
+        // preview never goes blank while data exists (the
         // request).
         property var miniChartSeries: {
             var payload = root.printer != null ? root.printer.temperatureChart : null;
@@ -141,7 +141,7 @@ Component {
             openPopOver = "";
             selectedChartSensor = "";
             // The gcode-store poll follows the console's OWN collapse
-            // state (the author's ruling: poll only while the console
+            // state (the ruling: poll only while the console
             // is on screen, with a backfill on expand). A printer that
             // attaches with the console collapsed starts without the
             // poll; expanding starts it (and seeds the backfill).
@@ -163,13 +163,13 @@ Component {
             updateCameraImage();
         }
         focus: true
-        // Esc on the Monitor page (the author's live request): the
+        // Esc on the Monitor page (a live request): the
         // popover and chart close first, then the page itself —
         // Preview when anything is sliced, Prepare otherwise. A
         // WINDOW-LEVEL Shortcut, never a Keys handler: Cura's
         // buttons do not take focus, so the moment the user clicks
         // anything the handler never sees Esc (the file-manager
-        // popup's own history — the author's live report: Esc on
+        // popup's own history — the live report: Esc on
         // the Monitor page did nothing). While the file-manager
         // popup is open THIS shortcut owns the key: an open
         // confirmation cancels (its content's own handler having
@@ -178,7 +178,7 @@ Component {
             sequence: "Esc"
             // THE one window-level shortcut: the whole Esc ladder in
             // one place, so the key can never have two claimants
-            // (the author's live report: the popup's own shortcut
+            // (the live report: the popup's own shortcut
             // and this one fought, and the popup lost). The popup's
             // open state lives in the MODEL now — no parent chains,
             // no focus.
@@ -186,7 +186,7 @@ Component {
                 if (root.printer != null && root.printer.fileManagerOpen) {
                     if (root.printer.filePrintConfirm !== "") {
                         // The print confirmation is the TOP layer: Esc
-                        // cancels it, not the popup (the author's
+                        // cancels it, not the popup (the
                         // ruling).
                         root.printer.fileCancelPrint();
                     } else {
@@ -315,7 +315,7 @@ Component {
                 // No Layout.leftMargin here: the host RowLayout's
                 // anchors.margins already indents every pane, and the
                 // doubled left edge read wider than the right pane's
-                // (the author's report).
+                // (the report).
                 border.color: UM.Theme.getColor("lining")
                 border.width: UM.Theme.getSize("default_lining").width
                 color: UM.Theme.getColor("main_background")
@@ -359,7 +359,7 @@ Component {
                         implicitHeight: width
 
                         // The SAME theme-chevron family as the console
-                        // and status toggles (the author's ruling: all
+                        // and status toggles (the ruling: all
                         // pane collapse buttons uniform). This pane is
                         // leftmost and collapses left.
                         iconSource: root.infoCollapsed ? UM.Theme.getIcon("ChevronSingleRight") : UM.Theme.getIcon("ChevronSingleLeft")
@@ -613,7 +613,7 @@ Component {
                 Layout.minimumWidth: 180 * screenScaleFactor
 
                 // Two SIBLING cards in the middle column: the webcam
-                // card on top, the console card below it (the author's
+                // card on top, the console card below it (the
                 // ruling — the console nested inside the webcam card
                 // read as one mis-anchored pane).
                 ColumnLayout {
@@ -663,7 +663,7 @@ Component {
                                 // console is collapsed; expanded, the camera
                                 // fits its stream and the console (the
                                 // column's last child) absorbs the leftover
-                                // space (the author's rulings).
+                                // space (the rulings).
                                 // The viewport fills the webcam card: a
                                 // small stream centres inside the card, and
                                 // the card itself grows or fits with the
@@ -770,7 +770,7 @@ Component {
                                 Rectangle {
                                     // A red recording dot plus "Live"
                                     // while the stream is genuinely
-                                    // live (the author's request).
+                                    // live (the request).
                                     visible: root.cameraConfigured && root.printer != null && root.printer.monitorConnected
                                     anchors.top: cameraImage.top
                                     anchors.left: cameraImage.left
@@ -900,7 +900,7 @@ Component {
                     Cura.RoundedRectangle {
                         id: consolePanel
                         Layout.fillWidth: true
-                        // Auto-collapse below 350 px (the author's
+                        // Auto-collapse below 350 px (the
                         // live report: the console's buttons overflowed
                         // when the window was crushed). The persisted
                         // expand state is untouched — the width decides
@@ -922,12 +922,12 @@ Component {
                         // author's live report). Its height is the
                         // user's, bounded by the clamp window below.
                         // UNTIL they drag the handle, the card keeps the
-                        // pane default: the author's live test found even
+                        // pane default: the live test found even
                         // 55% of the column "way too high" — ~28% it is.
                         // Collapsed, the card is a header strip sized by
                         // the HANDLE and the BUTTON with equal top/bottom
                         // margins — those two are the largest elements and
-                        // decide the strip (the author's ruling). The
+                        // decide the strip (the ruling). The
                         // inner column's implicit does not shrink reliably
                         // once its content hides, so the collapsed height
                         // is explicit.
@@ -941,7 +941,7 @@ Component {
                         // input row usable, and its ceiling leaves the
                         // webcam card its own header plus a viewport — a
                         // pane crushed under the pointer is the hazard of
-                        // the author's earlier report. A stored height
+                        // the earlier report. A stored height
                         // that no longer fits a smaller stage renders
                         // inside the clamps WITHOUT losing the user's
                         // intent: the model keeps what they set.
@@ -968,7 +968,7 @@ Component {
                         // for the body at all: the well cannot hold the
                         // prompt, the input and its buttons any more, and
                         // a squeezed column pushed them past the black
-                        // border (the author's live report). The body
+                        // border (the live report). The body
                         // FADES out just below the minimum and is gone for
                         // the rest of the travel to the collapse position,
                         // so the closing pane reads as an empty shell
@@ -1079,14 +1079,14 @@ Component {
                             // area. It rides BOTH states: pulling the strip
                             // down to the collapse position collapses the
                             // pane, and dragging back out of it expands the
-                            // pane (the author's request).
+                            // pane (the request).
                             Item {
                                 id: consoleResizeHandle
                                 objectName: "consoleResizeHandle"
                                 // Hidden while the auto-collapse width
                                 // holds: a grab bar for an expansion
                                 // that cannot happen would be a lie
-                                // (the author's live request).
+                                // (a live request).
                                 visible: !consolePanel.tooNarrow
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: consolePanel.consoleHandleHeight
@@ -1127,7 +1127,7 @@ Component {
                                 Rectangle {
                                     anchors.centerIn: parent
                                     // Wide and thick enough to read as a
-                                    // grab bar at a glance (the author's
+                                    // grab bar at a glance (the
                                     // live ruling — the first grip was
                                     // too subtle to find).
                                     width: 72 * screenScaleFactor
@@ -1148,7 +1148,7 @@ Component {
                                 Layout.topMargin: UM.Theme.getSize("thin_margin").height
                                 // The bottom breathing room keeps the
                                 // collapsed card from hugging the title
-                                // on both edges (the author's report).
+                                // on both edges (the report).
                                 Layout.bottomMargin: UM.Theme.getSize("thin_margin").height
                                 Layout.leftMargin: UM.Theme.getSize("thin_margin").width
                                 Layout.rightMargin: UM.Theme.getSize("thin_margin").width
@@ -1161,7 +1161,7 @@ Component {
                                 // The toggle hugs the top LEFT and
                                 // matches the OTHER panes' collapse
                                 // buttons (‹/›), not a theme chevron
-                                // (the author's ruling).
+                                // (the ruling).
                                 Cura.SecondaryButton {
                                     id: consoleCollapseButton
                                     Layout.alignment: Qt.AlignVCenter
@@ -1182,7 +1182,7 @@ Component {
                                     // collapses upward); the button
                                     // centres the icon itself.
                                     // The accordion convention: DOWN when expanded
-                                    // (the author's ruling — the first direction read
+                                    // (the ruling — the first direction read
                                     // inverted).
                                     iconSource: root.printer != null && root.printer.sectionExpandedMap["console"] !== false && !consolePanel.tooNarrow ? UM.Theme.getIcon("ChevronSingleDown") : UM.Theme.getIcon("ChevronSingleUp")
                                     tooltip: consolePanel.tooNarrow ? "The window is too narrow — widen it to expand the console." : (root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? "Collapse the console." : "Expand the console.")
@@ -1211,7 +1211,7 @@ Component {
                                     // collapsed strips.
                                     color: root.printer != null && root.printer.sectionExpandedMap["console"] !== false && !consolePanel.tooNarrow ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
                                 }
-                                // The error bell (the author's live
+                                // The error bell (the live
                                 // request): while the console is
                                 // collapsed, a NEW error line rings a
                                 // red bell next to the header until
@@ -1259,7 +1259,7 @@ Component {
                                 // The section stays ENABLED while
                                 // disconnected: scrolling, selecting and
                                 // copying the restored history must keep
-                                // working (the author's ruling). Only
+                                // working (the ruling). Only
                                 // the INPUT surface disables.
                                 enabled: root.printer != null
                                 property int consoleRecallIndex: -1
@@ -1299,7 +1299,7 @@ Component {
 
                                 function consoleLineHtml(entry) {
                                     // Terminal voice, three speakers
-                                    // (the author's rulings): commands
+                                    // (the rulings): commands
                                     // carry ">", Moonraker's responses
                                     // carry "<", and the plugin's own
                                     // notes carry "#" in amber — a hue
@@ -1309,13 +1309,13 @@ Component {
                                     // render BRIGHT (red/green); saved
                                     // commands keep their TEXT light
                                     // grey and put the verdict on the
-                                    // ">" only (the author's live
+                                    // ">" only (the live
                                     // ruling: the whole line turning
                                     // green was too much) — green
                                     // matches the input row's prompt,
                                     // red is a failure, quiet grey is
                                     // no verdict. While unsaved the
-                                    // line stays blue (the author's
+                                    // line stays blue (the
                                     // ruling). The muted hues are
                                     // contrast-checked (≥4.5:1 on the
                                     // dark well) — the old muted
@@ -1329,7 +1329,7 @@ Component {
                                     } else if (entry.saved === false) {
                                         // Sent but not yet flushed to
                                         // disk: blue until the save
-                                        // lands (the author's ruling —
+                                        // lands (the ruling —
                                         // the API verdict flips too
                                         // fast to read live).
                                         hue = "#58a6ff";
@@ -1341,7 +1341,7 @@ Component {
                                         // the verdict colours are LIVE
                                         // signals, and a restored command
                                         // showing its old green read as
-                                        // current state (the author's
+                                        // current state (the
                                         // report). Restored responses
                                         // keep their muted hues.
                                         hue = entry.kind === "command" ? "#9da7b3" : (entry.error ? "#d0635e" : (entry.success ? "#4f9a5d" : "#9da7b3"));
@@ -1411,11 +1411,11 @@ Component {
                                         // insert()ing afterwards produced
                                         // an EMPTY pane in the real Cura
                                         // engine (total=53 rendered=53
-                                        // text='' — the author's smoking
+                                        // text='' — the smoking
                                         // gun), while the append path's
                                         // insert works there. The
                                         // restored history then opens at
-                                        // the NEWEST line (the author's
+                                        // the NEWEST line (the
                                         // ruling).
                                         consoleText.text = html;
                                         if (fromEmpty) {
@@ -1463,7 +1463,7 @@ Component {
                                     // pane that reads as "at the end",
                                     // and auto-scrolling then buried
                                     // the restored commands at the head
-                                    // (the author's report).
+                                    // (the report).
                                     if (wasAtEnd && consoleRenderedLines > 0) {
                                         consoleFlick.stickToEnd = true;
                                         consoleFlick.contentY = consoleFlick.contentHeight - consoleFlick.height;
@@ -1486,7 +1486,7 @@ Component {
                                             // they want to follow the tail
                                             // again: return the view to the
                                             // prompt even from a scrolled-up
-                                            // position (the author's ruling).
+                                            // position (the ruling).
                                             consoleFlick.stickToEnd = true;
                                             consoleFlick.contentY = consoleFlick.contentHeight - consoleFlick.height;
                                         }
@@ -1523,7 +1523,7 @@ Component {
                                     Layout.fillHeight: true
                                     // The disconnected state reads in the
                                     // well itself: grey instead of the
-                                    // terminal black (the author's live
+                                    // terminal black (the live
                                     // ruling).
                                     color: root.printer != null && root.printer.monitorConnected ? "#161b22" : "#2d333b"
                                     border.color: UM.Theme.getColor("lining")
@@ -1559,10 +1559,10 @@ Component {
                                                 // updates over several frames
                                                 // after setting the text, and
                                                 // one-shot scrolls measured
-                                                // stale values (the author's
+                                                // stale values (the
                                                 // reports).
                                                 property bool restoreScrollPending: false
-                                                // Stick-to-end (the author's
+                                                // Stick-to-end (the
                                                 // live report: when the pane
                                                 // is crushed and the text
                                                 // wraps, the sync pins to a
@@ -1583,7 +1583,7 @@ Component {
                                                 // several frames and a
                                                 // one-shot scroll kept
                                                 // landing off by the command
-                                                // bar (the author's reports).
+                                                // bar (the reports).
                                                 Timer {
                                                     id: restoreQuietTimer
                                                     interval: 120
@@ -1594,7 +1594,7 @@ Component {
                                                 // movement cancels the restore's
                                                 // follow — a user scrolling up
                                                 // mid-history is never yanked
-                                                // (the author's ruling).
+                                                // (the ruling).
                                                 onMovementStarted: {
                                                     restoreScrollPending = false;
                                                     stickToEnd = false;
@@ -1681,7 +1681,7 @@ Component {
                                                 // layout slot stole a line from
                                                 // the output area and the feed
                                                 // stopped short of the input row
-                                                // (the author's live report).
+                                                // (the live report).
                                                 anchors.left: parent.left
                                                 anchors.right: parent.right
                                                 anchors.bottom: parent.bottom
@@ -1787,7 +1787,7 @@ Component {
                     }
                     Rectangle {
                         // The connection dot rides the Printer status
-                        // pane's title — the author's chosen spot for
+                        // pane's title — the chosen spot for
                         // the always-readable connection state. Green
                         // when connected, red when not.
                         Layout.alignment: Qt.AlignVCenter
@@ -1907,7 +1907,7 @@ Component {
                                     // ("Status" and "Message"); the label
                                     // column stays just wide enough for
                                     // the words so the values keep the
-                                    // room (the author's ruling).
+                                    // room (the ruling).
                                     width: 64 * screenScaleFactor
                                     text: "Status"
                                     color: UM.Theme.getColor("text_inactive")
@@ -1954,7 +1954,7 @@ Component {
                                     text: root.printer != null ? root.printer.monitorMessage : ""
                                     // The message is primary content: full
                                     // text colour, not the inactive grey
-                                    // (the author's ruling).
+                                    // (the ruling).
                                     color: UM.Theme.getColor("text")
                                     elide: Text.ElideRight
                                     wrapMode: Text.NoWrap
@@ -1985,7 +1985,7 @@ Component {
                                 // lane's status row, first in the grid so
                                 // its columns ARE the grid's columns (a
                                 // separate row above read as misaligned —
-                                // the author's report). The caption is
+                                // the report). The caption is
                                 // permanent so the row explains itself
                                 // before its first event; the value is
                                 // "—" until then.
@@ -2474,7 +2474,7 @@ Component {
                                 }
                                 UM.Label {
                                     // An empty list says so instead of
-                                    // reading as a bug (the author's
+                                    // reading as a bug (the
                                     // live request): the objects arrive
                                     // when the slicer's EXCLUDE_OBJECT
                                     // lines execute — seconds into a
@@ -2571,7 +2571,7 @@ Component {
                                 }
                             }
 
-                            // The manual Reconnect (the author's
+                            // The manual Reconnect (the
                             // live request): the recovery for a UI
                             // stuck after a printer error or a
                             // dropped connection — cycles the client
@@ -2705,7 +2705,7 @@ Component {
                     width: statusCollapsedTitle.implicitHeight
                     // Extra room at the top so the connection dot leads
                     // the rotated title with a little air between them
-                    // (the author's rulings: the dot comes before the
+                    // (the rulings: the dot comes before the
                     // word, matching the expanded header's dot-before-
                     // title order, and the gap reads as a space).
                     height: statusCollapsedTitle.implicitWidth + 24 * screenScaleFactor
@@ -3073,7 +3073,7 @@ Component {
             z: 1000
             // Sized to the content, margins included — the box must
             // always contain its values, and it may overflow any
-            // boundary per the author's ruling. The y side is chosen
+            // boundary per the ruling. The y side is chosen
             // by the room BELOW the cursor, so a tall box flips above
             // instead of sliding off the bottom of the stage.
             width: tooltipColumn.implicitWidth + 2 * UM.Theme.getSize("narrow_margin").width

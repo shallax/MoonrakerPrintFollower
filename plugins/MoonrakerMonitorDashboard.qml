@@ -31,7 +31,7 @@ Component {
         }
         // The document root sits in the bubbling chain of EVERY
         // focused item in the stage, so Esc closes the popup no
-        // matter where focus actually landed (the author's Snapshot
+        // matter where focus actually landed (the Snapshot
         // 0 report: Esc only worked while the search field was
         // focused).
         Keys.onEscapePressed: {
@@ -165,7 +165,7 @@ Component {
                     // remainder. The clip boundary is pixel-exact —
                     // glyphs cut mid-stroke, so the colour boundary
                     // follows the fill edge continuously, not letter
-                    // by letter (the author's request).
+                    // by letter (the request).
                     Item {
                         id: emergencyTextWhite
                         anchors.top: parent.top
@@ -359,7 +359,7 @@ Component {
                         height: width
                         implicitHeight: width
                         // The SAME theme-chevron family as the monitor's
-                        // pane toggles (the author's ruling: all pane
+                        // pane toggles (the ruling: all pane
                         // collapse buttons uniform).
                         iconSource: root.controlsCollapsed ? UM.Theme.getIcon("ChevronSingleLeft") : UM.Theme.getIcon("ChevronSingleRight")
                         tooltip: root.controlsCollapsed ? "Show the printer controls." : "Hide the printer controls."
@@ -482,7 +482,7 @@ Component {
                             }
 
                             RowLayout {
-                                // NO-REFLOW RULE (the author's ruling):
+                                // NO-REFLOW RULE (the ruling):
                                 // the action buttons never disappear —
                                 // they disable. The row used to vanish
                                 // entirely when no action applied and
@@ -694,7 +694,7 @@ Component {
                                         text: root.printer != null && root.printer.homedAxes.length > 0 ? root.printer.homedAxes.toUpperCase().split('').join(' ') + "  · " : "—"
                                         color: UM.Theme.getColor("text")
                                     }
-                                    // The abs/rel toggle (the author's
+                                    // The abs/rel toggle (the
                                     // live ruling: the mode TEXT is the
                                     // control, never a separate button)
                                     // — clicking the word switches and
@@ -736,7 +736,7 @@ Component {
                                 }
                                 UM.Label {
                                     // The grey-label / black-value
-                                    // readout pattern (the author's
+                                    // readout pattern (the
                                     // ruling, after the MCUs section),
                                     // with an honest emdash when there
                                     // is no value.
@@ -1082,7 +1082,7 @@ Component {
                                 }
                                 UM.Label {
                                     // The unit rides the row, like the
-                                    // speed row's "mm/s" (the author's
+                                    // speed row's "mm/s" (the
                                     // ruling) — the free-text length
                                     // box was dropped as unnecessary.
                                     text: "mm"
@@ -1117,7 +1117,7 @@ Component {
                                     color: UM.Theme.getColor("text_inactive")
                                 }
                                 // Same highlight pattern as the
-                                // distance row (the author's live
+                                // distance row (the live
                                 // report).
                                 Item {
                                     Layout.fillWidth: true
@@ -1141,7 +1141,7 @@ Component {
                                     }
                                 }
                                 // Same highlight pattern as the
-                                // distance row (the author's live
+                                // distance row (the live
                                 // report).
                                 Item {
                                     Layout.fillWidth: true
@@ -1165,7 +1165,7 @@ Component {
                                     }
                                 }
                                 // Same highlight pattern as the
-                                // distance row (the author's live
+                                // distance row (the live
                                 // report).
                                 Item {
                                     Layout.fillWidth: true
@@ -1189,7 +1189,7 @@ Component {
                                     }
                                 }
                                 // Same highlight pattern as the
-                                // distance row (the author's live
+                                // distance row (the live
                                 // report).
                                 Item {
                                     Layout.fillWidth: true
@@ -1231,7 +1231,7 @@ Component {
                                 // Pin names like STEPPER_X are not
                                 // self-evidently endstops — the block
                                 // gets its own bold title, like the
-                                // MCUs section (the author's ruling).
+                                // MCUs section (the ruling).
                                 // The title stays always: it labels the
                                 // chips too.
                                 text: "Endstops"
@@ -1244,7 +1244,7 @@ Component {
                                 // The summary line yields to the chips
                                 // once they exist — they ARE the
                                 // readout, and a bare emdash beside
-                                // them read as an error (the author's
+                                // them read as an error (the
                                 // live report). The chips sit below the
                                 // jog pad, so this follows their
                                 // accepted appearance carve-out.

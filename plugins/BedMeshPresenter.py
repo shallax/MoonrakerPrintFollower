@@ -76,7 +76,7 @@ class BedMeshPresenter(QObject):
                 self._cura.controller.getScene().sceneChanged.emit(self._node)
         except Exception as error:
             # A missing renderer/API must not disable printer following —
-            # but it must not vanish silently either: the author's
+            # but it must not vanish silently either: the
             # "Hide bed mesh does nothing" report needs the real cause
             # in Cura's log, throttled to once per 30 s.
             from UM.Logger import Logger

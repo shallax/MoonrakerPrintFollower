@@ -34,7 +34,7 @@ class PrinterBinding(QObject):
         # constructs before Cura's active machine exists (identity
         # "unknown"), and every cached read saw the unknown machine's
         # EMPTY record — the console's restored transcript never loaded
-        # (the author's "console starts completely empty" report).
+        # (the "console starts completely empty" report).
         return self._store.get()
     @property
     def identity(self): return self._machine_id, self._machine_name

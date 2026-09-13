@@ -23,7 +23,7 @@ class MonitorCommands(QObject):
     # failure while the printer does exactly what it was asked.
     EXPECTED_TIMEOUT_S = {"Resume": 300}
     MAX_QUEUED_COMMANDS = 16
-    # The post-e-stop reconnect delay (the author's ruling,
+    # The post-e-stop reconnect delay (the ruling,
     # 2026-09-10, live-proven on their printer): after the stop the
     # host refuses commands until the connection is cycled, so the
     # plugin cycles it ONCE, automatically. The pause lets the stop
@@ -47,7 +47,7 @@ class MonitorCommands(QObject):
         self._data = data
         # Bumped by the emergency stop: the in-flight command's
         # terminal reply must not overwrite "Emergency stop issued"
-        # with an outcome-unknown verdict (the author's live
+        # with an outcome-unknown verdict (the live
         # request: after the stop the plugin assumes the print was
         # cancelled and clears everything).
         self._lifecycle = 0
@@ -104,7 +104,7 @@ class MonitorCommands(QObject):
 
     def report_status(self, text) -> None:
         """A non-command status line for the action pane (the print
-        watchdog's failure verdict — the author's live report: a
+        watchdog's failure verdict — the live report: a
         start that never happens must say so where the user looks)."""
         self._status = str(text)
         self.changed.emit()
@@ -281,7 +281,7 @@ class MonitorCommands(QObject):
         self._suppress_click = True  # the release of this hold is not a click
         self._lifecycle += 1
         # The print is ASSUMED stopped at the client's observation
-        # layer (the author's ruling) — one point, every consumer
+        # layer (the ruling) — one point, every consumer
         # (guards, jog gate, the follower's coordinator).
         self._data.assume_print_stopped()
         self.emergencyStopped.emit()

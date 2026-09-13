@@ -395,7 +395,7 @@ class MoonrakerClient(QObject):
         QTimer.singleShot(0, refresh)
 
     def assume_print_stopped(self) -> None:
-        """The e-stop's assumption (the author's ruling): the print is
+        """The e-stop's assumption (the ruling): the print is
         over until the printer reports otherwise. The CURRENT snapshot
         re-emits immediately with the assumed state so every consumer
         re-evaluates now, not at the next poll — which may never come
@@ -473,7 +473,7 @@ class MoonrakerClient(QObject):
         if generation != self._generation:
             return
         if self._session.state.assume_print_stopped:
-            # The e-stop's assumption (the author's ruling): until
+            # The e-stop's assumption (the ruling): until
             # the printer reports a real non-printing state, every
             # emitted status reads as cancelled — the monitor's
             # guards, the jog gate AND the follower's coordinator
@@ -530,7 +530,7 @@ class MoonrakerClient(QObject):
         if not self._connected:
             self._connected = True
             # Name the live transport so the connected state is
-            # verifiable at a glance (the author's ask: confidence
+            # verifiable at a glance (the ask: confidence
             # that the websocket is really in use).
             transport = "websocket" if self._effective_feed_mode == "websocket" else "HTTP polling"
             self.connectionChanged.emit(True, f"Moonraker connected over {transport}")

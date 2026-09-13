@@ -41,7 +41,7 @@ def moonraker_error_text(payload: Dict[str, Any]) -> str:
     ``{"error": "..."}`` (handled at the call sites) and
     ``{"code": 400, "message": "Unknown", "traceback": ...}`` — whose
     ``message`` is often just "Unknown" while the real text sits in
-    the traceback tail (the author's live report: a cold extrude
+    the traceback tail (the live report: a cold extrude
     surfaced a bare 400, hiding "Extrude below minimum temp — see
     the 'min_extrude_temp' config option")."""
     message = str(payload.get("message") or "").strip()

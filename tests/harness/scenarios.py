@@ -966,7 +966,7 @@ SCENARIOS = [
      ]},
 
     # ─── preview ──────────────────────────────────────────────
-    {"id": "h2", "group": "printing", "name": "the load end-to-end from a fresh boot (the author's flow)",
+    {"id": "h2", "group": "printing", "name": "the load end-to-end from a fresh boot (the flow)",
      "steps": [
          {"op": "click_stage", "stage": "PreviewStage"},
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"},
@@ -1269,7 +1269,7 @@ SCENARIOS = [
          {"op": "sim_ledger", "needle": "printer.objects.subscribe", "field": "path", "min": 1, "budget": 40},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 60},
      ]},
-    # ─── the preview, end to end (the author's comprehensive list) ───
+    # ─── the preview, end to end (the comprehensive list) ───
     {"id": "p1", "group": "preview",
      "name": "the load renders the real toolpath, the indicator, and the card",
      "steps": [

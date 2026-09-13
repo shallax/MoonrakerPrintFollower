@@ -80,7 +80,7 @@ class PrintCoordinator(QObject):
         pauses.changed.connect(self._publish)
         pauses.message.connect(self._message)
         # A rebuilt preview stage destroys and recreates the QML
-        # controls (the author's new-build-plate report); the
+        # controls (the new-build-plate report); the
         # presentation re-emits after recreating so the fresh card
         # receives the full value set immediately, before any other
         # event would republish it.
@@ -148,7 +148,7 @@ class PrintCoordinator(QObject):
             # slice) is the moment Cura's controls must come up: the
             # plugin-driven load fires none of Cura's own activity
             # events, so Cura's panel and slider stay dormant until an
-            # unrelated event (the author's live report). Nudge Cura's
+            # unrelated event (the live report). Nudge Cura's
             # own computation on the edge, and once more after the
             # render settles.
             has_toolpath = bool(self._cura.has_toolpath)
@@ -276,7 +276,7 @@ class PrintCoordinator(QObject):
 
     def _maybe_fetch_mr_metadata(self, filename, job):
         """The active print's file metadata from Moonraker — a tiny JSON
-        header parse, NOT a gcode download (the author's no-silent-
+        header parse, NOT a gcode download (the no-silent-
         downloads ruling covers the file itself; the header query is
         what Moonraker's own UI uses for the same readouts).
 
@@ -373,7 +373,7 @@ class PrintCoordinator(QObject):
                 self._detail = "Detached"
         # Cura streams position changes at the render cadence; the
         # panel values do not need that rate. Throttle the ETA and
-        # publish to 5 Hz — the author's preview-lag report.
+        # publish to 5 Hz — the preview-lag report.
         now = time.monotonic()
         if now - self._publish_at < 0.2:
             return
@@ -405,7 +405,7 @@ class PrintCoordinator(QObject):
 
     def download_for_monitor(self):
         """Download and index the active print WITHOUT loading it into
-        the preview: the author's optimisation — the monitor's better
+        the preview: the optimisation — the monitor's better
         layer and ETA must not pay for a scene render the user may not
         want. The index service pulls metadata, restores or downloads
         the file, and builds the index; a later preview load finds the

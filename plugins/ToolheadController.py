@@ -51,7 +51,7 @@ from .ToolheadPolicy import (
 class ToolheadController(QObject):
     changed = pyqtSignal()
     # A move was rejected by the client-side clamp: the model routes
-    # this into the console as a local note (the author's live
+    # this into the console as a local note (the live
     # request — a rejected nudge must explain itself in BOTH the
     # jog status and the console feed).
     rejectedNote = pyqtSignal(str)
@@ -91,7 +91,7 @@ class ToolheadController(QObject):
         data.commandChanged.connect(self._command_changed)
         commands.changed.connect(self._pump)
         # The assumed-cancelled latch flips through commands.changed:
-        # the jog gate must refresh with it (the author's live
+        # the jog gate must refresh with it (the live
         # report — the jog pad stayed locked behind a print that no
         # longer existed).
         commands.changed.connect(self.observe)
@@ -115,7 +115,7 @@ class ToolheadController(QObject):
                 self._mode_latch = None
             # else: HOLD the user's choice while the G90/G91 rides
             # the lane — an eager poll revert would bounce the mode
-            # display back and forth (the author's live report:
+            # display back and forth (the live report:
             # hysteresis on clicking).
         else:
             self._mode_latch = None
@@ -174,7 +174,7 @@ class ToolheadController(QObject):
         distance = self._clamp_jog(axis, self._jog_distance * direction)
         if distance == 0.0:
             if axis == "z" and direction == -1:
-                # The clamp rejected the move (the author's live
+                # The clamp rejected the move (the live
                 # request): the jog status says so, and the console
                 # gets a local note — once per burst, so a flurry of
                 # taps cannot flood the feed.
@@ -192,7 +192,7 @@ class ToolheadController(QObject):
         self._push(op)
 
     def set_absolute(self, absolute: bool) -> None:
-        """The abs/rel toggle (the author's live request): subsequent
+        """The abs/rel toggle (a live request): subsequent
         jogs, extrudes and parks encode against this mode, and the
         PRINTER adopts it too — the actual G90/G91 rides the command
         lane so the next poll's gcode_move agrees instead of
@@ -210,7 +210,7 @@ class ToolheadController(QObject):
     def _polled_z(self):
         """The freshest Z the poll knows: the live motion report when
         present, else the gcode position (the Position readout's own
-        source — the author's live report: the plugin KNOWS Z and
+        source — the live report: the plugin KNOWS Z and
         must guard with it)."""
         core = self._data.snapshot.core
         live = (core.get("motion_report") or {}).get("live_position") or ()
@@ -240,7 +240,7 @@ class ToolheadController(QObject):
         toolhead = self._data.snapshot.auxiliary.get("toolhead") or {}
         try:
             if axis == "z" and self._z_estimate is not None:
-                # The client-side Z projection (the author's live
+                # The client-side Z projection (the live
                 # report: rapid nudge taps outrun the poll, and each
                 # tap clamped against the STALE position let the
                 # merged queue walk the head below zero). The
@@ -255,7 +255,7 @@ class ToolheadController(QObject):
             maximum = float(maximum[index]) if len(maximum) > index else None
             if axis == "z" and (minimum is None or minimum < 0.0):
                 # The Z floor is ZERO, whatever the configured
-                # position_min says (the author's live ruling:
+                # position_min says (the live ruling:
                 # "you know what clicking nudge would move to. Why
                 # are you allowing it?" — many printers configure a
                 # negative Z minimum for probe travel, but the jog
@@ -317,7 +317,7 @@ class ToolheadController(QObject):
         # The Z projection advances the moment the move is ACCEPTED
         # into the queue — a later tap clamps against the move its
         # predecessor already covers, never the stale polled value
-        # (the author's live report: the head could still be nudged
+        # (the live report: the head could still be nudged
         # to zero and beyond).
         if getattr(op, "axis", None) == "z":
             base = self._z_estimate if self._z_estimate is not None else self._polled_z()

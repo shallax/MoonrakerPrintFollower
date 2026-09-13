@@ -180,7 +180,7 @@ class MonitorCamera(QObject):
     def _bridge_url(self, config, url):
         # A camera behind the header-auth proxy cannot render through
         # Cura's loader (NetworkMJPGImage sends no headers): republish
-        # it on the keyless loopback bridge (the author's 4.0.0
+        # it on the keyless loopback bridge (the 4.0.0
         # ruling). The key travels with the bridge's own upstream
         # fetch; the loader sees a plain local URL.
         if not url or not config.api_key or not self._remote_stream(url):

@@ -14,7 +14,7 @@ from .ConsoleController import ConsoleController
 
 
 def _british_spelling() -> bool:
-    """British spellings for Commonwealth-English locales: the author's
+    """British spellings for Commonwealth-English locales: the
     ruling is that the plugin is British, but the handful of variant
     strings follow the USER's locale — QLocale decides en_GB vs en_US.
     Bare "en" and other languages get the American spellings Cura's own
@@ -141,7 +141,7 @@ def _read_state() -> dict:
 
 
 def _toolhead_state(stored) -> dict:
-    """The jog/extrude selection persists (the author's live report:
+    """The jog/extrude selection persists (the live report:
     the chosen options were not saved). Values are floats; anything
     unparsable falls back to the policy defaults."""
     stored = stored if isinstance(stored, dict) else {}
@@ -267,7 +267,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                                 "fileManagerColumnWidths", "fileManagerColumnOrder", "fileManagerColumnHidden",
                                 "fileManagerFilterCounts", "fileManagerFilterOptions", "fileManagerHistoryLoaded",
                                 "fileManagerHistoryExhausted", "fileManagerWalkError")),
-        # Thumbnails publish ALONE (the author's live report: each
+        # Thumbnails publish ALONE (the live report: each
         # scroll-triggered fetch reply rebuilt the whole payload).
         ("fileManagerThumbsChanged", ("fileManagerThumbs",)),
         ("consoleChanged", ("consoleHistory", "consoleLines", "consoleDropped", "consoleRevisions", "consolePending", "consoleErrorBell")),
@@ -298,7 +298,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # flow (download + index), passed in as an explicit capability.
         self._request_load = request_load
         # The monitor-only variant: download + index WITHOUT the preview
-        # render (the author's optimisation); the preview's own load
+        # render (the optimisation); the preview's own load
         # finds the file already local and skips the re-download.
         self._request_monitor_download = request_monitor_download
         self._show_probe_points = bool(getattr(self._config(), "show_probe_points", False))
@@ -316,7 +316,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._console_height = state["consoleHeight"]
         # The file-manager's own column config rehydrates when the
         # service exists (the state file is the model's to READ; the
-        # values are the service's to OWN — the author's ruling that
+        # values are the service's to OWN — the ruling that
         # the file manager is its own thing).
         self._file_columns_state = state["fileManagerColumns"]
         self._camera_refresh_nonce = 0
@@ -356,7 +356,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._camera.streamFailed.connect(self._on_stream_failed)
         self._camera.streamRecovered.connect(self._on_stream_recovered)
         self._toolhead = ToolheadController(self._data, self._commands, self)
-        # The persisted jog/extrude selection (the author's live
+        # The persisted jog/extrude selection (the live
         # report) — applied before any publish so the first frame
         # already shows the saved options.
         self._toolhead.set_distance(self._toolhead_state["jogDistance"])
@@ -364,7 +364,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._toolhead.set_extrude_speed(self._toolhead_state["extrudeSpeed"])
         self._console = ConsoleController(self._data, self._commands, config, apply_config, identity, self)
         # The toolhead's clamp rejections land in the console as
-        # local notes (the author's live request).
+        # local notes (a live request).
         self._toolhead.rejectedNote.connect(self._console.note)
         self._console_error_bell = False
         self._console_errors_seen = 0
@@ -376,7 +376,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._print_armed_state = ""
         self._print_start_error = ""
         self._file_manager.note.connect(self._on_file_manager_note)
-        # Upload progress and outcome feed the popup (the author's
+        # Upload progress and outcome feed the popup (the
         # live request).
         self._file_manager.uploadProgress.connect(self._on_upload_progress)
         self._file_manager.uploadFinished.connect(self._on_upload_finished)
@@ -386,7 +386,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_manager_open = False
         if preferences_flushed is not None:
             # The console marks its sent lines SAVED when the preference
-            # file actually flushes (the author's colour ruling).
+            # file actually flushes (the colour ruling).
             preferences_flushed.connect(self._console.mark_saved)
         for signal in (self._data.changed, self._commands.changed, self._controls.changed, self._camera.changed,
                        self._toolhead.changed, self._console.changed, self._file_manager.changed, bed_mesh.changed):
@@ -401,7 +401,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The attach-time reload can run before the active machine's
         # identity resolves; retry it on every poll heartbeat so the
         # restored transcript lands the moment the config is readable
-        # (the author's "commands never rehydrate" report).
+        # (the "commands never rehydrate" report).
         self._data.changed.connect(self._console.reload_if_empty)
         # The author's ruling (2026-09-10): after a reconnect the
         # camera stream restarts — the nonce bump reloads the stream
@@ -429,7 +429,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         now = time.monotonic()
         # The FIRST failure retries immediately: a camera's first
         # fetch can die on a cold-start hiccup (DNS or first contact)
-        # while the very next request sails — the author's live
+        # while the very next request sails — the live
         # report: leaving and re-entering the Monitor tab, a fresh
         # request, started the stream. Once a retry cycle is running,
         # the 10 s cadence keeps a dead stream from spinning the
@@ -453,7 +453,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(bool)
     def setConsoleExpanded(self, expanded):
-        # The console polls the store only while on screen (the author's
+        # The console polls the store only while on screen (the
         # ruling); the pane's visibility drives this flag, seeded with
         # the persisted last-seen stamp so the backfill skips the
         # server's stale buffer.
@@ -606,7 +606,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
         # The M117 message lives on Klipper's display_status object,
         # not print_stats — the Print-job slot reads it from the aux
-        # snapshot (the author's report: M117 showed nowhere).
+        # snapshot (the report: M117 showed nowhere).
         display = (self._data.snapshot.auxiliary or {}).get("display_status")
         if isinstance(display, Mapping):
             message = str(display.get("message") or "")
@@ -628,7 +628,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values["fileManagerThumbs"] = self._file_manager.thumbnail_payload() if self._file_manager_open else {}
         values["fileManagerNote"] = self._file_manager_note
         # Thumbnails fetch per the RENDER WINDOW, not the page: the
-        # QML's visibleRows change drives the request (the author's
+        # QML's visibleRows change drives the request (the
         # live report: an "all / page" listing fired hundreds of
         # thumbnail requests on open — the window bounds them). The
         # recents strip's own fetch stays here (bounded at 50). The
@@ -693,7 +693,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                     self._print_start_failed(f"The printer reported an error: {self._print_start_error}")
                 else:
                     self._print_start_failed("The printer did not begin printing.")
-        # The no-reflow rule's sibling ruling (the author, 2026-09-10):
+        # The no-reflow rule's sibling ruling (2026-09-10):
         # while DISCONNECTED every control on the Monitor page disables
         # — the QML gates its sections and the emergency stop on this.
         values["monitorConnected"] = self._client.connected
@@ -701,7 +701,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values.update(self._camera.values)
         values.update(self._toolhead.values)
         values.update(self._console.values)
-        # The console error bell (the author's live request): while
+        # The console error bell (a live request): while
         # the console is collapsed, a NEW error line rings a red bell
         # next to its header until the console expands. Restored
         # lines never ring (they are not new), and the marker counts
@@ -761,7 +761,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             if url and url != self._camera_last_url:
                 # Any camera-URL transition deserves a fresh load: the
                 # first attach's initial request dies silently in the
-                # loader (the author's report — the manual refresh
+                # loader (the report — the manual refresh
                 # worked because it changed the URL).
                 self._camera_last_url = url
                 self._camera_refresh_nonce += 1
@@ -999,7 +999,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot()
     def reconnect(self):
-        """The manual Reconnect (the author's live request): cycle
+        """The manual Reconnect (a live request): cycle
         the client and re-arm the monitor — the recovery for a UI
         stuck after a printer error or a dropped connection."""
         self._commands.report_status("Reconnecting…")
@@ -1014,7 +1014,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot()
     def openFileManager(self):
         # The open trigger: the flag gates the heavy payload work
-        # (the author's live report: the closed popup must not keep
+        # (the live report: the closed popup must not keep
         # paying the per-poll cost).
         self._file_manager_open = True
         self._file_manager_note = ""
@@ -1069,7 +1069,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values = list(values)
         filters = dict(self._file_manager.view.filters)
         if category in ("modified", "print_time"):
-            # Single-value categories store a SCALAR (the author's
+            # Single-value categories store a SCALAR (the
             # live report: Print time filtered nothing — the policy
             # does float(["30"]) and the TypeError fallback matched
             # every row; Modified's window lookup failed the same
@@ -1109,7 +1109,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot()
     def fileRequestDelete(self):
         """The bulk delete from the selection (Snapshot 3): the
-        currently-printing file is never offered (the author's gate
+        currently-printing file is never offered (the gate
         — the host 403s it anyway, and the client must not ask)."""
         rows = self._file_manager.resident_rows()
         selected = [row for row in rows if row.relpath in self._file_manager.selection]
@@ -1145,7 +1145,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(str)
     def fileRequestDeleteDir(self, path):
-        """The folder delete (the author's live request — right-click
+        """The folder delete (a live request — right-click
         a breadcrumb segment or a strip chip)."""
         path = str(path).strip("/")
         if not path:
@@ -1183,7 +1183,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(str)
     def fileRequestRenameDir(self, path):
-        """The folder rename (the author's live request — right-click
+        """The folder rename (a live request — right-click
         a breadcrumb segment or a strip chip)."""
         path = str(path).strip("/")
         if not path:
@@ -1240,7 +1240,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(str)
     def fileUpload(self, path):
-        """Snapshot 3 upload (the author's ruling): LOCAL gcode files
+        """Snapshot 3 upload (the ruling): LOCAL gcode files
         only — sliced prints already upload from the Preview view.
         A name collision asks first; otherwise the upload runs."""
         # The picker hands over a file:// URL — the service wants a
@@ -1282,13 +1282,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def _start_upload(self, path, name, overwrite=False) -> None:
         # The popup's payload opens on the FIRST publish after this;
         # the service's progress and outcome signals drive it from
-        # here on (the author's live request: a bar while it runs and
+        # here on (a live request: a bar while it runs and
         # a success/fail verdict at the end).
         self._file_upload_progress = {"name": name, "percent": 0,
                                       "state": "uploading", "error": ""}
         # The overwrite nod MUST ride through: without it the service
         # re-refuses the colliding name and never emits a verdict —
-        # the popup hung on "uploading" forever (the author's live
+        # the popup hung on "uploading" forever (the live
         # report).
         self._file_manager.upload_file(path, overwrite=overwrite)
 
@@ -1307,7 +1307,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot(list)
     def fileRequestVisibleThumbnails(self, relpaths):
-        """The render window's thumbnails (the author's live report:
+        """The render window's thumbnails (the live report:
         the page-wide fetch fired hundreds of requests on "all /
         page" — the QML's visible rows bound them)."""
         if not self._file_manager_open:
@@ -1322,7 +1322,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot(str, float)
     def setFileColumnWidth(self, key, width):
         """Snapshot 3's column resize — the STATE lives in the file
-        manager (the author's ruling: the file manager is its own
+        manager (the ruling: the file manager is its own
         thing, composed into the Monitor page)."""
         if self._file_manager.set_column_width(key, width):
             self._save_state()
@@ -1551,7 +1551,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             "consoleHeight": self._console_height,
             # The chrome-only rewrite in __init__ runs BEFORE the
             # service exists: rehydrated block then, live state after
-            # (the author's live report: a legacy state file broke
+            # (the live report: a legacy state file broke
             # the printer binding — this save raised).
             "fileManagerColumns": self._file_manager.column_state() if getattr(self, "_file_manager", None) is not None else self._file_columns_state,
             "toolhead": {
@@ -1675,7 +1675,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def jog(self, axis, direction): self._toolhead.jog(axis, direction)
     @pyqtSlot(bool)
     def setPositionMode(self, absolute):
-        # The abs/rel toggle (the author's live request).
+        # The abs/rel toggle (a live request).
         self._toolhead.set_absolute(absolute)
 
     @pyqtSlot(float)

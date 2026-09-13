@@ -1,7 +1,7 @@
 """The file-manager service: resident listing, history and view state.
 
 One owner for the popup's data (round-2 A1): a full-tree walk on open
-into a resident listing (search is global by the author's ruling), the
+into a resident listing (search is global by the ruling), the
 current directory as the grid's scope, history with the bounded
 window and the Load-all escape hatch, disk usage from the root
 listing, and the view pipeline (filter → search → sort → page) from
@@ -70,12 +70,12 @@ class FileManager(QObject):
     # the model routes these into the console feed like the
     # toolhead's rejectedNote.
     note = pyqtSignal(str)
-    # Upload progress and outcome (Snapshot 3 finish — the author's
+    # Upload progress and outcome (Snapshot 3 finish — the
     # live request: a progress bar and a success/fail verdict in the
     # popup).
     uploadProgress = pyqtSignal(int)
     uploadFinished = pyqtSignal(bool, str)
-    # Thumbnail transitions publish ALONE (the author's live report:
+    # Thumbnail transitions publish ALONE (the live report:
     # scrolling a 400-file listing fired a fetch per newly visible
     # row and each reply rebuilt the whole payload — the storm).
     thumbsChanged = pyqtSignal()
@@ -176,14 +176,14 @@ class FileManager(QObject):
     # ---- fetching --------------------------------------------------
 
     def open(self) -> None:
-        """Refetch on open (the author's ruling): a fresh walk plus the
+        """Refetch on open (the ruling): a fresh walk plus the
         history window. The previous rows stay visible until the new
         listing lands (the popup never opens empty)."""
         self._walk()
         self._fetch_history(HISTORY_WINDOW)
 
     def refresh(self) -> None:
-        # Thumbnails regenerate with the file (the author's ruling:
+        # Thumbnails regenerate with the file (the ruling:
         # refresh is the refetch of everything visible).
         self.clear_thumbnails()
         self.open()
@@ -197,7 +197,7 @@ class FileManager(QObject):
         # completion: refresh must discover new files AND new
         # directories, and files deleted on the printer must leave
         # the rows. Reusing the resident dicts meant an already-known
-        # directory was never re-walked (the author's live report:
+        # directory was never re-walked (the live report:
         # refresh missed new subdirectories) and deleted files
         # lingered forever. On a partial failure the previous
         # listing stays (the popup never goes blank on a refresh).
@@ -280,7 +280,7 @@ class FileManager(QObject):
             f"server/history/list?limit={max(1, int(limit))}", finished, replace=True)
 
     def load_all_history(self) -> None:
-        """The complete escape hatch (the author's ruling): page the
+        """The complete escape hatch (the ruling): page the
         list until exhausted — one click resolves even a file printed
         a thousand jobs ago."""
         generation = self._generation
@@ -343,7 +343,7 @@ class FileManager(QObject):
     def delete_files(self, relpaths: Sequence[str], printing_relpath: Any = "") -> None:
         """Snapshot 3: HTTP DELETE per file (root-inclusive — the
         host's only delete route). The currently-printing file is
-        refused client-side (the author's gate — the host 403s it
+        refused client-side (the gate — the host 403s it
         anyway, and the client must not even ask). Every outcome
         answers as a console note; the local rows drop on success
         and ONE refresh re-walks after the batch (the ruling: every
@@ -434,7 +434,7 @@ class FileManager(QObject):
 
     def upload_file(self, local_path: str, overwrite: bool = False) -> bool:
         """Snapshot 3: multipart POST server/files/upload — LOCAL
-        gcode files only (the author's ruling: sliced prints upload
+        gcode files only (the ruling: sliced prints upload
         from the Preview view already). Lands in the CURRENT
         directory so it appears where the user is looking. A name
         collision needs the overwrite nod (the host silently
@@ -444,7 +444,7 @@ class FileManager(QObject):
         name = os.path.basename(local_path)
         if not is_gcode_name(name):
             # The verdict must answer even on an early refusal —
-            # otherwise the popup hangs on "uploading" (the author's
+            # otherwise the popup hangs on "uploading" (the
             # live report).
             self.uploadFinished.emit(False, "Only gcode files upload here.")
             self.note.emit("Upload refused: only gcode files upload here.")
@@ -535,7 +535,7 @@ class FileManager(QObject):
         self._upload_replies = {}
 
     def rename_directory(self, directory: str, new_name: Any, overwrite: bool = False) -> bool:
-        """Snapshot 3: rename a FOLDER (the author's live request —
+        """Snapshot 3: rename a FOLDER (a live request —
         right-click a breadcrumb segment or a strip chip). The host's
         move takes {source, dest} directory paths; on success the
         resident rows, dirs, the current path, the selection and the
@@ -571,7 +571,7 @@ class FileManager(QObject):
         return True
 
     def delete_directory(self, directory: str) -> bool:
-        """Snapshot 3: delete a FOLDER (the author's live request).
+        """Snapshot 3: delete a FOLDER (a live request).
         The host's DELETE handles directories; on success the rows
         and dirs under it drop, and the view pops to the parent when
         it sat inside the deleted tree."""
@@ -605,7 +605,7 @@ class FileManager(QObject):
         return True
 
     def create_directory(self, name: str) -> None:
-        """Create a folder in the current directory (the author's
+        """Create a folder in the current directory (the
         live request): the host's directory route takes the full
         target path."""
         name = str(name or "").strip()
@@ -666,7 +666,7 @@ class FileManager(QObject):
         (round-2 D4). Success is NEVER the reply: a print_stats
         transition with the expected filename is — the model watches
         the snapshot. The request rides the binding's current
-        identity, so the POST re-validates it (the author's ruling).
+        identity, so the POST re-validates it (the ruling).
         """
         generation = self._generation
         relpath = str(relpath)
@@ -692,7 +692,7 @@ class FileManager(QObject):
 
     def clear_walk_error(self) -> None:
         """The banner's dismiss: the error clears until the next walk
-        re-reports one (the author's live ruling — the banner overlays
+        re-reports one (the live ruling — the banner overlays
         the first row, so it must be closable)."""
         self._walk_error = None
         self.changed.emit()
@@ -756,7 +756,7 @@ class FileManager(QObject):
             # the signal connects into a BOUND method — the transport's
             # own lifetime pattern (MoonrakerTransport.send_json). A
             # bare closure connected to QNetworkReply.finished is a
-            # use-after-free trap in PyQt: the author's live crash
+            # use-after-free trap in PyQt: the live crash
             # report was a SIGSEGV in PyQtSlot::call on the main
             # thread, delivered from a QtNetwork signal right after
             # the popup opened. All fetch state (the reply, relpath,
@@ -802,14 +802,14 @@ class FileManager(QObject):
         try:
             # PyQt6 enum comparison: ``error() != 0`` is ALWAYS true —
             # the enum members never equal plain ints, so the success
-            # path raised on every fetch (the author's live report:
+            # path raised on every fetch (the live report:
             # no thumbnails, all cells failed). Compare against the
             # enum itself, the transport's form.
             if reply.error() != QNetworkReply.NetworkError.NoError:
                 raise ValueError("thumbnail fetch failed")
             data = bytes(reply.readAll())
             # No thumbnail to display: the hourglass must
-            # NEVER spin forever (the author's live ruling) —
+            # NEVER spin forever (the live ruling) —
             # an empty or non-PNG body falls back to the
             # placeholder like any failure.
             if len(data) < 8 or data[:8] != b"\x89PNG\r\n\x1a\n":
@@ -904,7 +904,7 @@ class FileManager(QObject):
     def subdirectories(self) -> List[str]:
         """The folder strip's contents: direct children of the current
         directory, basenames, alphabetical. Directories never join
-        the file rows — they carry no print metadata (the author's
+        the file rows — they carry no print metadata (the
         ruling). Hidden while a search is active (the scope is then
         the whole tree, not a directory)."""
         if self._view.search:
@@ -925,7 +925,7 @@ class FileManager(QObject):
 
     def current_rows(self) -> List[FileRow]:
         """Filter → search → sort over the right scope: the whole tree
-        while a search is active (the author's global-search ruling),
+        while a search is active (the global-search ruling),
         otherwise the CURRENT level only — a directory shows its own
         files, never a recursive aggregate of the subtree (the
         author's live ruling)."""
@@ -977,7 +977,7 @@ class FileManager(QObject):
     def toggle_page_selection(self) -> None:
         """The header checkbox: select the whole page, or drop it
         entirely when the page is already all-selected (partial pages
-        fill up — the author's ruling on its three states)."""
+        fill up — the ruling on its three states)."""
         page_rows = self.page_rows()
         relpaths = {row.relpath for row in page_rows}
         if relpaths and relpaths <= self._selection:
@@ -993,7 +993,7 @@ class FileManager(QObject):
 
     def recents(self) -> List[Dict[str, Any]]:
         """The strip's entries, joined onto the resident rows so the
-        cards can show the row's thumbnail (the author's live request
+        cards can show the row's thumbnail (a live request
         — the metadata is already in hand)."""
         entries = recent_prints(self._history)
         for entry in entries:

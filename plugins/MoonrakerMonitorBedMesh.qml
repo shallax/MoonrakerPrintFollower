@@ -9,7 +9,7 @@ import QtQuick 2.15
 // The shell imports QtQuick ONLY so its compile finishes in
 // milliseconds: the stage reads the CONSTANT monitorItem property
 // exactly once, and a read landing while the document was still
-// compiling cached a null forever (the author's dashboard-absent
+// compiling cached a null forever (the dashboard-absent
 // boots). The heavy dashboard compiles asynchronously here, off the
 // startup path (nothing on the main thread waits), and its Component
 // wrapper is instantiated here too — the dashboard document is

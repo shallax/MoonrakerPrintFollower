@@ -230,7 +230,7 @@ class MoonrakerSocket(QObject):
                 # Moonraker then pushes only CHANGES. Seed the aux
                 # accumulator from the sync so objects that never change
                 # (a steady temperature) still reach the Monitor on the
-                # next drain (the author's live report).
+                # next drain (the live report).
                 for name in self._aux_names:
                     if name in status:
                         self._aux[name] = status[name]

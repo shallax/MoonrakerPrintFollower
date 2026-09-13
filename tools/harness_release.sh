@@ -4,11 +4,11 @@
 # smoke set again on the secondary version — the version-swap proof
 # (TESTING.md §5).
 #
-# One attempt per unit (the author's ruling: a retried unit suggests
+# One attempt per unit (a retried unit suggests
 # flakiness, and a flaky unit must read as a failure).
 #
 # Every unit's gallery and log land under one timestamped, immutable
-# root (the author's ruling: never overwritten, never deleted):
+# root (never overwritten, never deleted):
 #   /tmp/mpf/ui-artifacts/runs/<yyyy-MM-dd-HHmmss>/<curaVersion>/<unit>[/.log]
 # Re-runs accumulate side by side; the CI upload publishes the whole
 # ui-artifacts tree.

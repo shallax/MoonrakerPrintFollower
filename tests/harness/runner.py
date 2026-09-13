@@ -1324,7 +1324,7 @@ def scenario6():
         attached_again = bool(wait_for(lambda: exec_rpc(FOLLOW_READ).get("attached"), 15.0, 1.0))
         steps.append(("07-attach-again", "the panel's Attach button re-attaches",
                       "preview.state.attached", attached_again, shot("07-attach-again")))
-        # The variant (the author's ruling): a view swap while
+        # The variant (the ruling): a view swap while
         # ATTACHED preserves the attach — switching stages is
         # navigation, not a detach request. A DETACHED follower must
         # stay detached across a swap (no automatic re-attach).
@@ -1479,7 +1479,7 @@ def scenario4():
                       "cameraViewport at %sx%s" % (viewport.get("w"), viewport.get("h")) if viewport else "not found",
                       bool(viewport) and viewport.get("w", 0) > 0, shot("04-viewport")))
         # The image's QML auto-start does not fire under the WM-less
-        # Xvfb (the same trigger gap behind the author's refresh-click
+        # Xvfb (the same trigger gap behind the refresh-click
         # workaround); the scenario calls the image's own start() —
         # the exact call the QML handlers make — then goes hands-off.
         exec_rpc(STREAM_START)
@@ -1790,8 +1790,8 @@ ATTACH_READ = ("from UM.Application import Application\n"
                "                                              and coord._preview.state.attached)\n"
                "        break\n")
 
-# The suite's groups — the id IS the name (the letter scheme retired
-# at the author's request): connection, status, temperatures, console,
+# The suite's groups — the id IS the name (the letter scheme was
+# retired by request): connection, status, temperatures, console,
 # webcams, files, motion, printing, settings, stress, visual, preview,
 # probe, real (the real-printer read-only group).
 
@@ -1866,7 +1866,7 @@ def suite_scenario(spec, step_fn=None):
     return steps
 
 # ─── Real-printer read-only mode (TESTING.md §2.5) ───────────────
-# The real host is the author's own printer: a live print must never
+# The real host is a live printer: a live print must never
 # be touched. Only the r-group's real_safe scenarios run, and every
 # step outside the read-only allowlist is refused — recorded in the
 # gallery as a failure, never a command reaching the printer.
@@ -2488,7 +2488,7 @@ def suite_step(step):
 
     if op == "insert_model":
         # Cura's own reader chain inserts the suite's test model (the
-        # Voron cube) — the path the author's drag-drop drives.
+        # Voron cube) — the path the drag-drop drives.
         code = ("from UM.Application import Application\n"
                 "from PyQt6.QtCore import QUrl\n"
                 "app = Application.getInstance()\n"
@@ -2527,7 +2527,7 @@ def suite_step(step):
     if op == "add_post_script":
         # Activate a post-processing script through the plugin's own
         # manager — Cura's save-area `</>` button only renders while a
-        # script is active (the author's insert-a-pause flow).
+        # script is active (the insert-a-pause flow).
         reply = exec_rpc("from UM.Application import Application\napp = Application.getInstance()\nresult = {}\nplugin = app.getPluginRegistry().getPluginObject(\"PostProcessingPlugin\")\ntry:\n    plugin.addScriptToList(\"PauseAtHeight\")\n    result[\"added\"] = True\nexcept Exception as exc:\n    result[\"error\"] = repr(exc)",
                          raise_on_error=True)
         if reply.get("error"):

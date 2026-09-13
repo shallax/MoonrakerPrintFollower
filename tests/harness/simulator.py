@@ -856,7 +856,7 @@ class Simulator:
         self.server = tornado.httpserver.HTTPServer(self.app)
         # All interfaces: the bridged-webcam arm serves the stream on the
         # container's own (non-loopback) IP so the plugin's key-carrying
-        # bridge path is exercised for real (the author's camera path).
+        # bridge path is exercised for real (the camera path).
         sockets = tornado.netutil.bind_sockets(port, "0.0.0.0")
         self.server.add_sockets(sockets)
         self.port = sockets[0].getsockname()[1]
