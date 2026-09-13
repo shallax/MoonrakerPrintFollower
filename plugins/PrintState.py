@@ -142,7 +142,7 @@ class LayerResolver:
                 if delta > 0.005:
                     self._z_ascent += delta
                     self._z_rise_observations += 1
-                    # Provisional immediate seed: the author attaches
+                    # Provisional immediate seed: the monitor attaches
                     # mid-print and cannot wait for a full layer (some
                     # layers are huge). The FIRST Z increment seeds a
                     # step and a layer; a z-hop misread self-heals when

@@ -266,7 +266,7 @@ class MoonrakerHttpTransport(QObject):
                                     error = server_words
                 except Exception:
                     # A non-JSON refusal body is an auth gateway's page
-                    # (the author's proxy answers 401 with HTML): name
+                    # (the proxy answers 401 with HTML): name
                     # the status so the settings test-connection surface
                     # reads "the API key was rejected (HTTP 401)".
                     if reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute) == 401:
@@ -291,7 +291,7 @@ class MoonrakerHttpTransport(QObject):
                         # failure (payload None) — the console's verdict
                         # colours need exactly that distinction. The
                         # script endpoint answers HTTP 200 with the
-                        # WHOLE error DICT inside "error" (the author's
+                        # WHOLE error DICT inside "error" (the
                         # live report: "Extrude refused: {'code': 400,
                         # 'message': ...}" — str(dict) was the error):
                         # extract the server's words, never the dict.

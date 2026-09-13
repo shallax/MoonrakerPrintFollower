@@ -202,7 +202,7 @@ def file_row_payload(row, now) -> dict:
 
     The status fallback distinguishes genuinely-never-printed files
     from files printed beyond the partially-loaded history window
-    (the author's live ruling): the metadata's ``print_start_time``
+    (the live ruling): the metadata's ``print_start_time``
     is the honest signal — absent means never printed, present but
     unjoined means the history hasn't been loaded far enough."""
     return {
@@ -230,7 +230,7 @@ def file_row_payload(row, now) -> dict:
 def estimate_remaining(elapsed, progress, estimate, complete):
     elapsed, progress, estimate = max(0, number(elapsed)), max(0, min(1, number(progress))), number(estimate)
     # The by-file blend needs only a little progress signal and must
-    # appear promptly: the author expects the unoptimised values as
+    # appear promptly: the unoptimised values are expected as
     # soon as Moonraker reports them on connect, not a minute into the
     # print (the old 60 s / 2% floor left the readout empty at start).
     by_file = max(0, elapsed / progress - elapsed) if progress >= 0.005 and elapsed >= 10 else None
@@ -340,7 +340,7 @@ def core_values(snapshot, physical, connected):
     if layer_progress is None:
         layer_progress = -1.0
     position = motion.get("live_position") or ()
-    # Filament accounting (the author's request): Moonraker reports the
+    # Filament accounting (the request): Moonraker reports the
     # used length as a TOP-LEVEL print_stats field; Klipper's info dict
     # only ever holds the layer counters a slicer's SET_PRINT_STATS_INFO
     # wrote (current_layer/total_layer), never filament_used — the old

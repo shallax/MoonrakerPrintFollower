@@ -35,7 +35,7 @@ Slider {
             anchors.left: parent.left
             anchors.margins: 2 * screenScaleFactor
             width: Math.max(0, control.visualPosition) * (parent.width - 4 * screenScaleFactor)
-            // Disabled sliders grey out (the author's live report):
+            // Disabled sliders grey out (the live report):
             // the stock dimming does not reach a custom-styled fill.
             color: control.enabled ? UM.Theme.getColor("primary") : UM.Theme.getColor("text_disabled")
             radius: Math.min(UM.Theme.getSize("progressbar_radius").width, height / 2)

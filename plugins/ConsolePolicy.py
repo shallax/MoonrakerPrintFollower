@@ -1,8 +1,8 @@
 """Pure console policy: history bounds and input guards.
 
-Deliberately NO command-safety table: the author ruled the console
-unrestricted ("writing something in there requires real intent and we
-shouldn't baby the user"). The policy owns only what is mechanical —
+Deliberately NO command-safety table: the console is unrestricted
+(typing a command is real intent; it must not be babied). The policy
+owns only what is mechanical —
 history length, the empty-input guard — so the controller stays thin
 and everything here is unit-testable without Qt.
 """
@@ -16,7 +16,7 @@ from typing import List
 MAX_HISTORY = 200
 
 # The persisted console TRANSCRIPT bound (commands + Klipper's output
-# from the gcode store): the author's ruling is the last ~50 lines
+# from the gcode store): the ruling is the last ~50 lines
 # survive across sessions, with restored lines greyed in the pane.
 MAX_TRANSCRIPT = 50
 

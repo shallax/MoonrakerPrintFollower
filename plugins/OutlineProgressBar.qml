@@ -4,7 +4,7 @@ import Cura 1.1 as Cura
 
 // A plugin-owned outline-style progress bar: a thin rounded border
 // with NO background fill — the themed ProgressBar's inactive-window
-// palette rendered as an ugly black slab (the author's screenshot) —
+// palette rendered as an ugly black slab (the screenshot) —
 // and the completed fraction filled inside the outline in Cura's
 // brand blue (the same accent as buttons and slider handles).
 Item {

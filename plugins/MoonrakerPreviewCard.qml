@@ -128,7 +128,7 @@ Item {
                     // NOT gated on hasToolpath: the follower attaches
                     // at the view swap, but hasToolpath only flips once
                     // the model finishes RENDERING — the button used to
-                    // wait for the render (the author's "Detach takes a
+                    // wait for the render (the "Detach takes a
                     // long time" report). The follower null-checks the
                     // view on every drive, so attaching early is safe.
                     // NO-REFLOW RULE: never hidden — it disables instead
@@ -180,7 +180,7 @@ Item {
             }
 
             UM.Label {
-                // The current-layer info slot (the author's 2026-09-11
+                // The current-layer info slot (the 2026-09-11
                 // ruling): filled while the print is active; when it has
                 // nothing to say the slot collapses instead of leaving a
                 // blank gap between the bed-mesh and pause buttons.

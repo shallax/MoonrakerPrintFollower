@@ -26,7 +26,7 @@ class PollPolicy:
     paused_floor_ms: int = 1500
     idle_floor_ms: int = 5000
     # The auxiliary objects query while printing/paused: 2.5 s, down
-    # from 1 s — the author's live report (2026-09-11): prints stall
+    # from 1 s — the live report (2026-09-11): prints stall
     # at points while the plugin is connected, and two full state
     # queries per second are the prime suspect. Temperatures change
     # slowly enough that the chart loses nothing.
@@ -127,7 +127,7 @@ class RequestCoalescer:
 class BindingIdentity:
     """What a session is bound to: URL, key and the status-feed mode.
 
-    The mode is part of the identity — a change rebinds (the author's
+    The mode is part of the identity — a change rebinds (the
     ruling) — but it never enters ``MoonrakerHttpTransport.identity``:
     HTTP lanes have no reason to be invalidated by a status-feed change.
     """
@@ -304,7 +304,7 @@ class MoonrakerSessionState:
         self.connected = False
         self.pause_guard = False
         self.toolhead_guard = False
-        # The e-stop's assumption (the author's ruling): session-level
+        # The e-stop's assumption (the ruling): session-level
         # storage so a stale stream can never re-assert an e-stopped
         # print; the rewrite stays at the client's single admission site.
         self.assume_print_stopped = False
@@ -422,7 +422,7 @@ class MoonrakerSession:
         """Rebind when the URL, the key OR the feed mode changed.
 
         ``feed_mode=None`` keeps the current mode (the frozen seam's
-        sentinel). A mode-only change rebinds the session — the author's
+        sentinel). A mode-only change rebinds the session — the
         ruling — but never reconfigures the HTTP transport: its lanes
         have no reason to be invalidated by a status-feed change.
         """

@@ -6,38 +6,31 @@ Moonraker simulator over the same websocket and HTTP transports a real
 printer speaks, and produces SCREENSHOTS AND VIDEO of every step as
 the proof artifact.
 
-## The mandate (the author's gospel truths, 2026-09-11, verbatim)
+## The mandate (2026-09-11)
 
-1. "It must be REAL Cura, not just you instantiating QML and faking
-   things. The plugin must be installed in Cura and live in the real
-   runtime with a real UI being rendered, just like I'm doing with my
-   live testing."
-2. "You must be able to give me screenshots as evidence of tests
-   passing, even better if they're video recordings (something like
-   cypress tests or Browserstack does?)"
-3. "It must be Cura 5.13 for now, but we should be able to specify the
-   version."
-4. "It must be open enough that we can test everything end-to-end
-   (eventually)"
-5. "I must be able to specify which test to run in case we want to
-   iterate quickly on just one thing."
-6. "It must be able to run in Docker because the host is headless
-   anyway and I don't want you polluting the host."
-7. "It must connect to a Moonraker simulator over both HTTP and
-   Websocket transports. The simulator must behave as per Moonraker's
-   API specs."
-8. "If required, it must be possible to point the test framework at a
-   real printer for when the simulator isn't accurate enough (such as
-   dwell testing?)"
-9. "You shouldn't have to modify the plugin or cura to facilitate
-   testing (except maybe for orchestration - such as logging or
-   performance counters), but you may if you absolutely have to."
+1. REAL Cura, not instantiating QML and faking things: the plugin
+   must be installed in Cura and live in the real runtime with a
+   real UI being rendered, exactly as live testing does.
+2. Screenshots as the evidence of tests passing — video recordings
+   are even better (in the style of Cypress or Browserstack).
+3. Cura 5.13 for now, with the version specifiable.
+4. Open enough to test everything end-to-end, eventually.
+5. Any single test must be runnable on its own, for fast iteration
+   on one thing.
+6. Run in Docker: the host is headless and must not be polluted.
+7. Connect to a Moonraker simulator over both the HTTP and websocket
+   transports; the simulator must behave per Moonraker's API specs.
+8. Where the simulator is not accurate enough (dwell testing, say),
+   it must be possible to point the framework at a real printer.
+9. The plugin and Cura should not need modifying to facilitate
+   testing (orchestration only — logging, performance counters —
+   unless absolutely necessary).
 
-Earlier rulings, still binding: screenshots are PROOF ("I don't want
-any fakery here"); the mandate covers ALL functionality end-to-end
-where feasible, starting with the recent failures to prove the
-process; harness work lives on the `v4.0.0-harness` branch (no PRs, no
-releases, sparse commits — work locally).
+Earlier rulings, still binding: screenshots are PROOF (no fakery);
+the mandate covers ALL functionality end-to-end where feasible,
+starting with the recent failures to prove the process; harness work
+lives on the `v4.0.0-harness` branch (no PRs, no releases, sparse
+commits — work locally).
 
 ## 1. What "real" means
 

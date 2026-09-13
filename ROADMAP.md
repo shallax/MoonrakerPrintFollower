@@ -55,7 +55,7 @@ the stream).
   The Information pane's widgets share one interaction model: a small
   glanceable widget in the pane, and a click-to-enlarge pop-over for
   perusal and interaction (one shared pop-over shell, two contents).
-  Chart spec (the author's rulings): a 30-minute rolling window;
+  Chart spec (the rulings): a 30-minute rolling window;
   actuals are solid lines in a customisable, persisted colour per
   sensor; targets are translucent BANDS beneath the actuals whose top
   edge is the setpoint marker (dashes were rejected — the actual line
@@ -90,18 +90,18 @@ the stream).
 
 ## 3.6.0 — File manager and the small controls — SHIPPED (2026-09-11)
 
-**Safety first — the jog reflow bug (the author's live report, 2026-09-09):**
+**Safety first — the jog reflow bug (live report, 2026-09-09):**
 while hammering a toolhead move with some Printer-controls sections open,
 other controls can disappear/reappear and REFLOW the whole pane — the nudge
 button under the pointer can move mid-click. Incredibly dangerous during
 nudges; the pane's content must stop shifting under the jog pad.
 
-**The author's rule (2026-09-10, verbatim):** "no controls disappear,
-ever. It's only disablement/ enablement. The rule basically: nothing
-should ever, EVER cause the UI to reflow unless it's explicitly done by
-the user (expanding/ collapsing sections, resizing things, etc)."
+**The no-reflow rule (2026-09-10):** no controls disappear, ever —
+only disablement/enablement. Nothing may cause the UI to reflow
+unless the user explicitly asks for it (expanding/collapsing
+sections, resizing, and so on).
 
-Shipped as 3.5.1 (the patch release, live-tested by the author through
+Shipped as 3.5.1 (the patch release, live-tested through
 the snapshot loop): every state-gated control (pause/resume/cancel,
 Exclude, the whole Configuration-changes section, the Preview
 follow/bed-mesh/pause-at-layer buttons, the console Clear button, the
@@ -117,16 +117,16 @@ Monitor control (the emergency stop included) while the console stays
 readable — shipped with it, and both rules now live in
 `INSTRUCTIONS.md` and `ARCHITECTURE.md`.
 
-**Console sizing (the author's direction):** the console's only expanded
-size is ~28% of the column — a drag handle to resize the pane lands with
-this release, shaped by the new pro-user persona (a 3D-printer
-enthusiast lens on feature value joins the review panel from this
-release). The author's constraints (2026-09-10): no ridiculously large
-sizes — the drag range is capped — and dragging small enough snaps the
-console into its collapsed state.
+**Console sizing (direction):** the console's only expanded size is
+~28% of the column — a drag handle to resize the pane lands with this
+release, shaped by the new pro-user persona (a 3D-printer enthusiast
+lens on feature value joins the review panel from this release).
+Constraints (2026-09-10): no ridiculously large sizes — the drag
+range is capped — and dragging small enough snaps the console into
+its collapsed state.
 
-**Layer numbering from the file's own comments:** DEFERRED by the
-author at the round-2 walk ("Sure, defer") — the flip as ruled is a
+**Layer numbering from the file's own comments:** DEFERRED at the
+round-2 walk — the flip as ruled is a
 silent no-op for `one_at_a_time` files (duplicate `;LAYER:0` discards
 the layer map) and off-by-one for preprocessed files (comments are
 0-based and signed; Cura's GUI and Klipper are 1-based; round-2 domain
@@ -143,41 +143,38 @@ delete of the currently-printing file must surface Moonraker's refusal
 cleanly, and starting a print must trigger the existing job-observation →
 load flow (stated so the wiring is tested).
 
-**The author's vision for the file manager (2026-09-10, verbatim):** "I think
-the file manager might be better off as a popup that opens in the middle of
-the screen when the user clicks a 'File manager' button somewhere in the
-printer controls pane" — it should "mirror Mainsail's file manager pretty
-similarly". Columns: "Thumbnail (if available), Name, Print attempts (count,
-last status - success vs fail), Last modified, Object height, Layer height,
-Estimated Print time, Last print time, Slicer, Extruder temp, Bed temp,
-Filament usage estimate". The metadata rule (verbatim): "What's returned in
-the details is contingent on whether you have to download the GCode. If it
-requires downloading Gcode to be able to get this info, then don't do it,
-that's way too expensive." Functions: "Delete (individually or bulk select),
-Rename (individually), Print (individually), Download"; "Upload external
-gcode" via a file picker ("Use the filename from the actual file"); "Upload
-current slice - ask for the file name like the 'Preview' upload pane and
-offer to print when uploaded." Search: "predominantly by name" — "I think
-only name otherwise results could be confusing." Filters (open for panel
-input): "filter by slicer, date (earlier than X, later than X), layer
-height? file size? duration? I don't know, let me know what you and the
-panel think". Listing (verbatim): "File listings should be paginated and
-loaded lazily to avoid a huge amount of data coming down in one go. Allow
-the user to pick page size, scroll move between pages (both via advance/
-reverse buttons and maybe direct page selection to allow the user to skip
-many pages). User should be able to sort by any of the columns, but doing
-so will require downloading all the metadata to avoid sorts only working
-on a single page." And: "It'd be good if we could see the free disk space
-on the printer."
+**The file-manager vision (2026-09-10):** a popup opening mid-screen
+from a File-manager button in the printer controls pane, mirroring
+Mainsail's file manager. Columns: thumbnail (if available), name,
+print attempts (count, last status success vs fail), last modified,
+object height, layer height, estimated print time, last print time,
+slicer, extruder temp, bed temp, filament usage estimate. Metadata
+rule: the details must never require downloading the gcode —
+anything that needs a download is too expensive to show. Functions:
+delete (individually or bulk), rename (individually), print
+(individually), download; upload external gcode via a file picker
+(use the file's actual filename); upload the current slice, asking
+for the filename like the Preview upload pane, and offer to print
+when uploaded. Search: predominantly by name — searching anything
+else would make results confusing. Filters (open for panel input):
+slicer, date (earlier than X, later than X), layer height, file
+size, duration — the set was deliberately left for the panel to
+shape. Listing: paginated and loaded lazily so a huge amount of
+data never arrives in one go; a user-picked page size; scrolling
+between pages via advance/reverse buttons and possibly direct page
+selection; sorting by any column, which requires downloading all
+the metadata so sorts never work on a single page only. Free disk
+space should be visible on the printer.
 
-**Phase-0 rulings (2026-09-10, with the author):**
+**Phase-0 rulings (2026-09-10):**
 - The listing comes from `server/files/directory?extended=true`
   (round-1 critic: plain `server/files/list` carries no metadata, so the
   12-column table needs the extended form; the same response carries
   `disk_usage`). Round-2 change: subfolder navigation is in scope, so
   the grid lists ONE directory at a time with a breadcrumb — no
   full-tree flattening. Pagination, sorting and filtering are
-  client-side ("If we have to download it all at once, so be it"). Lazy
+  client-side (the whole listing downloads at once, and that is
+  accepted). Lazy
   loading applies to thumbnails: fetch per visible row, cache.
 - No requested column triggers a client gcode download — metadata is
   parsed host-side at upload; the contingency stays as the guardrail.
@@ -195,7 +192,7 @@ on the printer."
   job?" with the filename, print/cancel.
 - Disconnected: the File-manager button disables (the 3.5.1 rule).
 - Sort/search/filter state is NOT persisted. Instead a **Recent prints**
-  strip (new, the author's idea) LEADS the popup — the author's
+  strip (new, the idea) LEADS the popup — the
   live-test reversal (Snapshot 0, 2026-09-10): "I've changed my opinion
   on the 'recent prints' bit. I think that does belong as the first
   thing in the window." It shows the top 5 distinct
@@ -206,7 +203,7 @@ on the printer."
   tooltip ("it shows that it _was_ there"): "No longer listed on the
   printer — deleted or moved". Clicking a live card opens the same
   "Start print job?" confirmation.
-- Column order: drag-to-reorder, persisted, default = the author's
+- Column order: drag-to-reorder, persisted, default = the
   sequence. Horizontal scroll for the wide table; per-column visibility
   is optional — the panel decides whether it earns its place.
 - All timestamps render in the user's local time.
@@ -267,14 +264,14 @@ accepted adjustments:**
   guarded branches.
 - `INSTRUCTIONS.md`'s section-id recipe gains `console`.
 
-**Round-1 rulings (2026-09-10, walked with the author):**
+**Round-1 rulings (2026-09-10):**
 - Attempts column: the status word, colour-coded, never flattened to
   success/fail; the count carries a "within history retention" tooltip.
 - Reflow: the no-reflow rule holds for the Monitor; the file-manager
-  popup is exempt — the author, verbatim: "Reflowing the file manager
-  is fine, there's nothing critical on that." The structural QML pin
-  still sweeps the popup, so its `visible:` entries land in the allow
-  list citing this ruling.
+  popup is exempt — reflowing the file manager is fine, there is
+  nothing critical on it. The structural QML pin still sweeps the
+  popup, so its `visible:` entries land in the allow list citing
+  this ruling.
 - Watchdog: auto-switch after 2 consecutive failed probes, transient
   only — "stream offline" badge + manual revert; the saved camera
   preference is never rewritten.
@@ -289,18 +286,17 @@ accepted adjustments:**
 - File-manager button: a permanent section at the top of the
   Printer-controls pane with a full-width "File manager" button.
 - Recents dedup: top 5 distinct files by filename — a file printed
-  three times counts once (the author's own "distinct files").
+  three times counts once ("distinct files").
 
-**Carried over from the 3.5.x decision log** — IN per the author
-("Sure, do all 3"):
+**Carried over from the 3.5.x decision log** — IN (all three):
 - the private persist path (`binding.persist(config)`, R5-3 Option B)
 - the client-side send queue (R5-8)
 - the pane-readability INSTRUCTIONS note (the 3.6 docs pass)
 
-**Round-2 panel outcomes (2026-09-10, walked with the author — full
+**Round-2 panel outcomes (2026-09-10, walked through — full
 disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
 - Snapshot-sequenced build: **Snapshot 0** — the popup as a static
-  mock-up (synthetic data, no network, no model) for the author's taste
+  mock-up (synthetic data, no network, no model) for the taste
   test — then 1 read-only manager → 2 print + download → 3 mutations;
   the Monitor tail on its own track.
 - **Snapshot 1 (read-only manager) built (2026-09-10):** the pinned
@@ -365,7 +361,7 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   files).
 - **Snapshot 1 live-test rulings, round 4 (2026-09-10):** Esc on the
   Monitor page is a window-level Shortcut (a Keys handler dies with
-  focus — the author's live report), gated off while the file-manager
+  focus — a live report), gated off while the file-manager
   popup is open (two live shortcuts on one key would both fire; the
   first gate read the wrong parent and broke the popup's Esc). A
   refused command reads the SERVER's words ("Extrude refused:
@@ -401,9 +397,9 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   cancelled until the printer reports otherwise, so every consumer
   (guards, jog gate, the follower's coordinator) re-evaluates
   immediately and consistently; the earlier per-consumer latches were
-  deleted (one point, no scattered conditionals — the author's guard
+  deleted (one point, no scattered conditionals — the guard
   sprawl; the permissions consolidation lives in the 3.7.0 roadmap).
-- E-stop recovery (the author's ruling, 2026-09-10, live-proven on
+- E-stop recovery (the ruling, 2026-09-10, live-proven on
   their printer, overriding the investigation's readiness-gating
   alternative): after the stop the host refuses commands until the
   connection is cycled — the plugin disconnects and reconnects ONCE,
@@ -415,7 +411,7 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   proves insufficient.
 - Thumbnails (Snapshot 2): one-shot fetches into a session temp dir
   with loading/ready/failed states and the no-spin-forever fallback
-  (the author's ruling). Iteration 1 shipped THREE stacked defects,
+  (the ruling). Iteration 1 shipped THREE stacked defects,
   all live-caught: a bare closure on the reply's finished signal
   crashed Cura on open (a PyQt use-after-free — SIGSEGV in
   `PyQtSlot::call`); the URL itself was wrong — the plain
@@ -463,7 +459,7 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   "Select all on this page" button and the bulk-bar Clear button were
   dropped — "can be done by double-toggling the select all checkbox").
 - Recents dismissal persists (FIFO 50 name-keyed hide-list).
-- Recents reversal (the author, 2026-09-10): the greyed-out "No
+- Recents reversal (2026-09-10): the greyed-out "No
   longer listed on the printer — deleted or moved" card is GONE.
   The author: if recents were stored locally, a recently-deleted
   file could stay visible because the user could clean it out by
@@ -487,7 +483,7 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
 **Snapshot 0 live-test rulings (2026-09-10):**
 - Filters stack UNDER the search bar on their own row ("Filter
   positioning is a bit weird. Perhaps they should be under the search
-  bar") — refined live by the author: ONE DROPDOWN PER FILTER
+  bar") — refined live: ONE DROPDOWN PER FILTER
   CATEGORY, each self-contained with scrollable multi-select options;
   a category with an active filter turns SOLID BLUE as its active
   indicator. The active selections stay INSIDE each dropdown's menu —
@@ -498,8 +494,8 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   scrolls ("if it dynamically shrunk the file list, we'd be good").
 - The camera control bar reflows (wraps) when the window is crushed
   horizontally — "Reflowing that control is fine."
-- Snapshot 0 iterates until the author is happy ("Let's keep iterating
-  snapshot 0 until I'm happy") — no Snapshot 1 before the nod.
+- Snapshot 0 iterates until it looks right — no Snapshot 1 before
+  the nod.
 - Console: long Klipper lines wrap on word boundaries and the text
   stops short of the scrollbar; the console auto-collapses below
   350 px of width and auto-re-expands when widened (the persisted
@@ -529,15 +525,15 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   mode (drag handles, scroll suppressed, Done/Esc exits, order and
   widths persist). Its trigger is the ⋮ beside the select-all
   checkbox in the first column's HEADER cell — not toolbar text
-  (the author's live ruling).
+  (the live ruling).
 - The sort slot shows the arrow only on the sorted column and nothing
   elsewhere — no "—" placeholder.
-- Sort rule (the author's): exactly ONE column is sorted at a time;
+- Sort rule (the): exactly ONE column is sorted at a time;
   sorting another column cancels the current sort.
 - The grid's two scrollers are axis-locked (vertical owns both
   columns; the horizontal one never intercepts a vertical wheel).
 
-**Monitor width squeeze (the author's out-of-scope ruling,
+**Monitor width squeeze (the out-of-scope ruling,
 2026-09-10):** when the stage is too narrow for the Webcam pane at
 its minimum, the Information pane auto-collapses to make room. The
 trigger is computed from FIXED constants (expanded Info width +
@@ -547,13 +543,11 @@ hysteresis oscillation can form; re-expansion waits for the required
 width plus a margin, so the boundary cannot jitter. While
 auto-collapsed the toggle is inert with an explanatory tooltip.
 
-**Snapshot 0 PINNED as the design (2026-09-10, the author): "I think
-this is as perfect as we're going to get from iterating a mock. Pin
-this as the design."** Snapshot 1 wires the real data behind this
-exact face.
+**Snapshot 0 PINNED as the design (2026-09-10):** the mock iteration
+had gone as far as it usefully could; this exact face is the design.
+Snapshot 1 wires the real data behind it.
 
-**Search/filter semantics (the author's functional rulings,
-2026-09-10):**
+**Search/filter semantics (functional rulings, 2026-09-10):**
 - Search narrows the results with every keystroke — live filtering
   over the resident data, debounced (~150 ms), cheap because the
   listing is fully client-side.
@@ -580,7 +574,7 @@ exact face.
   history query — only the paged list and single-job-by-id — so the
   escape hatch extends the whole window, never a single file.)
 - The "N selected" count carries a ✕ and IS the global selection
-  clear (the author's ruling).
+  clear (the ruling).
 - Direct page selection is CUT ("Mainsail doesn't have it"); "All"
   joins the page-size selector instead (25/50/100/All).
 - The select-all header checkbox has three states: click on
@@ -597,9 +591,8 @@ exact face.
   while a confirmation or mode owns the key).
 - Ticked rows: white text everywhere, the status colour survives as a
   dot beside the word, and the printing accent bar turns white.
-- The scroll chevrons stay centred over the data — the author
-  overruled the nudge into a gap ("otherwise they're not obvious
-  enough").
+- The scroll chevrons stay centred over the data — the nudge into a
+  gap was overruled (they would not be obvious enough).
 - Recents cards shrink to a minimum useful width (112 px) and no
   further; five cards fit at Cura's minimum.
 - Narrow mode hides the Files heading, breadcrumb and refreshed-at
@@ -611,8 +604,8 @@ exact face.
 Small controls the domain panel ranked as the real Mainsail gaps —
 re-checked against the tree on 2026-09-10; two had shipped since the
 panel's ranking (the speed/flow sliders and Z-babystepping). The rest
-moved to a 3.6.1 follow-up by the author's ruling on 2026-09-11 ("too
-late to continue on this and too risky"), then FOLDED INTO 4.0.0 the
+moved to a 3.6.1 follow-up by a ruling on 2026-09-11 (too late to
+continue and too risky), then FOLDED INTO 4.0.0 the
 same day: restart-button arming, the auto-improve-ETA opt-in, the
 webcam liveness watchdog, ETA feed-forward, scroll-to-prompt and the
 pause-list verified-pause-only semantics — all shipped in 4.0.0.
@@ -625,7 +618,7 @@ watchdog's transition-is-success form, the directory delete route,
 the clipped row viewport, the disconnected gates and the popup's own
 note surface).
 
-## 4.0.0 — Websocket transport (the author, 2026-09-11)
+## 4.0.0 — Websocket transport (2026-09-11)
 
 **RELEASE GATE (resolved):** the 2026-09-11 still-broken list (the
 failure state persisting until a manual reconnect, the preview card
@@ -647,19 +640,18 @@ Moonraker fans them out to subscribers — one serialization shared by
 all clients instead of one per client query. Everything in 4.0.1 waits
 on this.
 
-**The author's scope rulings (2026-09-11, verbatim):**
+**Scope rulings (2026-09-11):**
 
-- "v4.0.0 - switch to websockets. This _should_ be a feature
-  transparent change, so if any features do change, I need to know and
-  approve first." — the transport swap is invisible to the user by
-  design; any observable behaviour change stops at the author for
-  explicit approval before it is built.
-- "Also, I think there should probably be the option of enabling
-  websockets vs sticking to HTTP, even though we know HTTP has
-  performance issues." — a user-facing transport-mode choice:
-  websocket subscription or the HTTP poll, both first-class.
+- v4.0.0 switches to websockets. It should be a feature-transparent
+  change, so any feature that changes needs to be surfaced and
+  approved before it is built — the transport swap is invisible to
+  the user by design.
+- There should be an option to enable websockets or stick to HTTP,
+  even though HTTP has known performance issues — a user-facing
+  transport-mode choice: websocket subscription or the HTTP poll,
+  both first-class.
 
-**Phase-0 rulings (2026-09-11, walked with the author):**
+**Phase-0 rulings (2026-09-11, walked through):**
 
 - The toggle switches the STATUS FEED only: the core and auxiliary
   status traffic follow the choice. Commands (gcode/script, print/start,
@@ -679,10 +671,10 @@ on this.
   one full HTTP objects query (no replay). The 3.5.1 disconnected UX
   renders identically in both modes.
 
-**The author's note (2026-09-11, verbatim):** "Just a note to take into
-account, I'm seeing a lot of the panel assess against Cura 5.9.1. The
-current version of Cura is 5.13.x." — every compatibility claim in the
-panel rounds is assessed against CURRENT Cura (5.13.x) and its bundled
+**Compatibility baseline note (2026-09-11):** the panel had been
+assessing against Cura 5.9.1; the current Cura is 5.13.x. Every
+compatibility claim in the panel rounds is assessed against CURRENT
+Cura (5.13.x) and its bundled
 PyQt6. The 5.9.1 pin in the tree is the capture theme only
 (`tests/theme_assets/`, extracted from the 5.9.1 AppImage) — capture
 fidelity, never the runtime baseline. Cura 5.13's bundled PyQt6 is
@@ -692,8 +684,8 @@ QHostAddress lesson, pinned by
 module-availability question must be answered against the real 5.13
 bundle, not the container.
 
-**Substrate verification (2026-09-11, the author demanded certainty):**
-the author's standing rule for this release — "We need to be absolutely
+**Substrate verification (2026-09-11, certainty demanded):**
+the standing rule for this release — "We need to be absolutely
 sure that if we implement websockets, this will work" (a previous
 websocket attempt had failed — explained by the binding being absent).
 Verified against the real Cura 5.13.0 AppImage (latest stable per
@@ -715,7 +707,7 @@ no new dependency, works on every Cura in the 5.0–5.13 line. Remaining
 certainty gates: a TLS (wss) check and the live-Moonraker test on the
 author's printer during the snapshot loop.
 
-**Live-printer verification (2026-09-11, the author's Voron):** the
+**Live-printer verification (2026-09-11, the Voron):** the
 hand-rolled RFC 6455 client, running INSIDE the real Cura 5.13.0
 bundle, completed the handshake against the live Moonraker
 (v0.13.0-733), the subscribe returned all five objects, and 29 frames
@@ -732,7 +724,7 @@ TLS spike (verified TLS 1.3 + certificate-verification parity with
 today's HTTPS, measured byte-identical) covers the substrate half; a
 live proxied-https test rides the snapshot loop.
 
-**Phase-2 rulings (2026-09-11, walked with the author):**
+**Phase-2 rulings (2026-09-11, walked through):**
 - Subscription while idle: FULL-TIME (all five status objects
   whenever connected) with a delivery clock — the socket accumulates
   pushes and the existing `PollPolicy` delivers to consumers at
@@ -746,10 +738,10 @@ live proxied-https test rides the snapshot loop.
   mid-upload cancels it, stated in ARCHITECTURE §3 and the toggle's
   helper line; no silent behaviour.
 - The round-1 dispositions for C2/C4, H1–H8, M3–M6 and L1–L4 are
-  recorded as PROPOSED (the author's nod comes at the round-2 walk);
+  recorded as PROPOSED (the nod comes at the round-2 walk);
   the three explicit rulings above and the substrate ruling are fixed.
 
-**Phase-4 rulings (2026-09-11, walked with the author — the panel
+**Phase-4 rulings (2026-09-11, walked through — the panel
 walk):**
 - Guards ride the push stream: in socket mode the 250 ms guard updates
   come from the delivery clock draining at the urgent interval (the
@@ -781,15 +773,15 @@ walk):**
   to adjust it. The core interval field is relabelled
   ("Status update interval") with a mode-aware helper line; the
   auxiliary and console cadences gain per-printer fields with bounds.
-- UX adjudication RULED (2026-09-11, the author): the transport-mode
+- UX adjudication RULED (2026-09-11): the transport-mode
   control is two `Cura.RadioButton`s — "WebSocket subscription" /
   "HTTP polling" — on the Connection tab with a permanent reason
   line, per the UX persona's recommendation. The approval-list strings
   (connection notes naming the transport, one-click revert, mode-aware
   Test-connection verdict, interval relabel, reason line, trace label)
-  get the author's nod as they are built.
+  get the nod as they are built.
 
-## 4.0.1 — Harness fast-follow (the author, 2026-09-13)
+## 4.0.1 — Harness fast-follow (2026-09-13)
 
 A fast follow after 4.0.0 ships; both items are test-infrastructure only:
 
@@ -801,18 +793,17 @@ A fast follow after 4.0.0 ships; both items are test-infrastructure only:
   window (1280x720) squeezes the Monitor's left column. Raise the
   harness resolution (e.g. 1920x1080) and re-calibrate the geometry
   probes and click coordinates that assume the current size.
-- **Visible interactions (the author's rule, 2026-09-13)**: wherever
-  possible, anything the scenarios interact with MUST be on screen —
-  scroll the panes to bring the control into the rendered viewport
-  before driving it, so the videos and screenshots SHOW the
-  interaction. "If the user can't see it, assume they can't interact
-  with it."
-- **Harness verbosity (the author, 2026-09-13)**: the harness scripts
+- **Visible interactions (2026-09-13)**: wherever possible, anything
+  the scenarios interact with MUST be on screen — scroll the panes
+  to bring the control into the rendered viewport before driving
+  it, so the videos and screenshots SHOW the interaction. If it
+  cannot be seen on screen, treat it as not interactable.
+- **Harness verbosity (2026-09-13)**: the harness scripts
   sit silently through long phases (the docker build, the Cura fetch,
   the per-unit staging, the boot waits). Emit progress lines for each
   phase — what is being waited on and for how long — so a watching
   terminal never looks hung.
-- **Filter the known-benign boot warnings (the author, 2026-09-13)**:
+- **Filter the known-benign boot warnings (2026-09-13)**:
   every Cura boot prints upstream warnings — the ast.Str deprecation
   from UM/Settings/SettingFunction.py and its kin — that drown the
   failure report's log tail in boilerplate, and the same warnings
@@ -820,21 +811,20 @@ A fast follow after 4.0.0 ships; both items are test-infrastructure only:
   lines out of the boot log before the failure report, and suppress
   DeprecationWarnings in the plugin's test output, so a failing
   unit's report opens with the signal.
-- **Skip CodeQL for the test harness (the author, 2026-09-13)**: the
+- **Skip CodeQL for the test harness (2026-09-13)**: the
   simulator and harness code (tests/harness/**, the driver) is test
   infrastructure, not shipped code — CodeQL findings there are noise.
   Scope the analyze job's path filters to the shipped tree.
 
 ### The original 4.0.1 — Printer resilience and console polish
 
-FOLDED INTO 4.0.0 (the author's ruling, 2026-09-11: "Screw it, do all
-4.0.1 now") — every item below shipped in 4.0.0. This list is now
-empty history.
+FOLDED INTO 4.0.0 (ruling, 2026-09-11) — every item below shipped in
+4.0.0. This list is now empty history.
 
 - ~~**Restart arming**~~ — SHIPPED IN 4.0.0.
 - ~~**Webcam watchdog**~~ — SHIPPED IN 4.0.0 (the bridged-stream
   restart with the veil; direct URLs remain out of scope).
-- ~~**ETA feed-forward**~~ — STRUCK (the author, 2026-09-11): Klipper
+- ~~**ETA feed-forward**~~ — STRUCK (2026-09-11): Klipper
   already feeds the live speed factor back (`gcode_move.speed_factor`)
   and the follower's ETA math already scales the slicer's per-layer
   times by it — there is no printer-side remaining-time signal to
@@ -842,49 +832,48 @@ empty history.
 - ~~**Auto-improve-ETA opt-in**~~ — SHIPPED IN 4.0.0.
 - ~~**Scroll-to-prompt**~~ — SHIPPED IN 4.0.0.
 - ~~**Pause-list verified-pause-only**~~ — SHIPPED IN 4.0.0.
-- ~~**Poll-cadence sliders (the author, 2026-09-11)**~~ — SHIPPED IN
+- ~~**Poll-cadence sliders (2026-09-11)**~~ — SHIPPED IN
   4.0.0: the cadence sliders (status update, auxiliary, console) with
   the 250 ms floor landed as part of the websocket work.
 
 ## 4.1.0 — The UI-driving test suite
 
-**Pulled into scope (2026-09-11, the author):** the 4.0.0 release is
-frozen on this suite — "I don't want any fakery here. I want you to be
-able to show me screenshots of the things you're doing in the tests as
-PROOF that the things you've implemented work the way you claim they
-work. We should use Cura 5.13, but it should be possible to swap out
-the Cura version if we need." Non-negotiables: the REAL Cura
+**Pulled into scope (2026-09-11):** the 4.0.0 release is frozen on
+this suite — no fakery: screenshots of what the tests actually do are
+the PROOF that the implemented things work as claimed. Cura 5.13 is
+the pinned version, with a swap path for other versions.
+Non-negotiables: the REAL Cura
 application, the REAL UI, REAL clicks, and screenshots as the proof
 artifact; the only fake in the system is the network peer (a full
 Moonraker simulator over websocket — Moonraker is what the PRINTER
 runs, not what Cura runs). The design lives in `TESTING.md` and goes
 to a three-persona panel — architect, engineer, and an expert
-automated tester (the author's composition, with explicit go-ahead).
+automated tester (the composition, with explicit go-ahead).
 
-**The release gate (the author's final 4.0.0 live-test round,
+**The release gate (the final 4.0.0 live-test round,
 2026-09-11):** the suite must click through, with screenshots:
 
 - the failure state must clear without a manual reconnect (item 2:
-  "the persists and I have to reconnect");
+  the error persists and requires a reconnect);
 - the preview card must stay through the load AND after the render
-  settles, without any interaction (item 4: "only comes back after a
-  load");
+  settles, without any interaction (item 4: the card only comes back
+  after a load);
 - M117 messages must reach the Print-job section;
 - the earlier still-open items: the camera's first load without a
   refresh click, temperatures arriving within seconds of print start,
-  controls unlocking after an out-of-range failure, and dwell (the
-  author declined to log dwells by hand — the harness captures it).
+  controls unlocking after an out-of-range failure, and dwell
+  (logging dwells by hand was declined — the harness captures it).
 
-**Mandate expansion (2026-09-11, the author):** the suite covers ALL of
-the plugin's functionality end-to-end where feasible — not just the
-regression list — "connecting to a dummy simulated printer over the
-same transport method that a real Moonraker printer uses". The
-catalogue in `TESTING.md` is two layers: the release gates, then the
-full functional surface — the suite (transport, status, temperatures,
+**Mandate expansion (2026-09-11):** the suite covers ALL of the
+plugin's functionality end-to-end where feasible — not just the
+regression list — connecting to a dummy simulated printer over the
+same transport a real Moonraker printer uses. The catalogue in
+`TESTING.md` is two layers: the release gates, then the full
+functional surface — the suite (transport, status, temperatures,
 console, camera, files, controls, preview, settings, soaks).
-Phasing (2026-09-11, the author): the gates first — "We can start with
-just the current recent failures to prove the theory/ process" — then
-the full surface so the author stops re-testing everything by hand.
+Phasing (2026-09-11): the gates first — start with the current
+recent failures to prove the theory and the process — then the full
+surface, so nothing needs re-testing by hand.
 
 **Status (2026-09-13):** the suite SHIPPED, pulled into 4.0.0 — the
 gates, all 13 groups, the smoke set, the simulator's real Moonraker
@@ -902,7 +891,7 @@ itself:
 
 ## 4.2.0 — State & permissions consolidation
 
-- **Volumetric flow rate (the author, 2026-09-13):** the printer
+- **Volumetric flow rate (2026-09-13):** the printer
   status shows the current volumetric flow rate in mm³/s — a small
   readout riding the state layer this version consolidates.
 - **The Post-Processing button's vertical alignment (validated
@@ -911,7 +900,7 @@ itself:
   and the Slice panel, and the harness's v1 scenario asserts the
   no-overlap alignment directly. No longer a backlog item.
 
-**State & permissions consolidation (the author, 2026-09-10):**
+**State & permissions consolidation (2026-09-10):**
 "Can I press this button when I'm printing, when I'm not homed, when
 I'm paused, when I'm e-stopped?" — the guard logic has grown
 scattered: the toolhead gate, the model's publish projections, the
@@ -922,7 +911,7 @@ plugin already polls the full state (`print_stats.state`,
 endpoint to query, so the table has to live plugin-side. The fix: ONE
 pure policy module projecting the snapshot into named permissions
 (can_jog, can_extrude, can_restart, can_power, can_start_print, …)
-with the author's rulings as the table — every consumer reads the
+with the rulings as the table — every consumer reads the
 same derivation, and the scattered conditionals collapse into a
 single tested file. The e-stop assumption stays special: the ONE case
 where the plugin must NOT trust the last poll — it lives at the
@@ -990,7 +979,7 @@ scope revisit: folder trees — confirm before 3.6.0 ships that files in
 subfolders are at least listable and printable, or the file manager is
 weaker than Mainsail's for anyone with a library.
 
-**Live-test fixes (2026-09-11, the author's snapshot round):**
+**Live-test fixes (2026-09-11, the snapshot round):**
 
 - The author's live report: dragging the preview's layer-height slider
   no longer detaches the follower (the path progress bar still does),
@@ -1012,17 +1001,17 @@ weaker than Mainsail's for anyone with a library.
   move Cura's view, and wiping the baseline on every inactive
   observation left the window between observations permanently
   unarmed.
-- **The missing Monitor cards (the author's live report): a
+- **The missing Monitor cards (a live report): a
   subscription deadlock.** In websocket mode the auxiliary wanted set
   only reached the socket after the first aux fragment arrived — and
   Moonraker only pushes SUBSCRIBED objects, so the first fragment
   never came: temperatures, fans and sensors vanished (HTTP mode was
-  unaffected — the author's "HTTP brings the cards back"). The wanted
+  unaffected — the "HTTP brings the cards back"). The wanted
   set now reaches the socket the moment the object list is known. The
-  RPC lane itself was live-proven against the author's printer (3/3
+  RPC lane itself was live-proven against the printer (3/3
   replies on all seven monitor methods, zero errors) before the
   deadlock was found.
-- **The cadence controls are real sliders now** (the author's ruling
+- **The cadence controls are real sliders now** (the ruling
   and correction): aux + console are linear 250–60000 ms sliders with
   a 250 ms floor and live value labels; the status update interval is
   a log-spaced slider (250 ms to ~34 min, each step doubling) that
@@ -1035,7 +1024,7 @@ weaker than Mainsail's for anyone with a library.
   anchored to its bottom (overflowing upward), so the row stays small
   and every component docks to the bottom line together.
 
-**More live-test fixes (2026-09-11, the author's second round):**
+**More live-test fixes (2026-09-11, the second round):**
 
 - **Aux data that never changes never arrived:** Moonraker's subscribe
   response carries the full state ONCE, then pushes only CHANGES. The
@@ -1044,7 +1033,7 @@ weaker than Mainsail's for anyone with a library.
   all back" — the resubscribe re-sent the sync). The socket now seeds
   the aux accumulator from every subscribe response, so the next
   drain publishes unchanged objects too.
-- **New objects join mid-print (the author's rule):** the aux merge
+- **New objects join mid-print (the rule):** the aux merge
   accepted only names from the FIRST objects/list, so a device
   switched on mid-print was dropped even when its data arrived. The
   merge now accepts newly-seen names, and the subscription grows to
@@ -1061,13 +1050,13 @@ weaker than Mainsail's for anyone with a library.
   Cura's layer controls). The empty card now gates on toolpath/load
   state — it means "nothing is loaded", nothing else.
 - **Test-connection 401 wording:** an auth gateway's HTML 401 body
-  (the author's proxy) surfaced as Qt's raw error string. Non-JSON
+  (the proxy) surfaced as Qt's raw error string. Non-JSON
   401s now read "the API key was rejected (HTTP 401)", matching the
   websocket path.
 - **The connected state names the live transport** ("Moonraker
-  connected over websocket" / "… over HTTP polling") — the author's
+  connected over websocket" / "… over HTTP polling") — the
   ask for confidence that the websocket is genuinely in use.
-- **The slow-drag detach delay (the author's third report):** the
+- **The slow-drag detach delay (the third report):** the
   echo window refreshed on every unarmed→armed re-arm, and an absorbed
   drag deviation unarmed the follower — each observe then re-armed the
   window, absorbing a slow drag for the window's whole 3.5 s. The
@@ -1137,7 +1126,7 @@ contrast; pairwise hue separation is the residual debt).
 - **A Pi/system-health panel from notify_proc_stat_update** — host stats,
   not printer state; Mainsail/Fluidd already own that surface.
 - **High-rate chart push (10 Hz+)** — MCU temperature sampling caps the
-  source; the 2.5 s aux poll (the author's 2026-09-11 step-down from 1 s)
+  source; the 2.5 s aux poll (the 2026-09-11 step-down from 1 s)
 sets the chart's shipped resolution.
 - **Firmware-update management (Moonraker update_manager)** — dangerous,
   off-brand for a slicer plugin, and per-machine update state is a
@@ -1151,7 +1140,7 @@ sets the chart's shipped resolution.
 - **Network discovery of Moonraker instances** — a security surface for
   near-zero value; users configure one URL per machine.
 
-## 3.6.0 candidate notes (settled with the author 2026-09-10)
+## 3.6.0 candidate notes (settled 2026-09-10)
 
 - **Console resize** — ruled in, see above.
 - **Scroll-to-prompt after a send** — ruled IN for 3.6.0: after sending
@@ -1164,5 +1153,4 @@ sets the chart's shipped resolution.
   layer. The verification window is 10 s (the existing command-track
   timeout); on timeout the entry stays, restyled missed/failed,
   dismissible by click, and all entries clear at print end. NO automatic
-  PAUSE retry — the author: "I'd hesitate to issue a retry in case it's
-  just slow."
+  PAUSE retry — a retry could double a command that was merely slow.

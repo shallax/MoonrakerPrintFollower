@@ -2,7 +2,7 @@ import QtQuick 2.15
 import UM 1.5 as UM
 
 // The Monitor's temperature history plot: solid actuals, translucent
-// target BANDS whose top edge is the setpoint marker (the author's
+// target BANDS whose top edge is the setpoint marker (the
 // ruling — dashed targets got chopped by the actual line at steady
 // state), translucent power areas on a 0-100% second axis, and a
 // hover cursor snapped to the 1 s sample grid with per-series values.
@@ -93,7 +93,7 @@ Item {
 
     function _rightGutter() {
         // The 0-100% power labels live OUTSIDE the plot, in a reserved
-        // right margin (the author's ruling: chips painted over the
+        // right margin (the ruling: chips painted over the
         // data looked janky, and the labels must never collide with the
         // lines). The plot domain shrinks to fit; the compact sparkline
         // keeps its full width.

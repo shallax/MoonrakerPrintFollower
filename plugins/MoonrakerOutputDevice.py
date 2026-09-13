@@ -50,7 +50,7 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
 
     @pyqtSlot()
     def leaveMonitorStage(self):
-        """Esc on the Monitor page leaves it (the author's live
+        """Esc on the Monitor page leaves it (the live
         request): back to the Preview stage when anything is sliced,
         otherwise to Prepare."""
         try:
@@ -94,7 +94,7 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         if self._upload.busy:
             # The Enter wedge: a dialog dismissed without resolving its
             # choice leaves the controller active with a dead dialog —
-            # busy forever, so the dialog never re-opens (the author's
+            # busy forever, so the dialog never re-opens (the
             # live report). A closed-but-unresolved dialog resets here;
             # a genuinely busy transfer still refuses.
             if self._dialog is not None:

@@ -6,7 +6,7 @@ import UM 1.5 as UM
 import Cura 1.1 as Cura
 
 // The file-manager popup (3.6.0): the real QML surface over the
-// published model slice — no synthetic rows ship (the author's
+// published model slice — no synthetic rows ship (the
 // ruling). The popup is exempt from the no-reflow rule by the
 // author's ruling ("Reflowing the file manager is fine, there's
 // nothing critical on that"); every state-gated visibility
@@ -21,7 +21,7 @@ Item {
     // the engine gate and captures — the mock rows below then serve
     // as the fallback so those still render.
     property var printerModel: null
-    // No mock fallbacks (the author's ruling: the synthetic data
+    // No mock fallbacks (the ruling: the synthetic data
     // must not ship) — without a printer the face simply renders
     // empty; the engine gate and captures pass a stub model when
     // they need faces.
@@ -31,7 +31,7 @@ Item {
     // All dismissal paths request the close through this signal and
     // the dashboard owns the flag — assigning `open` internally would
     // break the binding and leave the button unable to reopen the
-    // popup (the author's Snapshot 0 report).
+    // popup (the Snapshot 0 report).
     signal closeRequested
 
     visible: open
@@ -119,7 +119,7 @@ Item {
     }
 
     // Esc has three layers, in order: an open dialog's content owns
-    // the key (Esc CANCELS it — the author's ruling); this root
+    // the key (Esc CANCELS it — the ruling); this root
     // ladder is the fallback while focus sits on a plain item
     // inside the popup; the monitor's window-level shortcut owns
     // the rest of the stage. The model's fileManagerOpen is the
@@ -138,7 +138,7 @@ Item {
     // The print confirmation (Snapshot 2): filename, est. time,
     // filament, the target printer's name and a readiness line, with
     // the pinned verbs. While it is up, Esc cancels IT — the top
-    // layer owns the key (the author's ruling), and every row's
+    // layer owns the key (the ruling), and every row's
     // Print entry stands down.
     Popup {
         id: printConfirmDialog
@@ -146,7 +146,7 @@ Item {
         anchors.centerIn: root
         padding: UM.Theme.getSize("default_margin").width
         // The dialog owns the interaction while it is up: the rows
-        // behind it must not answer clicks (the author's live
+        // behind it must not answer clicks (the live
         // report).
         modal: true
         closePolicy: Popup.CloseOnEscape
@@ -154,7 +154,7 @@ Item {
         // itself; a popup-held focus swallows the key.
         focus: false
         onOpened: printConfirmDialogFocus.forceActiveFocus()
-        // The popup's own background (the author's live report: the
+        // The popup's own background (the live report: the
         // default background was a dark slab under dark text) —
         // the same surface as the filter dropdowns.
         background: Rectangle {
@@ -178,7 +178,7 @@ Item {
                 text: "Start print?"
                 font: UM.Theme.getFont("large_bold")
             }
-            // The confirmation's own large thumbnail (the author's
+            // The confirmation's own large thumbnail (the
             // live request): the grid's fetch/cache at dialog scale
             // with the same fallbacks — hourglass while loading,
             // diamond when the file has none. The centring Item is
@@ -371,7 +371,7 @@ Item {
         }
     }
 
-    // The New-folder dialog (the author's live request): a plain
+    // The New-folder dialog (a live request): a plain
     // name, Enter creates, Esc cancels.
     Popup {
         id: createFolderDialog
@@ -451,7 +451,7 @@ Item {
             radius: UM.Theme.getSize("default_radius").width
         }
         onOpened: {
-            // The whole stem pre-selects (the author's live
+            // The whole stem pre-selects (the live
             // request): typing replaces the name and the extension
             // survives. onOpened fires once per open, so a republish
             // mid-typing never re-selects or moves the cursor. The
@@ -482,7 +482,7 @@ Item {
                 id: renameField
                 width: parent.width
                 // The theme's default field reads as a black slab
-                // under the popup (the author's live report): the
+                // under the popup (the live report): the
                 // input well matches the thumbnail tiles' surface,
                 // with the theme's text colour (white-on-white was
                 // the second report) and a Cura-blue selection.
@@ -537,7 +537,7 @@ Item {
         }
     }
 
-    // The folder context menu (the author's live request): right-click
+    // The folder context menu (a live request): right-click
     // a breadcrumb segment or a strip chip to rename or delete the
     // folder. The root has no menu — it cannot be renamed or deleted.
     Menu {
@@ -631,7 +631,7 @@ Item {
         }
     }
 
-    // The upload progress popup (Snapshot 3 finish — the author's
+    // The upload progress popup (Snapshot 3 finish — the
     // live request): a bar while the upload runs, and a success/fail
     // verdict in the SAME popup at the end.
     Popup {
@@ -644,7 +644,7 @@ Item {
         // itself; a popup-held focus swallows the key.
         focus: false
         onOpened: uploadProgressDialogFocus.forceActiveFocus()
-        // ANY close dismisses the payload (the author's ruling: the
+        // ANY close dismisses the payload (the ruling: the
         // dialog can never get stuck) — Esc and the button alike;
         // a dismissed upload runs on and its verdict lands in the
         // console.
@@ -683,7 +683,7 @@ Item {
             OutlineProgressBar {
                 visible: root.uploadProgressState() === "uploading"
                 // Explicit geometry: Layout.* is IGNORED inside this
-                // plain Column, and a zero-sized bar was the author's
+                // plain Column, and a zero-sized bar was the
                 // live report ("no progress bar").
                 width: parent.width
                 height: 10 * screenScaleFactor
@@ -700,7 +700,7 @@ Item {
             }
             RowLayout {
                 // Always present: closing mid-upload dismisses the
-                // popup, and the upload runs on (the author's
+                // popup, and the upload runs on (the
                 // ruling: the dialog can never get stuck).
                 width: parent.width
                 spacing: UM.Theme.getSize("narrow_margin").width
@@ -729,7 +729,7 @@ Item {
     }
 
     // Below this size the full file area gives way to the recents
-    // strip and a resize hint (the author's live ruling: a crushed
+    // strip and a resize hint (the live ruling: a crushed
     // window makes the manager useless — only recent prints stay).
     readonly property bool narrowMode: card.width < 700 * screenScaleFactor || card.height < 500 * screenScaleFactor
 
@@ -737,7 +737,7 @@ Item {
     // and the trailing columns share these geometry constants with the
     // header and every row — one column model, no per-row arithmetic.
     readonly property real rowHeight: 48 * screenScaleFactor
-    // The render window (the author's live report: a 400-file
+    // The render window (the live report: a 400-file
     // "all / page" listing beachballed the popup — two panes of
     // eager delegates). Only the rows inside the window plus a
     // margin instantiate; the scroll geometry stays honest.
@@ -747,7 +747,7 @@ Item {
     onVisibleRowsChanged: thumbsWindowTimer.restart()
     function requestVisibleThumbnails() {
         // Fires when the scroll SETTLES: fast scrolling fetches once,
-        // not once per frame (the author's live report: the fetch
+        // not once per frame (the live report: the fetch
         // storm made long scrolls crawl).
         if (root.printerModel != null) {
             var relpaths = [];
@@ -763,7 +763,7 @@ Item {
         onTriggered: root.requestVisibleThumbnails()
     }
     // Column widths are sized to fit their HEADERS on one line —
-    // headers never elide or wrap (the author's live ruling). The
+    // headers never elide or wrap (the live ruling). The
     // widths are USER-RESIZABLE and persist in the model's column
     // config (Snapshot 3); the fallbacks are the pinned Snapshot 0
     // sizes.
@@ -879,7 +879,7 @@ Item {
         var dx = (x - root.columnDrag.start) / screenScaleFactor;
         // REASSIGN, never mutate: QML tracks the property, not the
         // object's fields — mutating meant the widths only applied
-        // on release (the author's live report).
+        // on release (the live report).
         root.columnDrag = {
             "key": root.columnDrag.key,
             "base": root.columnDrag.base,
@@ -966,7 +966,7 @@ Item {
 
     // The ubiquitous .gcode suffix is noise; the rarer extensions
     // (.ufp, .nc, .gco, .g) stay — they signal a different file kind
-    // (the author's live ruling).
+    // (the live ruling).
     function displayName(name) {
         return name.endsWith(".gcode") ? name.substring(0, name.length - 6) : name;
     }
@@ -1032,7 +1032,7 @@ Item {
         return counts[category] !== undefined ? counts[category] : 0;
     }
     function filterAnyActive() {
-        // "Clear all" covers the search too (the author's live
+        // "Clear all" covers the search too (the live
         // ruling), so a search alone lights the link.
         if (root.printerModel != null && root.printerModel.fileManagerSearch.length > 0) {
             return true;
@@ -1105,7 +1105,7 @@ Item {
         root.printerModel.setFileFilter(category, values.indexOf(key) >= 0 ? [] : [key]);
     }
     function printStartAllowed() {
-        // The start gate (the author's rulings): no active job —
+        // The start gate (the rulings): no active job —
         // printing OR paused — and the printer connected. Not-homed
         // and not-ready states stay allowed: the confirmation warns
         // and the watchdog explains a start that never happens.
@@ -1231,7 +1231,7 @@ Item {
         // the host never parsed it (a legacy file dropped into
         // gcodes/). The scan entry only appears where it has work
         // to do — offering it on complete rows looked like a dead
-        // option (the author's live report).
+        // option (the live report).
         return row.slicer === null || row.estimated_time === null;
     }
     function pageSelectionState() {
@@ -1241,7 +1241,7 @@ Item {
         return root.printerModel != null ? root.printerModel.fileManagerWalkError : "";
     }
 
-    // One option row in a filter dropdown (the author's live
+    // One option row in a filter dropdown (the live
     // rulings: a selection NEVER dismisses the dropdown — Qt menus
     // close on item activation regardless of closePolicy, so the
     // dropdowns are Popups; Modified/Print time are radios — the
@@ -1256,7 +1256,7 @@ Item {
             Rectangle {
                 anchors.fill: parent
                 // Inset by the border width: a flush hover rect
-                // paints OVER the dropdown's outline (the author's
+                // paints OVER the dropdown's outline (the
                 // live report: the border vanished on hover).
                 anchors.margins: UM.Theme.getSize("default_lining").width
                 radius: UM.Theme.getSize("default_radius").width
@@ -1324,7 +1324,7 @@ Item {
 
     // The filter slots live inline in the Filters row below; the
     // options are [key, label, count] triples from the model and the
-    // count per option sits beside its label (the author's ruling:
+    // count per option sits beside its label (the ruling:
     // numbers next to each filter option).
 
     // The scrim covers the stage above the e-stop dock, which stays
@@ -1349,7 +1349,7 @@ Item {
         color: UM.Theme.getColor("main_background")
         radius: UM.Theme.getSize("default_radius").width
         // Nothing may paint past the card onto the scrim or the dock
-        // (the author's Snapshot 0 report: the content spilled into
+        // (the Snapshot 0 report: the content spilled into
         // the emergency pane on small windows).
         clip: true
 
@@ -1377,8 +1377,8 @@ Item {
 
             // Recents strip FIRST: the top 50 distinct recently
             // printed files from Moonraker history, a HORIZONTALLY
-            // SCROLLING bar (the author's live request, 2026-09-10)
-            // — the strip's leading spot is the author's live-test
+            // SCROLLING bar (a live request, 2026-09-10)
+            // — the strip's leading spot is the live-test
             // reversal (Snapshot 0): "I've changed my opinion on the
             // recent prints bit. I think that does belong as the
             // first thing in the window." No local persistence at
@@ -1478,7 +1478,7 @@ Item {
                                     // unlike a local store there is no way
                                     // for the user to clean a recently
                                     // deleted entry out — so it must not
-                                    // appear at all (the author's live
+                                    // appear at all (the live
                                     // ruling).
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
@@ -1523,7 +1523,7 @@ Item {
             }
 
             // Divider: the recents strip must read as part of the
-            // card, not float above the files list (the author's
+            // card, not float above the files list (the
             // live report).
             Rectangle {
                 Layout.fillWidth: true
@@ -1545,14 +1545,14 @@ Item {
                 // (Snapshot 1 wires the mock's inert segments).
                 // While a search is active the scope is the whole
                 // tree, not a directory, so the breadcrumb goes
-                // (the author's live ruling).
+                // (the live ruling).
                 RowLayout {
                     visible: root.printerModel == null || root.printerModel.fileManagerSearch.length === 0
                     spacing: 0
                     UM.Label {
                         // The root segment reads "<root>", not
                         // Moonraker's raw root name — "/" collided
-                        // with the segment separators (the author's
+                        // with the segment separators (the
                         // live ruling).
                         text: "<root>"
                         color: UM.Theme.getColor("primary")
@@ -1590,7 +1590,7 @@ Item {
                                         }
                                         if (mouse.button === Qt.RightButton) {
                                             // The folder context menu
-                                            // (the author's live
+                                            // (the live
                                             // request): rename or
                                             // delete this segment's
                                             // directory.
@@ -1611,11 +1611,11 @@ Item {
                     text: root.printerModel != null ? root.printerModel.fileManagerRefreshedAt : ""
                     color: UM.Theme.getColor("text_inactive")
                 }
-                // The bounded-window escape hatch (the author's
+                // The bounded-window escape hatch (the
                 // ruling: 200 jobs by default, one click loads the
                 // complete history — even a file printed a thousand
                 // jobs ago resolves). It sits with the refresh
-                // affordance, not the recents strip (the author's
+                // affordance, not the recents strip (the
                 // live ruling).
                 UM.Label {
                     visible: root.printerModel != null && root.printerModel.fileManagerHistoryLoaded > 0 && !root.printerModel.fileManagerHistoryExhausted
@@ -1632,7 +1632,7 @@ Item {
                         }
                     }
                 }
-                // The refresh button (the author's live request):
+                // The refresh button (a live request):
                 // re-walks the tree and re-fetches the history
                 // window on demand.
                 Cura.SecondaryButton {
@@ -1651,7 +1651,7 @@ Item {
                 }
             }
 
-            // Search — name-only, full width (the author's live-test
+            // Search — name-only, full width (the live-test
             // ruling: filters stack UNDER the search bar, not beside).
             // The field is an Item so the in-field clear button can
             // anchor without touching the TextField's own layout
@@ -1680,7 +1680,7 @@ Item {
                     placeholderText: "Search by name"
                     rightPadding: searchClear.visible ? searchClear.width + 8 * screenScaleFactor : 6 * screenScaleFactor
                     // The keystroke settles for 250 ms before the
-                    // search hits the model (the author's live
+                    // search hits the model (the live
                     // ruling) — typing never stutters the grid.
                     onTextEdited: searchDebounce.restart()
                     Timer {
@@ -1727,11 +1727,11 @@ Item {
             }
 
             // One dropdown PER filter category, each self-contained
-            // with scrollable multi-select options (the author's
+            // with scrollable multi-select options (the
             // live ruling). A category with an active filter turns
             // SOLID BLUE and its selected options stay inside the
             // dropdown's own menu — NO chips band spilling into the
-            // form (the author's live ruling). The mock shows
+            // form (the live ruling). The mock shows
             // Slicer and Modified active, the other two inactive.
             // The over-filtered empty state carries its own
             // "Clear all filters" action, so nothing needs the
@@ -1749,12 +1749,12 @@ Item {
                 // The filter slots: BOTH button faces coexist and
                 // visibility flips (never a Loader swap — rebuilding
                 // the button destroys the open menu the moment a
-                // selection lands, the author's live report: the
+                // selection lands, the live report: the
                 // dropdown dismissed itself). Each menu parents to
                 // its SLOT, so `y: parent.height` opens it BELOW the
-                // button, not over it (the author's live report).
+                // button, not over it (the live report).
                 // No CloseOnRelease: a selection never dismisses the
-                // menu — the user does (the author's live ruling).
+                // menu — the user does (the live ruling).
                 Item {
                     implicitWidth: slicerPrimary.implicitWidth
                     implicitHeight: slicerPrimary.implicitHeight
@@ -1810,7 +1810,7 @@ Item {
                         }
                     }
                 }
-                // Modified and Print time are RADIOS (the author's
+                // Modified and Print time are RADIOS (the
                 // live ruling: OR-checkboxes make no sense for
                 // windows and bounds — one at a time; clicking the
                 // active radio clears the filter).
@@ -1925,7 +1925,7 @@ Item {
                     }
                 }
                 // The Never printed filter is a bare TOGGLE, not a
-                // dropdown (the author's live ruling on the fourth
+                // dropdown (the live ruling on the fourth
                 // filter category).
                 Item {
                     implicitWidth: neverPrintedPrimary.implicitWidth
@@ -1943,7 +1943,7 @@ Item {
                     }
                 }
                 // A clickable Clear all in the same style as the
-                // [⇄ Columns] trigger (the author's live ruling);
+                // [⇄ Columns] trigger (the live ruling);
                 // it lights up only while a filter is active.
                 UM.Label {
                     text: "Clear all"
@@ -1956,7 +1956,7 @@ Item {
                 }
             }
 
-            // The folder strip (the author's ruling: directories
+            // The folder strip (the ruling: directories
             // never join the metadata list — they carry no print
             // history and no meaningful sizes). One chip per
             // subdirectory of the CURRENT level: a click descends,
@@ -1964,7 +1964,7 @@ Item {
             // active — the scope is then the whole tree.
             // The strip scrolls horizontally: a wrapping Flow grew
             // rows of chips on folder-heavy printers and crushed the
-            // grid (the author's live report).
+            // grid (the live report).
             Flickable {
                 visible: !root.narrowMode && root.printerModel != null && root.printerModel.fileManagerSearch.length === 0 && (root.printerModel.fileManagerDirectory.length > 0 || root.activeDirectories.length > 0)
                 Layout.fillWidth: true
@@ -1979,7 +1979,7 @@ Item {
                 Row {
                     id: chipsRow
                     spacing: UM.Theme.getSize("narrow_margin").width
-                    // The up directory (the author's live ruling): a
+                    // The up directory (the live ruling): a
                     // chip whenever a parent exists — the root view has
                     // nowhere to go. It leads the strip, like a file
                     // manager's ".." entry.
@@ -2062,8 +2062,8 @@ Item {
                                 }
                             }
                             // The visible menu affordance: the right-click
-                            // menu alone was undiscoverable (the author
-                            // could not find folder deletion at all).
+                            // menu alone was undiscoverable (folder
+                            // deletion could not be found at all).
                             UM.Label {
                                 anchors.right: parent.right
                                 anchors.rightMargin: UM.Theme.getSize("narrow_margin").width
@@ -2088,7 +2088,7 @@ Item {
             }
 
             // Bulk delete lives in the PAGINATION row, far left,
-            // nudging the page controls over (the author's live
+            // nudging the page controls over (the live
             // ruling). The header checkbox selects the whole page,
             // so the row carries only the count and the verb. The
             // verb is red, never primary-blue: blue reads as "the
@@ -2097,7 +2097,7 @@ Item {
             // the count appear only while a selection exists.
 
             // Narrow mode: the file area gives way to the recents
-            // strip and a resize hint (the author's live ruling —
+            // strip and a resize hint (the live ruling —
             // a crushed window makes the manager useless, and only
             // recent prints stay).
             UM.Label {
@@ -2114,14 +2114,14 @@ Item {
             // The grid. The column HEADERS are frozen above one
             // vertical scroller that owns both the sticky block and
             // the trailing rows (the names scroll with the rows —
-            // the author's Snapshot 0 reports). The trailing header
+            // the Snapshot 0 reports). The trailing header
             // follows the rows' horizontal scroll one-way, so the
             // two halves can never drift.
             // An Item, NOT a Column: the scroll affordances and the
             // header are anchored to each other, and anchored
             // children inside a Column break its layout entirely
             // ("Column will not function") — the rows then scrolled
-            // through the column titles (the author's live reports;
+            // through the column titles (the live reports;
             // the fades hit it first, the chevrons hit it again).
             Item {
                 visible: !root.narrowMode
@@ -2129,10 +2129,10 @@ Item {
                 Layout.fillHeight: true
                 // Squeeze down to just the header: a negative-height
                 // scroller breaks its clip and the rows spill OVER
-                // the column titles (the author's live report).
+                // the column titles (the live report).
                 Layout.minimumHeight: root.rowHeight
                 // A horizontal wheel anywhere over the grid scrolls
-                // the strip (the author's live report: the wheel
+                // the strip (the live report: the wheel
                 // only worked over the scrollbar). Vertical wheels
                 // pass through to the ListView untouched.
                 WheelHandler {
@@ -2198,7 +2198,7 @@ Item {
                             }
                             // A "/" separator keeps the select-all
                             // checkbox and the columns trigger from
-                            // reading as one control (the author's
+                            // reading as one control (the
                             // live ruling).
                             UM.Label {
                                 anchors.horizontalCenter: parent.horizontalCenter
@@ -2208,12 +2208,12 @@ Item {
                             }
                             // The columns menu lives IN this header
                             // cell, beside the select-all checkbox
-                            // (the author's live ruling): reorder
+                            // (the live ruling): reorder
                             // and resize live behind it, not as
                             // text in the toolbar. The swishy ⇄
                             // glyph in the primary colour stands
                             // out where a bare hamburger was too
-                            // easy to miss (the author's live
+                            // easy to miss (the live
                             // report).
                             UM.Label {
                                 anchors.right: parent.right
@@ -2259,7 +2259,7 @@ Item {
                                 padding: 0
                                 closePolicy: Popup.CloseOnEscape | Popup.CloseOnReleaseOutside
                                 // The themed surface, like every other
-                                // popup in the card (the author's live
+                                // popup in the card (the live
                                 // report: the default background was a
                                 // black slab).
                                 background: Rectangle {
@@ -2420,7 +2420,7 @@ Item {
                                     // the sorted column: only ONE
                                     // column is sorted at a time,
                                     // and the sorted column carries
-                                    // the arrow (the author's live
+                                    // the arrow (the live
                                     // report caught the mock's
                                     // stray "Name ↓").
                                     text: "Name"
@@ -2510,7 +2510,7 @@ Item {
                                         // title — at the column edge it
                                         // read as belonging to the NEXT
                                         // header and overlapped the text
-                                        // on tight columns (the author's
+                                        // on tight columns (the
                                         // live reports).
                                         UM.Label {
                                             text: root.printerModel != null ? (root.printerModel.fileManagerSortColumn === root.sortKeyFor(modelData[0]) ? (root.printerModel.fileManagerSortAscending ? "↑" : "↓") : "") : ""
@@ -2567,7 +2567,7 @@ Item {
                     anchors.bottom: gridHorizontal.top
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
-                    // The row list is VIRTUALIZED (the author's
+                    // The row list is VIRTUALIZED (the
                     // live reports: an "all / page" listing
                     // beachballed the popup, and a lazy render
                     // window churned delegates per scroll frame).
@@ -2596,9 +2596,8 @@ Item {
                                 width: 3 * screenScaleFactor
                                 // White on a ticked row — the
                                 // blue bar on blue was
-                                // invisible (the delta
-                                // review's catch, ruled by
-                                // the author).
+                                // invisible (the delta review's
+                                // catch, as ruled).
                                 color: root.rowChecked(modelData) ? "white" : UM.Theme.getColor("primary")
                             }
                             RowLayout {
@@ -2618,7 +2617,7 @@ Item {
                                         // flips WHITE with a blue
                                         // tick — a blue box on a
                                         // blue row was invisible
-                                        // (the author's live
+                                        // (the live
                                         // report).
                                         border.color: root.rowChecked(modelData) ? "white" : UM.Theme.getColor("lining")
                                         border.width: UM.Theme.getSize("default_lining").width
@@ -2801,7 +2800,7 @@ Item {
                                             // Snapshot 3: the
                                             // printing file never
                                             // offers the mutations
-                                            // (the author's gate).
+                                            // (the gate).
                                             enabled: root.printerModel != null && root.printerModel.monitorConnected && !modelData.printing
                                             text: "Rename"
                                             onTriggered: {
@@ -2874,7 +2873,7 @@ Item {
                             // The frozen columns end here: the
                             // sliding trailing half clips at this
                             // edge so it can never paint over the
-                            // names (the author's live ruling).
+                            // names (the live ruling).
                             x: root.stickyWidth
                             width: root.trailingWidth
                             height: root.rowHeight
@@ -2891,7 +2890,7 @@ Item {
                                 }
                                 MouseArea {
                                     // Double-click-to-print covers the
-                                    // trailing half too (the author's
+                                    // trailing half too (the
                                     // live request).
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
@@ -2914,7 +2913,7 @@ Item {
                                                 // Breathing room so an
                                                 // elided cell never reads
                                                 // as joined to its
-                                                // neighbour (the author's
+                                                // neighbour (the
                                                 // live report).
                                                 anchors.leftMargin: 5 * screenScaleFactor
                                                 anchors.rightMargin: 5 * screenScaleFactor
@@ -2967,7 +2966,7 @@ Item {
                     // Anchored to the card's bottom, NOT to the
                     // grid's: a grid↔strip anchor pair is a binding
                     // loop that collapsed the ListView to zero
-                    // height — the author's live report: no rows
+                    // height — the live report: no rows
                     // at all.
                     anchors.bottom: parent.bottom
                     height: 12 * screenScaleFactor
@@ -2979,7 +2978,7 @@ Item {
                     }
                 }
 
-                // Scroll affordances, the author's design: small
+                // Scroll affordances, the design: small
                 // chevrons CENTRED in the data section, overlaying
                 // the table — an up arrow near the top while more
                 // data is above, a down arrow near the bottom
@@ -2993,7 +2992,7 @@ Item {
                     anchors.horizontalCenter: gridVertical.horizontalCenter
                     anchors.topMargin: 4 * screenScaleFactor
                     // Same glyph family and colour as the column
-                    // sort arrows (the author's live ruling).
+                    // sort arrows (the live ruling).
                     color: UM.Theme.getColor("primary")
                     font: UM.Theme.getFont("medium_bold")
                 }
@@ -3025,7 +3024,7 @@ Item {
                         text: root.printerModel != null ? root.printerModel.fileManagerWalkError : ""
                         font: UM.Theme.getFont("default")
                     }
-                    // The dismiss affordance (the author's live
+                    // The dismiss affordance (the live
                     // ruling): the banner overlays the first row, so
                     // it must be closable, not just transient.
                     UM.Label {
@@ -3099,7 +3098,7 @@ Item {
                     border.color: "#d32f2f"
                     border.width: 2 * screenScaleFactor
                     // The verb and the count are GONE, not greyed,
-                    // while no selection exists (the author's live
+                    // while no selection exists (the live
                     // ruling); the delete itself arrives with
                     // Snapshot 3.
                     visible: root.printerModel == null || root.printerModel.fileManagerSelected > 0
@@ -3125,7 +3124,7 @@ Item {
                     text: (root.printerModel != null ? root.printerModel.fileManagerSelected : 0) + " selected ✕"
                     font: UM.Theme.getFont("medium_bold")
                     visible: root.printerModel == null || root.printerModel.fileManagerSelected > 0
-                    // The count IS the global clear (the author's
+                    // The count IS the global clear (the
                     // ruling): with selection accumulated across
                     // pages, only the count can drop it all without
                     // perturbing the view.
@@ -3275,17 +3274,17 @@ Item {
                 spacing: UM.Theme.getSize("default_margin").width / 2
 
                 Cura.SecondaryButton {
-                    // The New-folder dialog (the author's live
+                    // The New-folder dialog (the live
                     // request).
                     text: "New folder…"
                     enabled: root.printerModel != null && root.printerModel.monitorConnected
                     onClicked: createFolderDialog.open()
                 }
                 Cura.SecondaryButton {
-                    // Snapshot 3 upload (the author's ruling): LOCAL
+                    // Snapshot 3 upload (the ruling): LOCAL
                     // gcode files only — sliced prints already upload
                     // from the Preview view. Bottom-left, beside the
-                    // disk readout (the author's placement).
+                    // disk readout (the placement).
                     text: "Upload file…"
                     enabled: root.printerModel != null && root.printerModel.monitorConnected
                     onClicked: filePicker.open()

@@ -108,7 +108,7 @@ class PrinterConfig:
     # The status-feed transport, per printer (mixed fleets mix modes).
     # The product default lives here, never in a client-side code default.
     feed_mode: FeedMode = FeedMode.WEBSOCKET
-    # The delivery cadences (the author's sliders ruling): the floor is
+    # The delivery cadences (the sliders ruling): the floor is
     # the printer's own update cadence — below 250 ms there is no
     # fresher data in either mode, and in HTTP mode each request costs
     # the printer a full serialization.
@@ -152,7 +152,7 @@ class PrinterConfig:
     # lock).
     temperature_chart: Dict[str, Any] = field(default_factory=dict)
     console_history: List[str] = field(default_factory=list)
-    # The persisted console transcript (the author's ruling): the last
+    # The persisted console transcript (the ruling): the last
     # ~50 lines of BOTH the user's commands and Klipper's gcode-store
     # output survive across sessions; restored lines grey in the pane.
     console_transcript: List[Dict[str, Any]] = field(default_factory=list)
@@ -246,7 +246,7 @@ class PrinterConfig:
                     "error": bool(entry.get("error")),
                     # The success flag colours the restored "ok" green;
                     # dropping it here rendered every restored response
-                    # neutral grey (the author's "never seen a coloured
+                    # neutral grey (the "never seen a coloured
                     # line" report).
                     "success": bool(entry.get("success")),
                 })

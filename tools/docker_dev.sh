@@ -58,7 +58,7 @@ else
     if [ "$(docker inspect "$name" --format '{{.State.Running}}' 2>/dev/null || true)" != "true" ]; then
         docker rm -f "$name" >/dev/null 2>&1 || true
     fi
-    # /tmp/mpf is the deterministic scratch dir (the author's ruling:
+    # /tmp/mpf is the deterministic scratch dir (the ruling:
     # probes, packages and transient files live there, never in the
     # source tree) — bind-mounted so the container sees the same
     # files as the host.

@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
-# The pinned column order (Snapshot 0): the author's twelve plus Size.
+# The pinned column order (Snapshot 0): the twelve plus Size.
 DEFAULT_COLUMN_ORDER = [
     "name", "modified", "size", "attempts", "status", "object_height",
     "layer_height", "estimated_time", "last_print", "slicer",
@@ -79,7 +79,7 @@ PAGE_SIZES = (25, 50, 100, "all")
 # host-side 400 "not a valid gcode file" for everything else).
 GCODE_EXTENSIONS = (".gcode", ".g", ".gco")
 
-# History is fetched in a bounded window (the author's ruling: 200 by
+# History is fetched in a bounded window (the ruling: 200 by
 # default, "Load all history" as the complete escape hatch).
 HISTORY_WINDOW = 200
 
@@ -119,7 +119,7 @@ class FileRow:
     thumb_small: Optional[str] = None
     # The metadata's print_start_time: the honest "has this file ever
     # printed" signal while the history window is only partially
-    # loaded (the author's live ruling).
+    # loaded (the live ruling).
     print_start_time: Optional[float] = None
 
 
@@ -189,7 +189,7 @@ def rename_target(row: FileRow, new_name: Any) -> Optional[str]:
 def name_collides(rows: Iterable[FileRow], target_relpath: str) -> bool:
     """Whether another resident row already owns the target — the
     host's move silently overwrites, so the client prompts first
-    (round-1 C2/C3, the author's ruling)."""
+    (round-1 C2/C3, the ruling)."""
     return any(row.relpath == target_relpath for row in rows)
 
 
@@ -201,7 +201,7 @@ def path_collides(paths: Iterable[str], target_path: str) -> bool:
 
 def upload_relpath(directory: str, filename: str) -> str:
     """Where an upload lands: the current directory joined with the
-    file's own basename (the author's ruling: use the filename from
+    file's own basename (the ruling: use the filename from
     the actual file)."""
     name = str(filename or "").replace("\\", "/").rsplit("/", 1)[-1]
     directory = str(directory or "").strip("/")
@@ -210,7 +210,7 @@ def upload_relpath(directory: str, filename: str) -> str:
 
 def delete_candidates(rows: Iterable[FileRow], printing_relpath: Any) -> List[FileRow]:
     """The rows a delete may target: the currently-printing file is
-    NEVER offered (the author's gate — the host 403s it anyway, and
+    NEVER offered (the gate — the host 403s it anyway, and
     the client must not even ask)."""
     blocked = str(printing_relpath or "")
     return [row for row in rows if row.relpath != blocked]
@@ -280,7 +280,7 @@ def _row_value(row: FileRow, column: str) -> Any:
         return row.filename
     if column == "status":
         # The column key is the header's vocabulary; the dataclass
-        # field is last_status (the author's live crash: sorting by
+        # field is last_status (the live crash: sorting by
         # Status raised AttributeError straight through the publish).
         return row.last_status
     return getattr(row, column)
@@ -317,7 +317,7 @@ def _value_text(value: Any) -> str:
 
 
 def filter_rows(rows: Sequence[FileRow], filters: Dict[str, Any], *, now: float) -> List[FileRow]:
-    """OR within a category, AND across categories (the author's ruling).
+    """OR within a category, AND across categories (the ruling).
 
     ``filters`` keys:
     - ``slicer``: a list of slicer names; ``"unknown"`` selects files
@@ -391,7 +391,7 @@ def _match_print_time(row: FileRow, minutes: Any) -> bool:
 
 
 def search_rows(rows: Sequence[FileRow], query: str) -> List[FileRow]:
-    """Global name+path search, token-AND, case-insensitive (the author's rulings).
+    """Global name+path search, token-AND, case-insensitive (the rulings).
 
     Search is NOT scoped to the current directory — matches come from
     the whole resident listing, and the folder shows small in the name
@@ -461,7 +461,7 @@ def merge_column_order(persisted: Sequence[str], available: Sequence[str]) -> Li
 def attempts_for(rows: Sequence[FileRow], history_jobs: Sequence[Dict[str, Any]]) -> List[FileRow]:
     """Join history onto the rows: attempts = jobs within the fetched
     window; last_status = the newest job's status word, never
-    flattened to success/fail (the author's ruling); last_print = the
+    flattened to success/fail (the ruling); last_print = the
     newest job's end time. History filenames are root-exclusive
     relpaths, matching the rows'."""
     from dataclasses import replace
@@ -485,9 +485,9 @@ def attempts_for(rows: Sequence[FileRow], history_jobs: Sequence[Dict[str, Any]]
 
 def recent_prints(history_jobs: Sequence[Dict[str, Any]], *, limit: int = 50) -> List[Dict[str, Any]]:
     """Top N DISTINCT files most recently printed — a file printed
-    three times counts once (the author's ruling) — with the newest
+    three times counts once (the ruling) — with the newest
     job's status and end time. Files the server no longer lists are
-    DROPPED, not greyed (the author's live ruling, 2026-09-10): a
+    DROPPED, not greyed (the live ruling, 2026-09-10): a
     locally-stored recents list could have kept a recently-deleted
     file visible because the user could clean it out by hand — but
     with Moonraker's history as the source of truth there is no way
@@ -512,7 +512,7 @@ def recent_prints(history_jobs: Sequence[Dict[str, Any]], *, limit: int = 50) ->
 
 
 def page_selection_state(page_rows: Sequence[FileRow], selected: Set[str]) -> str:
-    """The select-all checkbox's three states (the author's ruling)."""
+    """The select-all checkbox's three states (the ruling)."""
     if not page_rows:
         return "none"
     selected_count = sum(1 for row in page_rows if row.relpath in selected)
@@ -538,7 +538,7 @@ def filter_option_counts(rows: Sequence[FileRow], *, now: float) -> Dict[str, An
     """Option lists for the filter dropdowns: each option as a
     [key, label, count] triple over the RESIDENT listing (counts stay
     stable as filters change — a shrinking count while ticking is a
-    feedback loop the author ruled out). The keys are exactly the
+    feedback loop that was ruled out). The keys are exactly the
     vocabulary filter_rows accepts.
 
     - slicer: one entry per distinct slicer plus "unknown"
@@ -617,13 +617,13 @@ class ViewState:
     page_size: Any = 25
 
     def apply(self, rows: Sequence[FileRow], *, now: float) -> List[FileRow]:
-        """Filters first, then search within the subset (the author's ruling)."""
+        """Filters first, then search within the subset (the ruling)."""
         filtered = filter_rows(rows, self.filters, now=now)
         narrowed = search_rows(filtered, self.search)
         return sort_rows(narrowed, self.sort_column, self.sort_ascending)
 
     def change_sort(self, column: str) -> None:
-        """Sorting another column CANCELS the current sort (the author's ruling)."""
+        """Sorting another column CANCELS the current sort (the ruling)."""
         if column not in SORTABLE_COLUMNS:
             return
         if self.sort_column == column:

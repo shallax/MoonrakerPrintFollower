@@ -1,7 +1,7 @@
 """Key-carrying local republisher for authenticated camera streams.
 
 Cura's NetworkMJPGImage cannot send the X-Api-Key header, so a camera
-behind a header-auth proxy cannot render (the author's 2026-09-11
+behind a header-auth proxy cannot render (the 2026-09-11
 ruling: 4.0.0 gains a bridge). The bridge fetches the stream from the
 configured printer WITH the key and republishes it on a keyless
 loopback endpoint for Cura's loader. The listener binds loopback

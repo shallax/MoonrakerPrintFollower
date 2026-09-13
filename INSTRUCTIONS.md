@@ -126,7 +126,7 @@ merely fixed forward (the author's amendment, 2026-09-11).
 ## Release workflow
 
 New releases follow the `/new-feature` skill (`.claude/skills/new-feature/SKILL.md`):
-plan with verbatim author quotes and real push-back → one round-1 critic
+plan with real push-back → one round-1 critic
 before going deep → build with tests → a six-persona panel
 (architecture/UX/engineering/product/security and the
 Klipper/Moonraker/Cura domain expert, read-only, findings funnel back
@@ -188,10 +188,10 @@ Two rules govern every control on the Monitor tab; both are pinned by
 and `test_disconnected_disables_every_monitor_control`) — update the
 pins in the same commit as any change to a control.
 
-- **No reflow, ever** (the author's rule, verbatim): "no controls
-  disappear, ever. It's only disablement/enablement... nothing should
-  ever, EVER cause the UI to reflow unless it's explicitly done by the
-  user (expanding/collapsing sections, resizing things, etc)." The
+- **No reflow, ever**: no controls disappear, ever — only
+  disablement/enablement. Nothing may cause the UI to reflow unless
+  the user explicitly asks for it (expanding/collapsing sections,
+  resizing things, etc). The
   reasoning: a control vanishing mid-interaction moves the button
   under the pointer — genuinely dangerous during jog nudges. So
   state-gated controls render permanently and toggle `enabled`; status

@@ -10,7 +10,7 @@ Cura.MachineAction {
 
     property bool validUrl: manager.validUrl(urlField.text)
     property bool insecureKeyWarning: manager.insecureKeyWarning(urlField.text, apiKeyField.text)
-    // The interval controls are sliders (the author's ruling): bounded
+    // The interval controls are sliders (the ruling): bounded
     // and stepped, so an invalid value can never be entered. The poll
     // slider is log-spaced; pollIntervalMoved records whether the user
     // touched it, so an untouched stored value is never rewritten.

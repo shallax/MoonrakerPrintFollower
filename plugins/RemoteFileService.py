@@ -31,7 +31,7 @@ class FileLease:
 class _OneShotDownload:
     """The file-manager Download lane: one file, one stream, into a
     fresh temp directory. Independent of the job-bound state machine
-    (the author's file-manager ruling: Download loads the file into
+    (the file-manager ruling: Download loads the file into
     Cura), with the same byte cap and lane discipline."""
 
     def __init__(self, transport, relpath, root, on_ready):

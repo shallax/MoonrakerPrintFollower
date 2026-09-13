@@ -47,8 +47,8 @@ cleanup() {
          pkill -9 -f "simulator_serve[.]py" 2>/dev/null; true' || true
     if [ "${MODE:-scenario}" = "real" ]; then
         # The seeded profile holds the real host and key at runtime:
-        # a real run's debris must not outlive the run (the author's
-        # rule — the key must never sit on disk beyond the session).
+        # a real run's debris must not outlive the run (the key
+        # must never sit on disk beyond the session).
         case "${RUN_DIR_NAME:-run-001}" in
             /*) rm -rf /tmp/mpf/xdg "$RUN_DIR_NAME" ;;
             *) rm -rf /tmp/mpf/xdg /tmp/mpf/ui-artifacts/"${RUN_DIR_NAME:-run-001}" ;;

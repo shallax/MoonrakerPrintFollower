@@ -113,7 +113,7 @@ class PreviewFollower:
         # does not move Cura's view, so the armed baseline stays valid.
         # Wiping it on every inactive observation left the window
         # between observations permanently unarmed — drags and scrolls
-        # in that window were ignored (the author's live report).
+        # in that window were ignored (the live report).
         self._state = PreviewState(attached=state.attached,
             expected_layer=state.expected_layer, expected_minimum=state.expected_minimum,
             expected_path=state.expected_path, expected_minimum_path=state.expected_minimum_path)
@@ -190,7 +190,7 @@ class PreviewFollower:
             if layer != state.anchor_layer:
                 state = replace(state, anchor_layer=layer, anchor_duration=duration)
             state = replace(state, observed_layer=layer)
-        # The auto-improve-ETA opt-in (the author's ruling): learn the
+        # The auto-improve-ETA opt-in (the ruling): learn the
         # print's drift from the slicer's elapsed estimate at the
         # current layer, clamped so an early-layer wobble cannot swing
         # the remaining estimate wildly.
@@ -241,7 +241,7 @@ class PreviewFollower:
             # to refresh here on every unarmed->armed transition, and
             # an absorbed drag deviation unarmed the follower — each
             # observe then re-armed the window, absorbing a slow drag
-            # for the window's whole 3.5 s (the author's live report:
+            # for the window's whole 3.5 s (the live report:
             # a slow drag detached only after ~3 s). The window now
             # covers just the moment after an attach.
         self.update_eta(snapshot, index)

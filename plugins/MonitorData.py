@@ -40,7 +40,7 @@ class MonitorData(QObject):
     consoleStoreChanged = pyqtSignal()
     commandChanged = pyqtSignal(object)
     # Fires on every connection-state transition with the new state —
-    # the console logs a "#" note on each (the author's request).
+    # the console logs a "#" note on each (the request).
     connectionStateChanged = pyqtSignal(bool)
 
     def __init__(self, client, parent=None):
@@ -58,7 +58,7 @@ class MonitorData(QObject):
         # consumed before a drop never backfills again.
         self._console_seen = deque(maxlen=400)
         self._console_seed = None
-        # The error bell's collapsed watch (the author's live
+        # The error bell's collapsed watch (the live
         # request): the store feed is the only source of error lines,
         # so while the console is collapsed a SLOW poll keeps the
         # bell able to ring — one small request every 5 s, nothing
@@ -165,14 +165,14 @@ class MonitorData(QObject):
 
     def assume_print_stopped(self):
         """The e-stop's assumption rides the client's observation
-        layer (the author's ruling): one point, every consumer."""
+        layer (the ruling): one point, every consumer."""
         self._client.assume_print_stopped()
 
     def set_toolhead_guard(self, active):
         self._client.set_toolhead_guard(active)
 
     def reconnect(self) -> None:
-        """The manual Reconnect (the author's live request, 3.6.0):
+        """The manual Reconnect (a live request, 3.6.0):
         the client cycle of the e-stop recovery, minus the
         connected-only gate — a manual reconnect exists for when the
         UI state is STUCK, which includes being disconnected."""
@@ -244,7 +244,7 @@ class MonitorData(QObject):
             if self._active and generation == self._generation and session == self._client.session.generation:
                 callback(payload, error)
         if rpc is not None:
-            # The socket RPC lane (the author's ruling: ditch the HTTP
+            # The socket RPC lane (the ruling: ditch the HTTP
             # polls) — unavailable means the socket is down or the mode
             # is HTTP, and the same request falls through to the wire.
             rpc_method, rpc_params = rpc
@@ -300,7 +300,7 @@ class MonitorData(QObject):
         # fired ONLY in the once-per-connect refresh_all, and when the
         # RPC lane had not upgraded yet that one request was dropped
         # forever — the camera stayed unselected until a manual
-        # refresh (the author's live report; the harness's scenario 4
+        # refresh (the live report; the harness's scenario 4
         # caught it).
         self.refresh_webcams()
 
@@ -320,7 +320,7 @@ class MonitorData(QObject):
         """The wanted set must reach the socket even before any aux data
         has arrived: Moonraker only pushes subscribed objects, so waiting
         for the first fragment to issue the subscription is a deadlock
-        — temperatures never appeared in websocket mode (the author's
+        — temperatures never appeared in websocket mode (the
         live report)."""
         if self._client.effective_feed_mode != "websocket":
             return
@@ -352,7 +352,7 @@ class MonitorData(QObject):
         # hot-removed stop rendering instead of staying in the snapshot for
         # the rest of the session. Newly-seen objects join the set even when
         # the first objects/list missed them — a device switched on
-        # mid-print must show up, not be dropped (the author's rule).
+        # mid-print must show up, not be dropped (the rule).
         wanted = {name for name in self._snapshot.objects if self.wants_object(name)}
         wanted |= {name for name in incoming if self.wants_object(name)}
         # The wanted set is the subscription's declarative input (A8/F5):
@@ -367,7 +367,7 @@ class MonitorData(QObject):
         self.auxiliaryChanged.emit()
 
     # The console's gcode-store feed: polled ONLY while the console is
-    # expanded (the author's ruling), on the CONSOLE poll interval with
+    # expanded (the ruling), on the CONSOLE poll interval with
     # an idle floor (PollPolicy). The store holds Klipper's output
     # VERBATIM — Moonraker strips nothing (data_store.py stores the
     # payload as delivered) — and modern Klipper's response lines carry
@@ -387,7 +387,7 @@ class MonitorData(QObject):
             # The persisted last-seen stamp seeds the ONE-SHOT skip on
             # the first fetch: the store's buffer holds entries from
             # other sessions and other clients, and re-adding them was
-            # the author's "stale responses without requests" dump.
+            # the "stale responses without requests" dump.
             self._console_seed = float(stored_time or 0.0)
             self._console_watch.stop()
             self.refresh_console_store()
@@ -426,7 +426,7 @@ class MonitorData(QObject):
                     # The seed protects only this FIRST fetch — but the
                     # entries it skips must stay skipped for the whole
                     # session, or the next poll re-delivers the stale
-                    # buffer (the author's live report: the console
+                    # buffer (the live report: the console
                     # re-fetching Moonraker's history on load).
                     seen.append((stamp, text))
                     continue
@@ -448,7 +448,7 @@ class MonitorData(QObject):
         # a slow cadence (they change at homing, not every second).
         # The poll waits for Klippy to report ready: during a
         # firmware/restart every request lands in the gcode store as
-        # "!! Internal Error on WebRequest" (the author's live report
+        # "!! Internal Error on WebRequest" (the live report
         # — Moonraker starts fine, the plugin was just noisy about
         # it), and an unanswered readiness check must not paint the
         # console red.
@@ -456,7 +456,7 @@ class MonitorData(QObject):
             return
         # NEVER while a print runs: query_endstops makes Klipper
         # briefly pause the toolhead while it answers — a 250-500 ms
-        # dwell at the poll's 10 s cadence on the author's live
+        # dwell at the poll's 10 s cadence on the live
         # print (quitting Cura stopped it). The endstop states cannot
         # change mid-print, so the poll resumes only once idle.
         state = (self._snapshot.core.get("print_stats") or {}).get("state")

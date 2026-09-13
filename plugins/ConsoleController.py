@@ -5,7 +5,7 @@ Sends ride the console's OWN request path (channel "console"): the
 endpoint replies only after Klipper processes the script, and that
 reply's result is the execution verdict. Klipper's OUTPUT streams back
 through Moonraker's gcode store, which MonitorData polls while the
-console is expanded (the author's ruling: expanded-only, with a
+console is expanded (the ruling: expanded-only, with a
 backfill seed on expand) and deduplicates — the store pairs responses
 to recent commands by recency only (there are no correlation ids), so
 the pane is a terminal FEED, not a per-command echo: our typed lines
@@ -50,7 +50,7 @@ class ConsoleController(QObject):
             # out of the persisted record and is stamped on load so the
             # pane greys the previous session's lines. An EMPTY list is
             # a genuine Clear — it must not fall through to the legacy
-            # history re-migration (the author's Clear-doesn't-stick
+            # history re-migration (the Clear-doesn't-stick
             # report).
             transcript = [{
                 "kind": str(entry.get("kind") or "command"),
@@ -90,7 +90,7 @@ class ConsoleController(QObject):
         self._transcript_identity = None
         commands.emergencyStopped.connect(self._emergency_stopped)
         # Every connection transition writes a "#" note into the feed
-        # (the author's request: the console says when it lost or
+        # (the request: the console says when it lost or
         # regained the printer).
         data.connectionStateChanged.connect(self._connection_note)
         # A printer switch must not leave phantom pending sends or a
@@ -114,7 +114,7 @@ class ConsoleController(QObject):
     def _connection_note(self, connected) -> None:
         # Only genuine TRANSITIONS write a note: a flapping link re-emits
         # the same state on every failed reconnect attempt, and the feed
-        # must not fill with repeats (the author's live report).
+        # must not fill with repeats (the live report).
         connected = bool(connected)
         if connected == self._last_connection:
             return
@@ -129,7 +129,7 @@ class ConsoleController(QObject):
     def _note(self, text) -> None:
         """A plugin-side note rendered as its own feed line: the pane
         draws kind "note" with a "#" prefix in amber, unmistakably the
-        plugin's voice, never Klipper's (the author's ruling — anything
+        plugin's voice, never Klipper's (the ruling — anything
         the plugin adds to the feed must be obviously its own).
         Session-transient: notes never persist."""
         self._append_entries([{"kind": "note", "text": str(text),
@@ -144,7 +144,7 @@ class ConsoleController(QObject):
         stop appending forever). The newest commands are pinned through
         the rotation: a chatty Klipper floods the ring with a response
         per second and the typed requests rotated out entirely, so
-        restores came back requestless (the author's report)."""
+        restores came back requestless (the report)."""
         merged = self._transcript + additions
         dropped_head, self._transcript = merged[:-MAX_HISTORY], merged[-MAX_HISTORY:]
         if len(dropped_head) > 0:
@@ -159,7 +159,7 @@ class ConsoleController(QObject):
         line = normalise_line(text)
         if not line:
             # Terminal semantics: an empty Enter is simply nothing — no
-            # note, no banner (the author's ruling: the feed is the
+            # note, no banner (the ruling: the feed is the
             # console's information surface, and nothing sent carries no
             # information). Only an oversized paste explains itself.
             if len(str(text or "").strip()) > MAX_LINE:
@@ -213,7 +213,7 @@ class ConsoleController(QObject):
             return False
         self._append_entries([entry])
         self._in_flight.add(token)
-        # No "sent to Klipper" caption (the author's ruling): the typed
+        # No "sent to Klipper" caption (the ruling): the typed
         # line's own verdict colouring carries the feedback, and the
         # feed's "!!" lines are their own red signal — no status banner
         # anywhere outside the feed.
@@ -243,7 +243,7 @@ class ConsoleController(QObject):
         self._store_time = max(self._store_time, max(float(entry.get("time") or 0.0) for entry in entries))
         self._append_entries(fresh)
         # A live "!!" line is its own red signal in the feed — no
-        # banner, no status line outside it (the author's ruling).
+        # banner, no status line outside it (the ruling).
         self._persist()
         self.changed.emit()
 
@@ -253,7 +253,7 @@ class ConsoleController(QObject):
         self._transcript = []
         # Clear must clear the PERSISTED record too — both the new
         # transcript and the legacy typed history, so nothing survives
-        # a restart (the author's ruling). The store stamp stays: the
+        # a restart (the ruling). The store stamp stays: the
         # cleared pane must not refill from the server's buffer.
         config = self._config()
         self._apply_config(replace(config, console_transcript=[], console_history=[]))
@@ -264,7 +264,7 @@ class ConsoleController(QObject):
 
         The console constructs before Cura's active machine exists, so
         the early read hits the 'unknown' machine's EMPTY record and the
-        restored lines never appear (the author's 'console is completely
+        restored lines never appear (the 'console is completely
         empty' report; the writes land under the real machine once the
         identity arrives). Re-load per poll heartbeat until the identity
         resolves. Once loaded, a reconnect (same machine) must NOT
@@ -310,7 +310,7 @@ class ConsoleController(QObject):
 
     def mark_saved(self) -> None:
         """The preference file flushed: the sent lines are on disk, so
-        their blue pending colour can settle (the author's ruling — the
+        their blue pending colour can settle (the ruling — the
         API verdict flips too fast to read). Only entries inside the
         persisted window may claim "on disk": lines beyond it were never
         written and die with the session (the engineering panel's
@@ -370,7 +370,7 @@ class ConsoleController(QObject):
         transcript = [{"kind": entry["kind"], "text": entry["text"],
                        "error": entry["error"], "success": entry["success"]}
                       for entry in self._persist_window()]
-        # Only the last 50 lines persist (the author's ruling); the
+        # Only the last 50 lines persist (the ruling); the
         # session keeps up to MAX_HISTORY in the pane. The store stamp
         # persists with them so the next session's expand skip is
         # seeded with everything already seen.
