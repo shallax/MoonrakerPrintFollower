@@ -94,6 +94,12 @@ def ensure_ready():
     (the Add-printer wizard's own code path) and hide the welcome
     overlay until the gate is clear. Orchestration only — no
     plugin-surface claims."""
+    # Cura's first-boot window size is nondeterministic, and a narrow
+    # window collapses the header's stage buttons into the overflow
+    # menu — the stage clicks then fail ("stage button not found")
+    # while a wide window passes. Pin the geometry so every run has
+    # the same layout; the probes measure the live tree either way.
+    rpc({"id": 1, "cmd": "window_resize", "w": 1500, "h": 900})
     for _ in range(10):
         reply = rpc({"id": 1, "cmd": "welcome"})
         if reply.get("ok") and not reply.get("up"):
