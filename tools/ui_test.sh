@@ -71,6 +71,15 @@ if [ "$SEED_VER" != "5.13" ]; then
     cp -r /tmp/mpf/xdg/config/cura/5.13 /tmp/mpf/xdg/config/cura/"$SEED_VER"
     cp -r /tmp/mpf/xdg/cura/5.13 /tmp/mpf/xdg/cura/"$SEED_VER"
 fi
+# CuraEngine's ELF carries a RELATIVE interpreter path, resolved from
+# the spawning process's cwd — which is the fakehome (Cura chdirs
+# there). Without this link the backend's engine spawn dies with
+# ENOENT and no toolpath can ever slice (proven by the cube flow).
+mkdir -p /tmp/mpf/fakehome/lib64
+ln -sfn /lib64/ld-linux-x86-64.so.2 /tmp/mpf/fakehome/lib64/ld-linux-x86-64.so.2
+# Stage the suite's test model where the insert-slice flow reads it.
+mkdir -p /tmp/mpf/models
+cp "$root/tests/harness/models/voron_cube.stl" /tmp/mpf/models/voron_cube.stl
 # The driver's ready marker is per-boot: a stale one from an earlier
 # run would let the wait loop pass before Cura is actually up.
 rm -f /tmp/mpf/harness_port.txt

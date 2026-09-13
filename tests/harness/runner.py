@@ -2318,6 +2318,79 @@ def suite_step(step):
                     f"driver: {reply['error']}")
         return True, "the driver executed the inline probe", f"{reply}"
 
+    if op == "insert_model":
+        # Cura's own reader chain inserts the suite's test model (the
+        # Voron cube) — the path the author's drag-drop drives.
+        code = ("from UM.Application import Application\n"
+                "from PyQt6.QtCore import QUrl\n"
+                "app = Application.getInstance()\n"
+                "result = {}\n"
+                "try:\n"
+                "    app.readLocalFile(QUrl.fromLocalFile(\"/tmp/mpf/models/voron_cube.stl\"),"
+                " add_to_recent_files=False)\n"
+                "    result[\"read\"] = True\n"
+                "except Exception as exc:\n"
+                "    result[\"error\"] = repr(exc)")
+        reply = exec_rpc(code)
+        if reply.get("error"):
+            return (False, "the Voron cube inserted through Cura's reader chain",
+                    f"driver: {reply['error']}")
+        return True, "the Voron cube inserted through Cura's reader chain", "read"
+
+    if op == "slice_scene":
+        # The real slice: the backend's engine slices the scene and
+        # the layer job feeds the SimulationView (needs the Preview
+        # stage active — Cura's own auto-switch does not fire in the
+        # harness).
+        reply = exec_rpc("from UM.Application import Application\n"
+                         "app = Application.getInstance()\n"
+                         "result = {}\n"
+                         "try:\n"
+                         "    app.getBackend().forceSlice()\n"
+                         "    result[\"slice\"] = True\n"
+                         "except Exception as exc:\n"
+                         "    result[\"error\"] = repr(exc)")
+        if reply.get("error"):
+            return (False, "the scene sliced by the engine",
+                    f"driver: {reply['error']}")
+        return True, "the scene sliced by the engine", "sliced"
+
+    if op == "add_post_script":
+        # Activate a post-processing script through the plugin's own
+        # manager — Cura's save-area `</>` button only renders while a
+        # script is active (the author's insert-a-pause flow).
+        reply = exec_rpc("from UM.Application import Application\napp = Application.getInstance()\nresult = {}\nplugin = app.getPluginRegistry().getPluginObject(\"PostProcessingPlugin\")\ntry:\n    plugin.addScriptToList(\"PauseAtHeight\")\n    result[\"added\"] = True\nexcept Exception as exc:\n    result[\"error\"] = repr(exc)")
+        if reply.get("error"):
+            return (False, "the post-processing script activated",
+                    f"driver: {reply['error']}")
+        return True, "the post-processing script activated", "active"
+
+    if op == "gap_between":
+        # The vertical gap between two stacked items: above's bottom
+        # edge to below's top edge, within [min, max]. With
+        # edges=bottoms: above's bottom edge to below's bottom edge
+        # (the </> button must sit ON the card's bottom line — the
+        # author's live report).
+        def resolve(ref):
+            keys = ("objectName", "text", "className", "window")
+            payload = {k: ref[k] for k in keys if k in ref}
+            key = next(iter(ref.values()))
+            reply = rpc({"id": 1, "cmd": "rect", **payload})
+            if not reply.get("ok") or "rect" not in reply:
+                raise RuntimeError(f"rect of {key}: {reply.get('error', reply)}")
+            return key, reply["rect"]
+        a_key, a = resolve(step["above"])
+        b_key, b = resolve(step["below"])
+        if step.get("edges") == "bottoms":
+            gap = (b["y"] + b["h"]) - (a["y"] + a["h"])
+        else:
+            gap = b["y"] - (a["y"] + a["h"])
+        lo = float(step.get("min", -1000))
+        hi = float(step.get("max", 1000))
+        return (lo <= gap <= hi,
+                f"{a_key} and {b_key} hold their vertical gap",
+                f"gap {gap}px (wanted [{lo}, {hi}]); a={a} b={b}")
+
     raise ValueError(f"unknown suite op {op!r}")
 
 

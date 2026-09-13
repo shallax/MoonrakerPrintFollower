@@ -124,6 +124,15 @@ def main() -> int:
         appimage.chmod(0o755)
         sh(str(appimage), "--appimage-extract", cwd=vdir)
         shutil.move(str(vdir / "squashfs-root"), str(root))
+    # CuraEngine's ELF carries a RELATIVE interpreter path
+    # ("lib64/ld-linux-x86-64.so.2") — the kernel resolves it from the
+    # spawning process's cwd, which is the appdir. Without this link
+    # the backend's engine spawn dies with ENOENT and no toolpath can
+    # ever slice (proven: the engine runs once the link exists).
+    interp = root / "lib64" / "ld-linux-x86-64.so.2"
+    if not interp.exists():
+        interp.parent.mkdir(parents=True, exist_ok=True)
+        interp.symlink_to("/lib64/ld-linux-x86-64.so.2")
 
     pyv, qt6 = discover(root)
     print(f"bundled python {pyv}, PyQt6 {qt6}")

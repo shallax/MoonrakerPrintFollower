@@ -473,6 +473,21 @@ itself (`activePrinter`) and re-emits Cura's
 fresh boots restored the machine before the plugin's listener
 existed and every later read saw `None`.
 
+## 3b. The test model and the engine
+
+`tests/harness/models/voron_cube.stl` is the suite's test model (the
+author's ruling, 2026-09-13): the Voron Design Cube v7, fetched from
+a public mirror of the official STL and re-headed to a standard
+binary STL header (the official export carries UltiMaker's "ATF"
+header variant, which the reader chain silently rejects). The cube
+LOADS in the harness and meshes fully (proven: 10,242 vertices in
+the scene). The slice → toolpath step still needs the engine's
+socket-driven start to fire in the harness — the exec-level blocker
+(the engine's relative ELF interpreter, resolved from the appdir)
+is fixed by `tools/fetch_cura.py`, and the engine itself runs; the
+backend's start never firing remains the open thread before the
+preview's native action panel (and the `</>` with it) can be pinned.
+
 ## 4. Determinism and flake policy
 
 - A dedicated harness image pins Xvfb, Mesa (llvmpipe via
