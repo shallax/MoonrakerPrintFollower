@@ -7,6 +7,17 @@ on:
   # The gate loop runs without a tag: the full matrix on demand from
   # main, so a failing unit costs minutes instead of a junk tag.
   workflow_dispatch:
+  # PRs that touch the gate machinery run the full matrix before they
+  # can merge; product-code PRs keep the fast two-unit smoke in ci.yml.
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "tools/ui_test.sh"
+      - "tools/harness_release.sh"
+      - "tools/harness_smoke.sh"
+      - "tools/harness/**"
+      - "tools/fetch_cura.py"
+      - "tests/harness/**"
 
 permissions:
   contents: write
@@ -65,7 +76,7 @@ jobs:
         run: |
           python tools/build_curapackage.py
           python tools/build_marketplace_source.py
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')"
           python tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v${VERSION}.curapackage"
           python tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
 
