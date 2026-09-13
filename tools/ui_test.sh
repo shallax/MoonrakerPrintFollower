@@ -197,6 +197,12 @@ fi
 
 rm -f "$RUN_DIR/index.html"
 mkdir -p "$RUN_DIR"
+# The container's runner and driver write into the scratch tree (the
+# port/token files at /tmp/mpf itself, the galleries under this dir);
+# on CI the host-side creators run as a different uid than the
+# container's, so the tree must be open to everyone. Throwaway scratch.
+chmod 777 /tmp/mpf
+chmod -R 777 "$RUN_DIR"
 
 case "$MODE" in
     discover)
