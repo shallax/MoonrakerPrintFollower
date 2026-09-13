@@ -63,10 +63,13 @@ trap cleanup EXIT INT TERM
 # earlier runs never carry over.
 rm -rf /tmp/mpf/xdg
 mkdir -p /tmp/mpf/xdg
-# The container writes the seeded Cura config here — same cross-uid
-# concern as fakehome.
-chmod -R 777 /tmp/mpf/xdg
 cp -r "$root/tests/harness/config/." /tmp/mpf/xdg/
+# The container's Cura writes into the seeded tree — the instance lock
+# is its very first write, and the boot retries it forever on EACCES.
+# On CI the host-side creators run as a different uid than the
+# container's, so the copy must be opened up AFTER it lands (cp -r
+# restores the 755 modes the chmod would have fixed).
+chmod -R 777 /tmp/mpf/xdg
 # Real mode points the seeded machine record at the real host, at
 # runtime, from the environment — the host and key never touch the
 # repo, the logs or any committed file.
@@ -97,6 +100,9 @@ SEED_VER="${CURA_VERSION%.*}"
 if [ "$SEED_VER" != "5.13" ]; then
     cp -r /tmp/mpf/xdg/config/cura/5.13 /tmp/mpf/xdg/config/cura/"$SEED_VER"
     cp -r /tmp/mpf/xdg/cura/5.13 /tmp/mpf/xdg/cura/"$SEED_VER"
+    # The carry-over copy lands with the same 755 modes (cp -r); the
+    # cross-uid chmod above must cover it too.
+    chmod -R 777 /tmp/mpf/xdg/config/cura/"$SEED_VER" /tmp/mpf/xdg/cura/"$SEED_VER"
 fi
 # CuraEngine's ELF carries a RELATIVE interpreter path, resolved from
 # the spawning process's cwd — which is the fakehome (Cura chdirs
