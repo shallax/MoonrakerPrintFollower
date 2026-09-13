@@ -22,8 +22,8 @@ from plugins.RemoteJobService import PrintObservation
 
 PLUGINS = pathlib.Path(__file__).resolve().parents[1] / "plugins"
 BUTTON = (PLUGINS / "PreviewSecondaryButton.qml").read_text(encoding="utf-8")
-PANEL = (PLUGINS / "PreviewActionPanelControls.qml").read_text(encoding="utf-8")
-EMPTY = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text(encoding="utf-8")
+PANEL = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+EMPTY = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
 
 
 class View:
@@ -425,7 +425,7 @@ class PreviewPresentationContractTests(unittest.TestCase):
 
     def test_each_scheduled_pause_has_end_of_layer_eta(self):
         coordinator = (PLUGINS / "PrintCoordinator.py").read_text()
-        qml = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
+        qml = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
         self.assertIn("self._preview.remaining(layer, self._index.view, end=True)", coordinator)
         self.assertIn("property string pauseEta", qml)
         self.assertIn("parent.pauseEta.length > 0", qml)

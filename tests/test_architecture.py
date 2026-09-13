@@ -262,12 +262,13 @@ class SourceContractTests(unittest.TestCase):
                 self.assertNotIn(forbidden, source, module)
 
     def test_preview_qml_keeps_public_workflow(self):
-        panel = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
-        empty = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
-        self.assertIn('text: "Load current print"', panel)
-        self.assertIn('base.followingPaused ? "Attach" : "Detach"', panel)
-        self.assertNotIn('base.followingPaused ? "Attach" : "Detach"', empty)
-        self.assertIn("This does not pause the printer.", panel)
+        card = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
+        self.assertIn('text: "Load current print"', card)
+        self.assertIn('base.followingPaused ? "Attach" : "Detach"', card)
+        self.assertIn("This does not pause the printer.", card)
+        # The ONE-card refactor: no second preview card document exists.
+        self.assertFalse((PLUGINS / "EmptyPreviewLoadButton.qml").exists())
+        self.assertFalse((PLUGINS / "PreviewActionPanelControls.qml").exists())
 
     def test_removed_preference_api_and_private_follower_access_are_absent(self):
         for path in PLUGINS.glob("*.py"):

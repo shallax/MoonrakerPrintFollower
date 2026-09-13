@@ -66,7 +66,7 @@ CONTROLS_PROBE = (
     "        for item in _walk(flick, depth=64):\n"
     "            cls = item.metaObject().className()\n"
     "            c = item.mapToScene(QPointF(0, 0))\n"
-    "            if \"ColumnLayout\" in cls and abs(c.x() - f.x()) < 2 and abs(item.width() - target) < 3:\n"
+    "            if \"ColumnLayout\" in cls and abs(c.x() - f.x()) < 2 and abs(item.width() - target) < 24:\n"
     "                content = item\n"
     "                break\n"
     "        mx = 0\n"
@@ -406,6 +406,40 @@ P_POWER_FLIP = (
     "        break\n"
     "result")
 
+POWER_STATUS_PROBE = (
+    "from UM.Application import Application\n"
+    "app = Application.getInstance()\n"
+    "result = {}\n"
+    "for device in app.getOutputDeviceManager().getOutputDevices():\n"
+    "    if \"Moonraker\" in type(device).__name__:\n"
+    "        printer = device.activePrinter\n"
+    "        if printer is not None:\n"
+    "            result[\"power\"] = [str(d.get(\"device\")) + \"=\" + str(d.get(\"status\"))\n"
+    "                                for d in printer._data.snapshot.power]\n"
+    "        break\n"
+    "result")
+
+CAM_FRAMES = (
+    "window = _main_window()\n"
+    "result = {}\n"
+    "for item in _walk(window.contentItem(), depth=64):\n"
+    "    if \"NetworkMJPGImage\" in item.metaObject().className():\n"
+    "        result[\"started\"] = bool(getattr(item, \"_started\", False))\n"
+    "        result[\"width\"] = int(item.property(\"imageWidth\"))\n"
+    "        result[\"height\"] = int(item.property(\"imageHeight\"))\n"
+    "        break\n"
+    "result")
+
+CAM_STARTED = (
+    "window = _main_window()\n"
+    "result = {}\n"
+    "for item in _walk(window.contentItem()):\n"
+    "    if \"NetworkMJPGImage\" in item.metaObject().className():\n"
+    "        result[\"started\"] = bool(getattr(item, \"_started\", False))\n"
+    "        result[\"visible\"] = bool(item.isVisible())\n"
+    "        break\n"
+    "result")
+
 CLICK_GESTURE = (
     "from PyQt6.QtCore import QPoint, Qt\n"
     "window = _main_window()\n"
@@ -447,6 +481,88 @@ SCENE_PROBE = (
     "            \"n\": len(child.getAllChildren())})\n"
     "    except Exception as exc:\n"
     "        result[\"children\"].append({\"err\": repr(exc)[:60]})\n"
+    "result")
+
+E_STOP_SEQUENCE = (
+    "from UM.Application import Application\n"
+    "app = Application.getInstance()\n"
+    "result = {}\n"
+    "for device in app.getOutputDeviceManager().getOutputDevices():\n"
+    "    if \"Moonraker\" in type(device).__name__:\n"
+    "        printer = device.activePrinter\n"
+    "        if printer is not None:\n"
+    "            # One RPC: the arm resets after 1 s idle, and the\n"
+    "            # step vocabulary sleeps 1.5 s between slots.\n"
+    "            printer.emergencyStopClick()\n"
+    "            printer.emergencyStopClick()\n"
+    "            printer.emergencyHoldStarted()\n"
+    "            result[\"armed\"] = True\n"
+    "        break\n"
+    "result")
+
+CARD_EXCLUSIVE_PROBE = (
+    "window = _main_window()\n"
+    "result = {}\n"
+    "panel_card_visible = None\n"
+    "overlay_visible = None\n"
+    "for item in _walk(window.contentItem(), depth=64):\n"
+    "    try:\n"
+    "        name = item.property(\"objectName\")\n"
+    "    except Exception:\n"
+    "        name = None\n"
+    "    if name == \"moonrakerPreviewCard\":\n"
+    "        panel_card_visible = bool(item.property(\"panelVisible\"))\n"
+    "    elif name == \"moonrakerPreviewCardOverlay\":\n"
+    "        overlay_visible = bool(item.property(\"panelVisible\"))\n"
+    "result[\"exclusive\"] = bool(panel_card_visible is not None and overlay_visible is not None\n"
+    "                             and panel_card_visible != overlay_visible)\n"
+    "result[\"panel\"] = panel_card_visible\n"
+    "result[\"overlay\"] = overlay_visible\n"
+    "result")
+
+CARD_GATE_PROBE = (
+    "window = _main_window()\n"
+    "result = {}\n"
+    "panel_visible = False\n"
+    "for item in _walk(window.contentItem(), depth=64):\n"
+    "    try:\n"
+    "        if \"ActionPanelWidget\" in item.metaObject().className():\n"
+    "            panel_visible = panel_visible or bool(item.isVisible())\n"
+    "    except Exception:\n"
+    "        pass\n"
+    "    try:\n"
+    "        name = item.property(\"objectName\")\n"
+    "    except Exception:\n"
+    "        name = None\n"
+    "    if name in (\"moonrakerPreviewCard\", \"moonrakerPreviewCardPanel\",\n"
+    "                \"moonrakerPreviewCardOverlay\", \"moonrakerPreviewCardPanelHost\",\n"
+    "                \"moonrakerPreviewCardOverlayHost\"):\n"
+    "        result[name] = {\"visible_prop\": bool(item.property(\"visible\")),\n"
+    "                         \"is_visible\": bool(item.isVisible())}\n"
+    "        if name in (\"moonrakerPreviewCard\", \"moonrakerPreviewCardOverlay\"):\n"
+    "            result[name].update(\n"
+    "                gateVisible=bool(item.property(\"gateVisible\")),\n"
+    "                previewStageActive=bool(item.property(\"previewStageActive\")),\n"
+    "                configuredForFollowing=bool(item.property(\"configuredForFollowing\")),\n"
+    "                hasToolpath=bool(item.property(\"hasToolpath\")),\n"
+    "                sceneHasObjects=bool(item.property(\"sceneHasObjects\")),\n"
+    "                loadBusy=bool(item.property(\"loadBusy\")),\n"
+    "                statusText=str(item.property(\"statusText\"))[:60])\n"
+    "result[\"panel_visible\"] = panel_visible\n"
+    "from UM.Application import Application\n"
+    "app = Application.getInstance()\n"
+    "for e in app.getExtensions():\n"
+    "    if \"MoonrakerPrintFollower\" in type(e).__name__:\n"
+    "        p = getattr(getattr(e, \"_runtime\", None), \"presentation\", None)\n"
+    "        if p is not None:\n"
+    "            try:\n"
+    "                result[\"presenter_panel_up\"] = bool(p._cura_panel_visible())\n"
+    "            except Exception as exc:\n"
+    "                result[\"presenter_err\"] = repr(exc)[:80]\n"
+    "            result[\"presenter_cards\"] = [\n"
+    "                (str(getattr(c, \"objectName\", lambda: \"?\")()), bool(c.property(\"gateVisible\")))\n"
+    "                for c in p.controls]\n"
+    "        break\n"
     "result")
 
 P_SLIDER_DRAG = """from PyQt6.QtCore import QPoint, Qt
@@ -695,11 +811,19 @@ SCENARIOS = [
      ]},
 
     # ─── camera ───────────────────────────────────────────────
-    {"id": "e1", "group": "webcams", "name": "the camera loads on its own (the discovery-cycle fix)",
+    {"id": "e1", "group": "webcams", "name": "the camera starts on its own (the first-publish fix)",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "exec_stream_start"},
+         {"op": "wait_exec", "code": CAM_STARTED, "contains": '"started": true', "budget": 40},
          {"op": "assert_model", "prop": "cameraName", "contains": "sim-cam", "budget": 30},
+     ]},
+    {"id": "e3", "group": "webcams",
+     "name": "the key-carrying stream renders frames through the bridge",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "sim_arm", "arms": {"webcam_bridged": True}},
+         {"op": "exec_slot", "slot": "refreshWebcams", "args": []},
+         {"op": "wait_exec", "code": CAM_FRAMES, "contains": '"width": 320', "budget": 60},
      ]},
     {"id": "e2", "group": "webcams", "name": "the webcam selector lists the peer's cameras",
      "steps": [
@@ -710,6 +834,7 @@ SCENARIOS = [
     {"id": "f1", "group": "files", "name": "the file manager browses the simulated store",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 30},
          {"op": "click_text", "text": "File manager"},
          {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
      ]},
@@ -767,6 +892,7 @@ SCENARIOS = [
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
          {"op": "click_jog", "button": "moonrakerJogXPlus"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
@@ -774,6 +900,7 @@ SCENARIOS = [
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerHomeX", "budget": 30},
          {"op": "click_jog", "button": "moonrakerHomeX"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
@@ -816,8 +943,15 @@ SCENARIOS = [
      ]},
     {"id": "g9", "group": "motion", "name": "power devices list and toggle",
      "steps": [
-         {"op": "sim_set", "state": {"power_devices": [{"device": "sim-printer-power", "status": "off"}]}},
-         {"op": "assert_model", "prop": "powerDevices", "value": []},
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "sim_arm", "arms": {"power_devices": [
+             {"device": "sim-printer-power", "status": "off", "locked_while_printing": False}]}},
+         {"op": "wait_model", "prop": "powerDevices", "contains": "sim-printer-power", "budget": 20},
+         {"op": "wait_rect", "text": "Turn on", "budget": 40},
+         {"op": "exec_code", "code": SCROLL_CONTROLS},
+         {"op": "emit_click", "text": "Turn on"},
+         {"op": "wait_exec", "code": POWER_STATUS_PROBE, "contains": '"sim-printer-power=on"', "budget": 20},
+         {"op": "sim_ledger", "needle": "device_power/device", "method": "POST", "min": 1},
      ]},
     {"id": "g9b", "group": "motion", "name": "firmware and host restarts reach the peer",
      "steps": [
@@ -826,12 +960,20 @@ SCENARIOS = [
      ]},
 
     # ─── preview ──────────────────────────────────────────────
-    {"id": "h2", "group": "printing", "name": "the load end-to-end (the gate flow's surface)",
+    {"id": "h2", "group": "printing", "name": "the load end-to-end from a fresh boot (the author's flow)",
      "steps": [
          {"op": "click_stage", "stage": "PreviewStage"},
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"},
                                     "virtual_sdcard": {"is_active": True, "progress": 0.5, "file_size": 1048576}}},
          {"op": "wait_model", "prop": "monitorFilename", "contains": "scenario1", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
+         {"op": "sim_arm", "arms": {"gcode_stream_ms": 120}},
+         {"op": "emit_click", "text": "Load current print"},
+         {"op": "confirm_box", "button": "Yes"},
+         {"op": "wait_exec", "code": CARD_GATE_PROBE, "contains": '"loadBusy": true', "budget": 30},
+         {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
+         {"op": "wait_rect", "objectName": "loadIndicatorContent", "absent": True, "budget": 60},
      ]},
     {"id": "h3", "group": "printing", "name": "the attach/detach surface renders",
      "steps": [
@@ -856,7 +998,14 @@ SCENARIOS = [
      ]},
     {"id": "h8", "group": "printing", "name": "the ETA opt-in starts the hourglass",
      "steps": [
-         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
+         # A fresh file: h2's load (earlier in the group) already built
+         # scenario1's index, so the hourglass would have nothing left
+         # to resolve and read false instantly (the ordering leak).
+         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "delete-me.gcode"}}},
+         # A streamed download keeps the resolve window open long
+         # enough for the 1 s polling to observe the hourglass (the
+         # download route reads no route-delay arms).
+         {"op": "sim_arm", "arms": {"gcode_stream_ms": 120}},
          {"op": "exec_slot", "slot": "improveEta", "args": []},
          {"op": "wait_model", "prop": "improvingEta", "value": True, "budget": 10},
      ]},
@@ -930,21 +1079,21 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "PreviewStage"},
          {"op": "insert_model"},
          {"op": "slice_scene"},
-         {"op": "wait_rect", "objectName": "moonrakerPreviewActionPanelControls", "budget": 150},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 150},
          {"op": "exec_code", "code": "from UM.Application import Application\napp = Application.getInstance()\nresult = {}\nfor e in app.getExtensions():\n    if \"MoonrakerPrintFollower\" in type(e).__name__:\n        rt = e._runtime\n        coord = rt.coordinator if hasattr(rt, \"coordinator\") else rt.follow\n        result[\"gate_logged\"] = repr(getattr(coord, \"_gate_logged\", \"n/a\"))\n        result[\"has_toolpath\"] = bool(getattr(rt.cura, \"has_toolpath\", False))\n        result[\"preview_active\"] = bool(getattr(rt.cura, \"preview_active\", False))\n        result[\"configured\"] = bool(getattr(getattr(rt.binding, \"configured\", None), \"__bool__\", lambda: False)())\n        try:\n            view = app.getController().getActiveView()\n            result[\"active_view\"] = str(view.getPluginId()) if view else None\n            result[\"max_layers\"] = int(view.getMaxLayers()) if view and hasattr(view, \"getMaxLayers\") else None\n        except Exception as exc:\n            result[\"view_err\"] = repr(exc)[:80]\n        break\n"},
-         {"op": "wait_rect", "objectName": "moonrakerEmptyPreviewLoadControl", "absent": True, "budget": 60},
          {"op": "add_post_script", "script": "PauseAtHeight"},
          {"op": "wait_rect", "objectName": "postProcessingSaveAreaButton", "budget": 30},
          {"op": "assert_aligned", "item": {"objectName": "postProcessingSaveAreaButton"},
-          "no_overlap": {"objectName": "moonrakerPreviewActionPanelControls"}},
+          "no_overlap": {"objectName": "moonrakerPreviewCard"}},
          {"op": "dump_visible", "needle": "", "region": [600, 520, 1280, 800]},
-         {"op": "assert_aligned", "item": {"objectName": "moonrakerPreviewActionPanelControls"},
+         {"op": "assert_aligned", "item": {"objectName": "moonrakerPreviewCard"},
           "within": {"window": True}},
      ]},
     {"id": "v2", "group": "visual",
      "name": "the jog pad grid is straight",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
          {"op": "assert_aligned", "item": {"objectName": "moonrakerJogXPlus"},
           "anchor": {"objectName": "moonrakerJogXMinus"}, "axis": "center_y", "tol": 3},
          {"op": "assert_aligned", "item": {"objectName": "moonrakerJogYPlus"},
@@ -1114,12 +1263,12 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "PreviewStage"},
          {"op": "sim_set_current_print"},
          {"op": "sim_arm", "arms": {"gcode_stream_ms": 120}},
-         {"op": "wait_rect", "objectName": "moonrakerEmptyPreviewLoadControl", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
          {"op": "emit_click", "text": "Load current print"},
          {"op": "confirm_box", "button": "Yes"},
          {"op": "wait_exec", "code": P1_PCT_PROBE, "contains": '"pct": true', "budget": 20},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
-         {"op": "wait_rect", "objectName": "moonrakerPreviewActionPanelControls", "budget": 240},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
          {"op": "assert_exec", "code": "view = Application.getInstance().getController().getView(\"SimulationView\")\nresult = {\"max_layers\": int(view.getMaxLayers()) if view else 0}",
           "contains": '"max_layers": 39'},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "absent": True, "budget": 60},
@@ -1143,7 +1292,7 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "PrepareStage"},
          {"op": "click_stage", "stage": "PreviewStage"},
          {"op": "wait_exec", "code": P_FOLLOW_READ, "contains": '"attached": true', "budget": 20},
-         {"op": "wait_rect", "objectName": "moonrakerPreviewActionPanelControls", "budget": 60},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 60},
      ]},
     {"id": "p4", "group": "preview",
      "name": "the pause-at-layer entry schedules and renders",
@@ -1186,19 +1335,123 @@ SCENARIOS = [
          {"op": "wait_exec", "code": P_MISSED, "contains": '"missed": true', "budget": 60},
          {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
      ]},
+
+    # ─── the smoke set (the release gate's sanity layer) ──────────
+    {"id": "s1", "group": "smoke", "name": "connect: the websocket reaches the peer and the state lands",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 60},
+         {"op": "wait_model", "prop": "monitorState", "contains": "standby", "budget": 30},
+     ]},
+    {"id": "s2", "group": "smoke", "name": "dashboard: the Monitor renders and the data census passes",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 30},
+         {"op": "sim_arm", "arms": {
+             "power_devices": [
+                 {"device": "DFU", "status": "on", "locked_while_printing": False},
+                 {"device": "Printer", "status": "off", "locked_while_printing": True}],
+             "presets_value": {"presets": {"fast": {"name": "Fast", "gcode": "M220 S150"}}}}},
+         {"op": "wait_exec", "code": LANE_CENSUS_PROBE, "contains": '"healthy": true', "budget": 30},
+         {"op": "census", "budget": 40},
+     ]},
+    {"id": "s3", "group": "smoke", "name": "preview card: the locked dual-host behaviour, exclusive in every state",
+     "steps": [
+         {"op": "click_stage", "stage": "PreviewStage"},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
+         {"op": "exec_code", "code": CARD_GATE_PROBE},
+         {"op": "assert_exec", "code": CARD_EXCLUSIVE_PROBE,
+          "contains": '"exclusive": true, "panel": false, "overlay": true'},
+         {"op": "insert_model"},
+         {"op": "wait_seconds", "seconds": 4},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 60},
+         {"op": "assert_exec", "code": CARD_EXCLUSIVE_PROBE,
+          "contains": '"exclusive": true, "panel": true, "overlay": false'},
+     ]},
+    {"id": "s4", "group": "smoke", "name": "follow: attach, load the current print, and a slider drag detaches",
+     "steps": [
+         {"op": "click_stage", "stage": "PreviewStage"},
+         {"op": "sim_set_current_print"},
+         {"op": "sim_arm", "arms": {"gcode_stream_ms": 120}},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
+         {"op": "emit_click", "text": "Load current print"},
+         {"op": "confirm_box", "button": "Yes"},
+         {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
+         {"op": "wait_rect", "objectName": "loadIndicatorContent", "absent": True, "budget": 60},
+         {"op": "wait_seconds", "seconds": 5},
+         {"op": "exec_code", "code": P_SLIDER_DRAG},
+         {"op": "wait_exec", "code": P_FOLLOW_READ, "contains": '"attached": false', "budget": 20},
+     ]},
+    {"id": "s5", "group": "smoke", "name": "camera: the stream starts and renders frames, direct and bridged",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_exec", "code": CAM_STARTED, "contains": '"started": true', "budget": 40},
+         {"op": "sim_arm", "arms": {"webcam_bridged": True}},
+         {"op": "exec_slot", "slot": "refreshWebcams", "args": []},
+         {"op": "wait_exec", "code": CAM_FRAMES, "contains": '"width": 320', "budget": 60},
+     ]},
+    {"id": "s6", "group": "smoke", "name": "print state: pause/resume ride the lane and M117 renders",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
+         {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 15},
+         {"op": "exec_slot", "slot": "pausePrint", "args": []},
+         {"op": "sim_ledger", "needle": "print/pause", "method": "POST", "min": 1, "budget": 20},
+         {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 15},
+         {"op": "exec_slot", "slot": "resumePrint", "args": []},
+         {"op": "sim_ledger", "needle": "print/resume", "method": "POST", "min": 1, "budget": 20},
+         {"op": "sim_set", "state": {"display_status": {"message": "RENDERED-A", "progress": 0.5}}},
+         {"op": "wait_rendered", "objectName": "moonrakerM117Slot", "contains": "RENDERED-A", "budget": 30},
+     ]},
+    {"id": "s7", "group": "smoke", "name": "commands: the lane round-trips and the e-stop and restart heal",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         {"op": "click_jog", "button": "moonrakerJogXPlus"},
+         {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
+         {"op": "exec_console", "text": "M105"},
+         {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 2, "budget": 20},
+         {"op": "exec_code", "code": E_STOP_SEQUENCE},
+         {"op": "sim_ledger", "needle": "emergency_stop", "min": 1, "budget": 20},
+         # The shutdown rides the klippyLost path (a connection loss),
+         # not a klippyState value; the observable is the print state
+         # flipping to error with the stop's message.
+         {"op": "wait_model", "prop": "monitorState", "contains": "error", "budget": 20},
+         {"op": "exec_slot", "slot": "emergencyHoldReleased", "args": []},
+         {"op": "exec_slot", "slot": "firmwareRestart", "args": []},
+         {"op": "sim_ledger", "needle": "firmware_restart", "min": 1, "budget": 20},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+     ]},
+
     # ─── geometry probes (diagnostics, not release gates) ─────────
+    {"id": "z9", "group": "probe",
+     "name": "the card's visibility terms across the idle and loaded states",
+     "steps": [
+         {"op": "click_stage", "stage": "PreviewStage"},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
+         {"op": "exec_code", "code": CARD_GATE_PROBE},
+         {"op": "assert_exec", "code": CARD_EXCLUSIVE_PROBE,
+          "contains": '"exclusive": true, "panel": false, "overlay": true'},
+         {"op": "insert_model"},
+         {"op": "wait_seconds", "seconds": 4},
+         {"op": "exec_code", "code": CARD_GATE_PROBE},
+         {"op": "assert_exec", "code": CARD_EXCLUSIVE_PROBE,
+          "contains": '"exclusive": true, "panel": true, "overlay": false'},
+     ]},
     {"id": "z1", "group": "probe",
      "name": "the preview stage geometry across empty, model and sliced states",
      "steps": [
          {"op": "click_stage", "stage": "PreviewStage"},
-         {"op": "wait_rect", "objectName": "moonrakerEmptyPreviewLoadControl", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
          {"op": "exec_code", "code": SCENE_PROBE},
          {"op": "exec_code", "code": RECT_PROBE},
          {"op": "insert_model"},
          {"op": "wait_seconds", "seconds": 4},
          {"op": "exec_code", "code": RECT_PROBE},
          {"op": "slice_scene"},
-         {"op": "wait_rect", "objectName": "moonrakerPreviewActionPanelControls", "budget": 150},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 150},
          {"op": "exec_code", "code": RECT_PROBE},
      ]},
     {"id": "v13", "group": "visual",

@@ -135,6 +135,7 @@ class PrinterState:
         # (the moving bar + timestamp prove liveness in captures).
         self.webcam_streams = 0
         self.webcam_frames = []
+        self.webcam_bridged_base = ""
         self.webcam_down = False  # the stream-failure arm: /webcam 404s
         self.webcam_die_after = 0  # serve N frames then close mid-stream
         self.slow_first_frame_ms = 0.0
@@ -301,6 +302,7 @@ class PrinterState:
         self.slow_first_frame_ms = 0.0
         self.webcam_down = False
         self.webcam_die_after = 0
+        self.webcam_bridged_base = ""
         self.route_delay_ms = {}
         self.power_devices = []
         self.presets_value = {}
@@ -421,7 +423,8 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
         elif method == "server.gcode_store":
             self._respond(request_id, {"gcode_store": list(self._printer.console_lines)})
         elif method == "server.webcams.list":
-            self._respond(request_id, {"webcams": [{"name": "sim-cam", "location": "printer", "stream_url": "/webcam"}]})
+            stream = self._printer.webcam_bridged_base + "/webcam" if self._printer.webcam_bridged_base else "/webcam"
+            self._respond(request_id, {"webcams": [{"name": "sim-cam", "location": "printer", "stream_url": stream}]})
         elif method == "printer.query_endstops.status":
             self._respond(request_id, {"x": "open", "y": "open", "z": "open"})
         elif method == "machine.device_power.devices":
@@ -538,7 +541,8 @@ class StatusHandler(tornado.web.RequestHandler):
         elif path == "gcode_store":
             self.write(json.dumps({"result": {"gcode_store": list(self._printer.console_lines)}}))
         elif path == "webcams/list":
-            self.write(json.dumps({"result": {"webcams": [{"name": "sim-cam", "stream_url": "/webcam"}]}}))
+            stream = self._printer.webcam_bridged_base + "/webcam" if self._printer.webcam_bridged_base else "/webcam"
+            self.write(json.dumps({"result": {"webcams": [{"name": "sim-cam", "stream_url": stream}]}}))
         elif path == "device_power/devices":
             self.write(json.dumps({"result": {"devices": list(self._printer.power_devices)}}))
         elif path == "database/item":
@@ -732,6 +736,13 @@ class ControlHandler(tornado.web.RequestHandler):
                 body = json.loads(self.request.body or b"{}")
             except Exception:
                 body = {}
+            if body.pop("webcam_bridged", False):
+                # The container's own (non-loopback) IP plus this
+                # request's port: the exact URL the bridge will fetch.
+                import socket
+                ip = socket.gethostbyname(socket.gethostname())
+                port = str(self.request.host).rsplit(":", 1)[-1]
+                self._printer.webcam_bridged_base = f"http://{ip}:{port}"
             self._printer.unknown_keys = []
             self._printer.scenario(**body)
             self.write(json.dumps({"result": "ok",
@@ -843,7 +854,10 @@ class Simulator:
         self.printer = printer or PrinterState()
         self.app = make_app(self.printer)
         self.server = tornado.httpserver.HTTPServer(self.app)
-        sockets = tornado.netutil.bind_sockets(port, "127.0.0.1")
+        # All interfaces: the bridged-webcam arm serves the stream on the
+        # container's own (non-loopback) IP so the plugin's key-carrying
+        # bridge path is exercised for real (the author's camera path).
+        sockets = tornado.netutil.bind_sockets(port, "0.0.0.0")
         self.server.add_sockets(sockets)
         self.port = sockets[0].getsockname()[1]
 

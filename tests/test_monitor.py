@@ -36,7 +36,7 @@ FORMATTING = (PLUGINS / "MonitorFormatting.py").read_text()
 TYPED = "\n".join((PLUGINS / name).read_text() for name in ("MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py", "CuraIntegration.py", "MoonrakerMonitorModel.py"))
 DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
-PREVIEW_CONTROLS_QML = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
+PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
 POPOVER_QML = (PLUGINS / "MonitorPopOver.qml").read_text()
@@ -116,14 +116,14 @@ class MonitorModelContractTests(unittest.TestCase):
 
     def test_same_dashboard_chain_and_power_lock_explanation(self):
         self.assertIn('"MoonrakerMonitorBedMesh.qml"', OUTPUT_PLUGIN)
-        self.assertIn("MoonrakerMonitorDashboard", BED_MESH_QML)
+        self.assertIn('Qt.createComponent("MoonrakerMonitorDashboard.qml"', BED_MESH_QML)  # the shell's async load
         self.assertIn("MoonrakerMonitor", DASHBOARD_QML)
         self.assertIn("Power control is locked by Moonraker while this print is active.", DASHBOARD_QML)
 
     def test_output_plugin_selects_the_same_dashboard_through_one_model(self):
         self.assertIn("from .MoonrakerMonitorModel import MoonrakerMonitorModel", OUTPUT_PLUGIN)
         self.assertIn('"MoonrakerMonitorBedMesh.qml"', OUTPUT_PLUGIN)
-        self.assertIn("MoonrakerMonitorDashboard", BED_MESH_QML)
+        self.assertIn('Qt.createComponent("MoonrakerMonitorDashboard.qml"', BED_MESH_QML)
 
     def test_setup_and_save_commands_have_one_policy_owner(self):
         for command in ("G28", "QUAD_GANTRY_LEVEL", "BED_MESH_CALIBRATE", "SAVE_CONFIG", "SET_GCODE_OFFSET", "SET_FAN_SPEED", "SET_LED"):
@@ -763,7 +763,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # the pane collapse must close the pop-over, the ETA tooltip
         # must not claim a basis for a paused/absent value, and the
         # chart's filling state must actually render its copy.
-        panel = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
+        panel = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
         self.assertIn("The indicator is a SIBLING of the buttons Row", panel)
         self.assertIn("Collapsing the pane hides the pop-over's", MONITOR_QML)
         self.assertIn('monitorEta === "Paused" ? ""', MONITOR_QML)
@@ -2723,29 +2723,50 @@ Item {
         self.assertTrue(presentation._values.get("loadBusy"))
         self.assertIn("Resolving current print…", presentation._values.get("loadPhase", ""))
 
+    def test_load_request_clears_when_no_print_exists(self):
+        # The stuck-"Resolving" report: a standby printer sends no
+        # status frame, so observe() never clears the request — the
+        # refresh-side clearing settles it from the known snapshot
+        # state once the request is past its grace.
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
+        coordinator = self.follower._runtime.coordinator
+        presentation = self.follower._runtime.presentation
+        coordinator.request_load()
+        coordinator._load_requested_at = 0.0  # an aged request
+        coordinator.refresh()
+        self.assertFalse(coordinator._load_requested)
+        self.assertFalse(presentation._values.get("loadBusy"))
+        self.assertNotIn("Resolving current print…", presentation._values.get("loadPhase", ""))
+        self.assertEqual(coordinator._detail, "No active Moonraker print to load")
+
     def test_preview_load_feedback_surfaces(self):
-        overlay = (PLUGINS / "EmptyPreviewLoadButton.qml").read_text()
-        panel = (PLUGINS / "PreviewActionPanelControls.qml").read_text()
+        card = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
         indicator = (PLUGINS / "LoadProgressIndicator.qml").read_text()
-        for source in (overlay, panel):
-            self.assertIn("enabled: !base.loadBusy", source)
-            self.assertIn("LoadProgressIndicator {", source)
-            # Declared on the root: undeclared dynamic names read as
-            # undefined at load time and the bindings were dropped.
-            self.assertIn("property bool loadBusy: false", source)
-            self.assertIn("property real loadProgress: -1", source)
-            self.assertIn("property string loadPhase: \"\"", source)
+        self.assertIn("enabled: !base.loadBusy", card)
+        self.assertIn("LoadProgressIndicator {", card)
+        # Declared on the root: undeclared dynamic names read as
+        # undefined at load time and the bindings were dropped.
+        self.assertIn("property bool loadBusy: false", card)
+        self.assertIn("property real loadProgress: -1", card)
+        self.assertIn("property string loadPhase: \"\"", card)
         # The Attach/Detach button must not wait for the render:
         # hasToolpath only flips once the model finishes rendering.
-        self.assertNotIn("base.hasToolpath && (base.followingEnabled", panel)
+        self.assertNotIn("base.hasToolpath && (base.followingEnabled", card)
         # NO-REFLOW RULE: the button never hides — its state is
         # `enabled`, and the load button keeps its full width.
-        self.assertIn("enabled: base.followingEnabled || base.followingPaused", panel)
-        self.assertIn("width: buttons.width - base.buttonSpacing - followButton.width", panel)
+        self.assertIn("enabled: base.followingEnabled || base.followingPaused", card)
+        self.assertIn("width: buttons.width - base.buttonSpacing - followButton.width", card)
         self.assertIn("indicatorBar.sweepPhase", indicator)
         self.assertIn("busy: false", indicator)
         presentation = (PLUGINS / "PreviewPresentation.py").read_text()
-        self.assertIn("overlay.bedMeshVisibilityRequested.connect", presentation)
+        self.assertIn('("bedMeshVisibilityRequested", self.bedMeshVisibilityRequested.emit)', presentation)
+        dialog = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
+        # Enter resolves through the dialog's own accepted signal; the
+        # unresolved-close wedge heals in the device's requestWrite.
+        self.assertIn("onAccepted: {", dialog)
+        self.assertIn("onClicked: base.accept()", dialog)
+        device = (PLUGINS / "MoonrakerOutputDevice.py").read_text()
+        self.assertIn("A closed-but-unresolved dialog resets here", device)
 
     def test_console_qml_surface(self):
         for token in ("id: consoleSection", '"G-code command…"', "sendConsoleCommand(",
@@ -2973,7 +2994,7 @@ Item {
         # chrome still uses enabled/opacity, never visible:.
         exempt_files = {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml"}
         self.assertEqual(exempt_files, {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml"})
-        for monitor_file in ("MoonrakerMonitor.qml", "MoonrakerMonitorDashboard.qml", "PreviewActionPanelControls.qml"):
+        for monitor_file in ("MoonrakerMonitor.qml", "MoonrakerMonitorDashboard.qml", "MoonrakerPreviewCard.qml"):
             self.assertNotIn(monitor_file, exempt_files)
         whitelist = (
             "openPopOver", "sectionExpandedMap", "Collapsed", "platformActivity",

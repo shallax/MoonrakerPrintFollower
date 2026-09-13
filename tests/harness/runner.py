@@ -429,7 +429,7 @@ for item in _walk(window.contentItem()):
         name = item.property("objectName")
     except Exception:
         name = None
-    if name in ("moonrakerEmptyPreviewLoadControl", "moonrakerPreviewActionPanelControls"):
+    if name in ("moonrakerPreviewCard", "moonrakerPreviewCard"):
         try:
             result[name] = bool(item.property("visible"))
         except Exception:
@@ -904,14 +904,14 @@ def scenario9():
             "virtual_sdcard": {**state["virtual_sdcard"], "is_active": True,
                                "progress": 0.5, "file_size": gcode_size}})
         empty = bool(wait_for(
-            lambda: exec_rpc(CARD_READ).get("moonrakerEmptyPreviewLoadControl"), 25.0))
+            lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 25.0))
         wait_for(lambda: exec_rpc(LOAD_EMIT).get("emitted"), 10.0, 1.0)
         wait_for(lambda: rpc({"id": 1, "cmd": "confirm_box", "button": "Yes"}).get("ok"),
                  15.0, 1.0)
         action = bool(wait_for(
-            lambda: exec_rpc(CARD_READ).get("moonrakerPreviewActionPanelControls"), 60.0, 2.0))
+            lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 60.0, 2.0))
         steps.append(("04-loaded", "the print loaded; the action card appeared",
-                      "moonrakerPreviewActionPanelControls visible", bool(empty and action),
+                      "moonrakerPreviewCard visible", bool(empty and action),
                       shot("04-loaded")))
         # Schedule the end-of-layer pause through the panel's button.
         wait_for(lambda: exec_rpc(PAUSE_EMIT).get("emitted"), 20.0, 2.0)
@@ -1275,15 +1275,15 @@ def scenario6():
             "virtual_sdcard": {**state["virtual_sdcard"], "is_active": True,
                                "progress": 0.5, "file_size": gcode_size}})
         empty = bool(wait_for(
-            lambda: exec_rpc(CARD_READ).get("moonrakerEmptyPreviewLoadControl"), 25.0))
+            lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 25.0))
         wait_for(lambda: exec_rpc(LOAD_EMIT).get("emitted"), 10.0, 1.0)
         confirmed = bool(wait_for(
             lambda: rpc({"id": 1, "cmd": "confirm_box", "button": "Yes"}).get("ok"),
             15.0, 1.0))
         action = bool(wait_for(
-            lambda: exec_rpc(CARD_READ).get("moonrakerPreviewActionPanelControls"), 60.0, 2.0))
+            lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 60.0, 2.0))
         steps.append(("04-loaded", "the print loaded; the action card appeared",
-                      "moonrakerPreviewActionPanelControls visible", bool(empty and confirmed and action),
+                      "moonrakerPreviewCard visible", bool(empty and confirmed and action),
                       shot("04-loaded")))
         # The follower attaches with the load.
         attached = bool(wait_for(lambda: exec_rpc(FOLLOW_READ).get("attached"), 15.0, 1.0))
@@ -1612,9 +1612,9 @@ def scenario2(expect_fail=False):
             "virtual_sdcard": {**state["virtual_sdcard"], "is_active": True,
                                "progress": 0.5, "file_size": gcode_size}})
         empty = bool(wait_for(
-            lambda: exec_rpc(CARD_READ).get("moonrakerEmptyPreviewLoadControl"), 25.0))
+            lambda: exec_rpc(CARD_READ).get("moonrakerPreviewCard"), 25.0))
         steps.append(("04-empty-card", "the seeded running job makes the empty card show its Load button",
-                      "moonrakerEmptyPreviewLoadControl visible", empty, shot("04-empty-card")))
+                      "moonrakerPreviewCard visible", empty, shot("04-empty-card")))
         # The card's button: window-level synthesized clicks do not
         # reach this control under the WM-less Xvfb, so the button's
         # clicked signal is emitted — the exact QML handler a real
@@ -1633,9 +1633,9 @@ def scenario2(expect_fail=False):
         for _ in range(35):
             state = exec_rpc(CARD_READ)
             trace.append((round(time.time() - start, 1),
-                          bool(state.get("moonrakerEmptyPreviewLoadControl")),
-                          bool(state.get("moonrakerPreviewActionPanelControls"))))
-            if state.get("moonrakerPreviewActionPanelControls") and settled_at is None:
+                          bool(state.get("moonrakerPreviewCard")),
+                          bool(state.get("moonrakerPreviewCard"))))
+            if state.get("moonrakerPreviewCard") and settled_at is None:
                 settled_at = time.time()
                 shot("06-action-card-appears")
             if settled_at is not None and time.time() - settled_at >= 30:

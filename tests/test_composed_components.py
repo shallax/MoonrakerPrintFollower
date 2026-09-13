@@ -185,6 +185,30 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertIn("device=psu", posts[0].path)
         self.assertIn("action=on", posts[0].path)
 
+    def test_endstops_poll_skipped_while_printing(self):
+        # The author's live report: the 10 s endstops poll's
+        # query_endstops paused the toolhead 250-500 ms each time
+        # mid-print; quitting Cura stopped it. The states cannot
+        # change mid-print, so the poll must stand down while active.
+        model = self.monitor()
+        model._data._update(core={"print_stats": {"state": "printing"}})
+        before = len(self.transport.requests)
+        model._data.refresh_endstops()
+        self.assertEqual(len(self.transport.requests), before)
+
+    def test_power_display_lists_every_device_the_printer_reports(self):
+        # The author's ruling: the configured auto-power-on list narrows
+        # the print-start sequence, never the Monitor display — a
+        # configured list silently hid DFU on the real printer.
+        self.follower.apply_printer_config(self.config_type(url="http://printer-a", power_devices="24v"))
+        model = self.monitor()
+        model._data._update(power=[
+            {"device": "24v", "status": "on", "locked_while_printing": True},
+            {"device": "DFU", "status": "off", "locked_while_printing": True},
+        ])
+        names = [item["name"] for item in model._controls.power_devices()]
+        self.assertEqual(names, ["24v", "DFU"])
+
     def test_failed_hydration_is_latched_until_a_new_file_arrives(self):
         service, files = self.parts.index, self.parts.files
         files.bind(("part.gcode", 100, 1))
