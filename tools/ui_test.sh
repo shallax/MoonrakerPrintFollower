@@ -63,6 +63,9 @@ trap cleanup EXIT INT TERM
 # earlier runs never carry over.
 rm -rf /tmp/mpf/xdg
 mkdir -p /tmp/mpf/xdg
+# The container writes the seeded Cura config here — same cross-uid
+# concern as fakehome.
+chmod -R 777 /tmp/mpf/xdg
 cp -r "$root/tests/harness/config/." /tmp/mpf/xdg/
 # Real mode points the seeded machine record at the real host, at
 # runtime, from the environment — the host and key never touch the
@@ -100,6 +103,10 @@ fi
 # there). Without this link the backend's engine spawn dies with
 # ENOENT and no toolpath can ever slice (proven by the cube flow).
 mkdir -p /tmp/mpf/fakehome/lib64
+# The container runs as a fixed uid and must write this throwaway home
+# whatever uid created the mount on the host (the CI runner's user
+# differs from the dev box's — the .local mkdir died with EACCES).
+chmod -R 777 /tmp/mpf/fakehome
 ln -sfn /lib64/ld-linux-x86-64.so.2 /tmp/mpf/fakehome/lib64/ld-linux-x86-64.so.2
 # Stage the suite's test model where the insert-slice flow reads it.
 mkdir -p /tmp/mpf/models
