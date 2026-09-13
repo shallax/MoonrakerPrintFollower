@@ -27,6 +27,12 @@ RUN_ROOT="$HARNESS_DIR/ui-artifacts/runs/$(date +%Y-%m-%d-%H%M%S)"
 
 mkdir -p "$HARNESS_DIR" "$RUN_ROOT"
 
+# The harness stages the plugin from dist/, which a fresh checkout (or
+# a future CI job calling this directly) may not have — the release
+# workflow's artifact steps build it, but this script must not depend
+# on which job it runs inside.
+make package >/dev/null
+
 docker build -q -t mpf-cura-harness "$root/tools/harness" >/dev/null
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 docker run -d --init --name "$CONTAINER" \
