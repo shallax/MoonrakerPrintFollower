@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*"
+  # The gate loop runs without a tag: the full matrix on demand from
+  # main, so a failing unit costs minutes instead of a junk tag.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -24,6 +27,7 @@ jobs:
         run: echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
 
       - name: Validate tag and metadata versions
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           python - <<'PY'
           import json
@@ -65,20 +69,12 @@ jobs:
           python tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v${VERSION}.curapackage"
           python tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
 
-      - name: Run the real-Cura scenario gates (primary + swapped Cura)
-        run: ./tools/harness_release.sh
-        timeout-minutes: 360
-
-      # The galleries ARE the release proof (the author's mandate):
-      # without this step every unit's evidence dies with the runner's
-      # /tmp (the panel's finding).
-      - name: Collect the UI-test galleries
-        if: always()
+      - name: Upload built artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ui-test-galleries
-          path: /tmp/mpf/ui-artifacts/
-          if-no-files-found: warn
+          name: release-artifacts
+          path: dist/
+          retention-days: 1
 
       - name: Install gitleaks
         run: |
@@ -95,6 +91,96 @@ jobs:
           # The local gates run gitleaks, but the release workflow never
           # did while the README claimed it — panel security P3.
           gitleaks detect --no-git --no-banner --redact .
+
+  gate:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: smoke-primary,     cura: "5.13.0", budget: 20, group: smoke }
+          - { name: group-connection,  cura: "5.13.0", budget: 15, group: connection }
+          - { name: group-status,      cura: "5.13.0", budget: 15, group: status }
+          - { name: group-temperatures, cura: "5.13.0", budget: 15, group: temperatures }
+          - { name: group-console,     cura: "5.13.0", budget: 15, group: console }
+          - { name: group-webcams,     cura: "5.13.0", budget: 15, group: webcams }
+          - { name: group-files,       cura: "5.13.0", budget: 15, group: files }
+          - { name: group-motion,      cura: "5.13.0", budget: 15, group: motion }
+          - { name: group-printing,    cura: "5.13.0", budget: 15, group: printing }
+          - { name: group-settings,    cura: "5.13.0", budget: 15, group: settings }
+          - { name: group-visual,      cura: "5.13.0", budget: 15, group: visual }
+          - { name: group-preview,     cura: "5.13.0", budget: 15, group: preview }
+          - { name: group-probe,       cura: "5.13.0", budget: 15, group: probe }
+          - { name: smoke-secondary,   cura: "5.12.0", budget: 20, group: smoke }
+    env:
+      HARNESS_CONTAINER: mpf-cura-gate-${{ matrix.name }}
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Build the plugin package
+        run: make package >/dev/null
+
+      - name: Restore the pinned Cura tree
+        id: cura-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/mpf/cura_versions
+          key: mpf-cura-${{ matrix.cura }}
+
+      - name: Fetch the pinned Cura
+        run: python3 tools/fetch_cura.py "${{ matrix.cura }}"
+
+      - name: Build and start the harness container
+        run: |
+          docker build -q -t mpf-cura-harness tools/harness
+          docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
+          docker run -d --init --name "$HARNESS_CONTAINER" --cap-add=SYS_PTRACE \
+              -v /tmp/mpf:/tmp/mpf mpf-cura-harness sleep infinity
+
+      # One attempt per unit (the gate ruling): a retried unit would
+      # hide flakiness. The gallery is the proof — every unit's
+      # evidence lands under this workflow run's root.
+      - name: Run the unit
+        timeout-minutes: 30
+        run: |
+          mkdir -p /tmp/mpf
+          timeout "${BUDGET}m" env \
+              CURA_VERSION="${{ matrix.cura }}" \
+              MODE=suite SCENARIO_GROUP="${{ matrix.group }}" \
+              RUN_DIR_NAME="/tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.name }}" \
+              ./tools/ui_test.sh
+        env:
+          BUDGET: ${{ matrix.budget }}
+
+      - name: Upload the unit's gallery
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-${{ matrix.name }}
+          path: /tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.name }}
+          if-no-files-found: warn
+
+  publish:
+    needs: [release, gate]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v7
+
+      - name: Download built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/
 
       - name: Extract release notes from changelog
         run: |
