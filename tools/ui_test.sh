@@ -228,8 +228,30 @@ case "$MODE" in
             XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
             LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb timeout 1800 \
             /lib64/ld-linux-x86-64.so.2 ./UltiMaker-Cura" >/tmp/mpf/cura_run.log 2>&1 &'
-        for _ in $(seq 1 120); do [ -s /tmp/mpf/harness_port.txt ] && break; sleep 1; done
-        [ -s /tmp/mpf/harness_port.txt ] || { echo "ui_test: the driver never came up"; tail -20 /tmp/mpf/cura_run.log; exit 1; }
+        # The port must appear before the scenario can start; the CI
+        # runners are 2-vCPU VMs and boot Cura far more slowly than a
+        # dev box, so the deadline is generous. The failure report
+        # distinguishes a slow boot from a dead one.
+        boot_start=$(date +%s)
+        for _ in $(seq 1 300); do [ -s /tmp/mpf/harness_port.txt ] && break; sleep 1; done
+        if [ -s /tmp/mpf/harness_port.txt ]; then
+            echo "ui_test: driver up after $(( $(date +%s) - boot_start ))s"
+        else
+            echo "ui_test: the driver never came up"
+            if docker exec "$CONTAINER" bash -lc 'pgrep -f "UltiMaker-Cur[a]" >/dev/null'; then
+                echo "ui_test: Cura is still running — the boot did not finish within the deadline"
+            else
+                echo "ui_test: Cura is not running — the boot crashed or exited"
+            fi
+            if docker exec "$CONTAINER" bash -lc 'pgrep -f "Xvfb :9[9]" >/dev/null'; then
+                echo "ui_test: Xvfb is up"
+            else
+                echo "ui_test: Xvfb is not running"
+            fi
+            echo "ui_test: cura_run.log ($(wc -c < /tmp/mpf/cura_run.log) bytes):"
+            tail -40 /tmp/mpf/cura_run.log
+            exit 1
+        fi
         if [ "$MODE" = "real" ]; then
             # The host and key ride the container exec ONLY for real
             # mode — simulator runs never carry them (the panel's
