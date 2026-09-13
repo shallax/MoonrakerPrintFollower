@@ -85,6 +85,8 @@ class ArchitectureDocumentTests(unittest.TestCase):
         self.assertIn("hand-built on QtNetwork", ARCH)
         self.assertIn("The Monitor's data feed deactivates with the session and re-arms", ARCH)
         self.assertIn("A discovery watchdog holds the same line for the COLD", ARCH)
+        self.assertIn("The layer data's arrival (a slice, the engine's",
+                         (PLUGINS / "CuraIntegration.py").read_text(encoding="utf-8"))
 
     def test_document_distinguishes_harness_from_live_cura_validation(self):
         self.assertIn("The harness is not Cura or printer firmware", ARCH)

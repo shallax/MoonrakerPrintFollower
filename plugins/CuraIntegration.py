@@ -217,6 +217,19 @@ class CuraIntegration(QObject):
                 if signal is not None:
                     signal.connect(self._activity_changed)
                     self._view_connections.append((signal, self._activity_changed))
+                # The layer data's arrival (a slice, the engine's
+                # toolpath) must refresh the panel: without this hook
+                # the card waits for an unrelated refresh and boots
+                # intermittently render the preview empty (the
+                # harness's insert-slice flow exposed the race).
+                signal = getattr(view, "maxLayersChanged", None)
+                if signal is not None:
+                    signal.connect(self._layers_changed)
+                    self._view_connections.append((signal, self._layers_changed))
+        self.changed.emit()
+
+    def _layers_changed(self, *_args):
+        self._heights = None
         self.changed.emit()
 
     def _activity_changed(self, *_args):
