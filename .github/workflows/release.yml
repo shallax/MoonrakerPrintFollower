@@ -67,8 +67,7 @@ jobs:
 
       - name: Run the real-Cura scenario gates (primary + swapped Cura)
         run: ./tools/harness_release.sh
-        timeout-minutes: 240
-        continue-on-error: true
+        timeout-minutes: 360
 
       # The galleries ARE the release proof (the author's mandate):
       # without this step every unit's evidence dies with the runner's
