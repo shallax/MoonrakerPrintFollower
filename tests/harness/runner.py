@@ -2001,9 +2001,19 @@ def real_run():
 def suite_step(step):
     op = step["op"]
     if op == "click_stage":
-        click_stage(step["stage"])
-        reply = wait_stage(step["stage"], timeout_ms=20000)
-        return reply.get("ok") is True, f"real click on Cura's own {step['stage']} header button", f"stage == {step['stage']}"
+        reply = click_stage(step["stage"])
+        result = wait_stage(step["stage"], timeout_ms=20000)
+        if result.get("ok"):
+            note = f"stage == {step['stage']}"
+        elif not reply.get("ok"):
+            note = f"stage == {step['stage']} [qclick failed: {reply.get('error')}]"
+        else:
+            note = ("stage == {stage} [aim={aim} hit={hit} size={size} "
+                    "clicked={clicked} stage_after={stage_after}]").format(
+                stage=step["stage"], aim=reply.get("aim"), hit=reply.get("hit"),
+                size=reply.get("size"), clicked=reply.get("clicked"),
+                stage_after=reply.get("stage"))
+        return result.get("ok") is True, f"real click on Cura's own {step['stage']} header button", note
     if op == "click_text":
         reply = rpc({"id": 1, "cmd": "click_text", "text": step["text"],
                      "button": step.get("button", "left")})
