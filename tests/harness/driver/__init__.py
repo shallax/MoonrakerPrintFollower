@@ -441,7 +441,13 @@ class HarnessServer(QObject):
                     stage = Application.getInstance().getController().getActiveStage().getId()
                 except Exception:
                     pass
+                try:
+                    hit = window.contentItem().childAt(x, y)
+                    hit_name = hit.metaObject().className() if hit is not None else None
+                except Exception:
+                    hit_name = None
                 return {"id": request_id, "ok": True, "aim": [x, y], "label": str(label),
+                        "hit": hit_name,
                         "window": window.objectName() or "",
                         "size": (window.width(), window.height()),
                         "events": list(self._win_events),
