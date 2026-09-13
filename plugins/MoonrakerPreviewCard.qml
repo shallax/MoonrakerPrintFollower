@@ -4,12 +4,13 @@ import Cura 1.0 as Cura
 
 Item {
     id: base
-    objectName: "moonrakerPreviewActionPanelControls"
+    objectName: "moonrakerPreviewCard"
 
     property bool previewStageActive: false
     property bool followingPaused: false
     property bool followingEnabled: false
     property bool configuredForFollowing: false
+    property bool gateVisible: false
     // Declared so the bindings below exist from creation: undeclared
     // dynamic names read as undefined at load time and the bindings
     // are dropped before setProperty can ever reach them.
@@ -17,8 +18,6 @@ Item {
     property real loadProgress: -1
     property string loadPhase: ""
     property bool hasToolpath: false
-    // Published for the empty card's gate; the action card has no use
-    // for it (it only renders with a toolpath).
     property bool sceneHasObjects: false
     property string activePrinterName: ""
     property string statusText: ""
@@ -37,11 +36,11 @@ Item {
     property var pauseAtLayerItems: []
     property string pauseAtLayerUnavailableText: ""
 
-    // ActionPanelWidget already inserts a default margin between saveButton
-    // extension components. Reserve one further default margin inside this
-    // component so the visual gap from Cura's Post Processing </> button to
-    // our card matches the gap from our card to Cura's native action panel.
-    property real externalGap: UM.Theme.getSize("default_margin").width
+    // The root sizes to the panel so each host shell can place it
+    // freely (the panel shell collapses to a strip; the overlay shell
+    // corners it).
+    width: followerPanel.width
+    height: followerPanel.height
     property real horizontalPadding: UM.Theme.getSize("thick_margin").width
     property real verticalPadding: UM.Theme.getSize("thick_margin").height
     property real rowSpacing: UM.Theme.getSize("thin_margin").height
@@ -59,32 +58,29 @@ Item {
     signal removePauseAtLayerRequested(int layer)
     signal clearPauseAtLayersRequested
 
-    // Visible through a load/render (loadBusy) even when Cura's stage
-    // wanders, and whenever a toolpath is loaded on the preview stage;
-    // the empty card owns the idle-nothing-loaded state. Cura's own
-    // platformActivity flag is deliberately NOT a gate — it flipped
-    // mid-load and vanished the card (the author's report).
-    // The GATE lives on the inner panel, not the root: once Cura
-    // reparents this component into the action panel, the root's own
-    // bindings no longer re-evaluate on setProperty-driven changes
-    // (engine-proven — the card never showed during a load while the
-    // inner bindings track). The root stays visible and collapses to
-    // zero size instead.
-    width: followerPanel.visible ? externalGap + followerPanel.width : 0
-    // Cura's saveButton row centres its components on a line two thick
-    // margins above the action panel's bottom. If this extension
-    // reported the card's full height, the row would grow to it and
-    // Cura's own components (the Post Processing button) would centre
-    // far above the bottom. Report a short strip instead — the visible
-    // card anchors to its bottom and overflows upward — so the row
-    // stays small and everything docks to the bottom. Four thick
-    // margins puts the strip's bottom edge exactly on the action
-    // panel's bottom, keeping the card level with the Upload card.
-    height: followerPanel.visible ? 4 * base.verticalPadding : 0
+    // THE shared card content: hosted by whichever shell the presenter
+    // places it in (the action-panel shell while Cura's panel exists,
+    // the corner overlay while Cura's platform is idle and its panel
+    // is gone). The gate arrives pre-computed per instance as
+    // gateVisible — bindings on setProperty-fed values go stale on
+    // this dynamically created component (engine-proven), so the
+    // visibility is written imperatively from the change handlers.
+    function updateCardGate() {
+        followerPanel.visible = base.gateVisible;
+    }
+
+    onGateVisibleChanged: updateCardGate()
+
+    Component.onCompleted: updateCardGate()
+
+    // The panel shell's strip sizing reads these.
+    readonly property bool panelVisible: followerPanel.visible
+    property real panelWidth: followerPanel.width
+    property real panelHeight: followerPanel.height
 
     Rectangle {
         id: followerPanel
-        visible: configuredForFollowing && (loadBusy || (previewStageActive && hasToolpath))
+        objectName: "moonrakerPreviewCardPanel"
         anchors.right: parent.right
         anchors.bottom: parent.bottom
 
@@ -212,12 +208,12 @@ Item {
             }
 
             UM.Label {
-                // NO-REFLOW RULE: a permanent single-line slot — the
-                // text fills it with the error reason, or the scheduling
-                // hint while a toolpath exists, never resizes it (the
-                // UX panel: a blank slot read as broken spacing).
+                // The scheduling hint lives only while a toolpath
+                // exists; with the card visible in every state, a
+                // permanent empty slot would read as a gap on an
+                // empty scene.
                 width: parent.width
-                height: 36 * screenScaleFactor
+                height: base.hasToolpath ? 36 * screenScaleFactor : 0
                 text: (!base.pauseAtLayerScheduled && !base.pauseAtLayerCanToggle && base.pauseAtLayerUnavailableText.length > 0) ? "Can't schedule: " + base.pauseAtLayerUnavailableText : (base.hasToolpath ? "Scroll Cura Preview to the current or a future non-final layer to schedule an end-of-layer PAUSE." : "")
                 color: UM.Theme.getColor("text_inactive")
                 font: UM.Theme.getFont("default_italic")

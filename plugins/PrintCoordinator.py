@@ -6,7 +6,7 @@ from dataclasses import replace
 import time
 from urllib.parse import quote
 
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
 
 from .MonitorFormatting import filament_total_mm_from_file, parse_bed_mesh, result
@@ -38,6 +38,7 @@ class PrintCoordinator(QObject):
         self._gate_logged = None
         self._load_job = None
         self._load_requested = False
+        self._load_requested_at = 0.0
         # Moonraker's file metadata (the slicer header parsed server-side):
         # layer height and slicer estimate for prints the user never
         # loaded. Fetched once per job, retried every 30 s until success.
@@ -56,8 +57,10 @@ class PrintCoordinator(QObject):
         self._header_total_path = ""
         self._layer_trace_at = 0.0
         self._monitor_requested = False
+        self._monitor_requested_at = 0.0
         self._publish_at = 0.0
         self._processing = self._closed = False
+        self._had_toolpath = False
         client.statusReceived.connect(self.observe)
         client.connectionChanged.connect(self._connection_changed)
         client.sessionInvalidated.connect(self.reset_binding)
@@ -76,6 +79,12 @@ class PrintCoordinator(QObject):
         cura.loadFailed.connect(self._load_failed)
         pauses.changed.connect(self._publish)
         pauses.message.connect(self._message)
+        # A rebuilt preview stage destroys and recreates the QML
+        # controls (the author's new-build-plate report); the
+        # presentation re-emits after recreating so the fresh card
+        # receives the full value set immediately, before any other
+        # event would republish it.
+        presentation.controlsChanged.connect(self._publish)
         presentation.loadRequested.connect(self.confirm_load)
         presentation.attachmentRequested.connect(self.toggle_attachment)
         presentation.pauseRequested.connect(self.toggle_pause)
@@ -119,7 +128,37 @@ class PrintCoordinator(QObject):
         if self._closed or self._processing: return
         self._processing = True
         try:
+            # A load request against a standby printer never resolves
+            # through observe() — no status frame arrives to clear the
+            # flag (the stuck "Resolving…" report). The snapshot's own
+            # print state settles it here: a known-idle printer clears
+            # once the refresh the request kicked off has had a moment
+            # to land; the 5 s bound catches a stale snapshot.
+            now = time.monotonic()
+            if self._load_requested and now - self._load_requested_at > (2.0 if not self._snapshot.active else 5.0):
+                self._load_requested = False
+                if not self._snapshot.active:
+                    self._detail = "No active Moonraker print to load"
+            if self._monitor_requested and now - self._monitor_requested_at > (2.0 if not self._snapshot.active else 5.0):
+                self._monitor_requested = False
+                if not self._snapshot.active:
+                    self._detail = "No active Moonraker print to load"
             config = self._binding.config
+            # The toolpath's arrival (the plugin's load rendered, or a
+            # slice) is the moment Cura's controls must come up: the
+            # plugin-driven load fires none of Cura's own activity
+            # events, so Cura's panel and slider stay dormant until an
+            # unrelated event (the author's live report). Nudge Cura's
+            # own computation on the edge, and once more after the
+            # render settles.
+            has_toolpath = bool(self._cura.has_toolpath)
+            if has_toolpath and not self._had_toolpath:
+                self._had_toolpath = True
+                self._cura.nudge_cura_activity()
+                self._cura.nudge_layer_view()
+                QTimer.singleShot(1500, self._cura.nudge_cura_activity)
+            elif not has_toolpath:
+                self._had_toolpath = False
             job = self._files.job_key
             view = self._index.view
             if view is not None and view.job_key != job: view = None
@@ -375,17 +414,21 @@ class PrintCoordinator(QObject):
             self._message("Set a Moonraker URL before improving the monitor estimate")
             return
         self._monitor_requested = True
+        self._monitor_requested_at = time.monotonic()
         self._index.request()
         self._message("Downloading and indexing the print for the monitor…")
         self._client.force_refresh()
+        QTimer.singleShot(2600, self.refresh)
 
     def request_load(self):
         if not self._binding.configured:
             self._message("Set a Moonraker URL before loading the current print")
             return
         self._load_requested = True
+        self._load_requested_at = time.monotonic()
         self._message("Resolving current print…")
         self._client.force_refresh()
+        QTimer.singleShot(2600, self.refresh)
 
     def toggle_attachment(self):
         # A manual toggle is a deliberate choice: it cancels any pending
@@ -452,6 +495,12 @@ class PrintCoordinator(QObject):
                           else "Rendering…" if self._cura.loading
                           else "Resolving current print…" if self._load_requested or self._monitor_requested else ""),
             "configuredForFollowing": self._binding.configured and config.enabled,
+            # The stage state rides THIS publish path: the presenter's
+            # own refresh-side publish proved unreliable on the
+            # dynamically created cards (the harness probe caught the
+            # value never arriving after a stage click), while every
+            # value in this dict demonstrably lands.
+            "previewStageActive": self._cura.preview_active,
             "activePrinterName": self._binding.identity[1], "hasToolpath": self._cura.has_toolpath,
             "sceneHasObjects": self._cura.scene_has_objects,
             "statusText": compact, "statusIconName": status_icon(compact),

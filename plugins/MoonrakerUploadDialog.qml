@@ -47,6 +47,19 @@ UM.Dialog {
 
     onRejected: manager.cancelUpload()
 
+    // The dialog's own machinery accepts on Enter (UM's Dialog root
+    // does Keys.onReturnPressed: base.accept()); fighting the key
+    // routing loses when the focused field consumes the key. Resolve
+    // through the dialog's own accepted signal instead — whatever
+    // accepted it (the button, Enter, the platform) takes the SAME
+    // path. The unresolved-close wedge is healed controller-side
+    // (begin() resets a stale choice), so no cancel-on-close here:
+    // that fired on the open itself in real Cura and deleted the
+    // dialog before it could show.
+    onAccepted: {
+        manager.acceptUpload(pathField.editText, filenameField.text, printField.checked);
+    }
+
     ColumnLayout {
         id: form
         anchors.fill: parent
@@ -125,10 +138,7 @@ UM.Dialog {
             Cura.PrimaryButton {
                 text: printField.checked ? "Upload and print" : "Upload"
                 enabled: base.validFilename(filenameField.text) && base.validPath(pathField.editText)
-                onClicked: {
-                    manager.acceptUpload(pathField.editText, filenameField.text, printField.checked);
-                    base.accept();
-                }
+                onClicked: base.accept()
             }
 
             Cura.SecondaryButton {

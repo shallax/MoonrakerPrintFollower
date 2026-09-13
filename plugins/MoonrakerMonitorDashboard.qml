@@ -404,7 +404,7 @@ Component {
                         // author's clipping report). Narrower content
                         // only grows taller, so the visibility never
                         // oscillates.
-                        width: controlScrollbar.visible ? controlFlick.width - controlScrollbar.width : controlFlick.width
+                        width: controlScrollbar.visible ? controlFlick.width - controlScrollbar.width - UM.Theme.getSize("default_margin").width : controlFlick.width
                         // Spacing lives on the children, not the layout: a
                         // collapsed section's hidden content must contribute
                         // nothing, so stacked headers sit flush like Cura's.

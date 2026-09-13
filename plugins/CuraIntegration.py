@@ -69,6 +69,40 @@ class CuraIntegration(QObject):
     def suspended(self): return self._slicing or self.loading or time.monotonic() < self._settle_until
     @property
     def view(self): return self._view
+
+    def nudge_cura_activity(self):
+        """Re-run Cura's own platform-activity computation after the
+        plugin's load completes: the plugin-driven load path fires none
+        of Cura's scene-change events, so Cura's action panel (and the
+        card's panel host) stays hidden until some unrelated Cura
+        activity. Cura's own computation sets the flag and emits
+        activityChanged — the presenter's gate cascade then swaps the
+        card hosts and shows the panel."""
+        try:
+            updater = getattr(self.application, "updatePlatformActivity", None)
+            if callable(updater):
+                updater()
+        except Exception:
+            pass
+
+    def nudge_layer_view(self):
+        """Re-announce the current layer so Cura's own chrome (the
+        layer slider) wakes for the plugin-loaded print. Guarded as an
+        own write so the follower never reads the bump as a user drag."""
+        view = self._view
+        if view is None:
+            return
+        try:
+            self._writing += 1
+            try:
+                current = view.getCurrentLayer()
+                view.setCurrentLayer(max(0, int(current) - 1))
+                view.setCurrentLayer(int(current))
+            finally:
+                self._writing -= 1
+        except Exception:
+            pass
+
     @property
     def preview_active(self):
         try:

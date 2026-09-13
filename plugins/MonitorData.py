@@ -454,6 +454,14 @@ class MonitorData(QObject):
         # console red.
         if (self._snapshot.server or {}).get("klippy_state") != "ready":
             return
+        # NEVER while a print runs: query_endstops makes Klipper
+        # briefly pause the toolhead while it answers — a 250-500 ms
+        # dwell at the poll's 10 s cadence on the author's live
+        # print (quitting Cura stopped it). The endstop states cannot
+        # change mid-print, so the poll resumes only once idle.
+        state = (self._snapshot.core.get("print_stats") or {}).get("state")
+        if state in ("printing", "paused"):
+            return
         # A failed poll must never erase last-known states: an empty
         # endstop map reads as "not homed yet" while connected, which is
         # a lie about the printer during a transient network blip. The

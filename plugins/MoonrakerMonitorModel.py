@@ -427,10 +427,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def _on_stream_failed(self) -> None:
         import time
         now = time.monotonic()
-        # A dead camera fails every reconnect attempt: one nonce bump
-        # per attempt, throttled so a dead stream cannot spin the
+        # The FIRST failure retries immediately: a camera's first
+        # fetch can die on a cold-start hiccup (DNS or first contact)
+        # while the very next request sails — the author's live
+        # report: leaving and re-entering the Monitor tab, a fresh
+        # request, started the stream. Once a retry cycle is running,
+        # the 10 s cadence keeps a dead stream from spinning the
         # loader in a tight loop.
-        if now - self._camera_last_refresh_at >= 10.0:
+        if not self._camera_recovering or now - self._camera_last_refresh_at >= 10.0:
             self._camera_last_refresh_at = now
             self._camera_refresh_nonce += 1
         self._camera_recovering = True
