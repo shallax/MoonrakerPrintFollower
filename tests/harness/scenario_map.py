@@ -9,7 +9,7 @@ explicit, justified exclusion and nothing else).
 from __future__ import annotations
 
 SCENARIO_MAP = {
-    # The QML-facing verbs on the settings machine action (group I).
+    # The QML-facing verbs on the settings machine action (the settings group).
     "MoonrakerFollowerMachineAction.cancelTest": "i2",
     "MoonrakerFollowerMachineAction.clearCache": "i6",
     "MoonrakerFollowerMachineAction.insecureKeyWarning": "i2",
@@ -133,7 +133,7 @@ SCENARIO_MAP = {
 }
 
 PREFIX_RULES = [
-    # The file manager's verbs all ride the F-group scenarios.
+    # The file manager's verbs all ride the files-group scenarios.
     ("slot", "MoonrakerMonitorModel.file", "f1"),
     ("slot", "MoonrakerMonitorModel.toggleFile", "f1"),
     ("slot", "MoonrakerMonitorModel.setFile", "f1"),

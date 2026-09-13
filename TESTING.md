@@ -210,7 +210,7 @@ run as `MODE=scenario1`..`scenario11`, and the suite as
 truth #5):
 
 - `make ui_test MODE=suite SCENARIO_GROUP=webcams` — one surface
-  group by name (or letter: `a`..`j`): connection, status,
+  group by name: connection, status,
   temperatures, console, webcams, files, motion, printing, settings,
   stress;
 - `make ui_test CURA_VERSION=5.12.0 MODE=…` — any selection under any
@@ -416,7 +416,7 @@ slow endpoint → degradation not hang, dropped frames and socket close
 received samples, a long simulated print to completion with
 time-warped virtual_sdcard progress).
 
-**The V group — visual fidelity.** Geometry pins (`assert_aligned`:
+**The visual group — visual fidelity.** Geometry pins (`assert_aligned`:
 centre-line, containment, non-overlap; `assert_rect_change` for the
 pane shrink/grow; `wait_rect` for rendered presence), rendered
 follows-model checks (`wait_rendered`/`assert_rendered` read the
@@ -527,7 +527,7 @@ SimulationView is the ACTIVE view (the Preview stage click).
   And the c-group's red turned out to be a miscalibrated
   expectation, not the race: the endstop summary only says "Not
   homed yet" when the items are EMPTY while connected, so the
-  scenario now asserts the rendered items — group c runs green
+  scenario now asserts the rendered items — the temperatures group runs green
   consistently.
 - The red-run rule: a scenario that has never been observed failing
   is not evidence. Every gate scenario commits its red gallery from
@@ -566,11 +566,11 @@ SimulationView is the ACTIVE view (the Preview stage click).
   pin) and 5.12.0 (the secondary), each with a manifest recording the
   AppImage sha256 and the wheel pins. The release workflow runs
   `tools/harness_release.sh` after the artifact build (240-minute
-  envelope): the 11 gates and suite groups a–i on the primary
+  envelope): the 11 gates and the suite groups (connection through settings plus visual) on the primary
   version, then the 11 gates again on the secondary — declared
   budgets are 10 minutes per gate attempt and 15 minutes per suite
   group attempt, up to 3 attempts per unit under the documented flake
-  policy, and the soak group (j) stays out of the release path.
+  policy, and the soak group (stress) stays out of the release path.
 
 ## 6. Boundaries
 

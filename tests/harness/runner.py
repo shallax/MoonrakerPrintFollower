@@ -1700,11 +1700,21 @@ def scenario1(expect_fail=False):
 SUITE_STATE = {"sim": {}, "model": {}, "item": {}, "rect": {}}
 
 # The suite's groups by name — SCENARIO_GROUP accepts either.
-GROUP_NAMES = {
-    "connection": "a", "status": "b", "temperatures": "c", "console": "d",
-    "webcams": "e", "files": "f", "motion": "g", "printing": "h",
-    "settings": "i", "stress": "j", "visual": "v",
-}
+ATTACH_READ = ("from UM.Application import Application\n"
+               "app = Application.getInstance()\n"
+               "result = {}\n"
+               "for e in app.getExtensions():\n"
+               "    if \"MoonrakerPrintFollower\" in type(e).__name__:\n"
+               "        coord = getattr(getattr(e, \"_runtime\", None), \"coordinator\", None)\n"
+               "        if coord is not None:\n"
+               "            result[\"attached\"] = bool(getattr(getattr(coord, \"_preview\", None), \"state\", None)\n"
+               "                                              and coord._preview.state.attached)\n"
+               "        break\n")
+
+# The suite's groups — the id IS the name (the letter scheme retired
+# at the author's request): connection, status, temperatures, console,
+# webcams, files, motion, printing, settings, stress, visual, preview,
+# probe, real (the real-printer read-only group).
 
 
 def suite_apply(state, change):
@@ -1724,7 +1734,6 @@ def suite_run(group_id):
     scenario in sequence with a sim reset between scenarios (the
     process boundary is shared per group — the session boundary per
     scenario; see DECISIONS A40)."""
-    group_id = GROUP_NAMES.get(group_id, group_id)
     import scenarios
     specs = [spec for spec in scenarios.SCENARIOS if spec.get("group") == group_id]
     if not specs:
@@ -1795,7 +1804,7 @@ REAL_SAFE_OPS = {"click_stage", "click_text", "model_read",
                  "wait_model", "assert_model", "exec_slot", "dwell",
                  "rect_of", "assert_aligned", "assert_rendered",
                  "wait_rendered", "wait_rect", "dump_visible",
-                 "resize_window"}
+                 "resize_window", "census"}
 
 
 def real_dwell(step):
@@ -1877,7 +1886,7 @@ def real_run():
     real_step refusals. Observation only — no commands, no restarts,
     no print starts."""
     import scenarios
-    specs = [spec for spec in scenarios.SCENARIOS if spec.get("group") == "r"]
+    specs = [spec for spec in scenarios.SCENARIOS if spec.get("group") == "real"]
     if not specs:
         print("no real-printer scenarios")
         return 1
@@ -1944,11 +1953,14 @@ def suite_step(step):
         entries = sim_http("/ledger").get("entries", ())
         needle = str(step.get("needle") or "")
         method = step.get("method")
-        count = sum(1 for entry in entries
-                    if (needle in str(entry.get("path") or "") or needle in str(entry.get("method") or ""))
-                    and (method is None or method == str(entry.get("method") or "")))
+        matched = [entry for entry in entries
+                   if (needle in str(entry.get("path") or "") or needle in str(entry.get("method") or ""))
+                   and (method is None or method == str(entry.get("method") or ""))]
         expected = int(step.get("min", 1))
-        return count >= expected, "the peer's ledger counted requests", f"{needle!r}: {count} (>= {expected})"
+        detail = "; ".join(f"{e['method']} {e['path']} {e['ms']:.0f}ms"
+                           for e in matched[-6:])
+        return len(matched) >= expected, "the peer's ledger counted requests", \
+            f"{needle!r}: {len(matched)} (>= {expected}) [{detail}]"
     if op == "model_read":
         value = exec_rpc(MODEL_READ_TEMPLATE.replace("PROP_PLACEHOLDER", json.dumps(step["prop"])))
         SUITE_STATE["model"][step["prop"]] = value
@@ -2234,11 +2246,27 @@ def suite_step(step):
             if step.get("absent"):
                 return not reply.get("ok")
             return reply.get("ok")
-        ok = bool(wait_for(check, float(step.get("budget", 15)), 1.0))
+        ok = bool(wait_for(check, float(step.get("budget", 15)),
+                           float(step.get("poll", 1.0))))
         reply = rpc({"id": 1, "cmd": "rect", **ref})
         now = "absent" if not reply.get("ok") else reply["rect"]
         return (ok, f"{key} {'left the rendered tree' if step.get('absent') else 'entered the rendered tree'}",
                 f"now {now}")
+
+    if op == "census":
+        # The data-render census: every data class present in the
+        # snapshot must map to a rendered control. A fixed probe (the
+        # code lives in the suite, never in caller steps) so the
+        # real-printer mode can allow it while arbitrary exec stays
+        # refused.
+        import scenarios as _scenarios
+        reply = exec_rpc(_scenarios.CENSUS_PROBE, raise_on_error=True)
+        checks = reply.get("checks", {})
+        complete = bool(reply.get("complete"))
+        detail = "; ".join(f"{name}:{'ok' if ok else 'MISSING'}"
+                           for name, ok in checks.items())
+        return (complete, "the data-render census (every data class renders its control)",
+                f"{'complete' if complete else 'INCOMPLETE'}: {detail}")
 
     if op == "dump_visible":
         # A diagnostic: every visible item matching the needle, with
@@ -2312,7 +2340,14 @@ def suite_step(step):
     if op == "exec_code":
         # An inline driver probe — the settings dialog's opener uses
         # the machine-action registry, which no slot exposes.
-        reply = exec_rpc(step["code"])
+        # raise_on_error: a driver-side exception must surface as a
+        # step error — exec_rpc's silent {} masked probe failures as
+        # "the probe saw nothing" (the z-group calibration lesson).
+        try:
+            reply = exec_rpc(step["code"], raise_on_error=True)
+        except RuntimeError as exc:
+            return (False, "the driver executed the inline probe",
+                    f"driver error: {exc}")
         if reply.get("error"):
             return (False, "the driver executed the inline probe",
                     f"driver: {reply['error']}")
@@ -2390,6 +2425,39 @@ def suite_step(step):
         return (lo <= gap <= hi,
                 f"{a_key} and {b_key} hold their vertical gap",
                 f"gap {gap}px (wanted [{lo}, {hi}]); a={a} b={b}")
+
+    if op == "assert_exec":
+        reply = exec_rpc(step["code"])
+        if reply.get("error"):
+            return (False, "the driver's inline probe", f"driver: {reply['error']}")
+        rendered = json.dumps(reply, default=str)
+        ok = step["contains"] in rendered if step.get("contains") is not None else True
+        return (ok, "the driver's inline probe", rendered[:200])
+
+    if op == "wait_exec":
+        # Poll an inline probe until its result matches — the follow
+        # state's transitions land through the presentation, not the
+        # model's published properties.
+        def check():
+            reply = exec_rpc(step["code"])
+            if reply.get("error"):
+                return False
+            rendered = json.dumps(reply, default=str)
+            if step.get("contains") is not None:
+                return step["contains"] in rendered
+            if step.get("not_contains") is not None:
+                return step["not_contains"] not in rendered
+            return True
+        ok = bool(wait_for(check, float(step.get("budget", 15)), 1.0))
+        reply = exec_rpc(step["code"])
+        rendered = json.dumps(reply, default=str) if reply.get("error") is None else reply.get("error")
+        return (ok, "the driver's inline probe followed the change", str(rendered)[:200])
+
+    if op == "wait_seconds":
+        # A plain settle window — the follow's own 2s recovery lag
+        # swallows changes right after a load or a view swap.
+        time.sleep(float(step.get("seconds", 3)))
+        return True, f"settled {step.get('seconds', 3)}s", "settled"
 
     raise ValueError(f"unknown suite op {op!r}")
 

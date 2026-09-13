@@ -81,6 +81,60 @@ if tornado is not None:
                 conn.close()
             self.io_loop.run_sync(exercise)
 
+        def test_power_devices_arm_serves_both_lanes(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"power_devices": [
+                                       {"device": "DFU", "status": "on",
+                                        "locked_while_printing": False},
+                                       {"device": "Printer", "status": "off",
+                                        "locked_while_printing": True}]}))
+                response = await client.fetch(self.base + "/machine/device_power/devices")
+                self.assertEqual(json.loads(response.body)["result"]["devices"][0]["device"],
+                                 "DFU")
+                conn = await tornado.websocket.websocket_connect(
+                    f"ws://127.0.0.1:{self.sim.port}/websocket")
+                conn.write_message(json.dumps({"jsonrpc": "2.0",
+                                               "method": "machine.device_power.devices",
+                                               "id": 2}))
+                reply = json.loads(await conn.read_message())
+                self.assertEqual(reply["result"]["devices"][1]["status"], "off")
+                conn.close()
+            self.io_loop.run_sync(exercise)
+
+        def test_presets_arm_serves_the_database_value(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"presets_value": {
+                                       "presets": {"fast": {"name": "Fast", "gcode": "M220 S150"}}}}))
+                conn = await tornado.websocket.websocket_connect(
+                    f"ws://127.0.0.1:{self.sim.port}/websocket")
+                conn.write_message(json.dumps({"jsonrpc": "2.0",
+                                               "method": "server.database.get_item",
+                                               "params": {"namespace": "mainsail", "key": "presets"},
+                                               "id": 3}))
+                reply = json.loads(await conn.read_message())
+                self.assertEqual(reply["result"]["value"]["presets"]["fast"]["name"], "Fast")
+                conn.close()
+            self.io_loop.run_sync(exercise)
+
+        def test_gcode_stream_serves_the_whole_file_in_chunks(self):
+            async def exercise():
+                client = AsyncHTTPClient()
+                await client.fetch(self.base + "/harness/scenario", method="POST",
+                                   body=json.dumps({"gcode_stream_ms": 30}))
+                started = time.monotonic()
+                response = await client.fetch(self.base + "/server/files/gcodes/scenario1.gcode")
+                elapsed = time.monotonic() - started
+                self.assertEqual(response.code, 200)
+                self.assertEqual(len(response.body), len(self.sim.printer.gcode_bytes))
+                # 8734 bytes / 256-byte chunks ≈ 35 chunks at 30 ms:
+                # the stream must actually take time, not one-shot.
+                self.assertGreaterEqual(elapsed, 0.4)
+            self.io_loop.run_sync(exercise)
+
         def test_ledger_records_requests_and_stats(self):
             async def exercise():
                 client = AsyncHTTPClient()

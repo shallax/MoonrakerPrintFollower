@@ -51,12 +51,12 @@ unit() {  # unit <minutes-budget> <cura-version> <description> <mode> [group]
     fi
 }
 
-# The primary version: the gates, then the suite groups a–i plus the
-# visual pins (v).
+# The primary version: the gates, then the suite groups —
+# connection through settings, plus the visual pins.
 for n in 1 2 3 4 5 6 7 8 9 10 11; do
     unit 10 "$PRIMARY" "gate $n on $PRIMARY" "scenario$n"
 done
-for g in a b c d e f g h i v; do
+for g in connection status temperatures console webcams files motion printing settings visual; do
     unit 15 "$PRIMARY" "suite group $g on $PRIMARY" suite "$g"
 done
 # The secondary version: the swap proof — the gates again under it.

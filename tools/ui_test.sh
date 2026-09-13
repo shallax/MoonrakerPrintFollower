@@ -5,7 +5,7 @@
 #        make ui_test MODE=fail       -> the deliberately failing run
 #        make ui_test MODE=discover   -> dump stage-menu coordinates
 #        make ui_test MODE=scenarioN  -> one gate scenario (1..11)
-#        make ui_test MODE=suite SCENARIO_GROUP=<letter or name>
+#        make ui_test MODE=suite SCENARIO_GROUP=<group name>
 #        make ui_test MODE=real       -> read-only observation of a real
 #            printer (REAL_URL + REAL_API_KEY in the environment; the
 #            host and key never touch the repo — TESTING.md §2.5)
@@ -112,6 +112,12 @@ cp "$root/tests/harness/runner.py" /tmp/mpf/harness_runner.py
 cp "$root/tests/harness/scenarios.py" /tmp/mpf/scenarios.py
 cp "$root/tests/harness/scenario_map.py" /tmp/mpf/scenario_map.py
 cp "$root/tests/harness/surface_coverage.py" /tmp/mpf/coverage.py
+# The simulator is a test instrument, not a fixture: the working
+# tree's version must be what the run peers against — a stale staged
+# copy once served old protocol shapes for days and every arm on a
+# new field silently no-oped (the power-arm calibration lesson).
+cp "$root/tests/harness/simulator.py" "$root/tests/harness/simulator_serve.py" \
+    "$root/tests/test_simulator.py" /tmp/mpf/harness_tests/tests/harness/
 
 # The bracket keeps pgrep from matching the exec shell's own command
 # line (which contains the pattern) — without it the guard always

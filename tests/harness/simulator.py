@@ -138,6 +138,18 @@ class PrinterState:
         self.webcam_down = False  # the stream-failure arm: /webcam 404s
         self.webcam_die_after = 0  # serve N frames then close mid-stream
         self.slow_first_frame_ms = 0.0
+        # The power-section devices (the controls pane's toggle rows);
+        # armed by scenarios, e.g. a DFU device like a Voron's.
+        self.power_devices = []
+        # The database presets value (the controls pane's speed
+        # presets); armed by scenarios — the lane census asserts the
+        # stored rows render, so the sim must serve a real value.
+        self.presets_value = {}
+        # The gcode download's streaming cadence: milliseconds per
+        # 256-byte chunk (0 = one-shot). The preview's load indicator
+        # needs bytes arriving on the wire to animate its bar — a
+        # pre-request hold delivers nothing and the bar never moves.
+        self.gcode_stream_ms = 0
         try:
             directory = tempfile.mkdtemp(prefix="mpf-frames-")
             subprocess.run(
@@ -197,8 +209,13 @@ class PrinterState:
         self.inflight = max(0, self.inflight - 1)
 
     def service_delay(self, path: str) -> float:
+        # Normalise both sides: the handlers see the request path WITH
+        # its leading slash while the arms spell routes without one —
+        # an unnormalised match silently never fires (the calibration
+        # lesson).
+        path = str(path or "").lstrip("/")
         for prefix, delay in self.route_delay_ms.items():
-            if path.startswith(prefix):
+            if path.startswith(str(prefix).lstrip("/")):
                 return delay
         return 0.0
 
@@ -231,6 +248,12 @@ class PrinterState:
                 setattr(self, name, value)
             elif name == "console_lines":
                 self.console_lines = list(value)
+            elif name == "power_devices":
+                self.power_devices = list(value)
+            elif name == "presets_value":
+                self.presets_value = dict(value)
+            elif name == "gcode_stream_ms":
+                self.gcode_stream_ms = max(0, int(value))
 
     def reset(self) -> None:
         """The hermetic scenario boundary: state back to kickoff, every
@@ -253,6 +276,9 @@ class PrinterState:
         self.webcam_down = False
         self.webcam_die_after = 0
         self.route_delay_ms = {}
+        self.power_devices = []
+        self.presets_value = {}
+        self.gcode_stream_ms = 0
         self._last_pushed = {}
         self.console_lines = [{"type": "response", "message": "// Klipper state: Ready",
                                "time": time.time()}]
@@ -370,9 +396,9 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
         elif method == "printer.query_endstops.status":
             self._respond(request_id, {"x": "open", "y": "open", "z": "open"})
         elif method == "machine.device_power.devices":
-            self._respond(request_id, {"devices": []})
+            self._respond(request_id, {"devices": list(self._printer.power_devices)})
         elif method == "server.database.get_item":
-            self._respond(request_id, {"value": {}})
+            self._respond(request_id, {"value": self._printer.presets_value})
         else:
             self._respond(request_id, {"result": {}})
         self._printer.record_end(entry, 0)
@@ -462,7 +488,7 @@ class StatusHandler(tornado.web.RequestHandler):
         written = len(getattr(self, "_write_buffer", b"")) or 0
         self._printer.record_end(self._entry, written)
 
-    def get(self, path: str = "") -> None:
+    async def get(self, path: str = "") -> None:
         # The real auth check: the plugin sends X-Api-Key on its own
         # origin; the simulator accepts the configured test key or none.
         self.set_header("Content-Type", "application/json")
@@ -478,10 +504,20 @@ class StatusHandler(tornado.web.RequestHandler):
         elif path == "webcams/list":
             self.write(json.dumps({"result": {"webcams": [{"name": "sim-cam", "stream_url": "/webcam"}]}}))
         elif path == "device_power/devices":
-            self.write(json.dumps({"result": {"devices": []}}))
+            self.write(json.dumps({"result": {"devices": list(self._printer.power_devices)}}))
         elif path.startswith("files/gcodes/"):
             self.set_header("Content-Type", "application/octet-stream")
-            self.write(self._printer.gcode_bytes)
+            cadence = self._printer.gcode_stream_ms
+            if cadence > 0:
+                # Stream the file in small chunks: the client's
+                # download-progress signal (and the preview's
+                # determinate bar) only advances while bytes arrive.
+                for start in range(0, len(self._printer.gcode_bytes), 256):
+                    self.write(self._printer.gcode_bytes[start:start + 256])
+                    await self.flush()
+                    await tornado.gen.sleep(cadence / 1000.0)
+            else:
+                self.write(self._printer.gcode_bytes)
         elif path == "files/directory":
             # The walker's extended listing: dirs, files with the
             # metadata fields directory_rows reads, and disk usage.
