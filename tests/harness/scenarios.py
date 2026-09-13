@@ -1004,10 +1004,13 @@ SCENARIOS = [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "delete-me.gcode"}}},
          # A streamed download keeps the resolve window open long
          # enough for the 1 s polling to observe the hourglass (the
-         # download route reads no route-delay arms).
-         {"op": "sim_arm", "arms": {"gcode_stream_ms": 120}},
+         # download route reads no route-delay arms). The slow chunks
+         # and the generous budget keep the window observable on
+         # 2-vCPU CI runners, where the download and the index build
+         # shift the hourglass later than on a dev box.
+         {"op": "sim_arm", "arms": {"gcode_stream_ms": 500}},
          {"op": "exec_slot", "slot": "improveEta", "args": []},
-         {"op": "wait_model", "prop": "improvingEta", "value": True, "budget": 10},
+         {"op": "wait_model", "prop": "improvingEta", "value": True, "budget": 60},
      ]},
 
     # ─── settings & persistence ───────────────────────────────

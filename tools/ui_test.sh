@@ -73,6 +73,11 @@ cp -r "$root/tests/harness/config/." /tmp/mpf/xdg/
 # container's, so the copy must be opened up AFTER it lands (cp -r
 # restores the 755 modes the chmod would have fixed).
 chmod -R 777 /tmp/mpf/xdg
+# The seeded data dir is empty, and git drops empty directories from
+# the checkout: a fresh CI tree lacks it while a dev box's working
+# tree keeps it. Recreate it — the version carry-over copies it and
+# the boot writes its lock and settings into it.
+mkdir -p /tmp/mpf/xdg/cura/5.13
 # Real mode points the seeded machine record at the real host, at
 # runtime, from the environment — the host and key never touch the
 # repo, the logs or any committed file.
