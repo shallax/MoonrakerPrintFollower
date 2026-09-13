@@ -279,6 +279,20 @@ no commands, no restarts; a scenario that would mutate is refused.
 This is the mode for dwell verification when the simulator's capacity
 model isn't accurate enough.
 
+Implemented as `make ui_test MODE=real` with `REAL_URL` +
+`REAL_API_KEY` in the environment: the launcher rewrites the seeded
+machine record at runtime (the host and key never touch the repo, the
+logs or any committed file), the simulator is not started, and the
+runner dispatches only the r-group (r1 status renders, r2
+temperatures populate, r3 webcams stream, r4 the dwell profile).
+Every step runs through a read-only allowlist — the ops are
+observation/UI-navigation only, the slot allowlist is client-UI state
+only, and the dwell GETs only `/printer/*` and `/server/*` routes.
+Anything else — `sim_*`, file ops, jog/home/macros, print start —
+is a hard refusal recorded in the gallery as a failed step, never a
+command reaching the printer. A live print is observed, never
+touched.
+
 ## 3. The scenario catalogue
 
 Two layers. **The gates** are the release acceptance scenarios — each

@@ -1761,18 +1761,150 @@ def suite_run(group_id):
     return 0 if all(step[3] for step in steps) else 1
 
 
-def suite_scenario(spec):
+def suite_scenario(spec, step_fn=None):
+    # Resolved lazily: suite_step is defined below this function.
+    if step_fn is None:
+        step_fn = suite_step
     steps = []
     for index, step in enumerate(spec.get("steps", ())):
         name = f"{spec['id']}-{index:02d}"
         try:
-            result = suite_step(step)
+            result = step_fn(step)
             ok, action, assertion = result
             steps.append((name, action, assertion, ok, shot(name)))
         except Exception as exc:
             steps.append((name, f"{spec['name']}: {step.get('op')}",
                           f"step error: {exc!r}", False, shot(name)))
     return steps
+
+# ─── Real-printer read-only mode (TESTING.md §2.5) ───────────────
+# The real host is the author's own printer: a live print must never
+# be touched. Only the r-group's real_safe scenarios run, and every
+# step outside the read-only allowlist is refused — recorded in the
+# gallery as a failure, never a command reaching the printer.
+REAL_SAFE_SLOTS = {
+    # Client-UI state only — nothing in this set sends anything.
+    "reconnect", "refreshAll", "refreshWebcams", "selectWebcam",
+    "setShowProbePoints", "setBedMeshPreviewVisible",
+    "setSectionExpanded", "setConsoleExpanded", "setStatusCollapsed",
+    "setInfoCollapsed", "setControlsCollapsed", "setConsoleHeight",
+    "clearConsoleHistory",
+}
+
+REAL_SAFE_OPS = {"click_stage", "click_text", "model_read",
+                 "wait_model", "assert_model", "exec_slot", "dwell"}
+
+
+def real_dwell(step):
+    """The real dwell: sample a read-only GET's latency over the
+    window and watch the model's progress across it. GETs only, on
+    /printer/* and /server/* routes — nothing that commands."""
+    import urllib.request
+    path = step.get("path", "/printer/info")
+    if not (path.startswith("/printer/") or path.startswith("/server/")):
+        return (False, "real dwell",
+                f"REFUSED: dwell path {path!r} is not a read-only route")
+    minutes = float(step.get("minutes", 5))
+    url = os.environ.get("REAL_URL", "").rstrip("/")
+    api_key = os.environ.get("REAL_API_KEY", "")
+    if not url:
+        return (False, "real dwell", "REAL_URL is not set")
+    def progress():
+        value = exec_rpc(MODEL_READ_TEMPLATE.replace(
+            "PROP_PLACEHOLDER", json.dumps("monitorProgress")))
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    start_progress = progress()
+    deadline = time.time() + minutes * 60
+    samples = []
+    mid_shot = False
+    while time.time() < deadline:
+        t0 = time.time()
+        try:
+            req = urllib.request.Request(url + path)
+            if api_key:
+                req.add_header("X-Api-Key", api_key)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                resp.read(1)
+            samples.append((time.time() - t0) * 1000)
+        except Exception as exc:
+            samples.append(f"error:{exc!r}")
+        if not mid_shot and time.time() >= deadline - minutes * 60 / 2:
+            shot("r4-mid")
+            mid_shot = True
+        time.sleep(5)
+    shot("r4-end")
+    end_progress = progress()
+    numeric = [s for s in samples if isinstance(s, float)]
+    if numeric:
+        profile = (f"{len(numeric)} samples over {minutes:.0f} min: "
+                   f"min {min(numeric):.1f} ms, avg "
+                   f"{sum(numeric) / len(numeric):.1f} ms, "
+                   f"max {max(numeric):.1f} ms")
+    else:
+        profile = f"{len(samples)} samples, none measured"
+    errors = sum(1 for s in samples if isinstance(s, str))
+    return (len(numeric) > 0,
+            f"the real dwell sampled GET {path} over {minutes:.0f} minutes",
+            f"{profile}; {errors} error samples; "
+            f"print progress {start_progress} -> {end_progress}")
+
+
+def real_step(step):
+    """One step of a real_safe scenario. Anything outside the
+    read-only allowlist is a hard refusal, gallery-recorded."""
+    op = step["op"]
+    if op == "dwell":
+        return real_dwell(step)
+    if op not in REAL_SAFE_OPS:
+        return (False, f"{op} (real mode)",
+                f"REFUSED: op {op!r} is not in the read-only allowlist")
+    if op == "exec_slot" and step["slot"] not in REAL_SAFE_SLOTS:
+        return (False, f"{step['slot']} (real mode)",
+                f"REFUSED: slot {step['slot']!r} is not read-only")
+    return suite_step(step)
+
+
+def real_run():
+    """The read-only dwell against a real printer. The seeded
+    machine record points at REAL_URL (ui_test.sh seeds it at
+    runtime, never in the repo); only the r-group runs, under the
+    real_step refusals. Observation only — no commands, no restarts,
+    no print starts."""
+    import scenarios
+    specs = [spec for spec in scenarios.SCENARIOS if spec.get("group") == "r"]
+    if not specs:
+        print("no real-printer scenarios")
+        return 1
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, os.path.join(RUN_DIR, "real.mp4")])
+    steps = []
+    try:
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
+                      "hello succeeds", True, shot("00-boot")))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: active machine present, discovery chain live",
+                      "gate clear", gate, shot("01-gate")))
+        wait_stage("PrepareStage", timeout_ms=60000)
+        for spec in specs:
+            steps.extend(suite_scenario(spec, step_fn=real_step))
+    finally:
+        time.sleep(1)
+        video.terminate()
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Real-printer read-only — observation, no commands"
+    write_gallery(steps, False, title)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return 0 if all(step[3] for step in steps) else 1
+
 
 
 def suite_step(step):
@@ -1823,10 +1955,19 @@ def suite_step(step):
             value = exec_rpc(MODEL_READ_TEMPLATE.replace("PROP_PLACEHOLDER", json.dumps(step["prop"])))
             if step.get("contains") is not None:
                 return str(step["contains"]).lower() in str(value).lower()
-            return value == step.get("value") or (isinstance(step.get("value"), list) and value in step["value"])
+            if "value" in step:
+                return value == step.get("value") or (isinstance(step.get("value"), list) and value in step["value"])
+            # No expectation given: the property must be populated.
+            return value not in (None, "", [], {})
         ok = bool(wait_for(check, float(step.get("budget", 15)), 1.0))
         value = exec_rpc(MODEL_READ_TEMPLATE.replace("PROP_PLACEHOLDER", json.dumps(step["prop"])))
-        return ok, f"the model's {step['prop']} matched {step.get('contains', step.get('value'))!r}", f"now {value!r}"
+        if step.get("contains") is not None:
+            wanted = step.get("contains")
+        elif "value" in step:
+            wanted = step.get("value")
+        else:
+            wanted = "a populated value"
+        return ok, f"the model's {step['prop']} matched {wanted!r}", f"now {value!r}"
     if op == "wait_sim":
         def check():
             state = sim_http("/harness/state").get("result", {})
@@ -1849,7 +1990,12 @@ def suite_step(step):
         if step.get("contains") is not None:
             return str(step["contains"]).lower() in str(value).lower(), \
                 f"the model's {step['prop']} contains {step.get('contains')!r}", f"read {value!r}"
-        return value == step.get("value"), f"the model's {step['prop']} equals {step.get('value')!r}", f"read {value!r}"
+        if "value" in step:
+            return value == step.get("value"), f"the model's {step['prop']} equals {step.get('value')!r}", f"read {value!r}"
+        # No expectation given: the property must be populated (a
+        # False or 0 still counts as present).
+        return value not in (None, "", [], {}), \
+            f"the model's {step['prop']} is populated", f"read {value!r}"
     if op == "sim_drop":
         sim_http("/harness/drop_connections", "POST", {})
         return True, "the simulator dropped every websocket connection", "dropped"
@@ -2266,6 +2412,8 @@ def main():
     if mode == "suite":
         import scenarios  # noqa: F401 (the specs register)
         return suite_run(sys.argv[2] if len(sys.argv) > 2 else os.environ.get("SCENARIO_GROUP", "b"))
+    if mode == "real":
+        return real_run()
     expect_fail = mode == "fail"
     return scenario(expect_fail)
 

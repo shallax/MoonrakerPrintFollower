@@ -389,4 +389,35 @@ SCENARIOS = [
          {"op": "sim_set", "state": {"print_stats": {"state": "complete", "filename": "scenario1.gcode"}}},
          {"op": "wait_model", "prop": "monitorState", "contains": "complete", "budget": 15},
      ]},
+
+
+    # ─── R: real-printer read-only (observation; see TESTING.md §2.5) ───
+    # These run ONLY in real mode, where the dispatcher refuses every
+    # op outside the read-only allowlist: no commands, no restarts, no
+    # print starts — a live print is observed, never touched.
+    {"id": "r1", "group": "r", "real_safe": True,
+     "name": "the real printer's status renders",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+         {"op": "wait_model", "prop": "klippyState", "contains": "ready", "budget": 30},
+         {"op": "assert_model", "prop": "printActive"},
+     ]},
+    {"id": "r2", "group": "r", "real_safe": True,
+     "name": "the real printer's temperatures populate",
+     "steps": [
+         {"op": "wait_model", "prop": "temperatureItems", "budget": 45},
+         {"op": "assert_model", "prop": "temperatureItems", "contains": "temperature"},
+     ]},
+    {"id": "r3", "group": "r", "real_safe": True,
+     "name": "the real printer's webcam streams",
+     "steps": [
+         {"op": "wait_model", "prop": "webcamNames", "budget": 45},
+         {"op": "assert_model", "prop": "activeWebcamIndex"},
+     ]},
+    {"id": "r4", "group": "r", "real_safe": True,
+     "name": "the real dwell: poll latency over a steady window",
+     "steps": [
+         {"op": "dwell", "minutes": 5, "path": "/printer/info"},
+     ]},
 ]

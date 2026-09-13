@@ -6,6 +6,9 @@
 #        make ui_test MODE=discover   -> dump stage-menu coordinates
 #        make ui_test MODE=scenarioN  -> one gate scenario (1..11)
 #        make ui_test MODE=suite SCENARIO_GROUP=<letter or name>
+#        make ui_test MODE=real       -> read-only observation of a real
+#            printer (REAL_URL + REAL_API_KEY in the environment; the
+#            host and key never touch the repo — TESTING.md §2.5)
 set -eu
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
@@ -44,6 +47,23 @@ trap cleanup EXIT
 rm -rf /tmp/mpf/xdg
 mkdir -p /tmp/mpf/xdg
 cp -r "$root/tests/harness/config/." /tmp/mpf/xdg/
+# Real mode points the seeded machine record at the real host, at
+# runtime, from the environment — the host and key never touch the
+# repo, the logs or any committed file.
+if [ "${MODE:-scenario}" = "real" ]; then
+    [ -n "${REAL_URL:-}" ] || { echo "ui_test: MODE=real needs REAL_URL (and REAL_API_KEY) in the environment"; exit 1; }
+    python3 - "$REAL_URL" "${REAL_API_KEY:-}" << 'PY'
+import sys
+url, key = sys.argv[1], sys.argv[2]
+path = "/tmp/mpf/xdg/config/cura/5.13/cura.cfg"
+text = open(path).read()
+text = text.replace('"url":"http://127.0.0.1:7125"',
+                    '"url":"%s"' % url.replace('\\', '\\\\').replace('"', '\\"'))
+text = text.replace('"api_key":""',
+                    '"api_key":"%s"' % key.replace('\\', '\\\\').replace('"', '\\"'))
+open(path, "w").write(text)
+PY
+fi
 # The seed and plugin dirs live under Cura's per-version data dir;
 # the seed is written for 5.13, so carry it over for another version.
 SEED_VER="${CURA_VERSION%.*}"
@@ -107,11 +127,14 @@ docker exec "$CONTAINER" bash -lc 'pkill -9 -f "UltiMaker-Cur[a]" 2>/dev/null; \
 # The simulator: the plugin's network peer for the run. Fixed port so
 # the seeded printer config points at it deterministically. Restarted
 # every run — a long-lived process keeps serving stale simulator code
-# (and pgrep -f patterns match the probing shell itself).
+# (and pgrep -f patterns match the probing shell itself). Real mode
+# has no simulator — the seeded record points at the real host.
 SIM_PORT=7125
-docker exec "$CONTAINER" bash -lc "fuser -k $SIM_PORT/tcp 2>/dev/null; sleep 0.5; \
-  cd /tmp/mpf/harness_tests/tests/harness && nohup python3 simulator_serve.py $SIM_PORT \
-  >/tmp/mpf/simulator.log 2>&1 &"
+if [ "$MODE" != "real" ]; then
+    docker exec "$CONTAINER" bash -lc "fuser -k $SIM_PORT/tcp 2>/dev/null; sleep 0.5; \
+      cd /tmp/mpf/harness_tests/tests/harness && nohup python3 simulator_serve.py $SIM_PORT \
+      >/tmp/mpf/simulator.log 2>&1 &"
+fi
 
 rm -f "$RUN_DIR/index.html"
 mkdir -p "$RUN_DIR"
@@ -131,7 +154,7 @@ case "$MODE" in
         docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$RUN_DIR" \
             python3 /tmp/mpf/harness_runner.py discover
         ;;
-    scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite)
+    scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite|real)
         docker exec -e CURA_ROOT="$CURA_ROOT" -e CURA_WHEELS="$CURA_WHEELS" \
             "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
             DISPLAY=:99 APPDIR=\$CURA_ROOT \
@@ -143,7 +166,9 @@ case "$MODE" in
         for _ in $(seq 1 120); do [ -s /tmp/mpf/harness_port.txt ] && break; sleep 1; done
         [ -s /tmp/mpf/harness_port.txt ] || { echo "ui_test: the driver never came up"; tail -20 /tmp/mpf/cura_run.log; exit 1; }
         docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$RUN_DIR" \
-            HARNESS_COORDS="$COORDS" python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
+            HARNESS_COORDS="$COORDS" REAL_URL="${REAL_URL:-}" \
+            REAL_API_KEY="${REAL_API_KEY:-}" \
+            python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
         ;;
 esac
 echo "ui_test: gallery at $RUN_DIR/index.html"
