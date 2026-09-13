@@ -82,6 +82,7 @@ jobs:
           python tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
 
       - name: Log in to the container registry
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -89,6 +90,7 @@ jobs:
           password: ${{ github.token }}
 
       - name: Build and publish the harness image
+        if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6
         with:
           context: tools/harness
@@ -170,9 +172,15 @@ jobs:
 
       - name: Pull the harness image and start the container
         run: |
-          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker pull ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}
-          docker tag ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }} mpf-cura-harness
+          # PR runs have no pushed image for this sha; the build is the
+          # fallback. The push itself is gated to dispatch/tag runs,
+          # where the token can write packages.
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin 2>/dev/null || true
+          if docker pull ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }} >/dev/null 2>&1; then
+            docker tag ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }} mpf-cura-harness
+          else
+            docker build -q -t mpf-cura-harness tools/harness
+          fi
           docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
           docker run -d --init --name "$HARNESS_CONTAINER" --cap-add=SYS_PTRACE \
               -v /tmp/mpf:/tmp/mpf mpf-cura-harness sleep infinity
