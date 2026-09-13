@@ -61,7 +61,10 @@ trap cleanup EXIT INT TERM
 # machine + printer record (pointed at the simulator), welcome and
 # What's-New suppressed. Logs, registry state and probe debris from
 # earlier runs never carry over.
-rm -rf /tmp/mpf/xdg
+# Cura's own writes land with owner-only modes (settings files go
+# 0600, its dirs 0775): on CI the next unit's host-side rm hits them
+# as a different uid. The container's root does the destructive pass.
+docker exec "$CONTAINER" rm -rf /tmp/mpf/xdg
 mkdir -p /tmp/mpf/xdg
 cp -r "$root/tests/harness/config/." /tmp/mpf/xdg/
 # The container's Cura writes into the seeded tree — the instance lock
@@ -112,7 +115,10 @@ mkdir -p /tmp/mpf/fakehome/lib64
 # The container runs as a fixed uid and must write this throwaway home
 # whatever uid created the mount on the host (the CI runner's user
 # differs from the dev box's — the .local mkdir died with EACCES).
-chmod -R 777 /tmp/mpf/fakehome
+# The chmod runs in the container: a previous unit's Cura wrote here
+# with owner-only modes, and a host-side chmod would EPERM on files
+# it does not own.
+docker exec "$CONTAINER" chmod -R 777 /tmp/mpf/fakehome
 ln -sfn /lib64/ld-linux-x86-64.so.2 /tmp/mpf/fakehome/lib64/ld-linux-x86-64.so.2
 # Stage the suite's test model where the insert-slice flow reads it.
 mkdir -p /tmp/mpf/models
