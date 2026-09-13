@@ -1,8 +1,9 @@
 #!/bin/sh
-# The PR-level harness check: the smoke set (one boot, the
-# release-killing surfaces) against the primary pinned Cura. The full
-# gate (smoke + every suite group + the secondary version) remains the
-# release workflow's job — this is the fast per-PR signal.
+# The PR-level harness check: the smoke set against the primary pinned
+# Cura, twice in a row — the second unit proves the boot survives the
+# first unit's debris (Cura's owner-only writes broke the next unit's
+# cleanup on CI). The full gate (smoke + every suite group + the
+# secondary version) remains the release workflow's job.
 set -eu
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
@@ -28,9 +29,21 @@ docker run -d --init --name "$CONTAINER" --cap-add=SYS_PTRACE \
 
 python3 "$root/tools/fetch_cura.py" "$PRIMARY"
 
-if timeout 40m env CURA_VERSION="$PRIMARY" \
-        HARNESS_CONTAINER="$CONTAINER" MODE=suite SCENARIO_GROUP=smoke \
-        RUN_DIR_NAME="$RUN_ROOT/smoke" ./tools/ui_test.sh > "$RUN_ROOT/smoke.log" 2>&1; then
+# Two units, one after the other: the second boot must survive the
+# first unit's debris — Cura's owner-only config writes once killed
+# the next unit's cleanup on CI (the cross-uid lesson).
+fail=0
+for run in smoke-1 smoke-2; do
+    if timeout 40m env CURA_VERSION="$PRIMARY" \
+            HARNESS_CONTAINER="$CONTAINER" MODE=suite SCENARIO_GROUP=smoke \
+            RUN_DIR_NAME="$RUN_ROOT/$run" ./tools/ui_test.sh > "$RUN_ROOT/$run.log" 2>&1; then
+        echo "harness smoke $run PASSED"
+    else
+        echo "harness smoke $run FAILED"
+        fail=1
+    fi
+done
+if [ "$fail" = 0 ]; then
     echo "harness smoke PASSED (run root: $RUN_ROOT)"
 else
     echo "harness smoke FAILED (run root: $RUN_ROOT)"
