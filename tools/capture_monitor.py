@@ -224,6 +224,20 @@ def main():
         window.show()
         for _ in range(5):
             app.processEvents()
+        # The shell loads the dashboard asynchronously
+        # (Qt.createComponent); the first grab must wait for the inner
+        # Loader to produce the dashboard, or the capture reads blank
+        # (the determinism gate caught exactly that after the shell
+        # rework).
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            app.processEvents()
+            if any(child.property("objectName") == "moonrakerControlsPane"
+                   for child in item.findChildren(QQuickItem)):
+                break
+            time.sleep(0.05)
+        else:
+            raise RuntimeError("the dashboard never rendered inside the capture shell")
 
         def grab(name):
             image = window.grabWindow()

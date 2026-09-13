@@ -789,6 +789,25 @@ walk):**
   Test-connection verdict, interval relabel, reason line, trace label)
   get the author's nod as they are built.
 
+## 4.0.1 — Harness fast-follow (the author, 2026-09-13)
+
+A fast follow after 4.0.0 ships; both items are test-infrastructure only:
+
+- **Dismiss the G-code details warning**: Cura's "Make sure the g-code
+  is suitable for your printer" dialog gets in the way of the UI
+  tests. Dismiss it CONDITIONALLY at boot — never wait for it: tests
+  that load no gcode never see it.
+- **Test the Information pane**: never covered because the harness
+  window (1280x720) squeezes the Monitor's left column. Raise the
+  harness resolution (e.g. 1920x1080) and re-calibrate the geometry
+  probes and click coordinates that assume the current size.
+- **Visible interactions (the author's rule, 2026-09-13)**: wherever
+  possible, anything the scenarios interact with MUST be on screen —
+  scroll the panes to bring the control into the rendered viewport
+  before driving it, so the videos and screenshots SHOW the
+  interaction. "If the user can't see it, assume they can't interact
+  with it."
+
 ## 4.0.1 — Printer resilience and console polish
 
 FOLDED INTO 4.0.0 (the author's ruling, 2026-09-11: "Screw it, do all

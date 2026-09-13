@@ -20,7 +20,12 @@ CONTAINER="${HARNESS_CONTAINER:-mpf-cura513}"
 # Per-unit evidence dir: the release gate gives every unit its own name
 # so a later unit never overwrites an earlier one's proof (the panel's
 # evidence-survival finding).
-RUN_DIR="/tmp/mpf/ui-artifacts/${RUN_DIR_NAME:-run-001}"
+# An absolute RUN_DIR_NAME passes through (the release gate's
+# timestamped root); a relative one nests under ui-artifacts.
+case "${RUN_DIR_NAME:-run-001}" in
+    /*) RUN_DIR="$RUN_DIR_NAME" ;;
+    *) RUN_DIR="/tmp/mpf/ui-artifacts/${RUN_DIR_NAME:-run-001}" ;;
+esac
 
 # The pinned Cura for this run: any version can be selected; prepare
 # one with tools/fetch_cura.py (the manifest records the swap).
@@ -44,7 +49,10 @@ cleanup() {
         # The seeded profile holds the real host and key at runtime:
         # a real run's debris must not outlive the run (the author's
         # rule — the key must never sit on disk beyond the session).
-        rm -rf /tmp/mpf/xdg /tmp/mpf/ui-artifacts/"${RUN_DIR_NAME:-run-001}"
+        case "${RUN_DIR_NAME:-run-001}" in
+            /*) rm -rf /tmp/mpf/xdg "$RUN_DIR_NAME" ;;
+            *) rm -rf /tmp/mpf/xdg /tmp/mpf/ui-artifacts/"${RUN_DIR_NAME:-run-001}" ;;
+        esac
     fi
 }
 trap cleanup EXIT INT TERM
