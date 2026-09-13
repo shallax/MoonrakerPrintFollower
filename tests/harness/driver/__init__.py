@@ -247,7 +247,12 @@ class HarnessServer(QObject):
             rows = []
             for window in visible_windows:
                 for item in window.contentItem().findChildren(QQuickItem):
-                    if not item.isVisible() or item.width() < 8 or item.height() < 8:
+                    # Geometry + the effective-visibility walk: Qt's
+                    # isVisible() lies for deep repeater content and
+                    # was filtering the whole dump empty.
+                    if item.width() < 8 or item.height() < 8:
+                        continue
+                    if not _effectively_visible(item):
                         continue
                     try:
                         text = item.property("text")
@@ -262,6 +267,21 @@ class HarnessServer(QObject):
                                  "w": rect["w"], "h": rect["h"]})
             rows.sort(key=lambda row: (row["y"], row["x"]))
             return {"id": request_id, "ok": True, "items": rows[:2000]}
+        if cmd == "resize":
+            # Programmatic window geometry — the min/max layout
+            # exercise (no WM under Xvfb, so the app resizes itself).
+            # The reply reports the size the window actually took.
+            try:
+                window = _main_window()
+                if window is None:
+                    return {"id": request_id, "ok": False, "error": "no window"}
+                window.setGeometry(0, 0, int(request.get("w", 1600)),
+                                   int(request.get("h", 1000)))
+                time.sleep(2)
+                return {"id": request_id, "ok": True,
+                        "size": [window.width(), window.height()]}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "quit":
             try:
                 Application.getInstance().closeApplication()
@@ -657,6 +677,102 @@ class HarnessServer(QObject):
                                        Qt.KeyboardModifier.NoModifier, QPoint(x, y))
                 qtest.QTest.qWait(150)
                 return {"id": request_id, "ok": True, "aim": [x, y], "objectName": wanted}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "rect":
+            # An item's window-relative rect, found by objectName, by
+            # rendered text, or by class name — Cura-native items (the
+            # save-button row) carry no objectName. The same walk the
+            # click paths use; a Button-class match wins over labels
+            # and tooltips that share the text.
+            try:
+                wanted_name = str(request.get("objectName") or "")
+                wanted_text = str(request.get("text") or "")
+                wanted_class = str(request.get("className") or "")
+                window = _main_window()
+                if request.get("window"):
+                    pos = window.position()
+                    return {"id": request_id, "ok": True,
+                            "rect": {"x": round(pos.x()), "y": round(pos.y()),
+                                     "w": round(window.width()),
+                                     "h": round(window.height())},
+                            "found": "window"}
+                best = None
+                name_matches = []
+                for item in _walk(window.contentItem(), depth=64):
+                    if item.width() < 2 or item.height() < 2:
+                        continue
+                    if not _effectively_visible(item):
+                        continue
+                    try:
+                        name = item.property("objectName")
+                    except Exception:
+                        name = None
+                    if wanted_name and name == wanted_name:
+                        rect = self._rect(item)
+                        name_matches.append((rect["y"], rect["x"], rect))
+                        continue
+                    if wanted_text or wanted_class:
+                        try:
+                            label = item.property("text")
+                        except Exception:
+                            label = None
+                        klass = item.metaObject().className()
+                        if (wanted_text and label == wanted_text) or \
+                           (wanted_class and klass == wanted_class):
+                            if "Button" in klass:
+                                return {"id": request_id, "ok": True,
+                                        "rect": self._rect(item), "found": klass}
+                            if best is None or (item.width() * item.height() >
+                                                best.width() * best.height()):
+                                best = item
+                if name_matches:
+                    # Repeater rows share the objectName: the topmost
+                    # (then leftmost) is the row the user reads first.
+                    name_matches.sort()
+                    return {"id": request_id, "ok": True,
+                            "rect": name_matches[0][2], "found": "objectName"}
+                if best is not None:
+                    return {"id": request_id, "ok": True,
+                            "rect": self._rect(best),
+                            "found": best.metaObject().className()}
+                return {"id": request_id, "ok": False,
+                        "error": "no visible item matched",
+                        "objectName": wanted_name, "text": wanted_text,
+                        "className": wanted_class}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "text":
+            # The rendered text of an objectName'd item — the
+            # rendered-follows-model probes read this.
+            try:
+                wanted = str(request.get("objectName") or "")
+                window = _main_window()
+                matches = []
+                for item in _walk(window.contentItem(), depth=64):
+                    if item.width() < 2 or item.height() < 2:
+                        continue
+                    if not _effectively_visible(item):
+                        continue
+                    try:
+                        name = item.property("objectName")
+                    except Exception:
+                        name = None
+                    if name == wanted:
+                        rect = self._rect(item)
+                        matches.append((rect["y"], rect["x"], item))
+                if matches:
+                    # Shared names (repeater rows): the topmost row.
+                    matches.sort()
+                    item = matches[0][2]
+                    try:
+                        label = item.property("text")
+                    except Exception:
+                        label = None
+                    return {"id": request_id, "ok": True, "text": str(label)}
+                return {"id": request_id, "ok": False,
+                        "error": "no visible item with that objectName",
+                        "objectName": wanted}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "confirm_box":
@@ -1111,6 +1227,21 @@ QT_TEST = None
 
 
 QT_TEST_ERROR = ""
+
+
+def _effectively_visible(item):
+    # Qt's isVisible() lies for deeply nested repeater content (the
+    # rendered label reports invisible); walk the parent chain and AND
+    # the visible flags ourselves — the collapse checks depend on it.
+    node = item
+    while node is not None:
+        try:
+            if not bool(node.property("visible")):
+                return False
+        except Exception:
+            pass
+        node = node.parentItem()
+    return True
 
 
 def _walk(root, depth=24):

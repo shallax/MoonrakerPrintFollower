@@ -1697,13 +1697,13 @@ def scenario1(expect_fail=False):
     return 0 if all(step[3] for step in steps) else 1
 
 
-SUITE_STATE = {"sim": {}, "model": {}, "item": {}}
+SUITE_STATE = {"sim": {}, "model": {}, "item": {}, "rect": {}}
 
 # The suite's groups by name — SCENARIO_GROUP accepts either.
 GROUP_NAMES = {
     "connection": "a", "status": "b", "temperatures": "c", "console": "d",
     "webcams": "e", "files": "f", "motion": "g", "printing": "h",
-    "settings": "i", "stress": "j",
+    "settings": "i", "stress": "j", "visual": "v",
 }
 
 
@@ -1792,7 +1792,10 @@ REAL_SAFE_SLOTS = {
 }
 
 REAL_SAFE_OPS = {"click_stage", "click_text", "model_read",
-                 "wait_model", "assert_model", "exec_slot", "dwell"}
+                 "wait_model", "assert_model", "exec_slot", "dwell",
+                 "rect_of", "assert_aligned", "assert_rendered",
+                 "wait_rendered", "wait_rect", "dump_visible",
+                 "resize_window"}
 
 
 def real_dwell(step):
@@ -2107,6 +2110,179 @@ def suite_step(step):
             return True, f"the upload fixture written to {path}", "written"
         except OSError as exc:
             return False, f"the upload fixture written to {path}", f"OSError: {exc}"
+    if op == "rect_of":
+        # Read an item's rect into the suite state, addressed by
+        # objectName, rendered text, or class name (Cura-native).
+        ref = {k: step[k] for k in ("objectName", "text", "className") if k in step}
+        key = next(iter(ref.values()))
+        reply = rpc({"id": 1, "cmd": "rect", **ref})
+        if not reply.get("ok") or "rect" not in reply:
+            return (False, f"the rect of {key}",
+                    f"driver: {reply.get('error', reply)}")
+        rect = reply["rect"]
+        SUITE_STATE["rect"][key] = rect
+        return True, f"the rect of {key} ({reply.get('found')})", f"{rect}"
+
+    if op == "assert_aligned":
+        # Geometry pins: centre alignment on one axis, containment,
+        # or non-overlap. All read the live rects — the rendered
+        # layout, not the model's opinion of it.
+        def resolve(ref):
+            keys = ("objectName", "text", "className", "window")
+            payload = {k: ref[k] for k in keys if k in ref}
+            key = next(iter(ref.values()))
+            reply = rpc({"id": 1, "cmd": "rect", **payload})
+            if not reply.get("ok") or "rect" not in reply:
+                raise RuntimeError(f"rect of {key}: {reply.get('error', reply)}")
+            return key, reply["rect"]
+        item_key, a = resolve(step["item"])
+        if "no_overlap" in step:
+            other_key, b = resolve(step["no_overlap"])
+            overlap = not (a["x"] + a["w"] <= b["x"] or b["x"] + b["w"] <= a["x"] or
+                           a["y"] + a["h"] <= b["y"] or b["y"] + b["h"] <= a["y"])
+            return (not overlap, f"{item_key} must not overlap {other_key}",
+                    f"a={a} b={b} {'OVERLAP' if overlap else 'clear'}")
+        if "within" in step:
+            other_key, b = resolve(step["within"])
+            inside = (a["x"] >= b["x"] and a["y"] >= b["y"] and
+                      a["x"] + a["w"] <= b["x"] + b["w"] and
+                      a["y"] + a["h"] <= b["y"] + b["h"])
+            return (inside, f"{item_key} sits within {other_key}",
+                    f"a={a} b={b} {'inside' if inside else 'OUTSIDE'}")
+        other_key, b = resolve(step["anchor"])
+        axis = step.get("axis", "center_y")
+        tol = float(step.get("tol", 5))
+        if axis == "center_y":
+            gap = abs((a["y"] + a["h"] / 2) - (b["y"] + b["h"] / 2))
+        else:
+            gap = abs((a["x"] + a["w"] / 2) - (b["x"] + b["w"] / 2))
+        return (gap <= tol, f"{item_key} and {other_key} share {axis}",
+                f"gap {gap:.1f}px (tol {tol}); a={a} b={b}")
+
+    if op == "assert_rendered":
+        reply = rpc({"id": 1, "cmd": "text", "objectName": step["objectName"]})
+        if not reply.get("ok"):
+            return (False, f"the rendered text of {step['objectName']}",
+                    f"driver: {reply.get('error')}")
+        rendered = reply.get("text") or ""
+        if step.get("contains") is not None:
+            ok = step["contains"] in rendered
+        elif step.get("not_contains") is not None:
+            ok = step["not_contains"] not in rendered
+        elif step.get("equals") is not None:
+            ok = rendered == step["equals"]
+        else:
+            ok = bool(rendered)
+        return (ok, f"the rendered text of {step['objectName']}",
+                f"now {rendered!r}")
+
+    if op == "wait_rendered":
+        # The rendered-follows-model probe: the QML label's actual
+        # text must follow a push — the model being right is not
+        # enough (the pause-restyle bug class).
+        def check():
+            reply = rpc({"id": 1, "cmd": "text", "objectName": step["objectName"]})
+            if not reply.get("ok"):
+                return False
+            rendered = reply.get("text") or ""
+            if step.get("contains") is not None:
+                return step["contains"] in rendered
+            if step.get("not_contains") is not None:
+                return step["not_contains"] not in rendered
+            if step.get("equals") is not None:
+                return rendered == step["equals"]
+            return bool(rendered)
+        ok = bool(wait_for(check, float(step.get("budget", 15)), 1.0))
+        reply = rpc({"id": 1, "cmd": "text", "objectName": step["objectName"]})
+        rendered = reply.get("text") if reply.get("ok") else reply.get("error")
+        return (ok, f"the rendered text of {step['objectName']} followed the push",
+                f"now {rendered!r}")
+
+    if op == "wait_rect":
+        # An item's presence in the rendered tree — the collapse and
+        # resize scenarios wait on this.
+        ref = {k: step[k] for k in ("objectName", "text", "className") if k in step}
+        key = next(iter(ref.values()))
+
+        def check():
+            reply = rpc({"id": 1, "cmd": "rect", **ref})
+            if step.get("absent"):
+                return not reply.get("ok")
+            return reply.get("ok")
+        ok = bool(wait_for(check, float(step.get("budget", 15)), 1.0))
+        reply = rpc({"id": 1, "cmd": "rect", **ref})
+        now = "absent" if not reply.get("ok") else reply["rect"]
+        return (ok, f"{key} {'left the rendered tree' if step.get('absent') else 'entered the rendered tree'}",
+                f"now {now}")
+
+    if op == "dump_visible":
+        # A diagnostic: every visible item matching the needle, with
+        # geometry — the calibration evidence for matcher choices.
+        rows = rpc({"id": 3, "cmd": "visible"}).get("items", [])
+        needle = str(step.get("needle") or "").lower()
+        region = step.get("region")
+        if region:
+            x0, y0, x1, y1 = region
+            rows = [r for r in rows
+                    if r["x"] < x1 and r["y"] < y1 and r["x"] + r["w"] > x0
+                    and r["y"] + r["h"] > y0]
+        hits = [r for r in rows
+                if needle in (r["class"] + r["name"] + r["text"]).lower()]
+        brief = "; ".join(f"{r['class']}|{r['name']}|{r['text'][:20]!r}"
+                          f"@{r['x']},{r['y']} {r['w']}x{r['h']}"
+                          for r in hits[:12])
+        return True, f"visible items matching {needle!r}", brief or "no matches"
+
+    if op == "resize_window":
+        reply = rpc({"id": 1, "cmd": "resize", "w": int(step["w"]), "h": int(step["h"])})
+        if not reply.get("ok"):
+            return (False, f"resize to {step['w']}x{step['h']}", f"driver: {reply.get('error')}")
+        return True, f"the window resized to {step['w']}x{step['h']}", f"actual {reply['size']}"
+
+    if op == "sim_set_current_print":
+        # The running-job state the load needs, with the sim's REAL
+        # gcode size (gate #2's recipe — a size mismatch aborts the
+        # load in suite conditions).
+        state = sim_http("/harness/state")["result"]
+        listing = sim_http("/server/files/directory?path=gcodes&extended=true")
+        gcode_size = listing["result"]["files"][0]["size"]
+        sim_http("/harness/scenario", "POST", {
+            "print_stats": {**state["print_stats"], "state": "printing",
+                            "filename": "scenario1.gcode"},
+            "virtual_sdcard": {**state["virtual_sdcard"], "is_active": True,
+                               "progress": 0.5, "file_size": gcode_size}})
+        return True, "the simulator's running job (the real gcode size)", \
+            f"file_size {gcode_size}"
+
+    if op == "assert_rect_change":
+        # Compare against the rect_of cache: the pane-collapse pins
+        # (the pane must actually shrink/grow in the rendered tree).
+        key = step["objectName"]
+        direction = step.get("direction", "shrunk")
+        axis = step.get("axis", "w")
+        by = float(step.get("by", 20))
+
+        def check():
+            reply = rpc({"id": 1, "cmd": "rect", "objectName": key})
+            if not reply.get("ok"):
+                return False
+            rect = reply["rect"]
+            before = SUITE_STATE["rect"].get(key)
+            if before is None:
+                return False
+            delta = rect[axis] - before[axis]
+            return delta <= -by if direction == "shrunk" else delta >= by
+        ok = bool(wait_for(check, float(step.get("budget", 15)), 1.0))
+        reply = rpc({"id": 1, "cmd": "rect", "objectName": key})
+        now = reply.get("rect") if reply.get("ok") else "absent"
+        before = SUITE_STATE["rect"].get(key)
+        if ok and isinstance(now, dict):
+            # Re-anchor the cache on the new state so the next pin
+            # compares against THIS transition's result.
+            SUITE_STATE["rect"][key] = now
+        return (ok, f"{key} {direction} by at least {by:.0f}px on {axis}",
+                f"{before} -> {now}")
+
     raise ValueError(f"unknown suite op {op!r}")
 
 

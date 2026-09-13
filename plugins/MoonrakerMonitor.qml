@@ -2251,6 +2251,9 @@ Component {
                                             elide: Text.ElideRight
                                         }
                                         UM.Label {
+                                            // Inert; the harness's rendered-follows
+                                            // scenarios read this label's text.
+                                            objectName: "moonrakerTemperatureDetail"
                                             text: modelData.detail
                                         }
                                     }

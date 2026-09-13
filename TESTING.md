@@ -416,6 +416,26 @@ slow endpoint → degradation not hang, dropped frames and socket close
 received samples, a long simulated print to completion with
 time-warped virtual_sdcard progress).
 
+**The V group — visual fidelity.** Geometry pins (`assert_aligned`:
+centre-line, containment, non-overlap; `assert_rect_change` for the
+pane shrink/grow; `wait_rect` for rendered presence), rendered
+follows-model checks (`wait_rendered`/`assert_rendered` read the
+label's actual text after a push — the model being right is not
+enough), and the UI exercise the author's ruling demands: pane
+collapse/expand (info panel width, the temperatures section, the
+status panel) and window resize to narrow/wide — the console's
+width-driven auto-collapse and re-expand, with the panel layout
+asserted intact at both extremes. Limitation (documented with dump
+evidence in v1's gallery): Cura's NATIVE action-panel save row —
+Save to Disk and the `</>` post-processing button — never renders in
+the harness's preview conditions, so the known `</>` vertical
+alignment defect (ROADMAP 4.2.0) cannot be pinned by the harness; the
+plugin card's own geometry is pinned (window containment), and the
+defect stays human-verified. The matcher quirk this surfaced: custom
+Cura components layer labels over clickable regions and repeater rows
+share objectNames — rect/text lookups resolve the topmost visible
+instance.
+
 The step vocabulary (`scenarios.py`, interpreted in
 `runner.py`'s `suite_step`): `sim_set`/`sim_arm`/`sim_klippy`/
 `sim_drop` drive the harness lane; `sim_ledger` asserts request
