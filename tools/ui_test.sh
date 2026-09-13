@@ -248,17 +248,26 @@ case "$MODE" in
             else
                 echo "ui_test: Xvfb is not running"
             fi
-            # The kernel's verdict on the stall: a frozen CPU clock
-            # means the boot is blocked (the wchan/syscall names the
-            # blocker); a growing one means it is still computing.
+            # The kernel's verdict on the stall: every surviving process
+            # in the boot chain, then the loader's CPU clock and each
+            # thread's wchan/syscall. A frozen clock with a blocked
+            # syscall names the blocker; a growing one means the boot
+            # is still computing.
             docker exec "$CONTAINER" bash -lc '
+                for pid in $(pgrep -f "UltiMaker-Cur[a]"); do
+                    cmd=$(tr "\0" " " < /proc/$pid/cmdline 2>/dev/null)
+                    rest=$(sed -E "s/^[0-9]+ \([^)]*\) //" /proc/$pid/stat 2>/dev/null)
+                    echo "ui_test: pid $pid ppid $(echo "$rest" | cut -d" " -f2) state $(echo "$rest" | cut -d" " -f1) cpu $(echo "$rest" | cut -d" " -f12): $cmd"
+                    for c in $(ps -o pid= --ppid "$pid" 2>/dev/null); do
+                        echo "ui_test:   child $c: $(ps -o stat=,args= -p "$c" 2>/dev/null | head -1)"
+                    done
+                done
                 pid=$(pgrep -f "^/lib64/ld-linux.*UltiMaker-Cur[a]" | head -1)
                 if [ -n "$pid" ]; then
                     u1=$(sed -E "s/^[0-9]+ \([^)]*\) //" /proc/$pid/stat | cut -d" " -f12)
                     sleep 3
                     rest=$(sed -E "s/^[0-9]+ \([^)]*\) //" /proc/$pid/stat)
-                    u2=$(echo "$rest" | cut -d" " -f12)
-                    echo "ui_test: Cura pid $pid state $(echo "$rest" | cut -d" " -f1), cpu clock $u1 -> $u2, wchan $(cat /proc/$pid/wchan)"
+                    echo "ui_test: Cura pid $pid state $(echo "$rest" | cut -d" " -f1), cpu clock $u1 -> $(echo "$rest" | cut -d" " -f12), wchan $(cat /proc/$pid/wchan)"
                     for t in /proc/$pid/task/*; do
                         echo "ui_test:   tid $(basename $t): wchan $(cat $t/wchan 2>/dev/null), syscall $(cat $t/syscall 2>/dev/null)"
                     done
