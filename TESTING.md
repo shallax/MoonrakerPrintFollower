@@ -214,7 +214,16 @@ truth #5):
   temperatures, console, webcams, files, motion, printing, settings,
   stress;
 - `make ui_test CURA_VERSION=5.12.0 MODE=…` — any selection under any
-  pinned Cura;
+  pinned Cura. A version is prepared once with
+  `python3 tools/fetch_cura.py <version>`: it downloads the official
+  AppImage, extracts it to
+  `/tmp/mpf/cura_versions/<version>/root`, unpacks the matching
+  PyQt6 + PyQt6-Qt6 wheels (read from the bundle, so they always
+  match; the driver's QtTest import needs the full PyPI wheel) into
+  `wheels/`, and records sources, sha256s and pins in
+  `manifest.json` — the version-swap proof. The harness image is
+  `tools/harness/Dockerfile`, run with `docker run --init`;
+  `tools/harness_release.sh` orchestrates the whole release gate.
 - `make ui_test MODE=discover` — dump stage-menu coordinates.
 
 Lifecycle and isolation (a scenario is a REBIND — the production
@@ -475,10 +484,17 @@ existed and every later read saw `None`.
 - **Phase D — the full surface:** the suite matrix lands feature-group
   by feature-group until the suite encompasses all testing
   end-to-end.
-- **Phase E — the version swap and CI:** the suite under a second Cura
-  version (swap manifest proven), then `make ui_test` in the release
-  gates, with declared per-layer wall-clock budgets and the soak kept
-  out of any PR-blocking path.
+- **Phase E — the version swap and CI (COMPLETE, 2026-09-13):**
+  `CURA_VERSION` picks any prepared Cura; the swap is proven — the
+  demo and the webcams group run green under both 5.13.0 (the primary
+  pin) and 5.12.0 (the secondary), each with a manifest recording the
+  AppImage sha256 and the wheel pins. The release workflow runs
+  `tools/harness_release.sh` after the artifact build (240-minute
+  envelope): the 11 gates and suite groups a–i on the primary
+  version, then the 11 gates again on the secondary — declared
+  budgets are 10 minutes per gate attempt and 15 minutes per suite
+  group attempt, up to 3 attempts per unit under the documented flake
+  policy, and the soak group (j) stays out of the release path.
 
 ## 6. Boundaries
 

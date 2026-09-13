@@ -118,3 +118,10 @@ clean:
 
 ui_test:
 	./tools/ui_test.sh
+
+# The release gate's real-Cura scenario runs: the gates + suite on the
+# primary pinned Cura, the gates again on the secondary version. Run
+# on a box with docker; the budgets and retry policy live in
+# tools/harness_release.sh (TESTING.md §5).
+ui_release_gate:
+	./tools/harness_release.sh

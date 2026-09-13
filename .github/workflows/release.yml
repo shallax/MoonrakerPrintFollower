@@ -65,6 +65,10 @@ jobs:
           python tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v${VERSION}.curapackage"
           python tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
 
+      - name: Run the real-Cura scenario gates (primary + swapped Cura)
+        run: ./tools/harness_release.sh
+        timeout-minutes: 240
+
       - name: Install gitleaks
         run: |
           # The runner image dropped the preinstalled binary (the 3.5.0
