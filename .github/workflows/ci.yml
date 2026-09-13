@@ -10,6 +10,27 @@ on:
 
 
 jobs:
+  harness-smoke:
+    # The PR-level real-Cura check: the smoke set in one boot against
+    # the primary pinned Cura (the full gate stays release-time). The
+    # container brings its own Xvfb and ffmpeg, so the ubuntu runner
+    # needs no display. Galleries upload alongside the other evidence.
+    name: Harness smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Run the smoke set
+        run: ./tools/harness_smoke.sh
+      - name: Collect the smoke galleries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-smoke-galleries
+          path: /tmp/mpf/ui-artifacts/runs/
+          if-no-files-found: ignore
+
   lint:
     name: Lint
     runs-on: ubuntu-24.04
