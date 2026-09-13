@@ -9,15 +9,9 @@ on:
   workflow_dispatch:
   # PRs that touch the gate machinery run the full matrix before they
   # can merge; product-code PRs keep the fast two-unit smoke in ci.yml.
+  # Every PR runs the full matrix: the ruleset requires each unit's
+  # check, so a skipped matrix (a paths filter) would block merges.
   pull_request:
-    paths:
-      - ".github/workflows/**"
-      - "tools/ui_test.sh"
-      - "tools/harness_release.sh"
-      - "tools/harness_smoke.sh"
-      - "tools/harness/**"
-      - "tools/fetch_cura.py"
-      - "tests/harness/**"
 
 permissions:
   contents: write
@@ -131,23 +125,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { name: smoke-primary,     cura: "5.13.0", budget: 20, group: smoke }
-          - { name: group-connection,  cura: "5.13.0", budget: 15, group: connection }
-          - { name: group-status,      cura: "5.13.0", budget: 15, group: status }
-          - { name: group-temperatures, cura: "5.13.0", budget: 15, group: temperatures }
-          - { name: group-console,     cura: "5.13.0", budget: 15, group: console }
-          - { name: group-webcams,     cura: "5.13.0", budget: 15, group: webcams }
-          - { name: group-files,       cura: "5.13.0", budget: 15, group: files }
-          - { name: group-motion,      cura: "5.13.0", budget: 15, group: motion }
-          - { name: group-printing,    cura: "5.13.0", budget: 15, group: printing }
-          - { name: group-settings,    cura: "5.13.0", budget: 15, group: settings }
-          - { name: group-visual,      cura: "5.13.0", budget: 15, group: visual }
-          - { name: group-preview,     cura: "5.13.0", budget: 15, group: preview }
-          - { name: group-probe,       cura: "5.13.0", budget: 15, group: probe }
-          - { name: smoke-secondary,   cura: "5.12.0", budget: 20, group: smoke }
+        unit:
+          - smoke-primary
+          - group-connection
+          - group-status
+          - group-temperatures
+          - group-console
+          - group-webcams
+          - group-files
+          - group-motion
+          - group-printing
+          - group-settings
+          - group-visual
+          - group-preview
+          - group-probe
+          - smoke-secondary
     env:
-      HARNESS_CONTAINER: mpf-cura-gate-${{ matrix.name }}
+      HARNESS_CONTAINER: mpf-cura-gate-${{ matrix.unit }}
+      UNITS: '{"group-connection": {"budget": 15, "cura": "5.13.0", "group": "connection"}, "group-console": {"budget": 15, "cura": "5.13.0", "group": "console"}, "group-files": {"budget": 15, "cura": "5.13.0", "group": "files"}, "group-motion": {"budget": 15, "cura": "5.13.0", "group": "motion"}, "group-preview": {"budget": 15, "cura": "5.13.0", "group": "preview"}, "group-printing": {"budget": 15, "cura": "5.13.0", "group": "printing"}, "group-probe": {"budget": 15, "cura": "5.13.0", "group": "probe"}, "group-settings": {"budget": 15, "cura": "5.13.0", "group": "settings"}, "group-status": {"budget": 15, "cura": "5.13.0", "group": "status"}, "group-temperatures": {"budget": 15, "cura": "5.13.0", "group": "temperatures"}, "group-visual": {"budget": 15, "cura": "5.13.0", "group": "visual"}, "group-webcams": {"budget": 15, "cura": "5.13.0", "group": "webcams"}, "smoke-primary": {"budget": 20, "cura": "5.13.0", "group": "smoke"}, "smoke-secondary": {"budget": 20, "cura": "5.12.0", "group": "smoke"}}'
     steps:
       - name: Check out the source
         uses: actions/checkout@v7
@@ -165,10 +160,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/mpf/cura_versions
-          key: mpf-cura-${{ matrix.cura }}
+          key: mpf-cura-${{ fromJSON(env.UNITS)[matrix.unit].cura }}
 
       - name: Fetch the pinned Cura
-        run: python3 tools/fetch_cura.py "${{ matrix.cura }}"
+        run: python3 tools/fetch_cura.py "${{ fromJSON(env.UNITS)[matrix.unit].cura }}"
 
       - name: Pull the harness image and start the container
         run: |
@@ -192,20 +187,18 @@ jobs:
         timeout-minutes: 30
         run: |
           mkdir -p /tmp/mpf
-          timeout "${BUDGET}m" env \
-              CURA_VERSION="${{ matrix.cura }}" \
-              MODE=suite SCENARIO_GROUP="${{ matrix.group }}" \
-              RUN_DIR_NAME="/tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.name }}" \
+          timeout "${{ fromJSON(env.UNITS)[matrix.unit].budget }}m" env \
+              CURA_VERSION="${{ fromJSON(env.UNITS)[matrix.unit].cura }}" \
+              MODE=suite SCENARIO_GROUP="${{ fromJSON(env.UNITS)[matrix.unit].group }}" \
+              RUN_DIR_NAME="/tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.unit }}" \
               ./tools/ui_test.sh
-        env:
-          BUDGET: ${{ matrix.budget }}
 
       - name: Upload the unit's gallery
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gate-${{ matrix.name }}
-          path: /tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.name }}
+          name: gate-${{ matrix.unit }}
+          path: /tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.unit }}
           if-no-files-found: warn
 
   publish:
