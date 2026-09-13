@@ -17,6 +17,9 @@ Item {
     property real loadProgress: -1
     property string loadPhase: ""
     property bool hasToolpath: false
+    // Published for the empty card's gate; the action card has no use
+    // for it (it only renders with a toolpath).
+    property bool sceneHasObjects: false
     property string activePrinterName: ""
     property string statusText: ""
     property string statusIconName: "Information"
@@ -45,6 +48,10 @@ Item {
     property real buttonSpacing: UM.Theme.getSize("default_margin").width
     property real contentWidth: 300 * screenScaleFactor
 
+    onLoadBusyChanged: loadIndicator.busy = base.loadBusy
+    onLoadProgressChanged: loadIndicator.progress = base.loadProgress
+    onLoadPhaseChanged: loadIndicator.phase = base.loadPhase
+
     signal loadClicked
     signal pauseClicked
     signal bedMeshVisibilityRequested(bool visible)
@@ -57,8 +64,13 @@ Item {
     // the empty card owns the idle-nothing-loaded state. Cura's own
     // platformActivity flag is deliberately NOT a gate — it flipped
     // mid-load and vanished the card (the author's report).
-    visible: configuredForFollowing && (loadBusy || (previewStageActive && hasToolpath))
-    width: visible ? externalGap + followerPanel.width : 0
+    // The GATE lives on the inner panel, not the root: once Cura
+    // reparents this component into the action panel, the root's own
+    // bindings no longer re-evaluate on setProperty-driven changes
+    // (engine-proven — the card never showed during a load while the
+    // inner bindings track). The root stays visible and collapses to
+    // zero size instead.
+    width: followerPanel.visible ? externalGap + followerPanel.width : 0
     // Cura's saveButton row centres its components on a line two thick
     // margins above the action panel's bottom. If this extension
     // reported the card's full height, the row would grow to it and
@@ -68,10 +80,11 @@ Item {
     // stays small and everything docks to the bottom. Four thick
     // margins puts the strip's bottom edge exactly on the action
     // panel's bottom, keeping the card level with the Upload card.
-    height: visible ? 4 * base.verticalPadding : 0
+    height: followerPanel.visible ? 4 * base.verticalPadding : 0
 
     Rectangle {
         id: followerPanel
+        visible: configuredForFollowing && (loadBusy || (previewStageActive && hasToolpath))
         anchors.right: parent.right
         anchors.bottom: parent.bottom
 
@@ -149,11 +162,13 @@ Item {
             // full-width indicator inside it painted entirely past the
             // card's right edge and the load feedback was invisible
             // (panel UX P1 — "the second load shows no progress bar").
+            // Fed through the card's change handlers: bindings written
+            // here do not track the card's setProperty-driven updates
+            // (engine-proven), while imperative writes notify and the
+            // indicator's inner bindings on its own properties track.
             LoadProgressIndicator {
+                id: loadIndicator
                 width: parent.width
-                busy: base.loadBusy
-                progress: base.loadProgress
-                phase: base.loadPhase
             }
 
             PreviewSecondaryButton {

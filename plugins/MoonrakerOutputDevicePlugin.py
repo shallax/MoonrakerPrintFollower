@@ -104,6 +104,11 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         device.setMonitorViewQmlPath(os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "MoonrakerMonitorBedMesh.qml"
         ))
+        # The monitor item must exist before the device joins the
+        # output manager: the stage's Loader reads the constant
+        # monitorItem property once, and a compiling component reads
+        # as null there — the boot keeps the dashboard hidden forever.
+        device.warm_monitor_item()
         try:
             monitor.refreshAll()
         except Exception as exc:

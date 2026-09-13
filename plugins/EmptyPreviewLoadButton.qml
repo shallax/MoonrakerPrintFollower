@@ -10,14 +10,22 @@ Item {
     // NOT gated on CuraApplication.platformActivity: Cura flips that
     // flag during its own busy/idle cycles, and the empty card must not
     // appear as the "wrong" card mid-transition. It means "nothing is
-    // loaded", so it follows the toolpath and the load state instead.
-    visible: previewStageActive && configuredForFollowing && !hasToolpath && !loadBusy
+    // loaded", so it follows the toolpath and the scene: a
+    // loaded-but-unsliced model hands the stage to Cura's slice pane
+    // instead of being covered by the card. The card STAYS through a
+    // load (its indicator hosts the progress): during the download and
+    // index phases Cura's own action panel is hidden (platformActivity
+    // is false — the busy work is the plugin's), so the action card
+    // cannot show the feedback there (the author's "no progress bar"
+    // report).
+    visible: previewStageActive && configuredForFollowing && !hasToolpath && !sceneHasObjects
 
     property bool previewStageActive: false
     property bool followingPaused: false
     property bool followingEnabled: false
     property bool configuredForFollowing: false
     property bool hasToolpath: false
+    property bool sceneHasObjects: false
     property string activePrinterName: ""
     property string statusText: ""
     property string statusIconName: "Information"
@@ -33,6 +41,10 @@ Item {
     property string bedMeshMinimumText: ""
     property string bedMeshMaximumText: ""
     property string selectedLayerEtaText: ""
+
+    onLoadBusyChanged: loadIndicator.busy = base.loadBusy
+    onLoadProgressChanged: loadIndicator.progress = base.loadProgress
+    onLoadPhaseChanged: loadIndicator.phase = base.loadPhase
 
     signal loadClicked
     signal bedMeshVisibilityRequested(bool visible)
@@ -92,10 +104,8 @@ Item {
             }
 
             LoadProgressIndicator {
+                id: loadIndicator
                 width: parent.width
-                busy: base.loadBusy
-                progress: base.loadProgress
-                phase: base.loadPhase
             }
 
             PreviewSecondaryButton {

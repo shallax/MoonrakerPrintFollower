@@ -1,8 +1,9 @@
 """Cura output-device adapter. Upload policy and file preparation are composed."""
 from dataclasses import replace
 import os
+import time
 
-from PyQt6.QtCore import QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QCoreApplication, QUrl, QVariant, pyqtProperty, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QDesktopServices
 from cura.PrinterOutput.Models.PrinterOutputModel import PrinterOutputModel
 from cura.PrinterOutput.PrinterOutputController import PrinterOutputController
@@ -83,6 +84,24 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
     def setMonitorViewQmlPath(self, path: str) -> None:
         """Explicit capability the output plugin supplies for the Monitor panel."""
         self._monitor_view_qml_path = str(path or "")
+
+    def warm_monitor_item(self):
+        """Force the monitor item into existence while the install owns
+        the moment. The stage's Loader reads the CONSTANT monitorItem
+        property exactly once, and a read that lands while the QML
+        component is still compiling returns None — cached for the whole
+        boot (the author's dashboard-absent boots). Retrying here, before
+        the device is added to the output manager, is the one window in
+        which a retry can still help."""
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            try:
+                if self.monitorItem is not None:
+                    return
+            except Exception:
+                pass
+            QCoreApplication.processEvents()
+            time.sleep(0.05)
     @pyqtProperty(str, notify=uploadPathsChanged)
     def initialUploadFilename(self): return self._upload.filename
     @pyqtProperty(bool, notify=uploadPathsChanged)

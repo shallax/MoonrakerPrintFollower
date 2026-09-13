@@ -394,12 +394,17 @@ Component {
                     ColumnLayout {
                         id: controlContent
                         // The attached scrollbar overlays the content, so
-                        // the column spans the full width: reserving the
-                        // scrollbar's width here left a dead band on the
-                        // right when it was hidden — the pane's right gap
-                        // read three margins wide against the left pane's
-                        // one (the harness's margin-symmetry pin).
-                        width: controlFlick.width
+                        // the column spans the full width while the bar is
+                        // hidden (a constant reservation left a dead band
+                        // on the right — the pane's right gap read three
+                        // margins wide against the left pane's one, the
+                        // harness's margin-symmetry pin). While the bar
+                        // IS visible, the column yields its width so the
+                        // rows' right edges stay clear of it (the
+                        // author's clipping report). Narrower content
+                        // only grows taller, so the visibility never
+                        // oscillates.
+                        width: controlScrollbar.visible ? controlFlick.width - controlScrollbar.width : controlFlick.width
                         // Spacing lives on the children, not the layout: a
                         // collapsed section's hidden content must contribute
                         // nothing, so stacked headers sit flush like Cura's.

@@ -94,6 +94,20 @@ class CuraIntegration(QObject):
         except Exception:
             return False
     @property
+    def scene_has_objects(self):
+        # A loaded-but-unsliced model: the empty card must make way for
+        # Cura's slice pane (the gate once read platformActivity, which
+        # covers this but flaps during Cura's own busy cycles). The
+        # scene root always carries the build plate, the nozzle and the
+        # camera — and the first two carry mesh data — so the signal is
+        # a selectable mesh-bearing child: a real model's signature.
+        try:
+            root = self.controller.getScene().getRoot()
+            return any(node.isSelectable() and node.getMeshData() is not None
+                       for node in root.getAllChildren())
+        except Exception:
+            return False
+    @property
     def selected_layer(self):
         try: return max(0, int(self._view.getCurrentLayer()))
         except Exception: return None

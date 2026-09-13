@@ -453,6 +453,7 @@ class PrintCoordinator(QObject):
                           else "Resolving current print…" if self._load_requested or self._monitor_requested else ""),
             "configuredForFollowing": self._binding.configured and config.enabled,
             "activePrinterName": self._binding.identity[1], "hasToolpath": self._cura.has_toolpath,
+            "sceneHasObjects": self._cura.scene_has_objects,
             "statusText": compact, "statusIconName": status_icon(compact),
             "selectedLayerEtaText": state.eta_text,
             "pauseAtLayerActive": snapshot.active, "pauseAtLayerCandidate": selected + 1 if selected is not None else 0,
