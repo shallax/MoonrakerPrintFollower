@@ -19,7 +19,10 @@ mkdir -p "$HARNESS_DIR" "$RUN_ROOT"
 # no dist/ — the dev loop's make package doesn't exist here. Build it.
 make package >/dev/null
 
-docker build -q -t mpf-cura-harness "$root/tools/harness" >/dev/null
+# Prefer the published image (the release workflow pushes it);
+# build locally only when the registry copy is unreachable.
+docker pull ghcr.io/shallax/mpf-cura-harness:latest >/dev/null 2>&1 || \
+    docker build -q -t mpf-cura-harness "$root/tools/harness" >/dev/null
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 # SYS_PTRACE lets the stall diagnostics attach gdb/strace to the
 # hung boot from inside the container (the host's ptrace_scope

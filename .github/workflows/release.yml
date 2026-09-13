@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -79,6 +80,24 @@ jobs:
           VERSION="$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')"
           python tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v${VERSION}.curapackage"
           python tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v${VERSION}-source.zip"
+
+      - name: Log in to the container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and publish the harness image
+        uses: docker/build-push-action@v6
+        with:
+          context: tools/harness
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:latest
+            ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Upload built artifacts
         uses: actions/upload-artifact@v4
@@ -149,9 +168,11 @@ jobs:
       - name: Fetch the pinned Cura
         run: python3 tools/fetch_cura.py "${{ matrix.cura }}"
 
-      - name: Build and start the harness container
+      - name: Pull the harness image and start the container
         run: |
-          docker build -q -t mpf-cura-harness tools/harness
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }}
+          docker tag ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }} mpf-cura-harness
           docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
           docker run -d --init --name "$HARNESS_CONTAINER" --cap-add=SYS_PTRACE \
               -v /tmp/mpf:/tmp/mpf mpf-cura-harness sleep infinity
