@@ -1361,13 +1361,21 @@ def _import_qtest():
         # EXISTING package instead of shadowing the package (a second
         # PyQt6 package would double-load QtCore).
         try:
+            # The staged wheel dir is exported to the boot (CURA_WHEELS)
+            # and is the one place the binding exists on every host —
+            # the old /tmp/mpf/qt6wheel path was dev-box-only. The sip
+            # module ships under a versioned filename; if the wheel dir
+            # has none, the bundle's already-imported sip serves (both
+            # are 6.6.0, one ABI).
             import importlib.util
             import sys
-            wheel = "/tmp/mpf/qt6wheel"
-            sip_path = f"{wheel}/PyQt6/sip.cpython-312-x86_64-linux-gnu.so"
+            import glob
+            import os
+            wheel = os.environ.get("CURA_WHEELS") or "/tmp/mpf/qt6wheel"
             test_path = f"{wheel}/PyQt6/QtTest.abi3.so"
-            if "PyQt6.sip" not in sys.modules:
-                sip_spec = importlib.util.spec_from_file_location("PyQt6.sip", sip_path)
+            sip_candidates = sorted(glob.glob(f"{wheel}/PyQt6/sip.cpython-*.so"))
+            if "PyQt6.sip" not in sys.modules and sip_candidates:
+                sip_spec = importlib.util.spec_from_file_location("PyQt6.sip", sip_candidates[0])
                 sip_module = importlib.util.module_from_spec(sip_spec)
                 sys.modules["PyQt6.sip"] = sip_module
                 sip_spec.loader.exec_module(sip_module)

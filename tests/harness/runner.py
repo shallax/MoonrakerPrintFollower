@@ -162,8 +162,7 @@ def scenario(expect_fail=False):
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -406,6 +405,17 @@ def wait_for(check, budget_s, tick_s=2.0):
             return value
         time.sleep(tick_s)
     return check()
+
+
+def boot_step(hello):
+    """The boot record for every gallery: Cura's liveness plus the
+    QtTest injection state — the click path's availability is the one
+    thing that separates a healthy harness from a broken one."""
+    qtest_state = rpc({"id": 1, "cmd": "qtest_state"})
+    note = (f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}"
+            f" · qtest: ok={qtest_state.get('ok')} err={qtest_state.get('error')}"
+            f" wheel={qtest_state.get('sys_path_has_wheel')}")
+    return ("00-boot", note, "hello succeeds", True, shot("00-boot"))
 
 LOAD_EMIT = """
 window = _main_window()
@@ -879,8 +889,7 @@ def scenario9():
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -950,8 +959,7 @@ def scenario8():
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -1035,8 +1043,7 @@ def scenario10():
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -1107,8 +1114,7 @@ def scenario11():
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -1182,8 +1188,7 @@ def scenario7():
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -1251,8 +1256,7 @@ def scenario6():
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -1342,8 +1346,7 @@ def scenario5():
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -1435,8 +1438,7 @@ def scenario4():
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -1517,8 +1519,7 @@ def scenario3():
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -1588,8 +1589,7 @@ def scenario2(expect_fail=False):
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -1681,8 +1681,7 @@ def scenario1(expect_fail=False):
     try:
         steps = []
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -1809,8 +1808,7 @@ def suite_run(group_id):
     steps = []
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
                       "welcome not up", gate, shot("01-gate")))
@@ -1976,8 +1974,7 @@ def real_run():
     steps = []
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(("00-boot", f"Cura alive: pid {hello.get('pid')}, platform {hello.get('platform')}",
-                      "hello succeeds", True, shot("00-boot")))
+        steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, discovery chain live",
                       "gate clear", gate, shot("01-gate")))
