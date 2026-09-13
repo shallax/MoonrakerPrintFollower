@@ -6,14 +6,15 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release: **4.0.0** (the websocket transport; in finalisation).
+Current release: **4.0.0** (the websocket transport; fully live-tested and
+regression-green — awaiting the re-tag once the CI release gate is trusted).
 
 ## Direction
 
 The 3.2.0 debt payoff made structural change cheap again. The next stretch has one
 theme: close the gap to Mainsail on the Monitor tab, then put physical printer
-position to work in the Preview, where no web dashboard can go. Socket transport
-waits until the feature surface actually needs it.
+position to work in the Preview, where no web dashboard can go. (The socket
+transport shipped in 4.0.0.)
 
 ## 3.4.0 — Toolhead control
 
@@ -129,8 +130,8 @@ author at the round-2 walk ("Sure, defer") — the flip as ruled is a
 silent no-op for `one_at_a_time` files (duplicate `;LAYER:0` discards
 the layer map) and off-by-one for preprocessed files (comments are
 0-based and signed; Cura's GUI and Klipper are 1-based; round-2 domain
-D7). It joins the 4.0.0 layer-hardening pack, gate and base ruling
-included.
+D7). It did NOT land in 4.0.0 (the pack never formed); still deferred —
+carried forward with its gate and base ruling.
 
 The last large Mainsail parity piece: browse remote gcode, print and delete.
 `RemoteFileService` and its `FileLease` lifetime model already provide the
@@ -610,11 +611,11 @@ exact face.
 Small controls the domain panel ranked as the real Mainsail gaps —
 re-checked against the tree on 2026-09-10; two had shipped since the
 panel's ranking (the speed/flow sliders and Z-babystepping). The rest
-moved to 3.6.1 by the author's ruling on 2026-09-11 ("too late to
-continue on this and too risky") — see the 3.6.1 section for the
-carried items: restart-button arming, the auto-improve-ETA opt-in, the
+moved to a 3.6.1 follow-up by the author's ruling on 2026-09-11 ("too
+late to continue on this and too risky"), then FOLDED INTO 4.0.0 the
+same day: restart-button arming, the auto-improve-ETA opt-in, the
 webcam liveness watchdog, ETA feed-forward, scroll-to-prompt and the
-pause-list verified-pause-only semantics.
+pause-list verified-pause-only semantics — all shipped in 4.0.0.
 
 Snapshot 3 (2026-09-11): the mutations, uploads with progress and
 verdicts, column config/resize/reorder with title floors, the
@@ -626,14 +627,13 @@ note surface).
 
 ## 4.0.0 — Websocket transport (the author, 2026-09-11)
 
-**RELEASE GATE (2026-09-11, the author's final live-test round):** 4.0.0
-does not release before the author's surgery, and not before the
-real-Cura UI test harness (4.1.0, pulled into scope) clicks through the
-still-broken list with screenshots. Still broken as of the last round:
-the failure state persists until a manual reconnect; the preview card
-only appears after a load; M117 messages still miss the Print-job
-section. The record and the harness design are in the 4.1.0 section and
-`TESTING.md`.
+**RELEASE GATE (resolved):** the 2026-09-11 still-broken list (the
+failure state persisting until a manual reconnect, the preview card
+appearing only after a load, M117 missing the Print-job section) is
+fixed and harness-verified — every item clicked through the real-Cura
+suite with screenshots, and the full gate (smoke + all suite groups on
+5.13.0, smoke on 5.12.0) ran green on 2026-09-13. The record and the
+harness design are in the 4.1.0 section and `TESTING.md`.
 
 3.6.0 ends the v3 line. The author's ruling (2026-09-11): the
 per-request HTTP polling is unacceptable in production — prints audibly
@@ -807,11 +807,28 @@ A fast follow after 4.0.0 ships; both items are test-infrastructure only:
   before driving it, so the videos and screenshots SHOW the
   interaction. "If the user can't see it, assume they can't interact
   with it."
+- **Harness verbosity (the author, 2026-09-13)**: the harness scripts
+  sit silently through long phases (the docker build, the Cura fetch,
+  the per-unit staging, the boot waits). Emit progress lines for each
+  phase — what is being waited on and for how long — so a watching
+  terminal never looks hung.
+- **Filter the known-benign boot warnings (the author, 2026-09-13)**:
+  every Cura boot prints upstream warnings — the ast.Str deprecation
+  from UM/Settings/SettingFunction.py and its kin — that drown the
+  failure report's log tail in boilerplate, and the same warnings
+  bleed into the plugin's own test runs. Filter the known-benign
+  lines out of the boot log before the failure report, and suppress
+  DeprecationWarnings in the plugin's test output, so a failing
+  unit's report opens with the signal.
+- **Skip CodeQL for the test harness (the author, 2026-09-13)**: the
+  simulator and harness code (tests/harness/**, the driver) is test
+  infrastructure, not shipped code — CodeQL findings there are noise.
+  Scope the analyze job's path filters to the shipped tree.
 
-## 4.0.1 — Printer resilience and console polish
+### The original 4.0.1 — Printer resilience and console polish
 
 FOLDED INTO 4.0.0 (the author's ruling, 2026-09-11: "Screw it, do all
-4.0.1 now") — every item below shipped in 4.0.0. This section is now
+4.0.1 now") — every item below shipped in 4.0.0. This list is now
 empty history.
 
 - ~~**Restart arming**~~ — SHIPPED IN 4.0.0.
@@ -869,13 +886,30 @@ Phasing (2026-09-11, the author): the gates first — "We can start with
 just the current recent failures to prove the theory/ process" — then
 the full surface so the author stops re-testing everything by hand.
 
+**Status (2026-09-13):** the suite SHIPPED, pulled into 4.0.0 — the
+gates, all 13 groups, the smoke set, the simulator's real Moonraker
+semantics, and the evidence layer (per-unit galleries, videos,
+CI upload). 4.1.0's remainder is the deeper coverage, not the harness
+itself:
+
+- the deferred panel scenarios: the disabled-while-printing family,
+  the FM confirm dialogs, the temperature popover, the slider drags,
+  the settings dialog, the pause timed_out arm;
+- the Information pane (also listed in the 4.0.1 fast-follow — it
+  belongs here as the deep-coverage round);
+- the visible-interactions rule and the higher-resolution harness, if
+  the 4.0.1 fast-follow hasn't absorbed them by then.
+
 ## 4.2.0 — State & permissions consolidation
 
-- **The Post-Processing button's vertical alignment (backlogged
-  2026-09-11):** the `</>` button still sits slightly above the card's
-  bottom line — accepted for the 4.0.0 close, carried here so it is
-  not forgotten. The saveButton row's centre-line anchoring is the
-  mechanism (see the 4.0.0 live-test notes).
+- **Volumetric flow rate (the author, 2026-09-13):** the printer
+  status shows the current volumetric flow rate in mm³/s — a small
+  readout riding the state layer this version consolidates.
+- **The Post-Processing button's vertical alignment (validated
+  out, 2026-09-13):** the one-card refactor settled this — the card
+  now lives inside Cura's own saveButton row between the `</>` button
+  and the Slice panel, and the harness's v1 scenario asserts the
+  no-overlap alignment directly. No longer a backlog item.
 
 **State & permissions consolidation (the author, 2026-09-10):**
 "Can I press this button when I'm printing, when I'm not homed, when
