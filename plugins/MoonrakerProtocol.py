@@ -13,9 +13,15 @@ class RemoteFileIdentity:
     uuid: str = ""
 
     def stable_key(self) -> str:
+        # Moonraker's uuid is a fresh random per extraction, not a
+        # stable content identity: key on the surviving discriminators
+        # (size, modified) and use the uuid only when nothing else
+        # identifies the file.
+        if self.size > 0 or self.modified > 0:
+            return f"file:{self.filename}|size:{int(self.size)}|modified:{self.modified:.6f}"
         if self.uuid:
             return f"uuid:{self.uuid}"
-        return f"file:{self.filename}|size:{int(self.size)}|modified:{self.modified:.6f}"
+        return f"file:{self.filename}"
 
     def matches_job(self, filename: str, size: int) -> bool:
         return self.filename == filename and (self.size <= 0 or size <= 0 or self.size == size)

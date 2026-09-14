@@ -43,9 +43,10 @@ class PrintCoordinator(QObject):
         # layer height and slicer estimate for prints the user never
         # loaded. Fetched once per job, retried every 30 s until success.
         self._mr_meta = {}
-        self._mr_meta_file = ""
-        self._mr_meta_job = ""
+        self._mr_meta_key = ("", "")
+        self._mr_meta_asked = ("", "")
         self._mr_meta_at = 0.0
+        self._mr_meta_pending = False
         # The active print's filament total parsed from the DOWNLOADED
         # file's own header (client-side): Moonraker's metadata
         # undercounts multi-extruder prints (its Cura parser read only
@@ -174,8 +175,11 @@ class PrintCoordinator(QObject):
                 self._header_total_mm = filament_total_mm_from_file(path) if path else None
             # The downloaded metadata wins; Moonraker's header parse is
             # the fallback that populates the layer-height readout and
-            # the slicer estimate without any gcode download.
-            metadata = self._files.metadata or self._mr_meta
+            # the slicer estimate without any gcode download. The
+            # fallback serves ONLY the payload whose identity matches
+            # the current job — never the previous print's values.
+            status_stats = (self._status.get("print_stats") or {}) if isinstance(self._status, dict) else {}
+            metadata = self._files.metadata or self._mr_metadata_for(str(status_stats.get("filename") or ""), job)
             physical = self._layers.resolve(self._status, config, view, metadata, self._cura.heights)
             try:
                 estimate = float(metadata.get("estimated_time") or 0)
@@ -225,6 +229,7 @@ class PrintCoordinator(QObject):
                 self._layer_trace_at = time.monotonic()
                 info = (self._status.get("print_stats") or {}).get("info") or {}
                 gpos = (self._status.get("gcode_move") or {}).get("gcode_position") or ()
+                mr_meta = self._mr_metadata_for(filename, job)
                 Logger.log("i",
                     "layer trace: raw_current=%s total=%s state=%s z=%s e=%s progress=%s one_based=%s z_fallback=%s mr_meta=%s mr_meta_keys=%s files_meta=%s heights_n=%s deltas=%s ascent=%.3f z_layer=%s -> layer=%s source=%s",
                     info.get("current_layer"), info.get("total_layer"),
@@ -232,7 +237,7 @@ class PrintCoordinator(QObject):
                     gpos[2] if len(gpos) >= 3 else None, gpos[3] if len(gpos) >= 4 else None,
                     (self._status.get("virtual_sdcard") or {}).get("progress"),
                     config.moonraker_layer_is_one_based, config.z_fallback,
-                    bool(self._mr_meta), sorted(self._mr_meta) if self._mr_meta else [],
+                    bool(mr_meta), sorted(mr_meta) if mr_meta else [],
                     bool(self._files.metadata),
                     len(self._cura.heights),
                     self._layers._z_deltas, self._layers._z_ascent, self._layers._z_layer,
@@ -280,32 +285,88 @@ class PrintCoordinator(QObject):
         downloads ruling covers the file itself; the header query is
         what Moonraker's own UI uses for the same readouts).
 
-        The fetch LATCHES on success: a slicer header never changes
-        mid-print, so once we hold the metadata for the current job the
-        30 s retry ladder retires instead of re-querying for the whole
-        print (a 10 h job was ~1,200 requests of the same JSON). The
-        latch is job-keyed so a same-name file restart refetches."""
-        if self._mr_meta and self._mr_meta_file == filename and self._mr_meta_job == job:
-            return
-        if filename == self._mr_meta_file and time.monotonic() - self._mr_meta_at < 30:
-            return
-        self._mr_meta_file = filename
-        self._mr_meta_at = time.monotonic()
-        self._mr_meta_job = job
-        def done(payload, error):
-            if self._closed or filename != self._mr_meta_file or job != self._mr_meta_job:
-                return
-            value = result(payload)
-            if error or not isinstance(value, Mapping):
-                return
-            self._mr_meta = value
-            self.refresh()
+        The fetch LATCHES on a completed fetch for THIS job: a slicer
+        header never changes mid-print, so once we hold the metadata
+        the 30 s retry ladder retires instead of re-querying for the
+        whole print (a 10 h job was ~1,200 requests of the same JSON).
+        A failed fetch never latches — the previous job's payload must
+        never read as this job's — and the job-keyed throttle still
+        lets a same-name restart refetch."""
+        asked = (filename, job)
+        if self._mr_meta_key == asked:
+            return  # a completed fetch already latched this job
+        if self._mr_meta_pending:
+            return  # one request at a time
+        if self._mr_meta_asked == asked and time.monotonic() - self._mr_meta_at < 30:
+            return  # inside the throttle window for this job
         # Same quoting as MoonrakerProtocol.metadata_endpoint (safe="/"):
         # subfolder files arrive with their path and must not be
         # %2F-escaped (proxies that reject encoded slashes 404 them).
-        self._client.transport.send_json("follower", "mr-metadata", "GET",
+        started = self._client.transport.send_json("follower", "mr-metadata", "GET",
             "server/files/metadata?filename=" + quote(filename, safe="/"),
-            done, category="metadata")
+            self._mr_meta_done, category="metadata")
+        if not started:
+            # A dropped send must leave no identity pointing at a job
+            # that was never queried (the old latch satisfied forever).
+            self._mr_meta_asked = ("", "")
+            self._mr_meta_at = 0.0
+            return
+        # Request identity commits only when the send actually started.
+        self._mr_meta_asked = asked
+        self._mr_meta_at = time.monotonic()
+        self._mr_meta_pending = True
+
+    def _mr_meta_done(self, payload, error):
+        self._mr_meta_pending = False
+        asked = self._mr_meta_asked
+        value = result(payload) if payload else {}
+        if self._closed:
+            return
+        if error or not isinstance(value, Mapping):
+            # Never latch a failed fetch; the stale payload (if any)
+            # already fails the key check and is never served.
+            self.refresh()
+            return
+        job_id = value.get("job_id")
+        if job_id is None:
+            # A null job id means "no job identity" (Moonraker writes
+            # the field only when a print ran): accept without the
+            # history cross-check.
+            self._mr_meta = value
+            self._mr_meta_key = asked
+            self.refresh()
+            return
+        # The metadata alone cannot prove the job is the CURRENT one:
+        # cross-check its job id against the newest history row over
+        # the HTTP lane (the websocket history notification is
+        # off-limits by the transport discipline).
+        self._client.transport.send_json("follower", "mr-history", "GET",
+            "server/history/list?limit=1&order=desc",
+            lambda p, e, a=asked, v=value: self._mr_history_checked(a, v, p, e),
+            category="metadata")
+
+    def _mr_history_checked(self, asked, value, payload, error):
+        if self._closed or asked != self._mr_meta_asked:
+            return  # a new fetch or a reset superseded this check
+        job_id = value.get("job_id")
+        match = False
+        if not error:
+            try:
+                jobs = ((payload or {}).get("result") or {}).get("jobs") or []
+                match = bool(jobs) and str(jobs[0].get("job_id")) == str(job_id)
+            except (AttributeError, TypeError):
+                match = False
+        if match:
+            self._mr_meta = value
+            self._mr_meta_key = asked
+        self.refresh()
+
+    def _mr_metadata_for(self, filename, job):
+        """The successfully-received metadata for (filename, job), or an
+        empty mapping — never the previous print's payload."""
+        if self._mr_meta_key == (filename, job):
+            return self._mr_meta
+        return {}
 
     def reset_binding(self):
         self._processing = True
@@ -317,8 +378,10 @@ class PrintCoordinator(QObject):
             # into the next session — panel finding P1-1.
             self._monitor_requested = False
             self._mr_meta = {}
-            self._mr_meta_file = ""
-            self._mr_meta_job = ""
+            self._mr_meta_key = ("", "")
+            self._mr_meta_asked = ("", "")
+            self._mr_meta_at = 0.0
+            self._mr_meta_pending = False
             self._header_total_mm = None
             self._header_total_path = ""
             self._status = {}

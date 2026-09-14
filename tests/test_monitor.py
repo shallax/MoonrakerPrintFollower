@@ -2432,10 +2432,12 @@ class MonitorQtTests(unittest.TestCase):
         self.assertFalse(model.improvingEta)
 
     def test_metadata_fetch_latches_after_success_and_retries_after_failure(self):
-        # Panel ENG-P2-1: the header fetch used to re-request every 30 s
-        # for the whole print (a 10 h job ≈ 1,200 requests of the same
-        # JSON). A successful fetch is now terminal for the job; a
-        # failed one keeps the 30 s retry ladder.
+        # A successful fetch is terminal for the job; a same-name
+        # RESTART with a failed fetch never serves the previous job's
+        # payload and retries after the throttle window — reachable
+        # without poking private state (the old test's `_mr_meta = {}`
+        # poke was itself proof the retry was unreachable in
+        # production).
         from types import SimpleNamespace
         from unittest.mock import patch
         import sys
@@ -2444,9 +2446,9 @@ class MonitorQtTests(unittest.TestCase):
         module = sys.modules[type(coordinator).__module__]
         client = self.follower.client
 
-        def deliver(position):
+        def deliver(position, duration=30):
             status = {
-                "print_stats": {"filename": "part.gcode", "state": "printing", "print_duration": 30,
+                "print_stats": {"filename": "part.gcode", "state": "printing", "print_duration": duration,
                                 "info": {"current_layer": 2, "total_layer": 20}},
                 "virtual_sdcard": {"file_size": 100, "file_position": position},
                 "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1,
@@ -2466,17 +2468,78 @@ class MonitorQtTests(unittest.TestCase):
             meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
             self.assertEqual(len(meta), 1)
             meta[0].callback({"result": {"layer_height": 0.2, "estimated_time": 3600}}, None)
+            self.qt.events(1)
+            # A null job id needs no history cross-check.
+            self.assertEqual([r for r in self.transport.requests if r.channel == "mr-history"], [])
+            self.assertEqual(coordinator._mr_meta_key, ("part.gcode", coordinator._files.job_key))
             for step in range(3):
                 tick[0] += 31.0
                 deliver(20 + step)  # each delivery differs so the poll always refreshes
                 self.qt.events(1)
             self.assertEqual(len([r for r in self.transport.requests if r.channel == "mr-metadata"]), 1)
-            # A failed fetch must still retry after the throttle window.
-            coordinator._mr_meta = {}
+            # A same-name restart (the duration reset is a new job):
+            # its failed fetch never latches, the old payload is never
+            # served, and the retry fires on its own after the window.
+            deliver(5, duration=5)
+            self.qt.events(1)
+            meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+            self.assertEqual(len(meta), 2)
+            meta[1].callback({}, "boom")
+            self.qt.events(1)
+            self.assertEqual(coordinator._mr_metadata_for("part.gcode", coordinator._files.job_key), {})
             tick[0] += 31.0
+            deliver(6, duration=5)
+            self.qt.events(1)
+            self.assertEqual(len([r for r in self.transport.requests if r.channel == "mr-metadata"]), 3)
+
+    def test_metadata_with_job_id_cross_checks_the_current_print(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import sys
+        self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        module = sys.modules[type(coordinator).__module__]
+        client = self.follower.client
+
+        def deliver(duration):
+            status = {
+                "print_stats": {"filename": "part.gcode", "state": "printing", "print_duration": duration,
+                                "info": {"current_layer": 2, "total_layer": 20}},
+                "virtual_sdcard": {"file_size": 100, "file_position": 20},
+                "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1,
+                               "absolute_coordinates": True},
+                "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
+            }
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+
+        with patch.object(module, "time", SimpleNamespace(monotonic=lambda: 1000.0, time=lambda: 1700000000.0)):
             deliver(30)
             self.qt.events(1)
-        self.assertEqual(len([r for r in self.transport.requests if r.channel == "mr-metadata"]), 2)
+            meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+            self.assertEqual(len(meta), 1)
+            meta[0].callback({"result": {"layer_height": 0.2, "estimated_time": 3600, "job_id": "1A2B"}}, None)
+            self.qt.events(1)
+            history = [r for r in self.transport.requests if r.channel == "mr-history"]
+            self.assertEqual(len(history), 1)
+            # The newest history row matches: the payload latches.
+            history[0].callback({"result": {"count": 1, "jobs": [{"job_id": "1A2B", "status": "in_progress"}]}}, None)
+            self.qt.events(1)
+            key = ("part.gcode", coordinator._files.job_key)
+            self.assertEqual(coordinator._mr_meta_key, key)
+            self.assertEqual(coordinator._mr_metadata_for(*key).get("layer_height"), 0.2)
+            # A same-name restart whose row mismatches never latches.
+            deliver(5)
+            self.qt.events(1)
+            meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+            self.assertEqual(len(meta), 2)
+            meta[1].callback({"result": {"layer_height": 0.3, "job_id": "9Z9Z"}}, None)
+            self.qt.events(1)
+            history = [r for r in self.transport.requests if r.channel == "mr-history"]
+            self.assertEqual(len(history), 2)
+            history[1].callback({"result": {"count": 1, "jobs": [{"job_id": "1A2B", "status": "finished"}]}}, None)
+            self.qt.events(1)
+            new_key = ("part.gcode", coordinator._files.job_key)
+            self.assertEqual(coordinator._mr_metadata_for(*new_key), {})
 
     def test_metadata_request_keeps_subfolder_slashes(self):
         # Panel DOM-P2-3: the coordinator's URL escaped subfolder

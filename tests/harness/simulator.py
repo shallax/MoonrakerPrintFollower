@@ -185,12 +185,12 @@ class PrinterState:
              "size": len(self.gcode_bytes), "permissions": "rw",
              "slicer": "MoonrakerPrintFollower-sim", "estimated_time": 3600.0,
              "layer_height": 0.2, "filament_total": 12.5,
-             "print_start_time": None},
+             "uuid": "sim-uuid-1", "job_id": None, "print_start_time": None},
             {"filename": "benchy.gcode", "modified": time.time() - 7200.0,
              "size": len(self.gcode_bytes), "permissions": "rw",
              "slicer": "MoonrakerPrintFollower-sim", "estimated_time": 1800.0,
              "layer_height": 0.2, "filament_total": 6.0,
-             "print_start_time": None},
+             "uuid": "sim-uuid-2", "job_id": None, "print_start_time": None},
             # The delete/rename scenarios' disposable target: the
             # group's own scenarios must not destroy each other's
             # files (the f3-deletes-scenario1 knock-on lesson).
@@ -198,7 +198,7 @@ class PrinterState:
              "size": len(self.gcode_bytes), "permissions": "rw",
              "slicer": "MoonrakerPrintFollower-sim", "estimated_time": 600.0,
              "layer_height": 0.2, "filament_total": 2.0,
-             "print_start_time": None},
+             "uuid": "sim-uuid-3", "job_id": None, "print_start_time": None},
         ]
         self.seed = 0
         self.klippy_ready_broadcast: Any = None  # set by the app on klippy restart
@@ -549,6 +549,10 @@ class StatusHandler(tornado.web.RequestHandler):
             self.write(json.dumps({"result": {"value": self._printer.presets_value}}))
         elif path.startswith("files/gcodes/"):
             self.set_header("Content-Type", "application/octet-stream")
+            # Real Moonraker always declares the length from the
+            # on-disk size; the client treats it as the transfer
+            # authority (cap, progress, final check).
+            self.set_header("Content-Length", str(len(self._printer.gcode_bytes)))
             cadence = self._printer.gcode_stream_ms
             if cadence > 0:
                 # Stream the file in small chunks: the client's
@@ -563,10 +567,12 @@ class StatusHandler(tornado.web.RequestHandler):
         elif path == "files/metadata":
             filename = self.get_argument("filename", "")
             entry = next((item for item in self._printer.files
-                          if item.get("filename") == filename.rsplit("/", 1)[-1]), None)
+                          if item.get("filename") == filename), None)
             if entry is None:
-                self.write(json.dumps({"result": {},
-                                       "error": {"code": 404, "message": "unknown file"}}))
+                # Real Moonraker 404s unknown metadata.
+                self.set_status(404)
+                self.write(json.dumps({"error": {"code": 404,
+                                                 "message": f"Metadata not available for {filename}"}}))
             else:
                 self.write(json.dumps({"result": {**entry, "first_layer_height": 0.2,
                                                   "gcode_start_byte": 0}}))
@@ -711,11 +717,12 @@ class StatusHandler(tornado.web.RequestHandler):
                                  "filename": filename},
                     extruder={**self._printer.state["extruder"], "target": 210.0})
                 self._printer.state["virtual_sdcard"].update({"is_active": True, "progress": 0.0,
-                                                              "file_size": 1048576})
+                                                              "file_size": len(self._printer.gcode_bytes)})
             else:
                 self._printer.scenario(print_stats={**self._printer.state["print_stats"],
                                                     "state": "printing", "filename": filename})
-                self._printer.state["virtual_sdcard"].update({"is_active": True, "progress": 0.0})
+                self._printer.state["virtual_sdcard"].update({"is_active": True, "progress": 0.0,
+                                                              "file_size": len(self._printer.gcode_bytes)})
             self.write(json.dumps({"result": "ok"}))
         else:
             self.write(json.dumps({"result": "ok"}))
