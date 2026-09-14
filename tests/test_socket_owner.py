@@ -34,6 +34,7 @@ class SocketOwnerTests(unittest.TestCase):
         self.port = self.server.server_address[1]
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self._owners = []
+        self.addCleanup(self.server.server_close)  # the listening socket closes with the server
         self.addCleanup(self.server.shutdown)
         self.addCleanup(self._stop_owners)
 
