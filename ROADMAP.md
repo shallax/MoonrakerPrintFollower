@@ -495,9 +495,9 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   carries its own "Clear all filters" action.
 - The grid is the flexible region: the popup must fit a small window
   without spilling over the emergency dock — the file list shrinks and
-  scrolls ("if it dynamically shrunk the file list, we'd be good").
+  scrolls (a dynamically shrinking file list was preferred).
 - The camera control bar reflows (wraps) when the window is crushed
-  horizontally — "Reflowing that control is fine."
+  horizontally — reflowing that control is fine.
 - Snapshot 0 iterates until it looks right — no Snapshot 1 before
   the nod.
 - Console: long Klipper lines wrap on word boundaries and the text
@@ -579,7 +579,7 @@ Snapshot 1 wires the real data behind it.
   escape hatch extends the whole window, never a single file.)
 - The "N selected" count carries a ✕ and IS the global selection
   clear (the ruling).
-- Direct page selection is CUT ("Mainsail doesn't have it"); "All"
+- Direct page selection is CUT (Mainsail has no such feature); "All"
   joins the page-size selector instead (25/50/100/All).
 - The select-all header checkbox has three states: click on
   none/some selects the whole page; click on all deselects it; the
@@ -1010,7 +1010,7 @@ weaker than Mainsail's for anyone with a library.
   only reached the socket after the first aux fragment arrived — and
   Moonraker only pushes SUBSCRIBED objects, so the first fragment
   never came: temperatures, fans and sensors vanished (HTTP mode was
-  unaffected — the "HTTP brings the cards back"). The wanted
+  unaffected — switching back to HTTP restored the cards). The wanted
   set now reaches the socket the moment the object list is known. The
   RPC lane itself was live-proven against the printer (3/3
   replies on all seven monitor methods, zero errors) before the
