@@ -6,8 +6,12 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release: **4.0.0** (the websocket transport; fully live-tested and
-regression-green — awaiting the re-tag once the CI release gate is trusted).
+Current release: **4.0.0** — SHIPPED (2026-09-14): the websocket
+transport, live-tested and regression-green, published with the
+full CI matrix gate (the 14-cell harness matrix is required on every
+PR and runs again inside the release workflow itself).
+
+Next: **4.0.1** — the harness fast-follow (see the 4.0.1 section).
 
 ## Direction
 
