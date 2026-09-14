@@ -6,12 +6,33 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release: **4.0.0** — SHIPPED (2026-09-14): the websocket
-transport, live-tested and regression-green, published with the
-full CI matrix gate (the 14-cell harness matrix is required on every
-PR and runs again inside the release workflow itself).
+Current release: **4.0.1** — SHIPPED (2026-09-14): the harness
+fast-follow on the 4.0.0 websocket release. The 14-cell harness matrix
+runs on PRs and inside the release workflow.
 
-Next: **4.0.1** — the harness fast-follow (see the 4.0.1 section).
+Next proposed: **4.0.2** — transfer and print-identity correctness.
+
+## Active delivery sequence — proposal from the 2026-09-14 review
+
+The [detailed architecture review](docs/reviews/2026-09-14-architecture-review.md)
+records the evidence, reasoning, limitations and acceptance cases against
+main at `f500f91`. Finding IDs below refer to that report. These additions
+are proposed work; they do not claim that fixes or refactors have shipped.
+
+| Release | Intended outcome | Change to the existing plan |
+| --- | --- | --- |
+| 4.0.2 | Correct transfer cancellation, cleanup, accounting and metadata identity | Added focused maintenance release for F01–F05 |
+| 4.1.0 | Deeper UI interaction evidence, lifecycle failure cases and measured projection work | Extends the existing testing release |
+| 4.2.0 | One action policy and explicit state/operation contracts | Extends the existing state/permissions consolidation |
+| 4.3.0 | Focused Monitor/file-manager view models and QML components | Added bounded presentation refactor |
+| 4.4.0 | Physical head in the Preview | Moves the existing 4.3.0 feature scope forward one release |
+
+The order repairs concrete lifecycle defects before expanding features,
+then establishes useful regression evidence before structural extraction.
+The new 4.3.0 must remain bounded to the components and outcomes below.
+The display-only marker can proceed after 4.2.0 if feature priority
+requires overlap; its interactive controls depend on the shared action
+policy and session ownership.
 
 ## Direction
 
@@ -402,7 +423,7 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   (guards, jog gate, the follower's coordinator) re-evaluates
   immediately and consistently; the earlier per-consumer latches were
   deleted (one point, no scattered conditionals — the guard
-  sprawl; the permissions consolidation lives in the 3.7.0 roadmap).
+  sprawl; the permissions consolidation lives in the 4.2.0 roadmap).
 - E-stop recovery (the ruling, 2026-09-10, live-proven on
   their printer, overriding the investigation's readiness-gating
   alternative): after the stop the host refuses commands until the
@@ -411,7 +432,7 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   RECONNECT_DELAY_MS`), re-arming the monitor; the console's own
   connect/disconnect notes render the cycle. The rejected alternative
   (gating motion/setup on `klippy_state` readiness) stays on the
-  table for 3.7.0's permissions consolidation if the reconnect ever
+  table for 4.2.0's permissions consolidation if the reconnect ever
   proves insufficient.
 - Thumbnails (Snapshot 2): one-shot fetches into a session temp dir
   with loading/ready/failed states and the no-spin-forever fallback
@@ -785,10 +806,10 @@ walk):**
   Test-connection verdict, interval relabel, reason line, trace label)
   get the nod as they are built.
 
-## 4.0.1 — Harness fast-follow (2026-09-13)
+## 4.0.1 — Harness fast-follow — SHIPPED (2026-09-14)
 
-A fast follow after 4.0.0 ships; test-infrastructure only, plus the
-docs cleanup folded in (2026-09-14):
+Shipped after 4.0.0; test-infrastructure only, plus the docs cleanup
+folded in (2026-09-14):
 
 - **Dismiss the G-code details warning**: Cura's "Make sure the g-code
   is suitable for your printer" dialog gets in the way of the UI
@@ -840,6 +861,42 @@ FOLDED INTO 4.0.0 (ruling, 2026-09-11) — every item below shipped in
   4.0.0: the cadence sliders (status update, auxiliary, console) with
   the 250 ms floor landed as part of the websocket work.
 
+## 4.0.2 — Transfer and print-identity correctness
+
+Proposed from the 2026-09-14 architecture review. Address F01–F05 as
+small correctness changes with their regressions; broader UI extraction
+belongs to later releases.
+
+- **Download operation ownership (F01):** the worker owns an
+  operation-local queue and target. Cancellation retires the operation,
+  stops its writer and releases the target only when the writer is done.
+  Completion returns to Qt asynchronously; no GUI-thread join and no
+  unbounded application queue. Backpressure must also avoid blocking the
+  GUI thread.
+- **Per-attempt accounting (F02):** byte progress and the download cap
+  reset for each transfer/retry. Lifetime metrics remain separate.
+- **One-off download lifetime (F03):** file-manager downloads retain
+  their printer/session and load-intent identity. Rebind/shutdown aborts
+  the reply and worker; a stale completion cannot load into a different
+  Cura session. Surface errors and release temporary resources.
+- **Local upload cleanup (F04):** every success, failure, cancellation
+  and stale completion disposes of its Qt reply and source. Invalidate
+  ownership before aborting, and deliver one terminal result per
+  operation. Reuse multipart/resource ownership where it reduces
+  duplication, while preserving the distinct local-file and Preview
+  upload workflows.
+- **Print metadata identity (F05):** distinguish a requested identity
+  from the identity of successfully received metadata. Clear old job
+  values before presenting a new job, retry failures, and key throttling
+  by the print job so same-name restarts remain valid.
+
+Acceptance: gated slow-writer cancellation followed immediately by a new
+download; sequential transfers and retries under an injected small cap;
+late completion after a printer switch; repeated upload cleanup; and
+print-A metadata followed by a failing print-B query and successful
+retry. Check worker/reply/file retirement as well as UI outcomes. Retain
+the existing package checks and relevant real-Cura release scenarios.
+
 ## 4.1.0 — The UI-driving test suite
 
 **Pulled into scope (2026-09-11):** the 4.0.0 release is frozen on
@@ -888,10 +945,43 @@ itself:
 - the deferred panel scenarios: the disabled-while-printing family,
   the FM confirm dialogs, the temperature popover, the slider drags,
   the settings dialog, the pause timed_out arm;
-- the Information pane (also listed in the 4.0.1 fast-follow — it
-  belongs here as the deep-coverage round);
-- the visible-interactions rule and the higher-resolution harness, if
-  the 4.0.1 fast-follow hasn't absorbed them by then.
+- the Information pane as the deep-coverage round;
+- the visible-interactions rule and the higher-resolution harness.
+
+**Architecture-review additions (2026-09-14; F06, F08, F09):**
+
+- Classify evidence explicitly: real input through the rendered UI,
+  application integration via a slot, diagnostic probe, or justified
+  exclusion. Direct slot calls and emitted clicked signals remain useful
+  integration checks, but cannot establish control reachability,
+  enablement, focus or drag behavior.
+- Convert the critical deferred journeys to actual Qt mouse/keyboard
+  events. Record the target, delivered event, peer-side effect and
+  rendered outcome. A broken enabled binding, overlay or confirmation
+  handler must fail its UI test even when the Python slot still works.
+- Treat the surface-to-scenario map as an inventory. Validate references
+  and distinguish mapped surfaces from interactions actually exercised
+  with assertions; prefix coverage alone is not execution evidence.
+- Keep architectural import/package/runtime guards. Replace comment and
+  exact-expression pins with behavioral tests as those domains change.
+- Extend the lifecycle cases introduced in 4.0.2 with reusable controlled
+  clocks, slow sinks, stale responses and dispatch-time state changes.
+  The urgent correctness tests ship with their fixes, not at the end of
+  this release.
+- Establish file-list and event-loop baselines with realistic 400-file
+  and larger listings. Compute the file view once per relevant change;
+  unrelated status/console updates must not repeatedly filter and sort
+  it. Finish the independent view-model publication in 4.3.0.
+- Extract named harness step handlers and validate the scenario schema
+  while touching the runner. Separate observation probes from action
+  injection and preserve independently runnable scenarios.
+
+Acceptance: critical workflows have interaction evidence, lifecycle
+failures are deterministic, harmless helper/comment refactors do not
+fail behavioral tests, and file projection counts/latency have an
+explicit measured baseline. Preserve existing gates; this is deeper
+evidence, not a target to increase the test count or global coverage
+percentage.
 
 ## 4.2.0 — State & permissions consolidation
 
@@ -922,7 +1012,75 @@ trust the last poll — it lives at the client's observation layer
 (emitted status reads as cancelled until the printer says otherwise)
 and is documented there.
 
-## 4.3.0 — Physical head in the Preview
+**Architecture-review additions (2026-09-14; F05, F07, F10, F11):**
+
+- Return named action-availability decisions with concise disabled
+  reasons from the pure policy. The UI and command owners consume the
+  same decision. Queued work revalidates immediately before dispatch.
+- Preserve existing disconnected-control, emergency-stop, console and
+  no-reflow decisions during consolidation. Policy changes remain
+  separate product decisions.
+- Extract file print-start supervision from the model's publication
+  method into an operation owner with pending/confirmed/failed states
+  and an explicit clock.
+- Consolidate successful print metadata identity and retry ownership in
+  one service. Metadata-only lookup remains independent of downloading
+  or indexing; the coordinator consumes the result.
+- Add narrow typed capability interfaces and operation/result records
+  at the boundaries being changed. Introduce type checking for pure
+  modules and these interfaces, with deliberate Qt adapter exceptions.
+- Give persisted UI chrome a small state-store owner, preserve legacy
+  migrations and report save failures through bounded diagnostics.
+
+Acceptance: a state/capability table proves UI/dispatch agreement;
+queued work cannot run after becoming invalid; unknown state stays
+distinct from idle; metadata has one authoritative owner; persisted
+settings survive the existing migration/restart cases. The planned
+volumetric-flow readout remains a small vertical slice of this state
+layer. Presentation extraction is a separate 4.3.0 scope.
+
+## 4.3.0 — Monitor and file-manager modularity
+
+Added by the 2026-09-14 architecture review (F06, F07, F11). This is a
+bounded presentation refactor after the interaction evidence and shared
+state policy are established.
+
+- Keep Cura's required PrinterOutputModel adapter. Extract a focused
+  files view model first, then controls and other presentation owners
+  where their change/lifecycle boundaries justify separation.
+- Move file listing, selection and query publication to one owner.
+  Cache by relevant data/view/history revisions, explicitly expiring
+  date-based filters. Use stable row identities and suitable Qt list
+  model notifications so unrelated updates cannot recreate a row or
+  interrupt a gesture.
+- Extract complete QML components: file table and filters, confirmation
+  dialogs, console/camera panes, toolhead section and peripheral
+  controls. Each takes explicit model properties and emits intents.
+- Keep projection free of network requests, workflow transitions and
+  persistence writes. Those operations belong to their controllers or
+  stores.
+- Preserve public Cura/plugin surfaces, package identity, persistence
+  schema and test selectors through each vertical extraction. Remove
+  superseded code with its replacement.
+- Shorten historical inline commentary to current invariants as files
+  are touched. Folder reorganization and broad formatting changes are
+  lower priority than ownership and are not release prerequisites.
+
+Acceptance: search/sort/page changes project once; temperature/console
+updates do not rebuild the listing; repeated slider grabs, focus,
+Escape, confirmation cancellation, printer switching and layout
+stability retain their behavior. Compare measured responsiveness with
+4.1.0's baseline. Stop when the named ownership boundaries are complete;
+there is no lines-per-file quota or open-ended rewrite gate.
+
+## 4.4.0 — Physical head in the Preview
+
+Moved from the former 4.3.0 by the 2026-09-14 review; the feature scope
+below is retained. Start with the display-only marker and its position
+explanation, then add the interactive Preview capabilities in separate
+reviewable slices using 4.2.0's shared action policy. Coordinate/resolver
+changes need the foreign-heights/job-identity regression cases; full
+continuous-Z/vase support is a separately explicit capability.
 
 What a web dashboard cannot do: show the real machine inside the slice.
 
@@ -974,7 +1132,7 @@ height + one-click pause-at-next-layer + the layer-to-mm readout
 waypoints (M600, `; filament change`) on the layer timeline with
 time-to-go; (5) a camera thumbnail in the Preview (investigate, don't
 assume); (6) active-tool label + per-extruder path colouring.
-Cross-cutting: the layer-hardening pack belongs IN 3.7.0 (the marker
+Cross-cutting: the layer-hardening pack belongs in 4.4.0 (the marker
 inherits the resolver's numbers, and the `;LAYER:` flip without the
 gate can increase wrong-layer risk); the version-drift gate's user
 value is its presentation (permanent disabled-with-reason states); the
