@@ -50,7 +50,7 @@ fi
 # timestamped root); a relative one nests under ui-artifacts.
 case "${RUN_DIR_NAME:-run-001}" in
     /*) RUN_DIR="$RUN_DIR_NAME" ;;
-    *) RUN_DIR=""$WORK_DIR"/ui-artifacts/${RUN_DIR_NAME:-run-001}" ;;
+    *) RUN_DIR="$WORK_DIR/ui-artifacts/${RUN_DIR_NAME:-run-001}" ;;
 esac
 
 # The pinned Cura for this run: any version can be selected; prepare
@@ -165,7 +165,7 @@ export HARNESS_MODE="$MODE"
 # profile (the XDG data dir the spike established). A RED run stages
 # the plugin built from a known-broken revision — the runner and the
 # driver stay current (the scenario itself must be the same).
-PLUGIN_DIR=""$WORK_DIR"/xdg/cura/$SEED_VER/plugins"
+PLUGIN_DIR="$WORK_DIR/xdg/cura/$SEED_VER/plugins"
 rm -rf "$PLUGIN_DIR/Moonraker_Print_Follower" "$PLUGIN_DIR/HarnessDriver"
 mkdir -p "$PLUGIN_DIR"
 PACKAGE_ROOT="$root/dist"
