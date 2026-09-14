@@ -787,21 +787,13 @@ walk):**
 
 ## 4.0.1 — Harness fast-follow (2026-09-13)
 
-A fast follow after 4.0.0 ships; both items are test-infrastructure only:
+A fast follow after 4.0.0 ships; test-infrastructure only, plus the
+docs cleanup folded in (2026-09-14):
 
 - **Dismiss the G-code details warning**: Cura's "Make sure the g-code
   is suitable for your printer" dialog gets in the way of the UI
   tests. Dismiss it CONDITIONALLY at boot — never wait for it: tests
   that load no gcode never see it.
-- **Test the Information pane**: never covered because the harness
-  window (1280x720) squeezes the Monitor's left column. Raise the
-  harness resolution (e.g. 1920x1080) and re-calibrate the geometry
-  probes and click coordinates that assume the current size.
-- **Visible interactions (2026-09-13)**: wherever possible, anything
-  the scenarios interact with MUST be on screen — scroll the panes
-  to bring the control into the rendered viewport before driving
-  it, so the videos and screenshots SHOW the interaction. If it
-  cannot be seen on screen, treat it as not interactable.
 - **Harness verbosity (2026-09-13)**: the harness scripts
   sit silently through long phases (the docker build, the Cura fetch,
   the per-unit staging, the boot waits). Emit progress lines for each
@@ -819,6 +811,14 @@ A fast follow after 4.0.0 ships; both items are test-infrastructure only:
   simulator and harness code (tests/harness/**, the driver) is test
   infrastructure, not shipped code — CodeQL findings there are noise.
   Scope the analyze job's path filters to the shipped tree.
+- **The docs cleanup (2026-09-14)**: every verbatim quote and
+  attribution removed from the repo text — the roadmap, the testing
+  docs, the instructions, the skill's capture step and the code
+  comments — decisions restated impersonally.
+
+The Information pane, the visible-interactions rule and the higher-
+resolution harness moved to 4.1.0 (2026-09-14) — the pane's deep
+coverage is a 4.1.0 round, and its companions ride with it.
 
 ### The original 4.0.1 — Printer resilience and console polish
 
@@ -905,22 +905,22 @@ itself:
   no-overlap alignment directly. No longer a backlog item.
 
 **State & permissions consolidation (2026-09-10):**
-"Can I press this button when I'm printing, when I'm not homed, when
-I'm paused, when I'm e-stopped?" — the guard logic has grown
-scattered: the toolhead gate, the model's publish projections, the
-QML's `enabled:` bindings, the power locks and the restart guards
-each derive the same states ad hoc. Not a Klipper problem — the
-plugin already polls the full state (`print_stats.state`,
-`homed_axes`, `gcode_move`) and Klipper/Moonraker have NO permission
-endpoint to query, so the table has to live plugin-side. The fix: ONE
-pure policy module projecting the snapshot into named permissions
-(can_jog, can_extrude, can_restart, can_power, can_start_print, …)
-with the rulings as the table — every consumer reads the
-same derivation, and the scattered conditionals collapse into a
-single tested file. The e-stop assumption stays special: the ONE case
-where the plugin must NOT trust the last poll — it lives at the
-client's observation layer (emitted status reads as cancelled until
-the printer says otherwise) and is documented there.
+the question every guard answers — can this button be pressed while
+printing, not homed, paused, or e-stopped — has grown scattered: the
+toolhead gate, the model's publish projections, the QML's `enabled:`
+bindings, the power locks and the restart guards each derive the same
+states ad hoc. Not a Klipper problem — the plugin already polls the
+full state (`print_stats.state`, `homed_axes`, `gcode_move`) and
+Klipper/Moonraker have NO permission endpoint to query, so the table
+has to live plugin-side. The fix: ONE pure policy module projecting
+the snapshot into named permissions (can_jog, can_extrude,
+can_restart, can_power, can_start_print, …) with the rulings as the
+table — every consumer reads the same derivation, and the scattered
+conditionals collapse into a single tested file. The e-stop
+assumption stays special: the ONE case where the plugin must NOT
+trust the last poll — it lives at the client's observation layer
+(emitted status reads as cancelled until the printer says otherwise)
+and is documented there.
 
 ## 4.3.0 — Physical head in the Preview
 
