@@ -308,6 +308,11 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: python
+          # The harness (simulator, driver, scenarios) is test
+          # infrastructure, not shipped code — findings there are
+          # noise on every PR.
+          paths-ignore:
+            - tests/harness/**
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4

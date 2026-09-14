@@ -255,7 +255,17 @@ case "$MODE" in
         # dev box, so the deadline is generous. The failure report
         # distinguishes a slow boot from a dead one.
         boot_start=$(date +%s)
-        for _ in $(seq 1 300); do [ -s /tmp/mpf/harness_port.txt ] && break; sleep 1; done
+        for tick in $(seq 1 300); do
+            [ -s /tmp/mpf/harness_port.txt ] && break
+            # The boot is the longest silent phase; a line every half
+            # minute keeps a watching terminal from assuming a hang.
+            # (The counter must not be the underscore parameter —
+            # arithmetic on it reads the previous command's last arg.)
+            case $(( tick % 30 )) in
+                0) echo "ui_test: still booting ($(( $(date +%s) - boot_start ))s)" ;;
+            esac
+            sleep 1
+        done
         if [ -s /tmp/mpf/harness_port.txt ]; then
             echo "ui_test: driver up after $(( $(date +%s) - boot_start ))s"
         else
@@ -328,8 +338,13 @@ case "$MODE" in
                     echo "ui_test: gdb backtrace of loader pid $pid:"
                     timeout 30 gdb -batch -ex "set pagination off" -ex "thread apply all bt" -p "$pid" 2>&1 | grep -v "^\[New \|^\[Thread " | head -90
                 fi'
-            echo "ui_test: cura_run.log ($(wc -c < /tmp/mpf/cura_run.log) bytes):"
-            tail -40 /tmp/mpf/cura_run.log
+            # The known-benign boot noise (upstream deprecation and
+            # timer warnings) drowns the failure report's tail; strip
+            # it so the report opens with the signal. Anything else
+            # still prints in full.
+            echo "ui_test: cura_run.log ($(wc -c < /tmp/mpf/cura_run.log) bytes, known-benign lines filtered):"
+            tail -40 /tmp/mpf/cura_run.log | grep -vE \
+                'ast\.Str is deprecated|def visit_Str|Timers cannot be (started|stopped) from another thread|QNativeSocketEngine::write\(\) was not called|typeresolution\.cycle|typecompiler.*Component as the root of a QML document|Binding loop detected for property "height"'
             exit 1
         fi
         if [ "$MODE" = "real" ]; then
