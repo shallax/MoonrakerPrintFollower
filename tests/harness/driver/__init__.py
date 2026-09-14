@@ -1318,6 +1318,38 @@ Row {
                 return {"id": request_id, "ok": True, "hidden": hidden}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "hide_gcode_warning":
+            # Cura's "Make sure the g-code is suitable for your
+            # printer" message blocks gcode-loading flows. The gate
+            # hides it conditionally — never waiting for it: flows
+            # that load no gcode never see it at all.
+            try:
+                dismissed = []
+                window = _main_window()
+                if window is None:
+                    return {"id": request_id, "ok": False, "error": "no main window"}
+                for item in _walk(window.contentItem(), depth=48):
+                    try:
+                        text = item.property("text")
+                    except Exception:
+                        continue
+                    if not isinstance(text, str) or "Make sure the g-code is suitable" not in text:
+                        continue
+                    # The message card is the ancestor of the label
+                    # carrying the text; hide the card itself.
+                    parent = item
+                    for _ in range(8):
+                        candidate = parent.parentItem()
+                        if candidate is None:
+                            break
+                        parent = candidate
+                        if "Message" in parent.metaObject().className():
+                            parent.setVisible(False)
+                            dismissed.append(parent.metaObject().className())
+                            break
+                return {"id": request_id, "ok": True, "dismissed": dismissed}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "complete_welcome":
             # Drive Cura's own welcome model to its end, exactly as the
             # wizard's final button does. Its buttons are unreachable

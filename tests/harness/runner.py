@@ -104,6 +104,10 @@ def ensure_ready():
             break
         rpc({"id": 1, "cmd": "seed_machine"})
         rpc({"id": 1, "cmd": "hide_welcome"})
+        # The g-code-suitability message: dismissed conditionally at
+        # boot, never waited for — a flow that loads no gcode never
+        # spends time on it.
+        rpc({"id": 1, "cmd": "hide_gcode_warning"})
         time.sleep(2)
     # Cura's first-boot window size is nondeterministic, and a narrow
     # window collapses the header's stage buttons into the overflow

@@ -21,6 +21,7 @@ make package >/dev/null
 
 # Prefer the published image (the release workflow pushes it);
 # build locally only when the registry copy is unreachable.
+echo "harness smoke: pulling the harness image (building if it is unreachable)"
 docker pull ghcr.io/shallax/mpf-cura-harness:latest >/dev/null 2>&1 || \
     docker build -q -t mpf-cura-harness "$root/tools/harness" >/dev/null
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
@@ -37,6 +38,7 @@ python3 "$root/tools/fetch_cura.py" "$PRIMARY"
 # the next unit's cleanup on CI (the cross-uid lesson).
 fail=0
 for run in smoke-1 smoke-2; do
+    echo "harness smoke: unit $run starts (boot + the smoke scenarios)"
     if timeout 40m env CURA_VERSION="$PRIMARY" \
             HARNESS_CONTAINER="$CONTAINER" MODE=suite SCENARIO_GROUP=smoke \
             RUN_DIR_NAME="$RUN_ROOT/$run" ./tools/ui_test.sh > "$RUN_ROOT/$run.log" 2>&1; then
