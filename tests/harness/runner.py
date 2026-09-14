@@ -255,7 +255,7 @@ def _verdict(steps):
 EVIDENCE = []
 
 
-def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, started):
+def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, started, delivery=None):
     path, capture_error = capture if isinstance(capture, tuple) else (capture, None)
     return {
         "schema": 1,
@@ -270,7 +270,7 @@ def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, sta
         "capture": os.path.basename(path) if path else None,
         "capture_error": capture_error,
         "duration_ms": round((time.monotonic() - started) * 1000),
-        "delivery": None,
+        "delivery": delivery,
     }
 
 
@@ -1949,11 +1949,12 @@ def suite_scenario(spec, step_fn=None):
         started = time.monotonic()
         try:
             result = step_fn(step)
-            ok, action, assertion = result
+            ok, action, assertion = result[:3]
+            delivery = result[3] if len(result) > 3 else None
             capture = shot(name)
             steps.append((name, action, assertion, ok, capture))
             EVIDENCE.append(_evidence_entry(spec, index, step, name, ok, action,
-                                            assertion, capture, started))
+                                            assertion, capture, started, delivery))
         except Exception as exc:
             capture = shot(name)
             steps.append((name, f"{spec['name']}: {step.get('op')}",
@@ -2132,6 +2133,33 @@ def suite_step(step):
                      "button": step.get("button", "left")})
         time.sleep(0.6)
         return reply.get("ok") is True, f"real click on the rendered '{step['text']}'", "the click landed"
+    if op == "deliver_click":
+        request = {"id": 1, "cmd": "deliver_click"}
+        if "objectName" in step:
+            request["objectName"] = step["objectName"]
+        elif "text" in step:
+            request["text"] = step["text"]
+        else:
+            return False, "deliver_click", "step names no target"
+        reply = rpc(request)
+        time.sleep(0.6)
+        delivery = reply.get("delivery") or {}
+        if step.get("expect") == "not_accepted":
+            # The negative half of the proof: the target RESOLVED (a
+            # real item is under the aim) but no item accepted the
+            # press — a disabled control refuses the click.
+            refused = bool(reply.get("ok") and not delivery.get("accepted") and delivery.get("hit"))
+            note = (f"the press was refused by {delivery.get('hit')}") if refused \
+                else f"unexpected delivery [delivery={delivery!r}]"
+            return refused, f"a refused press/release on {step.get('objectName') or step.get('text')}", note, delivery
+        landed = bool(reply.get("ok") and delivery.get("accepted"))
+        note = (f"the press was accepted by {delivery.get('grabber')}") if landed \
+            else f"the press was NOT accepted [delivery={delivery!r}]"
+        return landed, f"a real press/release on {step.get('objectName') or step.get('text')}", note, delivery
+    if op == "key_press":
+        reply = rpc({"id": 1, "cmd": "key_press", "key": step["key"]})
+        time.sleep(0.4)
+        return bool(reply.get("ok") and reply.get("sent")), f"the {step['key']} key", "sent"
     if op == "emit_click":
         code = EMIT_TEMPLATE.replace("TEXT_PLACEHOLDER", json.dumps(step["text"]))
         reply = exec_rpc(code)
