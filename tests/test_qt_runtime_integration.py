@@ -2030,7 +2030,7 @@ class CuraIntegrationLoadTests(unittest.TestCase):
         return self.qt.load("RemoteFileService").FileLease(path, release)
 
     def _make_file(self, name="part.gcode"):
-        directory = tempfile.mkdtemp(prefix="load-", dir="/tmp/mpf")
+        directory = tempfile.mkdtemp(prefix="load-")
         path = os.path.join(directory, name)
         with open(path, "wb") as handle:
             handle.write(b"G1 X0\n")
