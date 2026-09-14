@@ -1048,6 +1048,10 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_set", "state": {"configfile": {"save_config_pending": True, "save_config_pending_items": {}}}},
          {"op": "wait_sim", "path": "configfile.save_config_pending", "value": True, "budget": 10},
+         # The slot gates on the plugin-side snapshot of the pending
+         # flag, which trails the peer's state by a poll; firing the
+         # slot before it lands sends nothing, forever.
+         {"op": "wait_model", "prop": "canSaveConfig", "value": True, "budget": 10},
          {"op": "exec_slot", "slot": "saveConfig", "args": []},
          {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
      ]},
