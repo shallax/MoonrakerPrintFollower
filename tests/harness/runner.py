@@ -56,6 +56,10 @@ def rpc(request, timeout=20.0):
                     if not chunk:
                         break
                     line += chunk
+                # A reply can arrive coalesced with another write from
+                # the driver; take the first object and discard the
+                # tail (json.loads would raise "Extra data").
+                line = line.split(b"\n", 1)[0]
                 return json.loads(line.decode("utf-8"))
         except (OSError, ValueError) as exc:
             last_error = exc
@@ -94,12 +98,6 @@ def ensure_ready():
     (the Add-printer wizard's own code path) and hide the welcome
     overlay until the gate is clear. Orchestration only — no
     plugin-surface claims."""
-    # Cura's first-boot window size is nondeterministic, and a narrow
-    # window collapses the header's stage buttons into the overflow
-    # menu — the stage clicks then fail ("stage button not found")
-    # while a wide window passes. Pin the geometry so every run has
-    # the same layout; the probes measure the live tree either way.
-    rpc({"id": 1, "cmd": "window_resize", "w": 1500, "h": 900})
     for _ in range(10):
         reply = rpc({"id": 1, "cmd": "welcome"})
         if reply.get("ok") and not reply.get("up"):
@@ -107,6 +105,17 @@ def ensure_ready():
         rpc({"id": 1, "cmd": "seed_machine"})
         rpc({"id": 1, "cmd": "hide_welcome"})
         time.sleep(2)
+    # Cura's first-boot window size is nondeterministic, and a narrow
+    # window collapses the header's stage buttons into the overflow
+    # menu — the stage clicks then fail ("stage button not found")
+    # while a wide window passes. Pin the geometry after the welcome
+    # settles so every run has the same layout; the probes measure
+    # the live tree either way.
+    try:
+        _pin = rpc({"id": 1, "cmd": "window_pin", "w": 1500, "h": 900}, timeout=70)
+        _pin_ok = bool(_pin.get("ok") and list(_pin.get("size") or ()) == [1500, 900])
+    except Exception:
+        _pin_ok = False
     # The model gate: the plugin's per-machine model appears when the
     # stack change lands. A boot occasionally restores the machine
     # before the plugin's listener exists — re-emit the stack change
@@ -127,7 +136,7 @@ def ensure_ready():
     # The re-emit's refresh re-fires the discovery, which heals most.
     for _ in range(4):
         if exec_rpc(AUX_READY) is True:
-            return True
+            return _pin_ok
         exec_rpc(REFRESH_EMIT)
         time.sleep(15)
     return False

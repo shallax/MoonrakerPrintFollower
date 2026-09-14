@@ -12,7 +12,7 @@ import json
 import os
 import time
 
-from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, QTimer, Qt, QUrl, pyqtSlot
+from PyQt6.QtCore import QEvent, QEventLoop, QObject, QPoint, QPointF, QTimer, Qt, QUrl, pyqtSlot
 from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtNetwork import QHostAddress, QTcpServer
 from PyQt6.QtQml import QQmlComponent, qmlEngine
@@ -106,6 +106,20 @@ class HarnessServer(QObject):
 
     def setPluginId(self, plugin_id):
         self._plugin_id = plugin_id
+
+    # The full Extension interface: the Extensions menu's model
+    # (UM/Qt/Bindings/ExtensionModel.py) iterates every registered
+    # extension at window construction and calls these — a missing
+    # one aborts the main window's build, and Cura comes up with no
+    # header and no stages while everything else keeps running.
+    def getPluginId(self):
+        return getattr(self, "_plugin_id", None)
+
+    def getMenuName(self):
+        return ""
+
+    def getMenuItemList(self):
+        return []
 
     # -- plumbing ----------------------------------------------------
 
@@ -249,14 +263,81 @@ class HarnessServer(QObject):
             return {"id": request_id, "ok": True,
                     "x": geometry.x(), "y": geometry.y(),
                     "w": geometry.width(), "h": geometry.height()}
-        if cmd == "window_resize":
-            # The boot gate pins the window geometry (Cura's first-boot
-            # size is nondeterministic, and a narrow window collapses
-            # the stage header into an overflow menu).
+        if cmd == "window_pin":
+            # The boot gate pins the editor window's geometry (Cura's
+            # first-boot size is nondeterministic, and a narrow window
+            # collapses the stage header into an overflow menu). The
+            # editor is the window that owns the stage header; until
+            # the header appears, the largest window is resized anyway
+            # — harmless on the closing splash, and on the editor it
+            # expands the collapsed header, which then exposes the
+            # stageId delegates. Cura re-applies its own size during
+            # init, so the pin re-applies.
             try:
-                window = _main_window()
-                window.resize(int(request.get("w", 1500)), int(request.get("h", 900)))
+                from PyQt6.QtQuick import QQuickWindow
+                w = int(request.get("w", 1500))
+                h = int(request.get("h", 900))
+                deadline = time.monotonic() + 40.0
+                target = [None]
+                loop = QEventLoop()
+
+                def search():
+                    if time.monotonic() > deadline:
+                        loop.quit()
+                        return
+                    for window in QGuiApplication.topLevelWindows():
+                        if not isinstance(window, QQuickWindow):
+                            continue
+                        try:
+                            content = window.contentItem()
+                        except Exception:
+                            continue
+                        found = False
+                        for item in _walk(content, depth=48):
+                            try:
+                                if item.property("stageId"):
+                                    found = True
+                                    break
+                            except Exception:
+                                pass
+                        if found:
+                            target[0] = window
+                            break
+                    if target[0] is None:
+                        # The stageId may simply not exist yet: pin the
+                        # largest window so the editor's collapsed
+                        # header expands when its turn comes.
+                        largest = None
+                        largest_area = 0
+                        for window in QGuiApplication.topLevelWindows():
+                            if isinstance(window, QQuickWindow):
+                                area = window.width() * window.height()
+                                if area > largest_area:
+                                    largest_area = area
+                                    largest = window
+                        if largest is not None and (
+                                largest.width() != w or largest.height() != h):
+                            largest.resize(w, h)
+                        QTimer.singleShot(1000, search)
+                        return
+                    window = target[0]
+                    window.resize(w, h)
+
+                    def reapply():
+                        window.resize(w, h)
+
+                    QTimer.singleShot(1500, reapply)
+                    QTimer.singleShot(3000, reapply)
+                    loop.quit()
+
+                QTimer.singleShot(500, search)
+                loop.exec()
+                window = target[0]
+                if window is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "no window with a stage header appeared"}
                 return {"id": request_id, "ok": True,
+                        "title": window.title() or "",
                         "size": (window.width(), window.height())}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
