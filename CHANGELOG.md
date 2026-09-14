@@ -2,6 +2,30 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.0.1
+
+Version 4.0.1 is the harness release: no product changes — the plugin
+behaves exactly as in 4.0.0. The test infrastructure around the release
+gate hardened, and the documentation was cleaned up.
+
+- **Harness output**: progress lines through the long phases (the
+  image pull, each unit's start) and a heartbeat during the boot
+  wait, so a watching terminal never looks hung.
+- **Failure reports open with the signal**: the boot log tail in the
+  failure report filters the known-benign upstream warnings (the
+  ast.Str deprecation and kin).
+- **Cura's "Make sure the g-code is suitable" message** is dismissed
+  conditionally at boot — never waited for.
+- **CI hardening**: workflow files are linted with actionlint (an
+  invalid action input once failed ci.yml with zero jobs and no log
+  to read); CodeQL ignores the harness tree via its config file; the
+  smoke job pulls the published harness image from GHCR with the
+  run-scoped token and re-tags it to the local name.
+- **Documentation**: verbatim quotes and attributions removed from the
+  roadmap, testing docs, instructions and code comments — decisions
+  restated impersonally. The roadmap re-cut: 4.0.0 shipped, the
+  Information-pane coverage moved to 4.1.0.
+
 ## 4.0.0
 
 Version 4.0.0 is the websocket release: the Moonraker status transport

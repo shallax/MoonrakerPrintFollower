@@ -8,8 +8,20 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.0.0
+- **Release:** 4.0.1
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
+
+## What changed in 4.0.1
+
+Version 4.0.1 is the harness release — no product changes; the plugin
+behaves exactly as in 4.0.0. The test infrastructure behind the release
+gate hardened: progress output through the long phases, failure reports
+with the known-benign warnings filtered out, the conditional G-code
+suitability message dismissal, actionlint over the workflow files, the
+CodeQL harness exclusion and the smoke job's registry image pull with
+the run-scoped token. The documentation was cleaned up — verbatim
+quotes and attributions removed, the roadmap re-cut. See the changelog
+for the full list.
 
 ## What changed in 4.0.0
 
