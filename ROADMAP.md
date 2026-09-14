@@ -6,12 +6,12 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release: **4.0.0** — SHIPPED (2026-09-14): the websocket
-transport, live-tested and regression-green, published with the
-full CI matrix gate (the 14-cell harness matrix is required on every
-PR and runs again inside the release workflow itself).
+Current release: **4.0.1** — SHIPPED (2026-09-14): the harness
+fast-follow — boot-verbosity, warning filtering, CodeQL scoping,
+the G-code dialog dismissal, the docs cleanup — with the shipped
+archives provably free of the test harness.
 
-Next: **4.0.1** — the harness fast-follow (see the 4.0.1 section).
+Next: **4.1.0** — deep harness coverage (see the 4.1.0 section).
 
 ## Direction
 
@@ -840,7 +840,60 @@ FOLDED INTO 4.0.0 (ruling, 2026-09-11) — every item below shipped in
   4.0.0: the cadence sliders (status update, auxiliary, console) with
   the 250 ms floor landed as part of the websocket work.
 
-## 4.1.0 — The UI-driving test suite
+## 4.1.0 — Deep harness coverage
+
+**Scope (2026-09-14):** the remainder of the UI-driving suite's
+mandate, now the harness itself has shipped in 4.0.0 — deeper
+coverage of the functional surface, with small product fixes landing
+only as findings-driven patches (see the rulings). Five workstreams,
+ordered by dependency:
+
+- **The higher-resolution harness.** The suite window moves from
+  1280x720 to 1920x1080 globally — one calibration set, closer to a
+  real desktop; per-scenario sizes would leave two calibration sets
+  drifting apart. Every geometry pin and click coordinate calibrated
+  to the old size is re-measured at the new one (margin symmetry,
+  pane edges, alignment checks, stage coordinates); the visual
+  group's narrow/wide extremes already cover the squeezed cases.
+- **The visible-interactions rule.** Anything a scenario drives must
+  be on screen: the panes scroll the control into the rendered
+  viewport first, and the click is a real pointer click — never a
+  signal emit — so the videos and screenshots show the interaction
+  itself. A control that cannot be made visible is treated as not
+  interactable; the emit shortcut survives only for the explicitly
+  listed cases, each named with its reason.
+- **The Information pane round.** The pane's deep coverage — the
+  chart mini widgets and their shared pop-over, the bed-mesh mini
+  map, the endstop readout — the first beneficiary of the higher
+  resolution: at 1280x720 the Monitor's left column squeezes the
+  pane into auto-collapse, so the scenarios could never exercise
+  it.
+- **The deferred panel scenarios:** the disabled-while-printing
+  family, the FM confirm dialogs, the temperature popover, the
+  slider drags, the settings dialog, the pause timed_out arm.
+- **The coverage checklist enforced.** The generator's promise — a
+  surface→scenario matrix where a surface with no scenario FAILS the
+  suite — becomes the gate: the full remap runs, and every
+  uncovered surface needs a scenario or a justified exclusion.
+
+**Phase-0 rulings (2026-09-14):**
+
+- **The FM confirm dialogs are an addressability gap, not a
+  visibility one.** The dialogs are plain popups inside the walked
+  window (the dimmer in the dumps proves the walk ran while they
+  were open); the verbs inside carry no objectNames, and the
+  custom-button label quirk defeats text clicks — nothing was
+  clickable. The fix is a naming pass on the dialogs' verbs, probed
+  end-to-end before any scenario is promised.
+- **Disabled-while-printing findings are patched small in 4.1.x as
+  found** — two guards disagreeing about the same state is a bug
+  today; the permissions consolidation itself stays 4.2.0.
+- **The panel is the three-persona composition again** (architect,
+  engineer, expert automated tester) — product/UX/security have
+  little to adjudicate on scenario coverage; the pro-user persona
+  feeds 4.2.0 planning only.
+
+### The suite's origin (the 4.0.0 record, kept for history)
 
 **Pulled into scope (2026-09-11):** the 4.0.0 release is frozen on
 this suite — no fakery: screenshots of what the tests actually do are
@@ -890,8 +943,8 @@ itself:
   the settings dialog, the pause timed_out arm;
 - the Information pane (also listed in the 4.0.1 fast-follow — it
   belongs here as the deep-coverage round);
-- the visible-interactions rule and the higher-resolution harness, if
-  the 4.0.1 fast-follow hasn't absorbed them by then.
+- the visible-interactions rule and the higher-resolution harness
+  (confirmed 2026-09-14 — the 4.0.1 fast-follow did not absorb them).
 
 ## 4.2.0 — State & permissions consolidation
 
