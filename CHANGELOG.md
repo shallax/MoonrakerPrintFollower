@@ -2,6 +2,43 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.0.2
+
+Version 4.0.2 is a correctness release: five repairs to the transfer
+and print-identity paths, each shipped with its regression tests.
+
+- **Downloads now retire cleanly.** Each download owns its queue,
+  file and writer thread; cancelling (or switching printers)
+  mid-download no longer leaves the old worker able to hijack the
+  next download — the failure that could freeze Cura outright — or
+  interleave writes into a file (silent corruption that passed the
+  size check). Memory use is bounded: when the write queue is full,
+  reading pauses and resumes when the writer drains, and the GUI
+  never waits for the disk writer.
+- **Progress and the size cap reset per attempt**, measured against
+  the server-declared length rather than the cached metadata size
+  (a stale cache could refuse a good file forever).
+- **The file manager's Download button is honest about its outcome**:
+  a download that finishes after a printer switch never loads into
+  the wrong session; failures appear in the popup's status line; and
+  if Cura never confirms a load (its silent refusal paths), the
+  plugin's "loading" state no longer sticks forever.
+- **Uploads leak nothing and report once.** Every terminal path
+  disposes the reply; a second upload of the same file while one
+  runs is refused with a message; "upload and print" says what
+  actually happened (started, queued, or refused — the printer can
+  answer 201 while declining the print), and both upload paths show
+  the printer's own refusal words.
+- **The previous print's metadata can never read as the new print's.**
+  The fallback payload is tied to the print that fetched it; a failed
+  fetch retries properly; same-name restarts refresh within the
+  throttle; and metadata carrying a print id is cross-checked against
+  the printer's history before it is used.
+
+The simulated Moonraker in the test harness now speaks the real
+protocol shapes (declared lengths, 404 metadata, print identities),
+so the regressions exercise real semantics.
+
 ## 4.0.1
 
 Version 4.0.1 is the harness release: no product changes — the plugin

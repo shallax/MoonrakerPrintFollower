@@ -8,8 +8,21 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.0.1
+- **Release:** 4.0.2
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
+
+## What changed in 4.0.2
+
+Version 4.0.2 is a correctness release: five repairs to the transfer
+and print-identity paths. Downloads retire cleanly on cancel or
+printer switch (the previous behaviour could freeze Cura or corrupt a
+file), memory stays bounded with progress and the size cap reset per
+attempt, the file-manager Download button reports its failures in the
+popup and can no longer stick "loading" forever, uploads dispose
+their replies on every path and report honestly (a second same-name
+upload is refused, and "upload and print" says started / queued /
+refused), and the previous print's metadata can never read as the new
+print's. See the changelog for the full list.
 
 ## What changed in 4.0.1
 
