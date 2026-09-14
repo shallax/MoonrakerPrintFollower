@@ -632,9 +632,10 @@ class PersistentIndexCache:
                     return None
                 if header.get("identity") != identity.stable_key():
                     return None
-                # A uuid alone must not vouch for content: re-uploads of a
-                # same-named file can keep a path-derived uuid while size or
-                # modified time changes. Validate every known field.
+                # The uuid is Moonraker's per-extraction token, never a
+                # content identity; the header's own fields vouch for
+                # size/modified (the surviving discriminators). Validate
+                # every known field.
                 fields = header.get("identity_fields")
                 if fields and isinstance(fields, list) and len(fields) == 4:
                     if identity.size > 0 and int(fields[1]) > 0 and int(fields[1]) != identity.size:

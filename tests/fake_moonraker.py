@@ -119,7 +119,12 @@ class FakeMoonraker:
             return {"result": deepcopy(self.server_info)}
         if "server/files/metadata" in path:
             filename = path.split("filename=", 1)[-1]
-            return {"result": deepcopy(self.metadata.get(filename, {}))}
+            if filename not in self.metadata:
+                # Real Moonraker 404s unknown metadata ("Metadata not
+                # available for <file>") — an error-bearing payload,
+                # never a silent empty success a client could latch.
+                return {"error": {"code": 404, "message": f"Metadata not available for {filename}"}}
+            return {"result": deepcopy(self.metadata[filename])}
         if method == "GET" and "server/files/directory" in path:
             # One directory level, Moonraker-shaped: the response does
             # NOT echo the requested path, and entries carry basenames

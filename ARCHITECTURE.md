@@ -271,6 +271,14 @@ skips the size check.
 Metadata completeness is separate from download identity: a failed metadata
 request installs a fallback identity so downloads proceed, then retries with
 backoff; only a successful response marks the run's metadata complete.
+The coordinator's Moonraker-metadata fallback carries the same discipline:
+the payload latches only on a completed fetch keyed by `(filename, job)`
+(request identity commits when the send starts, never before), a failed or
+superseded fetch never serves the previous job's values, and a payload that
+carries a `job_id` is cross-checked against the newest `server/history/list`
+row over the HTTP lane before it latches. Content identity keys on
+`(size, modified)` — Moonraker's `uuid` is a fresh random per extraction and
+`filename` is an echo of the request, so neither is identity.
 Failed downloads retry on their own backoff ladder, driven by consumer
 re-requests; a failed layer hydration is latched until a new file arrives
 or the index is rebuilt, so a broken file is never re-read in full on every

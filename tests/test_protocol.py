@@ -66,11 +66,20 @@ class ProtocolTests(unittest.TestCase):
 
 
 class FileIdentityTests(unittest.TestCase):
-    def test_remote_identity_prefers_uuid(self):
+    def test_remote_identity_keys_on_surviving_discriminators(self):
+        # The uuid is Moonraker's per-extraction token, not a stable
+        # content identity: same size/modified is the same file whatever
+        # the uuid, a differing size or modified is a different file.
         a = RemoteFileIdentity("same.gcode", 100, 1.0, "abc")
-        b = RemoteFileIdentity("same.gcode", 100, 999.0, "abc")
+        b = RemoteFileIdentity("same.gcode", 100, 1.0, "fresh-uuid")
         self.assertEqual(a.stable_key(), b.stable_key())
-        self.assertEqual(a.stable_key(), "uuid:abc")
+        self.assertEqual(a.stable_key(), "file:same.gcode|size:100|modified:1.000000")
+        c = RemoteFileIdentity("same.gcode", 100, 999.0, "abc")
+        self.assertNotEqual(a.stable_key(), c.stable_key())
+
+    def test_remote_identity_uuid_is_a_last_resort(self):
+        bare = RemoteFileIdentity("same.gcode", 0, 0.0, "abc")
+        self.assertEqual(bare.stable_key(), "uuid:abc")
 
     def test_remote_identity_fallback_distinguishes_modified(self):
         a = RemoteFileIdentity("same.gcode", 100, 1.0, "")
