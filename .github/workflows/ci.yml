@@ -18,9 +18,13 @@ jobs:
     name: Harness smoke
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      packages: read
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+      - name: Log in to the container registry
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Run the smoke set
         run: ./tools/harness_smoke.sh
       - name: Collect the smoke galleries
@@ -308,11 +312,7 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: python
-          # The harness (simulator, driver, scenarios) is test
-          # infrastructure, not shipped code — findings there are
-          # noise on every PR.
-          paths-ignore:
-            - tests/harness/**
+          config-file: .github/codeql/codeql-config.yml
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
