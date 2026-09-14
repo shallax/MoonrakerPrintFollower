@@ -1453,6 +1453,28 @@ SCENARIOS = [
          {"op": "assert_exec", "code": CARD_EXCLUSIVE_PROBE,
           "contains": '"exclusive": true, "panel": true, "overlay": false'},
      ]},
+    # The visible-interactions proof pair: the phase-0 evidence that a
+    # real press/release lands — accepted by the item under the aim,
+    # reaching the peer — and that a refused press reads as refused.
+    {"id": "z10", "group": "probe",
+     "name": "the deliver_click proof — a real press/release on a named control is accepted and reaches the peer",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         {"op": "deliver_click", "objectName": "moonrakerJogXPlus"},
+         {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
+     ]},
+    {"id": "z11", "group": "probe",
+     "name": "the refused-press proof — a disabled control resolves but does not accept the press",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
+         {"op": "wait_model", "prop": "jogEnabled", "value": False, "budget": 15},
+         {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         {"op": "deliver_click", "objectName": "moonrakerJogXPlus", "expect": "not_accepted"},
+     ]},
     {"id": "z1", "group": "probe",
      "name": "the preview stage geometry across empty, model and sliced states",
      "steps": [

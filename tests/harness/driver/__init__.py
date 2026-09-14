@@ -821,6 +821,56 @@ class HarnessServer(QObject):
                 return {"id": request_id, "ok": True, "aim": [x, y], "objectName": wanted}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "deliver_click":
+            # The canonical real click: resolve the target by
+            # objectName or rendered text across the main window and
+            # the popup windows, then a press/release with delivery
+            # introspection. No emit path exists behind this verb.
+            try:
+                by_name = bool(request.get("objectName"))
+                wanted = str(request.get("objectName") or request.get("text") or "")
+                qtest = _import_qtest()
+                if not qtest:
+                    return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
+                window = None
+                target = None
+                for _window, items in _click_windows():
+                    for item in items:
+                        try:
+                            value = item.property("objectName" if by_name else "text")
+                        except Exception:
+                            continue
+                        if value == wanted and bool(item.isVisible()):
+                            window, target = _window, item
+                            break
+                    if target is not None:
+                        break
+                if target is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "no visible item with that name/text", "wanted": wanted}
+                scene = target.mapToScene(QPointF(0, 0))
+                x = round(scene.x() + target.width() / 2)
+                y = round(scene.y() + target.height() / 2)
+                delivery = _deliver_press(window, x, y, Qt.MouseButton.LeftButton, target)
+                return {"id": request_id, "ok": True, "mechanism": "deliver",
+                        "aim": [x, y], "window": window.objectName() or "",
+                        "delivery": delivery, "wanted": wanted}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "key_press":
+            # A synthesized key on the main window (the Esc ladder's
+            # scenarios). The key names map Qt.Key.Key_<name>.
+            try:
+                qtest = _import_qtest()
+                if not qtest:
+                    return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
+                key = getattr(Qt.Key, "Key_" + str(request.get("key") or ""))
+                window = _main_window()
+                qtest.QTest.keyClick(window, key)
+                qtest.QTest.qWait(150)
+                return {"id": request_id, "ok": True, "key": str(request.get("key")), "sent": True}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "rect":
             # An item's window-relative rect, found by objectName, by
             # rendered text, or by class name — Cura-native items (the
@@ -1468,6 +1518,91 @@ def _main_window():
             best_area = area
             best = window
     return best
+
+
+def _click_windows():
+    # The click walks' window union: the main window first (its tree
+    # holds the plugin surface and the in-tree Popups), then the
+    # popup windows — the FM dialogs render in whichever topology
+    # this Cura uses, and the walk covers both. Popup windows are
+    # shallow, so the bounded depth keeps the union walk from
+    # stalling the GUI thread the way the all-windows deep walk did.
+    windows = _lookup_windows()
+    for index, window in enumerate(windows):
+        yield window, _walk(window.contentItem(), depth=24 if index == 0 else 12)
+
+
+class _DeliveryFilter(QObject):
+    # The delivery-introspection filter: which mouse events the
+    # target window saw during a press/release, with positions — the
+    # proof that the synthesized input arrived where it was aimed.
+    def __init__(self, events, parent=None):
+        super().__init__(parent)
+        self.events = events
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
+                            QEvent.Type.MouseMove):
+            name = str(event.type()).split(".")[-1]
+            try:
+                pos = (round(event.position().x()), round(event.position().y()))
+            except Exception:
+                pos = None
+            self.events.append((name, pos))
+        return False
+
+
+def _accepted_by(grabber, target):
+    # The press counts as accepted only when the grabber IS the
+    # target or a descendant of it — a scroll container (a
+    # QQuickFlickable) grabs presses on disabled children for
+    # flicking, and that is a refusal, not a delivery.
+    if grabber is None or target is None:
+        return False
+    node = grabber
+    while node is not None:
+        if node is target:
+            return True
+        try:
+            node = node.parentItem()
+        except Exception:
+            return False
+    return False
+
+
+def _deliver_press(window, x, y, button, target=None):
+    # A QTest press/release with delivery introspection. The hit is
+    # the item geometrically under the aim point BEFORE the press;
+    # the grabber is QQuickWindow.mouseGrabberItem() right after it —
+    # and accepted means the grabber is the target's own chain. An
+    # overlay (a scrim, a menu) covering the aim changes the hit and
+    # the grabber, which is exactly what the overlay-fails-the-step
+    # proof asserts.
+    try:
+        hit = window.contentItem().childAt(x, y)
+    except Exception:
+        hit = None
+    events = []
+    filt = _DeliveryFilter(events)
+    window.installEventFilter(filt)
+    qtest = _import_qtest()
+    try:
+        qtest.QTest.mousePress(window, button, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+        qtest.QTest.qWait(60)
+        try:
+            grabber = window.mouseGrabberItem()
+        except Exception:
+            grabber = None
+        qtest.QTest.mouseRelease(window, button, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+        qtest.QTest.qWait(60)
+    finally:
+        window.removeEventFilter(filt)
+    return {
+        "accepted": _accepted_by(grabber, target),
+        "grabber": grabber.metaObject().className() if grabber is not None else None,
+        "hit": hit.metaObject().className() if hit is not None else None,
+        "events": events[:12],
+    }
 
 
 def _sample_button_state(row, label):
