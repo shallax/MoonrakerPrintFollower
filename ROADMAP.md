@@ -10,7 +10,8 @@ Current release: **4.0.2** — SHIPPED (2026-09-14): the transfer and
 print-identity correctness release — five lifecycle repairs, each
 with its regression, live-tested through the snapshot loop.
 
-Next: **4.1.0** — deep harness coverage (see the 4.1.0 section).
+Next: **4.1.0** — deep harness coverage, extended by the round-1
+critic and the architecture review (see the 4.1.0 section).
 
 ## Direction
 
@@ -930,37 +931,104 @@ ARCHITECTURE §1/4/6/9/11 move with the code they describe.
 
 **Scope (2026-09-14):** the remainder of the UI-driving suite's
 mandate, now the harness itself has shipped in 4.0.0 — deeper
-coverage of the functional surface, with small product fixes landing
-only as findings-driven patches (see the rulings). Five workstreams,
+coverage of the functional surface — extended by the round-1 critic's
+dispositions (the plan's premises corrected against the tree), the
+architecture review's 4.1.0 findings (F06/F08/F09, the lifecycle
+scenarios) and the parallel local matrix. Small product fixes land
+only as findings-driven patches (see the rulings). Eight workstreams,
 ordered by dependency:
 
-- **The higher-resolution harness.** The suite window moves from
-  1280x720 to 1920x1080 globally — one calibration set, closer to a
-  real desktop; per-scenario sizes would leave two calibration sets
-  drifting apart. Every geometry pin and click coordinate calibrated
-  to the old size is re-measured at the new one (margin symmetry,
-  pane edges, alignment checks, stage coordinates); the visual
-  group's narrow/wide extremes already cover the squeezed cases.
-- **The visible-interactions rule.** Anything a scenario drives must
-  be on screen: the panes scroll the control into the rendered
-  viewport first, and the click is a real pointer click — never a
-  signal emit — so the videos and screenshots show the interaction
-  itself. A control that cannot be made visible is treated as not
-  interactable; the emit shortcut survives only for the explicitly
-  listed cases, each named with its reason.
-- **The Information pane round.** The pane's deep coverage — the
-  chart mini widgets and their shared pop-over, the bed-mesh mini
-  map, the endstop readout — the first beneficiary of the higher
-  resolution: at 1280x720 the Monitor's left column squeezes the
-  pane into auto-collapse, so the scenarios could never exercise
-  it.
-- **The deferred panel scenarios:** the disabled-while-printing
-  family, the FM confirm dialogs, the temperature popover, the
-  slider drags, the settings dialog, the pause timed_out arm.
-- **The coverage checklist enforced.** The generator's promise — a
-  surface→scenario matrix where a surface with no scenario FAILS the
-  suite — becomes the gate: the full remap runs, and every
-  uncovered surface needs a scenario or a justified exclusion.
+- **The higher-resolution harness — one display geometry.** The
+  suite moves to 1920x1080 GLOBALLY: the Xvfb screen in `ui_test.sh`
+  and the harness image, the capture SIZE, the window pin and the
+  driver's `resize` default move together, and a screen-fits
+  assertion fails the run if the window cannot render on the screen
+  (the round-1 catch: the pin only asks the window its own size, so
+  a 1920x1080 window on a 1600x1000 screen passes silently while
+  the Information and controls panes are never rendered).
+  Calibration discipline: a per-scenario window-size assertion
+  pre-step (no geometry leaking between scenarios inside a group's
+  shared boot); the margin-symmetry pin is re-specified per pane
+  state, not per resolution; the narrow/wide resize steps stay and
+  are re-measured — 1920x1080 is the baseline and capture geometry
+  only; one artifact-size measurement at the new geometry before
+  the first gate run.
+- **The visible-interactions rule and its machinery.** The rule
+  needs capabilities that do not exist yet, so the capability list
+  is a phase-0 deliverable with one end-to-end proof scenario
+  before any conversion is promised: a scroll verb, a
+  viewport-containment assertion, non-emit activation for
+  label-layer buttons (the custom-button quirk), and walks that
+  reach popup layers and separate windows. The FM confirm dialogs
+  are probed as a click landing on a named verb INSIDE a Popup,
+  verified by the driver's delivery introspection — a naming pass
+  alone does not make them clickable. The canonical drag primitive
+  is the explicit-buttons QMouseEvent path (`CONSOLE_RESIZE_CODE`
+  is the working proof); `exec_console_resize` is wired or deleted;
+  the consoleResize exclusion is re-probed in the same pass. The
+  Esc ladder is probed with a popup open at the new geometry. The
+  endstop readout reclassifies here — it lives in the scrolled
+  controls pane, not the Information pane. Evidence classification
+  (the review's F08): scenarios are labelled UI interaction /
+  application integration / diagnostic probe / explicit exclusion,
+  and each records its target, delivered input, peer-side effect
+  and rendered outcome; the 34 `exec_slot` + 15 `exec_file_slot` +
+  6 `emit_click` + 2 `click_text` + 4 inline emit steps convert to
+  real input over the release, the critical user journeys first.
+- **The Information pane round.** The chart mini widgets and their
+  shared pop-over, the bed-mesh mini map and the endstop readout —
+  the first beneficiary of the higher resolution. Chart assertions
+  are model/peer-side series assertions plus captures (no "canvas
+  is in the census" outcome): the simulator gains a
+  temperature-history exposure, and a latch-precondition capture
+  (infoPanel expanded at w=240) is pinned before any scenario
+  promises the pane.
+- **The deferred panel scenarios.** The disabled-while-printing
+  family (enumerated with a stated rationale, and any patch found
+  ships with its red-run evidence — pre-declared), the FM confirm
+  dialogs, the temperature popover, the slider drags, the settings
+  dialog, the pause timed_out arm. Budget policy comes AFTER
+  measured per-group wall clock from the existing galleries; target
+  counts and group assignment are fixed before budgets (a timeout
+  must read as a budget overrun, not a product failure). Phase-0
+  probes for timed_out and the settings dialog before promising
+  their scenarios.
+- **The coverage checklist enforced.** The gate becomes execution,
+  not membership: an execution check (each mapped surface observed
+  in a run's evidence), a widened extractor for unnamed pane items
+  (`MonitorPopOver.qml`, `TemperatureChart.qml`,
+  `CollapsibleSectionHeader.qml`, the configuration dialog — the
+  round's own subject matter), an exclusion schema (reason,
+  evidence, date, re-check trigger — the two stale entries are
+  rewritten through it), and `report()` wired into the gate log or
+  deleted. `REAL_SAFE_SLOTS` gets a pin.
+- **TESTING.md reconciliation.** The document describes the real
+  harness before the gate cites it — every unimplemented claim is
+  implemented or struck (the pre-flight refusal, the
+  overlay-coverage assertion, the ≤12-verb pin vs the real 45, the
+  watch/recorder/filmstrip, the manifests, the flake policy). The
+  round-6 deferral is re-ruled (2026-09-14): 4.1.0 makes the
+  document's promise a gate, so the reconciliation moves in.
+- **The parallel local matrix.** `-j N` parallelism in
+  `tools/harness_release.sh` — opt-in, serial by default, the
+  timing budgets documented as unloaded-machine assumptions.
+  Rehearsed in the container before it is called fixed (the
+  workflow-change rule).
+- **The architecture review's 4.1.0 fold-ins.** The F06 measured
+  projection repair (one cached file-view result recomputed on
+  data/view/history revision with deliberate date-filter expiry;
+  ~400-file baselines; a temperature tick or console append must
+  not sort the file list — the structural completion rides the 4.3
+  refactor); the reusable lifecycle-failure scenarios (injected
+  barriers/clocks over the review's eight verification priorities —
+  cancelled-and-replaced writers, independent transfer accounting,
+  post-switch one-shots, upload disposal cycles, metadata failure
+  after success); F09's pin discipline (behavioral tests replace
+  comment/expression pins in the touched domains; the genuinely
+  architectural pins keep their structural form); and the harness's
+  own maintenance as 4.1 changes it (named step handlers, a
+  validated scenario schema, observation probes separated from
+  action injection).
 
 **Phase-0 rulings (2026-09-14):**
 
@@ -969,15 +1037,24 @@ ordered by dependency:
   window (the dimmer in the dumps proves the walk ran while they
   were open); the verbs inside carry no objectNames, and the
   custom-button label quirk defeats text clicks — nothing was
-  clickable. The fix is a naming pass on the dialogs' verbs, probed
-  end-to-end before any scenario is promised.
+  clickable. The fix is a naming pass on the dialogs' verbs PLUS
+  the click machinery above — probed end-to-end before any scenario
+  is promised.
 - **Disabled-while-printing findings are patched small in 4.1.x as
   found** — two guards disagreeing about the same state is a bug
-  today; the permissions consolidation itself stays 4.2.0.
+  today; the permissions consolidation itself stays 4.2.0. The
+  family is enumerated with a stated rationale, and every patch
+  ships with its red-run evidence.
 - **The panel is the three-persona composition again** (architect,
   engineer, expert automated tester) — product/UX/security have
   little to adjudicate on scenario coverage; the pro-user persona
   feeds 4.2.0 planning only.
+- **The phase-2 rulings (2026-09-14, the author):** the architecture
+  review's re-sequencing adopted fully (the presentation refactor
+  becomes 4.3.0, the physical head moves to 4.4.0); the TESTING.md
+  reconciliation moves into 4.1.0 (re-ruling the round-6 deferral);
+  draft PR #19 closes as superseded with nothing of the review lost
+  and every finding dispositioned; 1920x1080 everywhere.
 
 ### The suite's origin (the 4.0.0 record, kept for history)
 
@@ -1032,7 +1109,7 @@ itself:
 - the visible-interactions rule and the higher-resolution harness
   (confirmed 2026-09-14 — the 4.0.1 fast-follow did not absorb them).
 
-## 4.2.0 — State & permissions consolidation
+## 4.2.0 — State, permissions & operation boundaries
 
 - **Volumetric flow rate (2026-09-13):** the printer
   status shows the current volumetric flow rate in mm³/s — a small
@@ -1061,9 +1138,85 @@ trust the last poll — it lives at the client's observation layer
 (emitted status reads as cancelled until the printer says otherwise)
 and is documented there.
 
-## 4.3.0 — Physical head in the Preview
+**The architecture review's additions (2026-09-14):**
+
+- **One action-availability owner (F10).** The consolidated policy
+  projection becomes the review's shape: named action decisions each
+  carrying a concise disabled reason, consumed by BOTH view models
+  and command owners, revalidated when queued work is actually
+  dispatched — a valid click can become invalid before execution.
+  Unknown observations stay distinguishable from an observed idle
+  state. The documented product decisions (disconnected-controls,
+  e-stop behaviour, unrestricted console intent, the no-reflow
+  rule) are preserved — changing policy is a separate decision from
+  centralising it.
+- **Typed operation boundaries and an explicit state store (F11).**
+  Small `typing.Protocol` interfaces for the seams being changed
+  (transport, printer session, file operations, index queries, Cura
+  loading) with type-checked pure modules; the Monitor model's
+  persistence moves into an explicit state-store owner with
+  migration tests and rate-limited failure reporting — a selection
+  that fails to survive restart must be explainable, and the
+  swallowed persistence exceptions stop being silent.
+- **A print-start operation owner** — pending/confirmed/failed
+  print-start as one owned operation (the review's ownership
+  table), consumed by every start path.
+- **Consolidated metadata ownership** — one metadata service
+  supporting metadata-only requests, consumed by the coordinator
+  and the file flow (F05's follow-up; the coordinator stops
+  implementing its own request/cache lifecycle).
+
+## 4.3.0 — Monitor & file-manager presentation refactor
+
+The 2026-09-14 re-sequencing inserted this release: the presentation
+debt gets a bounded delivery of its own instead of compounding under
+the physical-head feature. The review's F07 plus F06's structural
+completion, with fixed component scope and measurable exit criteria —
+not a repository-wide redesign.
+
+- **View-model extraction.** A FilesViewModel owning the file
+  projection: one computed file-view result (rows, total, page,
+  selection, empty state) cached by data/view/history revision with
+  deliberate date-filter expiry, published through a
+  QAbstractListModel with stable row identities — the F06
+  structural completion. Then the focused view models where their
+  update lifetimes differ: controls, console/camera,
+  information/chart presentation. Each receives explicit model
+  properties and emits intents — never the whole root object.
+- **Operation extraction.** The print-start operation owner (4.2.0)
+  already removes print-start supervision from the Monitor model; a
+  small UI-state store owns section sizes, collapse state and their
+  persisted schema.
+- **QML component extraction.** The file table, filter controls,
+  the file confirmation dialogs, the console pane, the camera pane,
+  the toolhead section and the peripheral controls become complete
+  functional components.
+- **Exit criteria.** Object names and public surfaces used by the
+  interaction tests are preserved; persistence migration and
+  gesture ownership survive; resize, focus, Esc handling,
+  confirm/cancel, printer switches and repeated slider grabs are
+  re-verified after each extraction; measured projection
+  improvements against the 4.1.0 baselines; unchanged package
+  identity. Each extraction is a vertical slice — move one owner,
+  redirect its callers, preserve observable behaviour, remove the
+  obsolete path in the same change. A lines-per-file target is not
+  an acceptance criterion; the test is that a feature change stays
+  within its component.
+
+## 4.4.0 — Physical head in the Preview (moved from 4.3.0)
 
 What a web dashboard cannot do: show the real machine inside the slice.
+The 4.3.0 presentation refactor lands first (the 2026-09-14
+re-sequencing): the marker's interactive controls depend on the
+common action policy and session ownership from 4.2.0, and its
+lifecycle boundaries are proven by the 4.0.2 repairs and the 4.1.0
+scenarios. The layer-hardening/foreign-heights pack becomes an
+explicit gate for the resolver/coordinate work, scoped to the
+behaviour the marker relies on; continuous-Z/vase support stays a
+distinct capability and is not a requirement for every preceding
+maintenance release. If feature value demands, the marker's
+display-only slice may proceed after 4.2.0 while the presentation
+refactor finishes.
 
 - A live physical-position marker overlaid on the Preview scene. The
   position source is `motion_report.live_position` plus
@@ -1113,9 +1266,10 @@ height + one-click pause-at-next-layer + the layer-to-mm readout
 waypoints (M600, `; filament change`) on the layer timeline with
 time-to-go; (5) a camera thumbnail in the Preview (investigate, don't
 assume); (6) active-tool label + per-extruder path colouring.
-Cross-cutting: the layer-hardening pack belongs IN 3.7.0 (the marker
-inherits the resolver's numbers, and the `;LAYER:` flip without the
-gate can increase wrong-layer risk); the version-drift gate's user
+Cross-cutting: the layer-hardening pack is the marker's prerequisite
+(the marker inherits the resolver's numbers, and the `;LAYER:` flip
+without the gate can increase wrong-layer risk); the version-drift
+gate's user
 value is its presentation (permanent disabled-with-reason states); the
 deuteranopia cheap 80% is fixing the default red/green pair. Out-of-
 scope revisit: folder trees — confirm before 3.6.0 ships that files in
