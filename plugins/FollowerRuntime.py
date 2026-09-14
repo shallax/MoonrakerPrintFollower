@@ -65,3 +65,4 @@ class FollowerRuntime:
         self.index.close()
         self.file_download.close()  # in-flight downloads retire BEFORE the files root goes
         self.files.close()
+        self.client.transport.close()  # the manager's pooled sockets close with the plugin

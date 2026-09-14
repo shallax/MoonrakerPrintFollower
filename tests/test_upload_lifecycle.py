@@ -78,6 +78,10 @@ class UploadLifecycleTests(unittest.TestCase):
         self.device_module = self.qt.load("MoonrakerOutputDevice")
         self.client_module = self.qt.load("MoonrakerClient")
 
+    def _stop_client(self, client):
+        client.stop()
+        client.transport.close()  # the manager's pooled sockets close with it
+
     @staticmethod
     def install_dialog_factory(app):
         dialogs = []
@@ -105,7 +109,7 @@ class UploadLifecycleTests(unittest.TestCase):
         transport = ScriptedTransport()
         client = self.client_module.MoonrakerClient(transport=transport)
         client.configure("http://printer-a", "", 750)
-        self.addCleanup(client.stop)
+        self.addCleanup(self._stop_client, client)
         config = self.config_type(url="http://printer-a", upload_dialog=True, upload_start_print=False)
         dialogs = self.install_dialog_factory(self.app)
         device = self.device_module.MoonrakerOutputDevice(
@@ -144,7 +148,7 @@ class UploadLifecycleTests(unittest.TestCase):
         transport = ScriptedTransport()
         client = self.client_module.MoonrakerClient(transport=transport)
         client.configure("http://printer-a", "", 750)
-        self.addCleanup(client.stop)
+        self.addCleanup(self._stop_client, client)
         config = self.config_type(url="http://printer-a", upload_dialog=True, upload_start_print=False)
         self.install_dialog_factory(self.app)
         active_machine = ["A"]
@@ -197,7 +201,7 @@ class UploadLifecycleTests(unittest.TestCase):
 
         client = self.client_module.MoonrakerClient()
         client.configure(url, "", 750)
-        self.addCleanup(client.stop)
+        self.addCleanup(self._stop_client, client)
         current = [self.config_type(
             url=url,
             upload_dialog=True,
@@ -281,7 +285,7 @@ class UploadLifecycleTests(unittest.TestCase):
     def test_file_manager_upload_terminal_disposes_exactly_once(self):
         client = self.client_module.MoonrakerClient(transport=ScriptedTransport())
         client.configure("http://printer-a", "", 750)
-        self.addCleanup(client.stop)
+        self.addCleanup(self._stop_client, client)
         fm, source = self._file_manager(client)
         verdicts = []
         fm.uploadFinished.connect(lambda ok, detail: verdicts.append((ok, detail)))
@@ -301,7 +305,7 @@ class UploadLifecycleTests(unittest.TestCase):
     def test_file_manager_abort_uploads_clears_ownership_before_abort(self):
         client = self.client_module.MoonrakerClient(transport=ScriptedTransport())
         client.configure("http://printer-a", "", 750)
-        self.addCleanup(client.stop)
+        self.addCleanup(self._stop_client, client)
         fm, source = self._file_manager(client)
         verdicts = []
         fm.uploadFinished.connect(lambda ok, detail: verdicts.append((ok, detail)))
@@ -315,7 +319,7 @@ class UploadLifecycleTests(unittest.TestCase):
     def test_file_manager_refuses_a_second_same_name_upload(self):
         client = self.client_module.MoonrakerClient(transport=ScriptedTransport())
         client.configure("http://printer-a", "", 750)
-        self.addCleanup(client.stop)
+        self.addCleanup(self._stop_client, client)
         fm, source = self._file_manager(client)
         replies = [self._upload_reply(), self._upload_reply()]
         client.transport.network = SimpleNamespace(post=lambda request, multipart: replies.pop(0))
@@ -331,7 +335,7 @@ class UploadLifecycleTests(unittest.TestCase):
     def test_upload_refusal_words_win_over_qt_error_text(self):
         client = self.client_module.MoonrakerClient(transport=ScriptedTransport())
         client.configure("http://printer-a", "", 750)
-        self.addCleanup(client.stop)
+        self.addCleanup(self._stop_client, client)
         controller = self.qt.load("UploadController").UploadController(client, "A", lambda: ("A", "A"))
         results = []
         controller.finished.connect(lambda ok, detail: results.append((ok, detail)))
@@ -369,7 +373,7 @@ class UploadLifecycleTests(unittest.TestCase):
         url = "http://127.0.0.1:" + str(server.server_port)
         client = self.client_module.MoonrakerClient()
         client.configure(url, "", 750)
-        self.addCleanup(client.stop)
+        self.addCleanup(self._stop_client, client)
         config = self.config_type(url=url, upload_dialog=True, upload_start_print=True)
         self.install_dialog_factory(self.app)
         device = self.device_module.MoonrakerOutputDevice(
@@ -412,7 +416,7 @@ class UploadLifecycleTests(unittest.TestCase):
         url = "http://127.0.0.1:" + str(server.server_port)
         client = self.client_module.MoonrakerClient()
         client.configure(url, "", 750)
-        self.addCleanup(client.stop)
+        self.addCleanup(self._stop_client, client)
         config = self.config_type(url=url, upload_dialog=True, upload_start_print=True)
         self.install_dialog_factory(self.app)
         device = self.device_module.MoonrakerOutputDevice(

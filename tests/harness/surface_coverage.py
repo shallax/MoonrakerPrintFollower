@@ -41,13 +41,16 @@ def extract() -> Dict[str, List[str]]:
                         surfaces["slot"].append(f"{module}.{node.name}")
                         break
         if name.endswith(".qml") and os.path.isfile(path):
-            source = open(path, encoding="utf-8").read()
+            with open(path, encoding="utf-8") as handle:
+                source = handle.read()
             for match in re.finditer(r'objectName:\s*"([^"]+)"', source):
                 surfaces["objectName"].append(match.group(1))
-    protocol = open(os.path.join(PLUGINS, "MoonrakerProtocol.py"), encoding="utf-8").read()
+    with open(os.path.join(PLUGINS, "MoonrakerProtocol.py"), encoding="utf-8") as handle:
+        protocol = handle.read()
     for match in re.finditer(r"def (\w*endpoint)\(", protocol):
         surfaces["route"].append(match.group(1))
-    model = open(os.path.join(PLUGINS, "MoonrakerMonitorModel.py"), encoding="utf-8").read()
+    with open(os.path.join(PLUGINS, "MoonrakerMonitorModel.py"), encoding="utf-8") as handle:
+        model = handle.read()
     for match in re.finditer(r'(\w+) = value_property\(', model):
         surfaces["key"].append(match.group(1))
     for kind in surfaces:
