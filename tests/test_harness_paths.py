@@ -1,0 +1,73 @@
+"""Regression pins for the run-dir resolution rule.
+
+The doubled-path bug (shipped in 4.0.2): the container side of
+ui_test.sh nested an ABSOLUTE run-dir name under its own ui-artifacts
+prefix, so every gallery landed at /tmp/mpf/ui-artifacts//tmp/mpf/
+ui-artifacts/runs/... while the gate report and CI's upload read the
+straight path. Fourteen green gate jobs, zero artifacts uploaded.
+The rule now lives in tools/ui_test_paths.sh and both sides of
+ui_test.sh resolve through it; these tests pin the behaviour and the
+wiring.
+"""
+
+import subprocess
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+HELPER = ROOT / "tools" / "ui_test_paths.sh"
+UI_TEST = ROOT / "tools" / "ui_test.sh"
+
+
+def _resolve(base, name):
+    out = subprocess.run(
+        ["sh", str(HELPER), "resolve", base, name],
+        capture_output=True, text=True, check=True,
+    )
+    return out.stdout.strip()
+
+
+class RunDirResolutionTests(unittest.TestCase):
+    def test_absolute_name_passes_through_verbatim(self):
+        # The regression itself: an absolute run-dir name must never
+        # gain a ui-artifacts prefix on either side of the run.
+        name = "/tmp/mpf/ui-artifacts/runs/2026-09-14-220945/group-visual"
+        self.assertEqual(_resolve("/tmp/mpf", name), name)
+
+    def test_relative_name_nests_under_ui_artifacts(self):
+        self.assertEqual(
+            _resolve("/tmp/mpf", "run-001"), "/tmp/mpf/ui-artifacts/run-001"
+        )
+
+    def test_host_and_container_views_resolve_the_same_suffix(self):
+        # The two views of the one scratch tree differ only in their
+        # base; the resolved suffix must agree or the report and the
+        # writer drift apart again.
+        host = _resolve("/tmp/mpf", "run-001")
+        container = _resolve("/tmp/mpf", "run-001")
+        self.assertEqual(host, container)
+
+    def test_ui_test_resolves_both_sides_through_the_shared_rule(self):
+        # The wiring: ui_test.sh must not build either side's path
+        # inline — both RUN_DIR and CONTAINER_RUN_DIR resolve through
+        # the helper, and the old doubled construction is gone.
+        text = UI_TEST.read_text()
+        self.assertIn(
+            'RUN_DIR="$(tools/ui_test_paths.sh resolve', text
+        )
+        self.assertIn(
+            'CONTAINER_RUN_DIR="$(tools/ui_test_paths.sh resolve', text
+        )
+        self.assertNotIn('CONTAINER_WORK_DIR}/ui-artifacts/${RUN_DIR_NAME', text)
+
+    def test_ui_test_refuses_a_run_without_landed_evidence(self):
+        # The gate half of the regression: a run whose gallery never
+        # reached the reported path must fail, whatever the verdict
+        # said.
+        text = UI_TEST.read_text()
+        self.assertIn('echo "ui_test: EVIDENCE MISSING', text)
+        self.assertIn('[ ! -s "$RUN_DIR/index.html" ]', text)
+
+
+if __name__ == "__main__":
+    unittest.main()

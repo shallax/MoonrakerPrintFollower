@@ -45,13 +45,11 @@ if ! docker exec "$CONTAINER" true >/dev/null 2>&1; then
 fi
 # Per-unit evidence dir: the release gate gives every unit its own name
 # so a later unit never overwrites an earlier one's proof (the panel's
-# evidence-survival finding).
-# An absolute RUN_DIR_NAME passes through (the release gate's
-# timestamped root); a relative one nests under ui-artifacts.
-case "${RUN_DIR_NAME:-run-001}" in
-    /*) RUN_DIR="$RUN_DIR_NAME" ;;
-    *) RUN_DIR="$WORK_DIR/ui-artifacts/${RUN_DIR_NAME:-run-001}" ;;
-esac
+# evidence-survival finding). Both sides resolve through the one shared
+# rule (tools/ui_test_paths.sh carries the tests) so the host report
+# and the container writes can never drift apart again.
+RUN_DIR="$(tools/ui_test_paths.sh resolve "$WORK_DIR" "${RUN_DIR_NAME:-run-001}")"
+CONTAINER_RUN_DIR="$(tools/ui_test_paths.sh resolve "$CONTAINER_WORK_DIR" "${RUN_DIR_NAME:-run-001}")"
 
 # The pinned Cura for this run: any version can be selected; prepare
 # one with tools/fetch_cura.py (the manifest records the swap).
@@ -75,10 +73,7 @@ cleanup() {
         # The seeded profile holds the real host and key at runtime:
         # a real run's debris must not outlive the run (the key
         # must never sit on disk beyond the session).
-        case "${RUN_DIR_NAME:-run-001}" in
-            /*) rm -rf "$WORK_DIR"/xdg "$RUN_DIR_NAME" ;;
-            *) rm -rf "$WORK_DIR"/xdg "$WORK_DIR"/ui-artifacts/"${RUN_DIR_NAME:-run-001}" ;;
-        esac
+        rm -rf "$WORK_DIR"/xdg "$RUN_DIR"
     fi
 }
 trap cleanup EXIT INT TERM
@@ -246,7 +241,7 @@ fi
 # A previous run's evidence is root-owned (the container writes it):
 # the container's root clears the dir — the host cannot chmod or
 # remove those files, and set -e turns the EPERM into a dead run.
-docker exec "$CONTAINER" rm -rf "${CONTAINER_WORK_DIR}/ui-artifacts/${RUN_DIR_NAME:-run-001}"
+docker exec "$CONTAINER" rm -rf "$CONTAINER_RUN_DIR"
 mkdir -p "$RUN_DIR"
 # The container's runner and driver write into the scratch tree (the
 # port/token files at /tmp/mpf itself, the galleries under this dir);
@@ -267,7 +262,7 @@ case "$MODE" in
             /lib64/ld-linux-x86-64.so.2 ./UltiMaker-Cura" >/tmp/mpf/cura_run.log 2>&1 &'
         # wait for the driver's port, then run the discovery
         for _ in $(seq 1 120); do [ -s /tmp/mpf/harness_port.txt ] && break; sleep 1; done
-        docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="${CONTAINER_WORK_DIR}/ui-artifacts/${RUN_DIR_NAME:-run-001}" \
+        docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
             python3 /tmp/mpf/harness_runner.py discover
         ;;
     scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite|real)
@@ -380,15 +375,23 @@ case "$MODE" in
             # The host and key ride the container exec ONLY for real
             # mode — simulator runs never carry them (the panel's
             # process-table finding).
-            docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="${CONTAINER_WORK_DIR}/ui-artifacts/${RUN_DIR_NAME:-run-001}" \
+            docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
                 HARNESS_COORDS="$COORDS" REAL_URL="${REAL_URL:-}" \
                 REAL_API_KEY="${REAL_API_KEY:-}" \
                 python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
         else
-            docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="${CONTAINER_WORK_DIR}/ui-artifacts/${RUN_DIR_NAME:-run-001}" \
+            docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
                 HARNESS_COORDS="$COORDS" \
                 python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
         fi
         ;;
 esac
 echo "ui_test: gallery at $RUN_DIR/index.html"
+# A run whose evidence never landed at the reported path is a failed
+# run whatever the verdict said — the doubled-path bug went green
+# while every gallery sat in a directory neither the gate nor CI
+# ever read. Discover dumps coordinates, not a gallery.
+if [ "${MODE:-scenario}" != "discover" ] && [ ! -s "$RUN_DIR/index.html" ]; then
+    echo "ui_test: EVIDENCE MISSING — no gallery at $RUN_DIR/index.html" >&2
+    exit 1
+fi
