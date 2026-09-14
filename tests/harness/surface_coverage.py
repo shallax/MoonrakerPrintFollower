@@ -26,7 +26,8 @@ def extract() -> Dict[str, List[str]]:
     for name in sorted(os.listdir(PLUGINS)):
         path = os.path.join(PLUGINS, name)
         if name.endswith(".py") and os.path.isfile(path):
-            source = open(path, encoding="utf-8").read()
+            with open(path, encoding="utf-8") as handle:
+                source = handle.read()
             if "@pyqtSlot" not in source:
                 continue
             module = os.path.splitext(name)[0]

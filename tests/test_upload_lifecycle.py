@@ -4,6 +4,8 @@ from http.server import ThreadingHTTPServer
 import json
 import os
 import pathlib
+import shutil
+import tempfile
 import threading
 import unittest
 from types import SimpleNamespace
@@ -269,10 +271,11 @@ class UploadLifecycleTests(unittest.TestCase):
     def _file_manager(self, client):
         fm = self.qt.load("FileManager").FileManager(client, None)
         self.addCleanup(fm.bind)
-        source = "/tmp/mpf/f04-upload.gcode"
+        directory = tempfile.mkdtemp(prefix="f04-upload-")
+        source = os.path.join(directory, "f04-upload.gcode")
         with open(source, "wb") as handle:
             handle.write(b"G1 X0\n")
-        self.addCleanup(os.unlink, source)
+        self.addCleanup(shutil.rmtree, directory, True)
         return fm, source
 
     def test_file_manager_upload_terminal_disposes_exactly_once(self):
