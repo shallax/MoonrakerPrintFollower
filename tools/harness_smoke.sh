@@ -25,14 +25,19 @@ make package >/dev/null
 # build itself fails (a swallowed build once left docker run without
 # an image and the whole job died on a usage error).
 echo "harness smoke: pulling the harness image (building if it is unreachable)"
-docker pull ghcr.io/shallax/mpf-cura-harness:latest >/dev/null 2>&1 || {
+if docker pull ghcr.io/shallax/mpf-cura-harness:latest >/dev/null 2>&1; then
+    # The run uses the short local name; the registry image carries
+    # the full ghcr ref and must be re-tagged first (an untagged
+    # pull once left docker run pulling the bare name from Hub).
+    docker tag ghcr.io/shallax/mpf-cura-harness:latest mpf-cura-harness
+else
     echo "harness smoke: the pull failed — building the image locally"
     if ! docker build -q -t mpf-cura-harness "$root/tools/harness" > "$RUN_ROOT/build.log" 2>&1; then
         echo "harness smoke: the image build failed:"
         tail -30 "$RUN_ROOT/build.log"
         exit 1
     fi
-}
+fi
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 # SYS_PTRACE lets the stall diagnostics attach gdb/strace to the
 # hung boot from inside the container (the host's ptrace_scope
