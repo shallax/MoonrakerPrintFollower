@@ -212,7 +212,17 @@ def scenario(expect_fail=False):
             video.kill()
     write_gallery(steps, expect_fail, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
+
+
+def _verdict(steps):
+    """The suite verdict: failures print to stdout too, so a cell's
+    job log names the failing steps even when the gallery upload dies
+    (the two flaky groups once failed with no reachable evidence)."""
+    failed = [name for name, _, _, ok, _ in steps if not ok]
+    if failed:
+        print(f"ui_test: FAILED steps: {', '.join(failed)}")
+    return 0 if not failed else 1
 
 
 def write_gallery(steps, expect_fail, title="the skeleton demo — real Cura under Xvfb, QTest clicks on Cura's own stage buttons",
@@ -964,7 +974,7 @@ def scenario9():
     title = "Gate #9 — pause list verified-only"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 def scenario8():
@@ -1049,7 +1059,7 @@ def scenario8():
     title = "Gate #8 — dwell profile"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 def scenario10():
@@ -1120,7 +1130,7 @@ def scenario10():
     title = "Gate #10 — restart arming / e-stop latch"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 def scenario11():
@@ -1193,7 +1203,7 @@ def scenario11():
     title = "Gate #11 — scroll-to-prompt"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 def scenario7():
@@ -1261,7 +1271,7 @@ def scenario7():
     title = "Gate #7 — transport handover"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 def scenario6():
@@ -1350,7 +1360,7 @@ def scenario6():
     title = "Gate #6 — detach on any layer selection change"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 def scenario5():
@@ -1443,7 +1453,7 @@ def scenario5():
     title = "Gate #5 — temperatures at print start"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 def scenario4():
@@ -1525,7 +1535,7 @@ def scenario4():
     title = "Gate #4 — camera first load"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 def scenario3():
@@ -1594,7 +1604,7 @@ def scenario3():
     title = "Gate #3 — M117 in the Print-job section"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 def scenario2(expect_fail=False):
@@ -1685,7 +1695,7 @@ def scenario2(expect_fail=False):
     title = "Gate #2 — the card stays through load and after render"
     write_gallery(steps, expect_fail, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 def scenario1(expect_fail=False):
@@ -1777,7 +1787,7 @@ def scenario1(expect_fail=False):
     title = "Gate #1 — the failure state clears itself"
     write_gallery(steps, expect_fail, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 SUITE_STATE = {"sim": {}, "model": {}, "item": {}, "rect": {}}
@@ -1850,7 +1860,7 @@ def suite_run(group_id):
     title = f"Scenario group {group_id}"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 def suite_scenario(spec, step_fn=None):
@@ -2013,7 +2023,7 @@ def real_run():
     title = "Real-printer read-only — observation, no commands"
     write_gallery(steps, False, title, video=video_path)
     print(f"gallery: {RUN_DIR}/index.html")
-    return 0 if all(step[3] for step in steps) else 1
+    return _verdict(steps)
 
 
 
