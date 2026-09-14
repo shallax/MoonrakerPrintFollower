@@ -266,15 +266,44 @@ def _verdict(steps):
 # them null rather than absent.
 EVIDENCE = []
 
+# F08's evidence classification: a step's class derives from its
+# MECHANISM, never from a declared label — the scenario's claim is
+# the minimum class over its steps (one real click plus six slot
+# calls is application integration, not UI interaction). The
+# ratcheting pin in test_harness_runner.py holds the census: real
+# input can only grow, direct invocation can only shrink.
+CLASS_ORDER = {"diagnostic-probe": 0, "application-integration": 1,
+               "ui-interaction": 2}
+
+DIRECT_INVOCATION_OPS = frozenset((
+    "exec_slot", "exec_file_slot", "emit_click", "click_jog",
+    "confirm_box", "exec_mode", "exec_validator", "exec_console",
+    "exec_extrude", "exec_test_connection", "exec_code"))
+
+REAL_INPUT_OPS = frozenset(("deliver_click", "click_stage", "click_text"))
+
+
+def _classify(op, delivery):
+    if op in REAL_INPUT_OPS:
+        # Real input; the delivery record decides. click_stage's
+        # acceptance is the stage transition itself (the effect).
+        if isinstance(delivery, dict) and delivery.get("accepted"):
+            return "ui-interaction"
+        return "application-integration"
+    if op in DIRECT_INVOCATION_OPS:
+        return "application-integration"
+    return "diagnostic-probe"
+
 
 def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, started, delivery=None):
     path, capture_error = capture if isinstance(capture, tuple) else (capture, None)
+    op = step.get("op") if isinstance(step, dict) else "boot"
     return {
         "schema": 1,
         "scenario": spec.get("id"),
         "step": index,
         "name": name,
-        "op": step.get("op") if isinstance(step, dict) else "boot",
+        "op": op,
         "spec": step,
         "ok": bool(ok),
         "action": action,
@@ -283,6 +312,7 @@ def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, sta
         "capture_error": capture_error,
         "duration_ms": round((time.monotonic() - started) * 1000),
         "delivery": delivery,
+        "class": _classify(op, delivery),
     }
 
 
@@ -290,6 +320,17 @@ def write_evidence(title):
     """evidence.json beside the gallery: the machine-readable run
     record. A run whose evidence never landed fails ui_test.sh's
     EVIDENCE MISSING check whatever the verdict said."""
+    by_class = {"diagnostic-probe": 0, "application-integration": 0,
+                "ui-interaction": 0}
+    scenario_min = {}
+    for entry in EVIDENCE:
+        by_class[entry["class"]] += 1
+        sid = entry["scenario"]
+        if sid is None:
+            continue
+        order = CLASS_ORDER[entry["class"]]
+        if sid not in scenario_min or order < CLASS_ORDER[scenario_min[sid]]:
+            scenario_min[sid] = entry["class"]
     run = {
         "schema": 1,
         "title": title,
@@ -297,6 +338,10 @@ def write_evidence(title):
         "plugin": os.environ.get("PLUGIN_VERSION", "?"),
         "mode": os.environ.get("HARNESS_MODE", ""),
         "written": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "classification": {
+            "steps": by_class,
+            "scenario_minimum": scenario_min,
+        },
         "steps": EVIDENCE,
     }
     with open(os.path.join(RUN_DIR, "evidence.json"), "w", encoding="utf-8") as handle:
@@ -2156,7 +2201,12 @@ def suite_step(step):
                 stage=step["stage"], aim=reply.get("aim"), hit=reply.get("hit"),
                 size=reply.get("size"), clicked=reply.get("clicked"),
                 stage_after=reply.get("stage"))
-        return result.get("ok") is True, f"real click on Cura's own {step['stage']} header button", note
+        landed = result.get("ok") is True
+        # The stage transition itself is the delivery's acceptance
+        # evidence — the qclick reply carries the events and the hit.
+        delivery = {"accepted": landed, "events": reply.get("events"),
+                    "hit": reply.get("hit")}
+        return landed, f"real click on Cura's own {step['stage']} header button", note, delivery
     if op == "click_text":
         reply = rpc({"id": 1, "cmd": "click_text", "text": step["text"],
                      "button": step.get("button", "left")})
