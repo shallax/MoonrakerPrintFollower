@@ -26,6 +26,15 @@ WORK_DIR="${MPF_WORK_DIR:-/tmp/mpf}"
 mkdir -p "$WORK_DIR"
 export MPF_WORK_DIR="$WORK_DIR"
 
+# A warm container from another checkout (or an older layout) serves
+# the WRONG harness tree through its tests/harness mount — the same
+# drift class docker_dev.sh guards. Recreate it when the mount
+# disagrees, before the existence check reuses it.
+_harness_src="$(docker inspect "$CONTAINER" --format '{{range .Mounts}}{{if eq .Destination "'"$root"'/tests/harness"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+if [ -n "$_harness_src" ] && [ "$_harness_src" != "$root/tests/harness" ]; then
+    echo "ui_test: the harness container mounts another checkout — recreating it"
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+fi
 # The harness container must exist before any docker exec:
 # provision it (image + mounts) exactly as the release gate does,
 # so `make ui_test` works from a bare machine.
