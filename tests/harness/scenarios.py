@@ -585,14 +585,20 @@ else:
         scene = handle.mapToScene(QPointF(0, 0))
         handle_x = round(scene.x() + handle.width() / 2)
         handle_y = round(scene.y() + handle.height() / 2)
+        # The drag moves the handle away from its nearer slider end:
+        # a fixed downward drag clamps at the bottom edge and never
+        # detaches once the running print has advanced the handle
+        # there (the slow-hardware observation).
+        slider_top = round(target.mapToScene(QPointF(0, 0)).y())
+        dy = -60 if handle_y > slider_top + round(target.height()) / 2 else 60
         qtest = _import_qtest()
         qtest.QTest.mousePress(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(handle_x, handle_y))
         for step in range(1, 5):
-            qtest.QTest.mouseMove(window, QPoint(handle_x, handle_y + step * 12))
+            qtest.QTest.mouseMove(window, QPoint(handle_x, handle_y + step * dy // 4))
             qtest.QTest.qWait(80)
-        qtest.QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(handle_x, handle_y + 48))
+        qtest.QTest.mouseRelease(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(handle_x, handle_y + dy))
         qtest.QTest.qWait(300)
-        result = {"dragged": True, "from": [handle_x, handle_y], "h": round(target.height())}
+        result = {"dragged": True, "from": [handle_x, handle_y], "h": round(target.height()), "dy": dy}
 """
 
 P_FOLLOW_READ = """from UM.Application import Application

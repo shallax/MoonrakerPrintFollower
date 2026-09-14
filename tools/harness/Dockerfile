@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl dbus dbus-user-session ffmpeg fontconfig \
         fonts-dejavu-core fonts-dejavu-mono gdb libegl1 libgl1 libgl1-mesa-dri \
         libglx0 libgtk-3-0 libxkbcommon-x11-0 libxtst6 mesa-libgallium \
-        mesa-va-drivers mesa-vdpau-drivers mesa-vulkan-drivers python3-dbus \
-        python3-tornado strace unzip x11-xkb-utils xdotool xvfb \
+        mesa-va-drivers mesa-vdpau-drivers mesa-vulkan-drivers psmisc \
+        python3-dbus python3-tornado strace unzip x11-xkb-utils xdotool xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # The ubuntu:24.04 base already ships the harness user (ubuntu,

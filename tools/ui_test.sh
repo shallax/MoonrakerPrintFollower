@@ -192,7 +192,8 @@ docker exec "$CONTAINER" bash -lc 'pgrep -f "Xvfb :9[9]" >/dev/null' || \
 # pile-up. The bracket in the pattern keeps the pkill from matching
 # its own command line.
 docker exec "$CONTAINER" bash -lc 'pkill -9 -f "UltiMaker-Cur[a]" 2>/dev/null; \
-    pkill -9 -f "ffmpe[g]" 2>/dev/null; sleep 1'
+    pkill -9 -f "ffmpe[g]" 2>/dev/null; \
+    pkill -9 -f "simulator_serve[.]py" 2>/dev/null; sleep 1'
 
 # The simulator: the plugin's network peer for the run. Fixed port so
 # the seeded printer config points at it deterministically. Restarted
