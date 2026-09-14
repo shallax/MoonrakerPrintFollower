@@ -67,10 +67,27 @@ def rpc(request, timeout=20.0):
     raise RuntimeError(f"driver RPC failed: {last_error}")
 
 
+def _png_size(path):
+    """The PNG header's declared dimensions, or None when the file is
+    not a readable PNG. A capture must BE what shot() asked for — a
+    truncated or mis-sized frame passes the old 100-byte check."""
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(24)
+    except OSError:
+        return None
+    if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    return (int.from_bytes(header[16:20], "big"), int.from_bytes(header[20:24], "big"))
+
+
 def shot(name):
     """One frame into the run dir. A capture that did not happen must
     read as a failure — a silently missing image would otherwise fall
-    back to a stale frame with the same name (the panel's finding)."""
+    back to a stale frame with the same name (the panel's finding).
+    The frame must also match the declared SIZE: a clamped or
+    truncated x11grab still writes a plausible file, and every
+    evidence claim downstream rests on these pixels."""
     path = os.path.join(RUN_DIR, f"{name}.png")
     try:
         os.unlink(path)
@@ -84,6 +101,9 @@ def shot(name):
         return (path, f"capture failed: {exc!r}"[:80])
     if not os.path.exists(path) or os.path.getsize(path) < 100:
         return (path, "capture failed: empty frame")
+    expected = tuple(int(part) for part in SIZE.split("x"))
+    if _png_size(path) != expected:
+        return (path, f"capture failed: frame is {_png_size(path)}, expected {expected}")
     return (path, None)
 
 
@@ -225,8 +245,55 @@ def _verdict(steps):
     return 0 if not failed else 1
 
 
+# The per-run evidence record (the spine): every step leaves a
+# machine-readable entry — op, target spec, verdict, capture and
+# wall-clock duration — so the coverage execution check, the F08
+# classification and the budget record all read one artifact instead
+# of three. The delivery fields (resolved item, accepted event) are
+# filled by the driver machinery as it lands; schema 1 ships with
+# them null rather than absent.
+EVIDENCE = []
+
+
+def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, started):
+    path, capture_error = capture if isinstance(capture, tuple) else (capture, None)
+    return {
+        "schema": 1,
+        "scenario": spec.get("id"),
+        "step": index,
+        "name": name,
+        "op": step.get("op") if isinstance(step, dict) else "boot",
+        "spec": step,
+        "ok": bool(ok),
+        "action": action,
+        "assertion": assertion,
+        "capture": os.path.basename(path) if path else None,
+        "capture_error": capture_error,
+        "duration_ms": round((time.monotonic() - started) * 1000),
+        "delivery": None,
+    }
+
+
+def write_evidence(title):
+    """evidence.json beside the gallery: the machine-readable run
+    record. A run whose evidence never landed fails ui_test.sh's
+    EVIDENCE MISSING check whatever the verdict said."""
+    run = {
+        "schema": 1,
+        "title": title,
+        "cura": os.environ.get("CURA_VERSION", "?"),
+        "plugin": os.environ.get("PLUGIN_VERSION", "?"),
+        "mode": os.environ.get("HARNESS_MODE", ""),
+        "written": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "steps": EVIDENCE,
+    }
+    with open(os.path.join(RUN_DIR, "evidence.json"), "w", encoding="utf-8") as handle:
+        json.dump(run, handle, indent=2)
+
+
 def write_gallery(steps, expect_fail, title="the skeleton demo — real Cura under Xvfb, QTest clicks on Cura's own stage buttons",
                   video=None):
+    write_evidence(title)
     rows = []
     for name, action, assertion, ok, path in steps:
         capture_error = None
@@ -1840,10 +1907,19 @@ def suite_run(group_id):
     steps = []
     try:
         hello = rpc({"id": 1, "cmd": "hello"})
-        steps.append(boot_step(hello))
+        _boot = boot_step(hello)
+        steps.append(_boot)
+        EVIDENCE.append(_evidence_entry({"id": group_id}, -1, {"op": "hello"},
+                                        _boot[0], _boot[3], _boot[1], _boot[2],
+                                        _boot[4], time.monotonic()))
         gate = ensure_ready()
+        _gate_cap = shot("01-gate")
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome not up", gate, _gate_cap))
+        EVIDENCE.append(_evidence_entry({"id": group_id}, -2, {"op": "boot_gate"},
+                                        "01-gate", gate,
+                                        "boot gate: active machine present, no welcome overlay",
+                                        "welcome not up", _gate_cap, time.monotonic()))
         wait_stage("PrepareStage", timeout_ms=60000)
         for spec in specs:
             sim_http("/harness/reset", "POST", {})
@@ -1870,13 +1946,21 @@ def suite_scenario(spec, step_fn=None):
     steps = []
     for index, step in enumerate(spec.get("steps", ())):
         name = f"{spec['id']}-{index:02d}"
+        started = time.monotonic()
         try:
             result = step_fn(step)
             ok, action, assertion = result
-            steps.append((name, action, assertion, ok, shot(name)))
+            capture = shot(name)
+            steps.append((name, action, assertion, ok, capture))
+            EVIDENCE.append(_evidence_entry(spec, index, step, name, ok, action,
+                                            assertion, capture, started))
         except Exception as exc:
+            capture = shot(name)
             steps.append((name, f"{spec['name']}: {step.get('op')}",
-                          f"step error: {exc!r}", False, shot(name)))
+                          f"step error: {exc!r}", False, capture))
+            EVIDENCE.append(_evidence_entry(spec, index, step, name, False,
+                                            f"{spec['name']}: {step.get('op')}",
+                                            f"step error: {exc!r}", capture, started))
     return steps
 
 # ─── Real-printer read-only mode (TESTING.md §2.5) ───────────────
