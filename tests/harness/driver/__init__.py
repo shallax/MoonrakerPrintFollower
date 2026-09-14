@@ -336,9 +336,15 @@ class HarnessServer(QObject):
                 if window is None:
                     return {"id": request_id, "ok": False,
                             "error": "no window with a stage header appeared"}
+                try:
+                    _geom = QGuiApplication.primaryScreen().geometry()
+                    _screen = [_geom.width(), _geom.height()]
+                except Exception:
+                    _screen = None
                 return {"id": request_id, "ok": True,
                         "title": window.title() or "",
-                        "size": (window.width(), window.height())}
+                        "size": (window.width(), window.height()),
+                        "screen": _screen}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "windows":
@@ -407,8 +413,9 @@ class HarnessServer(QObject):
                 window = _main_window()
                 if window is None:
                     return {"id": request_id, "ok": False, "error": "no window"}
-                window.setGeometry(0, 0, int(request.get("w", 1600)),
-                                   int(request.get("h", 1000)))
+                _win = os.environ.get("HARNESS_WINDOW", "1840x1040").split("x")
+                window.setGeometry(0, 0, int(request.get("w", int(_win[0]))),
+                                   int(request.get("h", int(_win[1]))))
                 time.sleep(2)
                 return {"id": request_id, "ok": True,
                         "size": [window.width(), window.height()]}

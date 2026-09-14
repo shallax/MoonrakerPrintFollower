@@ -19,7 +19,12 @@ import sys
 import time
 
 DISPLAY = os.environ.get("HARNESS_DISPLAY", ":99")
-SIZE = "1600x1000"
+# One display geometry (the round-2 contract): the screen SIZE, the
+# capture size and the window pin resolve from the environment, set
+# by ui_test.sh. The window pins SMALLER than the screen — headroom,
+# so the screen-fits assertion has something to defend.
+SIZE = os.environ.get("HARNESS_GEOMETRY", "1920x1080")
+WINDOW_SIZE = os.environ.get("HARNESS_WINDOW", "1840x1040")
 RUN_DIR = os.environ.get("HARNESS_RUN_DIR", "/tmp/mpf/ui-artifacts/run-001")
 PORT_FILE = "/tmp/mpf/harness_port.txt"
 TOKEN_FILE = "/tmp/mpf/harness_token.txt"
@@ -135,9 +140,16 @@ def ensure_ready():
     # while a wide window passes. Pin the geometry after the welcome
     # settles so every run has the same layout; the probes measure
     # the live tree either way.
+    _want = [int(part) for part in WINDOW_SIZE.split("x")]
+    _screen = [int(part) for part in SIZE.split("x")]
     try:
-        _pin = rpc({"id": 1, "cmd": "window_pin", "w": 1500, "h": 900}, timeout=70)
-        _pin_ok = bool(_pin.get("ok") and list(_pin.get("size") or ()) == [1500, 900])
+        _pin = rpc({"id": 1, "cmd": "window_pin", "w": _want[0], "h": _want[1]}, timeout=70)
+        # The boot gate fails when the window cannot render on the
+        # screen (the pin's own report must match BOTH) — a window
+        # larger than the screen used to pass by self-report alone.
+        _pin_ok = bool(_pin.get("ok")
+                       and list(_pin.get("size") or ()) == _want
+                       and list(_pin.get("screen") or ()) == _screen)
     except Exception:
         _pin_ok = False
     # The model gate: the plugin's per-machine model appears when the
@@ -1944,7 +1956,18 @@ def suite_scenario(spec, step_fn=None):
     if step_fn is None:
         step_fn = suite_step
     steps = []
+    # The calibration pre-step (a suite default, not a per-spec
+    # field): every scenario starts from the baseline geometry, so no
+    # scenario's resize can leak into the next inside a group's
+    # shared boot (the round-2 H1/M-3).
+    _want = [int(part) for part in WINDOW_SIZE.split("x")]
     for index, step in enumerate(spec.get("steps", ())):
+        if index == 0:
+            try:
+                rpc({"id": 1, "cmd": "window_pin", "w": _want[0], "h": _want[1]},
+                    timeout=40)
+            except Exception:
+                pass
         name = f"{spec['id']}-{index:02d}"
         started = time.monotonic()
         try:

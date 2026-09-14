@@ -18,6 +18,13 @@ PLUGIN_VERSION="$(python3 -c 'import json; print(json.load(open("package.json"))
 
 CONTAINER="${HARNESS_CONTAINER:-mpf-cura513}"
 CONTAINER_WORK_DIR="/tmp/mpf"
+# One display geometry for the whole suite (the round-2 contract):
+# the Xvfb screen, the capture SIZE and the window pin all resolve
+# from here, and the runner consumes them through the environment.
+# The window pins SMALLER than the screen — headroom, so the
+# screen-fits assertion has something to defend.
+HARNESS_GEOMETRY="${HARNESS_GEOMETRY:-1920x1080}"
+HARNESS_WINDOW="${HARNESS_WINDOW:-1840x1040}"
 # The deterministic scratch root. Everything a run needs lives
 # under it and is CREATED here, never assumed — /tmp does not
 # survive a reboot, and an unprepared tree must provision itself
@@ -211,8 +218,14 @@ cp "$root/tests/harness/simulator.py" "$root/tests/harness/simulator_serve.py" \
 # shell-backgrounded Xvfb — subshell or not, nohup or not — dies with
 # its exec session's teardown (proven empirically on a fresh
 # container), while `docker exec -d` has no session to tear down.
-docker exec "$CONTAINER" bash -lc 'pgrep -f "Xvfb :9[9]" >/dev/null' || \
-    docker exec -d "$CONTAINER" Xvfb :99 -screen 0 1600x1000x24 -nolisten tcp
+# The guard is geometry-aware: a leftover Xvfb at the OLD size must
+# not serve the new calibration (the round-2 H1 — local and CI
+# disagreed about which geometry was running), and the DPI is pinned
+# so the font-metric-derived screenScaleFactor cannot drift with it.
+docker exec "$CONTAINER" bash -lc "pgrep -f 'Xvfb :99 -screen 0 ${HARNESS_GEOMETRY}'" >/dev/null || {
+    docker exec "$CONTAINER" bash -lc 'pkill -f "Xvfb :9[9]"' >/dev/null 2>&1 || true
+    docker exec -d "$CONTAINER" Xvfb :99 -screen 0 "${HARNESS_GEOMETRY}"x24 -dpi 96 -nolisten tcp
+}
 
 # Kill anything a crashed previous run left behind (the EXIT trap
 # covers clean exits; this covers ui_test.sh itself being killed):
@@ -386,12 +399,14 @@ case "$MODE" in
             # process-table finding).
             docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
                 HARNESS_COORDS="$COORDS" HARNESS_MODE="$MODE" \
+                HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
                 REAL_URL="${REAL_URL:-}" \
                 REAL_API_KEY="${REAL_API_KEY:-}" \
                 python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
         else
             docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
                 HARNESS_COORDS="$COORDS" HARNESS_MODE="$MODE" \
+                HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
                 python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
         fi
         ;;
