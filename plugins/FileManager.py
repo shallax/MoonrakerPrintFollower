@@ -16,7 +16,7 @@ import os
 import shutil
 import tempfile
 import time
-from typing import Any, Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import quote
 
 from PyQt6.QtCore import QByteArray, QFile, QIODevice, QObject, QUrl, QVariant, pyqtSignal
@@ -41,6 +41,7 @@ from .FileManagerPolicy import (
     clamp_page,
     directory_rows,
     empty_kind,
+    filter_option_counts,
     is_gcode_name,
     name_collides,
     normalise_columns,
@@ -88,6 +89,16 @@ class FileManager(QObject):
         self._dirs: Set[str] = set()
         self._history: List[Dict[str, Any]] = []
         self._history_exhausted = False
+        # The F06 projection cache: one pipeline evaluation per
+        # revision set, keyed on the data/history revisions, the view
+        # fingerprint and the minute bucket (date filters expire
+        # deliberately, never silently stale). projection_count is
+        # the deterministic instrument the tests pin.
+        self._data_rev = 0
+        self._history_rev = 0
+        self._view_cache: Optional[Tuple[tuple, List[FileRow]]] = None
+        self._options_cache: Optional[Tuple[tuple, Dict[str, Any]]] = None
+        self.projection_count = 0
         self._disk_usage: Dict[str, int] = {}
         self._refreshed_at: Optional[float] = None
         self._walk_error: Optional[str] = None
@@ -248,6 +259,7 @@ class FileManager(QObject):
                         self._dirs = fresh_dirs
                         self._walk_error = None
                         self._rejoin_history()
+                        self._data_rev += 1
                     else:
                         self._walk_error = walked_error[0]
                 self.changed.emit()
@@ -278,6 +290,7 @@ class FileManager(QObject):
             jobs = result.get("jobs", ()) or ()
             self._history = [job for job in jobs if isinstance(job, dict)]
             self._history_exhausted = len(self._history) < limit
+            self._history_rev += 1
             self._rejoin_history()
             self.changed.emit()
         transport.send_json("file-manager", "history", "GET",
@@ -304,6 +317,7 @@ class FileManager(QObject):
                 if len(jobs) < batch or len(accumulated) >= 10000:
                     self._history = accumulated
                     self._history_exhausted = True
+                    self._history_rev += 1
                     self._rejoin_history()
                     self.changed.emit()
                     return
@@ -335,6 +349,7 @@ class FileManager(QObject):
             row = self._rows.get(key)
             if row is not None and isinstance(data, dict):
                 self._rows[key] = FileRow(**{**vars(row), **_row_from_metadata(relpath, data)})
+                self._data_rev += 1
                 self.changed.emit()
             self.note.emit(f"Metadata refreshed for {relpath.rsplit('/', 1)[-1]}.")
         transport.send_json("file-manager", f"metascan:{relpath}", "POST",
@@ -424,6 +439,7 @@ class FileManager(QObject):
                                  "relpath": target})
             self._rows.pop(old_key, None)
             self._rows[f"gcodes/{target}"] = new_row
+            self._data_rev += 1
             thumb = self._thumbs.pop(relpath, None)
             if thumb is not None:
                 self._thumbs[target] = thumb
@@ -943,12 +959,28 @@ class FileManager(QObject):
     def view(self) -> ViewState:
         return self._view
 
+    def _view_fingerprint(self):
+        view = self._view
+        filters = tuple(sorted(
+            (key, tuple(sorted(value)) if isinstance(value, (list, tuple, set)) else value)
+            for key, value in view.filters.items()))
+        return (view.search, filters, view.sort_column, view.sort_ascending,
+                view.page, str(view.page_size))
+
     def current_rows(self) -> List[FileRow]:
         """Filter → search → sort over the right scope: the whole tree
         while a search is active (the global-search ruling),
         otherwise the CURRENT level only — a directory shows its own
         files, never a recursive aggregate of the subtree (the
-        author's live ruling)."""
+        author's live ruling). One evaluation per revision set: the
+        cached rows serve every caller until the data, the history,
+        the view or the minute bucket moves (the F06 repair — a
+        temperature tick no longer sorts the file list)."""
+        key = (self._data_rev, self._history_rev,
+               tuple(self._directory), self._view_fingerprint(),
+               int(time.time() / 60))
+        if self._view_cache is not None and self._view_cache[0] == key:
+            return self._view_cache[1]
         if self._view.search:
             base = list(self._rows.values())
         else:
@@ -956,7 +988,22 @@ class FileManager(QObject):
             base = [row for row in self._rows.values()
                     if row.relpath.startswith(prefix)
                     and "/" not in row.relpath[len(prefix):]]
-        return self._view.apply(base, now=time.time())
+        rows = self._view.apply(base, now=time.time())
+        self._view_cache = (key, rows)
+        self.projection_count += 1
+        return rows
+
+    def filter_option_counts_cached(self, *, now: float) -> Dict[str, Any]:
+        """The filter menus' per-option counts, cached with the view —
+        they rescan the resident rows (one scan per revision set, not
+        per publish)."""
+        key = ("options", self._data_rev, self._history_rev,
+               self._view_fingerprint(), int(now / 60))
+        if self._options_cache is not None and self._options_cache[0] == key:
+            return self._options_cache[1]
+        counts = filter_option_counts(self.resident_rows(), now=now)
+        self._options_cache = (key, counts)
+        return counts
 
     def page_rows(self) -> List[FileRow]:
         return page_slice(self.current_rows(), self._view.page, self._view.page_size)

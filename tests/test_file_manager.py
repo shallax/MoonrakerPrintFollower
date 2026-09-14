@@ -942,6 +942,43 @@ class FileManagerServiceTests(unittest.TestCase):
         self.service.toggle_page_selection()
         self.assertEqual(self.service.selection, set())
 
+    def test_projection_runs_once_per_revision_set(self):
+        # F06: a temperature tick must not sort the file list. One
+        # pipeline evaluation per (data, history, view, minute) set;
+        # every page helper, count and the empty state read the
+        # cached rows.
+        self.service.open()
+        self.directory("path=gcodes&", [("a.gcode", {}), ("b.gcode", {}), ("c.gcode", {})])
+        self.deliver("history/list", {"result": {"jobs": []}})
+        self.service.current_rows()
+        self.assertEqual(self.service.projection_count, 1)
+        # The model's reads inside ONE publish: still one evaluation.
+        self.service.page_rows()
+        self.service.total_count()
+        self.service.page_index()
+        self.service.page_number()
+        self.service.empty_state()
+        self.service.selection_state(self.service.page_rows())
+        self.service.filter_option_counts_cached(now=10.0)
+        self.assertEqual(self.service.projection_count, 1)
+        # A view change: exactly one more.
+        self.service.view.change_search("a")
+        self.service.current_rows()
+        self.assertEqual(self.service.projection_count, 2)
+        # A data change (metascan): exactly one more.
+        self.service.scan_metadata("a.gcode")
+        self.deliver("metascan", {"result": {"layer_height": 0.3}})
+        self.service.current_rows()
+        self.assertEqual(self.service.projection_count, 3)
+
+    def test_filter_option_counts_are_cached_with_the_view(self):
+        self.service.open()
+        self.directory("path=gcodes&", [("a.gcode", {}), ("b.gcode", {})])
+        self.deliver("history/list", {"result": {"jobs": []}})
+        first = self.service.filter_option_counts_cached(now=10.0)
+        again = self.service.filter_option_counts_cached(now=10.0)
+        self.assertIs(first, again)  # the cached object, not a rescan
+
 
 if __name__ == "__main__":
     unittest.main()

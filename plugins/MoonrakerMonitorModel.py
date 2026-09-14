@@ -38,7 +38,6 @@ from datetime import datetime
 from .FileManager import FileManager
 from .FileManagerPolicy import (
     delete_candidates,
-    filter_option_counts,
     is_gcode_name,
     name_collides,
     normalise_columns,
@@ -565,7 +564,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             "fileManagerSearch": fm.view.search,
             "fileManagerFilters": {key: (list(value) if isinstance(value, (list, tuple)) else [value]) for key, value in fm.view.filters.items() if value},
             "fileManagerFilterCounts": {key: len(value) if isinstance(value, (list, tuple)) else 1 for key, value in fm.view.filters.items() if value},
-            "fileManagerFilterOptions": filter_option_counts(fm.resident_rows(), now=now),
+            "fileManagerFilterOptions": fm.filter_option_counts_cached(now=now),
             "fileManagerHistoryLoaded": fm.history_loaded,
             "fileManagerHistoryExhausted": fm.history_exhausted,
             "fileManagerWalkError": fm.walk_error or "",
