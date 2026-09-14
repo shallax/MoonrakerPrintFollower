@@ -6,13 +6,11 @@ what the releases ahead aim to deliver and why they are ordered the way they are
 Version numbers and the release checklist live in `INSTRUCTIONS.md`. Items here
 are proposals — each becomes binding only when its release branch exists.
 
-Current release: **4.0.1** — SHIPPED (2026-09-14): the harness
-fast-follow — boot-verbosity, warning filtering, CodeQL scoping,
-the G-code dialog dismissal, the docs cleanup — with the shipped
-archives provably free of the test harness.
+Current release: **4.0.2** — SHIPPED (2026-09-14): the transfer and
+print-identity correctness release — five lifecycle repairs, each
+with its regression, live-tested through the snapshot loop.
 
-Next: **4.0.2** — transfer and print-identity correctness (see the
-4.0.2 section).
+Next: **4.1.0** — deep harness coverage (see the 4.1.0 section).
 
 ## Direction
 
@@ -841,7 +839,7 @@ FOLDED INTO 4.0.0 (ruling, 2026-09-11) — every item below shipped in
   4.0.0: the cadence sliders (status update, auxiliary, console) with
   the 250 ms floor landed as part of the websocket work.
 
-## 4.0.2 — Transfer and print-identity correctness
+## 4.0.2 — Transfer and print-identity correctness — SHIPPED (2026-09-14)
 
 Proposed from the 2026-09-14 architecture review (record in
 `review/4.0.2/`), shaped by the three-persona panel round (reports in
