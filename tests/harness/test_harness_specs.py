@@ -49,6 +49,31 @@ class HarnessSpecTests(unittest.TestCase):
                     broken.append((spec["id"], str(exc)[:80]))
         self.assertEqual(broken, [])
 
+    def test_every_exec_code_step_declares_its_verbs(self):
+        # The exec_code closure (the round-2 HIGH-1): inline code is
+        # the hiding place for direct invocations — E_STOP_SEQUENCE
+        # called printer.emergencyStopClick() invisibly. Every
+        # exec_code step now declares what it invokes, and each
+        # declaration must name something the code actually contains.
+        offenders = []
+        for spec in _scenarios.SCENARIOS:
+            for step in spec.get("steps", ()):
+                if step.get("op") != "exec_code":
+                    continue
+                verbs = step.get("verbs")
+                if verbs is None:
+                    offenders.append(f"{spec['id']}: exec_code step without verbs")
+                    continue
+                code = step.get("code") or ""
+                # Template-based steps store the CONSTANT name as
+                # code — resolve it so the verb is checked against
+                # the code text, not the name.
+                resolved = getattr(_scenarios, code, code) if code.isupper() else code
+                for verb in verbs:
+                    if verb not in resolved:
+                        offenders.append(f"{spec['id']}: verbs declares {verb!r}, not in the code")
+        self.assertEqual(offenders, [])
+
     def test_every_spec_op_exists_in_the_runner(self):
         with open(_runner.__file__, encoding="utf-8") as handle:
             source = handle.read()

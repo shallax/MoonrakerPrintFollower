@@ -53,6 +53,33 @@ class PngSizeTests(unittest.TestCase):
         self.assertIsNone(runner._png_size(path))
 
 
+class RealModeAllowlistTests(unittest.TestCase):
+    def test_real_mode_allowlists_are_pinned_exactly(self):
+        # The ratcheting shape: these allowlists are the only thing
+        # between a scenario and a live printer. They may only
+        # shrink; any change moves this pin AND the decision record
+        # in the same commit.
+        self.assertEqual(sorted(runner.REAL_SAFE_SLOTS), sorted([
+            "reconnect", "refreshAll", "refreshWebcams", "selectWebcam",
+            "setShowProbePoints", "setBedMeshPreviewVisible",
+            "setSectionExpanded", "setConsoleExpanded", "setStatusCollapsed",
+            "setInfoCollapsed", "setControlsCollapsed", "setConsoleHeight",
+            "clearConsoleHistory"]))
+        self.assertEqual(runner.REAL_SAFE_OPS, {
+            "click_stage", "click_text", "model_read",
+            "wait_model", "assert_model", "exec_slot", "dwell",
+            "rect_of", "assert_aligned", "assert_rendered",
+            "wait_rendered", "wait_rect", "dump_visible",
+            "resize_window", "census"})
+
+    def test_input_verbs_are_denied_in_real_mode(self):
+        # Deny-by-default: every input verb is refused in real mode
+        # unless deliberately allowlisted (none are).
+        for op in ("deliver_click", "key_press", "click_jog", "emit_click",
+                   "exec_file_slot", "exec_code"):
+            self.assertNotIn(op, runner.REAL_SAFE_OPS)
+
+
 class EvidenceRecordTests(unittest.TestCase):
     def setUp(self):
         shutil.rmtree(SCRATCH, ignore_errors=True)
