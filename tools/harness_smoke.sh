@@ -19,11 +19,20 @@ mkdir -p "$HARNESS_DIR" "$RUN_ROOT"
 # no dist/ — the dev loop's make package doesn't exist here. Build it.
 make package >/dev/null
 
-# Prefer the published image (the release workflow pushes it);
-# build locally only when the registry copy is unreachable.
+# Prefer the published image (the release workflow pushes it; the
+# package is private, so CI logs in first). Build locally only when
+# the registry copy is unreachable — and say so, loudly, when the
+# build itself fails (a swallowed build once left docker run without
+# an image and the whole job died on a usage error).
 echo "harness smoke: pulling the harness image (building if it is unreachable)"
-docker pull ghcr.io/shallax/mpf-cura-harness:latest >/dev/null 2>&1 || \
-    docker build -q -t mpf-cura-harness "$root/tools/harness" >/dev/null
+docker pull ghcr.io/shallax/mpf-cura-harness:latest >/dev/null 2>&1 || {
+    echo "harness smoke: the pull failed — building the image locally"
+    if ! docker build -q -t mpf-cura-harness "$root/tools/harness" > "$RUN_ROOT/build.log" 2>&1; then
+        echo "harness smoke: the image build failed:"
+        tail -30 "$RUN_ROOT/build.log"
+        exit 1
+    fi
+}
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 # SYS_PTRACE lets the stall diagnostics attach gdb/strace to the
 # hung boot from inside the container (the host's ptrace_scope

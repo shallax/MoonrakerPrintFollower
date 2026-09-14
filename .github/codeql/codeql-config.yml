@@ -1,0 +1,5 @@
+# The harness (the simulator, driver and scenarios) is test
+# infrastructure, not shipped code — CodeQL findings there are noise
+# on every PR.
+paths-ignore:
+  - tests/harness
