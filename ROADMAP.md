@@ -1056,6 +1056,68 @@ ordered by dependency:
   draft PR #19 closes as superseded with nothing of the review lost
   and every finding dispositioned; 1920x1080 everywhere.
 
+**Round-2 panel outcomes (2026-09-14, the full dispositions in
+`review/DECISIONS.md`):** the plan survives the panel with four
+re-shapes — the evidence spine (below), workstream 2 as machinery,
+budgets as hang detectors, and TESTING.md as strike-and-mark.
+
+- **The evidence spine (new workstream, built first).** The doubled
+  evidence path — shipped in 4.0.2: fourteen green gate jobs, zero
+  galleries uploaded — is fixed with tests (`94af08f`: one shared
+  resolver for both sides, an EVIDENCE MISSING gate check). On top:
+  the per-run per-step evidence record (op, target, resolved item,
+  delivered event + accepted, peer effect, rendered outcome) and
+  `shot()` refusing a bad capture. Every later workstream consumes
+  it.
+- **Workstream 2 is machinery, not conversion.** New driver verbs
+  (key injection, popup walks, generalized delivery introspection);
+  the coordinate path opens for clicked-bearing items and
+  degradation gates the verdict; the four-part proof scenario (real
+  delivery recorded; an overlay fails it; a broken binding fails
+  it); the re-censused ~81 steps; `exec_code` closed as a hiding
+  place; the real-mode allowlist ratchets (deny-by-default for
+  mutating targets). F08's label is the minimum over a scenario's
+  steps, computed from the evidence record, with state-setup and
+  expected-red classes.
+- **Workstream 1 geometry: one constant, pinned DPI.** The DPI is
+  pinned (`-dpi`) and `screenScaleFactor` asserted unchanged; the
+  window pins smaller than the screen; the screen-fits check lives
+  in `shot()`/`ensure_ready()`; the per-scenario pre-step is a
+  suite default. The calibration surface is banked: twelve numeric
+  assertions and six resize steps.
+- **Workstream 4 budgets are hang detectors.** Measured: the CI
+  gate phase ran ~4m24s and the longest unit's run was 63s against
+  a 900s budget — 14x headroom. A unit timeout reports HANG (exit
+  124) distinct from a red; per-unit duration lines land in the
+  unit log; the revisit happens after the conversion.
+- **Workstream 3 chart evidence: push transcript + ticker.** The
+  simulator records every pushed `notify_status_update` (frame,
+  timestamp, topic, payload digest) and gains an autonomous
+  temperature ticker; series assertions read the model against the
+  peer transcript; captures are human-review evidence, never the
+  assertion.
+- **Workstream 6 TESTING.md: strike-and-mark.** ~40 claims
+  reconciled — kept, implemented, or struck WITH status visible; a
+  named citation set is what the gate may cite; INFRA/PRODUCT tags
+  and quarantine are implemented (they serve workstreams 4/5), not
+  struck; a doc-pin test stops the drift.
+- **Workstream 7 `-j N`: the de-singletonization.** Per-slot port,
+  display, token file, run dir and container; pkill scoped to the
+  invocation's process group; refcounted teardown; serial default
+  keeps the same-container debris proof; CI never uses `-j`.
+- **Workstream 8 fold-ins.** F06's assertion is the deterministic
+  call count (zero recomputes on an unrelated revision), latency
+  recorded not gated, with the simulator files arm, revision
+  counters and one injected-clock seam; the lifecycle set is built
+  cheapest-first with priority 3 IN (the rebind + second machine
+  record — the ruling); the runner/driver dispatch table moves the
+  op-existence guard in the same commit.
+- **Acceptance (the exit evidence).** Every mapped surface observed
+  in a run's evidence record; every critical journey real input
+  with red-run proof; the hang verdict distinct; the doc-pin green;
+  all gates green with zero warnings. The PR stops at ready — the
+  merge, tag and release wait for the author's snapshot test.
+
 ### The suite's origin (the 4.0.0 record, kept for history)
 
 **Pulled into scope (2026-09-11):** the 4.0.0 release is frozen on
