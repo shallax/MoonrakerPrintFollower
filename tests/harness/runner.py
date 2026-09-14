@@ -2004,12 +2004,15 @@ def suite_scenario(spec, step_fn=None):
     # The calibration pre-step (a suite default, not a per-spec
     # field): every scenario starts from the baseline geometry, so no
     # scenario's resize can leak into the next inside a group's
-    # shared boot (the round-2 H1/M-3).
+    # shared boot (the round-2 H1/M-3). A one-shot resize — the boot
+    # pin's late reapplies would otherwise yank the window back to
+    # the baseline mid-scenario, right after the scenario's own
+    # crush resize.
     _want = [int(part) for part in WINDOW_SIZE.split("x")]
     for index, step in enumerate(spec.get("steps", ())):
         if index == 0:
             try:
-                rpc({"id": 1, "cmd": "window_pin", "w": _want[0], "h": _want[1]},
+                rpc({"id": 1, "cmd": "resize", "w": _want[0], "h": _want[1]},
                     timeout=40)
             except Exception:
                 pass
