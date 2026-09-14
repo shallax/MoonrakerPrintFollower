@@ -11,7 +11,8 @@ fast-follow — boot-verbosity, warning filtering, CodeQL scoping,
 the G-code dialog dismissal, the docs cleanup — with the shipped
 archives provably free of the test harness.
 
-Next: **4.1.0** — deep harness coverage (see the 4.1.0 section).
+Next: **4.0.2** — transfer and print-identity correctness (see the
+4.0.2 section).
 
 ## Direction
 
@@ -402,7 +403,7 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   (guards, jog gate, the follower's coordinator) re-evaluates
   immediately and consistently; the earlier per-consumer latches were
   deleted (one point, no scattered conditionals — the guard
-  sprawl; the permissions consolidation lives in the 3.7.0 roadmap).
+  sprawl; the permissions consolidation lives in the 4.2.0 roadmap).
 - E-stop recovery (the ruling, 2026-09-10, live-proven on
   their printer, overriding the investigation's readiness-gating
   alternative): after the stop the host refuses commands until the
@@ -411,7 +412,7 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   RECONNECT_DELAY_MS`), re-arming the monitor; the console's own
   connect/disconnect notes render the cycle. The rejected alternative
   (gating motion/setup on `klippy_state` readiness) stays on the
-  table for 3.7.0's permissions consolidation if the reconnect ever
+  table for 4.2.0's permissions consolidation if the reconnect ever
   proves insufficient.
 - Thumbnails (Snapshot 2): one-shot fetches into a session temp dir
   with loading/ready/failed states and the no-spin-forever fallback
@@ -839,6 +840,48 @@ FOLDED INTO 4.0.0 (ruling, 2026-09-11) — every item below shipped in
 - ~~**Poll-cadence sliders (2026-09-11)**~~ — SHIPPED IN
   4.0.0: the cadence sliders (status update, auxiliary, console) with
   the 250 ms floor landed as part of the websocket work.
+
+## 4.0.2 — Transfer and print-identity correctness
+
+Proposed from the 2026-09-14 architecture review (the record lives in
+`review/4.0.2/`): five small lifecycle repairs, each shipped with its
+deterministic regression — ahead of the 4.1.0 test round so the
+lifecycle-failure scenarios have fixed machinery to exercise.
+
+- **Download operation ownership (F01):** each download becomes an
+  operation object owning its queue, target, cancellation state, byte
+  count and worker handle. Cancellation retires the operation,
+  signals the writer, and releases the file only after the writer
+  exits; completion returns to Qt asynchronously (no GUI-thread
+  join); buffering is bounded with backpressure that never blocks
+  the GUI thread. Today the worker reads shared fields, cancellation
+  does not stop it, and the queue is unbounded.
+- **Per-attempt accounting (F02):** byte progress and the download
+  cap reset on every transfer/retry; lifetime telemetry stays
+  separate.
+- **One-off download lifetime (F03):** file-manager downloads carry
+  their printer/session and load-intent identity; rebind/shutdown
+  aborts reply and worker, and a stale completion cannot load into a
+  different Cura session. Errors surface; temporary resources are
+  released.
+- **Local upload cleanup (F04):** every success, failure,
+  cancellation and stale completion disposes of its Qt reply and
+  source exactly once, with ownership invalidated before an abort
+  can emit completion.
+- **Print metadata identity (F05):** a requested identity is
+  distinguished from the identity of successfully received metadata;
+  old job values clear before a new job presents, failures retry,
+  and the throttle keys on the print job so same-name restarts stay
+  valid.
+
+Acceptance: gated slow-writer cancellation followed immediately by a
+new download; sequential transfers and retries under an injected
+small cap; late completion after a printer switch; repeated upload
+cleanup; print-A metadata followed by a failing print-B query and a
+successful retry — with worker/reply/file retirement checked as well
+as UI outcomes. The regressions use injected clocks and barriers, no
+sleeps; the reusable lifecycle-failure scenario machinery lands in
+4.1.0.
 
 ## 4.1.0 — Deep harness coverage
 
