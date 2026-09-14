@@ -1094,7 +1094,7 @@ class MonitorDataAuxTests(unittest.TestCase):
     def test_camera_url_rewrites_through_the_bridge_when_a_key_is_set(self):
         # A key-carrying camera cannot render through Cura's loader:
         # the URL is republished on the keyless loopback bridge (the
-        # author's 4.0.0 ruling), key and upstream riding the bridge.
+        # the 4.0.0 ruling), key and upstream riding the bridge.
         from PyQt6.QtCore import QObject, pyqtSignal
 
         class FakeData(QObject):
