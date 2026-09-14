@@ -142,6 +142,11 @@ def verify_archive(
             name for name in names
             if "__pycache__" in name
             or name.lower().endswith(extra_forbidden)
+            # The test harness (the driver, the simulator, the
+            # scenarios) is test infrastructure and must never reach
+            # a shipped archive — the name tokens would only appear
+            # if the packaging picked the tests tree up.
+            or any(token in name for token in ("tests/", "harness", "simulator", "scenario"))
             or name.endswith((".pyc", ".pyo", ".orig", ".rej", ".swp", ".swo", ".tmp", ".bak"))
             or "/." in name
         ]
