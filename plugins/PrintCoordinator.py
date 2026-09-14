@@ -304,7 +304,7 @@ class PrintCoordinator(QObject):
         # %2F-escaped (proxies that reject encoded slashes 404 them).
         started = self._client.transport.send_json("follower", "mr-metadata", "GET",
             "server/files/metadata?filename=" + quote(filename, safe="/"),
-            self._mr_meta_done, category="metadata")
+            lambda p, e, a=asked: self._mr_meta_done(a, p, e), category="metadata")
         if not started:
             # A dropped send must leave no identity pointing at a job
             # that was never queried (the old latch satisfied forever).
@@ -316,12 +316,11 @@ class PrintCoordinator(QObject):
         self._mr_meta_at = time.monotonic()
         self._mr_meta_pending = True
 
-    def _mr_meta_done(self, payload, error):
+    def _mr_meta_done(self, asked, payload, error):
         self._mr_meta_pending = False
-        asked = self._mr_meta_asked
         value = result(payload) if payload else {}
-        if self._closed:
-            return
+        if self._closed or asked != self._mr_meta_asked:
+            return  # a reset or a new request superseded this one
         if error or not isinstance(value, Mapping):
             # Never latch a failed fetch; the stale payload (if any)
             # already fails the key check and is never served.
