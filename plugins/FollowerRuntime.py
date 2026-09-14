@@ -26,7 +26,13 @@ class FollowerRuntime:
         self.binding = PrinterBinding(application, self.client, parent)
         self.cura = CuraIntegration(application, parent)
         self.files = RemoteFileService(self.client.transport, parent)
-        self.file_download = FileDownload(self.files, self.cura, parent)
+        self.file_download = FileDownload(self.files, self.cura, parent,
+            active_identity=lambda: self.binding.identity,
+            session_generation=lambda: self.client.session.generation)
+        # A session invalidation cancels every in-flight one-shot
+        # download — the unconditional entry point the bind/close
+        # transitions cannot provide while idle-browsing.
+        self.client.sessionInvalidated.connect(self.files.cancel_one_shots)
         cache_dir = os.path.join(Resources.getCacheStoragePath(), "Moonraker_Print_Follower")
         cache = PersistentIndexCache(os.path.join(cache_dir, "indexes"))
         self.index = GCodeIndexService(self.files, cache, parent)
@@ -57,4 +63,5 @@ class FollowerRuntime:
         self.motion.close()
         self.cura.close()
         self.index.close()
+        self.file_download.close()  # in-flight downloads retire BEFORE the files root goes
         self.files.close()

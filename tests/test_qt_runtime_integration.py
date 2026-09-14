@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import time
 from http.server import ThreadingHTTPServer
@@ -104,6 +105,52 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(transport.identity, ("http://imported", "import-key"))
         self.assertEqual(follower.client.session.base_url, "http://imported")
         self.assertTrue(transport.requests)
+
+    def test_session_invalidation_cancels_in_flight_downloads(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+        app, follower, transport = self.follower()
+        class NeverReply(QObject):
+            readyRead = pyqtSignal()
+            finished = pyqtSignal()
+            def setReadBufferSize(self, size): pass
+            def readAll(self): return b""
+            def rawHeader(self, name): return b""
+            def error(self):
+                from PyQt6.QtNetwork import QNetworkReply
+                return QNetworkReply.NetworkError.NoError
+            def errorString(self): return ""
+            def abort(self): pass
+            def deleteLater(self): pass
+        transport.network = SimpleNamespace(get=lambda request: NeverReply())
+        messages = []
+        follower.download_failed.connect(messages.append)
+        follower.request_file_download("prints/part.gcode")
+        follower.client.sessionInvalidated.emit()
+        self.assertEqual(len(messages), 1)
+        self.assertIn("cancelled", messages[0])
+
+    def test_deinitialize_with_in_flight_download_delivers_the_cancel_error(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+        app, follower, transport = self.follower()
+        class NeverReply(QObject):
+            readyRead = pyqtSignal()
+            finished = pyqtSignal()
+            def setReadBufferSize(self, size): pass
+            def readAll(self): return b""
+            def rawHeader(self, name): return b""
+            def error(self):
+                from PyQt6.QtNetwork import QNetworkReply
+                return QNetworkReply.NetworkError.NoError
+            def errorString(self): return ""
+            def abort(self): pass
+            def deleteLater(self): pass
+        transport.network = SimpleNamespace(get=lambda request: NeverReply())
+        messages = []
+        follower.download_failed.connect(messages.append)
+        follower.request_file_download("prints/part.gcode")
+        follower.deinitialize()
+        self.assertEqual(len(messages), 1)
+        self.assertIn("cancelled", messages[0])
 
     def test_reconnect_rearms_the_monitor_data(self):
         # A session invalidation deactivates the monitor's data feed;
@@ -1549,6 +1596,40 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         with open(files.path, "rb") as fh:
             self.assertEqual(fh.read(), b"a" * 16)
 
+    def test_one_shot_cancel_delivers_exactly_once(self):
+        reply = self._reply_double(payload=b"A" * 32, size=32)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        results = []
+        download = self.files.download_once("prints/part.gcode", on_ready=lambda p, e: results.append((p, e)))
+        reply.readyRead.emit()
+        download.cancel()  # the session-invalidation hook
+        reply.finished.emit()  # the ghost completion must not re-deliver
+        self.assertEqual(len(results), 1)
+        path, error = results[0]
+        self.assertIsNone(path)
+        self.assertIn("cancelled", error)
+        self.assertNotIn(download, self.files._one_shots)
+
+    def test_one_shot_constructor_failure_delivers_exactly_once(self):
+        with patch.object(tempfile, "mkdtemp", side_effect=OSError("no space")):
+            results = []
+            self.files.download_once("prints/part.gcode", on_ready=lambda p, e: results.append((p, e)))
+        self.assertEqual(results, [(None, "no space")])
+        self.assertEqual(len(self.files._one_shots), 0)
+
+    def test_one_shot_transport_switch_delivers_an_error_not_the_file(self):
+        reply = self._reply_double(payload=b"B" * 16, size=16)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        results = []
+        self.files.download_once("prints/part.gcode", on_ready=lambda p, e: results.append((p, e)))
+        self.transport.identity = ("http://printer-b", "other-key")  # mid-stream switch
+        reply.readyRead.emit()
+        reply.finished.emit()
+        self.assertTrue(self._wait(lambda: len(results) == 1))
+        path, error = results[0]
+        self.assertIsNone(path)
+        self.assertIn("connection changed", error)
+
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
 class ToolheadControllerTests(unittest.TestCase):
@@ -1902,6 +1983,104 @@ class RemoteFileServiceMetadataTests(unittest.TestCase):
         self.service.bind(("part.gcode", 1000, 2))
         self.assertFalse(self.service.metadata_complete)
         self.assertIsNone(self.service.identity)
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
+class CuraIntegrationLoadTests(unittest.TestCase):
+    """The load-into-Cura contract: preflights, the unconfirmed-load
+    watchdog and the quiet late completion."""
+
+    def setUp(self):
+        from PyQt6.QtCore import QObject, pyqtSignal
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+
+        class FakeApp(QObject):
+            fileCompleted = pyqtSignal(str)
+            def __init__(self):
+                super().__init__()
+                self.loaded = []
+            def getController(self):
+                class Stub:
+                    def getScene(self): raise AttributeError()
+                    def getView(self, name): return None
+                return Stub()
+            def getBackend(self): return None
+            def readLocalFile(self, url, **kwargs): self.loaded.append(url.toLocalFile())
+
+        self.app = FakeApp()
+        module = self.qt.load("CuraIntegration")
+        self.cura = module.CuraIntegration(self.app, None)
+        self.addCleanup(self.cura.close)
+        self.releases = []
+
+    def _wait(self, predicate, timeout=5.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            self.qt.events(10)
+        return predicate()
+
+    def _lease(self, path):
+        def release(lease_path):
+            self.releases.append(lease_path)
+            shutil.rmtree(os.path.dirname(lease_path), ignore_errors=True)
+        return self.qt.load("RemoteFileService").FileLease(path, release)
+
+    def _make_file(self, name="part.gcode"):
+        directory = tempfile.mkdtemp(prefix="load-", dir="/tmp/mpf")
+        path = os.path.join(directory, name)
+        with open(path, "wb") as handle:
+            handle.write(b"G1 X0\n")
+        return path
+
+    def test_load_refused_without_a_view(self):
+        path = self._make_file()
+        messages = []
+        self.cura.loadFailed.connect(messages.append)
+        self.assertFalse(self.cura.load(self._lease(path)))
+        self.assertEqual(messages, ["Cura has no active printer yet"])
+        self.assertEqual(self.app.loaded, [])
+        self.assertEqual(self.releases, [path])  # released, never leaked
+
+    def test_load_refused_while_loading(self):
+        path = self._make_file()
+        self.cura._view = object()
+        self.assertTrue(self.cura.load(self._lease(path)))
+        messages = []
+        self.cura.loadFailed.connect(messages.append)
+        self.assertFalse(self.cura.load(self._lease(self._make_file("two.gcode"))))
+        self.assertEqual(messages, ["Cura is already loading a file"])
+
+    def test_watchdog_unsticks_loading_and_keeps_the_file(self):
+        path = self._make_file()
+        self.cura._view = object()
+        self.cura.LOAD_WATCHDOG_MS = 50
+        messages = []
+        self.cura.loadFailed.connect(messages.append)
+        self.assertTrue(self.cura.load(self._lease(path)))
+        self.assertTrue(self.cura.loading)
+        self.assertTrue(self._wait(lambda: len(messages) == 1))
+        self.assertIn("did not confirm", messages[0])
+        self.assertFalse(self.cura.loading)
+        self.assertTrue(os.path.exists(path))  # dropped, not deleted
+
+    def test_watchdog_timed_out_load_completes_quietly(self):
+        path = self._make_file()
+        self.cura._view = object()
+        self.cura.LOAD_WATCHDOG_MS = 50
+        messages = []
+        self.cura.loadFailed.connect(messages.append)
+        self.assertTrue(self.cura.load(self._lease(path)))
+        self.assertTrue(self._wait(lambda: not self.cura.loading))
+        invalidated = []
+        self.cura.invalidated.connect(invalidated.append)
+        self.app.fileCompleted.emit(path)
+        self.assertEqual(invalidated, [])  # absorbed, not "file replaced"
+        self.assertIn(path, self.releases)  # released once the parse finished
+        self.assertFalse(os.path.exists(path))
 
 
 if __name__ == "__main__":

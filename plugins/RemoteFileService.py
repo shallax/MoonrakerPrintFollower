@@ -28,79 +28,111 @@ class FileLease:
 
 class _OneShotDownload:
     """The file-manager Download lane: one file, one stream, into a
-    fresh temp directory. Independent of the job-bound state machine
-    (the file-manager ruling: Download loads the file into
-    Cura), with the same byte cap and lane discipline."""
+    fresh temp directory, built on `DownloadOperation` — the same
+    bounded buffering, writer thread and operation-local state as the
+    job lane. Independent of the job-bound state machine (the
+    file-manager ruling: Download loads the file into Cura); its
+    terminal differs: exactly one `on_ready(path, error)` delivery,
+    the transport identity captured at request time, and the temp
+    directory retired on every error path (success keeps the file for
+    the lease protocol)."""
 
-    def __init__(self, transport, relpath, root, on_ready):
-        self._transport = transport
+    def __init__(self, service, relpath, root, on_ready):
+        self._service = service
+        self._transport = service._transport
         self._relpath = str(relpath)
         self._on_ready = on_ready
-        self._received = 0
+        self._transport_identity = tuple(self._transport.identity)
         self._done = False
+        self._directory = None
+        self._path = None
+        self._op = None
         try:
             self._directory = tempfile.mkdtemp(prefix="file-", dir=root)
             name = os.path.basename(self._relpath.replace("\\", "/")) or "download.gcode"
             if os.path.splitext(name)[1].lower() not in {".g", ".gcode"}:
                 name += ".gcode"
             self._path = os.path.join(self._directory, name)
-            self._target = DownloadTarget.open(self._path)
-            request = transport.request(download_endpoint(transport.identity[0], self._relpath), timeout_ms=30000)
+            target = service._target_factory(self._path)
+            request = self._transport.request(download_endpoint(self._transport.identity[0], self._relpath), timeout_ms=30000)
             request.setRawHeader(b"Accept", b"application/octet-stream")
-            self._reply = transport.network.get(request)
-            self._reply.setReadBufferSize(4 * 1024 * 1024)
-            self._reply.readyRead.connect(self._drain)
-            self._reply.finished.connect(self._finish)
+            reply = self._transport.network.get(request)
+            reply.setReadBufferSize(4 * 1024 * 1024)
+            declared = reply.rawHeader(b"Content-Length")
+            size = int(bytes(declared)) if declared else 0
         except Exception as error:
-            self._abort()
             self._finish_immediately(str(error))
+            return
+        self._op = DownloadOperation(target, reply, size, None, None)
+        self._op.on_writer_done = lambda o=self._op: service.oneShotDone.emit(o)
+        self._op.on_writer_drained = lambda o=self._op: service.oneShotDrained.emit(o)
+        self._op.start()
+        reply.readyRead.connect(lambda r=reply, o=self._op: service._drain_one_shot(self, o, r))
+        reply.finished.connect(lambda r=reply, o=self._op: self._finish_stream(o, r))
 
-    def _drain(self):
+    def _finish_stream(self, op, reply):
+        if self._done:
+            reply.deleteLater()
+            return
+        op.finished_reading = True
+        self._service._drain_one_shot(self, op, reply)
         if self._done:
             return
-        try:
-            chunk = bytes(self._reply.readAll())
-            self._received += len(chunk)
-            if self._received > RemoteFileService.MAX_DOWNLOAD_BYTES:
-                self._abort()
-                self._finish_immediately("Download exceeds the size cap")
-                return
-            if chunk:
-                self._target.write(chunk)
-        except Exception as error:
-            self._abort()
-            self._finish_immediately(str(error))
+        op.stop()  # the writer flushes and closes, then its done signal lands the terminal
 
-    def _finish(self):
+    def _terminal(self):
         if self._done:
             return
-        self._done = True
-        error = None
+        op = self._op
         try:
-            if self._reply.error() != QNetworkReply.NetworkError.NoError:
-                error = self._reply.errorString()
-            else:
-                self._target.flush_close()
-                self._on_ready(self._path, None)
-                return
-        except Exception as exc:
-            error = str(exc)
-        self._abort()
-        self._on_ready(None, error)
+            # A transport/session switch mid-stream must never load the
+            # old printer's file into the current session.
+            if tuple(self._transport.identity) != self._transport_identity:
+                raise OSError("The printer connection changed during the download")
+            if op.writer_error is not None:
+                raise OSError(op.writer_error)
+            if op.reply.error() != QNetworkReply.NetworkError.NoError:
+                raise OSError(op.reply.errorString())
+            if op.size > 0 and op.target.bytes_written != op.size:
+                raise OSError("Downloaded G-code size mismatch; refusing partial file")
+            self._deliver(self._path, None)
+        except Exception as error:
+            self._abort()
+            self._deliver(None, str(error))
+        finally:
+            op.reply.deleteLater()
 
     def _finish_immediately(self, error):
         if self._done:
             return
-        self._done = True
         self._abort()
-        self._on_ready(None, error)
+        self._deliver(None, error)
+
+    def cancel(self):
+        """The session-invalidation hook: abort and deliver the
+        terminal error. Exactly-once holds through every path,
+        constructor failure included."""
+        if self._done:
+            return
+        self._abort()
+        self._deliver(None, "The printer connection changed; the download was cancelled")
 
     def _abort(self):
-        try:
-            self._target.abort(remove=False)
-        except Exception:
-            pass
-        shutil.rmtree(self._directory, ignore_errors=True)
+        op = self._op
+        if op is not None:
+            op.abort()
+            if op.reply is not None:
+                op.reply.abort()
+                op.reply.deleteLater()
+        if self._directory is not None:
+            shutil.rmtree(self._directory, ignore_errors=True)
+            self._directory = None
+
+    def _deliver(self, path, error):
+        if self._done:
+            return
+        self._done = True
+        self._on_ready(path, error)
 
 
 class RemoteFileService(QObject):
@@ -119,6 +151,8 @@ class RemoteFileService(QObject):
     # stale writer's terminal is told apart from the current one.
     writerDone = pyqtSignal(object)
     writerDrained = pyqtSignal(object)
+    oneShotDone = pyqtSignal(object)
+    oneShotDrained = pyqtSignal(object)
 
     METADATA_RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)
     DOWNLOAD_RETRY_DELAYS_MS = (2000, 5000, 15000, 60000)
@@ -145,6 +179,7 @@ class RemoteFileService(QObject):
         self._metadata_retry_at = 0.0
         self._path = None
         self._download = None
+        self._one_shots = set()
         self._want_file = False
         self._leases = {}
         self._retired = set()
@@ -155,6 +190,8 @@ class RemoteFileService(QObject):
         self._lifetime_received = 0
         self.writerDone.connect(self._on_writer_done)
         self.writerDrained.connect(self._on_writer_drained)
+        self.oneShotDone.connect(self._on_one_shot_done)
+        self.oneShotDrained.connect(self._on_one_shot_drained)
 
     @property
     def download_fraction(self):
@@ -189,20 +226,63 @@ class RemoteFileService(QObject):
     def download_once(self, relpath, *, on_ready):
         """The file-manager Download capability: stream one file into
         a fresh temp location and report `on_ready(path, error)` once.
-        The job-bound state machine is untouched."""
-        if not hasattr(self, "_one_shots"):
-            self._one_shots = set()
+        The job-bound state machine is untouched. The returned handle
+        supports `cancel()`; the caller re-validates the requesting
+        printer/session identity at delivery."""
         download = None
         def done(path, error):
             if download is not None and download in self._one_shots:
                 self._one_shots.discard(download)
             on_ready(path, error)
-        download = _OneShotDownload(self._transport, relpath, self._root, done)
+        download = _OneShotDownload(self, relpath, self._root, done)
+        if download._done:
+            # A constructor failure delivered its terminal before the
+            # registry add — the dead download must not accumulate.
+            return download
         # KEEP THE REFERENCE: the reply's signals hold bound methods
         # of this object, and a garbage-collected downloader dies
         # silently mid-stream.
         self._one_shots.add(download)
         return download
+
+    def cancel_one_shots(self):
+        """The session-invalidation hook (wired by the runtime): every
+        in-flight one-shot aborts and delivers its terminal error."""
+        for download in list(self._one_shots):
+            download.cancel()
+
+    def _drain_one_shot(self, download, op, reply):
+        if download._done or op.aborted:
+            return
+        if op.reading_paused and not op.finished_reading:
+            if (op.received - op.written) >= op.LOW_WATER_BYTES:
+                return
+            op.reading_paused = False
+        try:
+            chunk = bytes(reply.readAll())
+            if chunk:
+                op.received += len(chunk)
+                self._lifetime_received += len(chunk)
+                if op.received > self.MAX_DOWNLOAD_BYTES:
+                    download._finish_immediately("Download exceeds the size cap")
+                    return
+                op.queue.put(chunk)
+                if not op.finished_reading and (op.received - op.written) >= op.HIGH_WATER_BYTES:
+                    op.reading_paused = True
+        except Exception as error:
+            download._finish_immediately(str(error))
+
+    def _on_one_shot_drained(self, op):
+        for download in list(self._one_shots):
+            if download._op is op:
+                download._service._drain_one_shot(download, op, op.reply)
+                return
+
+    def _on_one_shot_done(self, op):
+        for download in list(self._one_shots):
+            if download._op is op:
+                download._terminal()
+                return
 
     def bind(self, job_key):
         if self._job == job_key and not self._closed:
@@ -427,5 +507,6 @@ class RemoteFileService(QObject):
     def close(self):
         if self._closed: return
         self.bind(None)
+        self.cancel_one_shots()  # every one-shot retires BEFORE the root rmtree below
         self._closed = True
         if not self._leases: shutil.rmtree(self._root, ignore_errors=True)

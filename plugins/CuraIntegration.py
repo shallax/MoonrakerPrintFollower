@@ -25,6 +25,12 @@ class CuraIntegration(QObject):
     fileLoaded = pyqtSignal(str)
     loadFailed = pyqtSignal(str)
 
+    # The bound for the fileCompleted confirmation. Cura's fileCompleted
+    # is NOT a terminal signal — several refusal paths return silently
+    # before the parse starts — so a load that never confirms must not
+    # latch `loading` for the process lifetime.
+    LOAD_WATCHDOG_MS = 30000
+
     def __init__(self, application, parent=None):
         super().__init__(parent)
         self.application = application
@@ -38,6 +44,7 @@ class CuraIntegration(QObject):
         self._settle_until = 0.0
         self._writing = self._own_scene_changes = 0
         self._load_lease = None
+        self._load_watch_lease = None
         self._watch = QTimer(self)
         self._watch.setInterval(75)
         self._watch.timeout.connect(self._position_changed)
@@ -323,9 +330,22 @@ class CuraIntegration(QObject):
         self.queue(ask)
 
     def load(self, lease):
-        if self.loading or self._closed:
+        if self._closed:
             lease.close()
             return False
+        if self.loading:
+            lease.close()
+            self.loadFailed.emit("Cura is already loading a file")
+            return False
+        if self._view is None:
+            # The no-printer / no-build-volume window: Cura silently
+            # drops the file without ever emitting fileCompleted.
+            lease.close()
+            self.loadFailed.emit("Cura has no active printer yet")
+            return False
+        if self._load_watch_lease is not None:
+            self._load_watch_lease.close()
+            self._load_watch_lease = None
         self._load_lease = lease
         self._heights = None
         # The application's parse job can outlive this plugin. Keep the file
@@ -338,6 +358,17 @@ class CuraIntegration(QObject):
             try: signal.disconnect(release_when_complete)
             except (RuntimeError, TypeError): pass
         signal.connect(release_when_complete)
+        # The watchdog un-sticks `loading` when the confirmation never
+        # arrives. The file is dropped, not deleted: Cura's parse may
+        # still be reading it, and a late completion is absorbed below.
+        def watchdog():
+            if self._load_lease is not None and self._load_lease.path == lease.path:
+                self._load_lease = None
+                self._load_watch_lease = lease
+                self.loadFailed.emit("Cura did not confirm the load in time")
+            try: signal.disconnect(release_when_complete)
+            except (RuntimeError, TypeError): pass
+        QTimer.singleShot(self.LOAD_WATCHDOG_MS, watchdog)
         try:
             self.application.readLocalFile(QUrl.fromLocalFile(lease.path), add_to_recent_files=False)
             self.changed.emit()
@@ -352,12 +383,19 @@ class CuraIntegration(QObject):
     def _file_completed(self, path):
         lease = self._load_lease
         expected = lease is not None and os.path.abspath(str(path)) == os.path.abspath(lease.path)
+        absorbed = False
         if expected:
             self._load_lease = None
             lease.close()
+        elif self._load_watch_lease is not None and os.path.abspath(str(path)) == os.path.abspath(self._load_watch_lease.path):
+            # A timed-out load finished late: complete it quietly. The
+            # parse has finished, so releasing the temp file is safe.
+            absorbed = True
+            self._load_watch_lease.close()
+            self._load_watch_lease = None
         self._heights = None
         self._settle_until = time.monotonic() + 0.25
-        if not expected: self.invalidate("Cura file replaced")
+        if not expected and not absorbed: self.invalidate("Cura file replaced")
         self.fileLoaded.emit(str(path))
         self.queue(self._refresh, 260)
 
@@ -379,7 +417,12 @@ class CuraIntegration(QObject):
             try: self._root.childrenChanged.disconnect(self._scene_changed)
             except Exception: pass
         if self._load_lease is not None:
-            # The application-owned completion callback releases this lease.
+            # The application-owned completion callback may never run
+            # (Cura's silent refusal paths) — release, never drop.
+            self._load_lease.close()
             self._load_lease = None
+        if self._load_watch_lease is not None:
+            self._load_watch_lease.close()
+            self._load_watch_lease = None
 
 

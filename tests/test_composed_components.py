@@ -103,12 +103,13 @@ class ComposedComponentTests(unittest.TestCase):
             pathlib.Path(path).write_text("G1 X0")
             releases = []
             lease = self.qt.load("RemoteFileService").FileLease(path, releases.append)
+            self.parts.cura._view = object()  # the load preflight needs a build volume
             self.assertTrue(self.parts.cura.load(lease))
             self.app.fileCompleted.emit(os.path.join(directory, "unrelated.stl"))
             self.assertEqual(releases, [])
             self.assertTrue(self.parts.cura.loading)
             self.parts.cura.close()
-            self.assertEqual(releases, [])
+            self.assertEqual(releases, [path])  # shutdown releases, never drops
             self.app.fileCompleted.emit(path)
             self.assertEqual(releases, [path])
 
@@ -435,6 +436,7 @@ class ComposedComponentTests(unittest.TestCase):
         parts = follower._runtime
         # An active-but-unloaded print pulls nothing: the metadata and
         # index serve the Preview, which needs the print loaded in Cura.
+        parts.cura._view = object()  # the load preflight needs a build volume
         parts.coordinator.request_load()
         for _ in range(100):
             if app.loaded_paths: break
