@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 from PyQt6.QtCore import QByteArray, QFile, QIODevice, QObject, QTimer, QVariant, pyqtSignal
 from PyQt6.QtNetwork import QHttpMultiPart, QHttpPart, QNetworkReply, QNetworkRequest
 
+from .MoonrakerTransport import _moonraker_error_text
 from .PrinterConfig import PrinterConfig
 
 
@@ -34,6 +35,7 @@ class UploadController(QObject):
         self._config = PrinterConfig()
         self._filename, self._path = "", ""
         self._start_print = False
+        self._print_outcome = ""
         self._directories, self._queue, self._seen = set(), [], set()
         self._power = []
         self._attempts = 0
@@ -47,6 +49,8 @@ class UploadController(QObject):
     def path(self): return self._path
     @property
     def start_print(self): return self._start_print
+    @property
+    def print_outcome(self): return self._print_outcome
     @property
     def paths(self): return ["<root>"] + sorted(self._directories, key=str.casefold)
     @property
@@ -235,6 +239,7 @@ class UploadController(QObject):
 
     def _upload(self):
         if not self._current() or self._reply is not None or self._source is None: return
+        self._print_outcome = ""
         try:
             file = QFile(self._source.path)
             if not file.open(QIODevice.OpenModeFlag.ReadOnly): raise OSError(file.errorString())
@@ -271,12 +276,31 @@ class UploadController(QObject):
             reply.deleteLater()
             return
         error = reply.errorString() if reply.error() != QNetworkReply.NetworkError.NoError else ""
-        if not error:
-            import json
-            try:
-                payload = json.loads(bytes(reply.readAll()).decode())
-                if isinstance(payload, dict) and payload.get("error"): error = str(payload["error"])
-            except (ValueError, UnicodeError): pass  # successful legacy non-JSON response
+        import json
+        payload = {}
+        try:
+            parsed = json.loads(bytes(reply.readAll()).decode())
+            if isinstance(parsed, dict): payload = parsed
+        except (ValueError, UnicodeError): pass  # successful legacy non-JSON response
+        # The server's words always win over Qt's generic error text
+        # (the refusal-words rule shared with the file manager).
+        words = _moonraker_error_text(payload) if payload else ""
+        if words:
+            error = words
+        elif not error and payload.get("error"):
+            error = str(payload["error"])
+        # The upload verdict reads the BODY: Moonraker can answer 201
+        # while the print start failed (print_started false) or landed
+        # in the job queue (print_queued) — the adapter's message must
+        # say which happened, never a blanket "started the print".
+        if not error and self._start_print:
+            started, queued = payload.get("print_started"), payload.get("print_queued")
+            if started is False and queued is not True:
+                error = "Uploaded; the printer refused to start the print"
+            elif started is True:
+                self._print_outcome = "started"
+            elif queued is True:
+                self._print_outcome = "queued"
         self._finish(not bool(error), error)
 
     def fail(self, message):
@@ -304,7 +328,10 @@ class UploadController(QObject):
         self.dialogClosed.emit()
         self.changed.emit()
         def terminal():
-            self.finished.emit(success, error)
+            try:
+                self.finished.emit(success, error)
+            except RuntimeError:
+                pass  # the owner was deleted before the queued terminal fired
         QTimer.singleShot(0, terminal)
 
     def terminal_delivered(self):

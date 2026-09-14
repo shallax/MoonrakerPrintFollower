@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from http.server import ThreadingHTTPServer
+import json
 import os
 import pathlib
 import threading
 import unittest
+from types import SimpleNamespace
 
 from qt_runtime_support import QT_AVAILABLE, PipeSafeHandler, ScriptedTransport, runtime
 
@@ -238,6 +240,193 @@ class UploadLifecycleTests(unittest.TestCase):
         self.assertNotIn(b'name="print"', body)
         self.assertEqual(current[0].upload_path, "")
         self.assertFalse(current[0].upload_start_print)
+
+    def _upload_reply(self, error=False, body=None, sync_abort=False):
+        from PyQt6.QtCore import QObject, pyqtSignal
+        from PyQt6.QtNetwork import QNetworkReply
+
+        class FakeReply(QObject):
+            uploadProgress = pyqtSignal(int, int)
+            finished = pyqtSignal()
+            def __init__(self):
+                super().__init__()
+                self._deleted = 0
+                self._aborts = 0
+            def error(self):
+                return QNetworkReply.NetworkError.ContentNotFoundError if error else QNetworkReply.NetworkError.NoError
+            def errorString(self): return "simulated"
+            def readAll(self): return json.dumps(body).encode() if body is not None else b""
+            def abort(self):
+                # The faithful Qt 6.6 encoding: abort() emits finished
+                # SYNCHRONOUSLY.
+                self._aborts += 1
+                if sync_abort:
+                    self.finished.emit()
+            def deleteLater(self): self._deleted += 1
+            def isRunning(self): return False
+        return FakeReply()
+
+    def _file_manager(self, client):
+        fm = self.qt.load("FileManager").FileManager(client, None)
+        self.addCleanup(fm.bind)
+        source = "/tmp/mpf/f04-upload.gcode"
+        with open(source, "wb") as handle:
+            handle.write(b"G1 X0\n")
+        self.addCleanup(os.unlink, source)
+        return fm, source
+
+    def test_file_manager_upload_terminal_disposes_exactly_once(self):
+        client = self.client_module.MoonrakerClient(transport=ScriptedTransport())
+        client.configure("http://printer-a", "", 750)
+        self.addCleanup(client.stop)
+        fm, source = self._file_manager(client)
+        verdicts = []
+        fm.uploadFinished.connect(lambda ok, detail: verdicts.append((ok, detail)))
+        for error, body, ok in [
+            (False, None, True),
+            (True, {"message": "No space left on device"}, False),
+        ]:
+            double = self._upload_reply(error=error, body=body)
+            client.transport.network = SimpleNamespace(post=lambda request, multipart, d=double: d)
+            self.assertTrue(fm.upload_file(source))
+            double.finished.emit()
+            self.assertEqual(verdicts, [(ok, "f04-upload.gcode" if ok else "No space left on device")])
+            self.assertEqual(double._deleted, 1)
+            self.assertFalse(fm._upload_replies)
+            verdicts.clear()
+
+    def test_file_manager_abort_uploads_clears_ownership_before_abort(self):
+        client = self.client_module.MoonrakerClient(transport=ScriptedTransport())
+        client.configure("http://printer-a", "", 750)
+        self.addCleanup(client.stop)
+        fm, source = self._file_manager(client)
+        verdicts = []
+        fm.uploadFinished.connect(lambda ok, detail: verdicts.append((ok, detail)))
+        double = self._upload_reply(sync_abort=True)
+        client.transport.network = SimpleNamespace(post=lambda request, multipart: double)
+        self.assertTrue(fm.upload_file(source))
+        fm.bind()  # bumps the generation, then aborts: the synchronous finished re-enters the handler
+        self.assertEqual(verdicts, [(False, "The printer changed during the upload.")])
+        self.assertFalse(fm._upload_replies)
+
+    def test_file_manager_refuses_a_second_same_name_upload(self):
+        client = self.client_module.MoonrakerClient(transport=ScriptedTransport())
+        client.configure("http://printer-a", "", 750)
+        self.addCleanup(client.stop)
+        fm, source = self._file_manager(client)
+        replies = [self._upload_reply(), self._upload_reply()]
+        client.transport.network = SimpleNamespace(post=lambda request, multipart: replies.pop(0))
+        self.assertTrue(fm.upload_file(source))
+        verdicts = []
+        fm.uploadFinished.connect(lambda ok, detail: verdicts.append((ok, detail)))
+        self.assertFalse(fm.upload_file(source))
+        self.assertEqual(len(verdicts), 1)
+        self.assertFalse(verdicts[0][0])
+        self.assertIn("already running", verdicts[0][1])
+        self.assertEqual(len(fm._upload_replies), 1)  # the first upload still owns its op
+
+    def test_upload_refusal_words_win_over_qt_error_text(self):
+        client = self.client_module.MoonrakerClient(transport=ScriptedTransport())
+        client.configure("http://printer-a", "", 750)
+        self.addCleanup(client.stop)
+        controller = self.qt.load("UploadController").UploadController(client, "A", lambda: ("A", "A"))
+        results = []
+        controller.finished.connect(lambda ok, detail: results.append((ok, detail)))
+        double = self._upload_reply(error=True, body={"message": "Move out of range"})
+        controller._reply = double
+        controller._active = True
+        controller._current = lambda generation=None: True
+        controller._uploaded(double, controller._generation)
+        self.qt.events(10)
+        self.assertEqual(results, [(False, "Move out of range")])
+        self.assertEqual(double._deleted, 1)
+
+    def test_upload_start_refusal_reads_the_body_verdict(self):
+        class Handler(PipeSafeHandler):
+            def do_GET(self):
+                body = b'{"result": {"klippy_state": "ready"}}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                try: self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError): pass
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                body = b'{"result":{"item":{"path":"renamed.gcode"}}, "print_started": false, "print_queued": false}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                try: self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError): pass
+            def log_message(self, *_args): pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        url = "http://127.0.0.1:" + str(server.server_port)
+        client = self.client_module.MoonrakerClient()
+        client.configure(url, "", 750)
+        self.addCleanup(client.stop)
+        config = self.config_type(url=url, upload_dialog=True, upload_start_print=True)
+        self.install_dialog_factory(self.app)
+        device = self.device_module.MoonrakerOutputDevice(
+            self.app, "A", client=client, config=lambda: config,
+            apply_config=lambda value: None, active_identity=lambda: ("A", "A"),
+        )
+        self.addCleanup(device.deactivate)
+        results = []
+        device._upload.finished.connect(lambda ok, detail: results.append((ok, detail)))
+        device.requestWrite(None, "part.gcode")
+        device.acceptUpload("<root>", "renamed.gcode", True)
+        for _ in range(200):
+            if results:
+                break
+            self.qt.events(10)
+        self.assertEqual(results, [(False, "Uploaded; the printer refused to start the print")])
+
+    def test_upload_start_queued_is_a_distinct_outcome(self):
+        class Handler(PipeSafeHandler):
+            def do_GET(self):
+                body = b'{"result": {"klippy_state": "ready"}}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                try: self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError): pass
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                body = b'{"result":{"item":{"path":"renamed.gcode"}}, "print_started": false, "print_queued": true}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                try: self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError): pass
+            def log_message(self, *_args): pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        url = "http://127.0.0.1:" + str(server.server_port)
+        client = self.client_module.MoonrakerClient()
+        client.configure(url, "", 750)
+        self.addCleanup(client.stop)
+        config = self.config_type(url=url, upload_dialog=True, upload_start_print=True)
+        self.install_dialog_factory(self.app)
+        device = self.device_module.MoonrakerOutputDevice(
+            self.app, "A", client=client, config=lambda: config,
+            apply_config=lambda value: None, active_identity=lambda: ("A", "A"),
+        )
+        self.addCleanup(device.deactivate)
+        results = []
+        device._upload.finished.connect(lambda ok, detail: results.append((ok, detail)))
+        device.requestWrite(None, "part.gcode")
+        device.acceptUpload("<root>", "renamed.gcode", True)
+        for _ in range(200):
+            if results:
+                break
+            self.qt.events(10)
+        self.assertEqual(results, [(True, "")])
+        self.assertEqual(device._upload.print_outcome, "queued")
 
 
 if __name__ == "__main__":

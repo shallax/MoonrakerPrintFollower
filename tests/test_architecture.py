@@ -175,7 +175,7 @@ class SourceContractTests(unittest.TestCase):
             "PrintState": {"RemoteJobService"},
             "RemoteFileService": {"DownloadStream", "MoonrakerProtocol"},
             "RemoteJobService": set(),
-            "UploadController": {"PrinterConfig"},
+            "UploadController": {"MoonrakerTransport", "PrinterConfig"},
         }
         # Cura adapters sanctioned to import cura APIs.
         cura_exceptions = {"CuraOutputWriter", "MoonrakerFollowerMachineAction", "MoonrakerMonitorModel", "MoonrakerOutputDevice", "PrinterBinding"}
