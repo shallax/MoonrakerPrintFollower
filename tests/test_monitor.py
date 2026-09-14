@@ -2541,6 +2541,32 @@ class MonitorQtTests(unittest.TestCase):
             new_key = ("part.gcode", coordinator._files.job_key)
             self.assertEqual(coordinator._mr_metadata_for(*new_key), {})
 
+    def test_metadata_reply_after_reset_never_latches(self):
+        # A reply landing after a binding reset must not latch the old
+        # job's payload (the stale-request guard) — and must not fire
+        # a pointless history cross-check.
+        self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        client = self.follower.client
+        status = {
+            "print_stats": {"filename": "part.gcode", "state": "printing", "print_duration": 30,
+                            "info": {"current_layer": 2, "total_layer": 20}},
+            "virtual_sdcard": {"file_size": 100, "file_position": 20},
+            "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1,
+                           "absolute_coordinates": True},
+            "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
+        }
+        client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+        self.qt.events(1)
+        meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+        self.assertEqual(len(meta), 1)
+        coordinator.reset_binding()
+        meta[0].callback({"result": {"layer_height": 0.2, "estimated_time": 3600, "job_id": "1A2B"}}, None)
+        self.qt.events(1)
+        self.assertEqual(coordinator._mr_meta_key, ("", ""))
+        self.assertEqual(coordinator._mr_metadata_for("part.gcode", ("part.gcode", 100, 1)), {})
+        self.assertEqual([r for r in self.transport.requests if r.channel == "mr-history"], [])
+
     def test_metadata_request_keeps_subfolder_slashes(self):
         # Panel DOM-P2-3: the coordinator's URL escaped subfolder
         # separators to %2F while MoonrakerProtocol.metadata_endpoint
