@@ -89,6 +89,15 @@ jobs:
       - name: Shell scripts
         run: shellcheck tools/*.sh
 
+      - name: Workflow files
+        run: |
+          # The workflow files themselves are linted: an invalid input
+          # once made GitHub reject ci.yml before spawning any job,
+          # and the failure had no log to read.
+          wget -qO /tmp/actionlint.tar.gz https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          /tmp/actionlint .github/workflows/*.yml
+
       - name: Dockerfile
         run: |
           wget -qO /tmp/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
