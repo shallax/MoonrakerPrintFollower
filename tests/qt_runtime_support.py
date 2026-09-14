@@ -120,6 +120,9 @@ class ScriptedTransport:
     def cancel_all(self):
         self.cancelled.append((None, None))
 
+    def close(self):
+        self.cancel_all()
+
     def request(self, path, *, timeout_ms=5000):
         from PyQt6.QtCore import QUrl
         from PyQt6.QtNetwork import QNetworkRequest

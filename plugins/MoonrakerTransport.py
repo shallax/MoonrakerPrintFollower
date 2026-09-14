@@ -167,6 +167,13 @@ class MoonrakerHttpTransport(QObject):
             owner, channel = key.split("::", 1)
             self.cancel(owner, channel)
 
+    def close(self) -> None:
+        """Teardown: retire every lane, then the manager — its pooled
+        sockets close with it instead of surfacing as unclosed-socket
+        warnings at interpreter shutdown."""
+        self.cancel_all()
+        self._network.deleteLater()
+
     def send_json(
         self,
         owner: str,
