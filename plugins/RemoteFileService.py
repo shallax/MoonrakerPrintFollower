@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import os
-import queue
 import shutil
 import tempfile
-import threading
 import time
 from types import MappingProxyType
 
@@ -12,7 +10,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtNetwork import QNetworkReply
 
 from .MoonrakerProtocol import RemoteFileIdentity
-from .DownloadStream import DownloadTarget
+from .DownloadStream import DownloadOperation, DownloadTarget
 from .MoonrakerProtocol import download_endpoint, metadata_endpoint, parse_file_identity
 
 
@@ -116,6 +114,11 @@ class RemoteFileService(QObject):
     """
     changed = pyqtSignal()
     failed = pyqtSignal(str)
+    # The writer thread emits these; queued delivery lands them on the
+    # GUI thread (the GCodeIndexService idiom). The op payload is how a
+    # stale writer's terminal is told apart from the current one.
+    writerDone = pyqtSignal(object)
+    writerDrained = pyqtSignal(object)
 
     METADATA_RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)
     DOWNLOAD_RETRY_DELAYS_MS = (2000, 5000, 15000, 60000)
@@ -125,10 +128,13 @@ class RemoteFileService(QObject):
     # gigabyte; 2 GiB is headroom beyond generous.
     MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
 
-    def __init__(self, transport, parent=None):
+    def __init__(self, transport, parent=None, *, target_factory=DownloadTarget.open):
         super().__init__(parent)
         self._transport = transport
         self._root = tempfile.mkdtemp(prefix="cura-moonraker-files-")
+        # Injected so the gated-writer regressions need no private-field
+        # patching.
+        self._target_factory = target_factory
         self._generation = 0
         self._job = None
         self._identity = None
@@ -138,7 +144,7 @@ class RemoteFileService(QObject):
         self._metadata_attempts = 0
         self._metadata_retry_at = 0.0
         self._path = None
-        self._reply = self._target = None
+        self._download = None
         self._want_file = False
         self._leases = {}
         self._retired = set()
@@ -146,19 +152,20 @@ class RemoteFileService(QObject):
         self._error = ""
         self._download_attempts = 0
         self._download_retry_at = 0.0
-        self._download_received = 0
+        self._lifetime_received = 0
+        self.writerDone.connect(self._on_writer_done)
+        self.writerDrained.connect(self._on_writer_drained)
 
     @property
     def download_fraction(self):
         """0..1 of the in-flight download, or None when nothing is
-        downloading. The denominator is the printer's file_size; the
-        numerator accumulates as chunks drain."""
-        if self._reply is None:
+        downloading. The denominator is the response's declared
+        Content-Length — the transfer authority; a transfer without
+        one renders indeterminate."""
+        op = self._download
+        if op is None or op.size <= 0:
             return None
-        size = int((self._job or (None, 0, 0))[1] or 0)
-        if size <= 0:
-            return None
-        return max(0.0, min(1.0, self._download_received / size))
+        return max(0.0, min(1.0, op.received / op.size))
 
     @property
     def job_key(self): return self._job
@@ -175,7 +182,7 @@ class RemoteFileService(QObject):
     @property
     def phase(self):
         if self._error: return "error"
-        if self._reply is not None: return "downloading"
+        if self._download is not None: return "downloading"
         if self._metadata_pending: return "resolving"
         return "ready" if self._path else "idle"
 
@@ -214,12 +221,6 @@ class RemoteFileService(QObject):
         self._error = ""
         self._download_attempts = 0
         self._download_retry_at = 0.0
-        # The download writes land on a dedicated thread: draining a
-        # multi-megabyte QNetworkReply buffer into disk on the UI thread
-        # made every chunk a visible stall during large G-code loads.
-        self._write_queue = None
-        self._writer = None
-        self._writer_error = None
         self.changed.emit()
 
     def request_metadata(self):
@@ -276,7 +277,7 @@ class RemoteFileService(QObject):
         if self._error: return
         if self._identity is None:
             self.request_metadata()
-        elif self._want_file and not self._path and self._reply is None:
+        elif self._want_file and not self._path and self._download is None:
             self._start_download()
 
     def _start_download(self):
@@ -284,42 +285,44 @@ class RemoteFileService(QObject):
         directory = tempfile.mkdtemp(prefix="job-", dir=self._root)
         name = os.path.basename(job[0].replace("\\", "/")) or "moonraker.gcode"
         if os.path.splitext(name)[1].lower() not in {".g", ".gcode"}: name += ".gcode"
+        reply = None
         try:
-            self._target = DownloadTarget.open(os.path.join(directory, name))
-            self._write_queue = queue.Queue()
-            self._writer_error = None
-            self._writer = threading.Thread(target=self._writer_main, daemon=True)
-            self._writer.start()
+            target = self._target_factory(os.path.join(directory, name))
             request = self._transport.request(download_endpoint(self._transport.identity[0], job[0]), timeout_ms=30000)
             request.setRawHeader(b"Accept", b"application/octet-stream")
             reply = self._transport.network.get(request)
             reply.setReadBufferSize(4 * 1024 * 1024)
-            self._reply = reply
-            reply.readyRead.connect(lambda: self._drain(reply))
-            reply.finished.connect(lambda: self._finish_download(reply, generation, job))
-            self.changed.emit()
+            declared = reply.rawHeader(b"Content-Length")
+            size = int(bytes(declared)) if declared else 0
         except Exception as error:
-            self._abort_download()
+            if reply is not None:
+                reply.abort()
+                reply.deleteLater()
             shutil.rmtree(directory, ignore_errors=True)
             self._fail(str(error))
+            return
+        op = DownloadOperation(target, reply, size, generation, job)
+        op.on_writer_done = lambda o=op: self.writerDone.emit(o)
+        op.on_writer_drained = lambda o=op: self.writerDrained.emit(o)
+        self._download = op
+        op.start()
+        reply.readyRead.connect(lambda r=reply, o=op: self._drain(o, r))
+        reply.finished.connect(lambda r=reply, o=op: self._finish_download(o, r))
+        self.changed.emit()
 
-    def _writer_main(self):
-        try:
-            while True:
-                chunk = self._write_queue.get()
-                if chunk is None:
-                    break
-                self._target.write(chunk)
-        except Exception as error:
-            self._writer_error = str(error)
-
-    def _drain(self, reply):
-        if reply is not self._reply or self._target is None: return
+    def _drain(self, op, reply):
+        if op is not self._download or op.aborted:
+            return
+        if op.reading_paused and not op.finished_reading:
+            if (op.received - op.written) >= op.LOW_WATER_BYTES:
+                return  # still backed up: bytes stay in the reply's buffer
+            op.reading_paused = False
         try:
             chunk = bytes(reply.readAll())
-            if chunk and self._write_queue is not None:
-                self._download_received += len(chunk)
-                if self._download_received > self.MAX_DOWNLOAD_BYTES:
+            if chunk:
+                op.received += len(chunk)
+                self._lifetime_received += len(chunk)
+                if op.received > self.MAX_DOWNLOAD_BYTES:
                     # Byte cap (panel security P2-3): the only guard was
                     # equality against the SERVER-DECLARED size, which a
                     # hostile or stale endpoint simply lies about. Past
@@ -328,61 +331,70 @@ class RemoteFileService(QObject):
                     self._abort_download()
                     self._fail("Downloaded G-code exceeds the size cap")
                     return
-                self._write_queue.put(chunk)
+                op.queue.put(chunk)
+                if not op.finished_reading and (op.received - op.written) >= op.HIGH_WATER_BYTES:
+                    op.reading_paused = True
         except Exception as error:
             self._abort_download()
             self._fail(str(error))
 
-    def _finish_download(self, reply, generation, job):
-        if reply is not self._reply:
+    def _finish_download(self, op, reply):
+        if op is not self._download:
             reply.deleteLater()
             return
-        self._drain(reply)
-        if reply is not self._reply: return
-        # Let the writer finish the buffered tail (the sentinel ends the
-        # loop); only the tail remains, the bulk was written off the UI
-        # thread as the chunks arrived.
-        if self._write_queue is not None:
-            self._write_queue.put(None)
-            self._writer.join()
-            self._write_queue = None
-            self._writer = None
-        target = self._target
-        self._reply = self._target = None
+        op.finished_reading = True
+        self._drain(op, reply)
+        if op is not self._download:
+            return
+        # The writer drains the tail and flush-closes the target, then
+        # its done signal completes the operation on the GUI thread.
+        # The GUI thread never joins a writer: a stale worker stealing
+        # the sentinel left join() blocked forever.
+        op.stop()
+
+    def _on_writer_drained(self, op):
+        if op is not self._download or op.aborted or op.finished_reading:
+            return
+        op.reading_paused = False
+        self._drain(op, op.reply)
+
+    def _on_writer_done(self, op):
+        if op is not self._download:
+            return  # a retired operation's writer; everything was cleaned at abort
+        self._download = None
         try:
-            if self._writer_error is not None:
-                raise OSError(self._writer_error)
-            self._writer_error = None
-            if generation != self._generation or job != self._job:
-                target.abort()
-                self._retire(target.path)
+            if op.writer_error is not None:
+                raise OSError(op.writer_error)
+            if op.generation != self._generation or op.job != self._job:
+                self._retire(op.target.path)
                 return
-            if reply.error() != QNetworkReply.NetworkError.NoError:
-                raise OSError(reply.errorString())
-            target.flush_close()
-            size = self._identity.size if self._identity is not None else job[1]
-            if size > 0 and target.bytes_written != size:
+            if op.reply.error() != QNetworkReply.NetworkError.NoError:
+                raise OSError(op.reply.errorString())
+            if op.size > 0 and op.target.bytes_written != op.size:
                 raise OSError("Downloaded G-code size mismatch; refusing partial file")
-            self._path = target.path
+            self._path = op.target.path
             self._download_attempts = 0
             self._download_retry_at = 0.0
             self.changed.emit()
         except Exception as error:
-            target.abort()
-            self._retire(target.path)
+            self._retire(op.target.path)
             self._fail(str(error))
         finally:
-            reply.deleteLater()
+            op.reply.deleteLater()
 
     def _abort_download(self):
-        reply, target = self._reply, self._target
-        self._reply = self._target = None
-        if reply is not None:
-            reply.abort()
-            reply.deleteLater()
-        if target is not None:
-            target.abort()
-            self._retire(target.path)
+        op = self._download
+        self._download = None
+        if op is None:
+            return
+        # Retire the operation and signal its writer before aborting the
+        # reply: abort() can emit finished synchronously, and the stale
+        # reply must find no active operation when it lands.
+        op.abort()
+        if op.reply is not None:
+            op.reply.abort()
+            op.reply.deleteLater()
+        self._retire(op.target.path)
 
     def _fail(self, message):
         self._error = str(message)

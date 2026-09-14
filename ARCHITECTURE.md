@@ -13,7 +13,9 @@ version bump checklist, live in `INSTRUCTIONS.md`.
   the entire follower/model or an attribute-forwarding context.
 - Physical printer state is separate from the user's Preview selection.
 - Immutable observations and read-only query interfaces cross domain boundaries.
-- Cancellation invalidates ownership before aborting work or changing credentials.
+- Cancellation invalidates ownership before aborting work or changing credentials;
+  a transfer operation owns its queue, target and worker — a stale writer can never
+  adopt a later operation's state.
 - QML and Cura adapters expose presentation and user intents, not network/index policy.
 - One status feed per printer — a Moonraker websocket subscription (default) or the HTTP status poll
   (selectable, and the automatic fallback). The choice covers the status classes only: commands, the
@@ -58,7 +60,7 @@ private follower state to either integration.
 | `RemoteJobService.py` | Print observation and same-filename run identity | Preview selection |
 | `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer` and the single `LayerResolver` | QML/Cura writes |
 | `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` | Index algorithms or Cura loading |
-| `DownloadStream.py` | Bounded streaming G-code downloads to disk | Networking policy or Cura |
+| `DownloadStream.py` | Bounded streaming G-code downloads to disk and the `DownloadOperation` lifecycle | Networking policy or Cura |
 | `GCodeIndexService.py` | Index lifecycle, bounded worker execution and `IndexView` | Networking or UI |
 | `GCodeIndex.py` | Parsing, motion matching, compact hydration and cache serialization algorithms | Application orchestration |
 | `FollowController.py` | Follow-mode decisions and state precedence | Preview writes or networking |
@@ -134,7 +136,9 @@ redirect target off the configured host. Ordinary JSON uses
 `(owner, channel)` lanes with explicit replacement/cancellation.
 Request IDs, categories, latency and errors are logged without
 credentials. Streaming downloads and multipart uploads use the same
-request builder/pool but own their replies directly.
+request builder/pool but own their replies directly — they are never
+registered in the JSON lane registry, and `cancel_owner` stays
+JSON-only. Each operation retires its reply on every terminal path.
 
 `SessionSnapshot` publishes fully detached status copies and stores defensive
 copies of merged patches, so no consumer can mutate session internals through a
@@ -250,9 +254,19 @@ detector cannot mistake the animation for a manual grab.
 ## 6. Remote files, leases and bounded indexing
 
 `RemoteFileService` binds metadata/cache identity to a job token. Same-filename
-restarts invalidate old metadata and downloads. A streamed download uses a bounded
-Qt read buffer, writes incrementally to a temporary file and verifies known file
-size before publication.
+restarts invalidate old metadata and downloads. A streamed download is a
+`DownloadOperation` (owned by `DownloadStream.py`): operation-local queue,
+target, per-attempt byte counter and writer thread. The writer loop runs with
+its operation bound — it never reads service fields, so a stale worker can
+neither steal the next operation's sentinel nor write into its file — and it
+exits via a Qt signal; the GUI thread never joins a writer or closes its file
+(the writer closes its own fd). Buffering is bounded by high/low water marks:
+above the high mark the drain stops reading, leaving bytes in the reply's
+buffer (whose cap then throttles the socket), and the writer's low-water
+signal resumes the drain. The response's Content-Length is the sole
+transfer-length authority for the byte cap, the progress denominator and the
+final size check; a transfer without one renders indeterminate progress and
+skips the size check.
 
 Metadata completeness is separate from download identity: a failed metadata
 request installs a fallback identity so downloads proceed, then retries with
@@ -392,7 +406,9 @@ Each operation captures its generation, session and active machine identity.
 Folder scans, readiness retries, dialog accept/cancel and replies validate that
 ownership before further I/O. Start-print power-on probes every configured
 power device, never just the first. Cleanup clears reply ownership before
-`abort()`, which may emit a completion synchronously.
+`abort()`, which may emit a completion synchronously; the same ordering and the
+exactly-once terminal disposal rule apply to the file-manager's multipart
+uploads, whose registry keys on operation identity, never the destination path.
 
 Dialog teardown and terminal delivery occur after the initiating QML handler returns.
 The controller remains busy through success/error delivery; the adapter acknowledges
@@ -426,7 +442,9 @@ Pure tests cover parsing, layer resolution, immutable state, follow modes, ETA,
 configuration, metadata identity and protocol policy. Real-Qt tests exercise actual
 production components with minimal Cura host doubles, scripted/stale completions,
 and loopback HTTP. They cover startup/migration, rebind, file leases, bounded workers,
-Monitor timing/tuning, the QML meta-object surface and upload terminal ordering.
+Monitor timing/tuning, the QML meta-object surface, upload terminal ordering, and
+the download operation lifecycle — gated-writer retirement, per-attempt accounting,
+stale-writer isolation and the no-GUI-join guarantee.
 
 CI runs real-Qt regressions on Python 3.10–3.12; Cura provides Qt in production, so
 no Qt wheel is bundled in the plugin. Stdlib-only local runs explicitly skip the

@@ -1344,7 +1344,18 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         self.files._identity = self.qt.load("MoonrakerProtocol").RemoteFileIdentity("part.gcode", 0, modified=1)
         self.files._want_file = True
 
-    def _reply_double(self, error=False):
+    def _wait(self, predicate, timeout=5.0):
+        # The writer thread reports completion through a queued signal;
+        # the wait pumps the event loop until it lands.
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            self.qt.events()
+            time.sleep(0.005)
+        return predicate()
+
+    def _reply_double(self, error=False, payload=b"G1 X0 Y0\n", size=None):
         from PyQt6.QtCore import QObject, pyqtSignal
         from PyQt6.QtNetwork import QNetworkReply
 
@@ -1354,9 +1365,17 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
             def __init__(self, error):
                 super().__init__()
                 self._error = QNetworkReply.NetworkError.ContentNotFoundError if error else QNetworkReply.NetworkError.NoError
+                self._buffer = payload
             def setReadBufferSize(self, size): pass
-            def readAll(self): return b"G1 X0 Y0\n"
-            def header(self, name): return None  # no declared size: the bounded read path applies
+            def readAll(self):
+                # A real reply drains: each readAll returns only the
+                # bytes that arrived since the last read.
+                data, self._buffer = self._buffer, b""
+                return data
+            def rawHeader(self, name):
+                # The real API returns the header bytes; absent length
+                # means indeterminate progress.
+                return str(size).encode("ascii") if size is not None else b""
             def read(self, maxsize): return self.readAll()
             def bytesAvailable(self): return 0
             def error(self): return self._error
@@ -1364,6 +1383,24 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
             def abort(self): pass
             def deleteLater(self): pass
         return FakeReply(error)
+
+    def _identity(self, name, size):
+        return self.qt.load("MoonrakerProtocol").RemoteFileIdentity(name, size, modified=1)
+
+    def _gated_target(self, gate, name="GatedTarget"):
+        # A target whose writer parks on the first write until the gate
+        # is set — the deterministic stand-in for a slow disk.
+        DownloadTarget = self.qt.load("DownloadStream").DownloadTarget
+
+        class GatedTarget(DownloadTarget):
+            armed = True
+            def write(self, data):
+                if type(self).armed:
+                    type(self).armed = False
+                    gate.wait()
+                return super().write(data)
+        GatedTarget.__name__ = name
+        return GatedTarget
 
     def test_failure_latches_until_the_backoff_window_passes(self):
         failures = []
@@ -1383,7 +1420,7 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         self.files.request_file()
         self.assertEqual(self.files.phase, "downloading")
         reply.finished.emit()
-        self.assertEqual(self.files.phase, "ready")
+        self.assertTrue(self._wait(lambda: self.files.phase == "ready"))
         self.assertEqual(self.files._error, "")
         self.assertTrue(self.files.path and self.files.path.endswith("part.gcode"))
 
@@ -1392,9 +1429,125 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         self.transport.network = SimpleNamespace(get=lambda request: reply)
         self.files.request_file()
         reply.finished.emit()
-        self.assertEqual(self.files.phase, "error")
+        self.assertTrue(self._wait(lambda: self.files.phase == "error"))
         self.assertEqual(self.files._download_attempts, 1)
         self.assertGreater(self.files._download_retry_at, time.monotonic())
+
+    def test_abort_retires_the_writer_without_a_gui_thread_join(self):
+        gate = threading.Event()  # unset: the writer parks on its first write
+        GatedTarget = self._gated_target(gate)
+        module = self.qt.load("RemoteFileService")
+        files = module.RemoteFileService(self.transport, None, target_factory=GatedTarget.open)
+        self.addCleanup(gate.set)
+        self.addCleanup(files.close)
+        files.bind(("part.gcode", 100, 1))
+        files._identity = self._identity("part.gcode", 0)
+        files._want_file = True
+        reply = self._reply_double(payload=b"A" * 32)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        files.request_file()
+        op = files._download
+        reply.readyRead.emit()  # the writer parks on the first chunk
+        start = time.monotonic()
+        files.bind(("other.gcode", 50, 2))  # abort while the writer is gated
+        self.assertLess(time.monotonic() - start, 1.0)  # returned immediately: no join
+        self.assertIsNone(files._download)
+        gate.set()  # release the parked writer
+        self.assertIsNone(op._writer.join(timeout=2.0))  # the writer retired
+        self.assertFalse(op._writer.is_alive())
+        self.assertFalse(os.path.exists(os.path.dirname(op.target.path)))  # temp dir removed
+
+    def test_a_stale_writer_never_writes_into_the_next_download(self):
+        gate = threading.Event()  # unset: writer A parks on its first write
+        GatedTarget = self._gated_target(gate)
+        module = self.qt.load("RemoteFileService")
+        files = module.RemoteFileService(self.transport, None, target_factory=GatedTarget.open)
+        self.addCleanup(gate.set)
+        self.addCleanup(files.close)
+        files.bind(("part.gcode", 100, 1))
+        files._identity = self._identity("part.gcode", 0)
+        files._want_file = True
+        reply_a = self._reply_double(payload=b"A" * 64)
+        self.transport.network = SimpleNamespace(get=lambda request: reply_a)
+        files.request_file()
+        op_a = files._download
+        reply_a.readyRead.emit()  # writer A parks on A's chunk
+        files.bind(("other.gcode", 50, 2))  # aborts A while it is parked
+        files._identity = self._identity("other.gcode", 0)
+        files._want_file = True
+        reply_b = self._reply_double(payload=b"B" * 48)
+        self.transport.network = SimpleNamespace(get=lambda request: reply_b)
+        files.request_file()
+        reply_b.readyRead.emit()
+        reply_b.finished.emit()
+        gate.set()  # stale writer A resumes against its own closed target
+        self.assertTrue(self._wait(lambda: files.phase == "ready"))
+        with open(files.path, "rb") as fh:
+            self.assertEqual(fh.read(), b"B" * 48)  # exactly B's payload, in order
+        self.assertFalse(os.path.exists(os.path.dirname(op_a.target.path)))
+
+    def test_the_size_cap_is_per_attempt(self):
+        self.files.MAX_DOWNLOAD_BYTES = 20
+        reply = self._reply_double(payload=b"x" * 30)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        self.files.request_file()
+        reply.readyRead.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "error"))
+        self.assertIn("cap", self.files._error)
+        # A retry with a smaller file must not inherit the first
+        # attempt's bytes (a lifetime counter would trip the cap again).
+        self.files.bind(("small.gcode", 10, 2))
+        self.files._identity = self._identity("small.gcode", 0)
+        self.files._want_file = True
+        reply2 = self._reply_double(payload=b"y" * 10)
+        self.transport.network = SimpleNamespace(get=lambda request: reply2)
+        self.files.request_file()
+        reply2.readyRead.emit()
+        reply2.finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "ready"))
+        with open(self.files.path, "rb") as fh:
+            self.assertEqual(fh.read(), b"y" * 10)
+        self.assertEqual(self.files._lifetime_received, 40)
+
+    def test_fraction_uses_the_declared_length_and_resets_per_attempt(self):
+        reply = self._reply_double(payload=b"z" * 40, size=100)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        self.files.request_file()
+        reply.readyRead.emit()
+        self.assertEqual(self.files.download_fraction, 0.4)
+        # A fresh attempt starts at zero against its own declared length.
+        self.files.bind(("again.gcode", 80, 2))
+        self.files._identity = self._identity("again.gcode", 0)
+        self.files._want_file = True
+        reply2 = self._reply_double(payload=b"w" * 10, size=50)
+        self.transport.network = SimpleNamespace(get=lambda request: reply2)
+        self.files.request_file()
+        self.assertEqual(self.files.download_fraction, 0.0)
+        reply2.readyRead.emit()
+        self.assertEqual(self.files.download_fraction, 0.2)
+
+    def test_finish_returns_while_the_writer_is_still_gated(self):
+        gate = threading.Event()  # unset: the writer parks on its first write
+        self.addCleanup(gate.set)
+        GatedTarget = self._gated_target(gate)
+        module = self.qt.load("RemoteFileService")
+        files = module.RemoteFileService(self.transport, None, target_factory=GatedTarget.open)
+        self.addCleanup(files.close)
+        files.bind(("part.gcode", 100, 1))
+        files._identity = self._identity("part.gcode", 0)
+        files._want_file = True
+        reply = self._reply_double(payload=b"a" * 16)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        files.request_file()
+        reply.readyRead.emit()  # the writer parks on the first chunk
+        start = time.monotonic()
+        reply.finished.emit()  # must return immediately: the GUI thread never joins
+        self.assertLess(time.monotonic() - start, 1.0)
+        self.assertEqual(files.phase, "downloading")  # terminal still pending
+        gate.set()  # release the parked writer
+        self.assertTrue(self._wait(lambda: files.phase == "ready"))
+        with open(files.path, "rb") as fh:
+            self.assertEqual(fh.read(), b"a" * 16)
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
