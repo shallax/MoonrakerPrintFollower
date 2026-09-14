@@ -376,12 +376,13 @@ case "$MODE" in
             # mode — simulator runs never carry them (the panel's
             # process-table finding).
             docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
-                HARNESS_COORDS="$COORDS" REAL_URL="${REAL_URL:-}" \
+                HARNESS_COORDS="$COORDS" HARNESS_MODE="$MODE" \
+                REAL_URL="${REAL_URL:-}" \
                 REAL_API_KEY="${REAL_API_KEY:-}" \
                 python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
         else
             docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
-                HARNESS_COORDS="$COORDS" \
+                HARNESS_COORDS="$COORDS" HARNESS_MODE="$MODE" \
                 python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
         fi
         ;;

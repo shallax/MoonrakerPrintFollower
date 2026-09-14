@@ -12,10 +12,12 @@ cd "$root"
 
 echo "== stdlib suite =="
 python3 -m unittest discover -s tests
-# The harness specs' structural checks (probe strings compile, ids
-# unique, every op exists) — not discovered on the host (no package
-# init), so run directly.
+# The harness structural and spine checks (probe strings compile, ids
+# unique, every op exists; the evidence record and the PNG dimension
+# check) — not discovered on the host (no package init), so run
+# directly.
 python3 tests/harness/test_harness_specs.py
+python3 tests/harness/test_harness_runner.py
 
 echo "== real-Qt suite (dev container) =="
 tools/docker_dev.sh python3 -m unittest discover -s tests
