@@ -102,7 +102,11 @@ class FileManager(QObject):
         self._thumb_generation = 0
         self._thumb_queue: List[tuple] = []
         self._thumb_active = 0
-        self._upload_replies: Dict[str, QNetworkReply] = {}
+        # Upload operations key on their operation id, never the
+        # destination path: a second upload of the same name must not
+        # orphan the first's reply or let it emit a stale verdict.
+        self._upload_replies: Dict[str, tuple] = {}
+        self._upload_seq = 0
         # Snapshot 3's column config lives HERE, not in the model (the
         # author's live ruling: the file manager is its own thing,
         # composed into the Monitor page — the model only merges).
@@ -454,6 +458,12 @@ class FileManager(QObject):
             self.uploadFinished.emit(False, f"A file named {name} already exists.")
             self.note.emit(f"Upload refused: a file named {name} already exists.")
             return False
+        if any(in_flight == relpath for _reply, in_flight in self._upload_replies.values()):
+            # The ruling: a second upload of the same name while one
+            # runs is refused with a verdict, never queued.
+            self.uploadFinished.emit(False, f"An upload of {name} is already running.")
+            self.note.emit(f"Upload refused: an upload of {name} is already running.")
+            return False
         transport = self._client.transport
         try:
             source = QFile(local_path)
@@ -483,13 +493,15 @@ class FileManager(QObject):
             # children so nothing dies mid-stream.
             multipart.setParent(reply)
             source.setParent(reply)
-            self._upload_replies[relpath] = reply
+            self._upload_seq += 1
+            op_id = f"upload-{self._upload_seq}"
+            self._upload_replies[op_id] = (reply, relpath)
             reply.uploadProgress.connect(
                 lambda sent, total, g=generation: self.uploadProgress.emit(
                     max(0, min(100, int(sent * 100 / total))))
                 if total > 0 and g == self._generation else None)
             reply.finished.connect(
-                lambda r=reply, p=relpath, g=generation, n=name: self._upload_finished(p, r, g, n)
+                lambda r=reply, p=op_id, g=generation, n=name: self._upload_finished(p, r, g, n)
             )
             return True
         except Exception as error:
@@ -497,15 +509,15 @@ class FileManager(QObject):
             self.note.emit(f"Upload refused: {error}")
             return False
 
-    def _upload_finished(self, relpath: str, reply, generation: int, name: str) -> None:
-        if self._upload_replies.get(relpath) is reply:
-            self._upload_replies.pop(relpath, None)
+    def _upload_finished(self, op_id: str, reply, generation: int, name: str) -> None:
+        entry = self._upload_replies.get(op_id)
+        if entry is not None and entry[0] is reply:
+            self._upload_replies.pop(op_id, None)
         if generation != self._generation:
             # The printer changed mid-upload: the popup must resolve
             # with a verdict, not hang.
             self.uploadFinished.emit(False, "The printer changed during the upload.")
-            return
-        if reply.error() != QNetworkReply.NetworkError.NoError:
+        elif reply.error() != QNetworkReply.NetworkError.NoError:
             detail = reply.errorString()
             try:
                 body = json.loads(bytes(reply.readAll()).decode("utf-8", errors="replace"))
@@ -516,14 +528,23 @@ class FileManager(QObject):
                 pass
             self.uploadFinished.emit(False, detail)
             self.note.emit(f"Upload refused: {detail}")
-            return
-        self.uploadFinished.emit(True, name)
-        self.note.emit(f"Uploaded {name}.")
-        self.changed.emit()
-        self.refresh()
+        else:
+            self.uploadFinished.emit(True, name)
+            self.note.emit(f"Uploaded {name}.")
+            self.changed.emit()
+            self.refresh()
+        # Every terminal path disposes the reply exactly once; the
+        # multipart and the source QFile close with it (parented
+        # children of the reply).
+        reply.deleteLater()
 
     def _abort_uploads(self) -> None:
-        for reply in list(self._upload_replies.values()):
+        # Ownership is invalidated BEFORE abort: abort() emits finished
+        # synchronously, and the re-entrant handler must find no
+        # registry entry (the ordering rule shared with the thumbnails).
+        pending = list(self._upload_replies.items())
+        self._upload_replies.clear()
+        for _op_id, (reply, _relpath) in pending:
             try:
                 reply.abort()
             except Exception:
@@ -532,7 +553,6 @@ class FileManager(QObject):
                 reply.deleteLater()
             except Exception:
                 pass
-        self._upload_replies = {}
 
     def rename_directory(self, directory: str, new_name: Any, overwrite: bool = False) -> bool:
         """Snapshot 3: rename a FOLDER (a live request —

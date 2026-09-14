@@ -175,7 +175,8 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
                 self._message = None
             if success:
                 config = self._upload.config
-                suffix = " and started the print" if self._upload.start_print else ""
+                suffix = {"started": " and started the print", "queued": " and queued the print"}.get(
+                    self._upload.print_outcome, "")
                 self._message = Message(f"Uploaded '{self._upload.filename}' to {self.getName()}{suffix}.", 30 if config.upload_autohide_message else 0, True)
                 self._message.setTitle("Moonraker")
                 self._message.addAction("open_browser", "Open Browser", "globe", "Open the configured Moonraker frontend")
