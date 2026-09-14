@@ -11,8 +11,10 @@ what Cura runs — this double is the one permitted fake.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -157,6 +159,16 @@ class PrinterState:
         # The corrupt-frame arm: the next push goes out as garbage —
         # the client's socket must fail and reconnect (S-corruption).
         self.corrupt_frame_once = False
+        # The new lifecycle arms (round-2 fold-ins): the stageable
+        # file listing, the autonomous temperature ticker, the upload
+        # refusal/hold, the accepted-but-never-confirmed pause, the
+        # injected clock and the push transcript.
+        self.temp_tick_deg_c = 0.0
+        self.fail_upload = False
+        self.accept_pause_without_state = False
+        self.clock_skew_ms = 0.0
+        self.push_ledger = []
+        self.push_seq = 0
         # Keys the scenario lane could not apply — the runner's
         # sim_arm/sim_set refuse on these.
         self.unknown_keys = []
@@ -276,6 +288,24 @@ class PrinterState:
                 self.fail_pause_script = bool(value)
             elif name == "corrupt_frame_once":
                 self.corrupt_frame_once = bool(value)
+            elif name == "files":
+                # The stageable listing: F06's 400-file baseline and
+                # the file scenarios' arbitrary inventories. Entries
+                # without a modified time take the clock seam's now,
+                # so date-filter scenarios stage old files with
+                # clock_skew_ms instead of hand-computed stamps.
+                self.files = list(value)
+                for entry in self.files:
+                    if entry.get("modified") is None:
+                        entry["modified"] = self.now()
+            elif name == "temp_tick_deg_c":
+                self.temp_tick_deg_c = float(value or 0.0)
+            elif name == "fail_upload":
+                self.fail_upload = bool(value)
+            elif name == "accept_pause_without_state":
+                self.accept_pause_without_state = bool(value)
+            elif name == "clock_skew_ms":
+                self.clock_skew_ms = float(value or 0.0)
             else:
                 # A dropped key silently narrows the very surface the
                 # suite exists to widen — record it so the runner can
@@ -309,12 +339,25 @@ class PrinterState:
         self.gcode_stream_ms = 0
         self.fail_pause_script = False
         self.corrupt_frame_once = False
+        self.temp_tick_deg_c = 0.0
+        self.fail_upload = False
+        self.accept_pause_without_state = False
+        self.clock_skew_ms = 0.0
+        self.push_ledger = []
+        self.push_seq = 0
         self.unknown_keys = []
         self._last_pushed = {}
         self.console_lines = [{"type": "response", "message": "// Klipper state: Ready",
                                "time": time.time()}]
         self.ledger = []
         self.inflight = 0
+
+    def now(self) -> float:
+        # The injected-clock seam: every wall-clock read the arms
+        # stage goes through here, so the date-filter and timeout
+        # scenarios shift time with clock_skew_ms instead of
+        # hand-computed stamps.
+        return time.time() + self.clock_skew_ms / 1000.0
 
     def push_patch(self) -> Dict[str, Any]:
         """One changed-objects frame, as Moonraker shapes it: only
@@ -357,6 +400,16 @@ class PrinterState:
                 stats["message"] = ""
                 self.cold_start = False
                 self.state["virtual_sdcard"].update({"is_active": True})
+        elif self.temp_tick_deg_c and stats.get("state") not in ("printing", "error"):
+            # The autonomous temperature ticker: the chart scenarios
+            # need a moving series WITHOUT a print running. Advances
+            # the extruder and the bed every push at the armed rate.
+            for name in ("extruder", "heater_bed"):
+                entry = self.state.get(name)
+                if entry and isinstance(entry, dict):
+                    temp = float(entry.get("temperature") or 0.0)
+                    entry["temperature"] = round(
+                        temp + self.temp_tick_deg_c * self.push_cadence_ms / 1000.0, 2)
         # Every state object participates in the changes-only diff, not
         # just the original five — configfile, fan, gcode_move and the
         # rest ride the same contract (the pump used to drop them and
@@ -485,12 +538,25 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
                 self._printer.first_push_after_reply_at = time.monotonic()
             frame = {"jsonrpc": "2.0", "method": "notify_status_update",
                      "params": [patch, time.time()]}
+            payload = json.dumps(frame)
+            # The push transcript: the peer-side record of what was
+            # DELIVERED — frame number, timestamp, topics and a
+            # payload digest. The chart round's assertions read this,
+            # never the generator's ideal ramp (the round-2
+            # CRITICAL-3: the sim recorded requests only).
+            self._printer.push_ledger.append({
+                "seq": self._printer.push_seq,
+                "ts": frame["params"][1],
+                "topics": sorted(patch.keys()),
+                "digest": hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16],
+            })
+            self._printer.push_seq += 1
             try:
                 if self._printer.corrupt_frame_once:
                     self._printer.corrupt_frame_once = False
                     self.write_message(b"\x00\xff\xfe garbage")
                 else:
-                    self.write_message(json.dumps(frame))
+                    self.write_message(payload)
             except Exception:
                 break
 
@@ -653,7 +719,7 @@ class StatusHandler(tornado.web.RequestHandler):
             if script:
                 self._printer.console_lines.append(
                     {"type": "command", "message": script,
-                     "time": time.time()})
+                     "time": self._printer.now()})
             if self._printer.fail_pause_script and script.strip().upper() == "PAUSE":
                 # The missed-pause arm: the host refuses the command —
                 # the controller must keep the entry, restyled.
@@ -663,7 +729,8 @@ class StatusHandler(tornado.web.RequestHandler):
             else:
                 self.write(json.dumps({"result": "ok"}))
                 if script.strip().upper() == "PAUSE" and \
-                        self._printer.state["print_stats"].get("state") == "printing":
+                        self._printer.state["print_stats"].get("state") == "printing" and \
+                        not self._printer.accept_pause_without_state:
                     # Real ordering: the ack returns FIRST and the
                     # state transition lands on a later tick — Klipper
                     # expands the macro asynchronously. The plugin's
@@ -724,6 +791,34 @@ class StatusHandler(tornado.web.RequestHandler):
                 self._printer.state["virtual_sdcard"].update({"is_active": True, "progress": 0.0,
                                                               "file_size": len(self._printer.gcode_bytes)})
             self.write(json.dumps({"result": "ok"}))
+        elif path == "server/files/upload":
+            # The upload lane, honestly shaped: refused or accepted
+            # (holds ride the route_delay_ms lane in prepare — it is
+            # async-safe, a blocking sleep would freeze the pump).
+            # The filename rides the file part's Content-Disposition
+            # (the plugin's multipart shape).
+            if self._printer.fail_upload:
+                self.set_status(400)
+                self.write(json.dumps({"result": {},
+                                       "error": {"code": 400,
+                                                 "message": "simulated upload refusal"}}))
+                return
+            raw = self.request.body or b""
+            match = re.search(rb'name="file"; filename="([^"]+)"', raw)
+            filename = match.group(1).decode("utf-8", "replace") if match else "upload.gcode"
+            self._printer.files = [entry for entry in self._printer.files
+                                   if entry.get("filename") != filename]
+            self._printer.files.append({
+                "filename": filename, "modified": self._printer.now(),
+                "size": len(raw), "permissions": "rw",
+                "slicer": "sim-upload", "estimated_time": 600.0,
+                "layer_height": 0.2, "filament_total": 1.0,
+                "uuid": "sim-upload-uuid", "job_id": None, "print_start_time": None})
+            # The honest upload outcome: the terminal verdict reads
+            # this body (print_started/print_queued are distinct), so
+            # the sim answers the real shape, never a bare ok.
+            self.write(json.dumps({"result": {"print_started": False,
+                                              "print_queued": False}}))
         else:
             self.write(json.dumps({"result": "ok"}))
 
@@ -772,6 +867,11 @@ class ControlHandler(tornado.web.RequestHandler):
 
     def get(self, path: str = "") -> None:
         self.set_header("Content-Type", "application/json")
+        if path == "pushes":
+            # The push transcript: what the socket DELIVERED (the
+            # chart round's peer-side assertions read this).
+            self.write(json.dumps({"entries": self._printer.push_ledger}))
+            return
         result = dict(self._printer.state)
         result.update({
             "connections": self._printer.connections,
