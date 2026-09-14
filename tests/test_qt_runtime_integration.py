@@ -30,6 +30,7 @@ class QtRuntimeTests(unittest.TestCase):
             follower.deinitialize()
         for client in self.clients:
             client.stop()
+            client.transport.close()  # the manager's pooled sockets close with it
         self.qt.events()
 
     def client(self):
@@ -609,7 +610,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
         transport.configure("http://127.0.0.1:" + str(server.server_port), "test-key")
-        self.addCleanup(transport.cancel_all)
+        self.addCleanup(transport.close)
         results = []
         transport.send_json("test", "good", "GET", "/good", lambda p, e: results.append((p, e)))
         transport.send_json("test", "bad", "GET", "/bad", lambda p, e: results.append((p, e)))
@@ -701,7 +702,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
         transport.configure("http://127.0.0.1:" + str(server.server_port), "test-key")
-        self.addCleanup(transport.cancel_all)
+        self.addCleanup(transport.close)
         manager = self.qt.load("FileManager").FileManager(SimpleNamespace(transport=transport))
         FileRow = self.qt.load("FileManagerPolicy").FileRow
         manager.request_thumbnails([
@@ -744,7 +745,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
         transport.configure("http://127.0.0.1:" + str(server.server_port), "test-key")
-        self.addCleanup(transport.cancel_all)
+        self.addCleanup(transport.close)
         manager = self.qt.load("FileManager").FileManager(SimpleNamespace(transport=transport))
         # Seed the resident row directly — the delete path needs no
         # walk.
@@ -786,7 +787,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
         transport.configure("http://127.0.0.1:" + str(server.server_port), "test-key")
-        self.addCleanup(transport.cancel_all)
+        self.addCleanup(transport.close)
         manager = self.qt.load("FileManager").FileManager(SimpleNamespace(transport=transport))
         manager._directory = ["prints"]
         notes = []
@@ -861,7 +862,7 @@ class QtRuntimeTests(unittest.TestCase):
         transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
         base = "http://127.0.0.1:" + str(server.server_port)
         transport.configure(base, "test-key")
-        self.addCleanup(transport.cancel_all)
+        self.addCleanup(transport.close)
         results = []
         transport.send_json("fm", "delete", "DELETE", "server/files/gcodes/foo.gcode", lambda p, e: results.append(("delete", p, e)))
         transport.send_json("fm", "refused", "GET", "/refused", lambda p, e: results.append(("refused", p, e)))
@@ -933,7 +934,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
         transport.configure("http://127.0.0.1:" + str(server.server_port), "test-key")
-        self.addCleanup(transport.cancel_all)
+        self.addCleanup(transport.close)
         results = []
         transport.send_json("fm", "cold", "GET", "/cold", lambda p, e: results.append(("flat", p, e)))
         transport.send_json("fm", "rpc", "GET", "/rpc", lambda p, e: results.append(("nested", p, e)))
@@ -969,7 +970,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         transport = self.qt.load("MoonrakerTransport").MoonrakerHttpTransport()
         transport.configure("http://127.0.0.1:" + str(server.server_port), "test-key")
-        self.addCleanup(transport.cancel_all)
+        self.addCleanup(transport.close)
         service = self.qt.load("RemoteFileService").RemoteFileService(transport)
         self.addCleanup(service.close)
         results = []
@@ -1569,7 +1570,7 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         reply2 = self._reply_double(payload=b"w" * 10, size=50)
         self.transport.network = SimpleNamespace(get=lambda request: reply2)
         self.files.request_file()
-        self.assertEqual(self.files.download_fraction, 0.0)
+        self.assertIsNone(self.files.download_fraction)  # indeterminate until the headers arrive
         reply2.readyRead.emit()
         self.assertEqual(self.files.download_fraction, 0.2)
 
@@ -1595,6 +1596,40 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         self.assertTrue(self._wait(lambda: files.phase == "ready"))
         with open(files.path, "rb") as fh:
             self.assertEqual(fh.read(), b"a" * 16)
+
+    def test_fraction_becomes_determinate_when_the_headers_arrive_late(self):
+        # The response headers land with the first data, never at
+        # reply creation: a creation-time Content-Length read is
+        # empty and froze the progress as indeterminate for the whole
+        # transfer (the harness's p1-06 lesson).
+        from PyQt6.QtCore import QObject, pyqtSignal
+        class LateReply(QObject):
+            readyRead = pyqtSignal()
+            finished = pyqtSignal()
+            def __init__(self):
+                super().__init__()
+                self._chunks = [b"z" * 40, b"y" * 60]  # the declared 100 arrives in two events
+                self._headers = False
+            def setReadBufferSize(self, size): pass
+            def readAll(self):
+                return self._chunks.pop(0) if self._chunks else b""
+            def rawHeader(self, name):
+                return b"100" if self._headers else b""
+            def error(self):
+                from PyQt6.QtNetwork import QNetworkReply
+                return QNetworkReply.NetworkError.NoError
+            def errorString(self): return ""
+            def abort(self): pass
+            def deleteLater(self): pass
+        reply = LateReply()
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        self.files.request_file()
+        self.assertIsNone(self.files.download_fraction)  # the headers have not arrived
+        reply._headers = True  # they land with the first data event
+        reply.readyRead.emit()
+        self.assertEqual(self.files.download_fraction, 0.4)  # the lazy read catches them
+        reply.finished.emit()
+        self.assertTrue(self._wait(lambda: self.files.phase == "ready"))
 
     def test_one_shot_cancel_delivers_exactly_once(self):
         reply = self._reply_double(payload=b"A" * 32, size=32)

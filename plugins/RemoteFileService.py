@@ -58,8 +58,9 @@ class _OneShotDownload:
             request.setRawHeader(b"Accept", b"application/octet-stream")
             reply = self._transport.network.get(request)
             reply.setReadBufferSize(4 * 1024 * 1024)
-            declared = reply.rawHeader(b"Content-Length")
-            size = int(bytes(declared)) if declared else 0
+            # Same as the job lane: the declared length is read lazily
+            # in the drain once the response headers have arrived.
+            size = 0
         except Exception as error:
             self._finish_immediately(str(error))
             return
@@ -259,6 +260,10 @@ class RemoteFileService(QObject):
                 return
             op.reading_paused = False
         try:
+            if op.size <= 0:
+                declared = reply.rawHeader(b"Content-Length")
+                if declared:
+                    op.size = int(bytes(declared))
             chunk = bytes(reply.readAll())
             if chunk:
                 op.received += len(chunk)
@@ -366,18 +371,26 @@ class RemoteFileService(QObject):
         name = os.path.basename(job[0].replace("\\", "/")) or "moonraker.gcode"
         if os.path.splitext(name)[1].lower() not in {".g", ".gcode"}: name += ".gcode"
         reply = None
+        target = None
         try:
             target = self._target_factory(os.path.join(directory, name))
             request = self._transport.request(download_endpoint(self._transport.identity[0], job[0]), timeout_ms=30000)
             request.setRawHeader(b"Accept", b"application/octet-stream")
             reply = self._transport.network.get(request)
             reply.setReadBufferSize(4 * 1024 * 1024)
-            declared = reply.rawHeader(b"Content-Length")
-            size = int(bytes(declared)) if declared else 0
+            # The response headers have not arrived yet: the declared
+            # length is read lazily in the drain (a creation-time
+            # rawHeader read was empty and froze the progress as
+            # indeterminate for the whole transfer).
+            size = 0
         except Exception as error:
             if reply is not None:
                 reply.abort()
                 reply.deleteLater()
+            if target is not None:
+                # The open target must never leak its handle when the
+                # request setup fails after the file was created.
+                target.abort(remove=False)
             shutil.rmtree(directory, ignore_errors=True)
             self._fail(str(error))
             return
@@ -398,6 +411,10 @@ class RemoteFileService(QObject):
                 return  # still backed up: bytes stay in the reply's buffer
             op.reading_paused = False
         try:
+            if op.size <= 0:
+                declared = reply.rawHeader(b"Content-Length")
+                if declared:
+                    op.size = int(bytes(declared))
             chunk = bytes(reply.readAll())
             if chunk:
                 op.received += len(chunk)
