@@ -276,6 +276,16 @@ re-requests; a failed layer hydration is latched until a new file arrives
 or the index is rebuilt, so a broken file is never re-read in full on every
 poll.
 
+The file-manager's one-shot lane (`download_once`) runs on the same operation
+machinery and captures the transport identity at request time. A mid-stream
+printer/session switch cancels the stream — wired to the client's
+session-invalidation signal — and a stale completion refuses to load; the
+caller re-validates its captured machine/session identity at delivery. Cura's
+`fileCompleted` is not a terminal signal: the load lease is preflighted against
+the reachable refusals, and a bounded watchdog un-sticks `loading` when the
+confirmation never arrives — the file is dropped, not deleted, and a late
+completion is absorbed quietly.
+
 A `FileLease` explicitly keeps that file alive for an index worker or Cura parse
 job. Rebinding retires old files; deletion waits for all leases to close. An unrelated
 Cura file completion cannot release the current remote file. The matching application

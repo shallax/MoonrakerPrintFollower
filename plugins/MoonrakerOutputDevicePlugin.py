@@ -84,6 +84,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 bed_mesh=self._follower.bed_mesh,
                 request_load=self._follower.confirmForceLoadCurrentPrint,
                 request_file_download=self._follower.request_file_download,
+                download_failed=self._follower.download_failed,
                 request_monitor_download=self._follower.confirmDownloadForMonitor,
                 preferences_flushed=self._follower.preferencesFlushed,
                 identity=self._follower.current_printer_identity,

@@ -279,15 +279,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
                  request_load=None, request_monitor_download=None, request_file_download=None,
-                 preferences_flushed=None, identity=None):
+                 download_failed=None, preferences_flushed=None, identity=None):
         super().__init__(output_controller, number_of_extruders)
         self._client, self._print_state, self._config, self._apply_config, self._mesh = \
             client, print_state, config, apply_config, bed_mesh
         self._identity = identity
         # The file-manager Download capability: the follower owns the
         # one-shot stream + load-into-Cura (the same lane discipline
-        # as the improve-ETA pull).
+        # as the improve-ETA pull). Download failures (stream errors,
+        # stale completions, unconfirmed loads) land in the popup's
+        # note line through the same channel as file refusals.
         self._request_file_download = request_file_download
+        if download_failed is not None:
+            download_failed.connect(self._on_file_manager_note)
         self._file_print_confirm = None
         self._file_delete_confirm = None
         self._file_rename_target = None
