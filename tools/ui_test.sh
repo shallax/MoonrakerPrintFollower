@@ -17,6 +17,32 @@ cd "$root"
 PLUGIN_VERSION="$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')"
 
 CONTAINER="${HARNESS_CONTAINER:-mpf-cura513}"
+CONTAINER_WORK_DIR="/tmp/mpf"
+# The deterministic scratch root. Everything a run needs lives
+# under it and is CREATED here, never assumed — /tmp does not
+# survive a reboot, and an unprepared tree must provision itself
+# rather than die halfway through a run.
+WORK_DIR="${MPF_WORK_DIR:-/tmp/mpf}"
+mkdir -p "$WORK_DIR"
+export MPF_WORK_DIR="$WORK_DIR"
+
+# The harness container must exist before any docker exec:
+# provision it (image + mounts) exactly as the release gate does,
+# so `make ui_test` works from a bare machine.
+if ! docker exec "$CONTAINER" true >/dev/null 2>&1; then
+    echo "ui_test: the harness container is not running — provisioning it"
+    if ! docker image inspect mpf-cura-harness >/dev/null 2>&1; then
+        if docker pull ghcr.io/shallax/mpf-cura-harness:latest >/dev/null 2>&1; then
+            docker tag ghcr.io/shallax/mpf-cura-harness:latest mpf-cura-harness
+        else
+            docker build -q -t mpf-cura-harness "$root/tools/harness"
+        fi
+    fi
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    docker run -d --init --name "$CONTAINER" --cap-add=SYS_PTRACE \
+        -v "$root/tests/harness:$root/tests/harness" -v "$WORK_DIR:/tmp/mpf" \
+        mpf-cura-harness sleep infinity >/dev/null
+fi
 # Per-unit evidence dir: the release gate gives every unit its own name
 # so a later unit never overwrites an earlier one's proof (the panel's
 # evidence-survival finding).
@@ -24,17 +50,17 @@ CONTAINER="${HARNESS_CONTAINER:-mpf-cura513}"
 # timestamped root); a relative one nests under ui-artifacts.
 case "${RUN_DIR_NAME:-run-001}" in
     /*) RUN_DIR="$RUN_DIR_NAME" ;;
-    *) RUN_DIR="/tmp/mpf/ui-artifacts/${RUN_DIR_NAME:-run-001}" ;;
+    *) RUN_DIR=""$WORK_DIR"/ui-artifacts/${RUN_DIR_NAME:-run-001}" ;;
 esac
 
 # The pinned Cura for this run: any version can be selected; prepare
 # one with tools/fetch_cura.py (the manifest records the swap).
 CURA_VERSION="${CURA_VERSION:-5.13.0}"
-CURA_ROOT="/tmp/mpf/cura_versions/$CURA_VERSION/root"
-CURA_WHEELS="/tmp/mpf/cura_versions/$CURA_VERSION/wheels"
+CURA_ROOT="$WORK_DIR/cura_versions/$CURA_VERSION/root"
+CURA_WHEELS="$WORK_DIR/cura_versions/$CURA_VERSION/wheels"
 if [ ! -d "$CURA_ROOT" ]; then
-    echo "ui_test: Cura $CURA_VERSION is not prepared — run tools/fetch_cura.py $CURA_VERSION first"
-    exit 1
+    echo "ui_test: Cura $CURA_VERSION is not prepared — fetching it now"
+    tools/fetch_cura.py "$CURA_VERSION" || exit 1
 fi
 
 # Nothing outlives a run: Cura, its video ffmpeg and the simulator die
@@ -50,8 +76,8 @@ cleanup() {
         # a real run's debris must not outlive the run (the key
         # must never sit on disk beyond the session).
         case "${RUN_DIR_NAME:-run-001}" in
-            /*) rm -rf /tmp/mpf/xdg "$RUN_DIR_NAME" ;;
-            *) rm -rf /tmp/mpf/xdg /tmp/mpf/ui-artifacts/"${RUN_DIR_NAME:-run-001}" ;;
+            /*) rm -rf "$WORK_DIR"/xdg "$RUN_DIR_NAME" ;;
+            *) rm -rf "$WORK_DIR"/xdg "$WORK_DIR"/ui-artifacts/"${RUN_DIR_NAME:-run-001}" ;;
         esac
     fi
 }
@@ -64,29 +90,29 @@ trap cleanup EXIT INT TERM
 # Cura's own writes land with owner-only modes (settings files go
 # 0600, its dirs 0775): on CI the next unit's host-side rm hits them
 # as a different uid. The container's root does the destructive pass.
-docker exec "$CONTAINER" rm -rf /tmp/mpf/xdg
-mkdir -p /tmp/mpf/xdg
-cp -r "$root/tests/harness/config/." /tmp/mpf/xdg/
+docker exec "$CONTAINER" rm -rf "$WORK_DIR"/xdg
+mkdir -p "$WORK_DIR"/xdg
+cp -r "$root/tests/harness/config/." "$WORK_DIR"/xdg/
 # The container's Cura writes into the seeded tree — the instance lock
 # is its very first write, and the boot retries it forever on EACCES.
 # On CI the host-side creators run as a different uid than the
 # container's, so the copy must be opened up AFTER it lands (cp -r
 # restores the 755 modes the chmod would have fixed).
-chmod -R 777 /tmp/mpf/xdg
+chmod -R 777 "$WORK_DIR"/xdg
 # The seeded data dir is empty, and git drops empty directories from
 # the checkout: a fresh CI tree lacks it while a dev box's working
 # tree keeps it. Recreate it — the version carry-over copies it and
 # the boot writes its lock and settings into it.
-mkdir -p /tmp/mpf/xdg/cura/5.13
+mkdir -p "$WORK_DIR"/xdg/cura/5.13
 # Real mode points the seeded machine record at the real host, at
 # runtime, from the environment — the host and key never touch the
 # repo, the logs or any committed file.
 if [ "${MODE:-scenario}" = "real" ]; then
     [ -n "${REAL_URL:-}" ] || { echo "ui_test: MODE=real needs REAL_URL (and REAL_API_KEY) in the environment"; exit 1; }
     python3 - "$REAL_URL" "${REAL_API_KEY:-}" << 'PY'
-import sys
+import os, sys
 url, key = sys.argv[1], sys.argv[2]
-path = "/tmp/mpf/xdg/config/cura/5.13/cura.cfg"
+path = os.environ.get("MPF_WORK_DIR", "/tmp/mpf") + "/xdg/config/cura/5.13/cura.cfg"
 before = open(path).read()
 text = before
 text = text.replace('"url":"http://127.0.0.1:7125"',
@@ -106,32 +132,32 @@ fi
 # the seed is written for 5.13, so carry it over for another version.
 SEED_VER="${CURA_VERSION%.*}"
 if [ "$SEED_VER" != "5.13" ]; then
-    cp -r /tmp/mpf/xdg/config/cura/5.13 /tmp/mpf/xdg/config/cura/"$SEED_VER"
-    cp -r /tmp/mpf/xdg/cura/5.13 /tmp/mpf/xdg/cura/"$SEED_VER"
+    cp -r "$WORK_DIR"/xdg/config/cura/5.13 "$WORK_DIR"/xdg/config/cura/"$SEED_VER"
+    cp -r "$WORK_DIR"/xdg/cura/5.13 "$WORK_DIR"/xdg/cura/"$SEED_VER"
     # The carry-over copy lands with the same 755 modes (cp -r); the
     # cross-uid chmod above must cover it too.
-    chmod -R 777 /tmp/mpf/xdg/config/cura/"$SEED_VER" /tmp/mpf/xdg/cura/"$SEED_VER"
+    chmod -R 777 "$WORK_DIR"/xdg/config/cura/"$SEED_VER" "$WORK_DIR"/xdg/cura/"$SEED_VER"
 fi
 # CuraEngine's ELF carries a RELATIVE interpreter path, resolved from
 # the spawning process's cwd — which is the fakehome (Cura chdirs
 # there). Without this link the backend's engine spawn dies with
 # ENOENT and no toolpath can ever slice (proven by the cube flow).
-mkdir -p /tmp/mpf/fakehome/lib64
+mkdir -p "$WORK_DIR"/fakehome/lib64
 # The container runs as a fixed uid and must write this throwaway home
 # whatever uid created the mount on the host (the CI runner's user
 # differs from the dev box's — the .local mkdir died with EACCES).
 # The chmod runs in the container: a previous unit's Cura wrote here
 # with owner-only modes, and a host-side chmod would EPERM on files
 # it does not own.
-docker exec "$CONTAINER" chmod -R 777 /tmp/mpf/fakehome
-ln -sfn /lib64/ld-linux-x86-64.so.2 /tmp/mpf/fakehome/lib64/ld-linux-x86-64.so.2
+docker exec "$CONTAINER" chmod -R 777 "$WORK_DIR"/fakehome
+ln -sfn /lib64/ld-linux-x86-64.so.2 "$WORK_DIR"/fakehome/lib64/ld-linux-x86-64.so.2
 # Stage the suite's test model where the insert-slice flow reads it.
-mkdir -p /tmp/mpf/models
-cp "$root/tests/harness/models/voron_cube.stl" /tmp/mpf/models/voron_cube.stl
+mkdir -p "$WORK_DIR"/models
+cp "$root/tests/harness/models/voron_cube.stl" "$WORK_DIR"/models/voron_cube.stl
 # The driver's ready marker is per-boot: a stale one from an earlier
 # run would let the wait loop pass before Cura is actually up.
-rm -f /tmp/mpf/harness_port.txt
-COORDS=/tmp/mpf/harness_coords.json
+rm -f "$WORK_DIR"/harness_port.txt
+COORDS="$WORK_DIR"/harness_coords.json
 MODE="${MODE:-scenario}"
 export HARNESS_MODE="$MODE"
 
@@ -139,40 +165,40 @@ export HARNESS_MODE="$MODE"
 # profile (the XDG data dir the spike established). A RED run stages
 # the plugin built from a known-broken revision — the runner and the
 # driver stay current (the scenario itself must be the same).
-PLUGIN_DIR="/tmp/mpf/xdg/cura/$SEED_VER/plugins"
+PLUGIN_DIR=""$WORK_DIR"/xdg/cura/$SEED_VER/plugins"
 rm -rf "$PLUGIN_DIR/Moonraker_Print_Follower" "$PLUGIN_DIR/HarnessDriver"
 mkdir -p "$PLUGIN_DIR"
 PACKAGE_ROOT="$root/dist"
 if [ -n "${RED_REV:-}" ]; then
-    RED_DIR="/tmp/mpf/red-$RED_REV"
+    RED_DIR="$WORK_DIR/red-$RED_REV"
     if [ ! -f "$RED_DIR/dist/MoonrakerPrintFollower-v$PLUGIN_VERSION.curapackage" ]; then
         git -C "$root" worktree add --detach "$RED_DIR" "$RED_REV" >/dev/null 2>&1 || true
         (cd "$RED_DIR" && make package >/dev/null 2>&1) || true
     fi
     PACKAGE_ROOT="$RED_DIR/dist"
 fi
-(cd /tmp/mpf && rm -rf pkg_stage && mkdir pkg_stage && \
+(cd "$WORK_DIR" && rm -rf pkg_stage && mkdir pkg_stage && \
  unzip -q -o "$PACKAGE_ROOT/MoonrakerPrintFollower-v$PLUGIN_VERSION.curapackage" \
    -d pkg_stage 'files/plugins/*')
-cp -r /tmp/mpf/pkg_stage/files/plugins/Moonraker_Print_Follower "$PLUGIN_DIR/"
+cp -r "$WORK_DIR"/pkg_stage/files/plugins/Moonraker_Print_Follower "$PLUGIN_DIR/"
 cp -r "$root/tests/harness/driver" "$PLUGIN_DIR/HarnessDriver"
 # The container's root re-opens the seeded tree as the last staging
 # act: whatever uid skew survives between the host-side chmod and the
 # boot's view, the tree the boot actually sees ends up world-writable.
-docker exec "$CONTAINER" chmod -R 777 /tmp/mpf/xdg
-cp "$root/tests/harness/runner.py" /tmp/mpf/harness_runner.py
-cp "$root/tests/harness/scenarios.py" /tmp/mpf/scenarios.py
-cp "$root/tests/harness/scenario_map.py" /tmp/mpf/scenario_map.py
-cp "$root/tests/harness/surface_coverage.py" /tmp/mpf/coverage.py
+docker exec "$CONTAINER" chmod -R 777 "$WORK_DIR"/xdg
+cp "$root/tests/harness/runner.py" "$WORK_DIR"/harness_runner.py
+cp "$root/tests/harness/scenarios.py" "$WORK_DIR"/scenarios.py
+cp "$root/tests/harness/scenario_map.py" "$WORK_DIR"/scenario_map.py
+cp "$root/tests/harness/surface_coverage.py" "$WORK_DIR"/coverage.py
 # The simulator is a test instrument, not a fixture: the working
 # tree's version must be what the run peers against — a stale staged
 # copy once served old protocol shapes for days and every arm on a
 # new field silently no-oped (the power-arm calibration lesson).
 # The destination is created here: the CI runners start without the
 # harness_tests tree, and the copy used to fail every unit at staging.
-mkdir -p /tmp/mpf/harness_tests/tests/harness
+mkdir -p "$WORK_DIR"/harness_tests/tests/harness
 cp "$root/tests/harness/simulator.py" "$root/tests/harness/simulator_serve.py" \
-    "$root/tests/test_simulator.py" /tmp/mpf/harness_tests/tests/harness/
+    "$root/tests/test_simulator.py" "$WORK_DIR"/harness_tests/tests/harness/
 
 # The bracket keeps pgrep from matching the exec shell's own command
 # line (which contains the pattern) — without it the guard always
@@ -217,13 +243,16 @@ if [ "$MODE" != "real" ]; then
     done
 fi
 
-rm -f "$RUN_DIR/index.html"
+# A previous run's evidence is root-owned (the container writes it):
+# the container's root clears the dir — the host cannot chmod or
+# remove those files, and set -e turns the EPERM into a dead run.
+docker exec "$CONTAINER" rm -rf "${CONTAINER_WORK_DIR}/ui-artifacts/${RUN_DIR_NAME:-run-001}"
 mkdir -p "$RUN_DIR"
 # The container's runner and driver write into the scratch tree (the
 # port/token files at /tmp/mpf itself, the galleries under this dir);
 # on CI the host-side creators run as a different uid than the
 # container's, so the tree must be open to everyone. Throwaway scratch.
-chmod 777 /tmp/mpf
+chmod 777 "$WORK_DIR"
 chmod -R 777 "$RUN_DIR"
 
 case "$MODE" in
@@ -238,7 +267,7 @@ case "$MODE" in
             /lib64/ld-linux-x86-64.so.2 ./UltiMaker-Cura" >/tmp/mpf/cura_run.log 2>&1 &'
         # wait for the driver's port, then run the discovery
         for _ in $(seq 1 120); do [ -s /tmp/mpf/harness_port.txt ] && break; sleep 1; done
-        docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$RUN_DIR" \
+        docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="${CONTAINER_WORK_DIR}/ui-artifacts/${RUN_DIR_NAME:-run-001}" \
             python3 /tmp/mpf/harness_runner.py discover
         ;;
     scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite|real)
@@ -284,11 +313,11 @@ case "$MODE" in
             # container sees it, the boot process's real uid, and a
             # live write probe — an EACCES loop must be explainable by
             # one of these.
-            for d in /tmp/mpf /tmp/mpf/xdg /tmp/mpf/xdg/cura /tmp/mpf/xdg/cura/5.13; do
+            for d in "$WORK_DIR" "$WORK_DIR"/xdg "$WORK_DIR"/xdg/cura "$WORK_DIR"/xdg/cura/5.13; do
                 echo "ui_test: host  $(stat -c "%a %U %G" "$d" 2>/dev/null) $d"
             done
             docker exec "$CONTAINER" bash -lc '
-                for d in /tmp/mpf /tmp/mpf/xdg /tmp/mpf/xdg/cura /tmp/mpf/xdg/cura/5.13; do
+                for d in /tmp/mpf/xdg /tmp/mpf/xdg/cura /tmp/mpf/xdg/cura/5.13; do
                     echo "ui_test: container  $(stat -c "%a %U %G" "$d" 2>/dev/null) $d"
                 done
                 echo "ui_test: ubuntu user: $(su ubuntu -s /bin/bash -c "id -u; id -g" | tr "\n" " ")"
@@ -333,8 +362,8 @@ case "$MODE" in
                 done
                 if [ -n "${pid:-}" ]; then
                     echo "ui_test: strace of loader pid $pid:"
-                    timeout 8 strace -f -tt -s 100 -p "$pid" -o /tmp/mpf/strace.txt 2>&1 | tail -3
-                    tail -30 /tmp/mpf/strace.txt 2>/dev/null
+                    timeout 8 strace -f -tt -s 100 -p "$pid" -o "$WORK_DIR"/strace.txt 2>&1 | tail -3
+                    tail -30 "$WORK_DIR"/strace.txt 2>/dev/null
                     echo "ui_test: gdb backtrace of loader pid $pid:"
                     timeout 30 gdb -batch -ex "set pagination off" -ex "thread apply all bt" -p "$pid" 2>&1 | grep -v "^\[New \|^\[Thread " | head -90
                 fi'
@@ -342,8 +371,8 @@ case "$MODE" in
             # timer warnings) drowns the failure report's tail; strip
             # it so the report opens with the signal. Anything else
             # still prints in full.
-            echo "ui_test: cura_run.log ($(wc -c < /tmp/mpf/cura_run.log) bytes, known-benign lines filtered):"
-            tail -40 /tmp/mpf/cura_run.log | grep -vE \
+            echo "ui_test: cura_run.log ($(wc -c < "$WORK_DIR"/cura_run.log) bytes, known-benign lines filtered):"
+            tail -40 "$WORK_DIR"/cura_run.log | grep -vE \
                 'ast\.Str is deprecated|def visit_Str|Timers cannot be (started|stopped) from another thread|QNativeSocketEngine::write\(\) was not called|typeresolution\.cycle|typecompiler.*Component as the root of a QML document|Binding loop detected for property "height"'
             exit 1
         fi
@@ -351,12 +380,12 @@ case "$MODE" in
             # The host and key ride the container exec ONLY for real
             # mode — simulator runs never carry them (the panel's
             # process-table finding).
-            docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$RUN_DIR" \
+            docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="${CONTAINER_WORK_DIR}/ui-artifacts/${RUN_DIR_NAME:-run-001}" \
                 HARNESS_COORDS="$COORDS" REAL_URL="${REAL_URL:-}" \
                 REAL_API_KEY="${REAL_API_KEY:-}" \
                 python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
         else
-            docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$RUN_DIR" \
+            docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="${CONTAINER_WORK_DIR}/ui-artifacts/${RUN_DIR_NAME:-run-001}" \
                 HARNESS_COORDS="$COORDS" \
                 python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
         fi

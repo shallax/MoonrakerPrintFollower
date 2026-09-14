@@ -116,7 +116,7 @@ clean:
 	find . -name "*~" -not -path "./.git/*" -delete
 	rm -rf dist
 
-ui_test:
+ui_test: package  # the harness stages dist — it must be the current tree, never a stale build
 	./tools/ui_test.sh
 
 # The release gate's real-Cura scenario runs: the gates + suite on the
