@@ -128,11 +128,15 @@ class SourceContractTests(unittest.TestCase):
         allowed = {
             "BedMeshPresenter": {"BedMeshSceneNode"},
             "BedMeshSceneNode": set(),
+            "CameraBridge": set(),
             "CuraAdapter": set(),
             "CuraIntegration": {"CuraLifecycleBridge", "NativeNozzleLifecycle"},
             "CuraLifecycleBridge": set(),
             "CuraOutputWriter": set(),
             "DownloadStream": set(),
+            "FileDownload": {"RemoteFileService"},
+            "FileManager": {"FileManagerPolicy", "MoonrakerProtocol"},
+            "FileManagerPolicy": set(),
             "FollowController": set(),
             "FollowerRuntime": {"BedMeshPresenter", "CuraIntegration", "FileDownload", "GCodeIndex", "GCodeIndexService",
                 "MoonrakerClient", "PauseController", "PreviewFollower", "PreviewMotion",
@@ -184,6 +188,10 @@ class SourceContractTests(unittest.TestCase):
         # only contain the string inside preference-key literals.
         follower_exceptions = {"BedMeshPresenter", "MoonrakerFollowerMachineAction", "MoonrakerOutputDevicePlugin",
                                "PrinterConfig", "MoonrakerMonitorModel"}  # plugin-namespaced preference keys / file names
+        # The allowed set must cover every plugin module: an unlisted
+        # module would silently skip the whole check.
+        discovered = {path.stem for path in PLUGINS.glob("*.py")} - {"__init__"}
+        self.assertEqual(set(allowed), discovered)
         for module, dependencies in allowed.items():
             source = (PLUGINS / (module + ".py")).read_text()
             imported = {node.module for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ImportFrom) and node.level}
@@ -293,8 +301,12 @@ class SourceContractTests(unittest.TestCase):
             "QAbstractSocket": "QtNetwork",
             "QTcpSocket": "QtNetwork",
             "QSslSocket": "QtNetwork",
+            "QTcpServer": "QtNetwork",
             "QByteArray": "QtCore",
             "QCoreApplication": "QtCore",
+            "QFile": "QtCore",
+            "QIODevice": "QtCore",
+            "QLocale": "QtCore",
             "QModelIndex": "QtCore",
             "QObject": "QtCore",
             "QPointF": "QtCore",
@@ -304,6 +316,7 @@ class SourceContractTests(unittest.TestCase):
             "QTimer": "QtCore",
             "QUrl": "QtCore",
             "QVariant": "QtCore",
+            "Qt": "QtCore",
             "qInstallMessageHandler": "QtCore",
             "QColor": "QtGui",
             "QDesktopServices": "QtGui",
@@ -318,6 +331,10 @@ class SourceContractTests(unittest.TestCase):
             "QNetworkAccessManager": "QtNetwork",
             "QNetworkReply": "QtNetwork",
             "QNetworkRequest": "QtNetwork",
+            "QHttpMultiPart": "QtNetwork",
+            "QHttpPart": "QtNetwork",
+            "QQuickItem": "QtQuick",
+            "QMessageBox": "QtWidgets",
             "QAbstractAnimation": "QtCore",
             "QEasingCurve": "QtCore",
             "QPropertyAnimation": "QtCore",
@@ -334,7 +351,12 @@ class SourceContractTests(unittest.TestCase):
                 imported_module = str(node.module).split(".", 1)[1]
                 for alias in node.names:
                     name = alias.name
-                    if name in owners and owners[name] != imported_module:
+                    if name.startswith("pyqt"):
+                        continue  # the signal/slot machinery is QtCore's API
+                    if name not in owners:
+                        self.fail(f"{path.name}: {name} has no owners-map entry — "
+                                  f"name the Qt module that owns it")
+                    if owners[name] != imported_module:
                         self.fail(f"{path.name}: {name} belongs to PyQt6.{owners[name]}, "
                                   f"not PyQt6.{imported_module}")
 
