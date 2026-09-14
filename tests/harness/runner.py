@@ -1984,6 +1984,12 @@ REAL_SAFE_SLOTS = {
 REAL_MUTATING_TEXT = ("pause", "resume", "cancel", "start", "restart",
                       "turn on", "turn off", "emergency", "jog", "home",
                       "extrude", "delete", "rename", "upload", "print")
+# The ratcheting contract: both allowlists are pinned exactly in
+# tests/harness/test_harness_runner.py. They may only shrink, and any
+# change moves the pin and the decision record in the same commit.
+# Every input verb is denied by default in real mode — none of the
+# click/key/emit verbs appear here, and a new one must not without a
+# ruling.
 REAL_SAFE_OPS = {"click_stage", "click_text", "model_read",
                  "wait_model", "assert_model", "exec_slot", "dwell",
                  "rect_of", "assert_aligned", "assert_rendered",
