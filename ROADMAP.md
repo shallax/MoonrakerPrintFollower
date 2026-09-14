@@ -843,45 +843,90 @@ FOLDED INTO 4.0.0 (ruling, 2026-09-11) — every item below shipped in
 
 ## 4.0.2 — Transfer and print-identity correctness
 
-Proposed from the 2026-09-14 architecture review (the record lives in
-`review/4.0.2/`): five small lifecycle repairs, each shipped with its
-deterministic regression — ahead of the 4.1.0 test round so the
-lifecycle-failure scenarios have fixed machinery to exercise.
+Proposed from the 2026-09-14 architecture review (record in
+`review/4.0.2/`), shaped by the three-persona panel round (reports in
+`review/4.0.2/round-2-*.md`). Five lifecycle repairs, each shipped
+with its deterministic regression — ahead of the 4.1.0 test round so
+the lifecycle-failure scenarios have fixed machinery to exercise.
 
-- **Download operation ownership (F01):** each download becomes an
-  operation object owning its queue, target, cancellation state, byte
-  count and worker handle. Cancellation retires the operation,
-  signals the writer, and releases the file only after the writer
-  exits; completion returns to Qt asynchronously (no GUI-thread
-  join); buffering is bounded with backpressure that never blocks
-  the GUI thread. Today the worker reads shared fields, cancellation
-  does not stop it, and the queue is unbounded.
-- **Per-attempt accounting (F02):** byte progress and the download
-  cap reset on every transfer/retry; lifetime telemetry stays
-  separate.
-- **One-off download lifetime (F03):** file-manager downloads carry
-  their printer/session and load-intent identity; rebind/shutdown
-  aborts reply and worker, and a stale completion cannot load into a
-  different Cura session. Errors surface; temporary resources are
-  released.
-- **Local upload cleanup (F04):** every success, failure,
-  cancellation and stale completion disposes of its Qt reply and
-  source exactly once, with ownership invalidated before an abort
-  can emit completion.
-- **Print metadata identity (F05):** a requested identity is
-  distinguished from the identity of successfully received metadata;
-  old job values clear before a new job presents, failures retry,
-  and the throttle keys on the print job so same-name restarts stay
-  valid.
+- **F01/F02 — download operation ownership and per-attempt accounting
+  (one commit).** Each download becomes a `DownloadOperation` in
+  `DownloadStream.py` (the declared owner of bounded streaming
+  downloads): operation-local queue, target, cancellation state, byte
+  count and worker handle — the worker closure holds them and never
+  re-reads a service attribute, so a stale worker can neither steal
+  the next operation's sentinel (today: a permanent GUI-thread
+  `join()` hang) nor interleave writes into its file (today: silent
+  corruption that passes the byte-count check). Cancellation always
+  signals the operation's own queue; the writer exits via a Qt
+  signal — no GUI-thread join anywhere, and the writer owns the fd
+  close. Buffering is bounded by high/low water marks: above the high
+  mark the drain stops reading (bytes stay in Qt's buffer, throttling
+  the socket) and a writer-emitted low-water signal resumes. The
+  per-attempt byte counter is an operation field — progress and the
+  2 GiB cap reset per transfer/retry, lifetime telemetry stays a
+  service counter — and the response's Content-Length is the sole
+  transfer-length authority for the cap, the progress denominator and
+  the final check (the metadata-cache size is advisory: a stale value
+  can refuse a good file forever).
+- **F03 — one-off download lifetime.** A download captures (machine
+  id, session generation, transport identity, relpath, load intent)
+  at request time — the `UploadController` precedent — and cancels
+  through an unconditional entry point keyed to `sessionInvalidated`
+  (`bind`/`close` are no-ops while idle-browsing, exactly when
+  one-shots run). `FollowerRuntime` closes `file_download` before
+  `files`, so the temp root is never deleted under a live stream, and
+  no terminal result arrives after the owner is closed. Cura's
+  `fileCompleted` is NOT a terminal signal (six silent-return paths,
+  the no-printer window included): the load lease is preflighted
+  against the reachable refusals, a bounded watchdog releases it and
+  clears `loading`, and `close()` releases rather than drops.
+  Failures surface through a facade-relayed signal into the
+  file-manager's existing note surface (no QML change); replies
+  dispose on every path; exactly-once holds through constructor
+  failure; the one-shot lane writes through the operation's writer,
+  not the GUI thread.
+- **F04 — local upload cleanup.** One disposal routine on every
+  terminal path — success, failure, cancellation, stale completion —
+  with the clear-before-abort ordering already documented for the
+  Preview path (`abort()` can emit completion synchronously).
+  Per-operation identity (operation-id keys, never the relpath); a
+  second upload of the same name while one runs is REFUSED with a
+  verdict. Terminal verdicts read the response body — Moonraker can
+  answer 201 with `print_started: false`, and `print_queued` is a
+  distinct outcome — and both upload paths extract the server's
+  refusal words. Upstream residue recorded as known: aborted uploads
+  leave a temp file on the printer and same-second uploads share one
+  temp path — no client route cleans these.
+- **F05 — print metadata identity.** Identity keys on
+  `(size, modified)` — `filename` is an echo of the request and
+  `uuid` is a fresh random per extraction, so `stable_key()`'s
+  premise is fixed in the same pass. The per-print key is the
+  metadata row's `job_id`, cross-checked against
+  `server/history/list` (HTTP GET only — the websocket
+  `history:history_changed` notification is the forbidden
+  temptation; a null job id means "no job identity"; rowids can be
+  reused). Request identity commits only when the send starts (a
+  dropped send must not leave the latch satisfied forever); the
+  latch keys on a completed fetch for `(filename, job)`; the
+  throttle is job-keyed so same-name restarts stay valid; an
+  in-flight flag stops stacking; a failed query can never serve the
+  previous job's values (they feed the pause scheduler through
+  `layer_height`).
 
-Acceptance: gated slow-writer cancellation followed immediately by a
-new download; sequential transfers and retries under an injected
-small cap; late completion after a printer switch; repeated upload
-cleanup; print-A metadata followed by a failing print-B query and a
-successful retry — with worker/reply/file retirement checked as well
-as UI outcomes. The regressions use injected clocks and barriers, no
-sleeps; the reusable lifecycle-failure scenario machinery lands in
-4.1.0.
+Acceptance and test shapes: the review's five journeys (gated
+slow-writer cancellation followed immediately by a new download;
+sequential transfers and retries under an injected small cap; late
+completion after a printer switch; repeated upload cleanup; print-A
+metadata then a failing print-B query with a successful retry) — each
+as a pure-deterministic regression: gated writers, ghost replies,
+injected clocks, reply doubles whose `abort()` synchronously emits
+`finished`. No sleeps; none wait for the 4.1.0 lifecycle machinery.
+The fakes and simulator gain the real protocol shapes first
+(Content-Length, the metadata 404, the identity fields) so the
+regressions exercise real semantics. Structural pins retarget in the
+same commits (the per-class policy in `review/DECISIONS.md`);
+ARCHITECTURE §1/4/6/9/11 move with the code they describe.
 
 ## 4.1.0 — Deep harness coverage
 
