@@ -253,6 +253,20 @@ class CommandTracker:
         command.detail = str(detail or "Command failed")
         return command
 
+    def settled(self, name: str, detail: str) -> Optional[CommandAcknowledgement]:
+        """A benign terminal: the printer answered with a no-op
+        verdict (Klipper's "resume aborted" — nothing to resume).
+        Terminal and confirmed — never a failure paint, and the
+        pending expectation stops waiting for a state transition
+        that can never come."""
+        command = self._commands.get(str(name))
+        if command is None or command.terminal:
+            return command
+        command.terminal = True
+        command.outcome = "confirmed"
+        command.detail = str(detail or "Nothing to do")
+        return command
+
     def observe(self, printer_state: str, *, now: Optional[float] = None) -> list[CommandAcknowledgement]:
         state = str(printer_state or "").strip().lower()
         timestamp = time.monotonic() if now is None else float(now)

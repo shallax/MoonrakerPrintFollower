@@ -11,14 +11,20 @@ from plugins.MonitorPermissions import (
     R_DISCONNECTED,
     R_LOCKED,
     R_PAUSE_FIRST,
+    R_ALREADY_PAUSED,
+    R_ALREADY_PRINTING,
+    R_ESTOPPED,
+    R_NOTHING_TO_PAUSE,
     R_PAUSED_NOTE,
     R_PRINTING,
     R_UNKNOWN,
     Verdict,
     can_jog,
     can_macro,
+    can_pause,
     can_power,
     can_restart,
+    can_resume,
     can_set_absolute,
     can_start_print,
     can_z_offset,
@@ -36,12 +42,12 @@ def obs(**overrides):
 
 class PolicyPreludeTests(unittest.TestCase):
     def test_unknown_disables_every_action_with_the_unknown_reason(self):
-        for action in (can_jog, can_restart, can_start_print, can_macro, can_z_offset):
+        for action in (can_jog, can_pause, can_restart, can_resume, can_start_print, can_macro, can_z_offset):
             self.assertEqual(action(obs(connection="unknown")), Verdict("disabled", R_UNKNOWN))
         self.assertEqual(can_power(obs(connection="unknown"), True), Verdict("disabled", R_UNKNOWN))
 
     def test_disconnected_disables_every_action(self):
-        for action in (can_jog, can_restart, can_start_print):
+        for action in (can_jog, can_pause, can_restart, can_resume, can_start_print):
             self.assertEqual(action(obs(connection="no")), Verdict("disabled", R_DISCONNECTED))
 
     def test_the_estop_assumption_releases_the_guards_not_blocks_them(self):
@@ -146,6 +152,55 @@ class PolicyRulingTests(unittest.TestCase):
         # legitimate; the click gate is the busy flag.
         self.assertEqual(can_z_offset(obs(state="printing")), Verdict("allowed", ""))
         self.assertEqual(can_z_offset(obs(state="standby", busy=True)), Verdict("disabled", R_BUSY))
+
+
+class PauseResumeRowTests(unittest.TestCase):
+    def test_pause_allows_only_a_live_print_with_an_idle_lane(self):
+        self.assertEqual(can_pause(obs(state="printing")), Verdict("allowed", ""))
+        self.assertEqual(can_pause(obs(state="paused")), Verdict("disabled", R_ALREADY_PAUSED))
+        self.assertEqual(can_pause(obs(state="standby")), Verdict("disabled", R_NOTHING_TO_PAUSE))
+        self.assertEqual(can_pause(obs(state="complete")), Verdict("disabled", R_NOTHING_TO_PAUSE))
+        self.assertEqual(can_pause(obs(state="printing", busy=True)), Verdict("disabled", R_BUSY))
+
+    def test_resume_allows_only_a_paused_print_with_an_idle_lane(self):
+        self.assertEqual(can_resume(obs(state="paused")), Verdict("allowed", ""))
+        self.assertEqual(can_resume(obs(state="printing")), Verdict("disabled", R_ALREADY_PRINTING))
+        self.assertEqual(can_resume(obs(state="paused", busy=True)), Verdict("disabled", R_BUSY))
+
+    def test_the_pause_rows_are_the_first_consumers_of_the_estop_assumption(self):
+        # The exception to the shipped ruling (the guards release on
+        # the rewritten state): the pause rows refuse BY the
+        # assumption — a wedged stop must never offer a live Pause
+        # or Resume while the print may be physically running.
+        self.assertEqual(can_pause(obs(state="printing", assumed_stopped=True)), Verdict("disabled", R_ESTOPPED))
+        self.assertEqual(can_resume(obs(state="paused", assumed_stopped=True)), Verdict("disabled", R_ESTOPPED))
+
+    def test_the_authoritative_paused_bit_beats_the_state_proxy(self):
+        # CLEAR_PAUSE leaves print_stats reading "paused" with
+        # is_paused cleared — the state proxy would offer a live
+        # Resume on a print that can never resume; the bit refuses.
+        self.assertEqual(can_resume(obs(state="paused", is_paused=False)), Verdict("disabled", R_ALREADY_PRINTING))
+        # A genuinely paused print pauses/resumes even when the state
+        # word lags behind the object.
+        self.assertEqual(can_resume(obs(state="printing", is_paused=True)), Verdict("allowed", ""))
+        self.assertEqual(can_pause(obs(state="printing", is_paused=False)), Verdict("allowed", ""))
+        # The state-proxy-paused / bit-cleared world: nothing is
+        # pausable — the honest reason is the nothing-to-pause form
+        # (the resume side carries the trap's words, R_ALREADY_PRINTING).
+        self.assertEqual(can_pause(obs(state="paused", is_paused=False)), Verdict("disabled", R_NOTHING_TO_PAUSE))
+
+    def test_the_fallback_is_the_state_word(self):
+        # The bit is None until the pause_resume object has been
+        # observed once — the rows read the state word (the caveat is
+        # documented on the rows themselves).
+        self.assertEqual(can_resume(obs(state="paused")), Verdict("allowed", ""))
+        self.assertEqual(can_pause(obs(state="printing")), Verdict("allowed", ""))
+
+    def test_neither_row_uses_the_pause_first_mode(self):
+        for action in (can_pause, can_resume):
+            for state in ("printing", "paused", "standby"):
+                verdict = action(obs(state=state))
+                self.assertNotEqual(verdict.mode, "pause-first", (action.__name__, state))
 
 
 if __name__ == "__main__":

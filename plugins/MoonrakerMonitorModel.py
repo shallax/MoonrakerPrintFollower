@@ -33,7 +33,7 @@ from .MonitorCamera import MonitorCamera
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
-from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_restart, can_start_print, jog_caption, section_reason
+from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, jog_caption, section_reason
 from .PrintStartOwner import PrintStartOwner
 from datetime import datetime
 
@@ -244,7 +244,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
         ("endstopsChanged", ("endstopItems", "endstopSummary")),
-        ("actionChanged", ("printActive", "canPausePrint", "canResumePrint", "canCancelPrint", "actionBusy",
+        ("actionChanged", ("printActive", "canPausePrint", "canResumePrint", "pauseReason", "pauseReasonDetail", "resumeReason", "resumeReasonDetail", "canCancelPrint", "actionBusy",
                            "actionStatus", "emergencyHoldProgress")),
         ("controlsChanged", ("monitorLayerHeight", "macroNames", "hasQuadGantryLevel", "hasBedMesh", "canRunSetup",
                              "temperaturePresetNames", "canApplyTemperaturePreset", "speedFactorPercent", "flowFactorPercent",
@@ -806,7 +806,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._console_errors_seen = error_count
         values["consoleErrorBell"] = self._console_error_bell
         commands, mesh = self._commands, self._mesh.snapshot
-        state_word = commands.state
+        # The pause/resume rows (4.3.0): the last un-migrated command
+        # gate becomes policy projections — one derivation, the
+        # reasons ride the strip's middle slot and the Dashboard's
+        # tooltips.
+        pause_verdict = can_pause(observation)
+        resume_verdict = can_resume(observation)
         # The heightmap range filter (the author's request): ONE
         # window drives both surfaces — the Monitor pop-over reads the
         # published keys, the Preview card and scene node follow
@@ -825,8 +830,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         else:
             threshold_low, threshold_high = mesh_min, mesh_max
         values.update(printActive=commands.print_active,
-            canPausePrint=state_word == "printing" and not commands.busy,
-            canResumePrint=commands.state == "paused" and not commands.busy,
+            canPausePrint=pause_verdict.mode == "allowed",
+            canResumePrint=resume_verdict.mode == "allowed",
+            pauseReason=pause_verdict.reason,
+            pauseReasonDetail=REASON_DETAIL.get(pause_verdict.reason, ""),
+            resumeReason=resume_verdict.reason,
+            resumeReasonDetail=REASON_DETAIL.get(resume_verdict.reason, ""),
             canCancelPrint=commands.print_active and not commands.busy, actionBusy=commands.busy,
             actionStatus=commands.status, emergencyStopClicks=commands.clicks,
             emergencyHoldProgress=commands.hold_progress, powerDevices=self._controls.power_devices(),
@@ -913,6 +922,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     printActive = value_property(bool, "printActive", actionChanged, False)
     canPausePrint = value_property(bool, "canPausePrint", actionChanged, False)
     canResumePrint = value_property(bool, "canResumePrint", actionChanged, False)
+    pauseReason = value_property(str, "pauseReason", actionChanged, "")
+    pauseReasonDetail = value_property(str, "pauseReasonDetail", actionChanged, "")
+    resumeReason = value_property(str, "resumeReason", actionChanged, "")
+    resumeReasonDetail = value_property(str, "resumeReasonDetail", actionChanged, "")
     canCancelPrint = value_property(bool, "canCancelPrint", actionChanged, False)
     actionBusy = value_property(bool, "actionBusy", actionChanged, False)
     actionStatus = value_property(str, "actionStatus", actionChanged, "")
@@ -1707,10 +1720,27 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def updateMoonrakerStatus(self, status): self._data.observe(status)
     @pyqtSlot()
     def pausePrint(self):
-        if self.canPausePrint: self._commands.send("Pause", "printer/print/pause")
+        # The lane's revalidation (4.3.0): the verdict is re-derived
+        # from a FRESH observation at dispatch — never the cached
+        # property — and a refusal reports the policy's words. A
+        # missing observation denies (the pump's fail-closed polarity,
+        # not the upload path's None-allows artefact).
+        observation = getattr(self._data, "observation", None)
+        verdict = can_pause(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
+        if verdict.mode != "allowed":
+            self._commands.report_status(f"Pause refused: {verdict.reason}")
+            self._publish()
+            return
+        self._commands.send("Pause", "printer/print/pause")
     @pyqtSlot()
     def resumePrint(self):
-        if self.canResumePrint: self._commands.send("Resume", "printer/print/resume")
+        observation = getattr(self._data, "observation", None)
+        verdict = can_resume(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
+        if verdict.mode != "allowed":
+            self._commands.report_status(f"Resume refused: {verdict.reason}")
+            self._publish()
+            return
+        self._commands.send("Resume", "printer/print/resume")
     @pyqtSlot()
     def cancelPrint(self):
         if self.canCancelPrint: self._commands.send("Cancel", "printer/print/cancel")

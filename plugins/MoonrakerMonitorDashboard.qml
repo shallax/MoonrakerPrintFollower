@@ -605,6 +605,10 @@ Component {
                                     Layout.fillWidth: true
                                     text: "Pause"
                                     enabled: root.printer != null && root.printer.canPausePrint
+                                    // The refusal words (4.3.0): the policy's
+                                    // short form rides the tooltip — a dead
+                                    // Pause must never be silent.
+                                    tooltip: root.printer != null && !root.printer.canPausePrint && root.printer.pauseReason.length > 0 ? root.printer.pauseReason : "Pause the current print immediately (Klipper PAUSE)."
                                     onClicked: root.printer.pausePrint()
                                 }
 
@@ -612,6 +616,7 @@ Component {
                                     Layout.fillWidth: true
                                     text: "Resume"
                                     enabled: root.printer != null && root.printer.canResumePrint
+                                    tooltip: root.printer != null && !root.printer.canResumePrint && root.printer.resumeReason.length > 0 ? root.printer.resumeReason : "Resume the paused print (Klipper RESUME)."
                                     onClicked: root.printer.resumePrint()
                                 }
 

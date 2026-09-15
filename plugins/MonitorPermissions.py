@@ -5,6 +5,7 @@ networking, no mutable owners (the architecture review's F10 shape:
 pure functions over a frozen record, reason strings as constants)."""
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,10 @@ class Observation:
     save_config_pending: bool
     controls_locked: bool
     busy: bool
+    # The authoritative paused bit from the pause_resume object; None
+    # when the object has not been observed — the rows fall back to
+    # the state word with that caveat stated.
+    is_paused: Optional[bool] = None
 
 
 # The concise disabled reasons (F10): module-level constants — the
@@ -46,6 +51,12 @@ R_BUSY = "A command is running"
 # sentence), and the paused note preserves the shipped readout.
 R_PAUSE_FIRST = "Moves disabled — pause first"
 R_PAUSED_NOTE = "Paused — moves run immediately"
+# The pause/resume row vocabulary (4.3.0): distinct constants — the
+# exclude-flavoured R_NOT_PRINTING detail must never ride a Pause
+# button (M6).
+R_NOTHING_TO_PAUSE = "Nothing is printing"
+R_ALREADY_PAUSED = "Print is already paused"
+R_ALREADY_PRINTING = "Print is not paused"
 
 
 # The long tooltip sentences (the UX adjudication: the short form
@@ -61,6 +72,9 @@ REASON_DETAIL = {
     R_PRINTING: "A print is running — pause or finish it first.",
     R_BUSY: "A command is running — wait for it to finish.",
     R_NOT_PRINTING: "Nothing to exclude — this fires only while a print runs.",
+    R_NOTHING_TO_PAUSE: "Pause applies to a running print — nothing is printing right now.",
+    R_ALREADY_PAUSED: "The print is already paused — the button reads Resume while paused.",
+    R_ALREADY_PRINTING: "Resume applies to a paused print — this print is still running.",
 }
 
 
@@ -84,10 +98,10 @@ def _prelude(obs: Observation):
     shipped ruling releases the print guards immediately (the state
     reads cancelled and jog unlocks for recovery), and the command
     REFUSAL rides the lane's own e-stop lifecycle plus the follow-up
-    disconnect — the record CARRIES assumed_stopped for visibility
-    (the phase-6 re-review's D9: no ruling consumes it today, the
-    lane enforces the refusal), not so the click-time gates
-    change."""
+    disconnect — the record CARRIES assumed_stopped for visibility,
+    not so every click-time gate changes. The pause/resume rows ARE
+    the first consumers of the assumption (4.3.0): their refusal
+    WORDS come from the policy, the enforcement stays the lane's."""
     if obs.connection == "unknown": return R_UNKNOWN
     if obs.connection != "yes": return R_DISCONNECTED
     if not obs.active: return R_UNKNOWN
@@ -209,4 +223,51 @@ def can_z_offset(obs: Observation) -> Verdict:
     if blocked: return Verdict("disabled", blocked)
     if obs.busy: return Verdict("disabled", R_BUSY)
     if not obs.state: return Verdict("disabled", R_UNKNOWN)
+    return Verdict("allowed", "")
+
+
+def can_pause(obs: Observation) -> Verdict:
+    """Pause the live print: allowed only while PRINTING with the
+    lane idle — busy is a ROW term (the can_z_offset shape), so the
+    reason says what happened instead of a dead button. Never
+    pause-first: the mode has no legitimate pause meaning (a
+    copy-paste from can_jog would ship "Moves disabled — pause
+    first" on a Pause button). The e-stop assumption refuses
+    outright — the first consumer of the carried assumption. The
+    paused bit is pause_resume.is_paused where observed, the state
+    word otherwise (the fallback caveat). A missing observation
+    DENIES at the lane with R_UNKNOWN — the pump's fail-closed
+    polarity; the upload path's None-allows is a composition-
+    boundary artefact, not a precedent. The ToolheadController's
+    autonomous pause (a pause-first fulfilment) is a LANE
+    behaviour, not a click gate — it deliberately does not route
+    through this row."""
+    blocked = _prelude(obs)
+    if blocked: return Verdict("disabled", blocked)
+    if obs.assumed_stopped: return Verdict("disabled", R_ESTOPPED)
+    if obs.busy: return Verdict("disabled", R_BUSY)
+    paused = obs.is_paused
+    if paused is None:
+        paused = obs.state == "paused"
+    if paused: return Verdict("disabled", R_ALREADY_PAUSED)
+    if obs.state != "printing": return Verdict("disabled", R_NOTHING_TO_PAUSE)
+    return Verdict("allowed", "")
+
+
+def can_resume(obs: Observation) -> Verdict:
+    """Resume the paused print: allowed only while PAUSED with the
+    lane idle. The authoritative bit is pause_resume.is_paused —
+    the state proxy alone ships a live Resume on a print that can
+    never resume (CLEAR_PAUSE leaves the virtual_sdcard halted with
+    print_stats "paused" forever and Klipper aborts the RESUME);
+    the state word is the fallback with that caveat. Same lane
+    polarity and e-stop consumption as can_pause."""
+    blocked = _prelude(obs)
+    if blocked: return Verdict("disabled", blocked)
+    if obs.assumed_stopped: return Verdict("disabled", R_ESTOPPED)
+    if obs.busy: return Verdict("disabled", R_BUSY)
+    paused = obs.is_paused
+    if paused is None:
+        paused = obs.state == "paused"
+    if not paused: return Verdict("disabled", R_ALREADY_PRINTING)
     return Verdict("allowed", "")

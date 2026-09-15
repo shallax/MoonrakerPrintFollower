@@ -1170,11 +1170,24 @@ SCENARIOS = [
          {"op": "assert_model", "prop": "jogReason", "contains": "pause first", "budget": 10},
          {"op": "assert_model", "prop": "canRestart", "value": False, "budget": 10},
          {"op": "item_disabled", "objectName": "moonrakerJogXPlus"},
+         # The lane's revalidation (4.3.0): while PRINTING a Resume
+         # refuses with the policy's words, no command leaves the
+         # plugin, and the projected reasons name both rows.
+         {"op": "exec_slot", "slot": "resumePrint", "args": []},
+         {"op": "assert_model", "prop": "actionStatus", "contains": "Resume refused: Print is not paused", "budget": 10},
+         {"op": "assert_model", "prop": "resumeReason", "value": "Print is not paused", "budget": 10},
+         {"op": "assert_model", "prop": "resumeReasonDetail", "value": "Resume applies to a paused print — this print is still running.", "budget": 10},
+         {"op": "assert_model", "prop": "pauseReason", "value": "", "budget": 10},
+         {"op": "assert_model", "prop": "pauseReasonDetail", "value": "", "budget": 10},
          {"op": "exec_slot", "slot": "pausePrint", "args": []},
          {"op": "sim_ledger", "needle": "print/pause", "method": "POST", "min": 1, "budget": 20},
          {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 15},
          # Paused keeps the shipped caption — moves run immediately.
          {"op": "assert_model", "prop": "jogReason", "value": "Paused — moves run immediately", "budget": 10},
+         # The rows flip with the pause: the resume side opens, the
+         # pause side names why it refuses.
+         {"op": "assert_model", "prop": "resumeReason", "value": "", "budget": 10},
+         {"op": "assert_model", "prop": "pauseReason", "value": "Print is already paused", "budget": 10},
          {"op": "exec_slot", "slot": "resumePrint", "args": []},
          {"op": "sim_ledger", "needle": "print/resume", "method": "POST", "min": 1, "budget": 20},
      ]},
