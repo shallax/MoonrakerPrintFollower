@@ -476,12 +476,17 @@ class QtRuntimeTests(unittest.TestCase):
     def test_failure_backoff_survives_pending_and_forced_refreshes(self):
         client, transport = self.client()
         client.start()
+        # A PROVEN endpoint: the ladder protects its outages. (The
+        # never-connected cap — the eager first connection, the
+        # author's ruling — is pinned in the client feed tests.)
+        transport.requests[-1].callback({"result": {"status": {"print_stats": {"state": "idle"}}}}, None)
+        self.qt.events()
         client.force_refresh()
         transport.requests[-1].callback(None, "offline")
         self.qt.events()
         client.set_pause_guard(True)
         client.force_refresh()
-        self.assertEqual(len(transport.requests), 1)
+        self.assertEqual(len(transport.requests), 2)
         self.assertGreaterEqual(client._poll_timer.interval(), 5000)
 
     def test_queued_core_refresh_is_discarded_after_rebind(self):

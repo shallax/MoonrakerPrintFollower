@@ -79,8 +79,13 @@ class ClassificationRatchetTests(unittest.TestCase):
         # floor for the feature's coverage (DECISIONS 4.1.0). The pin
         # now counts exec_code and confirm_box, which the classifier
         # itself calls direct invocation, so they can never hide
-        # outside the ratchet:
-        # 45 exec_slot + 12 exec_file_slot + 6 emit_click +
+        # outside the ratchet. One more deliberate raise (4.2.0,
+        # DECISIONS): h6c's setBedMeshThresholds exec — the range
+        # filter's window cannot change through a single click (the
+        # handle-click no-op ruling makes a full-range window inert to
+        # clicks, and the harness has no drag op), so the slot is the
+        # only real path:
+        # 46 exec_slot + 12 exec_file_slot + 6 emit_click +
         # 3 confirm_box + 6 exec_mode + 3 exec_validator +
         # 1 exec_console + 1 exec_extrude + 1 exec_test_connection
         # + 23 exec_code.
@@ -88,7 +93,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         direct = len(re.findall(
             r'"op": "(exec_slot|exec_file_slot|emit_click|confirm_box|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))
-        self.assertLessEqual(direct, 101)
+        self.assertLessEqual(direct, 102)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —

@@ -70,6 +70,7 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.selectWebcam": "e2",
     "MoonrakerMonitorModel.sendConsoleCommand": "d1",
     "MoonrakerMonitorModel.setBedMeshPreviewVisible": "h6",
+    "MoonrakerMonitorModel.setBedMeshThresholds": "h6c",
     "MoonrakerMonitorModel.setConsoleExpanded": "d5",
     "MoonrakerMonitorModel.setConsoleHeight": "d5",
     "MoonrakerMonitorModel.setControlsCollapsed": "g8",
@@ -110,6 +111,7 @@ SCENARIO_MAP = {
     "moonrakerStatusStateText": "v9", "moonrakerConsoleOutput": "v9",
     "moonrakerFileRowName": "v10", "moonrakerFileSearch": "v11",
     "moonrakerBedMeshMap": "v12",
+    "moonrakerBedMeshRangeSlider": "h6c",
     "moonrakerJogXPlus": "g1", "moonrakerJogXMinus": "g1",
     "moonrakerJogYPlus": "g1", "moonrakerJogYMinus": "g1",
     "moonrakerJogZPlus": "g1", "moonrakerJogZMinus": "g1",
@@ -159,6 +161,8 @@ PREFIX_RULES = [
     ("slot", "MoonrakerMonitorModel.file", "f1"),
     ("slot", "MoonrakerMonitorModel.toggleFile", "f1"),
     ("slot", "MoonrakerMonitorModel.setFile", "f1"),
+    # The camera slots ride the camera-group scenario.
+    ("slot", "MoonrakerMonitorModel.cameraRenderStalled", "e2"),
     # The published keys by family.
     ("key", "console", "d1"),
     ("key", "camera", "e2"),
