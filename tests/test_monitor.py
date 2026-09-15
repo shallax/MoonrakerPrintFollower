@@ -890,6 +890,88 @@ class MonitorFormattingTests(unittest.TestCase):
                                    estimated_time=None, metadata_complete=False, layer_eta=None, layer_progress=None)
         self.assertEqual(core_values(snapshot, physical, True)["monitorProgress"], 65.58)
 
+    def test_motion_rows_report_the_live_values(self):
+        # The motion cluster (4.2.0): Velocity is Klipper's scalar
+        # speed magnitude; Flow rate is the commanded volumetric flow
+        # — live_extruder_velocity × π·(d/2)²; Accel limit is the
+        # configured ceiling from the aux poll's toolhead.
+        snapshot = SimpleNamespace(core={
+            "print_stats": {"state": "printing", "print_duration": 30},
+            "virtual_sdcard": {"progress": 0.5},
+            "gcode_move": {},
+            "motion_report": {"live_velocity": 20.0, "live_extruder_velocity": 0.34},
+        }, auxiliary={
+            "toolhead": {"extruder": "extruder", "max_accel": 5000.0},
+            "configfile": {"settings": {"extruder": {"filament_diameter": 1.75}}},
+        })
+        physical = SimpleNamespace(layer=SimpleNamespace(index=0, total=0, source="", thickness=None),
+                                   estimated_time=None, metadata_complete=False, layer_eta=None, layer_progress=None)
+        values = core_values(snapshot, physical, True)
+        self.assertEqual(values["monitorVelocity"], "20.0 mm/s")
+        self.assertEqual(values["monitorFlowRate"], "0.8 mm³/s")
+        self.assertEqual(values["monitorAccelLimit"], "5000 mm/s²")
+        self.assertEqual(values["monitorFlowDiameter"], "1.75 mm")
+
+    def test_motion_rows_read_dashes_without_the_objects(self):
+        # "—" only when the printer reports no motion object — the
+        # existing core-only snapshots (no auxiliary) must not break.
+        snapshot = SimpleNamespace(core={
+            "print_stats": {"state": "idle", "print_duration": 0},
+            "virtual_sdcard": {"progress": 0},
+            "gcode_move": {},
+            "motion_report": {},
+        })
+        physical = SimpleNamespace(layer=SimpleNamespace(index=0, total=0, source="", thickness=None),
+                                   estimated_time=None, metadata_complete=False, layer_eta=None, layer_progress=None)
+        values = core_values(snapshot, physical, True)
+        self.assertEqual(values["monitorVelocity"], "—")
+        self.assertEqual(values["monitorFlowRate"], "—")
+        self.assertEqual(values["monitorAccelLimit"], "—")
+
+    def test_flow_rate_keeps_the_retraction_sign_and_clamps_epsilon(self):
+        # A retraction reads negative; a cancellation artifact
+        # (-3.6e-15 was caught live) clamps to zero before the sign
+        # decision, never "-0.00 mm³/s".
+        def values_with(ev):
+            snapshot = SimpleNamespace(core={
+                "print_stats": {"state": "printing", "print_duration": 30},
+                "virtual_sdcard": {"progress": 0.5},
+                "gcode_move": {},
+                "motion_report": {"live_velocity": 20.0, "live_extruder_velocity": ev},
+            }, auxiliary={
+                "toolhead": {"extruder": "extruder", "max_accel": 5000.0},
+                "configfile": {"settings": {"extruder": {"filament_diameter": 1.75}}},
+            })
+            physical = SimpleNamespace(layer=SimpleNamespace(index=0, total=0, source="", thickness=None),
+                                       estimated_time=None, metadata_complete=False, layer_eta=None, layer_progress=None)
+            return core_values(snapshot, physical, True)
+        self.assertEqual(values_with(-23.6)["monitorFlowRate"], "-56.8 mm³/s")
+        self.assertEqual(values_with(-3.552713678800501e-15)["monitorFlowRate"], "0.0 mm³/s")
+
+    def test_flow_rate_uses_the_active_tools_diameter_only(self):
+        # Per-tool: the ACTIVE tool's section supplies the diameter;
+        # [extruder_stepper] sections never match (the prefix-sweep
+        # hazard), and the tool name is validated before the lookup.
+        snapshot = SimpleNamespace(core={
+            "print_stats": {"state": "printing", "print_duration": 30},
+            "virtual_sdcard": {"progress": 0.5},
+            "gcode_move": {},
+            "motion_report": {"live_velocity": 20.0, "live_extruder_velocity": 0.5},
+        }, auxiliary={
+            "toolhead": {"extruder": "extruder1", "max_accel": 5000.0},
+            "configfile": {"settings": {
+                "extruder": {"filament_diameter": 1.75},
+                "extruder1": {"filament_diameter": 2.85},
+                "extruder_stepper main": {"foo": 1},
+            }},
+        })
+        physical = SimpleNamespace(layer=SimpleNamespace(index=0, total=0, source="", thickness=None),
+                                   estimated_time=None, metadata_complete=False, layer_eta=None, layer_progress=None)
+        values = core_values(snapshot, physical, True)
+        # 0.5 × π × (2.85/2)² = 3.19 mm³/s, from extruder1's diameter.
+        self.assertEqual(values["monitorFlowDiameter"], "2.85 mm")
+        self.assertEqual(values["monitorFlowRate"], "3.2 mm³/s")
+
     def test_layer_progress_comes_from_the_snapshot_byte_fraction(self):
         # The within-layer fraction comes from the index's byte ranges
         # (the nozzle's Z never moves within a layer, so Z cannot

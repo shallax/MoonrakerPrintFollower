@@ -45,7 +45,11 @@ def fake_status(state="printing"):
         "virtual_sdcard": {"file_size": 3_000_000, "file_position": 720_000, "progress": 0.24},
         "gcode_move": {"gcode_position": [110.0, 95.0, 4.2, 12.5], "speed_factor": 1.0,
                        "extrude_factor": 1.0, "absolute_coordinates": True},
-        "motion_report": {"live_position": [110.0, 95.0, 4.2, 12.5]},
+        # The motion rows (4.2.0) read the live scalars — the seed
+        # carries them so the captures render real values instead of
+        # the "—" defaults (the engineering F12 ruling).
+        "motion_report": {"live_position": [110.0, 95.0, 4.2, 12.5],
+                          "live_velocity": 60.0, "live_extruder_velocity": 0.8},
         "fan": {"fan": {"speed": 0.6}},
         "temperature_sensor extruder": {"temperature": 211.4, "target": 210.0},
         "temperature_sensor heater_bed": {"temperature": 58.2, "target": 60.0},
@@ -173,6 +177,12 @@ def main():
                                  "power": 0.9 if step < 460 else 0.3},
                     "heater_bed": {"temperature": min(60.0, 24.0 + step * 0.1), "target": 60.0,
                                    "power": 0.5 if step < 350 else 0.1},
+                    # The motion rows' aux sources (4.2.0): the accel
+                    # ceiling and the per-tool filament diameter. The
+                    # homed state matches a printing machine so the
+                    # jog surfaces render as before.
+                    "toolhead": {"extruder": "extruder", "max_accel": 5000.0, "homed_axes": "xyz"},
+                    "configfile": {"settings": {"extruder": {"filament_diameter": 1.75}}},
                 }
                 if step >= 200:
                     auxiliary["heater_generic chamber"] = {"temperature": min(45.0, 24.0 + (step - 200) * 0.15),
