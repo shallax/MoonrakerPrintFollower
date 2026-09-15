@@ -1748,6 +1748,7 @@ SCENARIOS = [
          # pinned.
          {"op": "exec_slot", "slot": "showWhatsNew", "args": []},
          {"op": "wait_rect", "objectName": "whatsNewCloseButton", "budget": 20},
+         {"op": "scroll_into_view", "objectName_state": ["whatsnew", "section"]},
          {"op": "deliver_click", "objectName_state": ["whatsnew", "section"]},
          {"op": "wait_rect", "text_state": ["whatsnew", "item"], "budget": 20},
          {"op": "deliver_click", "objectName": "moonrakerControlsPane", "expect": "not_accepted"},
@@ -1761,6 +1762,7 @@ SCENARIOS = [
          # own behaviour — outside the harness's claim).
          {"op": "exec_slot", "slot": "showWhatsNew", "args": []},
          {"op": "wait_rect", "objectName": "whatsNewRepoLink", "budget": 20},
+         {"op": "scroll_into_view", "objectName": "whatsNewRepoLink"},
          {"op": "deliver_click", "objectName": "whatsNewRepoLink"},
          {"op": "exec_slot", "slot": "showWhatsNew", "args": []},
          {"op": "wait_rect", "objectName": "whatsNewCloseButton", "budget": 20},

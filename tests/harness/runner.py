@@ -2293,6 +2293,9 @@ def suite_step(step):
         request = {"id": 1, "cmd": "scroll_into_view"}
         if "objectName" in step:
             request["objectName"] = step["objectName"]
+        elif "objectName_state" in step:
+            slot, key = step["objectName_state"]
+            request["objectName"] = SUITE_STATE["stash"][slot][key]
         elif "text" in step:
             request["text"] = step["text"]
         else:
