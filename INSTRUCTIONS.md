@@ -307,24 +307,37 @@ cycle, and mangles values through configparser.
 
 - File shape: `{"sections": {...}, "controlsCollapsed": bool,
   "controlsLocked": bool, "infoCollapsed": bool, "statusCollapsed": bool,
-  "consoleHeight": int, "fileManagerColumns": {...}, "temperatureChart": {...},
-  "toolhead": {...}, "whatsNewSeen": ...}` — new fields default via
+  "consoleHeight": int, "fileManagerColumns": {...},
+  "toolhead": {...}, "whatsNewSeen": ...}` — the model's save payload
+  rewrites these WHOLE top-level keys per save. `temperatureChart` is
+  read-only here (it migrated into the per-printer record; the
+  migration deletes the key once). The UI-state store's keys
+  (`sections` — its writer — and the tenth key `sectionSizes`) live
+  as top-level SIBLINGS of these: anything nested inside them gets
+  erased by the next whole-key save. New fields default via
   `bool(decoded.get(..., False))` and the column config goes through
   `FileManagerPolicy.normalise_columns` (the file manager owns it; the
   model only merges and saves).
   The first shipped format was a flat section map; `_read_state` migrates
-  it, so new fields must default with `bool(decoded.get(..., False))` and
-  never break legacy reads.
+  it — recognised ONLY when every value is a bool, so a document that
+  lacks `sections` and carries the UI-state store's sibling keys never
+  hydrates them as sections. New fields must default with
+  `bool(decoded.get(..., False))` and never break legacy reads.
 - The FILE is the `StateStore`'s (4.2.0): writes are atomic
-  (`.tmp` + `os.replace`) read-modify-write MERGES on every change —
-  foreign keys survive (4.3.0's UI-state store consumes the same
-  file). The one deliberate full-document replace is the one-time
-  chart migration (`_save_state(replace=True)`). A missing file is
-  the first run — silent; genuine failures note once per session
-  through the console.
-- The model owns the values: slots mutate fields, `_save_state()`,
+  (`.tmp` + `os.replace`, O_NOFOLLOW + 0o600) read-modify-write
+  MERGES on every change — foreign keys survive (4.3.0's UI-state
+  store consumes the same file). `write(..., delete=(...))` drops
+  named keys inside the merge — the chart migration's only job. The
+  full-document replace is GONE: it was the sibling rule's single
+  exception and silently erased every other consumer's keys. A
+  missing file is the first run — silent; genuine failures note once
+  per session through the console.
+- The model owns its values: slots mutate fields, `_save_state()`,
   then `_publish()`. QML binds to the model properties and calls the
-  setter slots — never a local default.
+  setter slots — never a local default. The sections map is the
+  exception (4.3.0): it persists through the `UiStateStore`, the
+  file's second consumer — the model hydrates it but no longer
+  writes it.
 - Every new property and slot also goes into the surface lists in
   `tests/test_composed_components.py` (the properties string and the slot
   list) and the `_SIGNAL_KEYS` grouping in the model.

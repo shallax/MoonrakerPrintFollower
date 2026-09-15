@@ -2248,6 +2248,66 @@ class MonitorQtTests(unittest.TestCase):
         self.assertFalse(model.controlsCollapsed)
         self.assertFalse(model.controlsLocked)
 
+    def test_a_sections_less_document_with_sibling_keys_is_not_a_flat_map(self):
+        # The flat-map legacy shape is recognised ONLY when every value
+        # is a bool: a document that lacks `sections` and carries the
+        # UI-state store's sibling keys must not hydrate them as
+        # sections (the silent collapse-state reset, 4.3.0).
+        import UM.Resources as UMResourcesModule
+        section_path = UMResourcesModule.Resources.getStoragePath(
+            UMResourcesModule.Resources.Preferences,
+            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        with open(section_path, "w", encoding="utf-8") as handle:
+            json.dump({"sectionSizes": {"info": 240.0}, "setup": False}, handle)
+        model = self.monitor()
+        self.assertEqual(model._sections, {})
+
+    def test_the_ui_state_store_owns_the_sections_writes(self):
+        import UM.Resources as UMResourcesModule
+        section_path = UMResourcesModule.Resources.getStoragePath(
+            UMResourcesModule.Resources.Preferences,
+            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        with open(section_path, "w", encoding="utf-8") as handle:
+            json.dump({"sections": {"setup": False},
+                       "controlsLocked": True,
+                       "sectionSizes": {"info": 240.0}}, handle)
+        model = self.monitor()
+        model.setSectionExpanded("toolhead", False)
+        with open(section_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        # The section write merged: the sibling keys survive untouched.
+        self.assertEqual(payload["sections"], {"setup": False, "toolhead": False})
+        self.assertTrue(payload["controlsLocked"])
+        self.assertEqual(payload["sectionSizes"], {"info": 240.0})
+
+    def test_the_sizes_schema_drops_junk_at_the_boundary(self):
+        from plugins.StateStore import StateStore
+        from plugins.UiStateStore import UiStateStore
+        import tempfile
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "state.json")
+            store = StateStore(path)
+            ui = UiStateStore(store)
+            self.assertTrue(ui.set_sizes({"info": 240.0, "console": "412", "junk": None, "bad": "tall"}))
+            payload = json.load(open(path, "r", encoding="utf-8"))
+            self.assertEqual(payload["sectionSizes"], {"info": 240.0, "console": 412.0})
+
+    def test_the_store_delete_drops_only_the_named_keys(self):
+        from plugins.StateStore import StateStore
+        import tempfile
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "state.json")
+            store = StateStore(path)
+            store.write({"sections": {"setup": False}, "temperatureChart": {"visible": {}},
+                         "controlsLocked": True})
+            store.write({}, delete=("temperatureChart",))
+            payload = json.load(open(path, "r", encoding="utf-8"))
+            self.assertNotIn("temperatureChart", payload)
+            self.assertEqual(payload["sections"], {"setup": False})
+            self.assertTrue(payload["controlsLocked"])
+
     def test_corrupt_panel_state_file_degrades_to_defaults(self):
         # A truncated or hand-edited file must never raise or hydrate
         # inverted: unreadable JSON yields defaults, and string flags like

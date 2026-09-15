@@ -152,8 +152,9 @@ class SourceContractTests(unittest.TestCase):
             "MonitorTuning": set(),
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
             "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
-            "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PrintStartOwner", "PrinterConfig", "StateStore", "ToolheadController", "ToolheadPolicy", "WhatsNew"},
+            "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PrintStartOwner", "PrinterConfig", "StateStore", "ToolheadController", "ToolheadPolicy", "UiStateStore", "WhatsNew"},
             "PrintStartOwner": set(),
+            "UiStateStore": set(),
             "StateStore": set(),
             "ConsoleController": {"ConsolePolicy"},
             "ToolheadController": {"ToolheadPolicy", "MonitorPermissions"},
@@ -438,7 +439,7 @@ class CompositionStructureTests(unittest.TestCase):
                      "PreviewMotion", "PreviewPresentation", "PreviewSmoothing", "PrintCoordinator",
                      "PrintStartOwner", "PrinterBinding", "PrinterConfig", "PrintState",
                      "ConsoleController", "ConsolePolicy", "RemoteFileService", "RemoteJobService",
-                     "ToolheadController", "ToolheadPolicy", "UploadController"):
+                     "ToolheadController", "ToolheadPolicy", "UiStateStore", "UploadController"):
             source = (PLUGINS / (name + ".py")).read_text()
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.FunctionDef) and node.name == "__init__":

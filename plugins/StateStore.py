@@ -39,15 +39,18 @@ class StateStore:
             self._report("read", "The Monitor's panel state could not be read — the defaults were restored.")
             return None
 
-    def write(self, update: dict, merge: bool = True) -> bool:
+    def write(self, update: dict, merge: bool = True, delete: tuple = ()) -> bool:
         """The save: by default read-modify-write — the update
         MERGES into the file's current content so foreign keys
         survive (4.3.0's UI-state store consumes this file — a
         fixed-document save would erase its keys, round-2 A6).
-        merge=False is the full-document REPLACE, reserved for the
-        one-time schema migrations that deliberately drop a block.
-        Written atomically (.tmp + os.replace); a failure reports
-        once per session."""
+        `delete` names the keys the merge deliberately drops (the
+        chart migration removes ONLY its own legacy block — never a
+        full-document rewrite, which was the sibling rule's single
+        exception and is now gone outright). merge=False is the
+        full-document REPLACE, kept only for tests that pin the
+        legacy wrapper. Written atomically (.tmp + os.replace); a
+        failure reports once per session."""
         try:
             if merge:
                 try:
@@ -61,14 +64,27 @@ class StateStore:
                     # save forever — the old replace-write self-healed
                     # by overwriting; the merge falls back to an empty
                     # document and heals on this write (the
-                    # adversarial round's M1).
+                    # adversarial round's M1). NOTE: this self-heal is
+                    # a cross-consumer key-loss event — the next merge
+                    # write emits only the writing consumer's keys.
                     current = {}
                 document = dict(current)
                 document.update(update)
+                for key in delete:
+                    document.pop(key, None)
             else:
                 document = dict(update)
-            with open(self._path + ".tmp", "w", encoding="utf-8") as handle:
-                json.dump(document, handle)
+            # O_NOFOLLOW: a pre-existing symlink at the .tmp path must
+            # not be written through (truncating whatever it points
+            # at, as this user); 0o600: the file now carries two
+            # features' state.
+            fd = os.open(self._path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                # allow_nan=False: NaN/Infinity round-trip through
+                # Python's own loader but are non-standard JSON for
+                # any other reader — a file with two owners must stay
+                # standard.
+                json.dump(document, handle, allow_nan=False)
             os.replace(self._path + ".tmp", self._path)
             return True
         except Exception:

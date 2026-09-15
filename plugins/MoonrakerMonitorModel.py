@@ -35,6 +35,7 @@ from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
 from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, jog_caption, section_reason
 from .PrintStartOwner import PrintStartOwner
+from .UiStateStore import UiStateStore
 from datetime import datetime
 
 from .FileManager import FileManager
@@ -122,7 +123,14 @@ def _read_state(store=None) -> dict:
     if isinstance(decoded, dict):
         sections = decoded.get("sections")
         if not isinstance(sections, dict):
-            sections = decoded  # legacy flat section map
+            # The legacy flat section map — recognised ONLY when every
+            # value is a bool: a document that lacks `sections` and
+            # carries the UI-state store's sibling keys must not
+            # hydrate them as sections (4.3.0, the second consumer).
+            if all(isinstance(value, bool) for value in decoded.values()):
+                sections = decoded
+            else:
+                sections = {}
         return {
             "sections": {str(key): _state_bool(value) for key, value in sections.items()},
             "whatsNewSeen": str(decoded.get("whatsNewSeen") or ""),
@@ -344,6 +352,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_columns_state = state["fileManagerColumns"]
         self._camera_refresh_nonce = 0
         self._sections = state["sections"]
+        # The UI-state store (4.3.0): the sections map's persistence
+        # moves to the second consumer — the model's save payload
+        # stops rewriting the whole map, so the two writers can no
+        # longer clobber each other at the top level.
+        self._ui_state = UiStateStore(store=self._store)
         self._toolhead_state = state["toolhead"]
         # The chart config is per-printer (sensor names differ between
         # machines): it lives in the PrinterConfig record, adopting the
@@ -357,7 +370,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         elif state.get("temperatureChart"):
             self._chart_config = state["temperatureChart"]
             self._apply_chart_config()
-            self._save_state(replace=True)  # rewrite the global file chrome-only
+            # The legacy global block migrates into the per-printer
+            # record once: the store deletes ONLY that key — a
+            # full-document rewrite would erase the UI-state store's
+            # sibling keys (4.3.0, the sibling rule's single
+            # exception removed).
+            self._store.write({"sections": dict(self._sections)}, delete=("temperatureChart",))
         else:
             self._chart_config = {}
         self._history = TemperatureHistory()
@@ -1592,7 +1610,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         sections = dict(self._sections)
         sections[str(section)] = bool(expanded)
         self._sections = sections
-        self._save_state()
+        # The sections map persists through the UI-state store — the
+        # model's save no longer rewrites the whole map (4.3.0).
+        self._ui_state.set_sections(self._sections)
         self._publish()
 
     @pyqtSlot(str, bool)
@@ -1701,9 +1721,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         else:
             self._store_notes.append(text)
 
-    def _save_state(self, replace=False):
+    def _save_state(self):
         self._store.write({
-            "sections": dict(self._sections),
             "whatsNewSeen": self._whats_new_seen,
             "controlsCollapsed": self._controls_collapsed,
             "controlsLocked": self._controls_locked,
@@ -1720,7 +1739,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "extrudeDistance": self._values.get("extrudeDistance", EXTRUDE_DISTANCE_DEFAULT),
                 "extrudeSpeed": self._values.get("extrudeSpeed", EXTRUDE_SPEED_DEFAULT),
             },
-        }, merge=not replace)
+        })
     @pyqtSlot(object)
     def updateMoonrakerStatus(self, status): self._data.observe(status)
     @pyqtSlot()
