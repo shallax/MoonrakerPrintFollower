@@ -83,6 +83,7 @@ private follower state to either integration.
 | `MonitorTuning.py` | Debounce, pending tuning values, revision/confirmation timers | QML or printer discovery |
 | `MonitorControls.py` | Macro, preset, fan/LED/PWM, setup and power/exclusion policy | Qt model inheritance |
 | `ToolheadPolicy.py` | Pure jog/home/extrude G-code, the print-state safety gate and jog-queue coalescing | Qt, timers or networking |
+| `MonitorPermissions.py` | Pure permission policy: the frozen observation record and the action rulings table (can_jog, can_power, can_restart, can_start_print, …) with disabled reasons | Qt, networking or mutable state |
 | `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
@@ -96,8 +97,7 @@ private follower state to either integration.
 | `FileManager.py` | The file-manager state owner: resident walk, view state, mutations and the LOCAL-file upload (its own multipart path) plus the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | MoonrakerMonitorModel |
 | `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
 | `FileDownload.py` | One-shot file streaming from the printer into Cura (the file manager's Download verb) | FollowerRuntime |
-| `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
-| `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection, recents and the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | Model inheritance or formatting |
+| `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection, mutations, the LOCAL-file upload (its own multipart path) and the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | Model inheritance or formatting |
 | `MoonrakerOutputDevice.py` | Cura output-device signals/dialog/message adapter | Upload state machine |
 | `WhatsNew.py` | The what's-new content: the curated per-release entries and the once-per-version marker gate | Qt, I/O or networking |
 | `WhatsNewOverlay.py` | The overlay's window owner: the boot-wait offer, the main-window/monitor lookup and the Popup's creation on Cura's own engine | Monitor state or networking |

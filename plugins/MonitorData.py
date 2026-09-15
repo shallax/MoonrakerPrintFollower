@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from .ConsolePolicy import MAX_LINE
 from .MonitorFormatting import number, result, wanted_object
+from .MonitorPermissions import Observation
 from .MoonrakerSession import RequestCategory
 
 
@@ -40,8 +41,11 @@ class MonitorData(QObject):
     consoleStoreChanged = pyqtSignal()
     commandChanged = pyqtSignal(object)
     # Fires on every connection-state transition with the new state —
-    # the console logs a "#" note on each (the request).
-    connectionStateChanged = pyqtSignal(bool)
+    # the console logs a "#" note on each (the request). Tri-state
+    # since 4.2.0: 'unknown' | 'yes' | 'no' (the policy table needs
+    # unknown distinguishable from no; the bool monitorConnected
+    # projection keeps its old semantics).
+    connectionStateChanged = pyqtSignal(str)
 
     def __init__(self, client, parent=None):
         super().__init__(parent)
@@ -49,6 +53,14 @@ class MonitorData(QObject):
         self._active = False
         self._generation = 0
         self._connection_detail = ""
+        # The observation record (4.2.0): assembled here, with the
+        # two closed push-ins for the facts the data owner does not
+        # hold — controlsLocked (the model's chrome) and the command
+        # lane's busy flag. No-op when unchanged (the A3 contract).
+        self._connection_observed = False
+        self._controls_locked = False
+        self._commands_busy = False
+        self._observation = None
         self._timers = {}
         self._console_expanded = False
         self._console_entries = []
@@ -94,6 +106,11 @@ class MonitorData(QObject):
         connected = bool(args[0]) if args else self.connected
         if len(args) > 1:
             self._connection_detail = str(args[1])
+        # The tri-state latch (4.2.0): a session that has never seen
+        # a connection is 'unknown', not 'no' — the policy's
+        # fail-closed rows must be able to tell them apart (F10).
+        if connected:
+            self._connection_observed = True
         # The automatic reconnect must re-arm the monitor: an
         # invalidation deactivated it, and only the MANUAL reconnect
         # paths re-activated it before — a transport handover (or any
@@ -114,7 +131,8 @@ class MonitorData(QObject):
             # Klippy-ready broadcast uses is issued once.
             self._watchdog.stop()
             self._watchdog.start()
-        self.connectionStateChanged.emit(connected)
+        self._rebuild_observation()
+        self.connectionStateChanged.emit(self.connection_state)
         self.changed.emit()
 
     def _watch_discovery(self):
@@ -146,6 +164,17 @@ class MonitorData(QObject):
     @property
     def connected(self) -> bool:
         return bool(self._client.connected)
+
+    @property
+    def connection_state(self) -> str:
+        # The tri-state: 'unknown' until the first observed connect
+        # of this session generation, then 'yes'/'no'. The bool
+        # `connected` above keeps its exact old semantics (unknown
+        # reads False, like a fresh session always did) so every
+        # legacy reader behaves as before; only the policy table
+        # consumes the tri-state.
+        if self._client.connected: return "yes"
+        return "no" if self._connection_observed else "unknown"
 
     @property
     def status(self):
@@ -197,6 +226,46 @@ class MonitorData(QObject):
     def _update(self, **patch):
         from dataclasses import replace
         self._snapshot = replace(self._snapshot, **{key: freeze(value) for key, value in patch.items()})
+        self._rebuild_observation()
+        self.changed.emit()
+
+    def _rebuild_observation(self):
+        core = self._snapshot.core or {}
+        aux = self._snapshot.auxiliary or {}
+        stats = core.get("print_stats") or {}
+        configfile = aux.get("configfile") or {}
+        toolhead = aux.get("toolhead") or {}
+        observation = Observation(
+            active=self._active,
+            connection=self.connection_state,
+            state=str(stats.get("state") or ""),
+            homed_axes=str(toolhead.get("homed_axes") or ""),
+            assumed_stopped=bool(getattr(self._client, "assumed_stopped", False)),
+            save_config_pending=bool(configfile.get("save_config_pending")),
+            controls_locked=self._controls_locked,
+            busy=self._commands_busy,
+        )
+        self._observation = observation
+
+    @property
+    def observation(self):
+        return self._observation
+
+    def set_controls_locked(self, locked):
+        """The model's chrome push-in (A3): a no-op when unchanged."""
+        locked = bool(locked)
+        if locked == self._controls_locked: return
+        self._controls_locked = locked
+        self._rebuild_observation()
+        self.changed.emit()
+
+    def set_commands_busy(self, busy):
+        """The command lane's busy push-in (A3): a no-op when
+        unchanged."""
+        busy = bool(busy)
+        if busy == self._commands_busy: return
+        self._commands_busy = busy
+        self._rebuild_observation()
         self.changed.emit()
 
     def set_active(self, active):
@@ -204,6 +273,9 @@ class MonitorData(QObject):
         self._active = bool(active)
         if not active:
             self._generation += 1
+            # A fresh session generation has never observed a
+            # connection: the tri-state reads 'unknown' again.
+            self._connection_observed = False
             for timer in self._timers.values(): timer.stop()
             self._console_watch.stop()
             self._client.transport.cancel_owner("monitor")

@@ -109,8 +109,16 @@ class MonitorCommands(QObject):
         self._status = str(text)
         self.changed.emit()
 
+    def _set_busy(self, busy):
+        """The observation push-in (4.2.0): the policy's record reads
+        the command lane's busy flag through the data owner."""
+        busy = bool(busy)
+        if busy == self._busy: return
+        self._busy = busy
+        self._data.set_commands_busy(busy)
+
     def reset(self):
-        self._busy = False
+        self._set_busy(False)
         self._queue.clear()
         self._status = self._tracked = ""
         self._live = self._receipt = ""
@@ -120,7 +128,7 @@ class MonitorCommands(QObject):
 
     def send(self, label, path, body=None, queued=False):
         if self._busy or not self._data.active: return False
-        self._busy = True
+        self._set_busy(True)
         # A new action supersedes any old completion banner: the receipt
         # must never resurface over the fresh lifecycle text or a newer
         # terminal outcome (the engineering panel's receipt resurrection).
@@ -139,7 +147,7 @@ class MonitorCommands(QObject):
                 # touch the status.
                 return
             if error:
-                self._busy = False
+                self._set_busy(False)
                 self._live = ""
                 if payload is not None:
                     # The server ANSWERED with an error body: the
@@ -160,7 +168,7 @@ class MonitorCommands(QObject):
                 self._live = ""
                 self._data.accept_command(label)
             else:
-                self._busy = False
+                self._set_busy(False)
                 self._live = ""
                 # A receipt, never "accepted": the POST ack only means
                 # Moonraker queued the script, and Klipper can still

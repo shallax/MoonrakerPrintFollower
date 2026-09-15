@@ -430,8 +430,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_manager_note = str(text)
         self._publish()
 
-    def _on_connection_state(self, connected: bool) -> None:
-        if not connected:
+    def _on_connection_state(self, state: str) -> None:
+        if state != "yes":
             return
         self._camera_refresh_nonce += 1
         self._publish()
@@ -1435,6 +1435,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot(bool)
     def setControlsLocked(self, locked):
         self._controls_locked = bool(locked)
+        # The policy record's chrome push-in (4.2.0, A3).
+        self._data.set_controls_locked(self._controls_locked)
         self._save_state()
         self._publish()
     @pyqtSlot(bool)
