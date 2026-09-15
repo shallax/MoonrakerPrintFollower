@@ -1438,24 +1438,33 @@ the physical-head feature. The review's F07 plus F06's structural
 completion, with fixed component scope and measurable exit criteria —
 not a repository-wide redesign. The 2026-09-15 scoping ruling keeps
 4.4.0 separate and folds every 4.2.0 deferral plus the round-2
-pro-user planning input (2026-09-15) into this release.
+pro-user planning input (2026-09-15) into this release. The round-1
+critic (2026-09-15) corrected three false premises and re-shaped the
+workstreams; every disposition is in the decisions ledger.
 
 - **Vertex-style gcode deformation (bumped from 4.2.0, the author's
-  2026-09-15 ruling).** A Preview-card toggle that warps the rendered
-  gcode so the model rides the bed-mesh ridges: every vertex of the
-  rendered layers gets its own Z from the height map, times the
-  exaggeration. The per-layer prototype did not deliver the expected
-  look and was removed (logged); the design round must settle how the
-  warp composes with Cura's lazily built layer meshes, with a
-  Snapshot-0 mock before any machinery.
+  2026-09-15 ruling; feasibility-gated after the round-1 critic).**
+  A Preview-card toggle that warps the rendered gcode so the model
+  rides the bed-mesh ridges: every vertex of the rendered layers
+  gets its own Z from the height map, times the exaggeration. The
+  per-layer prototype did not deliver the expected look and was
+  removed (logged). The Snapshot-0 mock shows the hoped-for look
+  but is not the feasibility evidence: the plugin has no
+  vertex-level reach into Cura's preview today (the only layer-data
+  contact is a presence check on `getLayerData()`), and whether the
+  warp can compose with Cura's lazily built layer meshes is the
+  question that decides whether the toggle can ship. The design
+  round therefore produces a written feasibility finding before any
+  machinery; the toggle ships in 4.3.0 only if the finding says
+  feasible, otherwise the warp moves to 4.4.0 with the Preview
+  scene work. Flagged for the author at the snapshot stop.
 
 - **Preview status strip (the pro-user's top want, ruled in
   2026-09-15).** A slim status row as the first row of the existing
   Preview card, above the title: the current temps, the
-  ETA/already-printed line and pause/resume. Its dependency — the
-  4.2.0 action policy — already lands. Status-only (the 2026-09-15
-  ruling): the factor sliders, the z-offset nudges and the
-  extrude/retract controls stay in the Monitor — the Preview
+  ETA/already-printed line and pause/resume. Status-only (the
+  2026-09-15 ruling): the factor sliders, the z-offset nudges and
+  the extrude/retract controls stay in the Monitor — the Preview
   control dock is a 4.4.0 planning item with the jog pad. On the
   card, the strip rides its dual-host placement for free — no
   third host surface (re-ruled 2026-09-15 from a separate strip).
@@ -1464,68 +1473,163 @@ pro-user planning input (2026-09-15) into this release.
   ruling). The deformation toggle's home — the strip row or the
   bed-mesh controls — is a mock-round call. Snapshot-0 mock before
   wiring, like the deformation.
-- **Off-path distance in plain words (PUF5).** `refined_fraction`
-  gets its consumer: the follower's status area names how far the
-  commanded head sits off the toolpath instead of throwing the
-  number away. Commanded-not-sensed caveat: it cannot detect
-  skipped steps.
-- **Operation extraction — the print-start owner and the
-  coordinator's metadata adoption (deferred from 4.2.0).** The
-  owner extraction completes: the queued outcome, the publish-driven
-  tick and the watchdog move out of the model, and the upload path
-  adopts the shared owner — its POST-body verdict stops being the
-  only reason no false-watchdog exists today. The coordinator
-  retires its own mr-metadata cache and consumes the consolidated
-  metadata service; the rewrite of the preview's ETA/filament
-  anchors rides this release with the print-start owner, as the
-  4.2.0 deferral ruled.
-- **The UI-state store (the 4.2.0 owner's second consumer).** The
-  state-store owner created in 4.2.0 gains its second consumer —
-  one store, two releases' features, no second file. The 4.2.0
+  Round-1 corrections (2026-09-15):
+  - Pause/resume is the last un-migrated command gate — the action
+    policy has no pause row (two inline booleans gated on
+    `commands.busy`, no reason). Per the standing rulings (the
+    policy owns command permissions; refusals carry the policy's
+    words), the strip adds `can_pause`/`can_resume` rows with
+    reason constants and the Dashboard's buttons migrate onto
+    them; the source-pinned policy means the pin updates are
+    costed with the rows. The strip states what it shows while
+    actionBusy — a dead Pause with no words is the failure mode
+    4.2.0 removed.
+  - The temps have no seam: temperature data and formatting live in
+    the Monitor's aux poll, and the only Preview↔Monitor wiring
+    today is the bed-mesh thresholds. The plan names the seam — a
+    slim per-poll value block published through the coordinator
+    (which republishes every refresh) — and the staleness rule:
+    the strip's temps read "—" when the feed is absent, never a
+    stale value (the preview publish channel's sticky dict never
+    removes a key).
+  - The ETA line moves the slot's content: the existing
+    current-layer slot already renders the ETA/already-printed
+    text (`selectedLayerEtaText`). The strip takes that line up;
+    the slot keeps the current-layer scheduling info. The mock
+    round settles the split and carries an explicit vertical
+    budget for the card — its growth is harness-pinned (the v1
+    geometry assertions against Cura's save row and the window).
+  - The strip's state table (idle / printing / paused /
+    disconnected / busy / error) and its signals are named in the
+    plan: `printPauseRequested` / `printResumeRequested` — never
+    `pauseClicked`, which means Attach/Detach on the card today.
+  - One card-content budget (F14) covers the strip row, the ETA
+    slot's fate and the off-path line, with a stated maximum card
+    height.
+- **Off-path distance in plain words (PUF5; premise corrected by
+  the round-1 critic).** `refined_fraction` already has a consumer
+  — its fraction and method drive the Preview path bar and the
+  follower status string. What is unused is the distance scalar,
+  discarded inside the 3 mm measurement window. The item is a
+  signature change to the shipped progress estimator: return the
+  distance and surface it in the follower's status area.
+  In-window only — the 3 mm hold stays (it stops the
+  parser-position fraction inflating the monotonic floor into a
+  staircase; the old headline example is unproducible without
+  changing the hold). The gating is defined: which states show the
+  line, what the threshold is, and what it says when there is
+  nothing to say — every Z-hop, travel and wipe is legitimately
+  off-path, so the readout must not report normal motion as an
+  anomaly. Commanded-not-sensed caveat: it cannot detect skipped
+  steps.
+- **Operation extraction — two slices, separately revertible
+  (split after the round-1 critic).** Slice one: the print-start
+  owner extraction completes — the queued outcome, the
+  publish-driven tick and the watchdog move out of the model, and
+  the upload path adopts the shared owner. Deterministic,
+  unit-testable, no user-visible change; its own evidence. Slice
+  two: the coordinator's metadata adoption. Before it, the
+  consolidated service's contract is written down — fetch plus
+  retained payload plus latch semantics plus job-identity
+  discipline. The coordinator's mr-metadata cache is not a plain
+  cache: its latch retired a ~1,200-identical-request retry ladder
+  and its job-id cross-check against the newest
+  `server/history/list` row prevents the wrong-job readout;
+  adopting the bare fetch as-is reintroduces both. The contract
+  keeps them; explicit unit tests (fake fetch, no latch on
+  failure) move with the code. The rewrite of the preview's
+  ETA/filament anchors rides this slice — the 4.2.0 record's
+  riskiest area, kept apart from slice one so its regression
+  signal stays clean.
+- **The UI-state store (the 4.2.0 owner's second consumer).** New
+  module `UiStateStore.py` owns section sizes, collapse state and
+  their persisted schema, consuming the 4.2.0 `StateStore` — one
+  store, two releases' features, no second file. The 4.2.0
   constraints carry over: top-level-only merge (named in
-  ARCHITECTURE), the credential class stays out, and the second
-  consumer's keys must survive the first save. Collapse state stays
-  booleans under the existing keys with sizes in a sibling map — a
-  shape change or a renamed id silently re-expands every existing
-  user's sections (the pro-user's reset vector, PUF2). The 23
-  section ids are pinned before the surface moves; unknown keys
-  default to expanded, so nothing pins them today (PUF6).
+  ARCHITECTURE), the credential class stays out. The shape
+  requirement is written down: the Monitor's save payload rewrites
+  nine whole top-level keys per save, so the UI state lives as
+  top-level siblings of those nine — never nested inside `sections`
+  or `toolhead` — and the sizes sibling map is a tenth top-level
+  key with the same protection argument. Collapse state stays
+  booleans under the existing keys — a shape change or a renamed
+  id silently re-expands every existing user's sections (the
+  pro-user's reset vector, PUF2). The section-id pin is corrected
+  and lands first (F11): six ids are already pinned by name; the
+  pin becomes a literal set plus a length assertion so the console
+  pane — whose id is not a `sectionId:` literal — cannot be
+  missed.
 - **View-model extraction.** A FilesViewModel owning the file
-  projection: one computed file-view result (rows, total, page,
-  selection, empty state) cached by data/view/history revision with
-  deliberate date-filter expiry, published through a
-  QAbstractListModel with stable row identities — the F06
-  structural completion. Then the focused view models where their
-  update lifetimes differ: controls, console/camera,
+  projection as an INTERNAL collaborator: the model keeps the
+  public property names (pinned by name AND by base class) and
+  `fileManagerRows` stays a list-valued projection — the harness
+  reads it as a value and the file-list delegates consume dict
+  rows. The genuinely new part is the QAbstractListModel with
+  stable row identities behind that surface; the revision-keyed
+  cache and the date-filter expiry already ship (the F06
+  `projection_count`-pinned cache). Then the focused view models
+  where their update lifetimes differ: controls, console/camera,
   information/chart presentation. Each receives explicit model
-  properties and emits intents — never the whole root object.
+  properties and emits intents — never the whole root object. The
+  coverage gate's surface extractor reads one hard-coded file: it
+  becomes a directory scan in the same commit as any
+  `value_property` move, so a moved declaration cannot vanish from
+  the matrix.
 - **QML component extraction.** The file table, filter controls,
   the file confirmation dialogs, the console pane, the camera pane,
   the toolhead section and the peripheral controls become complete
   functional components. Its required companion is the
-  pin-retargeting pass (PUF3): 302 source-string assertions, 42
-  negative guards that pass vacuously once code moves, and 27
-  `.index(` slice sites need a named, costed pass — the negative
-  guards follow the code, they are not deleted.
+  pin-retargeting pass, re-derived at the pass start with the
+  counting method stated (the round-1 critic's counts: 339
+  positive / 52 negative source-constant assertions, or 265
+  `assertIn` sites / 406 executed assertions / 43 `assertNotIn`
+  against QML text; the 27 `.index(` sites reproduce). Three
+  families, three treatments: the string assertions retarget once
+  the module-level source constants are widened (they read whole
+  files); the count pins are arithmetic over a file's text and are
+  re-derived against the new file set — a moved section otherwise
+  reads as a lost section; the `.index()` anchors fail hard
+  (ValueError) and are replaced with named structural markers that
+  survive a move. The negative guards are the dangerous half —
+  they pass vacuously once the code moves — and must follow the
+  code, never deleted; the pass names how each guard follows. The
+  pass runs AFTER `qmlformat` (the pre-commit gate formats staged
+  QML); the qmldir entry and the two banned filenames are on the
+  checklist.
 - **Harness evidence visibility (bumped from 4.2.0, the author's
   2026-09-15 ruling).** The suite's inspections scroll their target
   into view before asserting, and the evidence captures show what
   the step actually saw — a recording that proves an inspection
-  against an off-screen item proves nothing a user could do. Lands
-  here so the extractions are gated by evidence that is itself
-  trustworthy.
-- **The Monitor card's locked case.** The print-job state already
-  names disconnected; the locked case's naming rides this refactor
-  (the round-3 reconciliation note).
+  against an off-screen item proves nothing a user could do.
+  Implemented as a new op or an opt-in driver flag, not a silent
+  change to existing inspections: the scroll walk resolves its
+  target through a different window set (visibility-filtered at
+  depth 64 vs the click walk's unfiltered depth 96) and it mutates
+  `contentY` — the four inspection ops sit in `REAL_SAFE_OPS`, the
+  tuple between a scenario and a live printer, and it moves with
+  the change in the same commit. The evidence entry gains the
+  geometry field so the capture genuinely shows what the step saw.
+- **The print-job caption's disconnected and locked states.** The
+  premise is corrected (F18): the caption reads "Idle" while the
+  socket is down — the surface that names disconnected today is
+  `monitorState`. The caption gains both states, folded in with the
+  strip's status vocabulary so one ruling covers both.
 - **Exit criteria.** Object names and public surfaces used by the
   interaction tests are preserved; persistence migration and
   gesture ownership survive; resize, focus, Esc handling,
   confirm/cancel, printer switches and repeated slider grabs are
-  re-verified after each extraction; measured projection
-  improvements against the 4.1.0 baselines; unchanged package
-  identity. The 23 section ids pinned; the no-oscillation
-  invariant named in the criteria (PUF2); the pin-retargeting pass
-  costed and complete. Each extraction is a vertical slice — move
+  re-verified after each extraction; NO REGRESSION against the
+  4.1.0 baselines — the old wording asked to improve on numbers
+  already banked post-improvement — via `projection_count` and the
+  publish-latency probe; unchanged package identity. The
+  no-oscillation invariant becomes testable: the three pane-width
+  constants, the two thresholds and the release margin are pinned
+  as unit-testable values BEFORE any pane slice moves — a pin
+  change and the hysteresis re-derivation land in the same commit.
+  The pin-retargeting pass costed and complete. Per-item criteria:
+  the deformation's is the feasibility finding; the strip's is the
+  state table, the signals and the content budget; the off-path
+  line's is the gating. Each extraction is a vertical slice — move
   one owner, redirect its callers, preserve observable behaviour,
   remove the obsolete path in the same change. A lines-per-file
   target is not an acceptance criterion; the test is that a feature
