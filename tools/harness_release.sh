@@ -12,14 +12,32 @@
 #   /tmp/mpf/ui-artifacts/runs/<yyyy-MM-dd-HHmmss>/<curaVersion>/<unit>[/.log]
 # Re-runs accumulate side by side; the CI upload publishes the whole
 # ui-artifacts tree.
+#
+# Usage:  harness_release.sh [-j N]
+#
+# The default run is SERIAL: one container, one shared /tmp/mpf, so
+# the smoke units' shared boot proves the second unit survives the
+# first unit's debris — a property parallel mode does not claim.
+# With -j N each unit gets its OWN container AND its own working
+# directory (the isolation ruling: /tmp/mpf/slot-<n> mounted as that
+# slot's /tmp/mpf), so the port/token files, the XDG seed and the
+# sim state can never collide; the evidence still lands in the shared
+# run root. CI never uses -j — its matrix already parallelizes by
+# machine, and the timing budgets assume an unloaded host.
 set -eu
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
+JOBS=1
+if [ "$1" = "-j" ]; then
+    JOBS="${2:?usage: harness_release.sh [-j N]}"
+    shift 2
+fi
+
 HARNESS_DIR="${HARNESS_DIR:-/tmp/mpf}"
-# The gate owns its container (built and removed here) under its own
-# name — never the dev harness container, which an ad-hoc run may be
-# using (the gate used to remove it out from under them).
+# The gate owns its container(s) (built and removed here) under its
+# own name(s) — never the dev harness container, which an ad-hoc run
+# may be using (the gate used to remove it out from under them).
 CONTAINER="${HARNESS_CONTAINER:-mpf-cura-gate}"
 PRIMARY="${CURA_PRIMARY:-5.13.0}"
 SECONDARY="${CURA_SECONDARY:-5.12.0}"
@@ -34,49 +52,141 @@ mkdir -p "$HARNESS_DIR" "$RUN_ROOT"
 make package >/dev/null
 
 docker build -q -t mpf-cura-harness "$root/tools/harness" >/dev/null
-docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-# SYS_PTRACE lets the stall diagnostics attach gdb/strace to the
-# hung boot from inside the container (the host's ptrace_scope
-# otherwise blocks a non-parent tracer).
-docker run -d --init --name "$CONTAINER" --cap-add=SYS_PTRACE \
-    -v "$HARNESS_DIR:$HARNESS_DIR" mpf-cura-harness sleep infinity >/dev/null
 
+# The Cura fetches happen ONCE into the shared tree; parallel slots
+# copy their version's tree into their own work dir (the extraction
+# must be writable — the plugin stages into it — and a hardlink
+# would mutate the shared tree).
 python3 "$root/tools/fetch_cura.py" "$PRIMARY"
 python3 "$root/tools/fetch_cura.py" "$SECONDARY"
 
 fail=0
-unit() {  # unit <minutes-budget> <cura-version> <unit-name> <mode> [group]
-    budget=$1; version=$2; name=$3; mode=$4; group=${5:-}
+hang=0
+
+start_container() {  # start_container <name> <slot_dir>
+    docker rm -f "$1" >/dev/null 2>&1 || true
+    # SYS_PTRACE lets the stall diagnostics attach gdb/strace to the
+    # hung boot from inside the container (the host's ptrace_scope
+    # otherwise blocks a non-parent tracer). The slot dir mounts as
+    # the container's /tmp/mpf; the shared tree mounts at its own
+    # path so the evidence lands in the shared run root.
+    docker run -d --init --name "$1" --cap-add=SYS_PTRACE \
+        -v "$2:/tmp/mpf" -v "$HARNESS_DIR:$HARNESS_DIR" \
+        mpf-cura-harness sleep infinity >/dev/null
+}
+
+prepare_slot() {  # prepare_slot <slot_dir> <cura-version>
+    mkdir -p "$1/cura_versions"
+    if [ ! -d "$1/cura_versions/$2/root" ]; then
+        cp -a "$HARNESS_DIR/cura_versions/$2" "$1/cura_versions/"
+    fi
+}
+
+run_unit() {  # run_unit <budget> <version> <name> <mode> [group] [slot]
+    budget=$1; version=$2; name=$3; mode=$4; group=${5:-}; slot=${6:-}
     echo "== $name on $version (budget ${budget}m, one attempt) =="
     unit_dir="$RUN_ROOT/$version/$name"
     mkdir -p "$RUN_ROOT/$version"
-    if [ -n "$group" ]; then
-        timeout "${budget}m" env CURA_VERSION="$version" \
-            HARNESS_CONTAINER="$CONTAINER" MODE="$mode" \
-            SCENARIO_GROUP="$group" RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh \
-            > "$unit_dir.log" 2>&1 \
-            || { echo "FAILED: $name on $version"; fail=1; }
+    if [ -n "$slot" ]; then
+        container="mpf-cura-gate-$slot"
+        work="$HARNESS_DIR/slot-$slot"
+        prepare_slot "$work" "$version"
+        if [ -n "$group" ]; then
+            timeout "${budget}m" env HARNESS_CONTAINER="$container" MPF_WORK_DIR="$work" \
+                CURA_VERSION="$version" MODE="$mode" SCENARIO_GROUP="$group" \
+                RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
+        else
+            timeout "${budget}m" env HARNESS_CONTAINER="$container" MPF_WORK_DIR="$work" \
+                CURA_VERSION="$version" MODE="$mode" \
+                RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
+        fi
     else
-        timeout "${budget}m" env CURA_VERSION="$version" \
-            HARNESS_CONTAINER="$CONTAINER" MODE="$mode" \
-            RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh \
-            > "$unit_dir.log" 2>&1 \
-            || { echo "FAILED: $name on $version"; fail=1; }
+        if [ -n "$group" ]; then
+            timeout "${budget}m" env HARNESS_CONTAINER="$CONTAINER" \
+                CURA_VERSION="$version" MODE="$mode" SCENARIO_GROUP="$group" \
+                RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
+        else
+            timeout "${budget}m" env HARNESS_CONTAINER="$CONTAINER" \
+                CURA_VERSION="$version" MODE="$mode" \
+                RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
+        fi
     fi
+    status=$?
+    if [ "$status" = 124 ]; then
+        echo "HANG: $name on $version (budget overrun — the unit never finished)"
+    elif [ "$status" != 0 ]; then
+        echo "FAILED: $name on $version"
+    fi
+    # The unit's status is the FUNCTION's status — the callers derive
+    # the gate verdict from it (a backgrounded call runs in a
+    # subshell, so flag mutation would die with the job).
+    return "$status"
 }
 
 # The smoke set (the sanity layer — the release-killing surfaces in
 # one boot) runs on both versions; the full suite groups run on the
 # primary as the deep regression.
-unit 20 "$PRIMARY" "smoke" suite smoke
+UNITS="20 $PRIMARY smoke suite smoke"
 for g in connection status temperatures console webcams files motion printing settings visual preview probe; do
-    unit 15 "$PRIMARY" "group-$g" suite "$g"
+    UNITS="$UNITS
+15 $PRIMARY group-$g suite $g"
 done
-# The secondary version: the swap proof — the smoke set again under it.
-unit 20 "$SECONDARY" "smoke" suite smoke
+UNITS="$UNITS
+20 $SECONDARY smoke suite smoke"
 
-docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-if [ "$fail" != 0 ]; then
+if [ "$JOBS" -le 1 ]; then
+    start_container "$CONTAINER" "$HARNESS_DIR"
+    while read -r budget version name mode group; do
+        [ -n "$budget" ] || continue
+        st=0
+        run_unit "$budget" "$version" "$name" "$mode" "$group" || st=$?
+        if [ "$st" = 124 ]; then hang=1
+        elif [ "$st" != 0 ]; then fail=1; fi
+    done <<UNITS_LIST
+$UNITS
+UNITS_LIST
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+else
+    # Parallel mode: one slot per job, units drained in batches of
+    # JOBS. Every slot's container and work dir are its own (the
+    # isolation ruling); the shared run root collects the evidence.
+    slot_num=1
+    while [ "$slot_num" -le "$JOBS" ]; do
+        start_container "mpf-cura-gate-$slot_num" "$HARNESS_DIR/slot-$slot_num"
+        slot_num=$((slot_num + 1))
+    done
+    count=0
+    pids=""
+    drain() {  # drain: wait for the batch and fold the statuses in
+        for pid in $pids; do
+            st=0
+            wait "$pid" || st=$?
+            if [ "$st" = 124 ]; then hang=1
+            elif [ "$st" != 0 ]; then fail=1; fi
+        done
+        pids=""
+    }
+    while read -r budget version name mode group; do
+        [ -n "$budget" ] || continue
+        slot=$((count % JOBS + 1))
+        count=$((count + 1))
+        run_unit "$budget" "$version" "$name" "$mode" "$group" "$slot" &
+        pids="$pids $!"
+        if [ $((count % JOBS)) -eq 0 ]; then
+            drain
+        fi
+    done <<UNITS_LIST
+$UNITS
+UNITS_LIST
+    drain
+    slot_num=1
+    while [ "$slot_num" -le "$JOBS" ]; do
+        docker rm -f "mpf-cura-gate-$slot_num" >/dev/null 2>&1 || true
+        slot_num=$((slot_num + 1))
+    done
+fi
+
+if [ "$fail" != 0 ] || [ "$hang" != 0 ]; then
     echo "ui release gate FAILED (run root: $RUN_ROOT)"
     exit 1
 fi
