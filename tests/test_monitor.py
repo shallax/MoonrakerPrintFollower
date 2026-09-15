@@ -61,6 +61,7 @@ OBJECTS_SECTION_QML = (PLUGINS / "ObjectsSection.qml").read_text()
 TEMPS_SECTION_QML = (PLUGINS / "TempsSection.qml").read_text()
 SYSTEM_INFO_SECTION_QML = (PLUGINS / "SystemInfoSection.qml").read_text()
 MCUS_SECTION_QML = (PLUGINS / "McusSection.qml").read_text()
+JOB_SECTION_QML = (PLUGINS / "JobSection.qml").read_text()
 MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
@@ -198,7 +199,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML + FANS_INFO_SECTION_QML + FILAMENT_SECTION_QML + OBJECTS_SECTION_QML + TEMPS_SECTION_QML + SYSTEM_INFO_SECTION_QML + MCUS_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML + FANS_INFO_SECTION_QML + FILAMENT_SECTION_QML + OBJECTS_SECTION_QML + TEMPS_SECTION_QML + SYSTEM_INFO_SECTION_QML + MCUS_SECTION_QML + JOB_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -268,7 +269,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # frontend launcher lives in the Printer status title row.
         self.assertIn('sectionIcon: "Fan"', FANS_INFO_SECTION_QML)
         self.assertIn('sectionIconUrl: Qt.resolvedUrl("Thermometer.svg")', TEMP_HISTORY_SECTION_QML)
-        self.assertIn('Qt.resolvedUrl("Download.svg")', MONITOR_QML)
+        self.assertIn('Qt.resolvedUrl("Download.svg")', JOB_SECTION_QML)
         self.assertIn('sectionIconUrl: Qt.resolvedUrl("Power.svg")', POWER_SECTION_QML)
         self.assertIn('text: "Open the Moonraker frontend."', MONITOR_QML)
         self.assertNotIn('text: "Open Moonraker frontend"', MONITOR_QML)
@@ -302,7 +303,8 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(TEMPS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(SYSTEM_INFO_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MCUS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
-        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(JOB_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 0)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
                          + SETUP_SECTION_QML.count("CollapsibleSectionHeader")
@@ -325,6 +327,7 @@ class MonitorModelContractTests(unittest.TestCase):
                          + TEMPS_SECTION_QML.count("CollapsibleSectionHeader")
                          + SYSTEM_INFO_SECTION_QML.count("CollapsibleSectionHeader")
                          + MCUS_SECTION_QML.count("CollapsibleSectionHeader")
+                         + JOB_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 0)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
@@ -348,7 +351,8 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(TEMPS_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(SYSTEM_INFO_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MCUS_SECTION_QML.count('sectionIcon: "'), 1)
-        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(JOB_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 0)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
                          + SETUP_SECTION_QML.count('sectionIcon: "')
@@ -369,6 +373,7 @@ class MonitorModelContractTests(unittest.TestCase):
                          + TEMPS_SECTION_QML.count('sectionIcon: "')
                          + SYSTEM_INFO_SECTION_QML.count('sectionIcon: "')
                          + MCUS_SECTION_QML.count('sectionIcon: "')
+                         + JOB_SECTION_QML.count('sectionIcon: "')
                          + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
@@ -603,7 +608,7 @@ class MonitorModelContractTests(unittest.TestCase):
                       "id: infoCollapseButton", "id: statusCollapseButton",
                       "id: infoCollapsedTitle", "id: statusCollapsedTitle",
                       "setInfoCollapsed", "setStatusCollapsed"):
-            self.assertIn(token, MONITOR_QML + MONITOR_MODEL + MESH_SECTION_QML)
+            self.assertIn(token, MONITOR_QML + MONITOR_MODEL + MESH_SECTION_QML + JOB_SECTION_QML)
         self.assertIn("infoCollapsed", MONITOR_MODEL)
         self.assertIn("statusCollapsed", MONITOR_MODEL)
         self.assertIn("cameraRefreshNonce", MONITOR_MODEL)
@@ -705,34 +710,34 @@ class MonitorModelContractTests(unittest.TestCase):
         # The Layer row discloses which source produced the value, and
         # the terminal picks an installed monospace face at runtime
         # (the generic and comma lists do not resolve everywhere).
-        self.assertIn("monitorLayerSource", MONITOR_QML)
-        self.assertIn("monitorLayerSource !== undefined", MONITOR_QML)
-        self.assertIn("Layer source: ", MONITOR_QML)
+        self.assertIn("monitorLayerSource", JOB_SECTION_QML)
+        self.assertIn("monitorLayerSource !== undefined", JOB_SECTION_QML)
+        self.assertIn("Layer source: ", JOB_SECTION_QML)
         # The model DECLARES the source (a dynamic setProperty would be
         # undefined at QML creation and the .length read would throw).
         self.assertIn('value_property(str, "monitorLayerSource", monitorChanged, "")', MONITOR_MODEL)
         self.assertIn('"monitorLayerSource"', MONITOR_MODEL)
         # A slim bar under the layer value shows the within-layer
         # progress; it hides while the layer has no height anchor.
-        self.assertIn("monitorLayerProgress >= 0", MONITOR_QML)
-        self.assertIn("Layer progress — how far through the current layer.", MONITOR_QML)
-        self.assertIn("without loading it into the preview", MONITOR_QML)
+        self.assertIn("monitorLayerProgress >= 0", JOB_SECTION_QML)
+        self.assertIn("Layer progress — how far through the current layer.", JOB_SECTION_QML)
+        self.assertIn("without loading it into the preview", JOB_SECTION_QML)
         # The glyph's in-progress state: a non-clickable hourglass.
-        self.assertIn('Qt.resolvedUrl("Hourglass.svg")', MONITOR_QML)
-        self.assertIn("root.printer.improvingEta", MONITOR_QML)
+        self.assertIn('Qt.resolvedUrl("Hourglass.svg")', JOB_SECTION_QML)
+        self.assertIn("root.printerModel.improvingEta", JOB_SECTION_QML)
         # Both progress figures carry two decimals.
-        self.assertIn("monitorProgress.toFixed(2)", MONITOR_QML)
-        self.assertIn("(root.printer.monitorLayerProgress * 100).toFixed(2)", MONITOR_QML)
+        self.assertIn("monitorProgress.toFixed(2)", JOB_SECTION_QML)
+        self.assertIn("(root.printerModel.monitorLayerProgress * 100).toFixed(2)", JOB_SECTION_QML)
         # The Improve-ETA bar: determinate during the download, a
         # plugin-owned sweep while resolving/indexing (Cura's themed
         # indeterminate renders as a static full bar).
-        self.assertIn("improveEtaProgress", MONITOR_QML)
-        self.assertIn("NumberAnimation on sweepPhase", MONITOR_QML)
-        self.assertIn("(1 - Math.abs(2 * improveEtaBar.sweepPhase - 1))", MONITOR_QML)
-        self.assertIn("The spacer keeps the glyph hugging", MONITOR_QML)
-        self.assertIn("SequentialAnimation on rotation", MONITOR_QML)
-        self.assertIn("PauseAnimation", MONITOR_QML)
-        self.assertIn("root.printer.improveEtaPhase", MONITOR_QML)
+        self.assertIn("improveEtaProgress", JOB_SECTION_QML)
+        self.assertIn("NumberAnimation on sweepPhase", JOB_SECTION_QML)
+        self.assertIn("(1 - Math.abs(2 * improveEtaBar.sweepPhase - 1))", JOB_SECTION_QML)
+        self.assertIn("The spacer keeps the glyph hugging", JOB_SECTION_QML)
+        self.assertIn("SequentialAnimation on rotation", JOB_SECTION_QML)
+        self.assertIn("PauseAnimation", JOB_SECTION_QML)
+        self.assertIn("root.printerModel.improveEtaPhase", JOB_SECTION_QML)
         self.assertIn("download_fraction", MONITOR_MODEL + (PLUGINS / "RemoteFileService.py").read_text())
         self.assertIn('"monitorLayerProgress"', MONITOR_MODEL)
         self.assertIn("function monoFamily()", MONITOR_QML)
@@ -962,7 +967,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # inactive-window palette (author's screenshot) — the monitor's
         # bars and sliders are all plugin-owned outline components now,
         # so a bare themed control may not creep back in.
-        for file_text in (MONITOR_QML, DASHBOARD_QML, TUNING_SECTION_QML, FANS_SECTION_QML, LEDS_SECTION_QML, PWM_SECTION_QML):
+        for file_text in (MONITOR_QML, DASHBOARD_QML, TUNING_SECTION_QML, FANS_SECTION_QML, LEDS_SECTION_QML, PWM_SECTION_QML, JOB_SECTION_QML):
             # Every "ProgressBar {"/"Slider {" token must be the plugin
             # outline components (the substring check covers both) —
             # the range-filter bar is the other plugin-owned
@@ -970,7 +975,7 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertEqual(file_text.count("ProgressBar {"), file_text.count("OutlineProgressBar {"))
             self.assertEqual(file_text.count("Slider {"),
                 file_text.count("OutlineSlider {") + file_text.count("BedMeshRangeSlider {"))
-        self.assertIn("OutlineProgressBar {", MONITOR_QML)
+        self.assertIn("OutlineProgressBar {", JOB_SECTION_QML)
         self.assertEqual(DASHBOARD_QML.count("OutlineSlider {"), 0)
         self.assertGreaterEqual(TUNING_SECTION_QML.count("OutlineSlider {"), 2)
         self.assertGreaterEqual(FANS_SECTION_QML.count("OutlineSlider {"), 1)
@@ -995,9 +1000,9 @@ class MonitorModelContractTests(unittest.TestCase):
         # rounded ends"), never a full pill — and every bar/slider
         # radius needs cornerSide, because Cura.RoundedRectangle forces
         # radius 0 without it (the corners silently render square).
-        for text in (bar, indicator, MONITOR_QML):
+        for text in (bar, indicator, JOB_SECTION_QML):
             self.assertIn('UM.Theme.getSize("progressbar_radius")', text)
-        for text, corners in ((bar, 2), (slider, 3), (indicator, 3), (MONITOR_QML, 3)):
+        for text, corners in ((bar, 2), (slider, 3), (indicator, 3), (JOB_SECTION_QML, 3)):
             self.assertEqual(text.count("cornerSide:"), corners, text[:40])
         # The pop-over shell must tolerate instantiation without a
         # parent (the engine gate creates every document standalone):
@@ -1011,7 +1016,7 @@ class MonitorModelContractTests(unittest.TestCase):
         panel = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
         self.assertIn("The indicator is a SIBLING of the buttons Row", panel)
         self.assertIn("Collapsing the pane hides the pop-over's", MONITOR_QML)
-        self.assertIn('monitorEta === "Paused" ? ""', MONITOR_QML)
+        self.assertIn('monitorEta === "Paused" ? ""', JOB_SECTION_QML)
         # The "Collecting temperature history…" placeholder stays ABSENT:
         # the author ruled the waiting state annoying and dropped it
         # before; the changelog quote was struck instead (the filling
@@ -1272,7 +1277,7 @@ class MonitorFormattingTests(unittest.TestCase):
         # The 4.2.0 rename: the multiplier row reads "Speed factor"
         # and no plain "Speed" caption survives in the Monitor card
         # (the UX re-review's ask for a mechanical pin).
-        self.assertIn('text: "Speed factor"', MONITOR_QML)
+        self.assertIn('text: "Speed factor"', JOB_SECTION_QML)
         self.assertNotIn('text: "Speed"', MONITOR_QML)
 
     def test_motion_rows_report_the_live_values(self):
@@ -2282,10 +2287,10 @@ class MonitorQtTests(unittest.TestCase):
         # lives ONLY in the Monitor's Print job grid (first row, so its
         # columns are the grid's columns — a separate row read as
         # misaligned); the Dashboard's print section does not repeat it.
-        self.assertIn('text: "Last action"', MONITOR_QML)
-        self.assertIn('root.printer.actionStatus.length > 0 ? root.printer.actionStatus : "—"', MONITOR_QML)
+        self.assertIn('text: "Last action"', JOB_SECTION_QML)
+        self.assertIn('root.printerModel.actionStatus.length > 0 ? root.printerModel.actionStatus : "—"', JOB_SECTION_QML)
         self.assertNotIn("visible: root.printer != null && root.printer.actionStatus.length > 0", MONITOR_QML)
-        self.assertLess(MONITOR_QML.index('text: "Last action"'), MONITOR_QML.index('text: "Layer"'))
+        self.assertLess(JOB_SECTION_QML.index('text: "Last action"'), JOB_SECTION_QML.index('text: "Layer"'))
         self.assertNotIn('text: "Last action"', DASHBOARD_QML)
 
     def test_macros_refuse_while_printing(self):
@@ -2962,7 +2967,7 @@ class MonitorQtTests(unittest.TestCase):
     def test_endstop_and_eta_surfaces(self):
         # The Improve-ETA action is a small download glyph beside the
         # Remaining value, not a full-width button row.
-        improve = MONITOR_QML[MONITOR_QML.index('Qt.resolvedUrl("Download.svg")'):MONITOR_QML.index("onClicked: root.printer.improveEta()")]
+        improve = JOB_SECTION_QML[JOB_SECTION_QML.index('Qt.resolvedUrl("Download.svg")'):JOB_SECTION_QML.index("onClicked: root.printerModel.improveEta()")]
         self.assertIn("Download.svg", improve)
         self.assertNotIn("Improve ETA — download", MONITOR_QML)
         for token in ("endstopItems", "endstopSummary",
@@ -2979,7 +2984,7 @@ class MonitorQtTests(unittest.TestCase):
                       "printer/query_endstops/status", "refresh_endstops"):
             self.assertIn(token, MONITOR_MODEL + (PLUGINS / "MonitorData.py").read_text())
         for token in ("improveEta()", "monitorEtaBasis === \"blend\"", "monitorEtaBasis === \"index\""):
-            self.assertIn(token, MONITOR_QML)
+            self.assertIn(token, JOB_SECTION_QML)
         for token in ("monitorEtaBasis", "def improveEta(", "layer_eta", "remaining_end",
                       "request_monitor_download"):
             self.assertIn(token, MONITOR_MODEL + (PLUGINS / "MonitorFormatting.py").read_text()
@@ -3679,9 +3684,9 @@ Item {
         # print through complete/cancelled until the next job starts
         # (the UX panel): the gate is the model's readout flag, not
         # printActive.
-        self.assertIn('text: "Filament used"', MONITOR_QML)
-        self.assertIn('text: "Filament remaining"', MONITOR_QML)
-        self.assertLess(MONITOR_QML.index('text: "Finish"'), MONITOR_QML.index('text: "Filament used"'))
+        self.assertIn('text: "Filament used"', JOB_SECTION_QML)
+        self.assertIn('text: "Filament remaining"', JOB_SECTION_QML)
+        self.assertLess(JOB_SECTION_QML.index('text: "Finish"'), JOB_SECTION_QML.index('text: "Filament used"'))
         # NO-REFLOW RULE: the rows are permanent — the values read "—"
         # until Klipper reports them; nothing hides them any more, and
         # the readout-visibility gate is gone from the model too.
