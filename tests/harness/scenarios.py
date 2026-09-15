@@ -575,6 +575,7 @@ SCENE_PROBE = (
     "        result[\"children\"].append({\"err\": repr(exc)[:60]})\n"
     "result")
 
+
 VERDICT_SCAN = (
     "window = _main_window()\n"
     "hits = []\n"
@@ -1186,15 +1187,32 @@ SCENARIOS = [
          # already built scenario1's index, and a fixed filename would
          # carry the previous run's index state in the shared tree (the
          # serial mode's second pass proved it) — the hourglass would
-         # have nothing left to resolve and read false instantly.
+         # have nothing left to resolve and read false instantly. The
+         # stamped file must EXIST in the store too — an identity-less
+         # print reports ready instantly — so the files arm stages it
+         # (h8 is the group's last scenario; the arm replaces the
+         # store) and the refresh walks it into the rows.
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "delete-me-{RUN_STAMP}.gcode"}}},
+         {"op": "sim_arm", "arms": {"files": [{"filename": "delete-me-{RUN_STAMP}.gcode",
+                                                "size": 1200, "modified": 10.0, "permissions": "rw",
+                                                "slicer": "MoonrakerPrintFollower-sim",
+                                                "estimated_time": 600.0, "layer_height": 0.2,
+                                                "filament_total": 2.0,
+                                                "uuid": "sim-uuid-stamped"}],
+                                    "gcode_stream_ms": 500}},
+         {"op": "exec_slot", "slot": "refreshFileManager", "args": []},
+         # The walk is async, and the index service resolves the
+         # print's identity from the resident rows — wait for the
+         # walk to land before the improve runs. The rows themselves
+         # publish [] while the popup is closed (by design), so the
+         # wait reads the refreshed-at stamp instead.
+         {"op": "wait_model", "prop": "fileManagerRefreshedAt", "contains": "Last refreshed", "budget": 30},
          # A streamed download keeps the resolve window open long
          # enough for the 1 s polling to observe the hourglass (the
          # download route reads no route-delay arms). The slow chunks
          # and the generous budget keep the window observable on
          # 2-vCPU CI runners, where the download and the index build
          # shift the hourglass later than on a dev box.
-         {"op": "sim_arm", "arms": {"gcode_stream_ms": 500}},
          {"op": "exec_slot", "slot": "improveEta", "args": []},
          {"op": "wait_model", "prop": "improvingEta", "value": True, "budget": 60},
      ]},
