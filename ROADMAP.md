@@ -1628,7 +1628,7 @@ explicit gate for the resolver/coordinate work, scoped to the
 behaviour the marker relies on; continuous-Z/vase support stays a
 distinct capability and is not a requirement for every preceding
 maintenance release. If feature value demands, the marker's
-display-only slice may proceed after 4.2.0 while the presentation
+display-only slice may proceed after 4.3.0 while the presentation
 refactor finishes.
 
 - A live physical-position marker overlaid on the Preview scene. The
