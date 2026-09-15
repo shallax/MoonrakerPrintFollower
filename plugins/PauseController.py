@@ -82,6 +82,14 @@ class PauseController(QObject):
         if not due: return
         self.changed.emit()
         if self._target is not None: return
+        # The autonomous dispatch re-check (4.2.0, N4): the poll that
+        # called observe may already be stale — if the print OBSERVABLY
+        # ended between polls the PAUSE must not go out against
+        # nothing. An unobserved state (empty status, the unit
+        # stubs) does not block: the schedule fired for a reason.
+        status = self._client.status or {}
+        state = str((status.get("print_stats") or {}).get("state") or "").lower()
+        if state and state not in {"printing", "paused"}: return
         self._target = due[0]
         self._states[self._target] = "fired"
         generation, job, target = self._generation, self._job, self._target

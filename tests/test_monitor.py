@@ -1525,6 +1525,33 @@ class MonitorQtTests(unittest.TestCase):
         self.assertFalse(self.follower.client._session.state.assume_print_stopped)
         self.assertFalse(model.printActive)
 
+    def test_queued_restart_revalidates_at_dispatch(self):
+        # 4.2.0 N1: a restart queued behind an in-flight command was
+        # valid when clicked; a print starting in the window must
+        # drop it at dispatch, with the policy's reason.
+        model = self.monitor()
+        self.deliver_state("standby")
+        model.jog("x", 1)  # in flight on the lane
+        model.klipperRestart()  # a valid click (standby), queued
+        self.deliver_state("printing")
+        scripts = [r for r in self.transport.requests if r.path == "printer/gcode/script"]
+        scripts[0].callback({}, None)  # the jog completes; the pump runs
+        self.qt.events(20)
+        self.assertEqual([r for r in self.transport.requests if r.path == "printer/restart"], [])
+        self.assertIn("Klipper restart cancelled", model.actionStatus)
+
+    def test_print_start_dispatch_gate_refuses_a_print_that_started(self):
+        # 4.2.0 S3/N2: the dialog's click was valid when it opened;
+        # the dispatch re-checks — a print running by confirm time
+        # refuses with the policy's reason, nothing reaches the wire.
+        model = self.monitor()
+        self.deliver_state("standby")
+        model._file_print_confirm = {"relpath": "part.gcode"}
+        self.deliver_state("printing")
+        model.fileConfirmPrint()
+        self.assertEqual([r for r in self.transport.requests if r.path == "printer/print/start"], [])
+        self.assertIn("Print start refused", model.actionStatus)
+
     def test_emergency_stop_reconnects_once_automatically(self):
         # The author's ruling (2026-09-10, live-proven on their
         # printer): after the stop the host refuses commands until
