@@ -752,29 +752,37 @@ class HarnessServer(QObject):
             # Click a rendered-text item: prefer the interactive
             # match (a Button-class item), else the largest one —
             # labels and tooltips share the text and must never be
-            # the aim point.
+            # the aim point. The walk spans the main window and the
+            # popup windows, and the delivery is introspected like
+            # deliver_click's (the press must be accepted by the
+            # target's own chain).
             try:
                 wanted = str(request.get("text") or "")
-                window = _main_window()
                 matches = []
-                for item in _walk(window.contentItem()):
-                    try:
-                        label = item.property("text")
-                    except Exception:
-                        continue
-                    if label == wanted and bool(item.isVisible()):
-                        matches.append(item)
+                for _window, items in _click_windows():
+                    for item in items:
+                        try:
+                            label = item.property("text")
+                        except Exception:
+                            continue
+                        if label == wanted and _effectively_visible(item):
+                            matches.append((_window, item))
                 if not matches:
                     return {"id": request_id, "ok": False, "error": "no visible item with that text",
                             "text": wanted}
                 target = None
-                for item in matches:
+                for _window, item in matches:
                     klass = item.metaObject().className()
                     if "Button" in klass or "MenuItem" in klass:
-                        target = item
+                        window, target = _window, item
                         break
                 if target is None:
-                    target = max(matches, key=lambda item: item.width() * item.height())
+                    window, target = max(matches, key=lambda pair: pair[1].width() * pair[1].height())
+                    # The label-layer promotion: aim at the control
+                    # that owns the click, not the label.
+                    control = _nearest_control(target)
+                    if control is not None:
+                        target = control
                 scene = target.mapToScene(QPointF(0, 0))
                 x = round(scene.x() + target.width() / 2)
                 y = round(scene.y() + target.height() / 2)
@@ -782,10 +790,9 @@ class HarnessServer(QObject):
                 if not qtest:
                     return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
                 button = Qt.MouseButton.RightButton if str(request.get("button")) == "right" else Qt.MouseButton.LeftButton
-                qtest.QTest.mouseClick(window, button,
-                                       Qt.KeyboardModifier.NoModifier, QPoint(x, y))
-                qtest.QTest.qWait(150)
-                return {"id": request_id, "ok": True, "aim": [x, y], "text": wanted}
+                delivery = _deliver_press(window, x, y, button, target)
+                return {"id": request_id, "ok": True, "mechanism": "deliver",
+                        "aim": [x, y], "text": wanted, "delivery": delivery}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "click_item":
@@ -856,6 +863,11 @@ class HarnessServer(QObject):
                             break
                     if target is not None:
                         break
+                if not by_name:
+                    # Text targets get the label-layer promotion too.
+                    control = _nearest_control(target) if target is not None else None
+                    if control is not None:
+                        target = control
                 if target is None:
                     return {"id": request_id, "ok": False,
                             "error": "no visible item with that name/text", "wanted": wanted}
@@ -1574,6 +1586,24 @@ class _DeliveryFilter(QObject):
                 pos = None
             self.events.append((name, pos))
         return False
+
+
+def _nearest_control(item):
+    # The custom-button quirk: Cura's components layer labels over
+    # the clickable region, so a text match resolves to the label —
+    # and a press at the label's centre grabs the background, never
+    # the handler. Aim at the nearest Button/MenuItem-class ANCESTOR,
+    # whose region owns the click.
+    node = item
+    while node is not None:
+        klass = node.metaObject().className()
+        if "Button" in klass or "MenuItem" in klass:
+            return node
+        try:
+            node = node.parentItem()
+        except Exception:
+            return None
+    return None
 
 
 def _accepted_by(grabber, target):

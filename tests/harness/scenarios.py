@@ -282,6 +282,42 @@ FM_POPUP_PROBE = (
     "    _json.dump(result, _f)\n"
     "result")
 
+FM_BUTTON_PROBE = (
+    "import json as _json\n"
+    "result = {\"matches\": []}\n"
+    "window = _main_window()\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        label = item.property(\"text\")\n"
+    "    except Exception:\n"
+    "        label = None\n"
+    "    if label != \"File manager\":\n"
+    "        continue\n"
+    "    cls = item.metaObject().className()\n"
+    "    p = item.mapToScene(QPointF(0, 0))\n"
+    "    row = [cls[:24], round(p.x()), round(p.y()), round(item.width()), round(item.height())]\n"
+    "    node = item\n"
+    "    chain = []\n"
+    "    for _ in range(6):\n"
+    "        try:\n"
+    "            node = node.parentItem()\n"
+    "        except Exception:\n"
+    "            break\n"
+    "        if node is None:\n"
+    "            break\n"
+    "        try:\n"
+    "            pp = node.mapToScene(QPointF(0, 0))\n"
+    "            chain.append([node.metaObject().className()[:24], round(pp.x()), round(pp.y()),\n"
+    "                          round(node.width()), round(node.height())])\n"
+    "        except Exception:\n"
+    "            chain.append([node.metaObject().className()[:24], None])\n"
+    "    row.append(chain)\n"
+    "    result[\"matches\"].append(row)\n"
+    "with open('/tmp/mpf/fm_button_probe.json', 'w') as f:\n"
+    "    _json.dump(result, f)\n"
+    "result")
+
+
 SETTINGS_PROBE = (
     "import json as _json\n"
     "from UM.Application import Application\n"
@@ -899,6 +935,17 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 30},
          {"op": "click_text", "text": "File manager"},
          {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
+         # Close the popup again: the NEXT scenario's File-manager
+         # click must not land on this popup's scrim (the overlay
+         # interception the delivery record proved — the press was
+         # refused by the scrim's rectangle). The popup renders in
+         # its own window, so a main-window press at its button's
+         # coordinates grabs whatever lives there; the close rides
+         # the model slot for now (popup chrome, not a critical
+         # journey — the popup-window addressing follow-up is
+         # recorded in DECISIONS).
+         {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
+         {"op": "wait_rect", "text": "New folder…", "absent": True, "budget": 20},
      ]},
     {"id": "f2", "group": "files", "name": "the upload flow reaches the peer",
      "steps": [
@@ -909,11 +956,19 @@ SCENARIOS = [
     {"id": "f3", "group": "files", "name": "delete removes the row after the confirm",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "exec_file_slot", "slot": "openFileManager", "args": []},
+         {"op": "click_text", "text": "File manager"},
          {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
+         # The row's context-menu MouseArea is a sibling of the name
+         # label — the real press grabs the row's background
+         # rectangle, never the menu trigger (the row-menu follow-up,
+         # recorded in DECISIONS with the probe's evidence). The
+         # request stays a declared slot; the CONFIRM is the real
+         # press on the named verb, and the popup closes by name so
+         # its scrim never covers the next scenario's clicks.
          {"op": "exec_file_slot", "slot": "fileRequestDeleteFile", "args": ["delete-me.gcode"]},
-         {"op": "exec_file_slot", "slot": "fileConfirmDelete", "args": []},
+         {"op": "deliver_click", "objectName": "deleteConfirmDeleteButton"},
          {"op": "sim_ledger", "needle": "gcodes/delete-me.gcode", "field": "path", "min": 1, "budget": 20},
+         {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
      ]},
     {"id": "f4", "group": "files", "name": "folder create reaches the peer's directory route",
      "steps": [
@@ -922,30 +977,41 @@ SCENARIOS = [
      ]},
     {"id": "f5", "group": "files", "name": "rename confirms into the peer's move route",
      "steps": [
+         {"op": "click_text", "text": "File manager"},
          {"op": "exec_file_slot", "slot": "fileRequestRename", "args": ["scenario1.gcode"]},
          {"op": "exec_file_slot", "slot": "filePreviewRename", "args": ["scenario1-renamed.gcode"]},
-         {"op": "exec_file_slot", "slot": "fileConfirmRename", "args": []},
+         {"op": "deliver_click", "objectName": "renameConfirmButton"},
          {"op": "sim_ledger", "needle": "files/move", "min": 1, "budget": 20},
+         {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
      ]},
     {"id": "f6", "group": "files", "name": "print confirm arms the start verdict",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "exec_file_slot", "slot": "openFileManager", "args": []},
+         {"op": "click_text", "text": "File manager"},
          {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
+         # The row-menu request stays a declared slot (see f3); the
+         # confirm is the real press on the named verb.
          {"op": "exec_file_slot", "slot": "fileRequestPrint", "args": ["benchy.gcode"]},
-         {"op": "exec_file_slot", "slot": "fileConfirmPrint", "args": []},
+         {"op": "deliver_click", "objectName": "printConfirmStartButton"},
          {"op": "sim_ledger", "needle": "print/start", "method": "POST", "min": 1, "budget": 20},
+         {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
      ]},
 
     {"id": "f7", "group": "files",
      "name": "the rename dialog's field and buttons drive the move",
      "steps": [
          {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "exec_file_slot", "slot": "openFileManager", "args": []},
+         {"op": "click_text", "text": "File manager"},
          {"op": "wait_rect", "text": "New folder…", "budget": 30},
+         # The row-menu request stays a declared slot (see f3); the
+         # confirm is the real press on the named verb.
          {"op": "exec_file_slot", "slot": "fileRequestRename", "args": ["benchy.gcode"]},
          {"op": "wait_rect", "text": "Rename file", "budget": 20},
-         {"op": "exec_code", "verbs": ['clicked.emit'], "code": "from PyQt6.QtCore import Qt\nwindow = _main_window()\nresult = {}\nqtest = _import_qtest()\nqtest.QTest.keyClick(window, Qt.Key.Key_X)\nqtest.QTest.qWait(300)\nfor item in _walk(window.contentItem()):\n    try:\n        label = item.property(\"text\")\n    except Exception:\n        label = None\n    if label == \"Rename\" and \"Button\" in item.metaObject().className() and bool(item.isVisible()):\n        item.clicked.emit()\n        result[\"confirmed\"] = True\n        break\nresult"},
+         # The dialog's field owns focus; the keystroke appends to
+         # the name (an unchanged name is a same-name no-op — the
+         # move must be a real move).
+         {"op": "key_press", "key": "X"},
+         {"op": "deliver_click", "objectName": "renameConfirmButton"},
          {"op": "wait_rect", "text": "Rename file", "absent": True, "budget": 20},
          {"op": "sim_ledger", "needle": "files/move", "min": 1, "budget": 20},
      ]},
@@ -1519,6 +1585,14 @@ SCENARIOS = [
      "steps": [
          {"op": "click_stage", "stage": "PrepareStage"},
          {"op": "exec_code", "verbs": [], "code": SETTINGS_PROBE},
+     ]},
+    {"id": "z13", "group": "probe",
+     "name": "the File-manager button's text match and its parent chain",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 30},
+         {"op": "wait_seconds", "seconds": 2},
+         {"op": "exec_code", "verbs": [], "code": FM_BUTTON_PROBE},
      ]},
     # The visible-interactions proof pair: the phase-0 evidence that a
     # real press/release lands — accepted by the item under the aim,
