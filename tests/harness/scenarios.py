@@ -1356,7 +1356,13 @@ SCENARIOS = [
              {"device": "DFU", "status": "on", "locked_while_printing": False},
              {"device": "Printer", "status": "off", "locked_while_printing": True}]}},
          {"op": "wait_rect", "text": "Turn off", "budget": 40},
-         {"op": "exec_code", "verbs": ['setProperty'], "code": SCROLL_CONTROLS},
+         # The visible-interactions pattern for scrolled content:
+         # bring the control into the rendered viewport (with the
+         # containment asserted). The switch's clickable region is a
+         # custom component whose class the promotion misses — the
+         # toggle stays a declared emit for now (the switch
+         # addressing follow-up, recorded in DECISIONS).
+         {"op": "scroll_into_view", "text": "Turn off"},
          {"op": "emit_click", "text": "Turn off"},
          {"op": "wait_exec", "code": P_POWER_FLIP, "contains": '"status": "off"', "budget": 20},
          {"op": "sim_ledger", "needle": "device_power/device", "method": "POST", "min": 1},
