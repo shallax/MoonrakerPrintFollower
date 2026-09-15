@@ -84,6 +84,7 @@ private follower state to either integration.
 | `MonitorControls.py` | Macro, preset, fan/LED/PWM, setup and power/exclusion policy | Qt model inheritance |
 | `ToolheadPolicy.py` | Pure jog/home/extrude G-code, the print-state safety gate and jog-queue coalescing | Qt, timers or networking |
 | `MonitorPermissions.py` | Pure permission policy: the frozen observation record and the action rulings table (can_jog, can_power, can_restart, can_start_print, …) with disabled reasons | Qt, networking or mutable state |
+| `StateStore.py` | The Monitor state file's explicit owner: the read-modify-write merge, the atomic replace and the rate-limited failure reporting | Qt, networking or value coercion |
 | `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |

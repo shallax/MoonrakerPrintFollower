@@ -58,6 +58,7 @@ from .MonitorFormatting import (
 from dataclasses import replace
 
 from .PrinterConfig import normalise_temperature_chart
+from .StateStore import StateStore
 from .MonitorTemperatureHistory import TemperatureHistory, chart_payload
 import time
 from .MonitorTuning import MonitorTuning
@@ -109,32 +110,30 @@ def _state_height(value) -> int:
 _chart_state = normalise_temperature_chart
 
 
-def _read_state() -> dict:
+def _read_state(store=None) -> dict:
     """The persisted panel state: collapsed sections, the control-pane
     collapse, the lock-all toggle and the console's dragged height. The
     first shipped format was a flat section map, which is migrated to the
-    current shape on read."""
-    try:
-        with open(_sections_path(), "r", encoding="utf-8") as handle:
-            decoded = json.load(handle)
-        if isinstance(decoded, dict):
-            sections = decoded.get("sections")
-            if not isinstance(sections, dict):
-                sections = decoded  # legacy flat section map
-            return {
-                "sections": {str(key): _state_bool(value) for key, value in sections.items()},
-                "whatsNewSeen": str(decoded.get("whatsNewSeen") or ""),
-                "controlsCollapsed": _state_bool(decoded.get("controlsCollapsed", False)),
-                "controlsLocked": _state_bool(decoded.get("controlsLocked", False)),
-                "infoCollapsed": _state_bool(decoded.get("infoCollapsed", False)),
-                "statusCollapsed": _state_bool(decoded.get("statusCollapsed", False)),
-                "consoleHeight": _state_height(decoded.get("consoleHeight", 0)),
-                "fileManagerColumns": normalise_columns(decoded.get("fileManagerColumns")),
-                "temperatureChart": _chart_state(decoded.get("temperatureChart")),
-                "toolhead": _toolhead_state(decoded.get("toolhead")),
-            }
-    except Exception:
-        pass
+    current shape on read. The FILE semantics live in the StateStore
+    (4.2.0, F11); the coercion below is the model's own (its tests pin
+    the fallback document)."""
+    decoded = (store or StateStore(_sections_path())).read()
+    if isinstance(decoded, dict):
+        sections = decoded.get("sections")
+        if not isinstance(sections, dict):
+            sections = decoded  # legacy flat section map
+        return {
+            "sections": {str(key): _state_bool(value) for key, value in sections.items()},
+            "whatsNewSeen": str(decoded.get("whatsNewSeen") or ""),
+            "controlsCollapsed": _state_bool(decoded.get("controlsCollapsed", False)),
+            "controlsLocked": _state_bool(decoded.get("controlsLocked", False)),
+            "infoCollapsed": _state_bool(decoded.get("infoCollapsed", False)),
+            "statusCollapsed": _state_bool(decoded.get("statusCollapsed", False)),
+            "consoleHeight": _state_height(decoded.get("consoleHeight", 0)),
+            "fileManagerColumns": normalise_columns(decoded.get("fileManagerColumns")),
+            "temperatureChart": _chart_state(decoded.get("temperatureChart")),
+            "toolhead": _toolhead_state(decoded.get("toolhead")),
+        }
     return {"sections": {}, "whatsNewSeen": "", "controlsCollapsed": False, "controlsLocked": False,
             "infoCollapsed": False, "statusCollapsed": False, "consoleHeight": 0,
             "fileManagerColumns": normalise_columns({}),
@@ -161,13 +160,9 @@ def _toolhead_state(stored) -> dict:
 
 
 def _write_state(state: dict) -> None:
-    try:
-        path = _sections_path()
-        with open(path + ".tmp", "w", encoding="utf-8") as handle:
-            json.dump(state, handle)
-        os.replace(path + ".tmp", path)
-    except Exception:
-        pass
+    # The legacy module-level name (tests pin it): a transient store
+    # with the merge-write semantics (4.2.0, F11).
+    StateStore(_sections_path()).write(state)
 
 
 def value_property(kind, name, signal, default=None):
@@ -289,11 +284,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
                  request_load=None, request_monitor_download=None, request_file_download=None,
-                 download_failed=None, preferences_flushed=None, identity=None):
+                 download_failed=None, preferences_flushed=None, identity=None, state_store=None):
         super().__init__(output_controller, number_of_extruders)
         self._client, self._print_state, self._config, self._apply_config, self._mesh = \
             client, print_state, config, apply_config, bed_mesh
         self._identity = identity
+        # The state file's owner (4.2.0, F11/A6): passed in as a
+        # capability — 4.3.0's UI-state store consumes the same
+        # instance; the default builds the production path.
+        self._store = state_store or StateStore(_sections_path(), note=self._on_store_note)
+        # Failure notes that fired before the console existed (the
+        # hydration read runs first) queue here and flush once the
+        # console lands.
+        self._store_notes = []
         # The file-manager Download capability: the follower owns the
         # one-shot stream + load-into-Cura (the same lane discipline
         # as the improve-ETA pull). Download failures (stream errors,
@@ -320,7 +323,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._improving_eta = False
         self._skip_clear_once = False
         self._values = {}
-        state = _read_state()
+        state = _read_state(self._store)
         self._whats_new_seen = state["whatsNewSeen"]
         self._controls_locked = state["controlsLocked"]
         self._controls_collapsed = state["controlsCollapsed"]
@@ -350,7 +353,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         elif state.get("temperatureChart"):
             self._chart_config = state["temperatureChart"]
             self._apply_chart_config()
-            self._save_state()  # rewrite the global file chrome-only
+            self._save_state(replace=True)  # rewrite the global file chrome-only
         else:
             self._chart_config = {}
         self._history = TemperatureHistory()
@@ -379,6 +382,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._toolhead.set_extrude_distance(self._toolhead_state["extrudeDistance"])
         self._toolhead.set_extrude_speed(self._toolhead_state["extrudeSpeed"])
         self._console = ConsoleController(self._data, self._commands, config, apply_config, identity, self)
+        # The hydration-time store notes flush now that the console
+        # exists (a read failure before this point would otherwise
+        # stay silent — the exact class F11 exists to kill).
+        for text in self._store_notes:
+            self._console.note(text)
+        self._store_notes = []
         # The toolhead's clamp rejections land in the console as
         # local notes (a live request).
         self._toolhead.rejectedNote.connect(self._console.note)
@@ -414,6 +423,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._data.auxiliaryChanged.connect(self._on_auxiliary)
         self._data.consoleStoreChanged.connect(self._on_console_store)
         self._data.invalidated.connect(self._on_invalidated)
+        # The store's failure latch is per SESSION (A6): a new
+        # session may report its own persistence failure.
+        self._data.invalidated.connect(self._store.reset_failures)
         # The attach-time reload can run before the active machine's
         # identity resolves; retry it on every poll heartbeat so the
         # restored transcript lands the moment the config is readable
@@ -1602,8 +1614,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 config[key] = {name: value for name, value in entries.items() if name in names}
         return config
 
-    def _save_state(self):
-        _write_state({
+    def _on_store_note(self, _kind, text):
+        """The store's failure sink (A6): the console note line is
+        the durable channel (the action status's precedence can hide
+        a line, round-2 S7)."""
+        console = getattr(self, "_console", None)
+        if console is not None:
+            console.note(text)
+        else:
+            self._store_notes.append(text)
+
+    def _save_state(self, replace=False):
+        self._store.write({
             "sections": dict(self._sections),
             "whatsNewSeen": self._whats_new_seen,
             "controlsCollapsed": self._controls_collapsed,
@@ -1621,7 +1643,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "extrudeDistance": self._values.get("extrudeDistance", EXTRUDE_DISTANCE_DEFAULT),
                 "extrudeSpeed": self._values.get("extrudeSpeed", EXTRUDE_SPEED_DEFAULT),
             },
-        })
+        }, merge=not replace)
     @pyqtSlot(object)
     def updateMoonrakerStatus(self, status): self._data.observe(status)
     @pyqtSlot()

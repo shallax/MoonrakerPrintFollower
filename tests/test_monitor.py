@@ -1931,7 +1931,10 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(second.consoleHeight, model_module.CONSOLE_HEIGHT_MAX)
         with open(section_path, "r", encoding="utf-8") as handle:
             self.assertEqual(json.load(handle)["consoleHeight"], model_module.CONSOLE_HEIGHT_MAX)
-        with patch.object(model_module, "_write_state") as write:
+        # The unchanged-height pin moved to the state store (4.2.0):
+        # the module-level _write_state is a legacy wrapper now, the
+        # model saves through its store instance.
+        with patch.object(second._store, "write", wraps=second._store.write) as write:
             second.setConsoleHeight(180)
             second.setConsoleHeight(180)
             self.assertEqual(write.call_count, 1)
