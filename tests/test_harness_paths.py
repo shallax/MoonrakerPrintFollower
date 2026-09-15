@@ -111,5 +111,35 @@ class RunDirResolutionTests(unittest.TestCase):
         self.assertIn('[ ! -s "$RUN_DIR/index.html" ]', text)
 
 
+class TestingDocPinTests(unittest.TestCase):
+    # The TESTING.md reconciliation (the 4.1.0 workstream): the
+    # document describes the real harness, and the struck claims may
+    # not re-enter the text — a drift back to the false claims fails
+    # here instead of at the gate.
+
+    def _doc(self):
+        return (ROOT / "TESTING.md").read_text()
+
+    def test_reconciliation_marker_is_present(self):
+        self.assertIn("Reconciliation status (2026-09-15", self._doc())
+
+    def test_struck_claims_do_not_reenter(self):
+        text = self._doc()
+        # The claims the audit struck: XTEST as the activation rule,
+        # the per-scenario Cura process, the ≤12-verb pin, the
+        # xwd/QScreen canonical capture, the resolved-address
+        # manifest, the 3-attempt and 240-minute claims, and the
+        # exact-version image pins.
+        for phrase in ("injected through the X server's XTEST extension",
+                       "its own Cura process",
+                       "≤ a dozen generic",
+                       "xwd -root",
+                       "resolved-address manifest",
+                       "up to 3 attempts",
+                       "240-minute",
+                       "by exact version, like the rest of the repo"):
+            self.assertNotIn(phrase, text, phrase)
+
+
 if __name__ == "__main__":
     unittest.main()
