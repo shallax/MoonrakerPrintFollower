@@ -59,6 +59,8 @@ FANS_INFO_SECTION_QML = (PLUGINS / "FansInfoSection.qml").read_text()
 FILAMENT_SECTION_QML = (PLUGINS / "FilamentSection.qml").read_text()
 OBJECTS_SECTION_QML = (PLUGINS / "ObjectsSection.qml").read_text()
 TEMPS_SECTION_QML = (PLUGINS / "TempsSection.qml").read_text()
+SYSTEM_INFO_SECTION_QML = (PLUGINS / "SystemInfoSection.qml").read_text()
+MCUS_SECTION_QML = (PLUGINS / "McusSection.qml").read_text()
 MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
@@ -196,7 +198,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML + FANS_INFO_SECTION_QML + FILAMENT_SECTION_QML + OBJECTS_SECTION_QML + TEMPS_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML + FANS_INFO_SECTION_QML + FILAMENT_SECTION_QML + OBJECTS_SECTION_QML + TEMPS_SECTION_QML + SYSTEM_INFO_SECTION_QML + MCUS_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -261,7 +263,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('sectionIcon: "Nozzle"', TOOLHEAD_SECTION_QML)
         self.assertIn('sectionIcon: "Printer"', PRINT_SECTION_QML)
         self.assertIn('sectionId: "meshmap"', MESH_SECTION_QML)
-        self.assertIn('sectionId: "systeminfo"', MONITOR_QML)
+        self.assertIn('sectionId: "systeminfo"', SYSTEM_INFO_SECTION_QML)
         # Plugin-drawn glyphs feed the header through a url, and the
         # frontend launcher lives in the Printer status title row.
         self.assertIn('sectionIcon: "Fan"', FANS_INFO_SECTION_QML)
@@ -298,7 +300,9 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(FILAMENT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(OBJECTS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(TEMPS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
-        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 3)
+        self.assertEqual(SYSTEM_INFO_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(MCUS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
                          + SETUP_SECTION_QML.count("CollapsibleSectionHeader")
@@ -319,6 +323,8 @@ class MonitorModelContractTests(unittest.TestCase):
                          + FILAMENT_SECTION_QML.count("CollapsibleSectionHeader")
                          + OBJECTS_SECTION_QML.count("CollapsibleSectionHeader")
                          + TEMPS_SECTION_QML.count("CollapsibleSectionHeader")
+                         + SYSTEM_INFO_SECTION_QML.count("CollapsibleSectionHeader")
+                         + MCUS_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 0)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
@@ -340,7 +346,9 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(FILAMENT_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(OBJECTS_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(TEMPS_SECTION_QML.count('sectionIcon: "'), 1)
-        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 3)
+        self.assertEqual(SYSTEM_INFO_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(MCUS_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 1)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
                          + SETUP_SECTION_QML.count('sectionIcon: "')
@@ -359,6 +367,8 @@ class MonitorModelContractTests(unittest.TestCase):
                          + FILAMENT_SECTION_QML.count('sectionIcon: "')
                          + OBJECTS_SECTION_QML.count('sectionIcon: "')
                          + TEMPS_SECTION_QML.count('sectionIcon: "')
+                         + SYSTEM_INFO_SECTION_QML.count('sectionIcon: "')
+                         + MCUS_SECTION_QML.count('sectionIcon: "')
                          + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
@@ -754,8 +764,8 @@ class MonitorModelContractTests(unittest.TestCase):
     def test_system_section_has_the_manual_reconnect(self):
         # The author's live request: a Reconnect in the System
         # section for a UI stuck after a printer error.
-        self.assertIn('text: "Reconnect"', MONITOR_QML)
-        self.assertIn("root.printer.reconnect()", MONITOR_QML)
+        self.assertIn('text: "Reconnect"', SYSTEM_INFO_SECTION_QML)
+        self.assertIn("root.printerModel.reconnect()", SYSTEM_INFO_SECTION_QML)
 
     def test_system_restart_surface(self):
         for token in ("firmwareRestart", "hostRestart", "FIRMWARE_RESTART", "machine/reboot"):
@@ -839,9 +849,9 @@ class MonitorModelContractTests(unittest.TestCase):
             '"Main MCU"',
         ):
             self.assertIn(token, TYPED)
-        self.assertIn("modelData.load", MONITOR_QML)
-        self.assertIn("modelData.frequency", MONITOR_QML)
-        self.assertIn("modelData.transport", MONITOR_QML)
+        self.assertIn("modelData.load", MCUS_SECTION_QML)
+        self.assertIn("modelData.frequency", MCUS_SECTION_QML)
+        self.assertIn("modelData.transport", MCUS_SECTION_QML)
 
     def test_addressable_led_colour_is_controllable(self):
         for token in (
