@@ -408,16 +408,29 @@ JSON state file keeps the chrome (expanded-section map, pane collapse,
 controls lock, the console height, the what's-new marker, the file
 manager's column config and the toolhead's jog/extrude selection), and
 a legacy global chart block migrates into the per-printer record once
-via the store's one deliberate replace-write. FORWARD NOTE for
-4.3.0 (the security re-review's D11): the merge is TOP-LEVEL only
-and the model's save payload rewrites nine whole top-level keys —
-the UI-state store must keep its keys at the top level or the
-monitor's saves will clobber them. The print-start lifecycle's
-three homes are also named here for the 4.3.0 owner extraction:
-`FileManager.start_print` (the POST), the model's
-`_print_armed_state`/watchdog, and the upload path's POST-body
-verdict (`UploadController`, now gated by the device's
-`_print_verdict`).
+via the store's merge with a key delete — the deliberate
+replace-write is gone (4.3.0), and the merge stays TOP-LEVEL only.
+The print-start lifecycle's three homes were named here for the
+4.3.0 owner extraction; they are now one owner
+(`PrintStartOwner`): the POST stays in `FileManager.start_print`
+and the upload path's POST-body verdict stays gated by the
+device's `_print_verdict`.
+
+**The section components (4.3.0).** The panes are thin shells:
+every collapsible section is its own property-driven QML component
+(thirteen in the controls dashboard, nine in the monitor), each
+reading a `printerModel` property and never the host's ids. The
+hosts keep the panes, the dialogs, the pop-over and the emergency
+dock; cross-surface requests cross the boundary as signals
+(pop-over toggles, the power-off and exclude-object confirmations)
+or as a single interaction sink — the sliders report their
+interaction through `receiveSliderInteraction` so the freeze lists
+and the refocus settle stay single-owner on the dashboard root.
+The capability gates (fans, filament, temperatures, MCUs) stay on
+the host instantiations. The console remains a pane: its
+auto-collapse latch, camera-area resize mapping and the host's
+printer-change resets are structural entanglements, not section
+content.
 
 The console sends on its own request path: `printer/gcode/script`
 replies only after Klipper processes the script, and that reply's

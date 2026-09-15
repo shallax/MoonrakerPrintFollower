@@ -2,6 +2,55 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.3.0
+
+Version 4.3.0 is the section release: every collapsible section
+of the Monitor page is its own component, and the Preview card
+gains a status strip with a single pause policy behind it.
+
+- **Every section its own component.** The Monitor page's panes
+  are now thin shells. All twenty-two collapsible sections ride
+  their own property-driven QML components — thirteen in the
+  controls dashboard (Print, Setup, Toolhead, Macros, Profiles,
+  Live tuning, Fans, LEDs, PWM, Power, System, Configuration
+  changes, File manager) and nine in the monitor (Bed mesh,
+  Temperature history, Print job, Temperatures, Fans, Filament
+  sensors, Objects, System, MCUs). Each reads a printerModel
+  property; the hosts keep the panes, the dialogs, the pop-over
+  and the emergency dock. The slider freeze/refocus machinery
+  stays single-owner on the host behind one interaction sink, and
+  the pop-over and confirmation dialogs are requested through
+  signals. The console remains a pane — its auto-collapse and
+  resize are structurally the host's.
+- **The Preview status strip.** Two fixed rows under the card
+  title: Pause/Resume — status-only, driven by the permission
+  policy's rows with the reason words as the tooltip — the hotend/
+  bed pair, and a middle slot carrying the print ETA or the
+  policy's refusal reason. The strip is fed by per-poll preview
+  blocks from the monitor's data path with an explicit staleness
+  clock; a stale strip says so instead of pretending.
+- **One pause policy.** `can_pause`/`can_resume` join the policy
+  table: busy is a row terminator, never pause-first; the
+  assumed-stopped trap consumes its error; the verdicts publish
+  with the reason words the buttons carry.
+- **Print-start ownership and metadata adoption.** The print-start
+  arm moves into its own owner with its timeout; the coordinator
+  adopts Moonraker's metadata only when the job matches, with a
+  bounded give-up per key.
+- **The UI-state store.** Section expansion and pane sizes persist
+  through the state file's second consumer with atomic merge
+  writes (O_NOFOLLOW, 0600, no NaN); the chart's flat-map
+  migration merges and deletes only what it owns.
+- **The slider track-click fix.** Clicking the slider track moves
+  the handle AND commits the value — a track click used to move
+  the handle while silently discarding the request.
+- **The caption states.** The print-job caption names Disconnected,
+  Printer state unknown and Locked — never a lying "Idle" while
+  the socket is down, and a locked band keeps its context.
+- **Harness evidence visibility.** Every resolving step records
+  the element's geometry and the walk that resolved it, and the
+  harness composites the outline onto each captured frame.
+
 ## 4.2.0
 
 Version 4.2.0 is the printer-state release: three live motion
