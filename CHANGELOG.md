@@ -60,6 +60,48 @@ comes from one policy table that says why.
   lanes); the fixtures carry the motion/toolhead/configfile shapes;
   the motion ticker arm drives the rows; the policy gates are pinned
   by model assertions and the rendered `item_disabled` step.
+- **The bed-mesh range filter.** A dual-ended slider on BOTH the
+  Information pop-over and the Preview card, one shared window in
+  the model so the two stay synchronised: handle drags narrow it,
+  dragging between the handles moves the whole window, a groove
+  click jumps the nearest handle, a handle click never moves it,
+  and the arrow keys nudge. The bar desaturates outside the window
+  and the out-of-window cells grey on both surfaces (the shared
+  grey), so peaks and troughs stand out. The window follows each new
+  mesh until touched, then clamps into the new range — it is never
+  persisted, by design.
+- **Scale z-max.** The Preview's bed-mesh exaggeration adjusts from
+  0 (flat) to 1000× and is remembered between sessions; the default
+  stays the historical 20×.
+- **Klipper-faithful bed-mesh visuals.** The maps and the Preview
+  surface extend the probed bounds with Klipper's own clamp (the
+  boundary values continue — no made-up slope), the orange outline
+  marks the probed bounds on every surface, hovering the extended
+  area reads the clamped value with an orange crosshair, and the
+  map painting pre-mixes the fainter look so cell edges never
+  double-paint into a grid.
+- **Read-only firmware fans.** Fans Klipper regulates itself
+  (controller_fan, temperature_fan, heater_fan) render their speed
+  without a slider and the command lane refuses them fail-closed.
+- **Independent LED channels and brightness.** The channel sliders
+  hold your set percentages (seeded once from the first-seen
+  colour); the brightness slider is the gain, composed into the
+  send only — nudging one never moves the other, and the labels
+  hold fixed widths.
+- **Eager first connection.** Until a status has ever landed, the
+  idle floor and the failure ladder do not gate the tick, and the
+  connect transition re-broadcasts the admitted snapshot and fires
+  every lane — the printer's data appears as soon as Moonraker
+  answers.
+- **Slider behaviours consolidated.** The plugin's OutlineSlider
+  owns every interaction path (groove, handle, keyboard) through
+  two semantic signals; keyboard nudges commit like releases, the
+  fan/LED/PWM repeaters freeze during gestures, and focus re-grants
+  to the exact slider after the submit's rebuild. The ETA
+  hourglass's rotation resets through the idle state, so the
+  download glyph never inherits the frozen angle.
+- **Bumped.** The gcode deformation (vertex-style) defers to 4.3.0
+  with a Snapshot-0 mock first, per the author's ruling.
 
 ## 4.1.0
 
