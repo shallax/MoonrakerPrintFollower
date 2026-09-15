@@ -677,7 +677,7 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertIn(token, CONTROLS + MONITOR_MODEL)
         self.assertIn("function applyLedColour()", DASHBOARD_QML)
         self.assertGreaterEqual(DASHBOARD_QML.count("applyLedColour()"), 4)
-        self.assertIn("root.tuningSliderPressed = pressed", DASHBOARD_QML)
+        self.assertIn("root.tuningSliderPressed = interacting", DASHBOARD_QML)
         self.assertNotIn('text: "Set colour"', DASHBOARD_QML)
         self.assertIn("root.printer.setLedColor", DASHBOARD_QML)
 
@@ -690,8 +690,11 @@ class MonitorModelContractTests(unittest.TestCase):
 
     def test_monitor_sliders_only_commit_on_release(self):
         # Speed, flow, fan, LED brightness, RGBW and PWM sliders all use
-        # Qt Quick Controls' deferred-value mode. onMoved only previews/holds
-        # the intended value; release queues the debounced Moonraker command.
+        # Qt Quick Controls' deferred-value mode. The control itself
+        # funnels every interaction path (groove, handle drag, keyboard)
+        # into valueTuning (the live preview) and valueCommitted (the
+        # apply on completion) — the usage sites never re-derive the
+        # interaction state.
         self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 9)
         for slider_id in (
             "speedSlider", "flowSlider", "fanSlider", "ledSlider",
@@ -701,8 +704,8 @@ class MonitorModelContractTests(unittest.TestCase):
             marker = "id: " + slider_id
             start = DASHBOARD_QML.find(marker)
             self.assertGreaterEqual(start, 0, slider_id)
-            self.assertIn("live: false", DASHBOARD_QML[start:start + 500], slider_id)
-        self.assertGreaterEqual(DASHBOARD_QML.count("onMoved:"), 9)
+            self.assertIn("live: false", DASHBOARD_QML[start:start + 700], slider_id)
+        self.assertGreaterEqual(DASHBOARD_QML.count("onValueCommitted:"), 9)
         self.assertIn("previewSpeedFactor", DASHBOARD_QML)
         self.assertIn("previewFlowFactor", DASHBOARD_QML)
         self.assertIn("previewFanSpeed", DASHBOARD_QML)
@@ -712,8 +715,8 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("function sliderSelection(slider)", DASHBOARD_QML)
         self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
         self.assertIn("root.sliderSelection(speedSlider) + \"%\"", DASHBOARD_QML)
-        self.assertIn("setSpeedFactor(root.sliderSelection(speedSlider))", DASHBOARD_QML)
-        self.assertIn("setFlowFactor(root.sliderSelection(flowSlider))", DASHBOARD_QML)
+        self.assertIn("root.printer.setSpeedFactor(value)", DASHBOARD_QML)
+        self.assertIn("root.printer.setFlowFactor(value)", DASHBOARD_QML)
 
     def test_monitor_sliders_do_not_repeat_qml_properties(self):
         duplicate = "from: 0; to: 100; stepSize: 1\n                                        from: 0; to: 100; live: false"
@@ -725,7 +728,7 @@ class MonitorModelContractTests(unittest.TestCase):
         for slider_id in ("speedSlider", "flowSlider", "fanSlider", "ledSlider", "redSlider",
                           "greenSlider", "blueSlider", "whiteSlider", "pwmSlider"):
             self.assertIn("id: " + slider_id, DASHBOARD_QML)
-        self.assertGreaterEqual(DASHBOARD_QML.count("root.tuningSliderPressed = pressed"), 9)
+        self.assertGreaterEqual(DASHBOARD_QML.count("root.tuningSliderPressed = interacting"), 9)
 
     def test_monitor_uses_plugin_outline_bars_and_sliders(self):
         # The themed ProgressBar/Slider render a black slab in the
@@ -734,9 +737,12 @@ class MonitorModelContractTests(unittest.TestCase):
         # so a bare themed control may not creep back in.
         for file_text in (MONITOR_QML, DASHBOARD_QML):
             # Every "ProgressBar {"/"Slider {" token must be the plugin
-            # outline components (the substring check covers both).
+            # outline components (the substring check covers both) —
+            # the range-filter bar is the other plugin-owned
+            # slider-shaped component (its name embeds "Slider {").
             self.assertEqual(file_text.count("ProgressBar {"), file_text.count("OutlineProgressBar {"))
-            self.assertEqual(file_text.count("Slider {"), file_text.count("OutlineSlider {"))
+            self.assertEqual(file_text.count("Slider {"),
+                file_text.count("OutlineSlider {") + file_text.count("BedMeshRangeSlider {"))
         self.assertIn("OutlineProgressBar {", MONITOR_QML)
         self.assertGreaterEqual(DASHBOARD_QML.count("OutlineSlider {"), 9)
         indicator = (PLUGINS / "LoadProgressIndicator.qml").read_text()
@@ -793,7 +799,7 @@ class MonitorModelContractTests(unittest.TestCase):
 
     def test_deferred_slider_and_monitor_ux_contracts(self):
         self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 9)
-        self.assertGreaterEqual(DASHBOARD_QML.count("onMoved:"), 9)
+        self.assertGreaterEqual(DASHBOARD_QML.count("onValueCommitted:"), 9)
         self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
         self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", DASHBOARD_QML)
         self.assertIn('text: "Refresh Moonraker\'s webcam list."', MONITOR_QML)
@@ -842,6 +848,82 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("onActivated: function (index)", MONITOR_QML)
         self.assertIn("selectWebcam(index)", MONITOR_QML)
         self.assertNotIn("selectWebcam(cameraSelector.currentIndex)", MONITOR_QML)
+
+    def test_camera_render_watchdogs_are_wired(self):
+        # The author's live reports: a stream that CONNECTED but never
+        # painted a frame raises no error signal — the pane's stall
+        # watchdog watches the frame size; and a suspend/wake leaves a
+        # frozen frame whose size is already set — the model's wake
+        # hook reloads the source.
+        self.assertIn("cameraStallWatchdog", MONITOR_QML)
+        self.assertIn("cameraRenderStalled()", MONITOR_QML)
+        self.assertIn("def cameraRenderStalled", MONITOR_MODEL)
+        self.assertIn("applicationStateChanged.connect(self._on_app_state_changed)", MONITOR_MODEL)
+
+    def test_slider_click_behaviours_are_wired(self):
+        # The author's live report: a click on a slider's grab handle
+        # must not move it, and a click focuses the slider so the
+        # arrow keys nudge one step.
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        for token in ("handlePress", "pressIsOnHandle", "parent.value = parent.valueBeforePress",
+                      "focusPolicy: Qt.StrongFocus", "Keys.onUpPressed: increase()", "forceActiveFocus()", "mouse.accepted = parent.handlePress"):
+            self.assertIn(token, config)
+        # The dashboard's OutlineSliders carry the same behaviours in
+        # the shared component (4.2.0): the handle path drives the
+        # value through the overlay, and every interaction path
+        # (groove, handle, keyboard) funnels into the component's own
+        # valueTuning/valueCommitted signals — the usage sites never
+        # re-derive the interaction state.
+        outline = (PLUGINS / "OutlineSlider.qml").read_text()
+        for token in ("handlePress", "pressIsOnHandle", "tuningActive", "focusPolicy: Qt.StrongFocus",
+                      "forceActiveFocus()", "control.value = control.valueBeforePress",
+                      "signal valueTuning", "signal valueCommitted", "readonly property bool interacting",
+                      "keyDebounce.restart()", "control.tuningActive = true"):
+            self.assertIn(token, outline)
+        self.assertIn("onValueCommitted", DASHBOARD_QML)
+        # The keyboard nudge holds the interaction state until its
+        # value submits, and the fan/LED/PWM repeaters freeze while a
+        # tuning slider is mid-gesture — without the hold, the
+        # commit's publish rebuilt the repeaters mid-nudge and killed
+        # the focused delegate (the author's live report).
+        for token in ("root.frozenFanItems = root.printer.fanControlItems",
+                      "root.tuningSliderPressed ? root.frozenFanItems",
+                      "root.tuningSliderPressed ? root.frozenLedItems",
+                      "root.tuningSliderPressed ? root.frozenPwmOutputItems"):
+            self.assertIn(token, DASHBOARD_QML)
+        # The bed-mesh range filter's keyboard half: focus + arrow keys.
+        range_slider = (PLUGINS / "BedMeshRangeSlider.qml").read_text()
+        for token in ("Keys.onLeftPressed", "Keys.onRightPressed", "Keys.onUpPressed", "forceActiveFocus()"):
+            self.assertIn(token, range_slider)
+
+    def test_mesh_rainbow_bar_matches_the_preview_scale(self):
+        # The author's live request: the expanded bed-mesh view shows
+        # the SAME blue-to-red min/max bar as the Preview's overlay —
+        # the shared dual-ended range-filter component (4.2.0) owns
+        # the stops now, so the two surfaces cannot drift.
+        slider = (PLUGINS / "BedMeshRangeSlider.qml").read_text()
+        for stop in ("#1a47f2", "#00b8ff", "#33db61", "#ffd11f", "#eb291f"):
+            self.assertIn(stop, slider)
+        for qml in (MONITOR_QML, PREVIEW_CONTROLS_QML):
+            self.assertIn("BedMeshRangeSlider", qml)
+        self.assertIn('text: root.printer != null ? "Low " + root.printer.bedMeshMinimum.toFixed(3)', MONITOR_QML)
+
+    def test_mesh_map_bed_space_visualisation_is_klipper_faithful(self):
+        # The author's accuracy ruling: the expanded map draws the
+        # probed cells within the real bed, extends the BOUNDARY
+        # values to the bed edges (Klipper clamps its lookup to the
+        # boundary cells — _get_linear_index constrains index and t),
+        # and outlines the measured bounds in the Preview's neon
+        # orange. The extension is fainter because it is the
+        # boundary's continuation, not a measurement.
+        for token in ("#FF5A00", "measured ? 0.58 : 0.28", "clampedValue",
+                      "bedMeshMachineWidth", "bedMeshMachineDepth", "bedMeshCenterIsZero",
+                      "printerToWidget", "constrains both", "hoverClamped",
+                      'root.hoverClamped ? "#FF5A00"'):
+            self.assertIn(token, BED_MESH_MAP_QML + MONITOR_MODEL)
+        # The popover carries the same clamped disclaimer the Preview's
+        # legend makes (the author's request).
+        self.assertIn("Neon orange outline = the probed mesh bounds; outside = the boundary values, continued as Klipper clamps them", MONITOR_QML)
 
 
 class MonitorFormattingTests(unittest.TestCase):
@@ -1198,6 +1280,79 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         self.assertFalse(wanted_object("gcode_macro START_PRINT"))
         self.assertFalse(wanted_object("unknown object"))
 
+    def test_fan_writability_follows_the_klipper_fan_types(self):
+        # The author's live reports (controller_fan1, hotend_fan):
+        # Klipper's controller_fan, temperature_fan and heater_fan are
+        # temperature-regulated — SET_FAN_SPEED never sticks — so
+        # their rows render read-only. The other fan types register
+        # the command.
+        from plugins.MonitorFormatting import fan_writable
+        for name in ("fan", "fan_generic nevermore"):
+            self.assertTrue(fan_writable(name), name)
+        for name in ("controller_fan controller_fan1", "controller_fan controller_fan2",
+                     "temperature_fan chamber", "heater_fan hotend_fan"):
+            self.assertFalse(fan_writable(name), name)
+        # The dashboard renders the read-only row instead of a slider,
+        # and the command lane refuses the regulated fans fail-closed.
+        controls = (PLUGINS / "MonitorControls.py").read_text()
+        self.assertIn('"writable": fan_writable(name)', controls)
+        self.assertIn("if not fan_writable(name):", controls)
+        self.assertIn("visible: modelData.writable", DASHBOARD_QML)
+        self.assertIn("Firmware-controlled — speed is read-only", DASHBOARD_QML)
+
+    def test_led_channels_are_absolute_and_the_labels_hold_their_width(self):
+        # The author's live report: the chroma normalisation made
+        # every nudge re-scale all four channel sliders (a +1 nudge
+        # of a zeroed channel jumped it to 100 and dragged the rest).
+        # The sliders now read absolute channel values, and the
+        # percentage labels hold a fixed width so the rows never
+        # reflow.
+        controls = (PLUGINS / "MonitorControls.py").read_text()
+        self.assertIn("ABSOLUTE channels", controls)
+        # The chroma normalisation's code is gone: no peak division
+        # remains in the channel derivation.
+        self.assertNotIn("* 100 / peak", controls)
+        self.assertIn("round(c * 100) for c in channels", controls)
+        # The channel commit sends the absolutes WITHOUT the
+        # brightness slider as a gain — passing it zeroed every
+        # channel nudge while the LED was off (the author's live
+        # report).
+        self.assertIn("root.sliderSelection(whiteSlider) : 0, -1);", DASHBOARD_QML)
+        # The brightness slider is the USER'S GAIN, unlinked from the
+        # channel peak (the author's ruling): the channel sliders
+        # hold the set percentages (seeded once from the first-seen
+        # colour), the gain composes into the SEND only, and neither
+        # slider's value moves the other.
+        self.assertIn("self._remembered_gain", controls)
+        self.assertIn("self._remembered_channels", controls)
+        self.assertIn("round(gain * 100)", controls)
+        self.assertIn('self._remembered_gain[name] = percent / 100.0', controls)
+        self.assertIn("self._remembered_gain.get(name, 1.0)", controls)
+        self.assertGreaterEqual(DASHBOARD_QML.count("width: 52 * screenScaleFactor"), 7)
+        self.assertIn("width: 150 * screenScaleFactor", DASHBOARD_QML)
+        # The submit's rebuild must not kill the tuned slider's focus
+        # (the author's live report): the dashboard remembers the
+        # slider's object and re-grants focus on the new delegate.
+        outline = (PLUGINS / "OutlineSlider.qml").read_text()
+        self.assertIn("property string controlObject", outline)
+        # One LED row holds five sliders: the refocus must land on the
+        # RIGHT one — the kind discriminates, and the walk recurses
+        # into the channel grid (the author's live report: the nudge
+        # went to the brightness slider instead of the channel).
+        self.assertIn("property string controlKind", outline)
+        self.assertIn("function focusSliderIn", DASHBOARD_QML)
+        self.assertIn("function focusTuningSliderOnce()", DASHBOARD_QML)
+        # The refocus retries until it lands and holds across the
+        # confirm-time rebuild (the author's live report: fan/LED
+        # sliders lost focus on the apply, the singletons never).
+        self.assertIn("refocusTimer.attempts = 0", DASHBOARD_QML)
+        self.assertIn("focusHoldTimer.start()", DASHBOARD_QML)
+        for token in ("id: fanRepeater", "id: ledRepeater", "id: pwmRepeater",
+                      "root.tuningSliderObject = modelData.object", "refocusTimer.start()",
+                      'controlKind: "led-red"', 'root.tuningSliderKind = "led-red"',
+                      'controlKind: "led-brightness"'):
+            self.assertIn(token, DASHBOARD_QML)
+
     def test_consumers_use_the_shared_classification_tables(self):
         data = (PLUGINS / "MonitorData.py").read_text()
         controls = (PLUGINS / "MonitorControls.py").read_text()
@@ -1219,7 +1374,7 @@ class EndstopAndEtaBasisTests(unittest.TestCase):
         self.assertEqual(summary, "")
         empty = SimpleNamespace(endstops={})
         self.assertEqual(endstop_values(empty)["endstopItems"], [])
-        self.assertIn("Not homed yet", endstop_values(empty)["endstopSummary"])
+        self.assertIn("No endstop states reported", endstop_values(empty)["endstopSummary"])
 
     def test_core_values_prefers_the_layer_anchored_eta_and_names_the_basis(self):
         from plugins.MonitorFormatting import core_values
@@ -2459,8 +2614,11 @@ class MonitorQtTests(unittest.TestCase):
             self.assertIn(token, DASHBOARD_QML)  # the readout lives in the Toolhead section
         self.assertNotIn('title: "Endstops"', MONITOR_QML)
         self.assertNotIn('sectionId: "endstops"', MONITOR_QML)
-        # The not-homed copy lives in the projection, not the QML.
-        self.assertIn("Not homed yet — home an axis to populate", FORMATTING)
+        # The empty-set copy lives in the projection, not the QML —
+        # and it makes no causal claim (the live report: homed axes
+        # with no endstop pins, e.g. sensorless homing, read "not
+        # homed yet").
+        self.assertIn("No endstop states reported", FORMATTING)
         for token in ("endstopItems", "endstopSummary", "endstopsChanged",
                       "printer/query_endstops/status", "refresh_endstops"):
             self.assertIn(token, MONITOR_MODEL + (PLUGINS / "MonitorData.py").read_text())
@@ -3264,6 +3422,11 @@ Item {
             # only change on a printer switch, which is user-initiated.
             "visible: root.printer != null && root.printer.hasQuadGantryLevel",
             "visible: root.printer != null && root.printer.hasBedMesh",
+            # Firmware-regulated fans swap the slider for a read-only
+            # row (the author's live report): the model's writable
+            # flag picks the face.
+            "visible: modelData.writable",
+            "visible: !modelData.writable",
             # Carve-outs awaiting the author's ruling (DECISIONS round 6):
             "visible: base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive && base.pauseAtLayerItems.length > 0",
             # The Endstops summary row yields to the chips once they
@@ -3444,6 +3607,18 @@ Item {
         model._data._update(core={"print_stats": {"state": "printing"}})
         self.assertEqual(model._history.revision, revision)
 
+    def test_connect_transition_fires_every_lane_immediately(self):
+        # The author's live report: after the connect the aux lanes
+        # stayed unpopulated until their timers' next ticks. The
+        # connection transition itself must fire every lane — the
+        # request traffic grows the moment the connection lands.
+        self.monitor()
+        self.qt.events(2)
+        before = len(self.transport.requests)
+        self.deliver_state("standby")
+        self.qt.events(2)
+        self.assertGreater(len(self.transport.requests), before)
+
     def test_endstop_query_uses_the_documented_get(self):
         model = self.monitor()
         # The poll is readiness-gated; seed a ready Klippy so the
@@ -3545,6 +3720,20 @@ Item {
         self.assertEqual(model.cameraRefreshNonce, before + 1)
         model._on_stream_recovered()
         self.assertFalse(model.cameraRecovering)
+
+    def test_camera_render_stall_rides_the_same_recovery(self):
+        # The render watchdog (the author's live report): a stream
+        # that connected but never painted a frame reports the stall
+        # through the same nonce-bump recovery as a stream failure,
+        # with the same 10 s throttle.
+        model = self.monitor()
+        model._camera_last_refresh_at = 0.0
+        before = model.cameraRefreshNonce
+        model.cameraRenderStalled()
+        self.assertTrue(model.cameraRecovering)
+        self.assertEqual(model.cameraRefreshNonce, before + 1)
+        model.cameraRenderStalled()
+        self.assertEqual(model.cameraRefreshNonce, before + 1)
 
     def test_setup_scripts_queue_behind_the_in_flight_command(self):
         model = self.monitor()

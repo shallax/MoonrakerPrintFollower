@@ -1242,6 +1242,21 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "setShowProbePoints", "args": [False]},
          {"op": "assert_model", "prop": "showProbePoints", "value": False},
      ]},
+    {"id": "h6c", "group": "printing", "name": "the heightmap range filter window is shared",
+     "steps": [
+         # A non-flat mesh so the window has a real range to clamp into.
+         {"op": "sim_set", "state": {"bed_mesh": {"profile_name": "sim-mesh", "mesh_min": [0.0, 0.0],
+                                                  "mesh_max": [50.0, 50.0],
+                                                  "probed_matrix": [[0.0, 0.2, 0.5], [0.1, 0.3, 0.4], [0.2, 0.1, 0.3]]}}},
+         {"op": "assert_model", "prop": "bedMeshAvailable", "value": True, "budget": 10},
+         {"op": "exec_slot", "slot": "setBedMeshThresholds", "args": [0.1, 0.4]},
+         {"op": "assert_model", "prop": "bedMeshThresholdLow", "value": 0.1},
+         {"op": "assert_model", "prop": "bedMeshThresholdHigh", "value": 0.4},
+         # The mini map's click opens the pop-over; the shared
+         # dual-ended slider renders inside it.
+         {"op": "deliver_click", "objectName": "moonrakerBedMeshMap"},
+         {"op": "wait_rect", "objectName": "moonrakerBedMeshRangeSlider", "budget": 30},
+     ]},
     {"id": "h8", "group": "printing", "name": "the ETA opt-in pulls the print for the monitor",
      "steps": [
          # The improve's journey: the print changes to a file never

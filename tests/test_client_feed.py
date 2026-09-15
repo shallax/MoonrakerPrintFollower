@@ -89,6 +89,50 @@ class ClientFeedTests(unittest.TestCase):
             "print_stats": None, "virtual_sdcard": None,
         })
 
+    def test_idle_floor_does_not_gate_the_first_connection(self):
+        # The author's live report: ~5 s of dead UI before the printer
+        # showed as connected — the idle floor (5000 ms) governed the
+        # tick from startup, so a failed first attempt retried five
+        # seconds later. Until the first status has ever landed, the
+        # tick runs at the configured cadence.
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.assertEqual(self.client._poll_timer.interval(), 750)
+        # Once a status lands, the idle floor applies again.
+        self.socket.syncSnapshot.emit({"print_stats": {"state": "idle"}}, 12.0)
+        self.assertTrue(self.client.connected)
+        self.assertEqual(self.client._poll_timer.interval(), 5000)
+
+    def test_failure_ladder_does_not_gate_a_never_connected_session(self):
+        # The author's live report: ~5 s of dead UI before the first
+        # data — each fast startup failure walks the ladder (1 s, 2 s,
+        # 5 s) and the 5 s rung then gates a session that has never
+        # connected. Until the printer has ever answered, the retry
+        # stays at the configured cadence.
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        for _ in range(4):
+            self.client._handle_failure("boom")
+        self.assertLessEqual(self.client._retry_delay_ms, self.client.FIRST_CONNECT_RETRY_MS)
+        self.assertLessEqual(self.client._poll_timer.interval(), self.client.FIRST_CONNECT_RETRY_MS)
+        # A proven endpoint keeps the ladder for its outages.
+        self.client._connected = True
+        self.client._handle_failure("boom")
+        self.assertGreater(self.client._retry_delay_ms, 750)
+
+    def test_connect_transition_republishes_the_accumulated_snapshot(self):
+        # The author's ruling: the connect transition re-broadcasts
+        # the accumulated snapshot so every listener populates
+        # instantly — even one that attached after the sync landed.
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        received = []
+        self.client.statusReceived.connect(lambda status: received.append(status))
+        self.socket.syncSnapshot.emit({"print_stats": {"state": "idle"}}, 12.0)
+        # The transition's republish, then the admission's own emit.
+        self.assertEqual(len(received), 2)
+        self.assertEqual(received[0]["print_stats"]["state"], "idle")
+
     def test_sync_snapshot_admits_and_marks_connected(self):
         self.client.configure("http://p", "k", 750, feed_mode="websocket")
         self.client.start()

@@ -13,6 +13,9 @@ SCENE_NODE = (PLUGINS / "BedMeshSceneNode.py").read_text()
 MONITOR_CONTROLS = (PLUGINS / "MonitorControls.py").read_text()
 DASHBOARD = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
+RANGE_SLIDER_QML = (PLUGINS / "BedMeshRangeSlider.qml").read_text()
+PRESENTATION = (PLUGINS / "PreviewPresentation.py").read_text()
+PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 MAIN_DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 PREVIEW_CONTROLS = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
@@ -91,7 +94,7 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("bedMeshMinimum", MONITOR_QML)
         self.assertIn("bedMeshMaximum", MONITOR_QML)
         self.assertIn("bedMeshRange", MONITOR_QML)
-        self.assertIn("20× vertical exaggeration", MONITOR_QML)
+        self.assertIn("The Preview's height exaggeration adjusts from its card", MONITOR_QML)
         self.assertIn("id: infoPanel", MONITOR_QML)
         self.assertIn('text: "Information"', MONITOR_QML)
         self.assertIn("bedMeshXMax - root.printer.bedMeshXMin", BED_MESH_MAP_QML)  # aspect-fitted plot
@@ -133,7 +136,7 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("cura.changed.connect(self._render)", TYPED)
         self.assertIn("with self._cura.decorating_scene()", TYPED)
         for qml in (PREVIEW_CONTROLS, EMPTY_PREVIEW):
-            self.assertIn("Neon orange outline = Klipper mesh bounds; outside = extrapolated", qml)
+            self.assertIn("Neon orange outline = the probed mesh bounds; outside = the boundary values, continued as Klipper clamps them", qml)
             # NO-REFLOW RULE: the legend keeps its space — it fades on
             # both the mesh availability AND the user's visibility
             # toggle, never vanishing.
@@ -142,7 +145,70 @@ class BedMeshTests(unittest.TestCase):
             self.assertIn("selectedLayerEtaText", qml)
             self.assertIn("bedMeshMinimumText", qml)
             self.assertIn("bedMeshMaximumText", qml)
-            self.assertIn("GradientStop", qml)
+            self.assertIn("BedMeshRangeSlider {", qml)
+
+    def test_range_filter_slider_is_shared_and_synchronised(self):
+        # The author's request: the dual-ended range filter lives on
+        # BOTH the Information pop-over and the Preview legend, and
+        # one shared model window drives both. The rainbow stops live
+        # in the shared component so the two surfaces cannot drift.
+        for stop in ("#1a47f2", "#00b8ff", "#33db61", "#ffd11f", "#eb291f"):
+            self.assertIn(stop, RANGE_SLIDER_QML)
+        for qml in (MONITOR_QML, PREVIEW_CONTROLS):
+            self.assertIn("BedMeshRangeSlider", qml)
+        # The shared window: the model publishes it, the pop-over
+        # slider writes it, the card's intents route through the
+        # presentation into the same slot.
+        self.assertIn("bedMeshThresholdLow", TYPED_CONTROLS)
+        self.assertIn("setBedMeshThresholds", TYPED_CONTROLS)
+        self.assertIn('root.printer.setBedMeshThresholds(low, high)', MONITOR_QML)
+        self.assertIn("bedMeshThresholdsRequested", PRESENTATION)
+        self.assertIn("bedMeshThresholdsRequested.connect(monitor.setBedMeshThresholds)", PLUGIN)
+        # The window moves whole (the centre drag) and the bar
+        # desaturates outside it (the wash, not a cover).
+        for token in ("windowAdjusted", "mode = 3", "outOfWindowAlpha", "moonrakerBedMeshRangeSlider"):
+            self.assertIn(token, RANGE_SLIDER_QML)
+        # The cells grey out outside the window on the map, and the
+        # scene node mirrors the same grey for its out-of-window
+        # vertices.
+        self.assertIn("outOfWindowGrey", BED_MESH_MAP_QML)
+        # The grid-effect fix (the author's report): the cells paint
+        # at full opacity with the fainter look pre-mixed toward the
+        # background — partial-alpha fills that overlap double-paint
+        # their shared edges into a visible grid.
+        self.assertIn("blendOver", BED_MESH_MAP_QML)
+        self.assertIn("measured ? 0.58 : 0.28", BED_MESH_MAP_QML)
+        self.assertIn("root.inRange(sample)", BED_MESH_MAP_QML)
+        self.assertIn("OUT_OF_WINDOW_GREY", SCENE_NODE)
+        self.assertIn("low=thresholds[0], high=thresholds[1]", PRESENTER)
+        self.assertIn("def set_thresholds", PRESENTER)
+        self.assertIn("def _clamp_thresholds", PRESENTER)
+
+    def test_scale_z_max_exaggeration_is_owned_by_the_presenter(self):
+        # The author's request: a Preview-side slider scales the Z
+        # distortion (Mainsail's "scale z-max"), 0 flattens the
+        # surface, the ceiling is 1000, and the default stays the
+        # historical fixed 20.
+        self.assertIn("EXAGGERATION_PREF_KEY", PRESENTER)
+        self.assertIn("def set_exaggeration", PRESENTER)
+        self.assertIn("self._exaggeration", PRESENTER)
+        self.assertIn("MAX_EXAGGERATION = 1000.0", SCENE_NODE)
+        self.assertIn("MAX_EXAGGERATION = 1000.0", PRESENTER)
+        self.assertIn('max(0.0, min(self.MAX_EXAGGERATION, float(exaggeration)))', SCENE_NODE)
+        for token in ("Scale z-max", "bedMeshExaggerationRequested", "bedMeshExaggeration"):
+            self.assertIn(token, PREVIEW_CONTROLS)
+        self.assertIn("to: 1000", PREVIEW_CONTROLS)
+        self.assertIn("bedMeshExaggerationRequested", PRESENTATION)
+        self.assertIn("bedMeshExaggerationRequested.connect(self.set_exaggeration)", PRESENTER)
+
+    def test_hourglass_rotation_never_carries_onto_the_download_glyph(self):
+        # The author's live report: when the hourglass hands back to
+        # the download icon, the glyph kept the angle the hourglass
+        # froze at — an assignment from inside the animation cannot
+        # win against the animation binding, so the idle STATE forces
+        # the reset instead.
+        self.assertIn('name: "idle"', MONITOR_QML)
+        self.assertIn("target: etaGlyph", MONITOR_QML)
 
     def test_saved_profiles_are_ordered_and_loadable(self):
         self.assertEqual(mesh_profiles({"profiles": {"summer": {}, "default": {}, "winter": {}}, "profile_name": "winter"}), ["winter", "default", "summer"])

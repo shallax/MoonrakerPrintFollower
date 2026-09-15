@@ -1438,6 +1438,15 @@ the physical-head feature. The review's F07 plus F06's structural
 completion, with fixed component scope and measurable exit criteria —
 not a repository-wide redesign.
 
+- **Vertex-style gcode deformation (bumped from 4.2.0, the author's
+  2026-09-15 ruling).** A Preview-card toggle that warps the rendered
+  gcode so the model rides the bed-mesh ridges: every vertex of the
+  rendered layers gets its own Z from the height map, times the
+  exaggeration. The per-layer prototype did not deliver the expected
+  look and was removed (logged); the design round must settle how the
+  warp composes with Cura's lazily built layer meshes, with a
+  Snapshot-0 mock before any machinery.
+
 - **View-model extraction.** A FilesViewModel owning the file
   projection: one computed file-view result (rows, total, page,
   selection, empty state) cached by data/view/history revision with
