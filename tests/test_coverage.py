@@ -24,7 +24,10 @@ class CoverageMatrixTests(unittest.TestCase):
     def test_the_matrix_is_not_empty(self):
         surfaces = extract()
         self.assertGreater(len(surfaces["slot"]), 100)
-        self.assertGreater(len(surfaces["key"]), 100)
+        # Measured 2026-09-15 after the key family became a directory
+        # scan: 159 keys (the floor is the only detector if the regex
+        # or the scan narrows).
+        self.assertGreater(len(surfaces["key"]), 150)
         self.assertGreaterEqual(len(surfaces["route"]), 10)
         self.assertGreaterEqual(len(surfaces["objectName"]), 30)
 

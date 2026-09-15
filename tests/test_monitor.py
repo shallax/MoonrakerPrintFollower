@@ -47,6 +47,21 @@ QMLDIR = (PLUGINS / "qmldir").read_text()
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
 CAPTURE_HARNESS = (ROOT / "tools" / "capture_monitor.py").read_text()
 
+# The 23 section ids are the persistence keys (INSTRUCTIONS: the stored
+# map only records touched sections; unknown keys default to expanded).
+# 22 exist as sectionId: literals across the panes; the console pane's
+# id is not a sectionId: property — it is pinned separately.
+SECTION_IDS = {
+    # Controls pane
+    "print", "setup", "toolhead", "macros", "profiles", "tuning",
+    "fans", "leds", "pwm", "power", "system", "save",
+    # Information and Printer status panes
+    "meshmap", "job", "temps", "fansinfo", "filament", "objects",
+    "systeminfo", "mcus", "temphistory",
+    # The Monitor's own surface
+    "console", "fileManager",
+}
+
 
 class MonitorModelContractTests(unittest.TestCase):
     def test_single_qt_model_exposes_dashboard_features(self):
@@ -149,6 +164,46 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('"EMERGENCY STOP — press and hold to fire"', DASHBOARD_QML)
         self.assertIn("EMERGENCY STOP", DASHBOARD_QML)
         self.assertNotIn("Emergency stop?", DASHBOARD_QML)
+
+    def test_section_ids_are_pinned_as_the_persistence_keys(self):
+        # The 22 sectionId: literals are pinned as an exact set and the
+        # console pane — whose id is not a sectionId: property — by its
+        # expansion reference: a renamed id or an unlisted section must
+        # not slip through silently (an unknown key defaults to expanded,
+        # so the pin is the only guard on the persistence vocabulary).
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML))
+        self.assertEqual(literals, SECTION_IDS - {"console"})
+        self.assertEqual(len(SECTION_IDS), 23)
+        self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
+
+    def test_no_oscillation_thresholds_keep_the_release_above_the_squeeze(self):
+        # The auto-collapse latch (MoonrakerMonitor.qml:205-239): the
+        # release point must sit ABOVE the squeeze point with a dead
+        # zone — the record there describes the latch that never
+        # re-armed when the release sat below the squeeze. The
+        # literals are extracted tolerantly (regexes, never the
+        # expression text, which qmlformat owns).
+        comfort = re.search(
+            r'infoComfortWidth: \(([0-9]+) \+ ([0-9]+) \+ ([0-9]+)\) \* screenScaleFactor \+ 4 \* UM\.Theme\.getSize\("default_margin"\)\.width',
+            MONITOR_QML,
+        )
+        self.assertIsNotNone(comfort, "the comfort-width expression changed shape")
+        squeeze = re.search(
+            r'webcamSqueezed: cameraViewport\.width > 0 && cameraViewport\.width < ([0-9]+) \* screenScaleFactor',
+            MONITOR_QML,
+        )
+        self.assertIsNotNone(squeeze, "the squeeze threshold changed shape")
+        release_margin = re.search(
+            r'root\.width >= infoComfortWidth \+ ([0-9]+) \* screenScaleFactor',
+            MONITOR_QML,
+        )
+        self.assertIsNotNone(release_margin, "the release threshold changed shape")
+        comfort_sum = sum(int(g) for g in comfort.groups())
+        self.assertGreater(
+            comfort_sum + int(release_margin.group(1)),
+            int(squeeze.group(1)),
+            "the release point must stay above the squeeze point or the latch never re-arms",
+        )
 
     def test_controls_live_in_the_collapsible_column_and_the_left_is_read_only(self):
         # The left panel carries no printer commands: only the camera list,
