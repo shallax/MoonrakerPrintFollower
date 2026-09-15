@@ -469,46 +469,10 @@ Component {
                         // collapsed section's hidden content must contribute
                         // nothing, so stacked headers sit flush like Cura's.
                         spacing: 0
-
-                        CollapsibleSectionHeader {
+                        FileManagerSection {
+                            id: fileManagerSection
                             Layout.fillWidth: true
                             printerModel: root.printer
-                            title: "File manager"
-                            sectionId: "fileManager"
-                            sectionIconUrl: Qt.resolvedUrl("Download.svg")
-                        }
-                        ColumnLayout {
-                            visible: root.printer == null || root.printer.sectionExpandedMap["fileManager"] !== false
-                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
-                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            Layout.fillWidth: true
-                            Layout.topMargin: UM.Theme.getSize("default_margin").height
-                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                            spacing: UM.Theme.getSize("default_margin").height
-
-                            UM.Label {
-                                Layout.fillWidth: true
-                                height: 36 * screenScaleFactor
-                                text: "Browse, print and manage the printer's gcode files."
-                                color: UM.Theme.getColor("text_inactive")
-                                elide: Text.ElideRight
-                                wrapMode: Text.NoWrap
-                            }
-                            Cura.SecondaryButton {
-                                Layout.fillWidth: true
-                                text: "File manager"
-                                enabled: root.printer != null && root.printer.monitorConnected
-                                onClicked: {
-                                    if (root.printer != null) {
-                                        root.printer.setFileManagerOpen(true);
-                                    }
-                                }
-                                UM.TooltipArea {
-                                    anchors.fill: parent
-                                    acceptedButtons: Qt.NoButton
-                                    text: root.printer != null && root.printer.monitorConnected ? "Open the file manager." : "The printer is disconnected."
-                                }
-                            }
                         }
 
                         PrintSection {
