@@ -67,6 +67,28 @@ class StateStoreTests(unittest.TestCase):
             handle.write("[1, 2]")
         self.assertIsNone(self.store.read())
 
+    def test_a_corrupt_file_self_heals_on_the_next_write(self):
+        # The adversarial round's M1: an undecodable-but-present file
+        # must not wedge every save forever — the merge falls back to
+        # an empty document and the write heals the file (the old
+        # replace-write self-healed the same way).
+        with open(self.path, "w", encoding="utf-8") as handle:
+            handle.write("{ this is not json")
+        self.assertTrue(self.store.write({"sections": {"toolhead": True}}))
+        with open(self.path, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["sections"], {"toolhead": True})
+
+    def test_replace_write_drops_foreign_keys_deliberately(self):
+        # merge=False is the migration's deliberate full-document
+        # replace (the one-time chart migration drops the migrated
+        # block).
+        self.store.write({"sections": {}, "futureKey": 42})
+        self.assertTrue(self.store.write({"sections": {"toolhead": False}}, merge=False))
+        with open(self.path, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertNotIn("futureKey", saved)
+        self.assertEqual(saved["sections"], {"toolhead": False})
+
 
 if __name__ == "__main__":
     unittest.main()

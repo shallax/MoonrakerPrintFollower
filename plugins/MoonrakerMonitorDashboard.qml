@@ -641,14 +641,18 @@ Component {
                                     // bottom of Setup" report). The
                                     // emdash is the honest empty value.
                                     height: 36 * screenScaleFactor
-                                    text: root.printer != null ? (root.printer.printActive ? "Setup disabled during a print" : (root.printer.hasBedMesh && root.printer.bedMeshProfileNames.length === 0 ? "No saved bed mesh profiles" : "—")) : "—"
+                                    // The section-level denial (4.2.0):
+                                    // a locked or dead pane says why
+                                    // FIRST — the per-section text is
+                                    // the fallback.
+                                    text: root.printer != null ? (root.printer.sectionReason !== "" ? root.printer.sectionReason : (root.printer.printActive ? "Setup disabled during a print" : (root.printer.hasBedMesh && root.printer.bedMeshProfileNames.length === 0 ? "No saved bed mesh profiles" : "—"))) : "—"
                                     color: UM.Theme.getColor("text")
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
                                     wrapMode: Text.NoWrap
                                     UM.TooltipArea {
                                         anchors.fill: parent
-                                        text: root.printer != null ? (root.printer.printActive ? "Homing and bed-mesh setup controls are disabled during a print." : (root.printer.hasBedMesh && root.printer.bedMeshProfileNames.length === 0 ? "No saved bed mesh profiles reported by Klipper." : "")) : ""
+                                        text: root.printer != null ? (root.printer.sectionReasonDetail !== "" ? root.printer.sectionReasonDetail : (root.printer.printActive ? "Homing and bed-mesh setup controls are disabled during a print." : (root.printer.hasBedMesh && root.printer.bedMeshProfileNames.length === 0 ? "No saved bed mesh profiles reported by Klipper." : ""))) : ""
                                         acceptedButtons: Qt.NoButton
                                     }
                                 }
@@ -1430,7 +1434,7 @@ Component {
                             Cura.SecondaryButton {
                                 Layout.fillWidth: true
                                 text: "Run macro"
-                                enabled: root.printer != null && macroSelector.currentIndex >= 0 && !root.printer.actionBusy && !root.printer.printActive && root.macroArgumentsValid()
+                                enabled: root.printer != null && macroSelector.currentIndex >= 0 && !root.printer.actionBusy && !root.printer.printActive && root.printer.sectionReason === "" && root.macroArgumentsValid()
                                 onClicked: root.printer.runMacro(macroSelector.currentText, root.macroArgumentString())
                             }
                         }
@@ -1487,7 +1491,7 @@ Component {
                                 }
                                 UM.Label {
                                     height: 36 * screenScaleFactor
-                                    text: root.printer != null && root.printer.printActive ? "Disabled during a print" : "—"
+                                    text: root.printer != null ? (root.printer.sectionReason !== "" ? root.printer.sectionReason : (root.printer.printActive ? "Disabled during a print" : "—")) : "—"
                                     wrapMode: Text.NoWrap
                                     elide: Text.ElideRight
                                     color: UM.Theme.getColor("text")
@@ -1497,7 +1501,7 @@ Component {
                                         // Short value in the row, full
                                         // sentence in the tooltip (the
                                         // author's ruling).
-                                        text: root.printer != null && root.printer.printActive ? "Temperature profiles are disabled during a print, matching Mainsail." : ""
+                                        text: root.printer != null ? (root.printer.sectionReasonDetail !== "" ? root.printer.sectionReasonDetail : (root.printer.printActive ? "Temperature profiles are disabled during a print, matching Mainsail." : "")) : ""
                                         acceptedButtons: Qt.NoButton
                                     }
                                 }
@@ -1647,7 +1651,7 @@ Component {
                                                 height: UM.Theme.getSize("action_button").height
                                                 text: "↑ " + modelData.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
                                                 tooltip: "Moves the nozzle up, away from the bed."
-                                                enabled: root.printer != null && !root.printer.actionBusy
+                                                enabled: root.printer != null && !root.printer.actionBusy && root.printer.sectionReason === ""
                                                 onClicked: root.printer.adjustZOffset(modelData)
                                             }
                                         }
@@ -1663,7 +1667,7 @@ Component {
                                                 height: UM.Theme.getSize("action_button").height
                                                 text: "↓ " + Math.abs(modelData).toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
                                                 tooltip: "Moves the nozzle down, closer to the bed."
-                                                enabled: root.printer != null && !root.printer.actionBusy
+                                                enabled: root.printer != null && !root.printer.actionBusy && root.printer.sectionReason === ""
                                                 onClicked: root.printer.adjustZOffset(modelData)
                                             }
                                         }
@@ -1672,7 +1676,7 @@ Component {
                                 Cura.SecondaryButton {
                                     Layout.fillWidth: true
                                     text: "Clear Z offset"
-                                    enabled: root.printer != null && !root.printer.actionBusy
+                                    enabled: root.printer != null && !root.printer.actionBusy && root.printer.sectionReason === ""
                                     onClicked: root.printer.clearZOffset()
                                 }
                             }
@@ -2022,7 +2026,7 @@ Component {
                                 }
                                 UM.Label {
                                     height: 36 * screenScaleFactor
-                                    text: root.anyPowerLocked ? "Locked during this print" : "—"
+                                    text: root.printer != null && root.printer.sectionReason !== "" ? root.printer.sectionReason : (root.anyPowerLocked ? "Locked during this print" : "—")
                                     wrapMode: Text.NoWrap
                                     elide: Text.ElideRight
                                     color: UM.Theme.getColor("text")
@@ -2032,7 +2036,7 @@ Component {
                                         // Short value in the row, full
                                         // sentence in the tooltip (the
                                         // author's ruling).
-                                        text: root.anyPowerLocked ? "Power control is locked by Moonraker while this print is active." : ""
+                                        text: root.printer != null && root.printer.sectionReasonDetail !== "" ? root.printer.sectionReasonDetail : (root.anyPowerLocked ? "Power control is locked by Moonraker while this print is active." : "")
                                         acceptedButtons: Qt.NoButton
                                     }
                                 }
@@ -2065,7 +2069,7 @@ Component {
                                     // The policy gate (4.2.0): the
                                     // reason rides the tooltip when
                                     // the button is denied.
-                                    tooltip: "Restart Klipper's firmware process (FIRMWARE_RESTART)." + (root.printer != null && !root.printer.canRestart && root.printer.restartReason !== "" ? " " + root.printer.restartReason : "")
+                                    tooltip: "Restart Klipper's firmware process (FIRMWARE_RESTART)." + (root.printer != null && !root.printer.canRestart && root.printer.restartReasonDetail !== "" ? " " + root.printer.restartReasonDetail : "")
                                     enabled: root.printer != null && root.printer.canRestart
                                     onClicked: root.printer.firmwareRestart()
                                 }
@@ -2073,7 +2077,7 @@ Component {
                                     Layout.fillWidth: true
                                     text: "Host restart"
                                     objectName: "moonrakerHostRestart"
-                                    tooltip: "Reboot the host Moonraker runs on (machine/reboot)." + (root.printer != null && !root.printer.canRestart && root.printer.restartReason !== "" ? " " + root.printer.restartReason : "")
+                                    tooltip: "Reboot the host Moonraker runs on (machine/reboot)." + (root.printer != null && !root.printer.canRestart && root.printer.restartReasonDetail !== "" ? " " + root.printer.restartReasonDetail : "")
                                     enabled: root.printer != null && root.printer.canRestart
                                     onClicked: root.printer.hostRestart()
                                 }
@@ -2089,7 +2093,7 @@ Component {
                                     Layout.fillWidth: true
                                     text: "Klipper restart"
                                     objectName: "moonrakerKlipperRestart"
-                                    tooltip: "Restart Klipper entirely (printer/restart): reloads the config and reconnects the MCU." + (root.printer != null && !root.printer.canRestart && root.printer.restartReason !== "" ? " " + root.printer.restartReason : "")
+                                    tooltip: "Restart Klipper entirely (printer/restart): reloads the config and reconnects the MCU." + (root.printer != null && !root.printer.canRestart && root.printer.restartReasonDetail !== "" ? " " + root.printer.restartReasonDetail : "")
                                     enabled: root.printer != null && root.printer.canRestart
                                     onClicked: root.printer.klipperRestart()
                                 }
@@ -2108,7 +2112,10 @@ Component {
                                 }
                                 UM.Label {
                                     height: 36 * screenScaleFactor
-                                    text: root.printer != null && root.printer.printActive ? "Disabled during a print" : "—"
+                                    // The restart reason is the policy's
+                                    // own (4.2.0): the row carries it,
+                                    // the tooltip is enrichment.
+                                    text: root.printer != null && root.printer.restartReason !== "" ? root.printer.restartReason : "—"
                                     wrapMode: Text.NoWrap
                                     elide: Text.ElideRight
                                     color: UM.Theme.getColor("text")
@@ -2118,7 +2125,7 @@ Component {
                                         // Short value in the row, full
                                         // sentence in the tooltip (the
                                         // author's ruling).
-                                        text: root.printer != null && root.printer.printActive ? "System restarts are disabled during a print." : ""
+                                        text: root.printer != null ? root.printer.restartReasonDetail : ""
                                         acceptedButtons: Qt.NoButton
                                     }
                                 }
@@ -2194,7 +2201,7 @@ Component {
                                 }
                                 UM.Label {
                                     height: 36 * screenScaleFactor
-                                    text: root.printer != null ? (root.printer.printActive ? "Disabled during a print" : root.printer.canSaveConfig ? "Restarts Klipper" : "—") : "—"
+                                    text: root.printer != null ? (root.printer.sectionReason !== "" ? root.printer.sectionReason : (root.printer.printActive ? "Disabled during a print" : root.printer.canSaveConfig ? "Restarts Klipper" : "—")) : "—"
                                     color: UM.Theme.getColor("text")
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
@@ -2204,7 +2211,7 @@ Component {
                                         // Short value in the row, full
                                         // sentence in the tooltip (the
                                         // author's ruling).
-                                        text: root.printer != null ? (root.printer.printActive ? "SAVE_CONFIG is disabled during a print." : root.printer.canSaveConfig ? "Saving configuration restarts Klipper." : "") : ""
+                                        text: root.printer != null ? (root.printer.sectionReasonDetail !== "" ? root.printer.sectionReasonDetail : (root.printer.printActive ? "SAVE_CONFIG is disabled during a print." : root.printer.canSaveConfig ? "Saving configuration restarts Klipper." : "")) : ""
                                         acceptedButtons: Qt.NoButton
                                     }
                                 }

@@ -84,8 +84,10 @@ def _prelude(obs: Observation):
     shipped ruling releases the print guards immediately (the state
     reads cancelled and jog unlocks for recovery), and the command
     REFUSAL rides the lane's own e-stop lifecycle plus the follow-up
-    disconnect — the record carries assumed_stopped so the dispatch
-    predicates can see it, not so the click-time gates change."""
+    disconnect — the record CARRIES assumed_stopped for visibility
+    (the phase-6 re-review's D9: no ruling consumes it today, the
+    lane enforces the refusal), not so the click-time gates
+    change."""
     if obs.connection == "unknown": return R_UNKNOWN
     if obs.connection != "yes": return R_DISCONNECTED
     if not obs.active: return R_UNKNOWN
@@ -113,6 +115,16 @@ def can_jog(obs: Observation) -> Verdict:
     if state in {"standby", "paused", "complete", "cancelled", "error"}:
         return Verdict("allowed", "")
     return Verdict("disabled", R_UNKNOWN)
+
+
+def section_reason(obs: Observation) -> str:
+    """The shared SECTION-level denial (4.2.0, the phase-6 re-review):
+    the states that grey WHOLE panes — unknown/disconnected/locked —
+    as one short form every section's Status row prefixes. Per-section
+    state text (Setup's print-time refusal and the like) stays where
+    it is; this closes the fail-closed leak where a locked or dead
+    pane read "—". The prelude IS this list — one derivation."""
+    return _prelude(obs) or ""
 
 
 def jog_caption(obs: Observation) -> str:
@@ -163,10 +175,12 @@ def can_start_print(obs: Observation) -> Verdict:
     """Print-start click/dispatch time: not-homed AND not-ready
     states stay allowed — the shipped decision, now an explicit row
     (the confirmation warns and the watchdog explains a start that
-    never happens). Only an OBSERVED running print refuses. The
-    fail-closed prelude deliberately does not apply here: the
-    dialog's own warning is the shipped safety net for the unknown
-    case, and the transport refuses a truly dead printer."""
+    never happens). The CONNECTION clause stays: unknown or
+    disconnected refuses (the shipped printStartAllowed required
+    monitorConnected — the QML term this row replaces). Only an
+    OBSERVED running print refuses otherwise."""
+    if obs.connection == "unknown": return Verdict("disabled", R_UNKNOWN)
+    if obs.connection != "yes": return Verdict("disabled", R_DISCONNECTED)
     if _print_active(obs.state): return Verdict("disabled", R_PRINTING)
     return Verdict("allowed", "")
 

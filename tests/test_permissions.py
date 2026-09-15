@@ -36,17 +36,12 @@ def obs(**overrides):
 
 class PolicyPreludeTests(unittest.TestCase):
     def test_unknown_disables_every_action_with_the_unknown_reason(self):
-        # Print-start is the deliberate exception: not-ready states
-        # stay allowed (the confirmation warns, the watchdog
-        # explains) — the shipped decision, an explicit row.
-        for action in (can_jog, can_restart, can_macro, can_z_offset):
+        for action in (can_jog, can_restart, can_start_print, can_macro, can_z_offset):
             self.assertEqual(action(obs(connection="unknown")), Verdict("disabled", R_UNKNOWN))
         self.assertEqual(can_power(obs(connection="unknown"), True), Verdict("disabled", R_UNKNOWN))
 
     def test_disconnected_disables_every_action(self):
-        # Print-start is the deliberate exception (the warning covers
-        # it — see the start-print test).
-        for action in (can_jog, can_restart):
+        for action in (can_jog, can_restart, can_start_print):
             self.assertEqual(action(obs(connection="no")), Verdict("disabled", R_DISCONNECTED))
 
     def test_the_estop_assumption_releases_the_guards_not_blocks_them(self):
@@ -78,6 +73,22 @@ class PolicyRulingTests(unittest.TestCase):
         # Unobserved states disable (jog_gate's "" default).
         self.assertEqual(can_jog(obs(state="")), Verdict("disabled", R_UNKNOWN))
         self.assertEqual(can_jog(obs(state="idle")), Verdict("disabled", R_UNKNOWN))
+
+    def test_can_jog_cross_pins_the_dispatch_gate(self):
+        # The two homes of the jog mapping (the phase-6 architecture
+        # re-review's M-2): the click-time row and the dispatch-time
+        # jog_gate must agree over the union of states — one edit to
+        # either must fail this.
+        from plugins.ToolheadPolicy import jog_gate
+        for state in ("printing", "standby", "paused", "complete", "cancelled", "error", "idle", ""):
+            verdict = can_jog(obs(state=state))
+            gate = jog_gate(state)
+            if gate == "pause-first":
+                self.assertEqual(verdict.mode, "pause-first", state)
+            elif gate == "allowed":
+                self.assertEqual(verdict.mode, "allowed", state)
+            else:
+                self.assertEqual(verdict.mode, "disabled", state)
 
     def test_jog_caption_names_every_state(self):
         # The Status-row caption (the UX adjudication): the reason
@@ -111,11 +122,14 @@ class PolicyRulingTests(unittest.TestCase):
     def test_start_print_allows_not_homed_and_refuses_a_running_print(self):
         self.assertEqual(can_start_print(obs(homed_axes="")), Verdict("allowed", ""))
         self.assertEqual(can_start_print(obs(state="printing")), Verdict("disabled", R_PRINTING))
-        # Not-ready and unobserved states stay allowed — the shipped
-        # warning-and-watchdog doctrine, an explicit row.
+        # Not-ready states stay allowed — the shipped warning-and-
+        # watchdog doctrine, an explicit row.
         self.assertEqual(can_start_print(obs(state="")), Verdict("allowed", ""))
-        self.assertEqual(can_start_print(obs(connection="unknown")), Verdict("allowed", ""))
-        self.assertEqual(can_start_print(obs(connection="no")), Verdict("allowed", ""))
+        # The CONNECTION clause stays (the shipped printStartAllowed
+        # required monitorConnected — the phase-6 architecture
+        # re-review's H-1).
+        self.assertEqual(can_start_print(obs(connection="unknown")), Verdict("disabled", R_UNKNOWN))
+        self.assertEqual(can_start_print(obs(connection="no")), Verdict("disabled", R_DISCONNECTED))
 
     def test_power_is_per_device(self):
         self.assertEqual(can_power(obs(state="printing"), True), Verdict("disabled", R_PRINTING))

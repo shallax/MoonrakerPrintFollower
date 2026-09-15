@@ -424,6 +424,19 @@ class PrinterState:
                 info["current_layer"] = (int(info.get("current_layer") or 0)) + 1
                 info["total_layer"] = 40
                 stats["info"] = info
+            if self.motion_speed_mm_s:
+                # The motion ticker (4.2.0): the motion rows' scenarios
+                # need a moving head — advances the live positions and
+                # sets the velocities from the armed rates. The sim
+                # serves what is scripted: Klipper's 30 s E-trapq
+                # history fallback is NOT modelled (it lands with the
+                # travel-zeroing work if that ships).
+                motion = self.state["motion_report"]
+                step_s = self.push_cadence_ms / 1000.0
+                motion["live_position"][0] = round(motion["live_position"][0] + self.motion_speed_mm_s * step_s, 4)
+                motion["live_position"][3] = round(motion["live_position"][3] + self.motion_e_mm_s * step_s, 4)
+                motion["live_velocity"] = self.motion_speed_mm_s
+                motion["live_extruder_velocity"] = self.motion_e_mm_s
         elif stats.get("state") == "error" and self.cold_start:
             # The cold-start error: Klipper refuses below the minimum
             # temperature while Moonraker ramps the heater; once the
@@ -450,19 +463,6 @@ class PrinterState:
                     temp = float(entry.get("temperature") or 0.0)
                     entry["temperature"] = round(
                         temp + self.temp_tick_deg_c * self.push_cadence_ms / 1000.0, 2)
-        elif self.motion_speed_mm_s and stats.get("state") == "printing":
-            # The motion ticker (4.2.0): the motion rows' scenarios
-            # need a moving head — advances the live positions and
-            # sets the velocities from the armed rates. The sim
-            # serves what is scripted: Klipper's 30 s E-trapq
-            # history fallback is NOT modelled (it lands with the
-            # travel-zeroing work if that ships).
-            motion = self.state["motion_report"]
-            step_s = self.push_cadence_ms / 1000.0
-            motion["live_position"][0] = round(motion["live_position"][0] + self.motion_speed_mm_s * step_s, 4)
-            motion["live_position"][3] = round(motion["live_position"][3] + self.motion_e_mm_s * step_s, 4)
-            motion["live_velocity"] = self.motion_speed_mm_s
-            motion["live_extruder_velocity"] = self.motion_e_mm_s
         # Every state object participates in the changes-only diff, not
         # just the original five — configfile, fan, gcode_move and the
         # rest ride the same contract (the pump used to drop them and

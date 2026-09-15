@@ -59,7 +59,7 @@ private follower state to either integration.
 | `SocketFraming.py` | Pure RFC 6455 framing: handshake build/verify, frame codec, extended lengths, size caps, close codes | Qt, sockets, policy |
 | `RemoteJobService.py` | Print observation and same-filename run identity | Preview selection |
 | `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer` and the single `LayerResolver` | QML/Cura writes |
-| `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` | Index algorithms or Cura loading |
+| `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` — the identity-neutral `request_metadata_only` (4.2.0) included | Index algorithms or Cura loading |
 | `DownloadStream.py` | Bounded streaming G-code downloads to disk and the `DownloadOperation` lifecycle | Networking policy or Cura |
 | `GCodeIndexService.py` | Index lifecycle, bounded worker execution and `IndexView` | Networking or UI |
 | `GCodeIndex.py` | Parsing, motion matching, compact hydration and cache serialization algorithms | Application orchestration |
@@ -76,13 +76,13 @@ private follower state to either integration.
 | `PreviewPresentation.py` | Preview QML objects, displayed values and user-intent signals | Following or scheduling policy |
 | `BedMeshPresenter.py` | Active mesh overlay, visibility preference and Preview mesh controls | Macro execution |
 | `BedMeshSceneNode.py` | Mesh surface/boundary geometry and shader rendering | Scene composition |
-| `MonitorData.py` | Monitor request lifetime, category timers and frozen `MonitorSnapshot` | QML declarations |
+| `MonitorData.py` | Monitor request lifetime, category timers, the frozen `MonitorSnapshot` and the observation record's assembly (the tri-state connection, the two push-ins) | QML declarations |
 | `MoonrakerMonitorModel.py` | The single Qt Monitor model: property declarations and projection merge | Domain policy or networking |
 | `MoonrakerFollowerMachineAction.py` | Configuration QML properties, validation and the isolated probe transport | Live binding state |
 | `MonitorCommands.py` | Monitor action acknowledgement and emergency-stop click sequence | Sliders or discovery |
 | `MonitorTuning.py` | Debounce, pending tuning values, revision/confirmation timers | QML or printer discovery |
-| `MonitorControls.py` | Macro, preset, fan/LED/PWM, setup and power/exclusion policy | Qt model inheritance |
-| `ToolheadPolicy.py` | Pure jog/home/extrude G-code, the print-state safety gate and jog-queue coalescing | Qt, timers or networking |
+| `MonitorControls.py` | Macro, preset, fan/LED/PWM, setup and power/exclusion dispatch (the restart guards included), each through the permission policy's `_allowed` gate | Qt model inheritance |
+| `ToolheadPolicy.py` | Pure jog/home/extrude G-code, the DISPATCH-time jog gate and jog-queue coalescing (the click-time gate is `MonitorPermissions.can_jog`) | Qt, timers or networking |
 | `MonitorPermissions.py` | Pure permission policy: the frozen observation record and the action rulings table (can_jog, can_power, can_restart, can_start_print, …) with disabled reasons | Qt, networking or mutable state |
 | `StateStore.py` | The Monitor state file's explicit owner: the read-modify-write merge, the atomic replace and the rate-limited failure reporting | Qt, networking or value coercion |
 | `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
@@ -95,11 +95,10 @@ private follower state to either integration.
 | `ConsoleController.py` | Console state owner: the bounded per-printer history and the untracked send lane | Model inheritance or formatting |
 | `CuraOutputWriter.py` | Cura-affine preparation of a temporary G-code/UFP file | HTTP upload |
 | `UploadController.py` | The Preview upload's write operation: discovery, readiness, multipart stream and cancellation | Cura application or QML |
-| `FileManager.py` | The file-manager state owner: resident walk, view state, mutations and the LOCAL-file upload (its own multipart path) plus the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | MoonrakerMonitorModel |
+| `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection, mutations, the LOCAL-file upload (its own multipart path) and the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | MoonrakerMonitorModel |
 | `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
 | `FileDownload.py` | One-shot file streaming from the printer into Cura (the file manager's Download verb) | FollowerRuntime |
-| `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection, mutations, the LOCAL-file upload (its own multipart path) and the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | Model inheritance or formatting |
-| `MoonrakerOutputDevice.py` | Cura output-device signals/dialog/message adapter | Upload state machine |
+| `MoonrakerOutputDevice.py` | Cura output-device signals/dialog/message adapter (the upload-with-start print gate included) | Upload state machine |
 | `WhatsNew.py` | The what's-new content: the curated per-release entries and the once-per-version marker gate | Qt, I/O or networking |
 | `WhatsNewOverlay.py` | The overlay's window owner: the boot-wait offer, the main-window/monitor lookup and the Popup's creation on Cura's own engine | Monitor state or networking |
 
@@ -409,7 +408,16 @@ JSON state file keeps the chrome (expanded-section map, pane collapse,
 controls lock, the console height, the what's-new marker, the file
 manager's column config and the toolhead's jog/extrude selection), and
 a legacy global chart block migrates into the per-printer record once
-via the store's one deliberate replace-write.
+via the store's one deliberate replace-write. FORWARD NOTE for
+4.3.0 (the security re-review's D11): the merge is TOP-LEVEL only
+and the model's save payload rewrites nine whole top-level keys —
+the UI-state store must keep its keys at the top level or the
+monitor's saves will clobber them. The print-start lifecycle's
+three homes are also named here for the 4.3.0 owner extraction:
+`FileManager.start_print` (the POST), the model's
+`_print_armed_state`/watchdog, and the upload path's POST-body
+verdict (`UploadController`, now gated by the device's
+`_print_verdict`).
 
 The console sends on its own request path: `printer/gcode/script`
 replies only after Klipper processes the script, and that reply's

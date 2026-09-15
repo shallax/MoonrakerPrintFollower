@@ -581,9 +581,13 @@ class MonitorModelContractTests(unittest.TestCase):
     def test_system_restart_surface(self):
         for token in ("firmwareRestart", "hostRestart", "FIRMWARE_RESTART", "machine/reboot"):
             self.assertIn(token, MONITOR_MODEL + CONTROLS)
-        for token in ('text: "Firmware restart"', 'text: "Host restart"',
-                      "System restarts are disabled during a print."):
+        for token in ('text: "Firmware restart"', 'text: "Host restart"'):
             self.assertIn(token, DASHBOARD_QML)
+        # The reason copy lives in the policy (4.2.0): the row reads
+        # the published restartReason — the old QML sentence was
+        # superseded by the policy's short form.
+        self.assertIn('"A print is running"', POLICY)
+        self.assertIn("restartReason", DASHBOARD_QML)
 
     def test_emergency_stop_is_pinned_outside_scrollable_controls(self):
         # The dock lives at the bottom of the dashboard, spanning the whole
@@ -894,6 +898,13 @@ class MonitorFormattingTests(unittest.TestCase):
                                    estimated_time=None, metadata_complete=False, layer_eta=None, layer_progress=None)
         self.assertEqual(core_values(snapshot, physical, True)["monitorProgress"], 65.58)
 
+    def test_speed_factor_rename_is_mechanically_pinned(self):
+        # The 4.2.0 rename: the multiplier row reads "Speed factor"
+        # and no plain "Speed" caption survives in the Monitor card
+        # (the UX re-review's ask for a mechanical pin).
+        self.assertIn('text: "Speed factor"', MONITOR_QML)
+        self.assertNotIn('text: "Speed"', MONITOR_QML)
+
     def test_motion_rows_report_the_live_values(self):
         # The motion cluster (4.2.0): Velocity is Klipper's scalar
         # speed magnitude; Flow rate is the commanded volumetric flow
@@ -950,7 +961,30 @@ class MonitorFormattingTests(unittest.TestCase):
                                        estimated_time=None, metadata_complete=False, layer_eta=None, layer_progress=None)
             return core_values(snapshot, physical, True)
         self.assertEqual(values_with(-23.6)["monitorFlowRate"], "-56.8 mm³/s")
+        # The display threshold (the re-review): a cancellation
+        # artifact (-3.6e-15 was caught live) AND any magnitude that
+        # would round to "-0.0" at %.1f clamp to zero.
         self.assertEqual(values_with(-3.552713678800501e-15)["monitorFlowRate"], "0.0 mm³/s")
+        self.assertEqual(values_with(-0.01)["monitorFlowRate"], "0.0 mm³/s")
+
+    def test_motion_rows_read_zero_when_idle_and_connected(self):
+        # The idle state (the re-review's pin): a connected printer
+        # with motion_report present reads 0, never "—".
+        snapshot = SimpleNamespace(core={
+            "print_stats": {"state": "standby", "print_duration": 0},
+            "virtual_sdcard": {"progress": 0},
+            "gcode_move": {},
+            "motion_report": {"live_velocity": 0.0, "live_extruder_velocity": 0.0},
+        }, auxiliary={
+            "toolhead": {"extruder": "extruder", "max_accel": 5000.0},
+            "configfile": {"settings": {"extruder": {"filament_diameter": 1.75}}},
+        })
+        physical = SimpleNamespace(layer=SimpleNamespace(index=0, total=0, source="", thickness=None),
+                                   estimated_time=None, metadata_complete=False, layer_eta=None, layer_progress=None)
+        values = core_values(snapshot, physical, True)
+        self.assertEqual(values["monitorVelocity"], "0.0 mm/s")
+        self.assertEqual(values["monitorFlowRate"], "0.0 mm³/s")
+        self.assertEqual(values["monitorAccelLimit"], "5000 mm/s²")
 
     def test_flow_rate_uses_the_active_tools_diameter_only(self):
         # Per-tool: the ACTIVE tool's section supplies the diameter;
@@ -3335,7 +3369,7 @@ Item {
             "enabled: root.printer != null && root.printer.canPausePrint",
             "enabled: root.printer != null && root.printer.canResumePrint",
             "enabled: root.printer != null && root.printer.canCancelPrint",
-            "enabled: root.printer != null && root.printer.monitorConnected && !root.printer.actionBusy && root.printer.printActive && !modelData.excluded",
+            "enabled: root.printer != null && root.printer.monitorConnected && !root.printer.actionBusy && root.printer.printActive && root.printer.sectionReason === \"\" && !modelData.excluded",
             "enabled: root.printer != null && root.printer.monitorConnected && root.printer.consoleLines.length > 0",
             "enabled: base.bedMeshAvailable",
         ):

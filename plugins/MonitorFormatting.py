@@ -310,6 +310,13 @@ def filament_total_mm_from_file(path, limit=_FILAMENT_HEADER_SCAN_BYTES):
     return filament_total_mm_from_gcode(data)
 
 
+def _flow_text(flow) -> str:
+    """The %.1f form with the negative-zero guard: a magnitude that
+    rounds to zero renders without the sign (round-then-clamp)."""
+    text = f"{flow:.1f}"
+    return "0.0" if text == "-0.0" else text
+
+
 def filament_diameter(auxiliary):
     """The active extruder's filament_diameter from the configfile
     settings, or None. Klipper only creates extruder, extruder1..98
@@ -391,11 +398,15 @@ def core_values(snapshot, physical, connected):
     # MAGNITUDE (live_velocity is never signed). Flow rate is the
     # COMMANDED volumetric flow — live_extruder_velocity × the
     # filament cross-section — signed, so a retraction reads
-    # negative; tiny cancellation artifacts (a -3.6e-15 sample was
-    # caught live) clamp to zero first. Accel limit is the
-    # configured ceiling (Klipper publishes no instantaneous
-    # acceleration), from the aux poll's toolhead. "—" only when
-    # the object is absent entirely — an idle printer reads 0.
+    # negative; the ROUNDED value never renders "-0.0" (round-then-
+    # clamp, the panel's ruling — a pre-rounding clamp at 0.05
+    # would have zeroed a genuinely small commanded flow, the
+    # adversarial round's L6). Accel limit is the configured ceiling
+    # (Klipper publishes no instantaneous acceleration), from the
+    # aux poll's toolhead. "—" means a row's SOURCES have not
+    # reported — motion_report absent, or the printer.cfg diameter
+    # not resident yet for Flow rate (the discovery lane is its
+    # only supplier); an idle CONNECTED printer reads 0.
     velocity = number(motion.get("live_velocity"), None)
     ev = number(motion.get("live_extruder_velocity"), None)
     # The existing test snapshots are bare core-only namespaces — the
@@ -405,7 +416,6 @@ def core_values(snapshot, physical, connected):
     diameter = filament_diameter(aux)
     flow = None
     if ev is not None and diameter:
-        ev = 0.0 if abs(ev) < 1e-9 else ev
         flow = ev * math.pi * (diameter / 2.0) ** 2
     accel = number((aux.get("toolhead") or {}).get("max_accel"), None)
     return {
@@ -421,7 +431,7 @@ def core_values(snapshot, physical, connected):
         "monitorFlow": factor_percent(move.get("extrude_factor")),
         "monitorPosition": f"X {number(position[0]):.1f}   Y {number(position[1]):.1f}   Z {number(position[2]):.2f}" if len(position) >= 3 else "—",
         "monitorVelocity": f"{velocity:.1f} mm/s" if velocity is not None else "—",
-        "monitorFlowRate": f"{flow:.1f} mm³/s" if flow is not None else "—",
+        "monitorFlowRate": f"{_flow_text(flow)} mm³/s" if flow is not None else "—",
         "monitorFlowDiameter": f"{diameter:.2f} mm" if diameter else "—",
         "monitorAccelLimit": f"{accel:.0f} mm/s²" if accel is not None else "—",
         "monitorMessage": str(stats.get("message") or ""),

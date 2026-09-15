@@ -9,7 +9,7 @@ from .MonitorFormatting import (
     FAN_OBJECT_PREFIXES, LED_OBJECT_PREFIXES, PWM_OBJECT_PREFIXES,
     friendly, infer_macro_parameters, number, mesh_profiles,
 )
-from .MonitorPermissions import can_exclude, can_macro, can_power, can_restart, can_z_offset
+from .MonitorPermissions import R_UNKNOWN, Verdict, can_exclude, can_macro, can_power, can_restart, can_z_offset
 
 
 class MonitorControls(QObject):
@@ -103,7 +103,11 @@ class MonitorControls(QObject):
         move = snapshot.core.get("gcode_move") or {}
         origin = move.get("homing_origin") or ()
         changes = configfile.get("save_config_pending_items") or {}
-        setup = self._commands.setup_allowed
+        # The setup projections read the policy row (4.2.0, the
+        # adversarial round's M2): setup_allowed was the raw
+        # two-valued derivation; can_restart is the one the setup
+        # one-shots dispatch under.
+        setup = self._allowed(can_restart)
         objects = {name.lower() for name in snapshot.objects}
         profiles = mesh_profiles(aux.get("bed_mesh"))
         self._values = {
@@ -183,6 +187,9 @@ class MonitorControls(QObject):
 
     def apply_preset(self, index):
         if not self._commands.setup_allowed or not 0 <= index < len(self._presets): return
+        # The rule rides the queued entry too (the phase-6 security
+        # re-review, D1): the four one-shots below were the only
+        # dispatch sites without one.
         item = self._presets[index]
         preset, commands = item["preset"], []
         for name, attributes in (preset.get("values") or {}).items():
@@ -194,7 +201,7 @@ class MonitorControls(QObject):
             command = f"SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN={heater}" if parts[0] == "temperature_fan" else f"SET_HEATER_TEMPERATURE HEATER={heater}"
             commands.append(command + f" TARGET={target:g}")
         if preset.get("gcode"): commands.append(str(preset["gcode"]))
-        if commands: self._commands.script(item["name"], "\n".join(commands))
+        if commands: self._commands.script(item["name"], "\n".join(commands), rule=can_restart)
 
     def heaters_off(self):
         """Cooldown: set every heater appearing in the profiles to 0 target.
@@ -215,7 +222,7 @@ class MonitorControls(QObject):
                 command = (f"SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN={heater}"
                            if parts[0] == "temperature_fan" else f"SET_HEATER_TEMPERATURE HEATER={heater}")
                 commands.append(command + " TARGET=0")
-        if commands: self._commands.script("Cooldown", "\n".join(commands))
+        if commands: self._commands.script("Cooldown", "\n".join(commands), rule=can_restart)
 
     def factor(self, kind, percent, preview=False):
         percent = max(10 if kind == "speed" else 50, int(percent))
@@ -283,11 +290,11 @@ class MonitorControls(QObject):
 
     def mesh_profile(self, name):
         if self._commands.setup_allowed and name in self._values.get("bedMeshProfileNames", ()):
-            self._commands.script("Load mesh " + name, "BED_MESH_PROFILE LOAD=" + shlex.quote(name))
+            self._commands.script("Load mesh " + name, "BED_MESH_PROFILE LOAD=" + shlex.quote(name), rule=can_restart)
 
     def clear_mesh(self):
         if self._commands.setup_allowed and self._mesh.snapshot:
-            self._commands.script("Clear bed mesh", "BED_MESH_CLEAR")
+            self._commands.script("Clear bed mesh", "BED_MESH_CLEAR", rule=can_restart)
 
     def power_devices(self):
         # Every device the printer reports renders — the configured
@@ -317,7 +324,17 @@ class MonitorControls(QObject):
     def exclude(self, name):
         status = self._data.snapshot.auxiliary.get("exclude_object") or {}
         names = {item.get("name") for item in status.get("objects", ())}
-        if name in names and name not in status.get("excluded_objects", ()) and self._allowed(can_exclude):
-            safe = name.replace("\\", "\\\\").replace('"', '\\"').replace("\r", " ").replace("\n", " ")
-            self._commands.script("Exclude " + name, f'EXCLUDE_OBJECT NAME="{safe}"', rule=can_exclude)
+        if name not in names or name in status.get("excluded_objects", ()):
+            return
+        observation = getattr(self._data, "observation", None)
+        verdict = can_exclude(observation) if observation is not None \
+            else Verdict("disabled", R_UNKNOWN)
+        if verdict.mode != "allowed":
+            # A refusal must SAY so (the adversarial round's H2): a
+            # confirmed dialog that silently does nothing is the
+            # exact class this release exists to end.
+            self._commands.report_status(f"Exclude refused: {verdict.reason or 'no longer allowed'}")
+            return
+        safe = name.replace("\\", "\\\\").replace('"', '\\"').replace("\r", " ").replace("\n", " ")
+        self._commands.script("Exclude " + name, f'EXCLUDE_OBJECT NAME="{safe}"', rule=can_exclude)
 

@@ -17,9 +17,13 @@ comes from one policy table that says why.
   typed `configfile.settings` already resident in the snapshot;
   there is deliberately no override — a wrong reading is a wrong
   printer.cfg. The multiplier row is renamed "Speed factor" so the
-  live row can take Velocity. Rows read 0 at idle and "—" only
-  without a `motion_report` object; the mid-travel trapq history
-  staleness is labelled in the tooltip.
+  live row can take Velocity. Rows read 0 at idle; "—" means a
+  row's sources have not reported (no `motion_report` object, or
+  the diameter not resident yet for Flow rate — the discovery lane
+  is its only supplier, the websocket push never carries settings).
+  The trapq history staleness — up to 30 s of print time after the
+  last extrusion, not just travel moves — is labelled in the
+  tooltip.
 - **One permission policy.** `MonitorPermissions`: pure functions
   over a frozen observation record (assembled once in `MonitorData`,
   with the tri-state connection — unknown/yes/no — as a client-layer
