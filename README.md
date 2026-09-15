@@ -8,8 +8,42 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.0.2
+- **Release:** 4.1.0
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
+
+## What changed in 4.1.0
+
+Version 4.1.0 is the deep-harness-coverage release: the real-Cura
+gate grew teeth, and the review-driven repairs land with it.
+
+- **The parallel local matrix** — `harness_release.sh -j N` runs
+  every gate unit in its own container and working directory; the
+  local full matrix takes 532 s against the 945 s serial baseline.
+  The serial run stays the default (its shared boot proves the
+  debris the next unit must survive).
+- **The evidence spine, with teeth** — every step leaves a
+  machine-readable record (op, verdict, capture, delivery, class);
+  mis-sized captures fail the step; the coverage execution check
+  verifies every mapped surface in the run's evidence; a run whose
+  evidence never lands fails whatever its verdict said.
+- **Real input, verified delivery** — the jog pad, the home row,
+  the file-manager confirms, the console and pause/resume ride real
+  press/release events whose acceptance is checked against the
+  target's own item chain (the refused-press and overlay proofs run
+  live in the gate; the broken-start journey runs as the red
+  scenario that must fire the failure verdict).
+- **The file manager no longer re-sorts on a temperature tick** —
+  one file-view projection per revision set: on a staged 400-file
+  listing, ten unchanged publishes went from 90 pipeline
+  evaluations to zero and publish latency from 4.76 ms to 0.025 ms
+  warm.
+- **Upload refusals say why** — a nested refusal body unwraps into
+  the popup's status line, and the simulator's upload lane answers
+  the honest body (accepted and refused verdicts both proven).
+- **The testing document describes the real harness** — TESTING.md's
+  claims are reconciled and a doc-pin test stops the drift; the
+  exclusion records carry reason, evidence, date and re-check
+  trigger.
 
 ## What changed in 4.0.2
 
