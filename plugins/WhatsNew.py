@@ -26,6 +26,30 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "4.2.0",
+        "headline": "Version 4.2.0 is the printer-state release: three live motion "
+            "readouts join the Monitor card, and the controls that cannot be used "
+            "now say why.",
+        "items": (
+            "Three new readouts on the Monitor card: Velocity, the acceleration "
+            "limit Klipper has configured, and the Flow rate in mm³/s — like "
+            "Position they read a dash until Klipper reports them.",
+            "Flow rate is the commanded volumetric flow — Klipper's own live "
+            "extruder velocity times the filament cross-section from your "
+            "printer.cfg diameter. A retraction reads negative, which is "
+            "correct, and the number can lag during a travel move.",
+            "The filament diameter is read from printer.cfg for the tool in "
+            "use, so a mixed 1.75 mm / 2.85 mm machine reads correctly. "
+            "There is no override: a wrong diameter is a printer.cfg error.",
+            "Controls that are unavailable now say why, instead of only "
+            "greying out — a printer that has not reported its state yet, "
+            "or a print already running.",
+            "A printer state that is not yet known is no longer treated as "
+            "ready: the power switches and the restart buttons wait for a "
+            "real state before they can be pressed.",
+        ),
+    },
+    {
         "version": "4.1.0",
         "headline": "Version 4.1.0 is the deep-harness-coverage release: the real-Cura "
             "gate's coverage and proof machinery, the parallel local matrix, and the "

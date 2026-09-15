@@ -308,16 +308,23 @@ cycle, and mangles values through configparser.
 - File shape: `{"sections": {...}, "controlsCollapsed": bool,
   "controlsLocked": bool, "infoCollapsed": bool, "statusCollapsed": bool,
   "consoleHeight": int, "fileManagerColumns": {...}, "temperatureChart": {...},
-  "toolhead": {...}}` — new fields default via `bool(decoded.get(..., False))`
-  and the column config goes through `FileManagerPolicy.normalise_columns`
-  (the file manager owns it; the model only merges and saves).
+  "toolhead": {...}, "whatsNewSeen": ...}` — new fields default via
+  `bool(decoded.get(..., False))` and the column config goes through
+  `FileManagerPolicy.normalise_columns` (the file manager owns it; the
+  model only merges and saves).
   The first shipped format was a flat section map; `_read_state` migrates
   it, so new fields must default with `bool(decoded.get(..., False))` and
   never break legacy reads.
-- Writes are atomic (`.tmp` + `os.replace`) on every change.
-- The model is the single owner: slots mutate fields, `_save_state()`, then
-  `_publish()`. QML binds to the model properties and calls the setter slots
-  — never a local default.
+- The FILE is the `StateStore`'s (4.2.0): writes are atomic
+  (`.tmp` + `os.replace`) read-modify-write MERGES on every change —
+  foreign keys survive (4.3.0's UI-state store consumes the same
+  file). The one deliberate full-document replace is the one-time
+  chart migration (`_save_state(replace=True)`). A missing file is
+  the first run — silent; genuine failures note once per session
+  through the console.
+- The model owns the values: slots mutate fields, `_save_state()`,
+  then `_publish()`. QML binds to the model properties and calls the
+  setter slots — never a local default.
 - Every new property and slot also goes into the surface lists in
   `tests/test_composed_components.py` (the properties string and the slot
   list) and the `_SIGNAL_KEYS` grouping in the model.

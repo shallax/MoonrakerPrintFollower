@@ -8,8 +8,38 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.1.0
+- **Release:** 4.2.0
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
+
+## What changed in 4.2.0
+
+Version 4.2.0 is the printer-state release: three live motion
+readouts join the Monitor card, and the controls that cannot be used
+now say why.
+
+- **Three new Monitor readouts** — Velocity, the acceleration limit
+  Klipper has configured, and the Flow rate in mm³/s, in a block
+  after Position. Flow rate is the COMMANDED volumetric flow:
+  Klipper's live extruder velocity × the filament cross-section from
+  the printer.cfg diameter (per tool, so a mixed 1.75 mm / 2.85 mm
+  machine reads correctly; no override — a wrong diameter is a
+  printer.cfg error). A retraction reads negative, which is correct,
+  and the number can lag during a travel move.
+- **Disabled controls say why** — every permission now comes from
+  one policy table: disconnected, unknown, locked and print-running
+  states each carry a concise reason on the toolhead's status line
+  (and the restart buttons' tooltips), instead of silently greying
+  out. A printer state that has not been observed yet is no longer
+  treated as ready.
+- **Dispatch-time revalidation** — queued one-shots (the restarts
+  included) re-check their permission when they actually dispatch,
+  so a restart clicked while idle can never fire against a print
+  another client started; print-start re-checks at confirm time, not
+  dialog-open time.
+- **The panel state's file gets an owner** — one state store with a
+  merge-write that preserves the file's other keys for the next
+  release, and persistence failures now report once per session
+  instead of vanishing.
 
 ## What changed in 4.1.0
 
@@ -342,6 +372,8 @@ Monitor displays:
 - estimated remaining time and estimated finish time
 - speed and extrusion multipliers
 - live X/Y/Z position when `motion_report` is available
+- live toolhead speed, the configured acceleration limit, and the
+  commanded volumetric flow rate (mm³/s, negative on retraction)
 - Pause, Resume and Cancel controls while a print is active
 
 The Monitor layer resolver uses the same interpretation as the Preview follower. It prefers explicit `CURRENT_LAYER` values mapped from the active G-code, then uses the indexed G-code layer ranges with `virtual_sdcard.file_position`, and finally uses the configured Z-height fallback when necessary. This avoids requiring every Klipper setup to populate `print_stats.info.current_layer`.
