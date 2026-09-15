@@ -1751,6 +1751,9 @@ class MonitorQtTests(unittest.TestCase):
             self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
         with open(section_path, "r", encoding="utf-8") as handle:
             self.assertEqual(json.load(handle), {
+                # A fresh model stores no what's-new marker — the
+                # overlay shows until a dismissal records one.
+                "whatsNewSeen": "",
                 "sections": {"toolhead": False},
                 "controlsCollapsed": True,
                 "controlsLocked": True,
@@ -3138,6 +3141,12 @@ Item {
             "visible: !consolePanel.tooNarrow",
             # The file manager's popup: reflow is fine there, nothing critical on it (the author's ruling, ROADMAP 3.6.0) — each state-gated entry lands here by name.
             "visible: open",
+            # The what's-new overlay: the pre-collapsed sections ARE
+            # the feature (the latest entry open, previous versions
+            # gated behind their headers) — each gate lands here by
+            # name.
+            "visible: !modelData.isLatest",
+            "visible: modelData.isLatest || entry.open",
             "visible: root.thumbStateLarge(root.confirmRelpath()) === \"ready\" && confirmThumb.status !== Image.Error",
             "visible: root.thumbStateLarge(root.confirmRelpath()) === \"loading\"",
             "visible: root.thumbStateLarge(root.confirmRelpath()) === \"failed\" || root.thumbStateLarge(root.confirmRelpath()) === \"none\"",

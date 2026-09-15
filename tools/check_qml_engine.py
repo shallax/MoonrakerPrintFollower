@@ -13,7 +13,7 @@ import sys
 
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlComponent, QQmlEngine
-from PyQt6.QtCore import QObject, QUrl, pyqtProperty, pyqtSignal, qInstallMessageHandler
+from PyQt6.QtCore import QObject, QUrl, QVariant, pyqtProperty, pyqtSignal, qInstallMessageHandler
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -59,6 +59,20 @@ class UploadManager(SettingsManager):
         return False
 
 
+# The what's-new overlay takes its model through initial properties
+# (the production creation path) — a bare create() leaves the
+# required property unset and every binding reads undefined.
+class WhatsNewModelStub(QObject):
+    @pyqtProperty(QVariant, constant=True)
+    def whatsNewContent(self):
+        return [
+            {"version": "4.1.0", "items": ["first item", "second item"], "isLatest": True},
+            {"version": "4.0.2", "items": ["an older item"], "isLatest": False},
+        ]
+
+
+whats_new_model = WhatsNewModelStub()
+
 # KEEP PYTHON REFERENCES for every QObject handed to the engine as a
 # context property: PyQt6 releases wrappers that go out of scope and
 # QML then reads the property as null (capture_settings learned this
@@ -96,7 +110,10 @@ for name in sorted(item for item in os.listdir(os.path.join(ROOT, "plugins")) if
     component.loadUrl(QUrl.fromLocalFile(os.path.join(ROOT, "plugins", name)))
     if component.isError():
         failures.extend(f"{name}: {error.toString()}" for error in component.errors())
-    created = component.create()
+    if name == "WhatsNewOverlay.qml":
+        created = component.createWithInitialProperties({"model": whats_new_model})
+    else:
+        created = component.create()
     if created is not None:
         created.deleteLater()
     app.processEvents()

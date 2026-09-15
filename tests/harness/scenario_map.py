@@ -94,6 +94,10 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.setTemperatureSensorColor": "c3",
     "MoonrakerMonitorModel.setTemperatureSensorVisible": "c3",
     "MoonrakerMonitorModel.updateMoonrakerStatus": "b10",
+    # The what's-new overlay's lifecycle verbs (the z16 probe).
+    "MoonrakerMonitorModel.checkWhatsNew": "z16",
+    "MoonrakerMonitorModel.showWhatsNew": "z16",
+    "MoonrakerMonitorModel.dismissWhatsNew": "z16",
     "MoonrakerMonitorModel.zToZero": "g2",
     "MoonrakerOutputDevice.acceptUpload": "f2",
     "MoonrakerOutputDevice.cancelUpload": "f2",
@@ -118,6 +122,11 @@ SCENARIO_MAP = {
     "moonrakerPreviewCardOverlayHost": "z9",
     "infoPanel": "v4", "statusPanel": "v4",
     "loadIndicatorContent": "h2",
+    # The what's-new overlay's controls: the Close button, the repo
+    # link, and the per-version section headers (the extractor reads
+    # the dynamic objectName's static prefix).
+    "whatsNewCloseButton": "z16", "whatsNewRepoLink": "z16",
+    "whatsNewSection_": "z16",
     # The dialog verbs (the round-2 H3 naming pass): the CONFIRM
     # verbs are really pressed by their scenarios; the cancel verbs
     # and the chrome ride the deferred popup round (excluded below).

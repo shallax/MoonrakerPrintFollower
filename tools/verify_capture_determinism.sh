@@ -26,7 +26,8 @@ for run in run1 run2; do
     tools/docker_dev.sh sh -c "python3 tools/capture_monitor.py '$tmp/$run' \
         && python3 tools/capture_preview.py '$tmp/$run' \
         && python3 tools/capture_settings.py '$tmp/$run' \
-        && python3 tools/capture_upload.py '$tmp/$run'"
+        && python3 tools/capture_upload.py '$tmp/$run' \
+        && python3 tools/capture_whatsnew.py '$tmp/$run'"
 done
 stale=0
 count=0

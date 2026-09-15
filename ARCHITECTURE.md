@@ -99,6 +99,8 @@ private follower state to either integration.
 | `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
 | `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection, recents and the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | Model inheritance or formatting |
 | `MoonrakerOutputDevice.py` | Cura output-device signals/dialog/message adapter | Upload state machine |
+| `WhatsNew.py` | The what's-new content: the curated per-release entries and the once-per-version marker gate | Qt, I/O or networking |
+| `WhatsNewOverlay.py` | The overlay's window owner: the boot-wait offer, the main-window/monitor lookup and the Popup's creation on Cura's own engine | Monitor state or networking |
 
 ## 3. Binding and migration
 

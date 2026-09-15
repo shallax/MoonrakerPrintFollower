@@ -60,30 +60,35 @@ class ClassificationRatchetTests(unittest.TestCase):
     def test_real_input_can_only_grow(self):
         # The F08 acceptance, pinned statically: real-input steps may
         # only increase as the conversion proceeds. Today's census
-        # (2026-09-15, the re-review's re-count — the pin includes
+        # (2026-09-15, the what's-new overlay's z16 — the pin includes
         # key_press, which the classifier counts as real input):
-        # 47 click_stage + 22 deliver_click + 12 click_text +
-        # 5 key_press.
+        # 48 click_stage + 27 deliver_click + 12 click_text +
+        # 6 key_press.
         text = (ROOT / "tests/harness/scenarios.py").read_text()
         real = len(re.findall(
             r'"op": "(deliver_click|click_stage|click_text|key_press)"', text))
-        self.assertGreaterEqual(real, 86)
+        self.assertGreaterEqual(real, 93)
 
     def test_direct_invocation_can_only_shrink(self):
         # And the other half: direct-invocation steps may only
-        # shrink. Today's census (2026-09-15, the re-review's
-        # re-count — the pin now counts exec_code and confirm_box,
-        # which the classifier itself calls direct invocation, so
-        # they can never hide outside the ratchet):
-        # 39 exec_slot + 12 exec_file_slot + 6 emit_click +
+        # shrink. Today's census (2026-09-15): the what's-new
+        # overlay's z16 raised the ceiling once, deliberately — its
+        # popup has no real-input trigger (the offer runs at boot;
+        # the re-shows exist so each real dismissal can be tested),
+        # so its six exec_slot re-shows and one marker-clear are the
+        # floor for the feature's coverage (DECISIONS 4.1.0). The pin
+        # now counts exec_code and confirm_box, which the classifier
+        # itself calls direct invocation, so they can never hide
+        # outside the ratchet:
+        # 45 exec_slot + 12 exec_file_slot + 6 emit_click +
         # 3 confirm_box + 6 exec_mode + 3 exec_validator +
         # 1 exec_console + 1 exec_extrude + 1 exec_test_connection
-        # + 22 exec_code.
+        # + 23 exec_code.
         text = (ROOT / "tests/harness/scenarios.py").read_text()
         direct = len(re.findall(
             r'"op": "(exec_slot|exec_file_slot|emit_click|confirm_box|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))
-        self.assertLessEqual(direct, 95)
+        self.assertLessEqual(direct, 101)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —

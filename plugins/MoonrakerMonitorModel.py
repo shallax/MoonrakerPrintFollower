@@ -62,6 +62,7 @@ import time
 from .MonitorTuning import MonitorTuning
 from .ToolheadController import ToolheadController
 from .ToolheadPolicy import EXTRUDE_DISTANCE_DEFAULT, EXTRUDE_SPEED_DEFAULT, JOG_DISTANCE_DEFAULT
+from .WhatsNew import entries as whats_new_entries, latest_version as whats_new_latest, should_show as whats_new_should_show
 
 
 # The monitor's panel state lives in a plugin-owned JSON file next to
@@ -121,6 +122,7 @@ def _read_state() -> dict:
                 sections = decoded  # legacy flat section map
             return {
                 "sections": {str(key): _state_bool(value) for key, value in sections.items()},
+                "whatsNewSeen": str(decoded.get("whatsNewSeen") or ""),
                 "controlsCollapsed": _state_bool(decoded.get("controlsCollapsed", False)),
                 "controlsLocked": _state_bool(decoded.get("controlsLocked", False)),
                 "infoCollapsed": _state_bool(decoded.get("infoCollapsed", False)),
@@ -132,7 +134,7 @@ def _read_state() -> dict:
             }
     except Exception:
         pass
-    return {"sections": {}, "controlsCollapsed": False, "controlsLocked": False,
+    return {"sections": {}, "whatsNewSeen": "", "controlsCollapsed": False, "controlsLocked": False,
             "infoCollapsed": False, "statusCollapsed": False, "consoleHeight": 0,
             "fileManagerColumns": normalise_columns({}),
             "temperatureChart": _chart_state({}),
@@ -221,6 +223,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     cameraRecoveringChanged = pyqtSignal()
     connectionDetailChanged = pyqtSignal()
     fileManagerChanged = pyqtSignal()
+    # Fired when the once-per-version overlay should show (the
+    # startup check or an explicit reopen); the plugin's window
+    # owner listens and creates/shows the QML overlay.
+    whatsNewRequested = pyqtSignal()
     fileManagerThumbsChanged = pyqtSignal()
 
     _SIGNAL_KEYS = (
@@ -310,6 +316,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._skip_clear_once = False
         self._values = {}
         state = _read_state()
+        self._whats_new_seen = state["whatsNewSeen"]
         self._controls_locked = state["controlsLocked"]
         self._controls_collapsed = state["controlsCollapsed"]
         self._info_collapsed = state["infoCollapsed"]
@@ -1555,6 +1562,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def _save_state(self):
         _write_state({
             "sections": dict(self._sections),
+            "whatsNewSeen": self._whats_new_seen,
             "controlsCollapsed": self._controls_collapsed,
             "controlsLocked": self._controls_locked,
             "infoCollapsed": self._info_collapsed,
@@ -1588,6 +1596,34 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def sendConsoleCommand(self, text): return self._console.send(text)
     @pyqtSlot()
     def clearConsoleHistory(self): self._console.clear()
+    @pyqtProperty(QVariant, constant=True)
+    def whatsNewContent(self):
+        # The overlay's static content: every version with the latest
+        # flagged (rendered open at the top; the rest pre-collapsed).
+        return whats_new_entries()
+
+    @pyqtSlot()
+    def checkWhatsNew(self):
+        # The startup gate: a fresh install (or a version bump) shows
+        # the overlay once. The harness seeds the marker, so the
+        # suite's runs never see it unless a scenario asks.
+        if whats_new_should_show(self._whats_new_seen):
+            self.whatsNewRequested.emit()
+
+    @pyqtSlot()
+    def showWhatsNew(self):
+        # The explicit reopen: never touches the once-per-version
+        # marker.
+        self.whatsNewRequested.emit()
+
+    @pyqtSlot()
+    def dismissWhatsNew(self):
+        # Any dismiss path (Close, Esc, outside-click) lands here:
+        # the marker records the version, and the overlay stays gone
+        # until the next release.
+        self._whats_new_seen = whats_new_latest()
+        self._save_state()
+
     @pyqtSlot()
     def improveEta(self):
         # Download and index for the Monitor only — no preview render
