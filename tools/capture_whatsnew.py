@@ -26,8 +26,9 @@ from PyQt6.QtQuick import QQuickWindow  # noqa: F401  (type-registers the QML Wi
 THEME_ASSETS = os.path.join(ROOT, "tests", "theme_assets")
 QML_STUBS = os.path.join(ROOT, "tests", "qml_stubs")
 
-# The window the popup renders in; the card (520 wide) sits centered.
-TARGET_WIDTH, TARGET_HEIGHT = 900, 560
+# The window the popup renders in; the card (520 wide, capped at 560
+# tall) sits centered.
+TARGET_WIDTH, TARGET_HEIGHT = 900, 700
 
 
 class WhatsNewModelStub(QObject):

@@ -3147,6 +3147,11 @@ Item {
             # name.
             "visible: !modelData.isLatest",
             "visible: modelData.isLatest || entry.open",
+            # The overlay's scroll chevrons (the file manager's
+            # idiom): they appear only while more content hides off
+            # the scrolled edge.
+            "visible: flick.height > 0 && flick.contentY > 2",
+            "visible: flick.height > 0 && flick.contentY < flick.contentHeight - flick.height - 2",
             "visible: root.thumbStateLarge(root.confirmRelpath()) === \"ready\" && confirmThumb.status !== Image.Error",
             "visible: root.thumbStateLarge(root.confirmRelpath()) === \"loading\"",
             "visible: root.thumbStateLarge(root.confirmRelpath()) === \"failed\" || root.thumbStateLarge(root.confirmRelpath()) === \"none\"",

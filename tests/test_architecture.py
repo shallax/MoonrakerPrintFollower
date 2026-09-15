@@ -288,9 +288,11 @@ class SourceContractTests(unittest.TestCase):
             self.assertNotIn("self._follower._", source, path.name)
 
     def test_runtime_sources_do_not_contain_release_nicknames(self):
+        # Short-form release nicknames stay banned; a full version
+        # (v3.0.0) is not a nickname and is always written X.Y.Z.
         for path in PLUGINS.iterdir():
             if path.suffix in {".py", ".qml"}:
-                self.assertIsNone(re.search(r"\bv3\b", path.read_text(), re.I), path.name)
+                self.assertIsNone(re.search(r"\bv3\b(?!\.\d)", path.read_text(), re.I), path.name)
 
     def test_qt_imports_name_the_module_that_owns_the_class(self):
         # QHostAddress broke the plugin on Cura 5.13's bundled PyQt6:

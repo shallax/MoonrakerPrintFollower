@@ -19,6 +19,38 @@ PLUGINS = ROOT / "plugins"
 
 
 class WhatsNewContentTests(unittest.TestCase):
+    def test_shipped_release_notes_are_frozen(self):
+        # Once a release's notes are written, they are FROZEN — a
+        # later release adds its own entry, never edits the older
+        # ones (the author's ruling). The pin covers every entry
+        # except the head (the release in development); shipping a
+        # new release moves the old head into the frozen set and
+        # recomputes this pin in the same pass (the version bump
+        # checklist).
+        import hashlib
+
+        historical = [
+            {"version": entry["version"], "headline": entry["headline"],
+             "items": list(entry["items"])}
+            for entry in WHATS_NEW[1:]
+        ]
+        payload = json.dumps(historical, sort_keys=True).encode("utf-8")
+        digest = hashlib.sha256(payload).hexdigest()
+        self.assertEqual(
+            digest,
+            "717c0e08e449eb3b7faa71fcfc0290c254aebfe9a227db09c319ac37d0f87e00",
+            "the historical what's-new content changed — shipped release "
+            "notes are frozen; only a new head entry may be added, and "
+            "this pin recomputed for the release")
+
+    def test_the_content_reads_like_release_notes(self):
+        # The author's ruling: the popup's content is hand-curated and
+        # user-facing — the maintainer-level detail stays in
+        # CHANGELOG.md. No markdown survives into the rendered text.
+        for entry in WHATS_NEW:
+            for item in (entry["headline"], *entry["items"]):
+                self.assertNotIn("`", item, entry["version"])
+                self.assertNotIn("**", item, entry["version"])
     def test_the_latest_entry_is_the_shipped_package_version(self):
         # The release checklist adds a WHATS_NEW head alongside the
         # version bump — this pin fails a release that does one
@@ -47,10 +79,12 @@ class WhatsNewContentTests(unittest.TestCase):
                          [entry["version"] for entry in WHATS_NEW])
         for entry, curated in zip(content, WHATS_NEW, strict=True):
             self.assertEqual(entry["items"], list(curated["items"]))
+            self.assertEqual(entry["headline"], curated["headline"])
 
     def test_every_release_has_curated_items(self):
         for entry in WHATS_NEW:
             self.assertTrue(entry["version"])
+            self.assertTrue(entry["headline"])
             self.assertTrue(entry["items"])
             self.assertTrue(all(entry["items"]))
         self.assertEqual(len({entry["version"] for entry in WHATS_NEW}),

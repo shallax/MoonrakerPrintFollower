@@ -51,7 +51,8 @@ class PrintCoordinator(QObject):
         # The active print's filament total parsed from the DOWNLOADED
         # file's own header (client-side): Moonraker's metadata
         # undercounts multi-extruder prints (its Cura parser read only
-        # the first ';Filament used:' value until v0.10), so the header
+        # the first ';Filament used:' value until the v0.10 series), so
+        # the header
         # parse wins whenever the file is local and the metadata total
         # stays the fallback for files never downloaded. The bounded
         # scan is latched per downloaded file path.

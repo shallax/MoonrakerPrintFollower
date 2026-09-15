@@ -4,7 +4,7 @@ R5-12: the plugin computes the print's filament TOTAL itself from the
 downloaded gcode's FIRST ';Filament used:' line — summing its comma-
 separated metre values and scaling to mm — instead of trusting
 Moonraker's metadata, which undercounts multi-extruder prints until
-v0.10 (its Cura parser read only the first value). The coordinator
+the v0.10 series (its Cura parser read only the first value). The coordinator
 prefers that client-side total and keeps the Moonraker metadata total
 as the fallback; here the parse itself and the "—" guard (used over
 total must never clamp to a confident "0.00 m") are pinned.

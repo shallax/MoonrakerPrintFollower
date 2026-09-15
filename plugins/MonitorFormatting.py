@@ -259,8 +259,9 @@ def filament_total_mm_from_gcode(data):
 
     CuraEngine writes one comma-separated metre value per extruder on
     that line; the values are summed (Moonraker's own metadata parse
-    read only the FIRST value until v0.10, undercounting multi-extruder
-    prints by the other materials' lengths). None when the file carries
+    read only the FIRST value until the v0.10 series, undercounting
+    multi-extruder prints by the other materials' lengths). None when
+    the file carries
     no such line — callers then keep Moonraker's metadata total, which
     is exactly today's behaviour. The unit is mm end-to-end: each value
     is in metres, so the sum is scaled by 1000.
@@ -349,8 +350,9 @@ def core_values(snapshot, physical, connected):
     # parse of the downloaded file's header (filament_total_mm_from_*)
     # in the coordinator snapshot (physical.filament_total): Moonraker's
     # metadata read only the first ';Filament used:' value of multi-
-    # extruder prints until v0.10, so the client-side sum is preferred
-    # and the metadata total stays the fallback for files never
+    # extruder prints until the v0.10 series, so the client-side sum is
+    # preferred and the metadata total stays the fallback for files
+    # never
     # downloaded. The monitor snapshot is the second home for legacy
     # callers.
     used_mm = number(stats.get("filament_used"), None)
