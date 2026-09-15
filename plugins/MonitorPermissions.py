@@ -160,14 +160,14 @@ def can_power(obs: Observation, locked_while_printing) -> Verdict:
 
 
 def can_start_print(obs: Observation) -> Verdict:
-    """Print-start click-time: not-homed and not-ready states stay
-    allowed (the shipped decision, now an explicit row); a running
-    print refuses; unknown fails closed. The dispatch-time gate is
-    the print-start owner's (round-2 S3/N2)."""
-    blocked = _prelude(obs)
-    if blocked: return Verdict("disabled", blocked)
+    """Print-start click/dispatch time: not-homed AND not-ready
+    states stay allowed — the shipped decision, now an explicit row
+    (the confirmation warns and the watchdog explains a start that
+    never happens). Only an OBSERVED running print refuses. The
+    fail-closed prelude deliberately does not apply here: the
+    dialog's own warning is the shipped safety net for the unknown
+    case, and the transport refuses a truly dead printer."""
     if _print_active(obs.state): return Verdict("disabled", R_PRINTING)
-    if not obs.state: return Verdict("disabled", R_UNKNOWN)
     return Verdict("allowed", "")
 
 

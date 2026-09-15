@@ -275,6 +275,12 @@ Item {
                     focusPolicy: Qt.StrongFocus
                     text: "Start print"
                     Layout.fillWidth: true
+                    // The gate re-evaluates while the dialog stays
+                    // open (4.2.0, N2): the click-time check ran at
+                    // dialog-open; the dispatch re-checks again in
+                    // Python — this binding keeps the button honest
+                    // for the states the dialog can witness.
+                    enabled: root.printerModel != null && root.printStartAllowed()
                     onClicked: {
                         printConfirmDialog.close();
                         if (root.printerModel != null) {

@@ -190,20 +190,22 @@ class MonitorCommands(QObject):
             finished(None, "Moonraker is unavailable")
         return started
 
-    def script(self, label, script):
-        return self.request(label, "printer/gcode/script", {"script": str(script)})
+    def script(self, label, script, rule=None):
+        return self.request(label, "printer/gcode/script", {"script": str(script)}, rule=rule)
 
-    def request(self, label, path, body=None):
+    def request(self, label, path, body=None, rule=None):
         """A one-shot command: sent now, or queued behind the in-flight one.
 
         One-shot commands (Home, QGL, mesh, Save, Cooldown, macros, system
         restarts) queue instead of being dropped, so they can be lined up
-        in quick succession. Stateful commands never queue.
+        in quick succession. Stateful commands never queue. The entry
+        carries its permission RULE for the dispatch revalidation
+        (4.2.0, N1).
         """
         if self._busy:
             if len(self._queue) >= self.MAX_QUEUED_COMMANDS:
                 return False
-            self._queue.append((label, path, body))
+            self._queue.append((label, path, body, rule))
             self._live = f"{label} queued"
             self.changed.emit()
             return True
@@ -212,7 +214,24 @@ class MonitorCommands(QObject):
     def _pump_queue(self):
         if not self._queue or self._busy or not self._data.active:
             return
-        label, path, body = self._queue.pop(0)
+        label, path, body, rule = self._queue.pop(0)
+        # The dispatch revalidation (4.2.0, N1): the click-time
+        # predicate was checked when the entry queued; re-run it
+        # against the CURRENT observation — a valid click can become
+        # invalid before execution (a print started by another
+        # client). Denied entries drop with the policy's reason.
+        observation = getattr(self._data, "observation", None)
+        if rule is not None and observation is not None:
+            verdict = rule(observation)
+            if verdict.mode != "allowed":
+                # A denial is a fresh terminal outcome: it must not
+                # hide under the completing command's receipt (the
+                # precedence would mask it until the receipt expires,
+                # round-2 S7).
+                self._clear_receipt()
+                self.report_status(f"{label} cancelled: {verdict.reason or 'no longer allowed'}")
+                self._pump_queue()
+                return
         self.send(label, path, body, queued=True)
 
     def quick(self, channel, script, callback):

@@ -33,7 +33,7 @@ from .MonitorCamera import MonitorCamera
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
-from .MonitorPermissions import REASON_DETAIL, R_UNKNOWN, Verdict, can_jog, can_restart
+from .MonitorPermissions import REASON_DETAIL, R_UNKNOWN, Verdict, can_jog, can_restart, can_start_print
 from datetime import datetime
 
 from .FileManager import FileManager
@@ -1002,6 +1002,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         confirm = self._file_print_confirm
         self._file_print_confirm = None
         if confirm:
+            # The dispatch gate (4.2.0, S3/N2): the dialog's click was
+            # checked when it OPENED; the dispatch re-checks the
+            # CURRENT observation — a print started by another client
+            # in the window must refuse here, not at Moonraker.
+            observation = getattr(self._data, "observation", None)
+            verdict = can_start_print(observation) if observation is not None \
+                else Verdict("disabled", R_UNKNOWN)
+            if verdict.mode != "allowed":
+                self._commands.report_status(f"Print start refused: {verdict.reason}")
+                self._publish()
+                return
             self._file_manager.start_print(confirm["relpath"])
             # The state the snapshot held at confirm time: the
             # matched branch below holds while it stays unchanged, so

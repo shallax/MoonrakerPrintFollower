@@ -36,12 +36,17 @@ def obs(**overrides):
 
 class PolicyPreludeTests(unittest.TestCase):
     def test_unknown_disables_every_action_with_the_unknown_reason(self):
-        for action in (can_jog, can_restart, can_start_print, can_macro, can_z_offset):
+        # Print-start is the deliberate exception: not-ready states
+        # stay allowed (the confirmation warns, the watchdog
+        # explains) — the shipped decision, an explicit row.
+        for action in (can_jog, can_restart, can_macro, can_z_offset):
             self.assertEqual(action(obs(connection="unknown")), Verdict("disabled", R_UNKNOWN))
         self.assertEqual(can_power(obs(connection="unknown"), True), Verdict("disabled", R_UNKNOWN))
 
     def test_disconnected_disables_every_action(self):
-        for action in (can_jog, can_restart, can_start_print):
+        # Print-start is the deliberate exception (the warning covers
+        # it — see the start-print test).
+        for action in (can_jog, can_restart):
             self.assertEqual(action(obs(connection="no")), Verdict("disabled", R_DISCONNECTED))
 
     def test_the_estop_assumption_releases_the_guards_not_blocks_them(self):
@@ -106,7 +111,11 @@ class PolicyRulingTests(unittest.TestCase):
     def test_start_print_allows_not_homed_and_refuses_a_running_print(self):
         self.assertEqual(can_start_print(obs(homed_axes="")), Verdict("allowed", ""))
         self.assertEqual(can_start_print(obs(state="printing")), Verdict("disabled", R_PRINTING))
-        self.assertEqual(can_start_print(obs(state="")), Verdict("disabled", R_UNKNOWN))
+        # Not-ready and unobserved states stay allowed — the shipped
+        # warning-and-watchdog doctrine, an explicit row.
+        self.assertEqual(can_start_print(obs(state="")), Verdict("allowed", ""))
+        self.assertEqual(can_start_print(obs(connection="unknown")), Verdict("allowed", ""))
+        self.assertEqual(can_start_print(obs(connection="no")), Verdict("allowed", ""))
 
     def test_power_is_per_device(self):
         self.assertEqual(can_power(obs(state="printing"), True), Verdict("disabled", R_PRINTING))

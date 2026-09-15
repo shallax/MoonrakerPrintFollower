@@ -153,14 +153,14 @@ class MonitorControls(QObject):
     def run_macro(self, name, arguments=""):
         if name in self._macros and self._allowed(can_macro):
             arguments = str(arguments).replace("\r", " ").replace("\n", " ").strip()
-            self._commands.script("Macro " + name, name + (" " + arguments if arguments else ""))
+            self._commands.script("Macro " + name, name + (" " + arguments if arguments else ""), rule=can_macro)
 
     def setup(self, name):
         scripts = {"home": ("Home", "G28", True), "qgl": ("QGL", "QUAD_GANTRY_LEVEL", self._values.get("hasQuadGantryLevel")),
             "mesh": ("Bed mesh", "BED_MESH_CALIBRATE", self._values.get("hasBedMesh")),
             "save": ("Save configuration", "SAVE_CONFIG", self._values.get("saveConfigPending"))}
         label, script, allowed = scripts[name]
-        if self._commands.setup_allowed and allowed: self._commands.script(label, script)
+        if self._commands.setup_allowed and allowed: self._commands.script(label, script, rule=can_restart)
 
     def firmware_restart(self):
         # The host's own endpoint (the ruled route): the FIRMWARE_RESTART
@@ -168,18 +168,18 @@ class MonitorControls(QObject):
         # success always read as failure. The policy gate (4.2.0): the
         # shipped guard read unknown as idle; the table fails closed.
         if not self._allowed(can_restart): return
-        self._commands.request("Firmware restart", "printer/firmware_restart", {})
+        self._commands.request("Firmware restart", "printer/firmware_restart", {}, rule=can_restart)
 
     def klipper_restart(self):
         # A full Klipper restart (Moonraker's RESTART endpoint): reloads
         # the config, drops the MCU connection and clears Klipper state
         # — heavier than FIRMWARE_RESTART, lighter than a host reboot.
         if not self._allowed(can_restart): return
-        self._commands.request("Klipper restart", "printer/restart", {})
+        self._commands.request("Klipper restart", "printer/restart", {}, rule=can_restart)
 
     def host_restart(self):
         if not self._allowed(can_restart): return
-        self._commands.request("Host restart", "machine/reboot", {})
+        self._commands.request("Host restart", "machine/reboot", {}, rule=can_restart)
 
     def apply_preset(self, index):
         if not self._commands.setup_allowed or not 0 <= index < len(self._presets): return
@@ -233,7 +233,7 @@ class MonitorControls(QObject):
         homed = str((self._data.snapshot.auxiliary.get("toolhead") or {}).get("homed_axes") or "")
         script = "SET_GCODE_OFFSET " + (f"Z_ADJUST={amount:+g}" if amount is not None else "Z=0")
         if set(homed.lower()) >= {"x", "y", "z"}: script += " MOVE=1"
-        self._commands.script("Z offset", script)
+        self._commands.script("Z offset", script, rule=can_z_offset)
 
     def output(self, kind, name, percent, preview=False):
         list_name = {"fan": "fanControlItems", "pwm-output": "pwmOutputItems", "led-brightness": "ledItems"}[kind]
@@ -319,5 +319,5 @@ class MonitorControls(QObject):
         names = {item.get("name") for item in status.get("objects", ())}
         if name in names and name not in status.get("excluded_objects", ()) and self._allowed(can_exclude):
             safe = name.replace("\\", "\\\\").replace('"', '\\"').replace("\r", " ").replace("\n", " ")
-            self._commands.script("Exclude " + name, f'EXCLUDE_OBJECT NAME="{safe}"')
+            self._commands.script("Exclude " + name, f'EXCLUDE_OBJECT NAME="{safe}"', rule=can_exclude)
 
