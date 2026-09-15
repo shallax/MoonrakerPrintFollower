@@ -54,6 +54,7 @@ SYSTEM_SECTION_QML = (PLUGINS / "SystemSection.qml").read_text()
 SAVE_SECTION_QML = (PLUGINS / "SaveSection.qml").read_text()
 FILE_MANAGER_SECTION_QML = (PLUGINS / "FileManagerSection.qml").read_text()
 MESH_SECTION_QML = (PLUGINS / "MeshSection.qml").read_text()
+TEMP_HISTORY_SECTION_QML = (PLUGINS / "TempHistorySection.qml").read_text()
 MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
@@ -191,7 +192,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -260,7 +261,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # Plugin-drawn glyphs feed the header through a url, and the
         # frontend launcher lives in the Printer status title row.
         self.assertIn('sectionIcon: "Fan"', MONITOR_QML)
-        self.assertIn('sectionIconUrl: Qt.resolvedUrl("Thermometer.svg")', MONITOR_QML)
+        self.assertIn('sectionIconUrl: Qt.resolvedUrl("Thermometer.svg")', TEMP_HISTORY_SECTION_QML)
         self.assertIn('Qt.resolvedUrl("Download.svg")', MONITOR_QML)
         self.assertIn('sectionIconUrl: Qt.resolvedUrl("Power.svg")', POWER_SECTION_QML)
         self.assertIn('text: "Open the Moonraker frontend."', MONITOR_QML)
@@ -288,7 +289,8 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(SAVE_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(FILE_MANAGER_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MESH_SECTION_QML.count("CollapsibleSectionHeader"), 1)
-        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 8)
+        self.assertEqual(TEMP_HISTORY_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 7)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
                          + SETUP_SECTION_QML.count("CollapsibleSectionHeader")
@@ -304,6 +306,7 @@ class MonitorModelContractTests(unittest.TestCase):
                          + SAVE_SECTION_QML.count("CollapsibleSectionHeader")
                          + FILE_MANAGER_SECTION_QML.count("CollapsibleSectionHeader")
                          + MESH_SECTION_QML.count("CollapsibleSectionHeader")
+                         + TEMP_HISTORY_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 0)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
@@ -320,7 +323,8 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(SAVE_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(FILE_MANAGER_SECTION_QML.count('sectionIcon: "'), 0)  # The plugin glyph url
         self.assertEqual(MESH_SECTION_QML.count('sectionIcon: "'), 1)
-        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 7)  # Temperature history uses the plugin glyph
+        self.assertEqual(TEMP_HISTORY_SECTION_QML.count('sectionIcon: "'), 0)  # The plugin glyph url
+        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 7)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
                          + SETUP_SECTION_QML.count('sectionIcon: "')
@@ -611,7 +615,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # The mini chart carries a live legend row (dot, name, value) so
         # the unlabelled sparklines stay readable, and the mesh detail's
         # readout row is permanent so the map never resizes on hover.
-        self.assertIn("modelData.label + \" \" + value", MONITOR_QML)
+        self.assertIn("modelData.label + \" \" + value", TEMP_HISTORY_SECTION_QML)
         self.assertIn("Hover the map for probe coordinates", MONITOR_QML)
         # The chart's hover values live in a cursor-following tooltip
         # OUTSIDE the clipped card (allowed to overflow any boundary) —
@@ -633,7 +637,8 @@ class MonitorModelContractTests(unittest.TestCase):
         # strip keeps breathing room below the plot.
         self.assertIn('toFixed(0) + "°C"', TEMP_CHART_QML)
         self.assertIn('points[index][1].toFixed(1) + "°C"', TEMP_CHART_QML)
-        self.assertEqual(MONITOR_QML.count('toFixed(1) + "°C"'), 2)
+        self.assertEqual(MONITOR_QML.count('toFixed(1) + "°C"'), 1)
+        self.assertEqual(TEMP_HISTORY_SECTION_QML.count('toFixed(1) + "°C"'), 1)
         self.assertIn("Math.max(1, height - 22)", TEMP_CHART_QML)
         # The console history lives in a terminal-styled pane: dark,
         # fixed-width, newest line pinned to the bottom, with a prompt
@@ -666,7 +671,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # non-primary sensors stand in for the mini chart.
         self.assertIn("others.slice(0, 2)", MONITOR_QML)
         self.assertIn("2 - primary.length", MONITOR_QML)
-        self.assertIn('"series": root.miniChartSeries', MONITOR_QML)
+        self.assertIn('"series": root.miniSeries', TEMP_HISTORY_SECTION_QML)
         # The Layer row discloses which source produced the value, and
         # the terminal picks an installed monospace face at runtime
         # (the generic and comma lists do not resolve everywhere).
@@ -724,7 +729,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("setShowProbePoints", MONITOR_QML)
         # Terminal order: the history sits above the input row.
         self.assertLess(MONITOR_QML.index("id: consoleText"), MONITOR_QML.index("id: consoleInput"))
-        self.assertIn("All sensors hidden — click to re-enable one in the chart.", MONITOR_QML)
+        self.assertIn("All sensors hidden — click to re-enable one in the chart.", TEMP_HISTORY_SECTION_QML)
 
     def test_system_section_has_the_manual_reconnect(self):
         # The author's live request: a Reconnect in the System
@@ -3823,8 +3828,8 @@ Item {
             # exist (the author's live ruling — the chips ARE the
             # readout); it sits below the jog pad.
             "visible: root.printerModel == null || root.printerModel.endstopItems.length === 0",
-            "visible: root.miniChartHasSeries",
-            "visible: root.printer != null && !root.miniChartHasSeries",
+            "visible: root.miniHasSeries",
+            "visible: root.printerModel != null && !root.miniHasSeries",
             "visible: root.printer != null && root.printer.temperatureItems.length > 0",
             "visible: root.printer != null && root.printer.fanItems.length > 0",
             "visible: root.printer != null && root.printer.filamentSensorItems.length > 0",
