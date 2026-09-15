@@ -585,7 +585,10 @@ VERDICT_SCAN = (
     "        label = None\n"
     "    if isinstance(label, str) and (\"reported an error\" in label or \"did not begin printing\" in label):\n"
     "        hits.append(label[:90])\n"
-    "result = hits\n"
+    "# The suite's wait_exec reads the reply as a dict (the gate's own\n"
+    "# copy in the runner consumes a list — bool(list) — so they\n"
+    "# differ deliberately).\n"
+    "result = {\"hits\": hits}\n"
 )
 
 
@@ -974,6 +977,11 @@ SCENARIOS = [
      ]},
     {"id": "f2", "group": "files", "name": "the upload lane accepts and refuses honestly",
      "steps": [
+         # The popup stays open through the flow: the completion
+         # refresh walks the listing into the OPEN popup's rows.
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "click_text", "text": "File manager"},
+         {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
          {"op": "write_fixture", "path": "/tmp/mpf/scenario-upload.gcode"},
          {"op": "exec_file_slot", "slot": "fileUpload", "args": ["/tmp/mpf/scenario-upload.gcode"]},
          {"op": "sim_ledger", "needle": "files/upload", "field": "path", "min": 1, "budget": 30},
@@ -988,6 +996,7 @@ SCENARIOS = [
          {"op": "sim_arm", "arms": {"fail_upload": True}},
          {"op": "exec_file_slot", "slot": "fileUpload", "args": ["/tmp/mpf/scenario-upload-refused.gcode"]},
          {"op": "wait_model", "prop": "fileManagerNote", "contains": "simulated upload refusal", "budget": 30},
+         {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
      ]},
     {"id": "f3", "group": "files", "name": "delete removes the row after the confirm",
      "steps": [
@@ -1173,10 +1182,12 @@ SCENARIOS = [
      ]},
     {"id": "h8", "group": "printing", "name": "the ETA opt-in starts the hourglass",
      "steps": [
-         # A fresh file: h2's load (earlier in the group) already built
-         # scenario1's index, so the hourglass would have nothing left
-         # to resolve and read false instantly (the ordering leak).
-         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "delete-me.gcode"}}},
+         # A fresh file, run-stamped: h2's load (earlier in the group)
+         # already built scenario1's index, and a fixed filename would
+         # carry the previous run's index state in the shared tree (the
+         # serial mode's second pass proved it) — the hourglass would
+         # have nothing left to resolve and read false instantly.
+         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "delete-me-{RUN_STAMP}.gcode"}}},
          # A streamed download keeps the resolve window open long
          # enough for the 1 s polling to observe the hourglass (the
          # download route reads no route-delay arms). The slow chunks
