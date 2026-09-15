@@ -84,8 +84,11 @@ class ClassificationRatchetTests(unittest.TestCase):
         # filter's window cannot change through a single click (the
         # handle-click no-op ruling makes a full-range window inert to
         # clicks, and the harness has no drag op), so the slot is the
-        # only real path:
-        # 46 exec_slot + 12 exec_file_slot + 6 emit_click +
+        # only real path. And a9's reconnect exec — the group shares
+        # one boot, so the never-connected premise needs a real
+        # session cycle, and no real-input path exists for a
+        # reconnection:
+        # 47 exec_slot + 12 exec_file_slot + 6 emit_click +
         # 3 confirm_box + 6 exec_mode + 3 exec_validator +
         # 1 exec_console + 1 exec_extrude + 1 exec_test_connection
         # + 23 exec_code.
@@ -93,7 +96,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         direct = len(re.findall(
             r'"op": "(exec_slot|exec_file_slot|emit_click|confirm_box|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))
-        self.assertLessEqual(direct, 102)
+        self.assertLessEqual(direct, 103)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —
