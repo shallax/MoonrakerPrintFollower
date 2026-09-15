@@ -3314,6 +3314,7 @@ Item {
                     elide: Text.ElideRight
                 }
                 Cura.PrimaryButton {
+                    objectName: "fileManagerCloseButton"
                     text: "Close"
                     onClicked: root.closeRequested()
                 }

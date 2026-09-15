@@ -2214,7 +2214,11 @@ def suite_step(step):
         reply = rpc({"id": 1, "cmd": "click_text", "text": step["text"],
                      "button": step.get("button", "left")})
         time.sleep(0.6)
-        return reply.get("ok") is True, f"real click on the rendered '{step['text']}'", "the click landed"
+        delivery = reply.get("delivery") or {}
+        landed = bool(reply.get("ok") and delivery.get("accepted"))
+        note = (f"the press was accepted by {delivery.get('grabber')}") if landed \
+            else f"the press was NOT accepted [delivery={delivery!r}]"
+        return landed, f"real click on the rendered '{step['text']}'", note, delivery
     if op == "deliver_click":
         request = {"id": 1, "cmd": "deliver_click"}
         if "objectName" in step:

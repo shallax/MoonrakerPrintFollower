@@ -128,6 +128,7 @@ SCENARIO_MAP = {
     # are excluded below — no scenario opens that dialog yet; its
     # round lands with the deferred panel scenarios.
     "printConfirmStartButton": "f6", "printConfirmCancelButton": "f6",
+    "fileManagerCloseButton": "f1",
     "deleteConfirmDeleteButton": "f3", "deleteConfirmCancelButton": "f3",
     "renameConfirmButton": "f7", "renameConfirmCancelButton": "f7",
     "uploadConfirmOverwriteButton": "f2", "uploadConfirmCancelButton": "f2",
