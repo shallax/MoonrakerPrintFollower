@@ -394,6 +394,13 @@ class MoonrakerClient(QObject):
                 self.force_refresh()
         QTimer.singleShot(0, refresh)
 
+    @property
+    def assumed_stopped(self) -> bool:
+        # The observation record's assumed_stopped field (4.2.0, A1):
+        # the policy table must see the e-stop assumption itself, not
+        # just the rewritten state.
+        return bool(self._session.state.assume_print_stopped)
+
     def assume_print_stopped(self) -> None:
         """The e-stop's assumption (the ruling): the print is
         over until the printer reports otherwise. The CURRENT snapshot

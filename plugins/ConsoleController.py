@@ -111,11 +111,13 @@ class ConsoleController(QObject):
             "consolePending": len(self._in_flight),
         }
 
-    def _connection_note(self, connected) -> None:
+    def _connection_note(self, state) -> None:
         # Only genuine TRANSITIONS write a note: a flapping link re-emits
         # the same state on every failed reconnect attempt, and the feed
-        # must not fill with repeats (the live report).
-        connected = bool(connected)
+        # must not fill with repeats (the live report). The tri-state
+        # (4.2.0) folds to a bool here: 'unknown' is not a connected
+        # note worth printing.
+        connected = state == "yes"
         if connected == self._last_connection:
             return
         self._last_connection = connected

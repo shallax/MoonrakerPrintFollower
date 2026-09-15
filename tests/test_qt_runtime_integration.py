@@ -219,6 +219,48 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertTrue(configfile.get("save_config_pending"))
         self.assertEqual(configfile.get("settings", {}).get("extruder", {}).get("filament_diameter"), 1.75)
 
+    def test_connection_state_is_tristate_until_observed(self):
+        # The policy prerequisite (round-2 A2/S2/F3): 'unknown' until
+        # this session has observed a connect, then 'yes'/'no'; a
+        # session invalidation resets to 'unknown'. The legacy bool
+        # `connected` keeps its exact old semantics throughout.
+        model, client, _transport = self.monitor()
+        data = model._data
+        self.assertEqual(data.connection_state, "unknown")
+        self.assertFalse(data.connected)
+        # The real connect flow flips the client's flag before the
+        # signal — mirror that order on the scripted client.
+        client._connected = True
+        client.connectionChanged.emit(True, "Moonraker connected over http polling")
+        self.assertEqual(data.connection_state, "yes")
+        self.assertTrue(data.connected)
+        client._connected = False
+        client.connectionChanged.emit(False, "polling stopped")
+        self.assertEqual(data.connection_state, "no")
+        self.assertFalse(data.connected)
+        # A session invalidation is a fresh generation: unknown again.
+        data.set_active(False)
+        self.assertEqual(data.connection_state, "unknown")
+
+    def test_observation_carries_the_pushins_and_the_assumption(self):
+        # The record assembles in MonitorData with the two closed
+        # push-ins (controlsLocked from the model chrome, busy from
+        # the command lane) and the client's e-stop assumption.
+        model, client, _transport = self.monitor()
+        data = model._data
+        data.set_controls_locked(True)
+        data.set_commands_busy(True)
+        client.assume_print_stopped()
+        data._update(core={"print_stats": {"state": "printing"}}, auxiliary={
+            "toolhead": {"homed_axes": "xyz"},
+            "configfile": {"save_config_pending": False}})
+        obs = data.observation
+        self.assertTrue(obs.controls_locked)
+        self.assertTrue(obs.busy)
+        self.assertTrue(obs.assumed_stopped)
+        self.assertEqual(obs.state, "printing")
+        self.assertEqual(obs.homed_axes, "xyz")
+
     def test_unknown_machine_migration_is_retried_when_stack_appears(self):
         prefs = Preferences({"moonraker_print_follower/url": "http://legacy",
                              "moonraker_print_follower/enabled": True})
