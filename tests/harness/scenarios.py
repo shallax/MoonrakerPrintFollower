@@ -282,6 +282,53 @@ FM_POPUP_PROBE = (
     "    _json.dump(result, _f)\n"
     "result")
 
+SETTINGS_PROBE = (
+    "import json as _json\n"
+    "from UM.Application import Application\n"
+    "app = Application.getInstance()\n"
+    "result = {\"manager_api\": [], \"actions\": [], \"config_items\": []}\n"
+    "try:\n"
+    "    manager = app.getMachineActionManager()\n"
+    "    for name in dir(manager):\n"
+    "        if \"ction\" in name or \"show\" in name.lower() or \"activate\" in name.lower():\n"
+    "            result[\"manager_api\"].append(name)\n"
+    "    try:\n"
+    "        for action in manager.getMachineActions():\n"
+    "            result[\"actions\"].append([type(action).__name__, str(getattr(action, \"_key\", None)),\n"
+    "                                        str(getattr(action, \"_qml_url\", None))])\n"
+    "    except Exception as exc:\n"
+    "        result[\"actions_error\"] = repr(exc)\n"
+    "except Exception as exc:\n"
+    "    result[\"manager_error\"] = repr(exc)\n"
+    "try:\n"
+    "    window = _main_window()\n"
+    "    for item in _walk(window.contentItem(), depth=96):\n"
+    "        try:\n"
+    "            name = item.property(\"objectName\")\n"
+    "        except Exception:\n"
+    "            name = None\n"
+    "        try:\n"
+    "            text = item.property(\"text\")\n"
+    "        except Exception:\n"
+    "            text = None\n"
+    "        if not ((name and str(name).strip()) or (isinstance(text, str) and str(text).strip() in\n"
+    "                 (\"Connection\", \"Printer status transport\", \"Test connection\", \"Save\"))):\n"
+    "            continue\n"
+    "        cls = item.metaObject().className()\n"
+    "        try:\n"
+    "            p = item.mapToScene(QPointF(0, 0))\n"
+    "            result[\"config_items\"].append([cls[:22], str(name), str(text)[:30],\n"
+    "                                            round(p.x()), round(p.y()),\n"
+    "                                            round(item.width()), round(item.height())])\n"
+    "        except Exception:\n"
+    "            result[\"config_items\"].append([cls[:22], str(name), str(text)[:30]])\n"
+    "except Exception as exc:\n"
+    "    result[\"walk_error\"] = repr(exc)\n"
+    "with open('/tmp/mpf/settings_probe.json', 'w') as f:\n"
+    "    _json.dump(result, f)\n"
+    "result")
+
+
 PRESETS_PROBE = (
     "from UM.Application import Application\n"
     "app = Application.getInstance()\n"
@@ -908,7 +955,7 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
-         {"op": "click_jog", "button": "moonrakerJogXPlus"},
+         {"op": "deliver_click", "objectName": "moonrakerJogXPlus"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
     {"id": "g2", "group": "motion", "name": "home and the mesh actions reach the peer",
@@ -916,7 +963,7 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerHomeX", "budget": 30},
-         {"op": "click_jog", "button": "moonrakerHomeX"},
+         {"op": "deliver_click", "objectName": "moonrakerHomeX"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
     {"id": "g3", "group": "motion", "name": "the abs/rel toggle rides the command lane",
@@ -1430,7 +1477,7 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
-         {"op": "click_jog", "button": "moonrakerJogXPlus"},
+         {"op": "deliver_click", "objectName": "moonrakerJogXPlus"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
          {"op": "exec_console", "text": "M105"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 2, "budget": 20},
@@ -1460,6 +1507,18 @@ SCENARIOS = [
          {"op": "exec_code", "verbs": [], "code": CARD_GATE_PROBE},
          {"op": "assert_exec", "code": CARD_EXCLUSIVE_PROBE,
           "contains": '"exclusive": true, "panel": true, "overlay": false'},
+     ]},
+    # The settings-dialog discovery probe (the round-2 HIGH-8): the
+    # configuration page is a Cura.MachineAction with zero objectNames
+    # and no scenario has ever opened it. This answers the two
+    # questions that gate its scenarios: what the manager's activation
+    # API is, and whether the page's items live in the main window's
+    # tree. The dump lands in the scratch dir.
+    {"id": "z12", "group": "probe",
+     "name": "the settings page's activation API and its walkable content",
+     "steps": [
+         {"op": "click_stage", "stage": "PrepareStage"},
+         {"op": "exec_code", "verbs": [], "code": SETTINGS_PROBE},
      ]},
     # The visible-interactions proof pair: the phase-0 evidence that a
     # real press/release lands — accepted by the item under the aim,
