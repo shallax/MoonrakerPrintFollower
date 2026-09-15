@@ -1,4 +1,5 @@
 import QtQuick 2.15
+import QtQuick.Controls 2.15
 import UM 1.5 as UM
 import Cura 1.0 as Cura
 
@@ -27,6 +28,15 @@ Item {
     property string bedMeshRangeText: ""
     property string bedMeshMinimumText: ""
     property string bedMeshMaximumText: ""
+    property real bedMeshMinimum: 0
+    property real bedMeshMaximum: 0
+    // The heightmap range filter (the author's request): the window
+    // the Monitor model owns; both surfaces show the same handles.
+    property real bedMeshThresholdLow: 0
+    property real bedMeshThresholdHigh: 0
+    // The "scale z-max" exaggeration (the author's request): 0
+    // flattens the Preview surface, 1000 is the ceiling.
+    property real bedMeshExaggeration: 20
     property string selectedLayerEtaText: ""
     property bool pauseAtLayerActive: false
     property int pauseAtLayerCandidate: 0
@@ -50,10 +60,22 @@ Item {
     onLoadBusyChanged: loadIndicator.busy = base.loadBusy
     onLoadProgressChanged: loadIndicator.progress = base.loadProgress
     onLoadPhaseChanged: loadIndicator.phase = base.loadPhase
+    // The setProperty-fed mesh values drive the sliders imperatively
+    // (bindings on dynamically created cards go stale — engine-proven).
+    onBedMeshMinimumChanged: meshRangeSlider.minimum = base.bedMeshMinimum
+    onBedMeshMaximumChanged: meshRangeSlider.maximum = base.bedMeshMaximum
+    onBedMeshThresholdLowChanged: meshRangeSlider.low = base.bedMeshThresholdLow
+    onBedMeshThresholdHighChanged: meshRangeSlider.high = base.bedMeshThresholdHigh
+    onBedMeshExaggerationChanged: {
+        exaggerationSlider.value = base.bedMeshExaggeration;
+        exaggerationValueLabel.text = "×" + Math.round(base.bedMeshExaggeration);
+    }
 
     signal loadClicked
     signal pauseClicked
     signal bedMeshVisibilityRequested(bool visible)
+    signal bedMeshThresholdsRequested(real low, real high)
+    signal bedMeshExaggerationRequested(real scale)
     signal pauseAtLayerRequested(int layer)
     signal removePauseAtLayerRequested(int layer)
     signal clearPauseAtLayersRequested
@@ -290,32 +312,90 @@ Item {
                 height: implicitHeight
                 spacing: 2 * screenScaleFactor
 
-                Rectangle {
+                BedMeshRangeSlider {
+                    id: meshRangeSlider
                     width: parent.width
-                    height: 8 * screenScaleFactor
-                    radius: 2 * screenScaleFactor
-                    gradient: Gradient {
-                        orientation: Gradient.Horizontal
-                        GradientStop {
-                            position: 0.00
-                            color: "#1a47f2"
+                    enabled: base.bedMeshAvailable
+                    onWindowAdjusted: base.bedMeshThresholdsRequested(low, high)
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: base.buttonSpacing
+                    UM.Label {
+                        id: scaleLabel
+                        height: exaggerationSlider.implicitHeight
+                        text: "Scale z-max"
+                        color: UM.Theme.getColor("text_inactive")
+                        font: UM.Theme.getFont("default")
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    Slider {
+                        id: exaggerationSlider
+                        width: parent.width - scaleLabel.width - exaggerationValueLabel.width - 2 * parent.spacing
+                        from: 0
+                        to: 1000
+                        stepSize: 1
+                        // The locked slider behaviours (the author's
+                        // ruling): a press within the handle's extent
+                        // of the current value is a no-op, and a click
+                        // focuses the slider so the arrow keys nudge.
+                        focusPolicy: Qt.StrongFocus
+                        property bool handlePress: false
+                        property bool handleDragged: false
+                        property real valueBeforePress: 0
+                        function pressIsOnHandle(mouseX) {
+                            var centre = leftPadding + visualPosition * availableWidth;
+                            return Math.abs(mouseX - centre) <= 10 * screenScaleFactor;
                         }
-                        GradientStop {
-                            position: 0.25
-                            color: "#00b8ff"
+                        MouseArea {
+                            anchors.fill: parent
+                            onPressed: function (mouse) {
+                                parent.forceActiveFocus();
+                                parent.valueBeforePress = parent.value;
+                                parent.handleDragged = false;
+                                parent.handlePress = parent.pressIsOnHandle(mouse.x);
+                                mouse.accepted = parent.handlePress;
+                            }
+                            onPositionChanged: function (mouse) {
+                                if (!parent.handlePress) {
+                                    return;
+                                }
+                                var steps = Math.round((mouse.x - parent.leftPadding) / Math.max(1, parent.availableWidth) * (parent.to - parent.from));
+                                parent.value = Math.max(parent.from, Math.min(parent.to, parent.from + steps * parent.stepSize));
+                                if (Math.abs(parent.value - parent.valueBeforePress) > 0.001) {
+                                    parent.handleDragged = true;
+                                }
+                            }
+                            onReleased: function (mouse) {
+                                if (!parent.handlePress) {
+                                    return;
+                                }
+                                parent.handlePress = false;
+                                if (!parent.handleDragged) {
+                                    parent.value = parent.valueBeforePress;
+                                }
+                                mouse.accepted = true;
+                            }
                         }
-                        GradientStop {
-                            position: 0.50
-                            color: "#33db61"
+                        Keys.onUpPressed: increase()
+                        Keys.onDownPressed: decrease()
+                        Keys.onRightPressed: increase()
+                        Keys.onLeftPressed: decrease()
+                        onValueChanged: {
+                            exaggerationValueLabel.text = "×" + Math.round(value);
+                            base.bedMeshExaggerationRequested(value);
                         }
-                        GradientStop {
-                            position: 0.75
-                            color: "#ffd11f"
-                        }
-                        GradientStop {
-                            position: 1.00
-                            color: "#eb291f"
-                        }
+                    }
+                    UM.Label {
+                        id: exaggerationValueLabel
+                        width: 44 * screenScaleFactor
+                        height: exaggerationSlider.implicitHeight
+                        text: "×" + Math.round(base.bedMeshExaggeration)
+                        horizontalAlignment: Text.AlignRight
+                        color: UM.Theme.getColor("text_inactive")
+                        font: UM.Theme.getFont("default")
+                        verticalAlignment: Text.AlignVCenter
                     }
                 }
 
@@ -338,7 +418,7 @@ Item {
 
                 UM.Label {
                     width: parent.width
-                    text: "Neon orange outline = Klipper mesh bounds; outside = extrapolated"
+                    text: "Neon orange outline = the probed mesh bounds; outside = the boundary values, continued as Klipper clamps them"
                     color: UM.Theme.getColor("text_inactive")
                     font: UM.Theme.getFont("default_italic")
                     wrapMode: Text.WordWrap

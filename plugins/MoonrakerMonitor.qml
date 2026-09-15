@@ -744,6 +744,31 @@ Component {
                                     }
                                 }
 
+                                Timer {
+                                    // The render watchdog (the author's
+                                    // live report): a stream that
+                                    // CONNECTED but never painted a
+                                    // frame raises no error signal.
+                                    // While configured and visible, a
+                                    // frame-less image reports the
+                                    // stall every 8 s; the model's
+                                    // recovery reloads the source on
+                                    // its usual 10 s cadence, and the
+                                    // check skips once any frame has
+                                    // painted.
+                                    id: cameraStallWatchdog
+                                    interval: 8000
+                                    repeat: true
+                                    running: root.cameraConfigured && cameraImage.visible
+                                    onTriggered: {
+                                        if (cameraImage.imageWidth > 0)
+                                            return;
+                                        if (root.printer != null) {
+                                            root.printer.cameraRenderStalled();
+                                        }
+                                    }
+                                }
+
                                 Rectangle {
                                     // A stale frame must not read as
                                     // live: while disconnected a heavy
@@ -2107,12 +2132,31 @@ Component {
                                             acceptedButtons: Qt.NoButton
                                         }
                                         UM.ColorImage {
+                                            id: etaGlyph
                                             anchors.fill: parent
                                             // The hourglass is the non-clickable
                                             // in-progress state; the download
                                             // glyph returns on failure (timeout).
                                             source: root.printer != null && root.printer.improvingEta ? Qt.resolvedUrl("Hourglass.svg") : Qt.resolvedUrl("Download.svg")
                                             color: UM.Theme.getColor("text")
+                                            // The download glyph must never
+                                            // carry the angle the hourglass
+                                            // froze at (the author's live
+                                            // report): an assignment from
+                                            // inside the animation cannot
+                                            // win against the animation
+                                            // binding, so the IDLE STATE
+                                            // forces the reset instead.
+                                            states: [
+                                                State {
+                                                    name: "idle"
+                                                    when: !(root.printer != null && root.printer.improvingEta)
+                                                    PropertyChanges {
+                                                        target: etaGlyph
+                                                        rotation: 0
+                                                    }
+                                                }
+                                            ]
                                             // The hourglass flips and rests at
                                             // each 180-degree stop while the
                                             // sand drains, then flips again.
@@ -2349,6 +2393,22 @@ Component {
                                         anchors.fill: parent
                                         acceptedButtons: Qt.NoButton
                                         text: root.printer != null && root.printer.monitorFlowRate !== "—" ? "The commanded volumetric flow — Klipper's live extruder velocity × the filament cross-section. Uses printer.cfg's filament_diameter for the active tool (" + root.printer.monitorFlowDiameter + "). Pressure advance is excluded, the value can lag for up to 30 seconds after the last extrusion, and a negative reading while retracting is correct." : ""
+                                    }
+                                }
+                                UM.Label {
+                                    text: "Filament diameter"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    text: root.printer != null ? root.printer.monitorFlowDiameter : "—"
+                                    color: UM.Theme.getColor("text")
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    UM.TooltipArea {
+                                        anchors.fill: parent
+                                        acceptedButtons: Qt.NoButton
+                                        text: root.printer != null && root.printer.monitorFlowDiameter !== "—" ? "The active tool's filament_diameter from printer.cfg — the Flow rate row multiplies by this cross-section. There is deliberately no override: a wrong value is a printer.cfg error." : ""
                                     }
                                 }
                                 UM.Label {
@@ -3028,7 +3088,7 @@ Component {
             visible: root.openPopOver === "mesh" && root.printer != null && root.printer.bedMeshAvailable
             x: cameraArea.x + UM.Theme.getSize("default_margin").width
             y: UM.Theme.getSize("default_margin").height
-            height: Math.min(430 * screenScaleFactor, parent.height - 2 * UM.Theme.getSize("default_margin").height)
+            height: Math.min((520 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
             contentWidth: 390 * screenScaleFactor
             title: "Bed mesh — " + (root.printer != null ? root.printer.bedMeshProfile : "")
             onClosed: root.openPopOver = ""
@@ -3052,12 +3112,60 @@ Component {
                     id: meshDetail
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.minimumHeight: 215 * screenScaleFactor
+                    Layout.minimumHeight: 190 * screenScaleFactor
                     printer: root.printer
                     // Rehydrated at creation: the model already holds the
                     // persisted value, and a fresh map must never open
                     // with the dots missing while the checkbox shows on.
                     showProbePoints: root.printer != null ? root.printer.showProbePoints : false
+                }
+
+                // The dual-ended range filter (the author's request):
+                // the SAME five-stop blue-to-red scale the Preview's
+                // bed-mesh overlay uses, shared by both surfaces. The
+                // window lives in the model, so the Preview card's
+                // slider and this one stay synchronised.
+                BedMeshRangeSlider {
+                    id: meshRangeSlider
+                    Layout.fillWidth: true
+                    enabled: root.printer != null && root.printer.bedMeshAvailable
+                    minimum: root.printer != null ? root.printer.bedMeshMinimum : 0
+                    maximum: root.printer != null ? root.printer.bedMeshMaximum : 0
+                    low: root.printer != null ? root.printer.bedMeshThresholdLow : 0
+                    high: root.printer != null ? root.printer.bedMeshThresholdHigh : 0
+                    onWindowAdjusted: {
+                        if (root.printer != null) {
+                            root.printer.setBedMeshThresholds(low, high);
+                        }
+                    }
+                }
+
+                Row {
+                    Layout.fillWidth: true
+                    UM.Label {
+                        width: parent.width / 2
+                        text: root.printer != null ? "Low " + root.printer.bedMeshMinimum.toFixed(3) + " mm" : "Low"
+                        color: UM.Theme.getColor("text_inactive")
+                        font: UM.Theme.getFont("default")
+                    }
+                    UM.Label {
+                        width: parent.width / 2
+                        text: root.printer != null ? "High " + root.printer.bedMeshMaximum.toFixed(3) + " mm" : "High"
+                        horizontalAlignment: Text.AlignRight
+                        color: UM.Theme.getColor("text_inactive")
+                        font: UM.Theme.getFont("default")
+                    }
+                }
+
+                UM.Label {
+                    // The Klipper-clamped disclaimer (the author's
+                    // request): the same honest claim the Preview's
+                    // legend makes.
+                    Layout.fillWidth: true
+                    text: "Neon orange outline = the probed mesh bounds; outside = the boundary values, continued as Klipper clamps them"
+                    color: UM.Theme.getColor("text_inactive")
+                    font: UM.Theme.getFont("default_italic")
+                    wrapMode: Text.WordWrap
                 }
 
                 // The detail map is component-scoped, so its live
@@ -3090,11 +3198,12 @@ Component {
 
                 // The crosshair readout row is permanent so the map
                 // never resizes on hover; it shows the placeholder until
-                // the cursor snaps to a probe point.
+                // the cursor snaps to a probe point OR reads a clamped
+                // (extended) value.
                 UM.Label {
                     Layout.fillWidth: true
-                    text: meshDetail.hoverColumn >= 0 ? meshDetail.hoverText : "Hover the map for probe coordinates"
-                    color: meshDetail.hoverColumn >= 0 ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
+                    text: (meshDetail.hoverColumn >= 0 || meshDetail.hoverClamped) ? meshDetail.hoverText : "Hover the map for probe coordinates"
+                    color: (meshDetail.hoverColumn >= 0 || meshDetail.hoverClamped) ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
                     horizontalAlignment: Text.AlignHCenter
                 }
 
@@ -3124,7 +3233,7 @@ Component {
 
                 UM.Label {
                     Layout.fillWidth: true
-                    text: "Preview uses 20× vertical exaggeration. The solid area is Klipper's mesh; the faded perimeter is extrapolated to Cura's bed edge. Values shown here are the actual Klipper mesh heights."
+                    text: "The faded perimeter is extrapolated to Cura's bed edge; values shown are the actual Klipper mesh heights. The Preview's height exaggeration adjusts from its card."
                     color: UM.Theme.getColor("text_inactive")
                     wrapMode: Text.WordWrap
                 }

@@ -120,6 +120,12 @@ class MonitorData(QObject):
         # already active.
         if connected and not self._active:
             self.set_active(True)
+        elif connected:
+            # The first data must not wait for the lane timers' next
+            # ticks (the author's live report — aux stayed unpopulated
+            # long after the connect): the connection transition
+            # itself fires every lane immediately.
+            self.refresh_all()
         if connected:
             # The discovery watchdog: on ~30-40% of cold boots the
             # discovery chain never arms (webcams empty, temperatures
@@ -363,7 +369,11 @@ class MonitorData(QObject):
     def refresh_all(self):
         if not self._active: return
         self._client.force_refresh()
+        # Discovery first: the HTTP aux query is built from the
+        # objects list, so a connect-transition aux fires with the
+        # freshest objects when they already exist.
         self.refresh_discovery()
+        self.refresh_aux()
         self.refresh_power()
         self.refresh_system()
         self.refresh_endstops()

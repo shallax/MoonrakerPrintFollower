@@ -24,6 +24,12 @@ class MoonrakerClient(QObject):
     sessionInvalidated = pyqtSignal()
 
     RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)
+    # The never-connected retry ceiling: a session that has never
+    # received a status retries at this cadence instead of walking
+    # the failure ladder (the author's ruling — the first connection
+    # is eager). A LAN endpoint answers in one attempt; a down
+    # endpoint takes four attempts a second, which is harmless.
+    FIRST_CONNECT_RETRY_MS = 250
 
     def __init__(self, parent=None, session=None, transport=None, *, socket=None, proof_timeout_ms: int = 8000) -> None:
         super().__init__(parent)
@@ -472,7 +478,7 @@ class MoonrakerClient(QObject):
         previous_state = self._session.snapshot.printer_state
         merged, changed_commands = self._session.merge_status(patch)
         self._last_applied_stamp = max(self._last_applied_stamp, stamp)
-        self._handle_success()
+        connected_now = self._handle_success()
         if generation != self._generation:
             return
         self._apply_adaptive_interval()
@@ -513,6 +519,17 @@ class MoonrakerClient(QObject):
                 for command in self._session.commands.expire_non_terminal("superseded by a new print"):
                     self.commandChanged.emit(command.as_dict())
         self.statusReceived.emit(merged)
+        if connected_now:
+            # The connect transition re-broadcasts the accumulated
+            # snapshot to every listener (the author's ruling): the
+            # sync may have landed while a listener was not yet
+            # attached, and the fresh broadcast guarantees the UI
+            # populates instantly with everything known. It emits the
+            # ADMITTED status (the e-stop rewrite included), and it
+            # sits AFTER the generation guard, so a same-tick rebind
+            # discards the old session's broadcast like every other
+            # old-generation emission.
+            self.statusReceived.emit(merged)
         for command in changed_commands:
             if generation != self._generation:
                 break
@@ -525,11 +542,19 @@ class MoonrakerClient(QObject):
             self._session.snapshot.printer_state,
             urgent=self._session.pause_guard or self._session.toolhead_guard,
         )
+        # The idle floor must not gate the FIRST connection (the
+        # author's live report — five seconds of dead UI before the
+        # printer showed as connected): until a status has ever
+        # landed, the tick runs at the configured cadence so a failed
+        # first attempt retries promptly. The floors and the failure
+        # ladder apply once connected.
+        if not self._connected:
+            interval = min(interval, self._poll_interval_ms)
         interval = max(interval, self._retry_delay_ms)
         if self._poll_timer.interval() != interval:
             self._poll_timer.setInterval(interval)
 
-    def _handle_success(self) -> None:
+    def _handle_success(self) -> bool:
         self._retry_index = 0
         self._retry_delay_ms = 0
         self._retry_not_before = 0.0
@@ -541,6 +566,8 @@ class MoonrakerClient(QObject):
             # that the websocket is really in use).
             transport = "websocket" if self._effective_feed_mode == "websocket" else "HTTP polling"
             self.connectionChanged.emit(True, f"Moonraker connected over {transport}")
+            return True
+        return False
 
     def _handle_failure(self, reason: str) -> None:
         # One bounded reason: the console note's label elides long text,
@@ -555,6 +582,15 @@ class MoonrakerClient(QObject):
             urgent=self._session.pause_guard or self._session.toolhead_guard,
         )
         retry_interval = max(adaptive, delay)
+        # The first connection is eager (the author's live report —
+        # five seconds of dead UI before the printer showed as
+        # connected, then 2-3 s): each fast startup failure walked the
+        # ladder and the 5 s rung then gated a session that had never
+        # connected. Until the printer has ever answered, the backoff
+        # stays at the eager cadence; the ladder protects a PROVEN
+        # endpoint's outages.
+        if not self._connected:
+            retry_interval = min(retry_interval, self.FIRST_CONNECT_RETRY_MS)
         self._retry_delay_ms = retry_interval
         self._retry_not_before = time.monotonic() + retry_interval / 1000.0
         if self._poll_timer.interval() != retry_interval:

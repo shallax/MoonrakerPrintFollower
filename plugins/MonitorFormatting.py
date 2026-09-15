@@ -48,6 +48,18 @@ def chart_label(name):
 # to decide what to query; the controllers and formatting use it to decide
 # what to project. Adding a new object family means editing these tables only.
 FAN_OBJECT_PREFIXES = ("fan_generic ", "heater_fan ", "controller_fan ", "temperature_fan ")
+
+
+def fan_writable(name: str) -> bool:
+    """Whether SET_FAN_SPEED actually controls this fan object. Klipper's
+    controller_fan, temperature_fan and heater_fan are
+    temperature-regulated — the command either never sticks or is not
+    registered at all (the author's live reports, controller_fan1 and
+    hotend_fan) — so their rows render read-only."""
+    lower = str(name).lower()
+    if lower == "fan":
+        return True
+    return lower.startswith(("fan_generic ",))
 LED_OBJECT_PREFIXES = ("neopixel ", "dotstar ", "led ", "pca9533 ", "pca9632 ")
 PWM_OBJECT_PREFIXES = ("output_pin ",)
 TEMPERATURE_OBJECT_PREFIXES = ("heater_generic ", "temperature_", "bme280 ", "htu21d ", "sht3x ", "lm75 ")
@@ -441,20 +453,18 @@ def core_values(snapshot, physical, connected):
 
 
 def endstop_values(snapshot, connected=True):
-    """The endstop readout: per-axis pin states, or an explicit
-    "not homed yet" summary — Klipper's endstop values are meaningless
-    before the first homing of a session, and an empty list must not
-    read as a bug."""
+    """The endstop readout: per-axis pin states, or a summary when
+    nothing reported. The summary makes NO causal claim — an empty
+    set also describes a sensorless-homing printer (no endstop pins
+    exist at all) and a poll that has not landed; "not homed" was a
+    guess the live report disproved (homed axes, no pins)."""
     states = snapshot.endstops or {}
     items = []
     for axis in sorted(states):
         raw = str(states[axis]).strip()
         if raw:
             items.append({"name": axis.upper(), "state": raw, "triggered": raw.lower() == "triggered"})
-    # An empty set means two different things: never homed this
-    # session, or disconnected (the snapshot cleared). Only claim
-    # homing is missing while actually connected.
-    summary = "" if items or not connected else "Not homed yet — home an axis to populate the readout."
+    summary = "" if items or not connected else "No endstop states reported."
     return {"endstopItems": items, "endstopSummary": summary}
 
 
