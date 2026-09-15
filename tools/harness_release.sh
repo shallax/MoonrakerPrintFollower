@@ -29,7 +29,7 @@ root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
 JOBS=1
-if [ "$1" = "-j" ]; then
+if [ "${1:-}" = "-j" ]; then
     JOBS="${2:?usage: harness_release.sh [-j N]}"
     shift 2
 fi

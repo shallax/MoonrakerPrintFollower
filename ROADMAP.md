@@ -939,9 +939,10 @@ only as findings-driven patches (see the rulings). Eight workstreams,
 ordered by dependency:
 
 - **The higher-resolution harness — one display geometry.** The
-  suite moves to 1920x1080 GLOBALLY: the Xvfb screen in `ui_test.sh`
-  and the harness image, the capture SIZE, the window pin and the
-  driver's `resize` default move together, and a screen-fits
+  suite moves to 1920x1080 GLOBALLY: the Xvfb screen (spawned by
+  `ui_test.sh`'s geometry env at run time — the harness image
+  carries no geometry of its own), the capture SIZE, the window pin
+  and the driver's `resize` default move together, and a screen-fits
   assertion fails the run if the window cannot render on the screen
   (the round-1 catch: the pin only asks the window its own size, so
   a 1920x1080 window on a 1600x1000 screen passes silently while
