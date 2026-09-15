@@ -24,6 +24,11 @@ from .RemoteJobService import RemoteJobService
 
 
 class PrintCoordinator(QObject):
+    # The seam's staleness bound (4.3.0): the block's stamp is the
+    # aux landing's clock — older than this at publish time and the
+    # strip renders "—" (three missed 2.5 s polls).
+    PREVIEW_BLOCK_STALE_S = 8.0
+
     def __init__(self, *, client, binding, files, index, cura, preview, pauses,
                  presentation, bed_mesh, parent=None):
         super().__init__(parent)
@@ -37,6 +42,7 @@ class PrintCoordinator(QObject):
         self._status = {}
         self._detail = "Not connected"
         self._gate_logged = None
+        self._preview_block = None
         self._load_job = None
         self._load_requested = False
         self._load_requested_at = 0.0
@@ -93,6 +99,19 @@ class PrintCoordinator(QObject):
         presentation.pauseAtLayerRequested.connect(self.toggle_pause)
         presentation.removePauseRequested.connect(self.remove_pause)
         presentation.clearPausesRequested.connect(pauses.clear)
+
+    def receive_preview_block(self, block) -> None:
+        """The seam's sink (4.3.0): the Monitor's per-poll value
+        block lands here through the output-device edge. Duplicate
+        deliveries (the observation rebuilds on core updates too)
+        are ignored by the block's own stamp — the aux-landing stamp
+        is the one clock the staleness rule reads, never a receipt
+        taken in transit."""
+        if not isinstance(block, Mapping):
+            return
+        stamp = float(block.get("stamp") or 0.0)
+        if self._preview_block is None or stamp > self._preview_block[1]:
+            self._preview_block = (dict(block), stamp)
 
     @property
     def snapshot(self): return self._snapshot
@@ -391,6 +410,7 @@ class PrintCoordinator(QObject):
             self._header_total_mm = None
             self._header_total_path = ""
             self._status = {}
+            self._preview_block = None
             self._jobs.reset()
             self._layers.reset()
             self._snapshot = PrintSnapshot()
@@ -578,6 +598,12 @@ class PrintCoordinator(QObject):
             "pauseAtLayerCanToggle": can_toggle, "pauseAtLayerScheduled": scheduled,
             "pauseAtLayerSummary": pause_summary(items),
             "pauseAtLayerItems": items, "pauseAtLayerUnavailableText": unavailable,
+            # The Preview value block rides through to the card as-is
+            # — the strip applies the staleness rule against the
+            # block's aux-landing stamp.
+            "previewBlock": self._preview_block[0] if self._preview_block is not None else {},
+            "previewBlockStale": self._preview_block is None or
+                time.monotonic() - self._preview_block[1] > self.PREVIEW_BLOCK_STALE_S,
         })
 
     def close(self):

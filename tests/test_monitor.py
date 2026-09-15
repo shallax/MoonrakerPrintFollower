@@ -23,7 +23,10 @@ from plugins.MonitorFormatting import (
     infer_macro_parameters,
     parse_bed_mesh,
     parse_mcu_stats,
+    preview_block,
+    preview_temperature_pair,
 )
+from plugins.MonitorPermissions import Observation
 from plugins.PrintState import LayerResolver
 from qt_runtime_support import QT_AVAILABLE, ROOT, ScriptedSocket, ScriptedTransport, runtime
 
@@ -982,6 +985,52 @@ class MonitorModelContractTests(unittest.TestCase):
 
 
 class MonitorFormattingTests(unittest.TestCase):
+    def test_preview_temperature_pair_renders_the_fixed_pair(self):
+        # The strip's fixed pair: hotend and bed with the
+        # current→target form. target 0.0 = no setpoint — the arrow
+        # is omitted; a 0.0 reading on a heater with no target is
+        # "—" (Klipper's not-measured convention); missing objects
+        # render "—".
+        hotend, bed = preview_temperature_pair({
+            "extruder": {"temperature": 205.2, "target": 210.0},
+            "heater_bed": {"temperature": 60.0, "target": 60.0},
+        })
+        self.assertEqual(hotend, "205.2/210.0 °C")
+        self.assertEqual(bed, "60.0/60.0 °C")
+        hotend, bed = preview_temperature_pair({
+            "extruder": {"temperature": 23.4, "target": 0.0},
+            "heater_bed": {"temperature": 0.0, "target": 0.0},
+        })
+        self.assertEqual(hotend, "23.4 °C")
+        self.assertEqual(bed, "—")
+        hotend, bed = preview_temperature_pair({"extruder": {"temperature": None}})
+        self.assertEqual(hotend, "—")
+        self.assertEqual(bed, "—")
+
+    def test_preview_block_carries_the_verdicts_and_the_sentinel(self):
+        # The block rides the aux clock: the stamp passes through
+        # untouched, the verdicts come from the same policy rows the
+        # Dashboard reads (one derivation — the surfaces cannot
+        # disagree), and absence is an explicit shape.
+        observation = Observation(active=True, connection="yes", state="printing",
+                                  homed_axes="xyz", assumed_stopped=False,
+                                  save_config_pending=False, controls_locked=False, busy=False)
+        block = preview_block({"extruder": {"temperature": 205.2, "target": 210.0}},
+                              observation, stamp=12.5)
+        self.assertEqual(block["stamp"], 12.5)
+        self.assertTrue(block["canPause"])
+        self.assertFalse(block["canResume"])
+        self.assertEqual(block["pauseReason"], "")
+        self.assertEqual(block["resumeReason"], "Print is not paused")
+        self.assertFalse(block["inactive"])
+        # The sentinel shape: no observation and no aux — everything
+        # reads absent, nothing is omitted.
+        block = preview_block({}, None, stamp=0.0, inactive=True)
+        self.assertTrue(block["inactive"])
+        self.assertFalse(block["canPause"])
+        self.assertEqual(block["hotend"], "—")
+        self.assertEqual(block["bed"], "—")
+
     def test_macro_parameter_inference_types_defaults(self):
         definitions = infer_macro_parameters("""
             {% set enabled = params.ENABLED|default(True) %}

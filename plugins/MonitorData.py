@@ -1,6 +1,7 @@
 """Active Monitor request/poll lifecycle and immutable data projections."""
 from __future__ import annotations
 
+import time
 from collections import deque
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -8,7 +9,7 @@ from collections.abc import Mapping
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from .ConsolePolicy import MAX_LINE
-from .MonitorFormatting import number, result, wanted_object
+from .MonitorFormatting import number, preview_block, result, wanted_object
 from .MonitorPermissions import Observation
 from .MoonrakerSession import RequestCategory
 
@@ -38,6 +39,7 @@ class MonitorData(QObject):
     # Fired after each auxiliary reply lands in the snapshot — the
     # temperature history feeds from this, not from every publish.
     auxiliaryChanged = pyqtSignal()
+    previewBlockChanged = pyqtSignal(dict)
     consoleStoreChanged = pyqtSignal()
     commandChanged = pyqtSignal(object)
     # Fires on every connection-state transition with the new state —
@@ -161,6 +163,12 @@ class MonitorData(QObject):
     def _clear(self):
         empty = freeze({})
         self._snapshot = MonitorSnapshot(empty, empty, (), empty, empty, (), (), empty, empty)
+        # The sentinel: a cleared monitor publishes the explicit
+        # absent shape — the strip must never show the previous
+        # printer's temps after a switch.
+        self.previewBlockChanged.emit(preview_block(
+            {}, self._observation, stamp=time.monotonic(), inactive=True,
+        ))
 
     @property
     def snapshot(self): return self._snapshot
@@ -466,6 +474,13 @@ class MonitorData(QObject):
             merged[name] = dict(previous, **value) if isinstance(previous, Mapping) and isinstance(value, Mapping) else value
         self._update(auxiliary=merged)
         self.auxiliaryChanged.emit()
+        # The Preview value block rides the aux clock: the stamp is
+        # taken HERE, at the landing — the coordinator never
+        # re-stamps a block in transit (the seam's staleness rule).
+        self.previewBlockChanged.emit(preview_block(
+            self._snapshot.auxiliary, self._observation,
+            stamp=time.monotonic(), inactive=not self._active,
+        ))
 
     # The console's gcode-store feed: polled ONLY while the console is
     # expanded (the ruling), on the CONSOLE poll interval with
