@@ -1210,40 +1210,64 @@ itself:
 
 ## 4.2.0 — State, permissions & operation boundaries
 
-- **The motion cluster (planned 2026-09-15):** the Monitor card's
-  readout grid grows four live rows — Velocity, Max accel, Flow
-  rate, alongside the existing Position row — all from the polled
-  snapshot, same no-reflow rule as the filament rows. Verified
-  against the live Voron mid-print (read-only queries, 2026-09-15):
+- **The motion cluster (planned 2026-09-15, round-1 corrected):**
+  three new readout rows join Position in the Monitor card grid —
+  Speed, Accel limit, Flow rate — all from the polled snapshot,
+  value-only rows reading "—" until Klipper reports them, same
+  no-reflow rule as the filament rows. Verified against the live
+  Voron mid-print (read-only queries, 2026-09-15):
   `motion_report.live_velocity` is a single scalar (20.0 mm/s
-  observed) and no per-axis velocity exists, so the Velocity row is
-  scalar (the author's ruling); Klipper publishes no instantaneous
+  observed) and no per-axis velocity exists, so the row is scalar
+  (the author's ruling); Klipper publishes no instantaneous
   acceleration at all, so the accel row is the effective
-  `toolhead.max_accel` limit (5000.0 observed) — calm and exact
-  where a derived Δv/Δt would be noisy at poll intervals (the
-  author's ruling). Flow rate = `live_extruder_velocity` (scalar
-  mm/s of filament, 0.08–0.34 mm/s observed mid-print) × the
-  filament cross-section π·(d/2)² — live-measured (the author's
-  ruling), the sign preserved so a retraction reads negative — a
-  negative reading is correct behaviour, not a fault. Verified
-  live mid-print: a retraction sampled −23.6 mm/s extruder
-  velocity (≈ −56.8 mm³/s at 1.75 mm). The existing "Flow" row
-  (extrude factor %) keeps its name
-  and row; the volumetric value is a new key, not a takeover.
-- **Filament diameter (2026-09-15):** a per-printer setting,
-  defaulting to auto — a one-shot `configfile` read at connect.
-  Verified live: `printer/objects/query?configfile` returns the
-  parsed config and `config["extruder"]["filament_diameter"]` is
-  `"1.75"` (a string) on the Voron; nested dotted queries
-  (`configfile.config.extruder`) return empty dicts, so the whole
-  configfile object arrives as one unit — fetch once at connect,
-  never subscribe (78 sections, too heavy to poll). Falls back to
-  1.75 mm where the printer's config does not set it, and is
-  always overridable by hand.
-- **Permission rewiring order (2026-09-15):** the visible controls
-  first (jog/extrude/position), then the restart and power locks —
-  implementation order, not a behaviour change; every control lands
-  in this release working.
+  `toolhead.max_accel` limit (5000.0 observed). Row titles: Speed
+  (the value is an unsigned magnitude) and Accel limit (the value
+  is the configured ceiling) — the titles say what the values are.
+  Flow rate = `live_extruder_velocity` (scalar mm/s of filament) ×
+  the filament cross-section π·(d/2)², the sign preserved so a
+  retraction reads negative — a negative reading is correct
+  behaviour, not a fault. Verified live mid-print: a retraction
+  sampled −23.6 mm/s extruder velocity (≈ −56.8 mm³/s at 1.75 mm).
+  It is the COMMANDED value — pressure advance is applied after
+  the trapq and is not in this number — and the tooltip says so.
+  Mid-travel the trapq serves a stale history value (the last E
+  segment's terminal velocity), so the row can read nonzero while
+  nothing extrudes; the ruling is to show it and let the live test
+  decide whether travel-zeroing is worth its machinery. Cadence:
+  Speed and Flow ride the core poll, Accel limit the aux poll —
+  accepted, the limit only changes via SET_VELOCITY_LIMIT. The
+  existing "Flow" row (extrude factor %) keeps its name and row;
+  the volumetric value is a new key, not a takeover.
+- **Filament diameter (2026-09-15, round-1 corrected):** no new
+  lane — the plugin already fetches and subscribes the whole
+  configfile object (discovery every 30 s, websocket subscribe),
+  and Moonraker itself prunes `config`/`settings` from its cache
+  as "never change and can be quite large"; the read reuses what
+  is already resident. Read the TYPED path:
+  `settings.extruder.filament_diameter` is already a float with
+  defaults applied (the `config` path is the raw string). Per-tool:
+  every `[extruder*]` section is read and the ACTIVE tool's
+  diameter used, so mixed 1.75/2.85 machines read correctly per
+  tool. `filament_diameter` is a REQUIRED Klipper option, so "not
+  set" is unreachable; the reachable fallback is no extruder
+  section / config object absent → 1.75 mm. No manual override
+  (the author's ruling): a wrong reading is a wrong printer.cfg,
+  and an override would hide a config error that also breaks
+  Klipper's own volumetric features. The harness simulator's
+  configfile fixture (`simulator.py:97`, no config key) is
+  extended FIRST so the auto-read has an honest test.
+- **Permission rewiring order (2026-09-15, round-1 corrected):**
+  the ledger and the fixture lead the build — the exact-set module
+  list and ownership map, the exact persisted JSON, the exact
+  `enabled:` strings, the hand-mapped `can*` surfaces, the frozen
+  WHATS_NEW digest and the committed screenshots move in the same
+  commits as the change (the pins rule). Then the visible controls
+  (jog/extrude/position), then the restart and power locks — every
+  control lands in this release working. New `can*` keys match no
+  prefix rule and each hard-fails the surface coverage until
+  mapped; the policy module, the state store and the print-start
+  owner join the exact-set module list and ARCHITECTURE.md's
+  ownership map when they land.
 - **The Post-Processing button's vertical alignment (validated
   out, 2026-09-13):** the one-card refactor settled this — the card
   now lives inside Cura's own saveButton row between the `</>` button
@@ -1268,6 +1292,27 @@ trust the last poll — it lives at the client's observation layer
 (emitted status reads as cancelled until the printer says otherwise)
 and is documented there.
 
+**The policy input contract and the rulings (2026-09-15, round-1):**
+the observation record carries everything its consumers read —
+`data.active`, `connected` (three-valued: unknown/yes/no),
+`controlsLocked`, `commands.busy`, `print_stats.state`,
+`homed_axes`, `locked_while_printing`,
+`configfile.save_config_pending` — or the one derivation is
+unachievable. Rulings: unknown/disconnected → FAIL CLOSED
+(disabled with a reason — the author's ruling; today two shipped
+places read unknown as idle and are masked only by the QML section
+gate: `can_toggle` and the restart guard's second clause);
+not-homed → ALLOWED for jog and print-start (the shipped
+decisions, now explicit rows); observed error → allowed (the
+shipped toolhead ruling — ARCHITECTURE.md's "unknown/error"
+wording is corrected to match); revalidation is PER ACTION —
+some actions re-check the click-time predicate at dispatch,
+others a different one (the pause-first jog deliberately
+dispatches work that failed the click-time gate). `can_jog`
+covers the jog/extrude block this release — no control
+distinguishes them today, so no split. Each disabled state
+carries its reason (F10).
+
 **The architecture review's additions (2026-09-14):**
 
 - **One action-availability owner (F10).** The consolidated policy
@@ -1283,14 +1328,23 @@ and is documented there.
 - **Typed operation boundaries and an explicit state store (F11).**
   Small `typing.Protocol` interfaces for the seams being changed
   (transport, printer session, file operations, index queries, Cura
-  loading) with type-checked pure modules; the Monitor model's
-  persistence moves into an explicit state-store owner with
-  migration tests and rate-limited failure reporting — a selection
-  that fails to survive restart must be explainable, and the
-  swallowed persistence exceptions stop being silent.
+  loading), checked by review — no type checker runs in any gate
+  today, and adding one is a release-workflow change for a later
+  version. The Monitor model's persistence moves into an explicit
+  state-store owner with migration tests and rate-limited failure
+  reporting through the Monitor model's status channel (once per
+  session per failure class) — a selection that fails to survive
+  restart must be explainable, and the swallowed persistence
+  exceptions stop being silent. The owner created here is the one
+  4.3.0's UI-state store consumes — one store, two releases'
+  features, no second file.
 - **A print-start operation owner** — pending/confirmed/failed
   print-start as one owned operation (the review's ownership
-  table), consumed by every start path.
+  table), consumed by every start path. Metadata-only requests
+  are identity-neutral — neither set nor clear the parsed file
+  identity (the 4.0.2 hazard: a failing metadata request
+  overwriting the download path's identity); the model watchdog
+  stays the print-start confirmer, never the HTTP result.
 - **Consolidated metadata ownership** — one metadata service
   supporting metadata-only requests, consumed by the coordinator
   and the file flow (F05's follow-up; the coordinator stops
