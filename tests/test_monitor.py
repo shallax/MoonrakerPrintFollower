@@ -41,6 +41,7 @@ TYPED = "\n".join((PLUGINS / name).read_text() for name in ("MonitorFormatting.p
 DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 CAMERA_PANE_QML = (PLUGINS / "CameraPane.qml").read_text()
+PRINT_SECTION_QML = (PLUGINS / "PrintSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
@@ -175,7 +176,9 @@ class MonitorModelContractTests(unittest.TestCase):
         # expansion reference: a renamed id or an unlisted section must
         # not slip through silently (an unknown key defaults to expanded,
         # so the pin is the only guard on the persistence vocabulary).
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML))
+        # The section-id literals ride their components (4.3.0): the
+        # extraction scans the hosts AND every extracted section file.
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -236,7 +239,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn("property string title:", DASHBOARD_QML)
         self.assertNotIn("property string sectionIcon:", DASHBOARD_QML)
         self.assertIn('sectionIcon: "Nozzle"', DASHBOARD_QML)
-        self.assertIn('sectionIcon: "Printer"', DASHBOARD_QML)
+        self.assertIn('sectionIcon: "Printer"', PRINT_SECTION_QML)
         self.assertIn('sectionId: "meshmap"', MONITOR_QML)
         self.assertIn('sectionId: "systeminfo"', MONITOR_QML)
         # Plugin-drawn glyphs feed the header through a url, and the
@@ -247,10 +250,22 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('sectionIconUrl: Qt.resolvedUrl("Power.svg")', DASHBOARD_QML)
         self.assertIn('text: "Open the Moonraker frontend."', MONITOR_QML)
         self.assertNotIn('text: "Open Moonraker frontend"', MONITOR_QML)
-        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 13)
+        # The section machinery (4.3.0): per-file counts PLUS the
+        # totals — a moved section decrements one file and increments
+        # another, and the totals catch a dropped section that a
+        # per-file pin alone would read as "moved".
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 12)
+        self.assertEqual(PRINT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
-        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 11)
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
+                         + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
+                         + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
+        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 10)
+        self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
+        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
+                         + PRINT_SECTION_QML.count('sectionIcon: "')
+                         + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
         # sectionIcon: count is unchanged.
@@ -458,8 +473,10 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn('id: powerOffDialog', MONITOR_QML)
         self.assertNotIn('id: cancelPrintDialog', MONITOR_QML)
         # The right column hosts the print actions, power and the lock.
-        for token in ('text: "Pause"', 'text: "Resume"', 'text: "Cancel"', "cancelPrintDialog.open()",
-                      'title: "Power"', "powerOffDialog.open()", "controlsCollapsed",
+        # The print actions ride their component (4.3.0).
+        for token in ('text: "Pause"', 'text: "Resume"', 'text: "Cancel"', "cancelRequested()"):
+            self.assertIn(token, PRINT_SECTION_QML)
+        for token in ('title: "Power"', "powerOffDialog.open()", "controlsCollapsed",
                       "id: collapsedTitle", "rotation: 90",
                       '"Lock all controls."', '"Unlock all controls."', "PadlockLocked.svg", "PadlockUnlocked.svg",
                       "setControlsLocked", "setControlsCollapsed"):
@@ -665,7 +682,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn('emergencyButton.clicks >= 2 ? "white"', DASHBOARD_QML)
 
     def test_dashboard_shows_current_z_offset_beside_nudges(self):
-        self.assertIn('text: "Current Z offset"', DASHBOARD_QML)
+        self.assertIn('text: "Current Z offset"', PRINT_SECTION_QML)
         self.assertIn('"Current " + root.printer.zOffsetText', DASHBOARD_QML)
         self.assertIn("adjustZOffset", DASHBOARD_QML)
 
@@ -3768,14 +3785,14 @@ Item {
                               f"{path.name}:{number}: state-gated visible: {expression}")
         # The replacement: every SESSION state lives in `enabled`.
         for enabled in (
-            "enabled: root.printer != null && root.printer.canPausePrint",
-            "enabled: root.printer != null && root.printer.canResumePrint",
-            "enabled: root.printer != null && root.printer.canCancelPrint",
+            "enabled: root.printerModel != null && root.printerModel.canPausePrint",
+            "enabled: root.printerModel != null && root.printerModel.canResumePrint",
+            "enabled: root.printerModel != null && root.printerModel.canCancelPrint",
             "enabled: root.printer != null && root.printer.monitorConnected && !root.printer.actionBusy && root.printer.printActive && root.printer.sectionReason === \"\" && !modelData.excluded",
             "enabled: root.printer != null && root.printer.monitorConnected && root.printer.consoleLines.length > 0",
             "enabled: base.bedMeshAvailable",
         ):
-            self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML)
+            self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML + PRINT_SECTION_QML)
         # The Preview load button keeps its full width: the follow button
         # no longer vanishes to widen it.
         self.assertIn("width: buttons.width - base.buttonSpacing - followButton.width", PREVIEW_CONTROLS_QML)
