@@ -233,7 +233,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("monitorChanged", ("monitorState", "monitorConnected", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
                             "improvingEta", "improveEtaProgress", "improveEtaPhase", "monitorElapsed",
                             "monitorEta", "monitorEtaBasis", "monitorFinish", "monitorSpeed", "monitorFlow",
-                            "monitorPosition", "monitorMessage", "monitorLayerSource", "filamentUsed", "filamentRemaining")),
+                            "monitorPosition", "monitorVelocity", "monitorFlowRate", "monitorFlowDiameter",
+                            "monitorAccelLimit", "monitorMessage", "monitorLayerSource", "filamentUsed", "filamentRemaining")),
         ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
         ("temperatureChartChanged", ("temperatureChart",)),
         ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
@@ -828,6 +829,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     monitorSpeed = value_property(str, "monitorSpeed", monitorChanged, "100%")
     monitorFlow = value_property(str, "monitorFlow", monitorChanged, "100%")
     monitorPosition = value_property(str, "monitorPosition", monitorChanged, "—")
+    # The motion rows (4.2.0): the defaults read "—" until the first
+    # snapshot lands — an idle CONNECTED printer reads 0 (Klipper
+    # always reports the motion fields once the object exists).
+    monitorVelocity = value_property(str, "monitorVelocity", monitorChanged, "—")
+    monitorFlowRate = value_property(str, "monitorFlowRate", monitorChanged, "—")
+    monitorFlowDiameter = value_property(str, "monitorFlowDiameter", monitorChanged, "—")
+    monitorAccelLimit = value_property(str, "monitorAccelLimit", monitorChanged, "—")
     monitorMessage = value_property(str, "monitorMessage", monitorChanged, "")
     printActive = value_property(bool, "printActive", actionChanged, False)
     canPausePrint = value_property(bool, "canPausePrint", actionChanged, False)

@@ -2277,7 +2277,11 @@ Component {
                                 }
 
                                 UM.Label {
-                                    text: "Speed"
+                                    // "Speed factor" (the 4.2.0
+                                    // ruling): the row is the M220
+                                    // multiplier, and the live speed
+                                    // row below is titled Velocity.
+                                    text: "Speed factor"
                                     color: UM.Theme.getColor("text_inactive")
                                     Layout.preferredWidth: 110 * screenScaleFactor
                                 }
@@ -2305,6 +2309,63 @@ Component {
                                     text: root.printer != null ? root.printer.monitorPosition : "—"
                                     Layout.fillWidth: true
                                     wrapMode: Text.WordWrap
+                                }
+
+                                // The motion block (4.2.0): the two
+                                // core-poll values, then the aux-poll
+                                // ceiling. NO-REFLOW RULE: permanent
+                                // rows — idle reads 0, "—" only when
+                                // the printer reports no motion
+                                // object. The values must not wrap.
+                                UM.Label {
+                                    text: "Velocity"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    text: root.printer != null ? root.printer.monitorVelocity : "—"
+                                    color: UM.Theme.getColor("text")
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    UM.TooltipArea {
+                                        anchors.fill: parent
+                                        acceptedButtons: Qt.NoButton
+                                        // No claim under a dash (the
+                                        // panel UX ruling).
+                                        text: root.printer != null && root.printer.monitorVelocity !== "—" ? "Klipper's live toolhead speed — a magnitude, with no direction." : ""
+                                    }
+                                }
+                                UM.Label {
+                                    text: "Flow rate"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    text: root.printer != null ? root.printer.monitorFlowRate : "—"
+                                    color: UM.Theme.getColor("text")
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    UM.TooltipArea {
+                                        anchors.fill: parent
+                                        acceptedButtons: Qt.NoButton
+                                        text: root.printer != null && root.printer.monitorFlowRate !== "—" ? "The commanded volumetric flow — Klipper's live extruder velocity × the filament cross-section. Uses printer.cfg's filament_diameter for the active tool (" + root.printer.monitorFlowDiameter + "). Pressure advance is excluded, the value can lag during travel moves, and a negative reading while retracting is correct." : ""
+                                    }
+                                }
+                                UM.Label {
+                                    text: "Accel limit"
+                                    color: UM.Theme.getColor("text_inactive")
+                                    Layout.preferredWidth: 110 * screenScaleFactor
+                                }
+                                UM.Label {
+                                    text: root.printer != null ? root.printer.monitorAccelLimit : "—"
+                                    color: UM.Theme.getColor("text")
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                    UM.TooltipArea {
+                                        anchors.fill: parent
+                                        acceptedButtons: Qt.NoButton
+                                        text: root.printer != null && root.printer.monitorAccelLimit !== "—" ? "The acceleration ceiling Klipper has configured — SET_VELOCITY_LIMIT or M204 can change it mid-print. Not the acceleration currently in use." : ""
+                                    }
                                 }
                             }
                         }

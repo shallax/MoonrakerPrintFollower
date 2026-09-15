@@ -310,6 +310,23 @@ def filament_total_mm_from_file(path, limit=_FILAMENT_HEADER_SCAN_BYTES):
     return filament_total_mm_from_gcode(data)
 
 
+def filament_diameter(auxiliary):
+    """The active extruder's filament_diameter from the configfile
+    settings, or None. Klipper only creates extruder, extruder1..98
+    sections (validation rejects any other name), so the exact-key
+    lookup is safe; the predicate is the same one object_kind uses
+    (a prefix sweep would also match [extruder_stepper]). settings
+    holds the typed values with defaults applied — the raw strings
+    live in config."""
+    configfile = auxiliary.get("configfile") or {}
+    settings = configfile.get("settings") or {}
+    if not isinstance(settings, Mapping): return None
+    tool = str((auxiliary.get("toolhead") or {}).get("extruder") or "extruder").lower()
+    if not re.fullmatch(r"extruder\d*", tool): return None
+    section = settings.get(tool)
+    return number(section.get("filament_diameter"), None) if isinstance(section, Mapping) else None
+
+
 def core_values(snapshot, physical, connected):
     stats = snapshot.core.get("print_stats") or {}
     sd = snapshot.core.get("virtual_sdcard") or {}
@@ -370,6 +387,27 @@ def core_values(snapshot, physical, connected):
     # readout.
     filament_remaining = f"{max(0.0, total_mm - used_mm) / 1000.0:.2f} m" \
         if used_mm is not None and total_mm is not None and 0 <= used_mm <= total_mm else "—"
+    # The motion rows (4.2.0): Velocity is Klipper's scalar speed
+    # MAGNITUDE (live_velocity is never signed). Flow rate is the
+    # COMMANDED volumetric flow — live_extruder_velocity × the
+    # filament cross-section — signed, so a retraction reads
+    # negative; tiny cancellation artifacts (a -3.6e-15 sample was
+    # caught live) clamp to zero first. Accel limit is the
+    # configured ceiling (Klipper publishes no instantaneous
+    # acceleration), from the aux poll's toolhead. "—" only when
+    # the object is absent entirely — an idle printer reads 0.
+    velocity = number(motion.get("live_velocity"), None)
+    ev = number(motion.get("live_extruder_velocity"), None)
+    # The existing test snapshots are bare core-only namespaces — the
+    # auxiliary read must tolerate their absence (the ride-the-existing-
+    # argument ruling) rather than force a churn across call sites.
+    aux = getattr(snapshot, "auxiliary", None) or {}
+    diameter = filament_diameter(aux)
+    flow = None
+    if ev is not None and diameter:
+        ev = 0.0 if abs(ev) < 1e-9 else ev
+        flow = ev * math.pi * (diameter / 2.0) ** 2
+    accel = number((aux.get("toolhead") or {}).get("max_accel"), None)
     return {
         "monitorState": state.capitalize() if connected else "Disconnected",
         "monitorFilename": str(stats.get("filename") or ""),
@@ -382,6 +420,10 @@ def core_values(snapshot, physical, connected):
         "monitorSpeed": factor_percent(move.get("speed_factor")),
         "monitorFlow": factor_percent(move.get("extrude_factor")),
         "monitorPosition": f"X {number(position[0]):.1f}   Y {number(position[1]):.1f}   Z {number(position[2]):.2f}" if len(position) >= 3 else "—",
+        "monitorVelocity": f"{velocity:.1f} mm/s" if velocity is not None else "—",
+        "monitorFlowRate": f"{flow:.1f} mm³/s" if flow is not None else "—",
+        "monitorFlowDiameter": f"{diameter:.2f} mm" if diameter else "—",
+        "monitorAccelLimit": f"{accel:.0f} mm/s²" if accel is not None else "—",
         "monitorMessage": str(stats.get("message") or ""),
         "filamentUsed": filament_used,
         "filamentRemaining": filament_remaining,
