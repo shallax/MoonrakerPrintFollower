@@ -288,28 +288,6 @@ REAL_INPUT_OPS = frozenset(("deliver_click", "click_stage", "click_text",
                             "key_press"))
 
 
-# The per-run stamp: a fresh runner process starts each unit, so this
-# differs on every unit run (the hourglass journey's fresh-file
-# premise).
-RUN_STAMP = time.strftime("%Y%m%d%H%M%S")
-
-
-def _stamp_values(value):
-    # A run-stamped value: string leaves named {RUN_STAMP} resolve to
-    # this run's stamp, so a scenario that needs a FRESH file (the
-    # hourglass journey) can't collide with the shared tree's state
-    # from a previous run — the deterministic sim file plus a
-    # persistent index made the "fresh file" premise false on the
-    # serial run's second pass.
-    if isinstance(value, str):
-        return value.replace("{RUN_STAMP}", RUN_STAMP)
-    if isinstance(value, dict):
-        return {key: _stamp_values(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_stamp_values(item) for item in value]
-    return value
-
-
 def _delivery_name(identified):
     # A readable name for a delivery record's hit/grabber: the
     # objectName when the item carries one, else the class chain's
@@ -2332,13 +2310,13 @@ def suite_step(step):
         time.sleep(0.5)
         return reply.get("ok") is True, f"the {step.get('button', 'Yes')} on the plugin's QMessageBox", "answered"
     if op == "sim_set":
-        reply = sim_http("/harness/scenario", "POST", _stamp_values(step["state"]))
+        reply = sim_http("/harness/scenario", "POST", step["state"])
         unknown = reply.get("unknown") or []
         time.sleep(1.5)
         return (not unknown, "the simulator's state changed to %s" % json.dumps(step["state"])[:60],
                 "applied" if not unknown else f"REFUSED: unknown keys {unknown}")
     if op == "sim_arm":
-        reply = sim_http("/harness/scenario", "POST", _stamp_values(step["arms"]))
+        reply = sim_http("/harness/scenario", "POST", step["arms"])
         unknown = reply.get("unknown") or []
         return (not unknown, "the simulator armed %s" % json.dumps(step["arms"])[:60],
                 "armed" if not unknown else f"REFUSED: unknown arms {unknown}")

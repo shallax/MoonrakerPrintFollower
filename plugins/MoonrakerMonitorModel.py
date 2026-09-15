@@ -307,7 +307,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._show_probe_points = bool(getattr(self._config(), "show_probe_points", False))
         self._qv_cache = {}
         self._improving_eta = False
-        self._improving_since = 0.0
+        self._skip_clear_once = False
         self._values = {}
         state = _read_state()
         self._controls_locked = state["controlsLocked"]
@@ -482,8 +482,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._console_error_bell = False
         # The file manager's own lifecycle: deactivation cancels its
         # lane, aborts its fetches and clears the previous machine's
-        # rows and thumbnails (round-2 A15).
+        # rows and thumbnails (round-2 A15). The hourglass ends
+        # outright: a printer switch makes any in-flight improve
+        # moot, whatever the snapshot says.
         self._file_manager.unbind()
+        self._improving_eta = False
         self._publish()
 
     def setMonitoringActive(self, active): self._data.set_active(active)
@@ -607,6 +610,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         fm = self._file_manager
         previous = self._values
         snapshot = self._print_state()
+        if self._improving_eta and not self._skip_clear_once \
+                and (snapshot.index_ready or not snapshot.load_active):
+            # The index landed, or the download/build failed and the
+            # coordinator cleared its flags (panel finding P1-1): the
+            # hourglass ends and the glyph becomes the retry
+            # affordance — settled BEFORE the values build so the
+            # published value reflects the cleared state. The 90 s
+            # timer stays as the last resort for a hung pull.
+            self._improving_eta = False
+        self._skip_clear_once = False
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
         # The M117 message lives on Klipper's display_status object,
         # not print_stats — the Print-job slot reads it from the aux
@@ -753,20 +766,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             improveEtaPhase=("Downloading…" if (snapshot.load_active or self._improving_eta) and snapshot.download_fraction is not None
                              else "Indexing…" if (snapshot.load_active or self._improving_eta) and snapshot.indexing
                              else "Resolving…" if snapshot.load_active or self._improving_eta else ""))
-        if self._improving_eta and (snapshot.index_ready
-                                    or (not snapshot.load_active
-                                        and time.monotonic() - self._improving_since > 5.0)):
-            # The index landed, or the download/build failed and the
-            # coordinator cleared its flags (panel finding P1-1): the
-            # hourglass ends and the glyph becomes the retry
-            # affordance. The 5 s grace covers the registration gap —
-            # the coordinator's load_active flips on its NEXT snapshot
-            # rebuild, and a publish in that window must not clear the
-            # flag the improve just set (the red run: the hourglass
-            # never fired when the improve ran from a settled state,
-            # only when a previous load's tail kept load_active set).
-            # The 90 s timer stays as the last resort for a hung pull.
-            self._improving_eta = False
         self._values = values
         try:
             url = self._camera.url
@@ -1598,7 +1597,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # (the request path is idempotent and coalesced).
         if self._request_monitor_download is not None:
             self._improving_eta = True
-            self._improving_since = time.monotonic()
+            # The publish below must not clear the flag it just set:
+            # the coordinator's load_active flips on its NEXT snapshot
+            # rebuild, and the stale snapshot in this very publish
+            # reads as "the load never started" (the red run: the
+            # hourglass never fired when the improve ran from a
+            # settled state). Skip the clear once; every later
+            # publish sees the updated snapshot and clears honestly.
+            self._skip_clear_once = True
             self._publish()
             self._request_monitor_download()
             QTimer.singleShot(90000, self._improve_eta_timeout)

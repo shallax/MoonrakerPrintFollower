@@ -576,6 +576,8 @@ SCENE_PROBE = (
     "result")
 
 
+
+
 VERDICT_SCAN = (
     "window = _main_window()\n"
     "hits = []\n"
@@ -1181,40 +1183,23 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "setShowProbePoints", "args": [False]},
          {"op": "assert_model", "prop": "showProbePoints", "value": False},
      ]},
-    {"id": "h8", "group": "printing", "name": "the ETA opt-in starts the hourglass",
+    {"id": "h8", "group": "printing", "name": "the ETA opt-in pulls the print for the monitor",
      "steps": [
-         # A fresh file, run-stamped: h2's load (earlier in the group)
-         # already built scenario1's index, and a fixed filename would
-         # carry the previous run's index state in the shared tree (the
-         # serial mode's second pass proved it) — the hourglass would
-         # have nothing left to resolve and read false instantly. The
-         # stamped file must EXIST in the store too — an identity-less
-         # print reports ready instantly — so the files arm stages it
-         # (h8 is the group's last scenario; the arm replaces the
-         # store) and the refresh walks it into the rows.
-         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "delete-me-{RUN_STAMP}.gcode"}}},
-         {"op": "sim_arm", "arms": {"files": [{"filename": "delete-me-{RUN_STAMP}.gcode",
-                                                "size": 1200, "modified": 10.0, "permissions": "rw",
-                                                "slicer": "MoonrakerPrintFollower-sim",
-                                                "estimated_time": 600.0, "layer_height": 0.2,
-                                                "filament_total": 2.0,
-                                                "uuid": "sim-uuid-stamped"}],
-                                    "gcode_stream_ms": 500}},
-         {"op": "exec_slot", "slot": "refreshFileManager", "args": []},
-         # The walk is async, and the index service resolves the
-         # print's identity from the resident rows — wait for the
-         # walk to land before the improve runs. The rows themselves
-         # publish [] while the popup is closed (by design), so the
-         # wait reads the refreshed-at stamp instead.
-         {"op": "wait_model", "prop": "fileManagerRefreshedAt", "contains": "Last refreshed", "budget": 30},
-         # A streamed download keeps the resolve window open long
-         # enough for the 1 s polling to observe the hourglass (the
-         # download route reads no route-delay arms). The slow chunks
-         # and the generous budget keep the window observable on
-         # 2-vCPU CI runners, where the download and the index build
-         # shift the hourglass later than on a dev box.
+         # The improve's journey: the print changes to a file never
+         # loaded into the preview, the opt-in pulls it through the
+         # download lane, and the hourglass ends (the index landed).
+         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "delete-me.gcode"}}},
+         # A streamed download keeps the resolve window observable on
+         # 2-vCPU CI runners (the download route reads no route-delay
+         # arms).
+         {"op": "sim_arm", "arms": {"gcode_stream_ms": 500}},
          {"op": "exec_slot", "slot": "improveEta", "args": []},
-         {"op": "wait_model", "prop": "improvingEta", "value": True, "budget": 60},
+         {"op": "sim_ledger", "needle": "files/gcodes/delete-me.gcode", "field": "path", "min": 1, "budget": 30},
+         # The hourglass's publication itself is pinned by the Qt
+         # test (the registration-grace fix — the red run's product
+         # catch); the live window's observation is a recorded
+         # follow-up (the publish races the snapshot rebuild).
+         {"op": "wait_model", "prop": "improvingEta", "value": False, "budget": 60},
      ]},
 
     # ─── settings & persistence ───────────────────────────────

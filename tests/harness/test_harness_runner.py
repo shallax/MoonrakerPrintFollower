@@ -75,7 +75,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # re-count — the pin now counts exec_code and confirm_box,
         # which the classifier itself calls direct invocation, so
         # they can never hide outside the ratchet):
-        # 40 exec_slot + 12 exec_file_slot + 6 emit_click +
+        # 39 exec_slot + 12 exec_file_slot + 6 emit_click +
         # 3 confirm_box + 6 exec_mode + 3 exec_validator +
         # 1 exec_console + 1 exec_extrude + 1 exec_test_connection
         # + 22 exec_code.
