@@ -44,6 +44,7 @@ CAMERA_PANE_QML = (PLUGINS / "CameraPane.qml").read_text()
 PRINT_SECTION_QML = (PLUGINS / "PrintSection.qml").read_text()
 SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text()
 TOOLHEAD_SECTION_QML = (PLUGINS / "ToolheadSection.qml").read_text()
+PROFILES_SECTION_QML = (PLUGINS / "ProfilesSection.qml").read_text()
 MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
@@ -108,7 +109,7 @@ class MonitorModelContractTests(unittest.TestCase):
                       "root.printerModel.monitorPosition"):
             self.assertIn(token, TOOLHEAD_SECTION_QML)
         for token in ('"Cooldown"', "heatersOff"):
-            self.assertIn(token, DASHBOARD_QML)
+            self.assertIn(token, PROFILES_SECTION_QML)
         # The safety clause lives in the policy's copy (4.2.0): the QML
         # reads the published caption, never builds the sentence.
         self.assertIn("Toolhead moves are disabled during a print", POLICY)
@@ -181,7 +182,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -257,29 +258,33 @@ class MonitorModelContractTests(unittest.TestCase):
         # totals — a moved section decrements one file and increments
         # another, and the totals catch a dropped section that a
         # per-file pin alone would read as "moved".
-        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 9)
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 8)
         self.assertEqual(PRINT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(SETUP_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MACROS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(PROFILES_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
                          + SETUP_SECTION_QML.count("CollapsibleSectionHeader")
                          + TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader")
                          + MACROS_SECTION_QML.count("CollapsibleSectionHeader")
+                         + PROFILES_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
-        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 7)
+        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 6)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(SETUP_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(TOOLHEAD_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MACROS_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(PROFILES_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
                          + SETUP_SECTION_QML.count('sectionIcon: "')
                          + TOOLHEAD_SECTION_QML.count('sectionIcon: "')
                          + MACROS_SECTION_QML.count('sectionIcon: "')
+                         + PROFILES_SECTION_QML.count('sectionIcon: "')
                          + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
@@ -720,9 +725,9 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn("fixedWidthMode: true", grid)
 
     def test_temperature_presets_are_buttons_not_an_implied_selection(self):
-        self.assertIn("temperaturePresetItems", DASHBOARD_QML)
-        self.assertIn('modelData.active ? "Active — "', DASHBOARD_QML)
-        self.assertIn("applyTemperaturePreset(modelData.index)", DASHBOARD_QML)
+        self.assertIn("temperaturePresetItems", PROFILES_SECTION_QML)
+        self.assertIn('modelData.active ? "Active — "', PROFILES_SECTION_QML)
+        self.assertIn("applyTemperaturePreset(modelData.index)", PROFILES_SECTION_QML)
         self.assertNotIn("temperaturePresetSelector", DASHBOARD_QML)
 
     def test_pwm_controls_remain_in_dashboard(self):

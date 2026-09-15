@@ -536,75 +536,6 @@ Component {
                         CollapsibleSectionHeader {
                             Layout.fillWidth: true
                             printerModel: root.printer
-                            title: "Temperature profiles"
-                            sectionId: "profiles"
-                            sectionIcon: "PrintQuality"
-                        }
-                        ColumnLayout {
-                            Layout.topMargin: UM.Theme.getSize("default_margin").height
-                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                            visible: root.printer != null && root.printer.temperaturePresetItems.length > 0 && root.printer.sectionExpandedMap["profiles"] !== false
-                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
-                            Layout.fillWidth: true
-                            spacing: UM.Theme.getSize("default_margin").height / 2
-
-                            Repeater {
-                                model: root.printer != null ? root.printer.temperaturePresetItems : []
-                                Cura.SecondaryButton {
-                                    Layout.fillWidth: true
-                                    text: modelData.active ? "Active — " + modelData.name : modelData.name
-                                    enabled: root.printer != null && root.printer.canApplyTemperaturePreset
-                                    onClicked: root.printer.applyTemperaturePreset(modelData.index)
-                                }
-                            }
-                            Cura.SecondaryButton {
-                                Layout.fillWidth: true
-                                text: "Cooldown"
-                                tooltip: "Turn every heater off: all targets to 0 °C."
-                                enabled: root.printer != null && root.printer.canApplyTemperaturePreset
-                                onClicked: root.printer.heatersOff()
-                            }
-                            UM.Label {
-                                text: "A profile is marked Active only when all of its enabled heater targets match the printer. G-code-only profiles are never assumed active."
-                                color: UM.Theme.getColor("text_inactive")
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                            }
-                            GridLayout {
-                                columns: 2
-                                columnSpacing: UM.Theme.getSize("default_margin").width
-                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
-                                Layout.fillWidth: true
-
-                                UM.Label {
-                                    height: 36 * screenScaleFactor
-                                    text: "Status"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    Layout.preferredWidth: 110 * screenScaleFactor
-                                }
-                                UM.Label {
-                                    height: 36 * screenScaleFactor
-                                    text: root.printer != null ? (root.printer.sectionReason !== "" ? root.printer.sectionReason : (root.printer.printActive ? "Disabled during a print" : "—")) : "—"
-                                    wrapMode: Text.NoWrap
-                                    elide: Text.ElideRight
-                                    color: UM.Theme.getColor("text")
-                                    Layout.fillWidth: true
-                                    UM.TooltipArea {
-                                        anchors.fill: parent
-                                        // Short value in the row, full
-                                        // sentence in the tooltip (the
-                                        // author's ruling).
-                                        text: root.printer != null ? (root.printer.sectionReasonDetail !== "" ? root.printer.sectionReasonDetail : (root.printer.printActive ? "Temperature profiles are disabled during a print, matching Mainsail." : "")) : ""
-                                        acceptedButtons: Qt.NoButton
-                                    }
-                                }
-                            }
-                        }
-
-                        CollapsibleSectionHeader {
-                            Layout.fillWidth: true
-                            printerModel: root.printer
                             title: "Live tuning"
                             sectionId: "tuning"
                             sectionIcon: "Sliders"
@@ -775,6 +706,10 @@ Component {
                             }
                         }
                         MacrosSection {
+                            Layout.fillWidth: true
+                            printerModel: root.printer
+                        }
+                        ProfilesSection {
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
