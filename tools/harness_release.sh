@@ -57,6 +57,7 @@ docker build -q -t mpf-cura-harness "$root/tools/harness" >/dev/null
 # copy their version's tree into their own work dir (the extraction
 # must be writable — the plugin stages into it — and a hardlink
 # would mutate the shared tree).
+export CURA_VERSIONS_DIR="$HARNESS_DIR/cura_versions"
 python3 "$root/tools/fetch_cura.py" "$PRIMARY"
 python3 "$root/tools/fetch_cura.py" "$SECONDARY"
 
@@ -65,14 +66,23 @@ hang=0
 
 start_container() {  # start_container <name> <slot_dir>
     docker rm -f "$1" >/dev/null 2>&1 || true
+    # A previous run's slot holds root-owned debris the host cannot
+    # remove (Cura's owner-only writes) — the container clears it,
+    # then the dir is created USER-OWNED before the mount (docker
+    # would create a missing mount source as root, and every later
+    # host-side write into the slot then dies with EACCES).
+    docker run --rm -v "$(dirname "$2"):/host" mpf-cura-harness \
+        rm -rf "/host/$(basename "$2")" >/dev/null 2>&1 || true
+    mkdir -p "$2"
     # SYS_PTRACE lets the stall diagnostics attach gdb/strace to the
     # hung boot from inside the container (the host's ptrace_scope
     # otherwise blocks a non-parent tracer). The slot dir mounts as
-    # the container's /tmp/mpf; the shared tree mounts at its own
-    # path so the evidence lands in the shared run root.
+    # the container's /tmp/mpf — ONE mount: the shared tree is never
+    # mounted into a slot container (a second mount at the same
+    # destination is what Docker rejects, and the evidence joins the
+    # shared run root host-side after each unit).
     docker run -d --init --name "$1" --cap-add=SYS_PTRACE \
-        -v "$2:/tmp/mpf" -v "$HARNESS_DIR:$HARNESS_DIR" \
-        mpf-cura-harness sleep infinity >/dev/null
+        -v "$2:/tmp/mpf" mpf-cura-harness sleep infinity >/dev/null
 }
 
 prepare_slot() {  # prepare_slot <slot_dir> <cura-version>
@@ -91,14 +101,22 @@ run_unit() {  # run_unit <budget> <version> <name> <mode> [group] [slot]
         container="mpf-cura-gate-$slot"
         work="$HARNESS_DIR/slot-$slot"
         prepare_slot "$work" "$version"
+        # The slot's evidence dir lives in the SLOT's tree (its
+        # /tmp/mpf); it joins the shared run root after the unit.
+        slot_unit="$work/ui-artifacts/$name"
+        mkdir -p "$slot_unit"
         if [ -n "$group" ]; then
             timeout "${budget}m" env HARNESS_CONTAINER="$container" MPF_WORK_DIR="$work" \
                 CURA_VERSION="$version" MODE="$mode" SCENARIO_GROUP="$group" \
-                RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
+                RUN_DIR_NAME="$slot_unit" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
         else
             timeout "${budget}m" env HARNESS_CONTAINER="$container" MPF_WORK_DIR="$work" \
                 CURA_VERSION="$version" MODE="$mode" \
-                RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
+                RUN_DIR_NAME="$slot_unit" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
+        fi
+        status=$?
+        if [ -d "$slot_unit" ]; then
+            cp -a "$slot_unit" "$unit_dir"
         fi
     else
         if [ -n "$group" ]; then
@@ -110,8 +128,8 @@ run_unit() {  # run_unit <budget> <version> <name> <mode> [group] [slot]
                 CURA_VERSION="$version" MODE="$mode" \
                 RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
         fi
+        status=$?
     fi
-    status=$?
     if [ "$status" = 124 ]; then
         echo "HANG: $name on $version (budget overrun — the unit never finished)"
     elif [ "$status" != 0 ]; then

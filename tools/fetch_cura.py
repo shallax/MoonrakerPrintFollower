@@ -22,13 +22,17 @@ import datetime
 import glob
 import hashlib
 import json
+import os
 import pathlib
 import re
 import shutil
 import subprocess
 import sys
 
-BASE = pathlib.Path("/tmp/mpf/cura_versions")
+# The versions root is addressable: the release gate fetches into the
+# shared tree while a slot's fallback fetch extracts into the slot's
+# own tree (a slot must never race another slot's extraction).
+BASE = pathlib.Path(os.environ.get("CURA_VERSIONS_DIR", "/tmp/mpf/cura_versions"))
 CONTAINER = "mpf-cura513"
 
 

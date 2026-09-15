@@ -25,6 +25,15 @@ CONTAINER_WORK_DIR="/tmp/mpf"
 # screen-fits assertion has something to defend.
 HARNESS_GEOMETRY="${HARNESS_GEOMETRY:-1920x1080}"
 HARNESS_WINDOW="${HARNESS_WINDOW:-1840x1040}"
+
+# The slot mount maps the slot's host dir onto the container's
+# /tmp/mpf — inside a slot container, host-form paths do not exist.
+# Every path handed to the container resolves through the shared,
+# tested rule (tools/ui_test_paths.sh); the serial run's
+# host==container identity is the degenerate case.
+container_path() {
+    tools/ui_test_paths.sh container "$WORK_DIR" "$1"
+}
 # The deterministic scratch root. Everything a run needs lives
 # under it and is CREATED here, never assumed — /tmp does not
 # survive a reboot, and an unprepared tree must provision itself
@@ -65,13 +74,16 @@ fi
 # rule (tools/ui_test_paths.sh carries the tests) so the host report
 # and the container writes can never drift apart again.
 RUN_DIR="$(tools/ui_test_paths.sh resolve "$WORK_DIR" "${RUN_DIR_NAME:-run-001}")"
-CONTAINER_RUN_DIR="$(tools/ui_test_paths.sh resolve "$CONTAINER_WORK_DIR" "${RUN_DIR_NAME:-run-001}")"
+CONTAINER_RUN_DIR="$(container_path "$(tools/ui_test_paths.sh resolve "$CONTAINER_WORK_DIR" "${RUN_DIR_NAME:-run-001}")")"
 
 # The pinned Cura for this run: any version can be selected; prepare
 # one with tools/fetch_cura.py (the manifest records the swap).
 CURA_VERSION="${CURA_VERSION:-5.13.0}"
 CURA_ROOT="$WORK_DIR/cura_versions/$CURA_VERSION/root"
 CURA_WHEELS="$WORK_DIR/cura_versions/$CURA_VERSION/wheels"
+# The fallback fetch extracts into THIS run's tree — never the shared
+# one (a slot must not race another slot's extraction).
+export CURA_VERSIONS_DIR="$WORK_DIR/cura_versions"
 if [ ! -d "$CURA_ROOT" ]; then
     echo "ui_test: Cura $CURA_VERSION is not prepared — fetching it now"
     tools/fetch_cura.py "$CURA_VERSION" || exit 1
@@ -101,7 +113,7 @@ trap cleanup EXIT INT TERM
 # Cura's own writes land with owner-only modes (settings files go
 # 0600, its dirs 0775): on CI the next unit's host-side rm hits them
 # as a different uid. The container's root does the destructive pass.
-docker exec "$CONTAINER" rm -rf "$WORK_DIR"/xdg
+docker exec "$CONTAINER" rm -rf "$(container_path "$WORK_DIR"/xdg)"
 mkdir -p "$WORK_DIR"/xdg
 cp -r "$root/tests/harness/config/." "$WORK_DIR"/xdg/
 # The container's Cura writes into the seeded tree — the instance lock
@@ -160,7 +172,7 @@ mkdir -p "$WORK_DIR"/fakehome/lib64
 # The chmod runs in the container: a previous unit's Cura wrote here
 # with owner-only modes, and a host-side chmod would EPERM on files
 # it does not own.
-docker exec "$CONTAINER" chmod -R 777 "$WORK_DIR"/fakehome
+docker exec "$CONTAINER" chmod -R 777 "$(container_path "$WORK_DIR"/fakehome)"
 ln -sfn /lib64/ld-linux-x86-64.so.2 "$WORK_DIR"/fakehome/lib64/ld-linux-x86-64.so.2
 # Stage the suite's test model where the insert-slice flow reads it.
 mkdir -p "$WORK_DIR"/models
@@ -196,7 +208,7 @@ cp -r "$root/tests/harness/driver" "$PLUGIN_DIR/HarnessDriver"
 # The container's root re-opens the seeded tree as the last staging
 # act: whatever uid skew survives between the host-side chmod and the
 # boot's view, the tree the boot actually sees ends up world-writable.
-docker exec "$CONTAINER" chmod -R 777 "$WORK_DIR"/xdg
+docker exec "$CONTAINER" chmod -R 777 "$(container_path "$WORK_DIR"/xdg)"
 cp "$root/tests/harness/runner.py" "$WORK_DIR"/harness_runner.py
 cp "$root/tests/harness/scenarios.py" "$WORK_DIR"/scenarios.py
 cp "$root/tests/harness/scenario_map.py" "$WORK_DIR"/scenario_map.py
@@ -274,7 +286,7 @@ chmod -R 777 "$RUN_DIR"
 
 case "$MODE" in
     discover)
-        docker exec -e CURA_ROOT="$CURA_ROOT" -e CURA_WHEELS="$CURA_WHEELS" \
+        docker exec -e CURA_ROOT="$(container_path "$CURA_ROOT")" -e CURA_WHEELS="$(container_path "$CURA_WHEELS")" \
             "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
             DISPLAY=:99 APPDIR=\$CURA_ROOT \
             LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
@@ -288,7 +300,7 @@ case "$MODE" in
             python3 /tmp/mpf/harness_runner.py discover
         ;;
     scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite|real)
-        docker exec -e CURA_ROOT="$CURA_ROOT" -e CURA_WHEELS="$CURA_WHEELS" \
+        docker exec -e CURA_ROOT="$(container_path "$CURA_ROOT")" -e CURA_WHEELS="$(container_path "$CURA_WHEELS")" \
             "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
             DISPLAY=:99 APPDIR=\$CURA_ROOT \
             LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
