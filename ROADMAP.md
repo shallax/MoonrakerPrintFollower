@@ -1225,9 +1225,10 @@ itself:
   mm/s of filament, 0.08–0.34 mm/s observed mid-print) × the
   filament cross-section π·(d/2)² — live-measured (the author's
   ruling), the sign preserved so a retraction reads negative — a
-  negative reading is correct behaviour, not a fault. (Retractions
-  may be disabled on the current print, so no live negative sample
-  is required.) The existing "Flow" row (extrude factor %) keeps its name
+  negative reading is correct behaviour, not a fault. Verified
+  live mid-print: a retraction sampled −23.6 mm/s extruder
+  velocity (≈ −56.8 mm³/s at 1.75 mm). The existing "Flow" row
+  (extrude factor %) keeps its name
   and row; the volumetric value is a new key, not a takeover.
 - **Filament diameter (2026-09-15):** a per-printer setting,
   defaulting to auto — a one-shot `configfile` read at connect.
