@@ -295,7 +295,7 @@ case "$MODE" in
             LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb timeout 1800 \
             /lib64/ld-linux-x86-64.so.2 ./UltiMaker-Cura" >/tmp/mpf/cura_run.log 2>&1 &'
         # wait for the driver's port, then run the discovery
-        for _ in $(seq 1 120); do [ -s /tmp/mpf/harness_port.txt ] && break; sleep 1; done
+        for _ in $(seq 1 120); do [ -s "$WORK_DIR"/harness_port.txt ] && break; sleep 1; done
         docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
             python3 /tmp/mpf/harness_runner.py discover
         ;;
@@ -311,10 +311,13 @@ case "$MODE" in
         # The port must appear before the scenario can start; the CI
         # runners are 2-vCPU VMs and boot Cura far more slowly than a
         # dev box, so the deadline is generous. The failure report
-        # distinguishes a slow boot from a dead one.
+        # distinguishes a slow boot from a dead one. The wait reads
+        # the SLOT's tree (a slot container writes the port file into
+        # its own /tmp/mpf — the shared tree's copy is not evidence
+        # for this run).
         boot_start=$(date +%s)
         for tick in $(seq 1 300); do
-            [ -s /tmp/mpf/harness_port.txt ] && break
+            [ -s "$WORK_DIR"/harness_port.txt ] && break
             # The boot is the longest silent phase; a line every half
             # minute keeps a watching terminal from assuming a hang.
             # (The counter must not be the underscore parameter —
@@ -324,7 +327,7 @@ case "$MODE" in
             esac
             sleep 1
         done
-        if [ -s /tmp/mpf/harness_port.txt ]; then
+        if [ -s "$WORK_DIR"/harness_port.txt ]; then
             echo "ui_test: driver up after $(( $(date +%s) - boot_start ))s"
         else
             echo "ui_test: the driver never came up"
@@ -391,8 +394,8 @@ case "$MODE" in
                 done
                 if [ -n "${pid:-}" ]; then
                     echo "ui_test: strace of loader pid $pid:"
-                    timeout 8 strace -f -tt -s 100 -p "$pid" -o "$WORK_DIR"/strace.txt 2>&1 | tail -3
-                    tail -30 "$WORK_DIR"/strace.txt 2>/dev/null
+                    timeout 8 strace -f -tt -s 100 -p "$pid" -o "$(container_path "$WORK_DIR"/strace.txt)" 2>&1 | tail -3
+                    tail -30 "$(container_path "$WORK_DIR"/strace.txt)" 2>/dev/null
                     echo "ui_test: gdb backtrace of loader pid $pid:"
                     timeout 30 gdb -batch -ex "set pagination off" -ex "thread apply all bt" -p "$pid" 2>&1 | grep -v "^\[New \|^\[Thread " | head -90
                 fi'
@@ -412,6 +415,7 @@ case "$MODE" in
             docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
                 HARNESS_COORDS="$COORDS" HARNESS_MODE="$MODE" \
                 HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
+                CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
                 REAL_URL="${REAL_URL:-}" \
                 REAL_API_KEY="${REAL_API_KEY:-}" \
                 python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
@@ -419,6 +423,7 @@ case "$MODE" in
             docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
                 HARNESS_COORDS="$COORDS" HARNESS_MODE="$MODE" \
                 HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
+                CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
                 python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
         fi
         ;;
@@ -427,8 +432,18 @@ echo "ui_test: gallery at $RUN_DIR/index.html"
 # A run whose evidence never landed at the reported path is a failed
 # run whatever the verdict said — the doubled-path bug went green
 # while every gallery sat in a directory neither the gate nor CI
-# ever read. Discover dumps coordinates, not a gallery.
+# ever read. Discover dumps coordinates, not a gallery; the gate
+# scenarios write only the gallery, so the machine-readable record
+# is required only for the suite modes that produce it.
 if [ "${MODE:-scenario}" != "discover" ] && [ ! -s "$RUN_DIR/index.html" ]; then
     echo "ui_test: EVIDENCE MISSING — no gallery at $RUN_DIR/index.html" >&2
     exit 1
 fi
+case "${MODE:-scenario}" in
+    suite|real)
+        if [ ! -s "$RUN_DIR/evidence.json" ]; then
+            echo "ui_test: EVIDENCE MISSING — no evidence.json at $RUN_DIR/evidence.json" >&2
+            exit 1
+        fi
+        ;;
+esac

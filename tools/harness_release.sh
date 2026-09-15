@@ -64,15 +64,20 @@ python3 "$root/tools/fetch_cura.py" "$SECONDARY"
 fail=0
 hang=0
 
-start_container() {  # start_container <name> <slot_dir>
+start_container() {  # start_container <name> <slot_dir> [clear]
     docker rm -f "$1" >/dev/null 2>&1 || true
-    # A previous run's slot holds root-owned debris the host cannot
-    # remove (Cura's owner-only writes) — the container clears it,
-    # then the dir is created USER-OWNED before the mount (docker
-    # would create a missing mount source as root, and every later
-    # host-side write into the slot then dies with EACCES).
-    docker run --rm -v "$(dirname "$2"):/host" mpf-cura-harness \
-        rm -rf "/host/$(basename "$2")" >/dev/null 2>&1 || true
+    if [ "${3:-}" = "clear" ]; then
+        # A slot from a previous run holds root-owned debris the host
+        # cannot remove (Cura's owner-only writes) — the container
+        # clears it, then the dir is created USER-OWNED before the
+        # mount (docker would create a missing mount source as root,
+        # and every later host-side write into the slot then dies
+        # with EACCES). The clear is SLOT-ONLY: the serial run passes
+        # the shared tree as the mount, and clearing it would delete
+        # the fetched Cura trees and every prior run's evidence.
+        docker run --rm -v "$(dirname "$2"):/host" mpf-cura-harness \
+            rm -rf "/host/$(basename "$2")" >/dev/null 2>&1 || true
+    fi
     mkdir -p "$2"
     # SYS_PTRACE lets the stall diagnostics attach gdb/strace to the
     # hung boot from inside the container (the host's ptrace_scope
@@ -95,6 +100,7 @@ prepare_slot() {  # prepare_slot <slot_dir> <cura-version>
 run_unit() {  # run_unit <budget> <version> <name> <mode> [group] [slot]
     budget=$1; version=$2; name=$3; mode=$4; group=${5:-}; slot=${6:-}
     echo "== $name on $version (budget ${budget}m, one attempt) =="
+    wall_start=$(date +%s)
     unit_dir="$RUN_ROOT/$version/$name"
     mkdir -p "$RUN_ROOT/$version"
     if [ -n "$slot" ]; then
@@ -139,6 +145,10 @@ run_unit() {  # run_unit <budget> <version> <name> <mode> [group] [slot]
     elif [ "$status" != 0 ]; then
         echo "FAILED: $name on $version"
     fi
+    # The per-unit wall clock: the measured performance record (the
+    # acceptance's per-group timings), in the unit log beside the
+    # verdict.
+    echo "wall: $(( $(date +%s) - wall_start ))s $name on $version (status $status)"
     # The unit's status is the FUNCTION's status — the callers derive
     # the gate verdict from it (a backgrounded call runs in a
     # subshell, so flag mutation would die with the job).
@@ -174,17 +184,26 @@ else
     # isolation ruling); the shared run root collects the evidence.
     slot_num=1
     while [ "$slot_num" -le "$JOBS" ]; do
-        start_container "mpf-cura-gate-$slot_num" "$HARNESS_DIR/slot-$slot_num"
+        start_container "mpf-cura-gate-$slot_num" "$HARNESS_DIR/slot-$slot_num" clear
         slot_num=$((slot_num + 1))
     done
     count=0
     pids=""
     drain() {  # drain: wait for the batch and fold the statuses in
-        for pid in $pids; do
+        for entry in $pids; do
+            slot=${entry%%:*}
+            pid=${entry##*:}
             st=0
             wait "$pid" || st=$?
             if [ "$st" = 124 ]; then hang=1
             elif [ "$st" != 0 ]; then fail=1; fi
+            # A unit that failed or hung may have left debris (a half-
+            # seeded XDG tree, a wedged Cura) in its slot — the next
+            # batch's unit gets a fresh container and a cleared work
+            # dir rather than inheriting it (the isolation claim).
+            if [ "$st" != 0 ]; then
+                start_container "mpf-cura-gate-$slot" "$HARNESS_DIR/slot-$slot" clear
+            fi
         done
         pids=""
     }
@@ -193,7 +212,7 @@ else
         slot=$((count % JOBS + 1))
         count=$((count + 1))
         run_unit "$budget" "$version" "$name" "$mode" "$group" "$slot" &
-        pids="$pids $!"
+        pids="$pids $slot:$!"
         if [ $((count % JOBS)) -eq 0 ]; then
             drain
         fi
