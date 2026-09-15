@@ -175,6 +175,7 @@ class RemoteFileService(QObject):
         self._identity = None
         self._metadata = {}
         self._metadata_pending = False
+        self._metadata_only_pending = False
         self._metadata_fetched = False
         self._metadata_attempts = 0
         self._metadata_retry_at = 0.0
@@ -299,7 +300,7 @@ class RemoteFileService(QObject):
         self._job = job_key
         self._identity = self._path = None
         self._metadata = {}
-        self._metadata_pending = self._want_file = False
+        self._metadata_pending = self._metadata_only_pending = self._want_file = False
         self._metadata_fetched = False
         self._metadata_attempts = 0
         self._metadata_retry_at = 0.0
@@ -342,6 +343,32 @@ class RemoteFileService(QObject):
         started = self._transport.send_json("files", "metadata", "GET",
             metadata_endpoint(self._transport.identity[0], job[0]), finished, category="static")
         if not started: self._metadata_pending = False
+
+    def request_metadata_only(self, callback) -> bool:
+        """A metadata-only fetch that is IDENTITY-NEUTRAL (4.2.0,
+        A5/H7): the job lane's identity, its fetched/pending/
+        attempts/retry bits and its metadata cache stay untouched —
+        a failing metadata-only request must never overwrite the
+        identity the download path depends on (the 4.0.2 hazard),
+        and a successful one must not mark the job lane complete
+        (a silent download hang otherwise). The caller owns the
+        callback's lifetime; a stale reply is dropped by the
+        generation guard."""
+        if self._closed or not self._job or self._metadata_only_pending:
+            return False
+        self._metadata_only_pending = True
+        generation, job = self._generation, self._job
+        def finished(payload, error):
+            if generation != self._generation or job != self._job or self._closed:
+                return
+            self._metadata_only_pending = False
+            result = (payload or {}).get("result", {})
+            callback(dict(result) if isinstance(result, dict) else {}, error)
+        started = self._transport.send_json("files", "metadata-only", "GET",
+            metadata_endpoint(self._transport.identity[0], job[0]), finished, category="static")
+        if not started:
+            self._metadata_only_pending = False
+        return started
 
     def request_file(self, *, retry=False):
         self._want_file = True

@@ -1455,6 +1455,39 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         self.files._identity = self.qt.load("MoonrakerProtocol").RemoteFileIdentity("part.gcode", 0, modified=1)
         self.files._want_file = True
 
+    def test_metadata_only_request_is_identity_neutral(self):
+        # 4.2.0 A5/H7: a metadata-only fetch must not touch the job
+        # lane's identity, fetched/pending/attempts bits or its
+        # metadata cache — a failing one would otherwise overwrite
+        # the identity the download path depends on (the 4.0.2
+        # hazard), and a successful one would silently hang the
+        # download.
+        self.files._metadata = {"sentinel": 1}
+        self.files._identity = "job-identity"
+        seen = []
+        self.assertTrue(self.files.request_metadata_only(lambda result, error: seen.append((result, error))))
+        for request in self.transport.requests:
+            if getattr(request, "channel", "") == "metadata-only":
+                request.callback({"result": {"estimated_time": 100}}, None)
+                break
+        else:
+            self.fail("no metadata-only request left the transport")
+        self.qt.events(10)
+        self.assertEqual(seen, [({"estimated_time": 100}, None)])
+        self.assertEqual(self.files._identity, "job-identity")
+        self.assertEqual(self.files._metadata, {"sentinel": 1})
+        self.assertFalse(self.files._metadata_fetched)
+        self.assertFalse(self.files._metadata_pending)
+        # A FAILING metadata-only request leaves the lane alone too.
+        self.files.request_metadata_only(lambda result, error: seen.append((result, error)))
+        for request in self.transport.requests:
+            if getattr(request, "channel", "") == "metadata-only":
+                request.callback(None, "not found")
+                break
+        self.qt.events(10)
+        self.assertEqual(self.files._identity, "job-identity")
+        self.assertEqual(self.files._metadata, {"sentinel": 1})
+
     def _wait(self, predicate, timeout=5.0):
         # The writer thread reports completion through a queued signal;
         # the wait pumps the event loop until it lands.
