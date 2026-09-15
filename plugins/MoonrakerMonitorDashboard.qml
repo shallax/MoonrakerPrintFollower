@@ -68,7 +68,7 @@ Component {
                 }
             }
         }
-        property bool tuningSliderPressed: tuningSection != null && tuningSection.sliderInteracting
+        property bool tuningSliderPressed: false
         // The freeze lists (the author's live report): while a tuning
         // slider is mid-gesture — a drag or a pending keyboard nudge —
         // the fan/LED/PWM repeaters must not rebuild, or the rebuild
@@ -82,6 +82,15 @@ Component {
         // once the new delegate exists (the author's live report).
         property string tuningSliderObject: ""
         property string tuningSliderKind: ""
+        // Slider sections report interaction through this sink — the
+        // freeze and the refocus target stay single-owner here.
+        function receiveSliderInteraction(interacting, object, kind) {
+            tuningSliderPressed = interacting;
+            if (interacting) {
+                tuningSliderObject = object;
+                tuningSliderKind = kind;
+            }
+        }
         onTuningSliderPressedChanged: {
             if (tuningSliderPressed && root.printer != null) {
                 root.frozenFanItems = root.printer.fanControlItems;
@@ -537,6 +546,7 @@ Component {
                             id: tuningSection
                             Layout.fillWidth: true
                             printerModel: root.printer
+                            interactionSink: root.receiveSliderInteraction
                         }
                         MacrosSection {
                             Layout.fillWidth: true
@@ -546,80 +556,15 @@ Component {
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
-                        CollapsibleSectionHeader {
+
+                        FansSection {
+                            id: fansSection
                             Layout.fillWidth: true
                             printerModel: root.printer
-                            title: "Fan speed"
-                            sectionId: "fans"
-                            sectionIcon: "Fan"
+                            freezeRepeaters: root.tuningSliderPressed
+                            frozenItems: root.frozenFanItems
+                            interactionSink: root.receiveSliderInteraction
                         }
-                        ColumnLayout {
-                            Layout.topMargin: UM.Theme.getSize("default_margin").height
-                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                            visible: root.printer != null && root.printer.fanControlItems.length > 0 && root.printer.sectionExpandedMap["fans"] !== false
-                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
-                            Layout.fillWidth: true
-                            Repeater {
-                                id: fanRepeater
-                                model: root.tuningSliderPressed ? root.frozenFanItems : (root.printer != null ? root.printer.fanControlItems : [])
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        UM.Label {
-                                            text: modelData.name
-                                            Layout.fillWidth: true
-                                            elide: Text.ElideRight
-                                        }
-                                        UM.Label {
-                                            width: 52 * screenScaleFactor
-                                            horizontalAlignment: Text.AlignRight
-                                            text: modelData.writable ? root.sliderSelection(fanSlider) + "%" : modelData.percent + "%"
-                                        }
-                                    }
-                                    OutlineSlider {
-                                        id: fanSlider
-                                        Layout.fillWidth: true
-                                        visible: modelData.writable
-                                        controlObject: modelData.object
-                                        controlKind: "fan"
-                                        from: 0
-                                        to: 100
-                                        stepSize: 1
-                                        live: false
-                                        value: modelData.percent
-                                        onValueTuning: {
-                                            if (root.printer != null)
-                                                root.printer.previewFanSpeed(modelData.object, value);
-                                        }
-                                        onValueCommitted: {
-                                            if (root.printer != null)
-                                                root.printer.setFanSpeed(modelData.object, value);
-                                        }
-                                        onInteractingChanged: {
-                                            root.tuningSliderPressed = interacting;
-                                            if (interacting) {
-                                                root.tuningSliderObject = modelData.object;
-                                                root.tuningSliderKind = "fan";
-                                            }
-                                        }
-                                    }
-                                    // Firmware-regulated fans render their
-                                    // value without a slider (the author's
-                                    // live report — the command never
-                                    // sticks).
-                                    UM.Label {
-                                        visible: !modelData.writable
-                                        Layout.fillWidth: true
-                                        text: "Firmware-controlled — speed is read-only"
-                                        color: UM.Theme.getColor("text_inactive")
-                                        font: UM.Theme.getFont("default_italic")
-                                    }
-                                }
-                            }
-                        }
-
                         CollapsibleSectionHeader {
                             Layout.fillWidth: true
                             printerModel: root.printer

@@ -6,12 +6,12 @@ import Cura 1.1 as Cura
 
 // The Live-tuning section (4.3.0 extraction): the factor sliders and
 // the z-offset nudges moved out of the dashboard as one
-// property-driven component. sliderInteracting feeds the host's
-// repeater freeze — the sliders write it, the host binds it.
+// property-driven component. The sliders report interaction
+// through the host sink, so the freeze machinery stays single-owner.
 Column {
     id: root
     property var printerModel: null
-    property bool sliderInteracting: false
+    property var interactionSink: null
 
     function sliderSelection(slider) {
         return Math.round(slider.valueAt(slider.position));
@@ -78,7 +78,10 @@ Column {
                     if (root.printerModel != null)
                         root.printerModel.setSpeedFactor(value);
                 }
-                onInteractingChanged: root.sliderInteracting = interacting
+                onInteractingChanged: {
+                    if (root.interactionSink != null)
+                        root.interactionSink(interacting, "", "");
+                }
             }
         }
 
@@ -114,7 +117,10 @@ Column {
                     if (root.printerModel != null)
                         root.printerModel.setFlowFactor(value);
                 }
-                onInteractingChanged: root.sliderInteracting = interacting
+                onInteractingChanged: {
+                    if (root.interactionSink != null)
+                        root.interactionSink(interacting, "", "");
+                }
             }
         }
 
