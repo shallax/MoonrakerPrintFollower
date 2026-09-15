@@ -170,8 +170,14 @@ class TestingDocPinTests(unittest.TestCase):
         # The claims the audit struck: XTEST as the activation rule,
         # the per-scenario Cura process, the ≤12-verb pin, the
         # xwd/QScreen canonical capture, the resolved-address
-        # manifest, the 3-attempt and 240-minute claims, and the
-        # exact-version image pins.
+        # manifest, the 3-attempt and 240-minute claims, the
+        # exact-version image pins — and the re-review's second pass:
+        # the run-nonce handshake, the failure taxonomy, the
+        # faulthandler dump, the machine-profile budgets, the
+        # committed red galleries, the fixed-1600x1000 diagram, the
+        # XTEST-as-canonical path, the transcript replay, the
+        # metronome denial, the 45-verb and 297-layer numbers and
+        # the letter catalogue.
         for phrase in ("injected through the X server's XTEST extension",
                        "its own Cura process",
                        "≤ a dozen generic",
@@ -179,7 +185,20 @@ class TestingDocPinTests(unittest.TestCase):
                        "resolved-address manifest",
                        "up to 3 attempts",
                        "240-minute",
-                       "by exact version, like the rest of the repo"):
+                       "by exact version, like the rest of the repo",
+                       "run nonce",
+                       "failure taxonomy",
+                       "faulthandler",
+                       "machine profile",
+                       "commits its red gallery",
+                       "fixed 1600x1000x24",
+                       "exactly as a human mouse",
+                       "kept in-tree and replayed",
+                       "the metronome is NOT the default",
+                       "45 verbs",
+                       "297 layers",
+                       "REAL_MOONRAKER_URL",
+                       "orchestrates the whole release gate"):
             self.assertNotIn(phrase, text, phrase)
 
 
