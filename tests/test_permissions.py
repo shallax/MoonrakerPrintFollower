@@ -9,8 +9,9 @@ from plugins.MonitorPermissions import (
     Observation,
     R_BUSY,
     R_DISCONNECTED,
-    R_ESTOPPED,
     R_LOCKED,
+    R_PAUSE_FIRST,
+    R_PAUSED_NOTE,
     R_PRINTING,
     R_UNKNOWN,
     Verdict,
@@ -21,6 +22,7 @@ from plugins.MonitorPermissions import (
     can_set_absolute,
     can_start_print,
     can_z_offset,
+    jog_caption,
 )
 
 
@@ -42,13 +44,18 @@ class PolicyPreludeTests(unittest.TestCase):
         for action in (can_jog, can_restart, can_start_print):
             self.assertEqual(action(obs(connection="no")), Verdict("disabled", R_DISCONNECTED))
 
-    def test_the_estop_assumption_blocks_even_a_cancelled_state(self):
-        # A1: the policy sees the assumption itself — the rewritten
-        # 'cancelled' state must not read as an allowed idle.
+    def test_the_estop_assumption_releases_the_guards_not_blocks_them(self):
+        # The shipped ruling: the e-stop ASSUMES the print cancelled
+        # and the snapshot-derived guards release immediately (the
+        # state reads cancelled, jog unlocks for recovery). The
+        # record carries assumed_stopped for the dispatch predicates;
+        # the click-time gates rule on the rewritten state.
         self.assertEqual(can_jog(obs(state="cancelled", assumed_stopped=True)),
-                         Verdict("disabled", R_ESTOPPED))
+                         Verdict("allowed", ""))
         self.assertEqual(can_restart(obs(state="cancelled", assumed_stopped=True)),
-                         Verdict("disabled", R_ESTOPPED))
+                         Verdict("allowed", ""))
+        # The assumption itself stays visible to the record's readers.
+        self.assertTrue(obs(state="cancelled", assumed_stopped=True).assumed_stopped)
 
     def test_the_controls_lock_blocks_the_toolhead(self):
         self.assertEqual(can_jog(obs(controls_locked=True)), Verdict("disabled", R_LOCKED))
@@ -60,19 +67,29 @@ class PolicyPreludeTests(unittest.TestCase):
 
 class PolicyRulingTests(unittest.TestCase):
     def test_jog_mirrors_the_shipped_jog_gate(self):
-        self.assertEqual(can_jog(obs(state="printing")), Verdict("pause-first", ""))
+        self.assertEqual(can_jog(obs(state="printing")), Verdict("pause-first", R_PAUSE_FIRST))
         for state in ("standby", "paused", "complete", "cancelled", "error"):
             self.assertEqual(can_jog(obs(state=state)), Verdict("allowed", ""), state)
         # Unobserved states disable (jog_gate's "" default).
         self.assertEqual(can_jog(obs(state="")), Verdict("disabled", R_UNKNOWN))
         self.assertEqual(can_jog(obs(state="idle")), Verdict("disabled", R_UNKNOWN))
 
+    def test_jog_caption_names_every_state(self):
+        # The Status-row caption (the UX adjudication): the reason
+        # when disabled, the pause-first warning, the paused note,
+        # and nothing when there is nothing to say.
+        self.assertEqual(jog_caption(obs(state="")), R_UNKNOWN)
+        self.assertEqual(jog_caption(obs(connection="no")), R_DISCONNECTED)
+        self.assertEqual(jog_caption(obs(state="printing")), R_PAUSE_FIRST)
+        self.assertEqual(jog_caption(obs(state="paused")), R_PAUSED_NOTE)
+        self.assertEqual(jog_caption(obs(state="standby")), "")
+
     def test_jog_allows_while_not_homed(self):
         # The explicit row (H3): jog never consults homing.
         self.assertEqual(can_jog(obs(homed_axes="")), Verdict("allowed", ""))
 
     def test_set_absolute_follows_the_toolhead_gate(self):
-        self.assertEqual(can_set_absolute(obs(state="printing")), Verdict("pause-first", ""))
+        self.assertEqual(can_set_absolute(obs(state="printing")), Verdict("pause-first", R_PAUSE_FIRST))
         self.assertEqual(can_set_absolute(obs(state="error")), Verdict("allowed", ""))
 
     def test_restart_refuses_while_printing_and_paused(self):

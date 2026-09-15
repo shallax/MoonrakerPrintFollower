@@ -9,6 +9,7 @@ from .MonitorFormatting import (
     FAN_OBJECT_PREFIXES, LED_OBJECT_PREFIXES, PWM_OBJECT_PREFIXES,
     friendly, infer_macro_parameters, number, mesh_profiles,
 )
+from .MonitorPermissions import can_exclude, can_macro, can_power, can_restart, can_z_offset
 
 
 class MonitorControls(QObject):
@@ -42,6 +43,14 @@ class MonitorControls(QObject):
     @staticmethod
     def section(config, name):
         return next((value for key, value in config.items() if str(key).casefold() == str(name).casefold() and isinstance(value, Mapping)), {})
+
+    def _allowed(self, rule) -> bool:
+        """The policy gate (4.2.0): one derivation for every control
+        this owner dispatches. A missing observation — or a data
+        provider without the record (the test stubs) — fails closed."""
+        observation = getattr(self._data, "observation", None)
+        if observation is None: return False
+        return rule(observation).mode == "allowed"
 
     def _display(self, key, actual):
         self._tuning.observe(key, actual)
@@ -142,7 +151,7 @@ class MonitorControls(QObject):
         return deepcopy(self._macro_cache[name])
 
     def run_macro(self, name, arguments=""):
-        if name in self._macros and not self._commands.print_active:
+        if name in self._macros and self._allowed(can_macro):
             arguments = str(arguments).replace("\r", " ").replace("\n", " ").strip()
             self._commands.script("Macro " + name, name + (" " + arguments if arguments else ""))
 
@@ -156,19 +165,20 @@ class MonitorControls(QObject):
     def firmware_restart(self):
         # The host's own endpoint (the ruled route): the FIRMWARE_RESTART
         # gcode disconnects immediately, so its ack never arrives and
-        # success always read as failure.
-        if not self._data.active or self._commands.print_active: return
+        # success always read as failure. The policy gate (4.2.0): the
+        # shipped guard read unknown as idle; the table fails closed.
+        if not self._allowed(can_restart): return
         self._commands.request("Firmware restart", "printer/firmware_restart", {})
 
     def klipper_restart(self):
         # A full Klipper restart (Moonraker's RESTART endpoint): reloads
         # the config, drops the MCU connection and clears Klipper state
         # — heavier than FIRMWARE_RESTART, lighter than a host reboot.
-        if not self._data.active or self._commands.print_active: return
+        if not self._allowed(can_restart): return
         self._commands.request("Klipper restart", "printer/restart", {})
 
     def host_restart(self):
-        if not self._data.active or self._commands.print_active: return
+        if not self._allowed(can_restart): return
         self._commands.request("Host restart", "machine/reboot", {})
 
     def apply_preset(self, index):
@@ -215,6 +225,11 @@ class MonitorControls(QObject):
 
     def z_offset(self, amount=None):
         if amount is not None and (abs(amount) < 0.0001 or abs(amount) > 5): return
+        # The explicit per-action row (4.2.0, N3): babystepping is
+        # allowed mid-print; the policy gate is the first Python
+        # guard this path has ever had (the QML's !actionBusy was
+        # the only click gate before).
+        if not self._allowed(can_z_offset): return
         homed = str((self._data.snapshot.auxiliary.get("toolhead") or {}).get("homed_axes") or "")
         script = "SET_GCODE_OFFSET " + (f"Z_ADJUST={amount:+g}" if amount is not None else "Z=0")
         if set(homed.lower()) >= {"x", "y", "z"}: script += " MOVE=1"
@@ -280,9 +295,19 @@ class MonitorControls(QObject):
         # (UploadController), it never narrows the Monitor display (the
         # author's ruling: a configured 24v,Bed pair silently hid DFU).
         raw = self._data.snapshot.power
-        return [{"name": item["device"], "status": str(item.get("status") or "unknown"),
-            "locked": bool(item.get("locked_while_printing")),
-            "can_toggle": not (item.get("locked_while_printing") and self._commands.print_active)} for item in raw if item.get("device")]
+        # The per-device ruling (4.2.0, A3/F4): can_toggle is the
+        # policy's per-device verdict — the shipped row field, now
+        # one derivation (the old negation read unknown as idle).
+        rows = []
+        for item in raw:
+            if not item.get("device"): continue
+            observation = getattr(self._data, "observation", None)
+            verdict = can_power(observation, item.get("locked_while_printing")) \
+                if observation is not None else None
+            rows.append({"name": item["device"], "status": str(item.get("status") or "unknown"),
+                         "locked": bool(item.get("locked_while_printing")),
+                         "can_toggle": bool(verdict and verdict.mode == "allowed")})
+        return rows
 
     def set_power(self, name, on):
         item = next((item for item in self.power_devices() if item["name"] == name and item["can_toggle"]), None)
@@ -292,7 +317,7 @@ class MonitorControls(QObject):
     def exclude(self, name):
         status = self._data.snapshot.auxiliary.get("exclude_object") or {}
         names = {item.get("name") for item in status.get("objects", ())}
-        if name in names and name not in status.get("excluded_objects", ()) and self._commands.print_active:
+        if name in names and name not in status.get("excluded_objects", ()) and self._allowed(can_exclude):
             safe = name.replace("\\", "\\\\").replace('"', '\\"').replace("\r", " ").replace("\n", " ")
             self._commands.script("Exclude " + name, f'EXCLUDE_OBJECT NAME="{safe}"')
 

@@ -1283,12 +1283,17 @@ Component {
                                     // text changes, never the layout.
                                     // Grey label, black value (the MCUs
                                     // pattern), an honest emdash when
-                                    // nothing applies. The full sentence
-                                    // lives in the tooltip: elide must
-                                    // never hide the safety clause (the
-                                    // panel).
+                                    // nothing applies. The caption is
+                                    // the policy's short form (4.2.0):
+                                    // the reason when disabled, the
+                                    // pause-first warning, the paused
+                                    // note — one derivation, and the
+                                    // full sentence lives in the
+                                    // tooltip: elide must never hide
+                                    // the safety clause (the panel).
+                                    objectName: "toolheadStatusCaption"
                                     height: 36 * screenScaleFactor
-                                    text: root.printer != null ? (root.printer.canResumePrint ? "Paused — moves run immediately" : root.printer.canPausePrint ? "Moves disabled — pause first" : "—") : "—"
+                                    text: root.printer != null && root.printer.jogReason !== "" ? root.printer.jogReason : "—"
                                     color: UM.Theme.getColor("text")
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
@@ -1298,7 +1303,7 @@ Component {
                                         // Short value in the row, full
                                         // sentence in the tooltip (the
                                         // author's ruling).
-                                        text: root.printer != null ? (root.printer.canResumePrint ? "Printer is paused — moves run immediately; a print resumes from Klipper's recorded position." : root.printer.canPausePrint ? "Toolhead moves are disabled during a print — pause first." : "") : ""
+                                        text: root.printer != null ? root.printer.jogReasonDetail : ""
                                         acceptedButtons: Qt.NoButton
                                     }
                                 }
@@ -2056,15 +2061,20 @@ Component {
                                 Cura.SecondaryButton {
                                     Layout.fillWidth: true
                                     text: "Firmware restart"
-                                    tooltip: "Restart Klipper's firmware process (FIRMWARE_RESTART)."
-                                    enabled: root.printer != null && !root.printer.printActive
+                                    objectName: "moonrakerFirmwareRestart"
+                                    // The policy gate (4.2.0): the
+                                    // reason rides the tooltip when
+                                    // the button is denied.
+                                    tooltip: "Restart Klipper's firmware process (FIRMWARE_RESTART)." + (root.printer != null && !root.printer.canRestart && root.printer.restartReason !== "" ? " " + root.printer.restartReason : "")
+                                    enabled: root.printer != null && root.printer.canRestart
                                     onClicked: root.printer.firmwareRestart()
                                 }
                                 Cura.SecondaryButton {
                                     Layout.fillWidth: true
                                     text: "Host restart"
-                                    tooltip: "Reboot the host Moonraker runs on (machine/reboot)."
-                                    enabled: root.printer != null && !root.printer.printActive
+                                    objectName: "moonrakerHostRestart"
+                                    tooltip: "Reboot the host Moonraker runs on (machine/reboot)." + (root.printer != null && !root.printer.canRestart && root.printer.restartReason !== "" ? " " + root.printer.restartReason : "")
+                                    enabled: root.printer != null && root.printer.canRestart
                                     onClicked: root.printer.hostRestart()
                                 }
                             }
@@ -2078,8 +2088,9 @@ Component {
                                     // author's live report).
                                     Layout.fillWidth: true
                                     text: "Klipper restart"
-                                    tooltip: "Restart Klipper entirely (printer/restart): reloads the config and reconnects the MCU."
-                                    enabled: root.printer != null && !root.printer.printActive
+                                    objectName: "moonrakerKlipperRestart"
+                                    tooltip: "Restart Klipper entirely (printer/restart): reloads the config and reconnects the MCU." + (root.printer != null && !root.printer.canRestart && root.printer.restartReason !== "" ? " " + root.printer.restartReason : "")
+                                    enabled: root.printer != null && root.printer.canRestart
                                     onClicked: root.printer.klipperRestart()
                                 }
                             }
