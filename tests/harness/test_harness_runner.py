@@ -173,7 +173,24 @@ class EvidenceRecordTests(unittest.TestCase):
         self.assertEqual(entry["capture"], "f1-00.png")
         self.assertIsNone(entry["capture_error"])
         self.assertIsNone(entry["delivery"])
+        self.assertIsNone(entry["geometry"])
+        self.assertIsNone(entry["walk"])
         self.assertGreaterEqual(entry["duration_ms"], 0)
+
+    def test_entry_carries_the_evidence_geometry_and_walk(self):
+        # The evidence-visibility fields (C8/C9): each resolving step
+        # records the element's scene rect and the walk that resolved
+        # it, on their own channels — never folded into delivery.
+        entry = runner._evidence_entry(
+            {"id": "f1"}, 0, {"op": "scroll_into_view", "text": "Turn off"}, "f1-01",
+            True, "scrolled", "contained", (SCRATCH + "/f1-01.png", None),
+            time.monotonic(), delivery={"accepted": True},
+            geometry=[640, 312, 104, 36], walk={"mode": "click", "depth": 96,
+                                                "items": 41, "windows": 3})
+        self.assertEqual(entry["geometry"], [640, 312, 104, 36])
+        self.assertEqual(entry["walk"], {"mode": "click", "depth": 96,
+                                         "items": 41, "windows": 3})
+        self.assertEqual(entry["delivery"], {"accepted": True})
 
     def test_capture_error_splits_from_the_path(self):
         entry = runner._evidence_entry(
