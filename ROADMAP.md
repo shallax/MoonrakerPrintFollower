@@ -1355,10 +1355,22 @@ carries its reason (F10).
   identity (the 4.0.2 hazard: a failing metadata request
   overwriting the download path's identity); the model watchdog
   stays the print-start confirmer, never the HTTP result.
+  4.2.0 ships: the identity-neutral metadata-only capability
+  (RemoteFileService.request_metadata_only) and the dispatch-time
+  gate (the policy's can_start_print at confirm). The OWNER
+  extraction (queued outcome, the publish-driven tick, the
+  watchdog move) and the upload path's adoption of it defer to
+  4.3.0 — the upload path already reads its own queued verdict
+  from its POST body, so the false-watchdog case only exists once
+  both paths share the owner.
 - **Consolidated metadata ownership** — one metadata service
   supporting metadata-only requests, consumed by the coordinator
   and the file flow (F05's follow-up; the coordinator stops
-  implementing its own request/cache lifecycle).
+  implementing its own request/cache lifecycle). 4.2.0 ships the
+  service-side capability; the coordinator's adoption of it (its
+  own mr-metadata cache retires) defers to 4.3.0 — it rewires the
+  preview's ETA/filament anchors, the riskiest area, and rides the
+  same release as the print-start owner.
 
 **Round-2 panel rulings (2026-09-15, all author-confirmed):**
 
