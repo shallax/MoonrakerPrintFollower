@@ -2,11 +2,19 @@
 
 The overlay shows once per installation, per version: the persisted
 state carries the last SEEN version, and a mismatch with the content
-list's head (the shipped version) shows the popup. The content is
-hand-written per release — the release checklist adds a new entry
-here alongside the version bump, and the latest-version pin in
-tests/test_whatsnew.py fails a release that bumps the package
-version without a matching entry.
+list's head (the shipped version) shows the popup.
+
+The content is hand-curated for the popup — every release carries a
+headline (what the version IS, in one or two sentences) and a short,
+user-facing bullet list. It deliberately reads like release notes
+for a user, not the maintainer-level detail CHANGELOG.md keeps; the
+release checklist updates this list alongside the version bump, and
+the latest-version pin in tests/test_whatsnew.py fails a release
+that bumps the package version without a matching entry.
+
+Shipped release notes are FROZEN: a later release adds its own entry
+and never edits the older ones — the frozen-history pin in
+tests/test_whatsnew.py enforces it mechanically.
 
 Qt-free on purpose: the pure logic is unit-testable outside the
 container.
@@ -15,44 +23,352 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-# One entry per release, latest first. ``items`` is the short list
-# the overlay shows — curated, not generated.
+# One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
         "version": "4.1.0",
+        "headline": "Version 4.1.0 is the deep-harness-coverage release: the real-Cura "
+            "gate's coverage and proof machinery, the parallel local matrix, and the "
+            "review-driven product repairs, each shipped with its evidence.",
         "items": (
-            "The file manager no longer re-sorts on a temperature tick — "
-            "one view per revision set, measured 190x faster warm.",
-            "Upload refusals say why: the printer's own words appear in the "
-            "upload status line.",
-            "The ETA improve now works right after loading any print into "
-            "the preview (the hourglass no longer goes missing).",
-            "The release gate grew teeth: every step records its evidence, "
-            "the gate refuses a run whose proof never lands, and the local "
-            "full test matrix runs 2.5x faster in parallel.",
+            "The file list no longer re-sorts on a temperature tick, so it "
+            "never flickers while you browse.",
+            "Upload refusals say why: the printer's own reason appears in "
+            "the upload status line.",
+            "The ETA improvement works right after loading a print into "
+            "the Preview (the hourglass no longer goes missing).",
+            "A one-time \"What's new\" popup per version: when Cura starts "
+            "after an update, this changelog appears — the new release's "
+            "notes open at the top, older releases collapsed below, with a "
+            "link to the project's home. Esc, a click outside, or Close "
+            "dismisses it, and it stays gone until the next release.",
+            "The release test suite got stronger and faster (parallel "
+            "local runs), so every release ships with its proof.",
         ),
     },
     {
         "version": "4.0.2",
+        "headline": "Version 4.0.2 is a correctness release: five repairs to the transfer "
+            "and print-identity paths, each shipped with its regression tests.",
         "items": (
-            "Five transfer and print-identity repairs: downloads retire "
-            "cleanly on cancel or printer switch, progress and the size cap "
-            "reset per attempt, and uploads report their real outcome.",
+            "Downloads cancel cleanly: cancelling or switching printers "
+            "mid-download can no longer freeze Cura or corrupt a file.",
+            "Download progress and the size cap reset properly on each "
+            "attempt.",
+            "The Download button honestly reports what happened, and can "
+            "no longer get stuck \"loading\" forever.",
+            "Uploads report once, and a second upload of the same file "
+            "while one runs is refused with a message.",
+            "The previous print's details can never be mistaken for the "
+            "new print's.",
+        ),
+    },
+    {
+        "version": "4.0.1",
+        "headline": "Version 4.0.1 is the harness release: no product changes — the "
+            "plugin behaves exactly as in 4.0.0. The test infrastructure around the "
+            "release gate hardened, and the documentation was cleaned up.",
+        "items": (
+            "No user-facing changes: this release hardens the plugin's "
+            "test and release tooling and cleans up its documentation.",
         ),
     },
     {
         "version": "4.0.0",
+        "headline": "Version 4.0.0 is the websocket release: the Moonraker status transport "
+            "moves from per-request HTTP polling to Moonraker's websocket subscription, "
+            "with HTTP kept as a selectable, automatic-fallback mode.",
         "items": (
-            "The websocket release: the status feed rides a live socket "
-            "connection to the printer.",
+            "A live websocket connection keeps the status feed flowing, "
+            "with HTTP polling kept as an automatic fallback.",
+            "A transport choice on the Connection tab (websocket is the "
+            "default), and the connected status names the live "
+            "connection.",
+            "The monitor's other requests ride the live connection where "
+            "possible, falling back to HTTP when the socket is down.",
+            "Delivery-cadence sliders tune how often the status, "
+            "auxiliary data and console update — per printer.",
+            "The camera bridge: a camera behind a password-protected "
+            "proxy now works — the plugin re-serves the stream locally "
+            "with the key.",
+            "Preview polish: the current-layer label fills while attached "
+            "and collapses when idle, and dragging the slider detaches "
+            "immediately.",
+            "Monitor completeness: steady temperatures and devices "
+            "switched on mid-print appear without reconnecting.",
+            "Settings polish: a wrong API key on Test connection now "
+            "reads \"the API key was rejected (HTTP 401)\".",
+            "The 4.0.1 scope folded in: scroll-to-prompt, the "
+            "verified-pause-only list, opt-in ETA auto-improvement, a "
+            "recovering-camera veil, and restart arming.",
+            "Fixes from the live-test round: subscription deadlocks, "
+            "drag echo, watchdog snap-back and wrong-card flips.",
         ),
     },
     {
         "version": "3.6.0",
+        "headline": "Version 3.6.0 is the file-manager release, closed out with the "
+            "post-review sweep and the adversarial round's fixes.",
         "items": (
-            "The file manager: browse, search, upload, delete and rename "
-            "remote gcode, with the console resize handle and the no-reflow "
-            "safety rule.",
+            "File manager popup: the Monitor tab's Files button opens "
+            "the full store browser — search, filters, paging, sortable "
+            "columns, folder chips and thumbnails.",
+            "Mutations: print with a confirmation, download, upload with "
+            "progress and guards, rename with live collision checks, "
+            "delete, and create-folder.",
+            "Dialog discipline: every dialog closes with Esc or with the "
+            "popup, and an upload's progress supersedes its "
+            "confirmation.",
+            "Print-start watchdog: the verdict follows the printer's "
+            "actual state, so re-printing the same file is watched "
+            "properly.",
+            "Reconnect: a Reconnect button in the System section "
+            "recovers a dropped connection.",
+            "Console: the pane resizes by dragging its divider, and the "
+            "error bell stays fed while collapsed.",
+        ),
+    },
+    {
+        "version": "3.5.1",
+        "headline": "Version 3.5.1 is the stability patch for 3.5.0: the Monitor tab "
+            "never shifts under the pointer, and it behaves sensibly while the printer "
+            "is disconnected.",
+        "items": (
+            "No reflow, ever: no control on the Monitor tab disappears "
+            "any more — every state-gated control stays put and simply "
+            "disables.",
+            "Disconnected state: every control disables while the "
+            "console stays readable, and the camera dims with an "
+            "\"offline\" caption and shows a Live badge while streaming.",
+            "Readout restyle: the two-column label/value pattern applies "
+            "across the Printer-controls sections.",
+            "Klipper restart button in the System section, a larger "
+            "Webcam pane title, and the free-text extrusion distance box "
+            "is gone (the presets cover it).",
+        ),
+    },
+    {
+        "version": "3.5.0",
+        "headline": "Version 3.5.0 is the informational half of Mainsail parity: the "
+            "Monitor tab becomes the at-a-glance view of a running printer, with "
+            "temperature history, a bed-mesh map, a console with Klipper's live output, "
+            "endstop readouts and a better remaining-time estimate.",
+        "items": (
+            "Temperature history chart in the Information pane: a "
+            "30-minute window per sensor, toggleable setpoints and "
+            "power, a hover tooltip and a mini-chart. The history resets "
+            "when Cura restarts.",
+            "Bed-mesh mini map in the Information pane, with a crosshair "
+            "that snaps to probe points.",
+            "G-code console below the webcam: send commands, recall "
+            "history and watch Klipper's live replies — the transcript "
+            "persists per printer across sessions.",
+            "\"Last action\" row in the Print job grid, showing sent "
+            "commands and their confirmed outcome.",
+            "Filament used/remaining readouts, correct for "
+            "multi-extruder prints.",
+            "Live endstop readouts, with an explicit not-homed-yet "
+            "state.",
+            "A better remaining-time estimate that prefers the G-code's "
+            "own per-layer timing.",
+            "One shared pop-over shell for the pane's widgets — every "
+            "pop-over closes with Esc, its Close button, or an outside "
+            "click.",
+        ),
+    },
+    {
+        "version": "3.4.0",
+        "headline": "Version 3.4.0 is the first Monitor-parity release: manual control "
+            "of the physical toolhead from the Monitor tab, and a full overhaul of the "
+            "Monitor layout into Cura-style panes and collapsible sections.",
+        "items": (
+            "Toolhead section: jog arrows with distance presets, "
+            "per-axis home, motors off, centre-toolhead and park moves, "
+            "plus a live position readout.",
+            "KlipperScreen-style extrusion controls with distance and "
+            "speed presets.",
+            "Jogs respect the axis limits and the pause-first safety "
+            "gate: moves queue while the print pauses, then run.",
+            "Three Cura-style panes — Information, Printer status and "
+            "Printer controls — with collapsible sections that remember "
+            "their state across restarts.",
+            "Lock-all disables only the controls: the accordion stays "
+            "navigable, with padlock icons showing the state.",
+            "Setup commands queue in order, and the emergency stop "
+            "docks across the bottom of the window.",
+            "Camera bar: a compact webcam selector and an icon-only "
+            "refresh.",
+            "Honest command replies: an uncertain outcome says so "
+            "instead of claiming cancellation.",
+            "Fixes from the pre-release review: rapid Preview ⇄ Monitor "
+            "switching no longer detaches the follower, and narrow "
+            "stages compress gracefully.",
+        ),
+    },
+    {
+        "version": "3.3.1",
+        "headline": "Version 3.3.1 is an audit-driven hardening pass over 3.3.0: an "
+            "adversarial multi-agent review against the architecture contract confirmed "
+            "and fixed the following.",
+        "items": (
+            "The smoothing trace is now opt-in instead of writing to "
+            "Cura's cache on every smoothed print.",
+            "The display timer no longer ticks through a whole pause.",
+            "Failed downloads retry with backoff instead of wedging the "
+            "file service for the rest of the print.",
+            "Start-print power probing covers every configured power "
+            "device.",
+            "A batch of review-driven repairs, each with a regression "
+            "test.",
+        ),
+    },
+    {
+        "version": "3.3.0",
+        "headline": "Version 3.3.0 is the first feature release after the debt payoff: "
+            "follower quality.",
+        "items": (
+            "Smooth Preview following: the displayed position glides "
+            "along the toolpath at the observed physical speed, with no "
+            "snapping back within a layer.",
+            "The glide is equally smooth at any polling rate.",
+            "Slow moves are observed accurately, so the progress reads "
+            "smoothly.",
+            "A Smooth path progress option (on by default) in the "
+            "Following tab.",
+        ),
+    },
+    {
+        "version": "3.2.0",
+        "headline": "Version 3.2.0 closes the remaining 3.1.0 architecture gaps and "
+            "codifies how the repository changes. User-facing behaviour is unchanged.",
+        "items": (
+            "No user-facing changes: this release reorganises the "
+            "internals and codifies how the repository changes.",
+        ),
+    },
+    {
+        "version": "3.1.0",
+        "headline": "Version 3.1.0 is primarily an internal architecture and "
+            "reliability release. It preserves the v3.0.0 user-facing workflow while "
+            "reducing duplicated state/transport ownership and making the high-risk "
+            "parts independently testable.",
+        "items": (
+            "No user-facing changes: this release consolidates the "
+            "internals into one shared session layer and makes the "
+            "risky parts independently testable.",
+        ),
+    },
+    {
+        "version": "3.0.0",
+        "headline": "Version 3.0.0 turns Moonraker Print Follower into a much more "
+            "complete Cura-side companion for Klipper/Moonraker while preserving the "
+            "core live Preview follower.",
+        "items": (
+            "Moonraker connection and G-code upload built into the one "
+            "plugin.",
+            "A live printer dashboard: temperatures, print state, "
+            "macros, power controls, Z offset, speed/flow tuning, fans, "
+            "LEDs and an emergency stop.",
+            "Rich bed-mesh support, with a 3D Preview overlay and mesh "
+            "controls.",
+            "Schedule end-of-layer pauses directly from the Preview, "
+            "with multiple pauses and ETA display.",
+            "Better selected-layer ETA while inspecting future layers.",
+            "Preview following controls renamed to Detach / Attach, so "
+            "they cannot be confused with pausing the printer.",
+            "Better multi-printer behaviour, large-print performance "
+            "and stale-response protection.",
+        ),
+    },
+    {
+        "version": "2.0.0",
+        "headline": "Version 2.0.0 makes Moonraker Print Follower feel like part of "
+            "Cura rather than a separate utility.",
+        "items": (
+            "Configuration moves into Settings → Printer → Manage "
+            "Printers → Configure Moonraker Follower.",
+            "Full per-printer settings, with one active printer at a "
+            "time.",
+            "Improved live nozzle handling in the Preview, using Cura's "
+            "native nozzle model.",
+            "Smoother within-layer following, without visible rewind or "
+            "retrace.",
+            "Existing 1.x settings migrate automatically.",
+        ),
+    },
+    {
+        "version": "1.1.0",
+        "headline": "Version 1.1.0 moves Moonraker Print Follower from a single global "
+            "setup to a proper per-printer Cura workflow.",
+        "items": (
+            "Separate connection and following settings for each Cura "
+            "printer.",
+            "Automatic migration of existing 1.0.x settings.",
+            "New follow modes: exact layer, last completed layer, "
+            "one-layer look-ahead and a layer window.",
+            "Resilient Moonraker polling with automatic retry backoff.",
+            "Built-in connection testing and capability detection.",
+            "Large G-code files handled through compact indexing and "
+            "on-demand loading.",
+            "Refined Cura-styled Preview controls and clearer live "
+            "status.",
+        ),
+    },
+    {
+        "version": "1.0.3",
+        "headline": "Version 1.0.3 is a performance and accuracy release aimed "
+            "particularly at larger G-code files and long-running prints.",
+        "items": (
+            "Streams G-code downloads and indexing instead of holding "
+            "the whole file in memory.",
+            "Persistent path indexes make repeated loads much faster.",
+            "Uses the printer's motion data to match the nozzle position "
+            "better.",
+            "Better layer mapping from the G-code itself.",
+            "Stronger manual-override detection and stale-work "
+            "protection.",
+        ),
+    },
+    {
+        "version": "1.0.2",
+        "headline": "Version 1.0.2 focuses on making following behave predictably "
+            "while Cura is loading, slicing or changing scenes.",
+        "items": (
+            "Predictable following while Cura loads, slices or changes "
+            "scenes.",
+            "More reliable manual-override detection when the Preview "
+            "rebuilds.",
+            "Cleaner cancellation of downloads, requests and background "
+            "indexing.",
+            "Better stale-data protection on same-name re-prints.",
+            "Lower memory use while indexing large files.",
+        ),
+    },
+    {
+        "version": "1.0.1",
+        "headline": "This release makes it much easier to inspect a print without "
+            "fighting the follower.",
+        "items": (
+            "Moving the layer or toolpath slider suspends automatic "
+            "following.",
+            "Resuming following catches the Preview back up to the live "
+            "print.",
+            "Plugin-driven movement is never mistaken for your own "
+            "interaction.",
+        ),
+    },
+    {
+        "version": "1.0.0",
+        "headline": "Moonraker Print Follower brings a live Klipper/Moonraker print "
+            "into Cura Preview.",
+        "items": (
+            "Follow the printer's current layer and progress in the "
+            "Cura Preview.",
+            "Load the printing G-code into Cura on demand.",
+            "Pause and resume Preview following without pausing the "
+            "printer itself.",
+            "Configure connection details, polling, layer handling and "
+            "Preview behaviour.",
         ),
     },
 )
@@ -69,11 +385,11 @@ def should_show(seen: str) -> bool:
 
 
 def entries() -> List[dict]:
-    """The overlay's content shape: every version, with the latest
-    flagged so the overlay can render it open at the top and the rest
-    as pre-collapsed sections."""
+    """The overlay's content shape: every version with its headline
+    and bullets, with the latest flagged so the overlay can render it
+    open at the top and the rest as pre-collapsed sections."""
     return [
-        {"version": entry["version"], "items": list(entry["items"]),
-         "isLatest": index == 0}
+        {"version": entry["version"], "headline": entry["headline"],
+         "items": list(entry["items"]), "isLatest": index == 0}
         for index, entry in enumerate(WHATS_NEW)
     ]

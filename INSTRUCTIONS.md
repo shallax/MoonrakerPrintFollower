@@ -147,7 +147,11 @@ change together:
 3. `CHANGELOG.md` — a new section at the top, following the existing format
 4. `README.md` — the release header (`**Release:**`) and the "What changed"
    section
-5. Git tag — `v<version>`; the release workflow validates the tag against both
+5. `plugins/WhatsNew.py` — a new head entry (headline + user-facing items)
+   and the frozen-history pin in `tests/test_whatsnew.py` recomputed: a
+   shipped release's notes are FROZEN — later releases add their own entry,
+   never edit the older ones
+6. Git tag — `v<version>`; the release workflow validates the tag against both
    version fields and fails on mismatch
 
 The version test asserts `package_version` and `plugin` `version` stay in

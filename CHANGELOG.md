@@ -586,5 +586,3 @@ Moonraker Print Follower brings a live Klipper/Moonraker print into Cura Preview
 - Load the G-code currently printing on Moonraker into Cura on demand.
 - Pause and resume Preview following without pausing the printer itself.
 - Configure Moonraker connection details, polling, layer handling and Preview behaviour.
-
-This is the original 1.0 release of the plugin. The historical metadata has been corrected from an accidental `1.0.4` to `1.0.0`.

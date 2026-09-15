@@ -66,8 +66,10 @@ class WhatsNewModelStub(QObject):
     @pyqtProperty(QVariant, constant=True)
     def whatsNewContent(self):
         return [
-            {"version": "4.1.0", "items": ["first item", "second item"], "isLatest": True},
-            {"version": "4.0.2", "items": ["an older item"], "isLatest": False},
+            {"version": "4.1.0", "headline": "The newest release.",
+             "items": ["first item", "second item"], "isLatest": True},
+            {"version": "4.0.2", "headline": "An older release.",
+             "items": ["an older item"], "isLatest": False},
         ]
 
 
