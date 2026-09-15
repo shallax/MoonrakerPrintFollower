@@ -19,7 +19,8 @@ Item {
     property real maximum: 0
     property real low: 0
     property real high: 0
-    property bool enabled: true
+    // `enabled` is the inherited Item property (Qt 6) — declaring it
+    // again triggered the engine's member-override warning.
     property string outOfWindowColor: "#8a8f98"
     property real outOfWindowAlpha: 0.90  // a desaturating wash, not a cover
     // The two handles track these during a drag; the host-bound

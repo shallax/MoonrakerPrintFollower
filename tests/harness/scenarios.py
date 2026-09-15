@@ -815,6 +815,12 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_arm", "arms": {"refuse_subscribe": "down", "require_api_key": True}},
          {"op": "sim_klippy"},
+         # The group shares one boot: earlier scenarios CONNECTED, and
+         # the tri-state's never-observed latch survives. The reconnect
+         # cycles the client session (sessionInvalidated resets the
+         # latch), so the premise — a session that has NEVER connected
+         # — is honest.
+         {"op": "exec_slot", "slot": "reconnect"},
          {"op": "wait_model", "prop": "monitorConnected", "value": False, "budget": 30},
          {"op": "assert_model", "prop": "jogEnabled", "value": False},
          # The policy gate (4.2.0): a never-observed session is
@@ -1232,7 +1238,10 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_set", "state": {"bed_mesh": {"profile_name": "sim-mesh", "mesh_min": [0.0, 0.0],
                                                   "mesh_max": [50.0, 50.0], "probed_matrix": [[0.0] * 3] * 3}}},
-         {"op": "assert_model", "prop": "bedMeshAvailable", "value": True, "budget": 10},
+         # The first mesh of the boot arrives through the discovery
+         # watchdog's re-subscribe sync (~4 s); the budget covers the
+         # cold chain.
+         {"op": "assert_model", "prop": "bedMeshAvailable", "value": True, "budget": 30},
          {"op": "assert_model", "prop": "bedMeshProfile", "contains": "sim-mesh", "budget": 10},
      ]},
     {"id": "h6b", "group": "printing", "name": "the probe-points toggle persists on the preference",
@@ -1248,12 +1257,19 @@ SCENARIOS = [
          {"op": "sim_set", "state": {"bed_mesh": {"profile_name": "sim-mesh", "mesh_min": [0.0, 0.0],
                                                   "mesh_max": [50.0, 50.0],
                                                   "probed_matrix": [[0.0, 0.2, 0.5], [0.1, 0.3, 0.4], [0.2, 0.1, 0.3]]}}},
-         {"op": "assert_model", "prop": "bedMeshAvailable", "value": True, "budget": 10},
+         {"op": "assert_model", "prop": "bedMeshAvailable", "value": True, "budget": 30},
          {"op": "exec_slot", "slot": "setBedMeshThresholds", "args": [0.1, 0.4]},
          {"op": "assert_model", "prop": "bedMeshThresholdLow", "value": 0.1},
          {"op": "assert_model", "prop": "bedMeshThresholdHigh", "value": 0.4},
-         # The mini map's click opens the pop-over; the shared
-         # dual-ended slider renders inside it.
+         # The mini map lives on the MONITOR stage (the Preview card
+         # hosts the range slider too — its witness would pass
+         # without the pop-over ever opening). Enter the stage, then
+         # click the map to open the pop-over.
+         {"op": "click_stage", "stage": "MonitorStage"},
+         # The stage's dashboard loads asynchronously — the map must
+         # be ON SCREEN before the press (the same wait-then-click
+         # a9 uses).
+         {"op": "wait_rect", "objectName": "moonrakerBedMeshMap", "budget": 30},
          {"op": "deliver_click", "objectName": "moonrakerBedMeshMap"},
          {"op": "wait_rect", "objectName": "moonrakerBedMeshRangeSlider", "budget": 30},
      ]},

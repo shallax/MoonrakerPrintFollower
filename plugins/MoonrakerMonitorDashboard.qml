@@ -247,8 +247,10 @@ Component {
                 // The author's ruling (2026-09-10): while DISCONNECTED
                 // no Monitor-page control is enabled — the emergency
                 // stop included. It dims and refuses input instead of
-                // pretending it could fire.
-                property bool enabled: root.printer != null && root.printer.monitorConnected
+                // pretending it could fire. The INHERITED Item
+                // enabled carries the gate (a redeclaration tripped
+                // the engine's member-override warning).
+                enabled: root.printer != null && root.printer.monitorConnected
                 opacity: emergencyButton.enabled ? 1 : 0.4
                 Rectangle {
                     anchors.fill: parent
