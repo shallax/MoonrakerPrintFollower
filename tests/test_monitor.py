@@ -3031,6 +3031,25 @@ class MonitorQtTests(unittest.TestCase):
             new_key = ("part.gcode", coordinator._files.job_key)
             self.assertEqual(coordinator._mr_metadata_for(*new_key), {})
 
+    def test_files_view_model_keeps_stable_identities_behind_the_list(self):
+        # The view model (4.3.0): the QAbstractListModel behind the
+        # list-valued projection — the relpath is the row identity,
+        # so a rebuild re-anchors delegates by identity, never by
+        # position.
+        from plugins.FilesViewModel import FilesViewModel
+        view = FilesViewModel()
+        rows = [{"relpath": "a.gcode", "name": "a"},
+                {"relpath": "b.gcode", "name": "b"},
+                {"relpath": "c.gcode", "name": "c"}]
+        view.set_rows(rows)
+        self.assertEqual(view.rowCount(), 3)
+        self.assertEqual(view.data(view.index(1)), "b.gcode")
+        # A reordered rebuild keeps each row's identity attached to
+        # its file.
+        view.set_rows([rows[2], rows[0], rows[1]])
+        self.assertEqual(view.data(view.index(0)), "c.gcode")
+        self.assertEqual(view.data(view.index(2)), "b.gcode")
+
     def test_metadata_cross_check_gives_up_after_the_limit_and_latches_flagged(self):
         # The bounded give-up (4.3.0): a cross-check that can never
         # pass (the history stays empty) is silent and permanent

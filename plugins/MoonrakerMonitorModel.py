@@ -34,6 +34,7 @@ from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
 from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, jog_caption, section_reason
+from .FilesViewModel import FilesViewModel
 from .PrintStartOwner import PrintStartOwner
 from .UiStateStore import UiStateStore
 from datetime import datetime
@@ -357,6 +358,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # stops rewriting the whole map, so the two writers can no
         # longer clobber each other at the top level.
         self._ui_state = UiStateStore(store=self._store)
+        # The files view model (4.3.0): the stable-identity surface
+        # behind the list-valued projection — an internal
+        # collaborator, never the published surface.
+        self._files_model = FilesViewModel(self)
+        self._files_model_rev = -1
         self._toolhead_state = state["toolhead"]
         # The chart config is per-printer (sensor names differ between
         # machines): it lives in the PrinterConfig record, adopting the
@@ -655,6 +661,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             payload["checked"] = row.relpath in selection
             payload["printing"] = row.relpath == printing_relpath
             rows.append(payload)
+        # The view model rebuilds ONLY when the projection's revision
+        # moves — the per-publish cost stays on the cached rows.
+        if fm.projection_count != self._files_model_rev:
+            self._files_model_rev = fm.projection_count
+            self._files_model.set_rows(rows)
         total = fm.total_count()
         size = fm.view.page_size
         if size == "all":
