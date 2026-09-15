@@ -322,13 +322,28 @@ class HarnessServer(QObject):
                         return
                     window = target[0]
                     window.resize(w, h)
+                    attempts = [0]
 
-                    def reapply():
+                    def verify():
+                        # The resize is async to the event loop, and
+                        # the pin must report the size the window
+                        # ACTUALLY took — the old immediate read
+                        # returned the pre-resize size on slow boots
+                        # (the parallel matrix's gate failures).
+                        if window.width() == w and window.height() == h:
+                            loop.quit()
+                            return
+                        if attempts[0] >= 30:
+                            # Give up and report the truth — the
+                            # runner's size check fails honestly.
+                            loop.quit()
+                            return
+                        attempts[0] += 1
                         window.resize(w, h)
+                        QTimer.singleShot(500, verify)
 
-                    QTimer.singleShot(1500, reapply)
-                    QTimer.singleShot(3000, reapply)
-                    loop.quit()
+                    QTimer.singleShot(1500, verify)
+                    loop.exec()
 
                 QTimer.singleShot(500, search)
                 loop.exec()

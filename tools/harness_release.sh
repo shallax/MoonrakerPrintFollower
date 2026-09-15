@@ -105,30 +105,34 @@ run_unit() {  # run_unit <budget> <version> <name> <mode> [group] [slot]
         # /tmp/mpf); it joins the shared run root after the unit.
         slot_unit="$work/ui-artifacts/$name"
         mkdir -p "$slot_unit"
+        status=0
         if [ -n "$group" ]; then
             timeout "${budget}m" env HARNESS_CONTAINER="$container" MPF_WORK_DIR="$work" \
                 CURA_VERSION="$version" MODE="$mode" SCENARIO_GROUP="$group" \
-                RUN_DIR_NAME="$slot_unit" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
+                RUN_DIR_NAME="$slot_unit" ./tools/ui_test.sh > "$unit_dir.log" 2>&1 \
+                || status=$?
         else
             timeout "${budget}m" env HARNESS_CONTAINER="$container" MPF_WORK_DIR="$work" \
                 CURA_VERSION="$version" MODE="$mode" \
-                RUN_DIR_NAME="$slot_unit" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
+                RUN_DIR_NAME="$slot_unit" ./tools/ui_test.sh > "$unit_dir.log" 2>&1 \
+                || status=$?
         fi
-        status=$?
         if [ -d "$slot_unit" ]; then
             cp -a "$slot_unit" "$unit_dir"
         fi
     else
+        status=0
         if [ -n "$group" ]; then
             timeout "${budget}m" env HARNESS_CONTAINER="$CONTAINER" \
                 CURA_VERSION="$version" MODE="$mode" SCENARIO_GROUP="$group" \
-                RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
+                RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh > "$unit_dir.log" 2>&1 \
+                || status=$?
         else
             timeout "${budget}m" env HARNESS_CONTAINER="$CONTAINER" \
                 CURA_VERSION="$version" MODE="$mode" \
-                RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh > "$unit_dir.log" 2>&1
+                RUN_DIR_NAME="$unit_dir" ./tools/ui_test.sh > "$unit_dir.log" 2>&1 \
+                || status=$?
         fi
-        status=$?
     fi
     if [ "$status" = 124 ]; then
         echo "HANG: $name on $version (budget overrun — the unit never finished)"
