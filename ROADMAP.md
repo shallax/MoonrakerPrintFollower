@@ -1586,10 +1586,16 @@ the decisions ledger.
   becomes a directory scan in the same commit as any
   `value_property` move, so a moved declaration cannot vanish from
   the matrix.
-- **QML component extraction.** The file table, filter controls,
-  the file confirmation dialogs, the console pane, the camera pane,
-  the toolhead section and the peripheral controls become complete
-  functional components. Its required companion is the
+- **QML component extraction.** EVERY collapsible section becomes
+  its own property-driven QML component (the author's ruling,
+  2026-09-15: each section within a pane is its own file, not a
+  huge block in the monitor QML) — the controls pane's twelve
+  sections, the Information/Printer-status panes' nine, the console
+  pane, the camera pane, the file table, the filter controls and
+  the file confirmation dialogs. The panes become thin composition
+  shells over the per-section components; the section-id and
+  sectionIcon literals move WITH their components (the pinned-set
+  test widens to scan the component files). Its required companion is the
   pin-retargeting pass, re-derived at the pass start with the
   counting method stated (the round-1 critic's counts: 339
   positive / 52 negative source-constant assertions, or 265
