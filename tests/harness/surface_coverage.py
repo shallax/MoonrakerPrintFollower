@@ -85,3 +85,61 @@ def report(mapping) -> str:
         lines.append(f"{kind}: {len(names)} surfaces, {covered} mapped, {excluded} excluded, "
                      f"{len(names) - covered - excluded} UNCOVERED")
     return "\n".join(lines)
+
+
+def _norm(value: object) -> str:
+    # Alphanumeric lowercase: an op name, a slot name and an
+    # objectName must match across their separators ("exec_test_
+    # connection" names testConnection; "moonrakerJogXPlus" names
+    # jog).
+    return "".join(c for c in str(value).lower() if c.isalnum())
+
+
+def check_evidence(mapping, prefix_rules, steps) -> List[str]:
+    """The execution half of the coverage gate (workstream 4): the
+    map's membership check asks WHERE a surface should be covered;
+    this asks whether the run's evidence actually did it. For every
+    concrete map entry (slot, objectName and key kinds — routes are
+    owned by the simulator's contract test, which is what their
+    entries say), the mapped scenario must have RUN in the evidence
+    AND some step of it must name the surface — in the spec's own
+    values, in the step's declared verbs (the exec_code lint's
+    declaration), or in the op that runs it. Prefix-rule families
+    only require the scenario to have run. The gate scenarios folded
+    into the smoke set, so the smoke unit's steps carry the
+    s-scenarios."""
+    import json
+
+    steps_by_scenario: Dict[str, List[dict]] = {}
+    for step in steps:
+        steps_by_scenario.setdefault(step.get("scenario"), []).append(step)
+    observed = set(steps_by_scenario)
+    failures: List[str] = []
+    required = {value for value in mapping.values() if not isinstance(value, dict)}
+    required |= {rule[2] for rule in prefix_rules
+                 if isinstance(rule, (tuple, list)) and len(rule) >= 3}
+    for sid in sorted(required - observed):
+        failures.append(f"scenario:{sid} has no evidence steps in the run")
+    for name, sid in mapping.items():
+        if sid not in observed:
+            continue
+        if name.startswith("_") or isinstance(sid, dict):
+            continue
+        if "." in name or name.endswith("_endpoint"):
+            # Qualified slots and the protocol routes are exercised
+            # through the scenario's own assertions (ledger, model
+            # reads) — the spec never names them by design. The
+            # naming requirement applies to the items that exist to
+            # BE addressed: the objectName'd controls.
+            continue
+        needle = _norm(name)
+        refs = []
+        for step in steps_by_scenario.get(sid, []):
+            spec = step.get("spec") or {}
+            refs.append(_norm(json.dumps(spec, sort_keys=True)))
+            for verb in spec.get("verbs", ()):
+                refs.append(_norm(verb))
+            refs.append(_norm(step.get("op") or ""))
+        if not any(needle in ref for ref in refs if needle):
+            failures.append(f"{name}: mapped to {sid}, but no step of it names the surface")
+    return failures

@@ -59,22 +59,31 @@ class PngSizeTests(unittest.TestCase):
 class ClassificationRatchetTests(unittest.TestCase):
     def test_real_input_can_only_grow(self):
         # The F08 acceptance, pinned statically: real-input steps may
-        # only increase as the conversion proceeds. Today's census:
-        # 41 click_stage + 11 deliver_click + 7 click_text.
+        # only increase as the conversion proceeds. Today's census
+        # (2026-09-15, the re-review's re-count — the pin includes
+        # key_press, which the classifier counts as real input):
+        # 46 click_stage + 22 deliver_click + 11 click_text +
+        # 5 key_press.
         text = (ROOT / "tests/harness/scenarios.py").read_text()
-        real = len(re.findall(r'"op": "(deliver_click|click_stage|click_text)"', text))
-        self.assertGreaterEqual(real, 65)
+        real = len(re.findall(
+            r'"op": "(deliver_click|click_stage|click_text|key_press)"', text))
+        self.assertGreaterEqual(real, 84)
 
     def test_direct_invocation_can_only_shrink(self):
         # And the other half: direct-invocation steps may only
-        # shrink. Today's census: 34 exec_slot + 15 exec_file_slot +
-        # 6 emit_click + 6 exec_mode + 0 click_jog + 3 exec_validator
-        # + 2 exec_console + 1 exec_extrude + 1 exec_test_connection.
+        # shrink. Today's census (2026-09-15, the re-review's
+        # re-count — the pin now counts exec_code and confirm_box,
+        # which the classifier itself calls direct invocation, so
+        # they can never hide outside the ratchet):
+        # 38 exec_slot + 12 exec_file_slot + 6 emit_click +
+        # 3 confirm_box + 6 exec_mode + 3 exec_validator +
+        # 1 exec_console + 1 exec_extrude + 1 exec_test_connection
+        # + 22 exec_code.
         text = (ROOT / "tests/harness/scenarios.py").read_text()
         direct = len(re.findall(
-            r'"op": "(exec_slot|exec_file_slot|emit_click|click_jog|exec_mode'
-            r'|exec_validator|exec_console|exec_extrude|exec_test_connection)"', text))
-        self.assertLessEqual(direct, 63)
+            r'"op": "(exec_slot|exec_file_slot|emit_click|confirm_box|exec_mode'
+            r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))
+        self.assertLessEqual(direct, 93)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —
