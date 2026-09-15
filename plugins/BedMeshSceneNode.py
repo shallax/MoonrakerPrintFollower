@@ -16,17 +16,23 @@ class BedMeshSceneNode(SceneNode):
 
     Klipper only knows the configured mesh bounds. Cura, however, renders the
     complete build plate. The measured/interpolated Klipper surface therefore
-    remains exactly where Klipper says it is, while one additional outer ring is
-    linearly extrapolated to the physical Cura bed edges. Extrapolated vertices
-    are intentionally more transparent so the unprobed region is not presented
-    as measured data. A neon-orange raised ribbon follows the exact Klipper mesh
-    bounds so the measured/interpolated area remains obvious even when the alpha
-    change at the extrapolated perimeter is visually subtle.
+    remains exactly where Klipper says it is, while one additional outer ring
+    extends to the physical Cura bed edges, sampled with KLIPPER'S OWN CLAMP
+    (bed_mesh._get_linear_index constrains both the index and the fraction):
+    outside the probed bounds the compensation continues the boundary edge's
+    interpolated value — no made-up slope, no drop to zero (the author's
+    accuracy ruling, 2026-09-15). Extended vertices are intentionally more
+    transparent so the unprobed region is not presented as measured data. A
+    neon-orange raised ribbon follows the exact Klipper mesh bounds so the
+    measured/interpolated area remains obvious even when the alpha change at
+    the extended perimeter is visually subtle.
     """
 
     DEFAULT_EXAGGERATION = 20.0
+    MAX_EXAGGERATION = 1000.0
     SURFACE_ALPHA = 0.58
     EXTRAPOLATED_ALPHA = 0.28
+    OUT_OF_WINDOW_GREY = (0.541, 0.561, 0.596)  # #8A8F98, the map's out-of-window grey
     SURFACE_LIFT = 0.035
     BOUNDARY_WIDTH = 1.4
     BOUNDARY_LIFT = 0.09
@@ -132,11 +138,17 @@ class BedMeshSceneNode(SceneNode):
         y_min: float,
         y_max: float,
     ) -> float:
-        """Bilinearly sample the mesh and linearly extrapolate outside its bounds."""
+        """Bilinearly sample the mesh, CLAMPING outside its bounds —
+        Klipper's own behaviour (bed_mesh.py _get_linear_index
+        constrains both the index and the fraction), so the extended
+        perimeter shows the boundary values continued, never a
+        made-up slope (the author's accuracy ruling, 2026-09-15)."""
         rows = len(matrix)
         columns = len(matrix[0]) if rows else 0
         u = (printer_x - x_min) / (x_max - x_min) * (columns - 1)
         v = (printer_y - y_min) / (y_max - y_min) * (rows - 1)
+        u = min(max(u, 0.0), float(columns - 1))
+        v = min(max(v, 0.0), float(rows - 1))
         column, fu = cls._extrapolation_segment(u, columns)
         row, fv = cls._extrapolation_segment(v, rows)
 
@@ -159,7 +171,14 @@ class BedMeshSceneNode(SceneNode):
         machine_depth: float,
         center_is_zero: bool,
         exaggeration: float = DEFAULT_EXAGGERATION,
+        low: Any = None,
+        high: Any = None,
     ) -> bool:
+        """`low`/`high` bound the heightmap range filter: cells
+        outside the window render grey (the shared out-of-window
+        colour both surfaces use) so peaks and troughs can be traced
+        while the rest of the surface reads as context. None means
+        the whole range is coloured."""
         try:
             rows = int(snapshot.get("rows") or 0)
             columns = int(snapshot.get("columns") or 0)
@@ -172,7 +191,11 @@ class BedMeshSceneNode(SceneNode):
             maximum = float(snapshot.get("maximum"))
             machine_width = float(machine_width)
             machine_depth = float(machine_depth)
-            exaggeration = max(1.0, min(100.0, float(exaggeration)))
+            # Zero flattens the surface (the "scale z-max" slider's
+            # low end); the colours keep the heightmap readable.
+            exaggeration = max(0.0, min(self.MAX_EXAGGERATION, float(exaggeration)))
+            low = None if low is None else float(low)
+            high = None if high is None else float(high)
         except (TypeError, ValueError):
             self.clear()
             return False
@@ -215,12 +238,16 @@ class BedMeshSceneNode(SceneNode):
                     self.SURFACE_LIFT + value * exaggeration,
                     scene_z,
                 )
-                colours[index] = self._colour(
-                    value,
-                    minimum,
-                    maximum,
-                    extrapolated=extrapolated,
-                )
+                if low is not None and high is not None and (value < low or value > high):
+                    alpha = self.EXTRAPOLATED_ALPHA if extrapolated else self.SURFACE_ALPHA
+                    colours[index] = [*self.OUT_OF_WINDOW_GREY, alpha]
+                else:
+                    colours[index] = self._colour(
+                        value,
+                        minimum,
+                        maximum,
+                        extrapolated=extrapolated,
+                    )
 
         face = 0
         for row in range(render_rows - 1):

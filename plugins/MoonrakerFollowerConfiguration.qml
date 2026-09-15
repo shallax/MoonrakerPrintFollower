@@ -241,9 +241,76 @@ Cura.MachineAction {
                                 from: 0
                                 to: 13
                                 stepSize: 1
+                                // The click behaviours (the author's live
+                                // report): a press that lands within the
+                                // handle's extent of the current value is a
+                                // no-op — a click on the grab handle must
+                                // not move it; and a click focuses the
+                                // slider so the arrow keys nudge one step.
+                                focusPolicy: Qt.StrongFocus
+                                property bool handlePress: false
+                                property bool handleDragged: false
+                                property real valueBeforePress: 0
+                                function pressIsOnHandle(mouseX) {
+                                    var centre = leftPadding + visualPosition * availableWidth;
+                                    return Math.abs(mouseX - centre) <= 10 * screenScaleFactor;
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onPressed: function (mouse) {
+                                        parent.forceActiveFocus();
+                                        parent.valueBeforePress = parent.value;
+                                        parent.handleDragged = false;
+                                        parent.handlePress = parent.pressIsOnHandle(mouse.x);
+                                        mouse.accepted = parent.handlePress;
+                                    }
+                                    onPositionChanged: function (mouse) {
+                                        if (!parent.handlePress) {
+                                            return;
+                                        }
+                                        var steps = Math.round((mouse.x - parent.leftPadding) / Math.max(1, parent.availableWidth) * (parent.to - parent.from));
+                                        parent.value = Math.max(parent.from, Math.min(parent.to, parent.from + steps * parent.stepSize));
+                                        if (Math.abs(parent.value - parent.valueBeforePress) > 0.001) {
+                                            parent.handleDragged = true;
+                                        }
+                                        base.pollIntervalMoved = true;
+                                    }
+                                    onReleased: function (mouse) {
+                                        if (!parent.handlePress) {
+                                            return;
+                                        }
+                                        parent.handlePress = false;
+                                        if (!parent.handleDragged) {
+                                            parent.value = parent.valueBeforePress;
+                                        }
+                                        mouse.accepted = true;
+                                    }
+                                }
+                                Keys.onUpPressed: {
+                                    increase();
+                                    base.pollIntervalMoved = true;
+                                }
+                                Keys.onDownPressed: {
+                                    decrease();
+                                    base.pollIntervalMoved = true;
+                                }
+                                Keys.onRightPressed: {
+                                    increase();
+                                    base.pollIntervalMoved = true;
+                                }
+                                Keys.onLeftPressed: {
+                                    decrease();
+                                    base.pollIntervalMoved = true;
+                                }
                                 value: Number(manager.settingsPollInterval) > 0 ? Math.max(0, Math.min(13, Math.log2(Number(manager.settingsPollInterval) / 250))) : 1
                                 onMoved: {
+                                    // The groove path (clicks and drags
+                                    // outside the handle); the handle path
+                                    // never reaches this handler.
                                     base.pollIntervalMoved = true;
+                                    pollIntervalValueLabel.text = Math.round(250 * Math.pow(2, value)) + " ms";
+                                }
+                                onValueChanged: {
                                     pollIntervalValueLabel.text = Math.round(250 * Math.pow(2, value)) + " ms";
                                 }
                             }
@@ -274,8 +341,56 @@ Cura.MachineAction {
                                 from: 250
                                 to: 60000
                                 stepSize: 250
+                                // The click behaviours: see pollIntervalSlider.
+                                focusPolicy: Qt.StrongFocus
+                                property bool handlePress: false
+                                property bool handleDragged: false
+                                property real valueBeforePress: 0
+                                function pressIsOnHandle(mouseX) {
+                                    var centre = leftPadding + visualPosition * availableWidth;
+                                    return Math.abs(mouseX - centre) <= 10 * screenScaleFactor;
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onPressed: function (mouse) {
+                                        parent.forceActiveFocus();
+                                        parent.valueBeforePress = parent.value;
+                                        parent.handleDragged = false;
+                                        parent.handlePress = parent.pressIsOnHandle(mouse.x);
+                                        mouse.accepted = parent.handlePress;
+                                    }
+                                    onPositionChanged: function (mouse) {
+                                        if (!parent.handlePress) {
+                                            return;
+                                        }
+                                        var steps = Math.round((mouse.x - parent.leftPadding) / Math.max(1, parent.availableWidth) * (parent.to - parent.from));
+                                        parent.value = Math.max(parent.from, Math.min(parent.to, parent.from + steps * parent.stepSize));
+                                        if (Math.abs(parent.value - parent.valueBeforePress) > 0.001) {
+                                            parent.handleDragged = true;
+                                        }
+                                    }
+                                    onReleased: function (mouse) {
+                                        if (!parent.handlePress) {
+                                            return;
+                                        }
+                                        parent.handlePress = false;
+                                        if (!parent.handleDragged) {
+                                            parent.value = parent.valueBeforePress;
+                                        }
+                                        mouse.accepted = true;
+                                    }
+                                }
+                                Keys.onUpPressed: increase()
+                                Keys.onDownPressed: decrease()
+                                Keys.onRightPressed: increase()
+                                Keys.onLeftPressed: decrease()
                                 value: Number(manager.settingsAuxInterval) > 0 ? Number(manager.settingsAuxInterval) : 2500
-                                onMoved: auxIntervalValueLabel.text = value + " ms"
+                                onMoved: {
+                                    auxIntervalValueLabel.text = value + " ms";
+                                }
+                                onValueChanged: {
+                                    auxIntervalValueLabel.text = value + " ms";
+                                }
                             }
                             UM.Label {
                                 id: auxIntervalValueLabel
@@ -304,8 +419,56 @@ Cura.MachineAction {
                                 from: 250
                                 to: 60000
                                 stepSize: 250
+                                // The click behaviours: see pollIntervalSlider.
+                                focusPolicy: Qt.StrongFocus
+                                property bool handlePress: false
+                                property bool handleDragged: false
+                                property real valueBeforePress: 0
+                                function pressIsOnHandle(mouseX) {
+                                    var centre = leftPadding + visualPosition * availableWidth;
+                                    return Math.abs(mouseX - centre) <= 10 * screenScaleFactor;
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onPressed: function (mouse) {
+                                        parent.forceActiveFocus();
+                                        parent.valueBeforePress = parent.value;
+                                        parent.handleDragged = false;
+                                        parent.handlePress = parent.pressIsOnHandle(mouse.x);
+                                        mouse.accepted = parent.handlePress;
+                                    }
+                                    onPositionChanged: function (mouse) {
+                                        if (!parent.handlePress) {
+                                            return;
+                                        }
+                                        var steps = Math.round((mouse.x - parent.leftPadding) / Math.max(1, parent.availableWidth) * (parent.to - parent.from));
+                                        parent.value = Math.max(parent.from, Math.min(parent.to, parent.from + steps * parent.stepSize));
+                                        if (Math.abs(parent.value - parent.valueBeforePress) > 0.001) {
+                                            parent.handleDragged = true;
+                                        }
+                                    }
+                                    onReleased: function (mouse) {
+                                        if (!parent.handlePress) {
+                                            return;
+                                        }
+                                        parent.handlePress = false;
+                                        if (!parent.handleDragged) {
+                                            parent.value = parent.valueBeforePress;
+                                        }
+                                        mouse.accepted = true;
+                                    }
+                                }
+                                Keys.onUpPressed: increase()
+                                Keys.onDownPressed: decrease()
+                                Keys.onRightPressed: increase()
+                                Keys.onLeftPressed: decrease()
                                 value: Number(manager.settingsConsoleInterval) > 0 ? Number(manager.settingsConsoleInterval) : 1000
-                                onMoved: consoleIntervalValueLabel.text = value + " ms"
+                                onMoved: {
+                                    consoleIntervalValueLabel.text = value + " ms";
+                                }
+                                onValueChanged: {
+                                    consoleIntervalValueLabel.text = value + " ms";
+                                }
                             }
                             UM.Label {
                                 id: consoleIntervalValueLabel

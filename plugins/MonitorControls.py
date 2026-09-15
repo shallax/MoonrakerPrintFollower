@@ -7,7 +7,7 @@ import shlex
 from PyQt6.QtCore import QObject, pyqtSignal
 from .MonitorFormatting import (
     FAN_OBJECT_PREFIXES, LED_OBJECT_PREFIXES, PWM_OBJECT_PREFIXES,
-    friendly, infer_macro_parameters, number, mesh_profiles,
+    fan_writable, friendly, infer_macro_parameters, number, mesh_profiles,
 )
 from .MonitorPermissions import R_UNKNOWN, Verdict, can_exclude, can_macro, can_power, can_restart, can_z_offset
 
@@ -20,6 +20,17 @@ class MonitorControls(QObject):
         self._data, self._commands, self._tuning = data, commands, tuning
         self._mesh, self._config = bed_mesh, config
         self._remembered_colors = {}
+        # The brightness slider holds the USER'S GAIN, unlinked from
+        # the channel peak (the author's ruling): a channel nudge
+        # must not move the brightness value, or the extra field
+        # change triggers a second publish and rebuild that kills the
+        # slider's focus.
+        self._remembered_gain = {}
+        # The channel sliders hold the USER'S set percentages (the
+        # author's gain ruling): seeded once from the first-seen
+        # colour, then only the user's own nudges change them — the
+        # gain acts on the SEND, never on the displayed values.
+        self._remembered_channels = {}
         self._macro_cache = {}
         self._config_identity = None
         self._values = {}
@@ -36,6 +47,8 @@ class MonitorControls(QObject):
 
     def reset(self):
         self._remembered_colors.clear()
+        self._remembered_gain.clear()
+        self._remembered_channels.clear()
         self._macro_cache.clear()
         self._config_identity = None
         self.observe()
@@ -72,19 +85,30 @@ class MonitorControls(QObject):
             lower = name.lower()
             if lower == "fan" or lower.startswith(FAN_OBJECT_PREFIXES):
                 actual = round(max(0, min(1, number(value.get("speed")))) * 100)
-                fans.append({"object": name, "name": friendly(name), "percent": self._display("fan:" + name, actual)})
+                fans.append({"object": name, "name": friendly(name), "percent": self._display("fan:" + name, actual),
+                    "writable": fan_writable(name)})
             if lower.startswith(LED_OBJECT_PREFIXES):
                 colors = [[max(0, min(1, number(c))) for c in raw[:4]] for raw in value.get("color_data", ()) if isinstance(raw, (tuple, list))]
                 if not colors: continue
                 brightness = max(max(color, default=0) for color in colors)
                 if brightness > 0.001: self._remembered_colors[name] = colors
-                source = colors if brightness > 0.001 else self._remembered_colors.get(name, [[1, 1, 1, 0]])
-                chroma = [sum((color + [0] * 4)[i] for color in source) / len(source) for i in range(4)]
-                peak = max(chroma)
-                chroma = tuple(round(c * 100 / peak) if peak > 0.001 else 0 for c in chroma)
-                color = self._display("led-colour:" + name, chroma)
+                # Seed the gain once from the first-seen peak; after
+                # that the brightness slider is the user's own value.
+                if name not in self._remembered_gain and brightness > 0.001:
+                    self._remembered_gain[name] = brightness
+                gain = self._remembered_gain.get(name, 0.0)
+                # ABSOLUTE channels (the author's live report): the
+                # chroma normalisation made every nudge re-scale all
+                # four sliders — a +1 nudge of a zeroed channel jumped
+                # it to 100 and dragged the others with it. The
+                # sliders read the USER'S set values (the gain
+                # ruling), seeded once from the first-seen colour.
+                if name not in self._remembered_channels and brightness > 0.001:
+                    self._remembered_channels[name] = [sum((color + [0] * 4)[i] for color in colors) / len(colors) for i in range(4)]
+                channels = self._remembered_channels.get(name, [0.0, 0.0, 0.0, 0.0])
+                color = self._display("led-colour:" + name, tuple(round(c * 100) for c in channels))
                 section = self.section(config, name)
-                leds.append({"object": name, "name": friendly(name), "percent": self._display("led-brightness:" + name, round(brightness * 100)),
+                leds.append({"object": name, "name": friendly(name), "percent": self._display("led-brightness:" + name, round(gain * 100)),
                     "redPercent": color[0], "greenPercent": color[1], "bluePercent": color[2], "whitePercent": color[3],
                     "hasWhite": "white_pin" in section or "W" in str(section.get("color_order") or "").upper()})
             if lower.startswith(PWM_OBJECT_PREFIXES):
@@ -253,9 +277,17 @@ class MonitorControls(QObject):
             return
         suffix = name.split(" ", 1)[-1]
         if kind == "fan":
+            # Fail closed for the firmware-regulated fans (the
+            # author's live report): no path may issue SET_FAN_SPEED
+            # at a controller_fan/temperature_fan.
+            if not fan_writable(name):
+                return
             script = f"M106 S{round(percent * 255 / 100)}" if name == "fan" else f"SET_FAN_SPEED FAN={suffix} SPEED={percent / 100:.3f}"
         elif kind == "pwm-output": script = f"SET_PIN PIN={suffix} VALUE={item['scale'] * percent / 100:g}"
         else:
+            # The brightness slider is the user's gain: remember it
+            # (the unlink ruling) and scale the current colour.
+            self._remembered_gain[name] = percent / 100.0
             raw = (self._data.snapshot.auxiliary.get(name) or {}).get("color_data") or ()
             colors = [[number(c) for c in color[:4]] for color in raw if isinstance(color, (list, tuple))]
             peak = max((max(color, default=0) for color in colors), default=0)
@@ -273,18 +305,20 @@ class MonitorControls(QObject):
     def led_color(self, name, red, green, blue, white=0, brightness=-1, preview=False):
         item = next((item for item in self._values.get("ledItems", ()) if item["object"] == name), None)
         if item is None: return
+        # The sliders carry the user's SET percentages (the gain
+        # ruling): the channels are remembered, and the SEND composes
+        # them with the gain — the gain never changes the displayed
+        # values.
         channels = [max(0, min(1, value / 100)) for value in (red, green, blue, white)]
         if not item["hasWhite"]: channels[3] = 0
-        peak = max(channels)
-        chroma = [value / peak if peak > 0.001 else 0 for value in channels]
-        desired = tuple(round(value * 100) for value in chroma)
+        self._remembered_channels[name] = channels
+        desired = tuple(round(value * 100) for value in channels)
         key = "led-colour:" + name
         if preview:
             self._tuning.preview(key, desired)
             return
-        level = max(0, min(1, (brightness if brightness >= 0 else item["percent"]) / 100))
-        if level <= 0.001: level = max((max(c) for c in self._remembered_colors.get(name, [[1, 1, 1, 0]])), default=1)
-        c = [value * level for value in chroma]
+        level = max(0.0, min(1.0, (float(brightness) / 100.0 if brightness >= 0 else self._remembered_gain.get(name, 1.0))))
+        c = [value * level for value in channels]
         script = f"SET_LED LED={name.split(' ', 1)[-1]} RED={c[0]:.4f} GREEN={c[1]:.4f} BLUE={c[2]:.4f} WHITE={c[3]:.4f} TRANSMIT=1"
         self._tuning.queue(key, desired, key, script)
 

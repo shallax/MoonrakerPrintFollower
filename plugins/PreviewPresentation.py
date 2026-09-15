@@ -13,6 +13,8 @@ class PreviewPresentation(QObject):
     removePauseRequested = pyqtSignal(int)
     clearPausesRequested = pyqtSignal()
     bedMeshVisibilityRequested = pyqtSignal(bool)
+    bedMeshThresholdsRequested = pyqtSignal(float, float)
+    bedMeshExaggerationRequested = pyqtSignal(float)
     controlsChanged = pyqtSignal()
 
     def __init__(self, application, cura, parent=None):
@@ -86,6 +88,8 @@ class PreviewPresentation(QObject):
             ("removePauseAtLayerRequested", self.removePauseRequested.emit),
             ("clearPauseAtLayersRequested", self.clearPausesRequested.emit),
             ("bedMeshVisibilityRequested", self.bedMeshVisibilityRequested.emit),
+            ("bedMeshThresholdsRequested", self.bedMeshThresholdsRequested.emit),
+            ("bedMeshExaggerationRequested", self.bedMeshExaggerationRequested.emit),
         ):
             signal = getattr(card, name, None)
             if signal is not None: signal.connect(target)

@@ -70,6 +70,113 @@ Component {
             }
         }
         property bool tuningSliderPressed: false
+        // The freeze lists (the author's live report): while a tuning
+        // slider is mid-gesture — a drag or a pending keyboard nudge —
+        // the fan/LED/PWM repeaters must not rebuild, or the rebuild
+        // replaces the focused delegate and the interaction dies.
+        property var frozenFanItems: []
+        property var frozenLedItems: []
+        property var frozenPwmOutputItems: []
+        // The slider that was being tuned when the freeze lifted: the
+        // live lists rebuild the repeaters then, so the delegate's
+        // focus dies with the rebuild — the dashboard re-grants it
+        // once the new delegate exists (the author's live report).
+        property string tuningSliderObject: ""
+        property string tuningSliderKind: ""
+        onTuningSliderPressedChanged: {
+            if (tuningSliderPressed && root.printer != null) {
+                root.frozenFanItems = root.printer.fanControlItems;
+                root.frozenLedItems = root.printer.ledItems;
+                root.frozenPwmOutputItems = root.printer.pwmOutputItems;
+            }
+            if (!tuningSliderPressed && root.tuningSliderObject !== "") {
+                refocusTimer.attempts = 0;
+                refocusTimer.start();
+            }
+        }
+        // The refocus RETRIES until the walk lands: the repeater
+        // rebuild that follows the submit is asynchronous against the
+        // unfreeze edge, and a one-shot walk could focus a delegate
+        // that dies a moment later (the author's live report — fan
+        // and LED sliders lost focus on the apply, the singletons
+        // never rebuild).
+        Timer {
+            id: refocusTimer
+            interval: 25
+            repeat: true
+            property int attempts: 0
+            onTriggered: {
+                ++refocusTimer.attempts;
+                if (root.tuningSliderObject === "") {
+                    refocusTimer.stop();
+                    refocusTimer.attempts = 0;
+                    return;
+                }
+                if (root.focusTuningSliderOnce() || refocusTimer.attempts >= 20) {
+                    refocusTimer.stop();
+                    refocusTimer.attempts = 0;
+                    // The confirm-time publish can rebuild once more
+                    // after the apply; hold the focus across that
+                    // window before clearing the target.
+                    focusHoldTimer.start();
+                }
+            }
+        }
+        Timer {
+            id: focusHoldTimer
+            interval: 400
+            onTriggered: {
+                root.focusTuningSliderOnce();
+                root.tuningSliderObject = "";
+                root.tuningSliderKind = "";
+            }
+        }
+        function focusSliderIn(item, targetObject, targetKind) {
+            // Recursive: one LED row holds five sliders, nested a
+            // level down in the channel grid.
+            if (item == null) {
+                return false;
+            }
+            for (var i = 0; i < item.children.length; ++i) {
+                var child = item.children[i];
+                if (child != null && child.controlObject === targetObject && child.controlKind === targetKind) {
+                    child.forceActiveFocus();
+                    return true;
+                }
+                if (child != null && root.focusSliderIn(child, targetObject, targetKind)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        function focusTuningSliderOnce() {
+            var target = root.tuningSliderObject;
+            var kind = root.tuningSliderKind;
+            if (target === "" || root.printer == null) {
+                return false;
+            }
+            // The delegates are parented to the REPEATER'S PARENT,
+            // not the repeater — iterating the repeater's children
+            // found nothing (the probe's reproduction: focus died on
+            // the apply and the walk never saw a slider). itemAt is
+            // the real delegate accessor.
+            for (var r = 0; r < fanRepeater.count; ++r) {
+                if (root.focusSliderIn(fanRepeater.itemAt(r), target, kind)) {
+                    return true;
+                }
+            }
+            for (var l = 0; l < ledRepeater.count; ++l) {
+                if (root.focusSliderIn(ledRepeater.itemAt(l), target, kind)) {
+                    return true;
+                }
+            }
+            for (var p = 0; p < pwmRepeater.count; ++p) {
+                if (root.focusSliderIn(pwmRepeater.itemAt(p), target, kind)) {
+                    return true;
+                }
+            }
+            return false;
+        }
         property bool anyPowerLocked: {
             if (printer == null || printer.powerDevices == null)
                 return false;
@@ -1540,6 +1647,11 @@ Component {
                                         Layout.fillWidth: true
                                     }
                                     UM.Label {
+                                        // The fixed width keeps the row from
+                                        // reflowing as the percentage changes
+                                        // (the author's live report).
+                                        width: 52 * screenScaleFactor
+                                        horizontalAlignment: Text.AlignRight
                                         text: root.sliderSelection(speedSlider) + "%"
                                     }
                                 }
@@ -1552,19 +1664,15 @@ Component {
                                     live: false
                                     value: root.printer != null ? root.printer.speedFactorPercent : 100
                                     enabled: root.printer != null
-                                    onMoved: {
-                                        if (root.printer == null)
-                                            return;
-                                        var selected = root.sliderSelection(speedSlider);
-                                        root.printer.previewSpeedFactor(selected);
-                                        if (!pressed)
-                                            root.printer.setSpeedFactor(selected);
+                                    onValueTuning: {
+                                        if (root.printer != null)
+                                            root.printer.previewSpeedFactor(value);
                                     }
-                                    onPressedChanged: {
-                                        root.tuningSliderPressed = pressed;
-                                        if (!pressed && root.printer != null)
-                                            root.printer.setSpeedFactor(root.sliderSelection(speedSlider));
+                                    onValueCommitted: {
+                                        if (root.printer != null)
+                                            root.printer.setSpeedFactor(value);
                                     }
+                                    onInteractingChanged: root.tuningSliderPressed = interacting
                                 }
                             }
 
@@ -1578,6 +1686,8 @@ Component {
                                         Layout.fillWidth: true
                                     }
                                     UM.Label {
+                                        width: 52 * screenScaleFactor
+                                        horizontalAlignment: Text.AlignRight
                                         text: root.sliderSelection(flowSlider) + "%"
                                     }
                                 }
@@ -1590,19 +1700,15 @@ Component {
                                     live: false
                                     value: root.printer != null ? root.printer.flowFactorPercent : 100
                                     enabled: root.printer != null
-                                    onMoved: {
-                                        if (root.printer == null)
-                                            return;
-                                        var selected = root.sliderSelection(flowSlider);
-                                        root.printer.previewFlowFactor(selected);
-                                        if (!pressed)
-                                            root.printer.setFlowFactor(selected);
+                                    onValueTuning: {
+                                        if (root.printer != null)
+                                            root.printer.previewFlowFactor(value);
                                     }
-                                    onPressedChanged: {
-                                        root.tuningSliderPressed = pressed;
-                                        if (!pressed && root.printer != null)
-                                            root.printer.setFlowFactor(root.sliderSelection(flowSlider));
+                                    onValueCommitted: {
+                                        if (root.printer != null)
+                                            root.printer.setFlowFactor(value);
                                     }
+                                    onInteractingChanged: root.tuningSliderPressed = interacting
                                 }
                             }
 
@@ -1696,7 +1802,8 @@ Component {
                             enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             Repeater {
-                                model: root.printer != null ? root.printer.fanControlItems : []
+                                id: fanRepeater
+                                model: root.tuningSliderPressed ? root.frozenFanItems : (root.printer != null ? root.printer.fanControlItems : [])
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     RowLayout {
@@ -1707,30 +1814,48 @@ Component {
                                             elide: Text.ElideRight
                                         }
                                         UM.Label {
-                                            text: root.sliderSelection(fanSlider) + "%"
+                                            width: 52 * screenScaleFactor
+                                            horizontalAlignment: Text.AlignRight
+                                            text: modelData.writable ? root.sliderSelection(fanSlider) + "%" : modelData.percent + "%"
                                         }
                                     }
                                     OutlineSlider {
                                         id: fanSlider
                                         Layout.fillWidth: true
+                                        visible: modelData.writable
+                                        controlObject: modelData.object
+                                        controlKind: "fan"
                                         from: 0
                                         to: 100
                                         stepSize: 1
                                         live: false
                                         value: modelData.percent
-                                        onMoved: {
-                                            if (root.printer == null)
-                                                return;
-                                            var selected = root.sliderSelection(fanSlider);
-                                            root.printer.previewFanSpeed(modelData.object, selected);
-                                            if (!pressed)
-                                                root.printer.setFanSpeed(modelData.object, selected);
+                                        onValueTuning: {
+                                            if (root.printer != null)
+                                                root.printer.previewFanSpeed(modelData.object, value);
                                         }
-                                        onPressedChanged: {
-                                            root.tuningSliderPressed = pressed;
-                                            if (!pressed && root.printer != null)
-                                                root.printer.setFanSpeed(modelData.object, root.sliderSelection(fanSlider));
+                                        onValueCommitted: {
+                                            if (root.printer != null)
+                                                root.printer.setFanSpeed(modelData.object, value);
                                         }
+                                        onInteractingChanged: {
+                                            root.tuningSliderPressed = interacting;
+                                            if (interacting) {
+                                                root.tuningSliderObject = modelData.object;
+                                                root.tuningSliderKind = "fan";
+                                            }
+                                        }
+                                    }
+                                    // Firmware-regulated fans render their
+                                    // value without a slider (the author's
+                                    // live report — the command never
+                                    // sticks).
+                                    UM.Label {
+                                        visible: !modelData.writable
+                                        Layout.fillWidth: true
+                                        text: "Firmware-controlled — speed is read-only"
+                                        color: UM.Theme.getColor("text_inactive")
+                                        font: UM.Theme.getFont("default_italic")
                                     }
                                 }
                             }
@@ -1752,7 +1877,8 @@ Component {
                             Layout.fillWidth: true
                             spacing: UM.Theme.getSize("thin_margin").height
                             Repeater {
-                                model: root.printer != null ? root.printer.ledItems : []
+                                id: ledRepeater
+                                model: root.tuningSliderPressed ? root.frozenLedItems : (root.printer != null ? root.printer.ledItems : [])
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: UM.Theme.getSize("thin_margin").height
@@ -1760,19 +1886,19 @@ Component {
                                     function previewLedColour() {
                                         if (root.printer == null)
                                             return;
-                                        root.printer.previewLedColor(modelData.object, root.sliderSelection(redSlider), root.sliderSelection(greenSlider), root.sliderSelection(blueSlider), modelData.hasWhite ? root.sliderSelection(whiteSlider) : 0, root.sliderSelection(ledSlider));
+                                        root.printer.previewLedColor(modelData.object, root.sliderSelection(redSlider), root.sliderSelection(greenSlider), root.sliderSelection(blueSlider), modelData.hasWhite ? root.sliderSelection(whiteSlider) : 0, -1);
                                     }
 
                                     function applyLedColour() {
                                         if (root.printer == null)
                                             return;
-                                        root.printer.setLedColor(modelData.object, root.sliderSelection(redSlider), root.sliderSelection(greenSlider), root.sliderSelection(blueSlider), modelData.hasWhite ? root.sliderSelection(whiteSlider) : 0, root.sliderSelection(ledSlider));
-                                    }
-
-                                    function ledColourMoved(slider) {
-                                        previewLedColour();
-                                        if (!slider.pressed)
-                                            applyLedColour();
+                                        // The channels are ABSOLUTE values; the
+                                        // brightness slider is NOT passed —
+                                        // its own lane scales the colour, and
+                                        // passing it here as the gain zeroed
+                                        // every channel nudge while the LED
+                                        // was off (the author's live report).
+                                        root.printer.setLedColor(modelData.object, root.sliderSelection(redSlider), root.sliderSelection(greenSlider), root.sliderSelection(blueSlider), modelData.hasWhite ? root.sliderSelection(whiteSlider) : 0, -1);
                                     }
 
                                     RowLayout {
@@ -1783,29 +1909,35 @@ Component {
                                             elide: Text.ElideRight
                                         }
                                         UM.Label {
+                                            width: 150 * screenScaleFactor
+                                            horizontalAlignment: Text.AlignRight
                                             text: "Brightness " + root.sliderSelection(ledSlider) + "%"
                                         }
                                     }
                                     OutlineSlider {
                                         id: ledSlider
                                         Layout.fillWidth: true
+                                        controlObject: modelData.object
+                                        controlKind: "led-brightness"
                                         from: 0
                                         to: 100
                                         stepSize: 1
                                         live: false
                                         value: modelData.percent
-                                        onMoved: {
-                                            if (root.printer == null)
-                                                return;
-                                            var selected = root.sliderSelection(ledSlider);
-                                            root.printer.previewLedBrightness(modelData.object, selected);
-                                            if (!pressed)
-                                                root.printer.setLedBrightness(modelData.object, selected);
+                                        onValueTuning: {
+                                            if (root.printer != null)
+                                                root.printer.previewLedBrightness(modelData.object, value);
                                         }
-                                        onPressedChanged: {
-                                            root.tuningSliderPressed = pressed;
-                                            if (!pressed && root.printer != null)
-                                                root.printer.setLedBrightness(modelData.object, root.sliderSelection(ledSlider));
+                                        onValueCommitted: {
+                                            if (root.printer != null)
+                                                root.printer.setLedBrightness(modelData.object, value);
+                                        }
+                                        onInteractingChanged: {
+                                            root.tuningSliderPressed = interacting;
+                                            if (interacting) {
+                                                root.tuningSliderObject = modelData.object;
+                                                root.tuningSliderKind = "led-brightness";
+                                            }
                                         }
                                     }
 
@@ -1816,76 +1948,101 @@ Component {
                                         rowSpacing: UM.Theme.getSize("thin_margin").height
 
                                         UM.Label {
+                                            width: 16 * screenScaleFactor
                                             text: "R"
                                             color: UM.Theme.getColor("text_inactive")
                                         }
                                         OutlineSlider {
                                             id: redSlider
                                             Layout.fillWidth: true
+                                            controlObject: modelData.object
+                                            controlKind: "led-red"
                                             from: 0
                                             to: 100
                                             stepSize: 1
                                             live: false
                                             value: modelData.redPercent
-                                            onMoved: ledColourMoved(redSlider)
-                                            onPressedChanged: {
-                                                root.tuningSliderPressed = pressed;
-                                                if (!pressed)
-                                                    applyLedColour();
+                                            onValueTuning: previewLedColour()
+                                            onValueCommitted: applyLedColour()
+                                            onInteractingChanged: {
+                                                root.tuningSliderPressed = interacting;
+                                                if (interacting) {
+                                                    root.tuningSliderObject = modelData.object;
+                                                    root.tuningSliderKind = "led-red";
+                                                }
                                             }
                                         }
                                         UM.Label {
+                                            width: 52 * screenScaleFactor
+                                            horizontalAlignment: Text.AlignRight
                                             text: root.sliderSelection(redSlider) + "%"
                                         }
 
                                         UM.Label {
+                                            width: 16 * screenScaleFactor
                                             text: "G"
                                             color: UM.Theme.getColor("text_inactive")
                                         }
                                         OutlineSlider {
                                             id: greenSlider
                                             Layout.fillWidth: true
+                                            controlObject: modelData.object
+                                            controlKind: "led-green"
                                             from: 0
                                             to: 100
                                             stepSize: 1
                                             live: false
                                             value: modelData.greenPercent
-                                            onMoved: ledColourMoved(greenSlider)
-                                            onPressedChanged: {
-                                                root.tuningSliderPressed = pressed;
-                                                if (!pressed)
-                                                    applyLedColour();
+                                            onValueTuning: previewLedColour()
+                                            onValueCommitted: applyLedColour()
+                                            onInteractingChanged: {
+                                                root.tuningSliderPressed = interacting;
+                                                if (interacting) {
+                                                    root.tuningSliderObject = modelData.object;
+                                                    root.tuningSliderKind = "led-green";
+                                                }
                                             }
                                         }
                                         UM.Label {
+                                            width: 52 * screenScaleFactor
+                                            horizontalAlignment: Text.AlignRight
                                             text: root.sliderSelection(greenSlider) + "%"
                                         }
 
                                         UM.Label {
+                                            width: 16 * screenScaleFactor
                                             text: "B"
                                             color: UM.Theme.getColor("text_inactive")
                                         }
                                         OutlineSlider {
                                             id: blueSlider
                                             Layout.fillWidth: true
+                                            controlObject: modelData.object
+                                            controlKind: "led-blue"
                                             from: 0
                                             to: 100
                                             stepSize: 1
                                             live: false
                                             value: modelData.bluePercent
-                                            onMoved: ledColourMoved(blueSlider)
-                                            onPressedChanged: {
-                                                root.tuningSliderPressed = pressed;
-                                                if (!pressed)
-                                                    applyLedColour();
+                                            onValueTuning: previewLedColour()
+                                            onValueCommitted: applyLedColour()
+                                            onInteractingChanged: {
+                                                root.tuningSliderPressed = interacting;
+                                                if (interacting) {
+                                                    root.tuningSliderObject = modelData.object;
+                                                    root.tuningSliderKind = "led-blue";
+                                                }
                                             }
                                         }
                                         UM.Label {
+                                            width: 52 * screenScaleFactor
+                                            horizontalAlignment: Text.AlignRight
                                             text: root.sliderSelection(blueSlider) + "%"
                                         }
 
                                         UM.Label {
                                             visible: modelData.hasWhite
+                                            width: 16 * screenScaleFactor
                                             text: "W"
                                             color: UM.Theme.getColor("text_inactive")
                                         }
@@ -1893,20 +2050,27 @@ Component {
                                             id: whiteSlider
                                             visible: modelData.hasWhite
                                             Layout.fillWidth: true
+                                            controlObject: modelData.object
+                                            controlKind: "led-white"
                                             from: 0
                                             to: 100
                                             stepSize: 1
                                             live: false
                                             value: modelData.whitePercent
-                                            onMoved: ledColourMoved(whiteSlider)
-                                            onPressedChanged: {
-                                                root.tuningSliderPressed = pressed;
-                                                if (!pressed)
-                                                    applyLedColour();
+                                            onValueTuning: previewLedColour()
+                                            onValueCommitted: applyLedColour()
+                                            onInteractingChanged: {
+                                                root.tuningSliderPressed = interacting;
+                                                if (interacting) {
+                                                    root.tuningSliderObject = modelData.object;
+                                                    root.tuningSliderKind = "led-white";
+                                                }
                                             }
                                         }
                                         UM.Label {
                                             visible: modelData.hasWhite
+                                            width: 52 * screenScaleFactor
+                                            horizontalAlignment: Text.AlignRight
                                             text: root.sliderSelection(whiteSlider) + "%"
                                         }
                                     }
@@ -1929,7 +2093,8 @@ Component {
                             enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
                             Layout.fillWidth: true
                             Repeater {
-                                model: root.printer != null ? root.printer.pwmOutputItems : []
+                                id: pwmRepeater
+                                model: root.tuningSliderPressed ? root.frozenPwmOutputItems : (root.printer != null ? root.printer.pwmOutputItems : [])
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     RowLayout {
@@ -1940,29 +2105,34 @@ Component {
                                             elide: Text.ElideRight
                                         }
                                         UM.Label {
+                                            width: 52 * screenScaleFactor
+                                            horizontalAlignment: Text.AlignRight
                                             text: root.sliderSelection(pwmSlider) + "%"
                                         }
                                     }
                                     OutlineSlider {
                                         id: pwmSlider
                                         Layout.fillWidth: true
+                                        controlObject: modelData.object
+                                        controlKind: "pwm"
                                         from: 0
                                         to: 100
                                         stepSize: 1
                                         live: false
                                         value: modelData.percent
-                                        onMoved: {
-                                            if (root.printer == null)
-                                                return;
-                                            var selected = root.sliderSelection(pwmSlider);
-                                            root.printer.previewPwmOutput(modelData.object, selected);
-                                            if (!pressed)
-                                                root.printer.setPwmOutput(modelData.object, selected);
+                                        onValueTuning: {
+                                            if (root.printer != null)
+                                                root.printer.previewPwmOutput(modelData.object, value);
                                         }
-                                        onPressedChanged: {
-                                            root.tuningSliderPressed = pressed;
-                                            if (!pressed && root.printer != null) {
-                                                root.printer.setPwmOutput(modelData.object, root.sliderSelection(pwmSlider));
+                                        onValueCommitted: {
+                                            if (root.printer != null)
+                                                root.printer.setPwmOutput(modelData.object, value);
+                                        }
+                                        onInteractingChanged: {
+                                            root.tuningSliderPressed = interacting;
+                                            if (interacting) {
+                                                root.tuningSliderObject = modelData.object;
+                                                root.tuningSliderKind = "pwm";
                                             }
                                         }
                                     }

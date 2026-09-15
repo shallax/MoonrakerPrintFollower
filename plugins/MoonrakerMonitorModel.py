@@ -282,7 +282,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("typedControlsChanged", ("temperaturePresetItems", "pwmOutputItems", "bedMeshAvailable", "bedMeshProfile",
                                   "bedMeshProfileNames", "bedMeshRows", "bedMeshColumns", "bedMeshValues", "bedMeshMinimum",
                                   "bedMeshMaximum", "bedMeshRange", "bedMeshXMin", "bedMeshXMax", "bedMeshYMin", "bedMeshYMax",
-                                  "bedMeshRangeText", "bedMeshPreviewVisible")),
+                                  "bedMeshRangeText", "bedMeshPreviewVisible", "bedMeshThresholdLow", "bedMeshThresholdHigh",
+                                  "bedMeshMachineWidth", "bedMeshMachineDepth",
+                                  "bedMeshCenterIsZero")),
     )
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
@@ -381,6 +383,29 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._camera_recovering = False
         self._camera.streamFailed.connect(self._on_stream_failed)
         self._camera.streamRecovered.connect(self._on_stream_recovered)
+        # The wake recovery (the author's live report): a stream that
+        # survives a suspend shows a FROZEN frame — the image's size
+        # is already set, so the render watchdog cannot see it. A
+        # wake transition reloads the camera source once, the same
+        # way the refresh button does.
+        try:
+            from PyQt6.QtGui import QGuiApplication
+            app = QGuiApplication.instance()
+            if app is not None:
+                self._camera_app_state = app.applicationState()
+                app.applicationStateChanged.connect(self._on_app_state_changed)
+            else:
+                self._camera_app_state = None
+        except Exception:
+            self._camera_app_state = None
+        # The machine geometry for the bed-mesh map (4.2.0): 0 means
+        # unknown and the map draws the mesh-bounds view.
+        self._machine_width = 0.0
+        self._machine_depth = 0.0
+        self._machine_center_is_zero = False
+        self._mesh_threshold_low = None
+        self._mesh_threshold_high = None
+        self._mesh_thresholds_touched = False
         self._toolhead = ToolheadController(self._data, self._commands, self)
         # The persisted jog/extrude selection (the live
         # report) — applied before any publish so the first frame
@@ -474,6 +499,42 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._camera_refresh_nonce += 1
         self._camera_recovering = True
         self._publish()
+
+    def setMachineGeometry(self, width, depth, center_is_zero) -> None:
+        """The physical bed dimensions from the machine stack (4.2.0,
+        the author's request): the expanded bed-mesh map draws the
+        probed bounds within the real bed, extends the boundary
+        values to the bed edges and outlines the exact Klipper mesh
+        bounds — the Preview overlay's honest visualisation."""
+        try:
+            width, depth = float(width), float(depth)
+        except (TypeError, ValueError):
+            return
+        self._machine_width = width if width > 0 else 0.0
+        self._machine_depth = depth if depth > 0 else 0.0
+        self._machine_center_is_zero = bool(center_is_zero)
+        self._publish()
+
+    def _on_app_state_changed(self, state) -> None:
+        from PyQt6.QtCore import Qt
+        previous = self._camera_app_state
+        self._camera_app_state = state
+        if state == Qt.ApplicationState.ApplicationActive and previous not in (None, Qt.ApplicationState.ApplicationActive):
+            # Woke up: reload the camera source once. No veil — the
+            # stream may come back instantly, and a stuck veil would
+            # read as a failure the user must recover.
+            self._camera_refresh_nonce += 1
+            self._publish()
+
+    @pyqtSlot()
+    def cameraRenderStalled(self) -> None:
+        # The render watchdog (the author's live report): a stream
+        # that CONNECTED but never painted a frame raises no error
+        # signal — the QML pane watches the image's frame size and
+        # reports a stall here. The recovery is the same as a stream
+        # failure: the nonce bump reloads the source, cadence-limited
+        # by the same 10 s gate.
+        self._on_stream_failed()
 
     def _on_stream_recovered(self) -> None:
         if not self._camera_recovering:
@@ -788,6 +849,23 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values["consoleErrorBell"] = self._console_error_bell
         commands, mesh = self._commands, self._mesh.snapshot
         state_word = commands.state
+        # The heightmap range filter (the author's request): ONE
+        # window drives both surfaces — the Monitor pop-over reads the
+        # published keys, the Preview card and scene node follow
+        # through the presenter. The window follows the mesh range
+        # until the user touches a handle; a touched window is clamped
+        # into whatever range the next mesh brings.
+        mesh_min = float(mesh.get("minimum") or 0)
+        mesh_max = float(mesh.get("maximum") or 0)
+        if not mesh or mesh_max <= mesh_min:
+            threshold_low = threshold_high = 0.0
+        elif self._mesh_thresholds_touched:
+            threshold_low = min(max(self._mesh_threshold_low, mesh_min), mesh_max)
+            threshold_high = min(max(self._mesh_threshold_high, mesh_min), mesh_max)
+            if threshold_low > threshold_high:
+                threshold_low, threshold_high = threshold_high, threshold_low
+        else:
+            threshold_low, threshold_high = mesh_min, mesh_max
         values.update(printActive=commands.print_active,
             canPausePrint=state_word == "printing" and not commands.busy,
             canResumePrint=commands.state == "paused" and not commands.busy,
@@ -796,12 +874,17 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             emergencyHoldProgress=commands.hold_progress, powerDevices=self._controls.power_devices(),
             bedMeshAvailable=bool(mesh), bedMeshProfile=str(mesh.get("profile") or "Current mesh") if mesh else "",
             bedMeshRows=int(mesh.get("rows") or 0), bedMeshColumns=int(mesh.get("columns") or 0),
-            bedMeshValues=list(mesh.get("values") or ()), bedMeshMinimum=float(mesh.get("minimum") or 0),
-            bedMeshMaximum=float(mesh.get("maximum") or 0), bedMeshRange=float(mesh.get("range") or 0),
+            bedMeshValues=list(mesh.get("values") or ()), bedMeshMinimum=mesh_min,
+            bedMeshMaximum=mesh_max, bedMeshRange=float(mesh.get("range") or 0),
             bedMeshXMin=float(mesh.get("xMin") or 0), bedMeshXMax=float(mesh.get("xMax") or 0),
             bedMeshYMin=float(mesh.get("yMin") or 0), bedMeshYMax=float(mesh.get("yMax") or 0),
             bedMeshRangeText=f"{float(mesh.get('range') or 0):.3f} mm range" if mesh else "",
             bedMeshPreviewVisible=self._mesh.visible,
+            bedMeshThresholdLow=threshold_low,
+            bedMeshThresholdHigh=threshold_high,
+            bedMeshMachineWidth=self._machine_width,
+            bedMeshMachineDepth=self._machine_depth,
+            bedMeshCenterIsZero=self._machine_center_is_zero,
             controlsLocked=self._controls_locked, controlsCollapsed=self._controls_collapsed,
             infoCollapsed=self._info_collapsed, statusCollapsed=self._status_collapsed,
             consoleHeight=self._console_height,
@@ -1447,6 +1530,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_upload_confirm = None
         self._publish()
     emergencyHoldProgress = value_property(float, "emergencyHoldProgress", actionChanged, 0.0)
+    # The machine geometry (4.2.0): the physical bed the mesh map
+    # draws the probed bounds within — 0 means unknown, the map
+    # falls back to the mesh-bounds view.
+    bedMeshMachineWidth = value_property(float, "bedMeshMachineWidth", typedControlsChanged, 0.0)
+    bedMeshMachineDepth = value_property(float, "bedMeshMachineDepth", typedControlsChanged, 0.0)
+    bedMeshCenterIsZero = value_property(bool, "bedMeshCenterIsZero", typedControlsChanged, False)
+    # The heightmap range filter (the author's request): values
+    # outside this window render grey.
+    bedMeshThresholdLow = value_property(float, "bedMeshThresholdLow", typedControlsChanged, 0.0)
+    bedMeshThresholdHigh = value_property(float, "bedMeshThresholdHigh", typedControlsChanged, 0.0)
     bedMeshAvailable = value_property(bool, "bedMeshAvailable", typedControlsChanged, False)
     bedMeshProfile = value_property(str, "bedMeshProfile", typedControlsChanged, "")
     bedMeshProfileNames = value_property(QVariant, "bedMeshProfileNames", typedControlsChanged, [])
@@ -1736,6 +1829,30 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._improving_eta:
             self._improving_eta = False
             self._publish()
+    @pyqtSlot(bool)
+    @pyqtSlot(float, float)
+    def setBedMeshThresholds(self, low, high):
+        # The heightmap range filter (the author's request): ONE
+        # shared window drives both surfaces — the Monitor pop-over
+        # re-reads the published keys, the Preview card and scene node
+        # follow through the presenter — so the two sliders stay
+        # synchronised.
+        mesh = self._mesh.snapshot
+        mesh_min = float(mesh.get("minimum") or 0)
+        mesh_max = float(mesh.get("maximum") or 0)
+        if not mesh or mesh_max <= mesh_min:
+            return
+        low = min(max(float(low), mesh_min), mesh_max)
+        high = min(max(float(high), mesh_min), mesh_max)
+        if low > high:
+            low, high = high, low
+        if self._mesh_thresholds_touched and (low, high) == (self._mesh_threshold_low, self._mesh_threshold_high):
+            return
+        self._mesh_threshold_low, self._mesh_threshold_high = low, high
+        self._mesh_thresholds_touched = True
+        self._mesh.set_thresholds(low, high)
+        self._publish()
+
     @pyqtSlot(bool)
     def setShowProbePoints(self, show):
         if self._show_probe_points is bool(show):
