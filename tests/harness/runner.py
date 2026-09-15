@@ -2246,6 +2246,20 @@ def suite_step(step):
         reply = rpc({"id": 1, "cmd": "key_press", "key": step["key"]})
         time.sleep(0.4)
         return bool(reply.get("ok") and reply.get("sent")), f"the {step['key']} key", "sent"
+    if op == "scroll_into_view":
+        request = {"id": 1, "cmd": "scroll_into_view"}
+        if "objectName" in step:
+            request["objectName"] = step["objectName"]
+        elif "text" in step:
+            request["text"] = step["text"]
+        else:
+            return False, "scroll_into_view", "step names no target"
+        reply = rpc(request)
+        time.sleep(0.3)
+        contained = bool(reply.get("ok") and reply.get("contained"))
+        note = (f"contained ({reply.get('after')} within viewport {reply.get('viewport')})"
+                if contained else f"NOT contained [reply={reply!r}]")
+        return contained, f"scrolled {step.get('objectName') or step.get('text')} into view", note
     if op == "emit_click":
         code = EMIT_TEMPLATE.replace("TEXT_PLACEHOLDER", json.dumps(step["text"]))
         reply = exec_rpc(code)

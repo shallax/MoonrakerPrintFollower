@@ -880,6 +880,75 @@ class HarnessServer(QObject):
                         "delivery": delivery, "wanted": wanted}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "scroll_into_view":
+            # The visible-interactions rule's preposition: bring a
+            # resolved item into its Flickable's rendered viewport
+            # BEFORE a real press (a press aimed at an off-viewport
+            # item's scene coordinates lands below the window). The
+            # reply's contained flag is the containment assertion.
+            try:
+                wanted_name = str(request.get("objectName") or "")
+                wanted_text = str(request.get("text") or "")
+                by_name = bool(wanted_name)
+                wanted = wanted_name or wanted_text
+                qtest = _import_qtest()
+                if not qtest:
+                    return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
+                target = None
+                for _window, items in _click_windows():
+                    for item in items:
+                        try:
+                            value = item.property("objectName" if by_name else "text")
+                        except Exception:
+                            continue
+                        if value == wanted and _effectively_visible(item):
+                            target = item
+                            break
+                    if target is not None:
+                        break
+                if target is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "no visible item with that name/text", "wanted": wanted}
+                # The nearest Flickable ancestor (the class name is
+                # the check — other items carry contentY properties).
+                node = target
+                flickable = None
+                while node is not None:
+                    try:
+                        if "Flickable" in node.metaObject().className():
+                            flickable = node
+                            break
+                    except Exception:
+                        pass
+                    try:
+                        node = node.parentItem()
+                    except Exception:
+                        node = None
+                if flickable is None:
+                    return {"id": request_id, "ok": True, "contained": True,
+                            "scrolled": False,
+                            "note": "no flickable ancestor — the item needs no scroll"}
+                try:
+                    viewport_item = flickable.contentItem()
+                except Exception:
+                    viewport_item = flickable
+                origin = target.mapToItem(viewport_item, QPointF(0, 0))
+                viewport_h = flickable.height()
+                before = (round(origin.y()), round(origin.y() + target.height()))
+                if origin.y() < 0 or origin.y() + target.height() > viewport_h:
+                    flickable.setProperty(
+                        "contentY",
+                        max(0.0, origin.y() - (viewport_h - target.height()) / 2))
+                    qtest.QTest.qWait(200)
+                    origin = target.mapToItem(viewport_item, QPointF(0, 0))
+                contained = 0 <= origin.y() and origin.y() + target.height() <= viewport_h
+                return {"id": request_id, "ok": True, "contained": bool(contained),
+                        "scrolled": before != (round(origin.y()), round(origin.y() + target.height())),
+                        "before": before,
+                        "after": (round(origin.y()), round(origin.y() + target.height())),
+                        "viewport": round(viewport_h)}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "key_press":
             # A synthesized key on the main window (the Esc ladder's
             # scenarios). The key names map Qt.Key.Key_<name>.
