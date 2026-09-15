@@ -40,6 +40,11 @@ gate grew teeth, and the review-driven repairs land with it.
 - **Upload refusals say why** — a nested refusal body unwraps into
   the popup's status line, and the simulator's upload lane answers
   the honest body (accepted and refused verdicts both proven).
+- **A one-time "What's new" popup per version** — when Cura starts
+  after an update, an overlay shows what changed in the new version,
+  with previous releases in collapsed sections below and a link to
+  the project's home; Esc, a press outside the card or the Close
+  button dismiss it, and it stays gone until the next release.
 - **The testing document describes the real harness** — TESTING.md's
   claims are reconciled and a doc-pin test stops the drift; the
   exclusion records carry reason, evidence, date and re-check
@@ -443,6 +448,12 @@ The settings tabs: Connection, Following, Upload and Diagnostics.
 ![Upload dialog](screenshots/06-upload-dialog.png)
 
 The Cura-to-Moonraker upload dialog.
+
+![What's new popup](screenshots/08-whats-new.png)
+
+The once-per-version what's-new popup: the new release's items open
+at the top, previous versions in collapsed sections, the project link
+at the bottom.
 
 ## Moonraker transport
 

@@ -578,6 +578,28 @@ SCENE_PROBE = (
 
 
 
+WHATS_NEW_CLEAR_CODE = (
+    "from UM.Application import Application\n"
+    "app = Application.getInstance()\n"
+    "result = {}\n"
+    "for device in app.getOutputDeviceManager().getOutputDevices():\n"
+    "    if \"Moonraker\" in type(device).__name__:\n"
+    "        printer = getattr(device, \"activePrinter\", None)\n"
+    "        if printer is not None:\n"
+    "            printer._whats_new_seen = \"\"\n"
+    "            result[\"cleared\"] = True\n"
+    "            # The section the scenario expands is read LIVE from\n"
+    "            # the content (the first non-latest entry, whatever\n"
+    "            # release it is) — the scenario never pins a version\n"
+    "            # name or a curated sentence, which change every\n"
+    "            # release.\n"
+    "            entry = printer.whatsNewContent[1]\n"
+    "            result[\"section\"] = \"whatsNewSection_\" + entry[\"version\"]\n"
+    "            result[\"item\"] = entry[\"items\"][0]\n"
+    "        break\n"
+)
+
+
 VERDICT_SCAN = (
     "window = _main_window()\n"
     "hits = []\n"
@@ -1694,6 +1716,56 @@ SCENARIOS = [
          {"op": "deliver_click", "objectName": "moonrakerFileSearch", "expect": "not_accepted"},
          {"op": "deliver_click", "objectName": "deleteConfirmDeleteButton"},
          {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
+     ]},
+    # The what's-new overlay's lifecycle (the author's ruling: it must
+    # show once per version and dismiss by Esc, an outside press, and
+    # the Close button). The seeded profile carries the marker, so the
+    # suite never sees the popup unless a scenario asks — this one
+    # clears the marker and runs the startup check for real.
+    {"id": "z16", "group": "probe",
+     "name": "the what's-new overlay — the offer, three dismissals, the marker",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "exec_code", "verbs": [], "code": WHATS_NEW_CLEAR_CODE,
+          "stash": "whatsnew"},
+         {"op": "exec_slot", "slot": "checkWhatsNew", "args": []},
+         {"op": "wait_rect", "objectName": "whatsNewCloseButton", "budget": 20},
+         # Dismissal one: Esc, IMMEDIATELY — the first key after the
+         # popup appears, before any click inside it (the popup must
+         # hold focus from the moment it opens). The popup lives in
+         # Cura's own window; the key reaches its close policy.
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "whatsNewCloseButton", "absent": True, "budget": 20},
+         # The marker landed: the startup check stays quiet now (the
+         # quiet check IS the marker's proof).
+         {"op": "exec_slot", "slot": "checkWhatsNew", "args": []},
+         {"op": "wait_rect", "objectName": "whatsNewCloseButton", "absent": True, "budget": 5},
+         # Dismissal two: a press outside the card — the modal dimmer
+         # refuses the press AND closes the popup. First, the
+         # pre-collapsed sections prove themselves: a real press on a
+         # previous version's header expands its items — the header
+         # and the item text were read live from the content, never
+         # pinned.
+         {"op": "exec_slot", "slot": "showWhatsNew", "args": []},
+         {"op": "wait_rect", "objectName": "whatsNewCloseButton", "budget": 20},
+         {"op": "deliver_click", "objectName_state": ["whatsnew", "section"]},
+         {"op": "wait_rect", "text_state": ["whatsnew", "item"], "budget": 20},
+         {"op": "deliver_click", "objectName": "moonrakerControlsPane", "expect": "not_accepted"},
+         {"op": "wait_rect", "objectName": "whatsNewCloseButton", "absent": True, "budget": 20},
+         # Dismissal three: the Close button itself.
+         {"op": "exec_slot", "slot": "showWhatsNew", "args": []},
+         {"op": "wait_rect", "objectName": "whatsNewCloseButton", "budget": 20},
+         {"op": "deliver_click", "objectName": "whatsNewCloseButton"},
+         {"op": "wait_rect", "objectName": "whatsNewCloseButton", "absent": True, "budget": 20},
+         # The repo link's press lands (the browser launch is Qt's
+         # own behaviour — outside the harness's claim).
+         {"op": "exec_slot", "slot": "showWhatsNew", "args": []},
+         {"op": "wait_rect", "objectName": "whatsNewRepoLink", "budget": 20},
+         {"op": "deliver_click", "objectName": "whatsNewRepoLink"},
+         {"op": "exec_slot", "slot": "showWhatsNew", "args": []},
+         {"op": "wait_rect", "objectName": "whatsNewCloseButton", "budget": 20},
+         {"op": "deliver_click", "objectName": "whatsNewCloseButton"},
+         {"op": "wait_rect", "objectName": "whatsNewCloseButton", "absent": True, "budget": 20},
      ]},
     # The visible-interactions proof pair: the phase-0 evidence that a
     # real press/release lands — accepted by the item under the aim,

@@ -151,7 +151,7 @@ class SourceContractTests(unittest.TestCase):
             "MonitorTuning": set(),
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
             "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
-            "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTemperatureHistory", "MonitorTuning", "PrinterConfig", "ToolheadController", "ToolheadPolicy"},
+            "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorTemperatureHistory", "MonitorTuning", "PrinterConfig", "ToolheadController", "ToolheadPolicy", "WhatsNew"},
             "ConsoleController": {"ConsolePolicy"},
             "ToolheadController": {"ToolheadPolicy"},
             "MonitorTemperatureHistory": {"MonitorFormatting"},
@@ -159,7 +159,7 @@ class SourceContractTests(unittest.TestCase):
             "ToolheadPolicy": set(),
             "MoonrakerOutputDevice": {"CuraOutputWriter", "UploadController"},
             "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice"},
-            "MoonrakerPrintFollower": {"FollowerRuntime"},
+            "MoonrakerPrintFollower": {"FollowerRuntime", "WhatsNewOverlay"},
             "MoonrakerProtocol": set(),
             "MoonrakerSession": {"MoonrakerSocket", "MoonrakerTransport"},
             "MoonrakerSocket": {"SocketFraming"},
@@ -181,6 +181,8 @@ class SourceContractTests(unittest.TestCase):
             "RemoteFileService": {"DownloadStream", "MoonrakerProtocol"},
             "RemoteJobService": set(),
             "UploadController": {"MoonrakerTransport", "PrinterConfig"},
+            "WhatsNew": set(),
+            "WhatsNewOverlay": set(),
         }
         # Cura adapters sanctioned to import cura APIs.
         cura_exceptions = {"CuraOutputWriter", "MoonrakerFollowerMachineAction", "MoonrakerMonitorModel", "MoonrakerOutputDevice", "PrinterBinding"}
@@ -339,6 +341,9 @@ class SourceContractTests(unittest.TestCase):
             "QAbstractAnimation": "QtCore",
             "QEasingCurve": "QtCore",
             "QPropertyAnimation": "QtCore",
+            "QMetaObject": "QtCore",
+            "QQmlComponent": "QtQml",
+            "qmlEngine": "QtQml",
         }
         import ast
         for path in PLUGINS.glob("*.py"):

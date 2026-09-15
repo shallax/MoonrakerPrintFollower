@@ -3,6 +3,7 @@ from PyQt6.QtCore import QObject, pyqtSlot
 from UM.Extension import Extension
 
 from .FollowerRuntime import FollowerRuntime
+from .WhatsNewOverlay import WhatsNewOverlay
 
 
 class MoonrakerPrintFollower(QObject, Extension):
@@ -10,6 +11,7 @@ class MoonrakerPrintFollower(QObject, Extension):
         QObject.__init__(self)
         Extension.__init__(self)
         self._runtime = FollowerRuntime(application, self)
+        self._whats_new = WhatsNewOverlay()
 
     @property
     def client(self): return self._runtime.client
@@ -43,4 +45,6 @@ class MoonrakerPrintFollower(QObject, Extension):
     @pyqtSlot()
     def toggleFollowingPause(self): self._runtime.coordinator.toggle_attachment()
 
-    def deinitialize(self): self._runtime.close()
+    def deinitialize(self):
+        self._whats_new.close()
+        self._runtime.close()

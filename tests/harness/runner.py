@@ -1936,7 +1936,7 @@ def scenario1(expect_fail=False):
     return _verdict(steps)
 
 
-SUITE_STATE = {"sim": {}, "model": {}, "item": {}, "rect": {}}
+SUITE_STATE = {"sim": {}, "model": {}, "item": {}, "rect": {}, "stash": {}}
 
 # The suite's groups by name — SCENARIO_GROUP accepts either.
 ATTACH_READ = ("from UM.Application import Application\n"
@@ -2262,6 +2262,9 @@ def suite_step(step):
         request = {"id": 1, "cmd": "deliver_click"}
         if "objectName" in step:
             request["objectName"] = step["objectName"]
+        elif "objectName_state" in step:
+            slot, key = step["objectName_state"]
+            request["objectName"] = SUITE_STATE["stash"][slot][key]
         elif "text" in step:
             request["text"] = step["text"]
         else:
@@ -2632,7 +2635,13 @@ def suite_step(step):
         # observed the item at all is labeled: "absent" must mean
         # "the product hid it", not "the probe never resolved it"
         # (the panel's finding).
-        ref = {k: step[k] for k in ("objectName", "text", "className") if k in step}
+        ref = {}
+        for k in ("objectName", "text", "className"):
+            if k in step:
+                ref[k] = step[k]
+            elif f"{k}_state" in step:
+                slot, key = step[f"{k}_state"]
+                ref[k] = SUITE_STATE["stash"][slot][key]
         key = next(iter(ref.values()))
         observed = bool(SUITE_STATE["rect"].get(("seen", key)))
 
@@ -2750,6 +2759,14 @@ def suite_step(step):
         if reply.get("error"):
             return (False, "the driver executed the inline probe",
                     f"driver: {reply['error']}")
+        if step.get("stash"):
+            # The probe's result feeds later steps (the _state keys):
+            # a scenario can address a surface it read at runtime
+            # instead of pinning version-bound names or prose.
+            # exec_rpc already parsed the result — the reply IS the
+            # probe's dict (looking for a "result" key here stashed
+            # {} and starved the later steps).
+            SUITE_STATE["stash"][step["stash"]] = reply if isinstance(reply, dict) else {}
         return True, "the driver executed the inline probe", f"{reply}"
 
     if op == "insert_model":

@@ -47,6 +47,12 @@ the review-driven product repairs, each shipped with its evidence.
   instead of a generic transport error, and the simulator's upload
   lane answers the honest body — the scenario proves both the
   accepted and the refused verdicts.
+- **A one-time "What's new" popup per version.** When Cura starts
+  after an update, an overlay shows what changed in the new version,
+  with previous releases in collapsed sections below, a link to the
+  project's home, and dismissal by Esc, a press outside the card or
+  the Close button — every dismissal records the seen version, so
+  the popup stays gone until the next release.
 - **The testing document describes the real harness.** TESTING.md's
   claims are reconciled section by section (struck claims are marked
   with their reasons, and a doc-pin test fails if one re-enters);

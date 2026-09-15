@@ -251,6 +251,7 @@ jobs:
           QT_QPA_PLATFORM=offscreen python tools/capture_preview.py dist/screenshots
           QT_QPA_PLATFORM=offscreen python tools/capture_settings.py dist/screenshots
           QT_QPA_PLATFORM=offscreen python tools/capture_upload.py dist/screenshots
+          QT_QPA_PLATFORM=offscreen python tools/capture_whatsnew.py dist/screenshots
 
       - name: Upload CI artifacts
         uses: actions/upload-artifact@v7
@@ -281,7 +282,8 @@ jobs:
           tools/docker_dev.sh sh -c "python3 tools/capture_monitor.py dist/screenshots \
                 && python3 tools/capture_preview.py dist/screenshots \
                 && python3 tools/capture_settings.py dist/screenshots \
-                && python3 tools/capture_upload.py dist/screenshots"
+                && python3 tools/capture_upload.py dist/screenshots \
+                && python3 tools/capture_whatsnew.py dist/screenshots"
 
       - name: Verify capture determinism
         # Two runs in the same container must be byte-identical: the
