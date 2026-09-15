@@ -152,6 +152,11 @@ class FileManager(QObject):
         self._thumbs = {}
         self._thumb_queue = []
         self._thumb_active = 0
+        # The rows are gone: the projection cache must not serve the
+        # previous machine's view (the cache keys on the revisions —
+        # bump both or a current_rows() call re-serves the old rows).
+        self._data_rev += 1
+        self._history_rev += 1
         try:
             shutil.rmtree(self._thumb_root, ignore_errors=True)
         except Exception:
@@ -179,6 +184,10 @@ class FileManager(QObject):
         self._thumbs = {}
         self._thumb_queue = []
         self._thumb_active = 0
+        # The rows are gone: the projection cache must not serve the
+        # previous machine's view (see bind).
+        self._data_rev += 1
+        self._history_rev += 1
         try:
             shutil.rmtree(self._thumb_root, ignore_errors=True)
         except Exception:
@@ -267,7 +276,11 @@ class FileManager(QObject):
                 f"server/files/directory?path={quote('gcodes' + (f'/{directory}' if directory else ''), safe='/')}&extended=true",
                 finished, replace=True)
             if not started:
+                # The transport refused to send: that is a walk
+                # failure too — without it, a fully-refused walk
+                # swaps in "success" and the banner never appears.
                 pending -= 1
+                walked_error[0] = walked_error[0] or "the directory listing could not be sent"
                 # A refused start must still terminate the walk with
                 # a visible failure — an empty walk with no error and
                 # no timestamp is the eternal "Loading files…" face.
@@ -387,6 +400,10 @@ class FileManager(QObject):
                 self._rows.pop(f"gcodes/{relpath}", None)
                 self._selection.discard(relpath)
                 self._thumbs.pop(relpath, None)
+                # The emit publishes right now: bump the revision or
+                # the cache re-serves the deleted row until the
+                # final refresh's walk lands.
+                self._data_rev += 1
                 self.note.emit(f"Deleted {relpath.rsplit('/', 1)[-1]}.")
                 self.changed.emit()
             if remaining[0] == 0:
@@ -537,7 +554,12 @@ class FileManager(QObject):
             detail = reply.errorString()
             try:
                 body = json.loads(bytes(reply.readAll()).decode("utf-8", errors="replace"))
-                words = _moonraker_error_text(body) if isinstance(body, dict) else ""
+                # The refusal words ride two shapes: flat, or nested
+                # under "error" (Moonraker's newer form — the
+                # transport unwraps the same way).
+                inner = body.get("error") if isinstance(body, dict) else None
+                words = _moonraker_error_text(inner if isinstance(inner, dict)
+                                              else body) if isinstance(body, dict) else ""
                 if words:
                     detail = words
             except Exception:
@@ -632,6 +654,9 @@ class FileManager(QObject):
             current = "/".join(self._directory)
             if current == directory or current.startswith(prefix):
                 self._directory = directory.split("/")[:-1]
+            # The emit publishes the pruned rows: bump the revision
+            # or the cache re-serves the deleted subtree.
+            self._data_rev += 1
             self.note.emit(f"Deleted folder {directory.rsplit('/', 1)[-1]}.")
             self.changed.emit()
             self.refresh()
@@ -696,6 +721,9 @@ class FileManager(QObject):
                            if relpath.startswith(prefix)}
         self._selection = ({relpath for relpath in self._selection if not relpath.startswith(prefix)}
                            | moved_selection)
+        # The rekeyed rows publish before the confirming walk lands:
+        # bump the revision or the cache re-serves the old paths.
+        self._data_rev += 1
 
     def start_print(self, relpath: str) -> None:
         """POST printer/print/start with the root-exclusive filename

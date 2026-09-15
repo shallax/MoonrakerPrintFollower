@@ -958,11 +958,22 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
          {"op": "wait_rect", "text": "New folder…", "absent": True, "budget": 20},
      ]},
-    {"id": "f2", "group": "files", "name": "the upload flow reaches the peer",
+    {"id": "f2", "group": "files", "name": "the upload lane accepts and refuses honestly",
      "steps": [
          {"op": "write_fixture", "path": "/tmp/mpf/scenario-upload.gcode"},
          {"op": "exec_file_slot", "slot": "fileUpload", "args": ["/tmp/mpf/scenario-upload.gcode"]},
-         {"op": "sim_ledger", "needle": "files/upload", "min": 1, "budget": 30},
+         {"op": "sim_ledger", "needle": "files/upload", "field": "path", "min": 1, "budget": 30},
+         # The honest-lane proof: only the sim's upload handler (not
+         # the catch-all) adds the entry to the store, and the
+         # completion refresh walks it into the model's rows.
+         {"op": "wait_model", "prop": "fileManagerRows", "contains": "scenario-upload.gcode", "budget": 30},
+         # The refusal half: the armed lane answers 400 with its own
+         # message, and the note surfaces it. A dead lane would
+         # accept this upload and the refusal string never appears.
+         {"op": "write_fixture", "path": "/tmp/mpf/scenario-upload-refused.gcode"},
+         {"op": "sim_arm", "arms": {"fail_upload": True}},
+         {"op": "exec_file_slot", "slot": "fileUpload", "args": ["/tmp/mpf/scenario-upload-refused.gcode"]},
+         {"op": "wait_model", "prop": "fileManagerNote", "contains": "simulated upload refusal", "budget": 30},
      ]},
     {"id": "f3", "group": "files", "name": "delete removes the row after the confirm",
      "steps": [
