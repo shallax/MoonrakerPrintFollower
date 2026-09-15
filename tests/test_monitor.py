@@ -58,6 +58,7 @@ TEMP_HISTORY_SECTION_QML = (PLUGINS / "TempHistorySection.qml").read_text()
 FANS_INFO_SECTION_QML = (PLUGINS / "FansInfoSection.qml").read_text()
 FILAMENT_SECTION_QML = (PLUGINS / "FilamentSection.qml").read_text()
 OBJECTS_SECTION_QML = (PLUGINS / "ObjectsSection.qml").read_text()
+TEMPS_SECTION_QML = (PLUGINS / "TempsSection.qml").read_text()
 MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
@@ -195,7 +196,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML + FANS_INFO_SECTION_QML + FILAMENT_SECTION_QML + OBJECTS_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML + FANS_INFO_SECTION_QML + FILAMENT_SECTION_QML + OBJECTS_SECTION_QML + TEMPS_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -296,7 +297,8 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(FANS_INFO_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(FILAMENT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(OBJECTS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
-        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 4)
+        self.assertEqual(TEMPS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 3)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
                          + SETUP_SECTION_QML.count("CollapsibleSectionHeader")
@@ -316,6 +318,7 @@ class MonitorModelContractTests(unittest.TestCase):
                          + FANS_INFO_SECTION_QML.count("CollapsibleSectionHeader")
                          + FILAMENT_SECTION_QML.count("CollapsibleSectionHeader")
                          + OBJECTS_SECTION_QML.count("CollapsibleSectionHeader")
+                         + TEMPS_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 0)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
@@ -336,7 +339,8 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(FANS_INFO_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(FILAMENT_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(OBJECTS_SECTION_QML.count('sectionIcon: "'), 1)
-        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 4)
+        self.assertEqual(TEMPS_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 3)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
                          + SETUP_SECTION_QML.count('sectionIcon: "')
@@ -354,6 +358,7 @@ class MonitorModelContractTests(unittest.TestCase):
                          + FANS_INFO_SECTION_QML.count('sectionIcon: "')
                          + FILAMENT_SECTION_QML.count('sectionIcon: "')
                          + OBJECTS_SECTION_QML.count('sectionIcon: "')
+                         + TEMPS_SECTION_QML.count('sectionIcon: "')
                          + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the

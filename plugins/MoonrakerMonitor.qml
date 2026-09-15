@@ -2001,45 +2001,10 @@ Component {
                                 }
                             }
                         }
-
-                        Column {
+                        TempsSection {
                             Layout.fillWidth: true
                             visible: root.printer != null && root.printer.temperatureItems.length > 0
-                            CollapsibleSectionHeader {
-                                width: parent.width
-                                printerModel: root.printer
-                                title: "Temperatures"
-                                sectionId: "temps"
-                                sectionIcon: "PrintQuality"
-                            }
-                            ColumnLayout {
-                                visible: root.printer == null || root.printer.sectionExpandedMap["temps"] !== false
-                                anchors.left: parent.left
-                                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                                anchors.right: parent.right
-                                Layout.fillWidth: true
-                                spacing: UM.Theme.getSize("default_margin").height / 2
-
-                                Repeater {
-                                    model: root.printer != null ? root.printer.temperatureItems : []
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: UM.Theme.getSize("default_margin").width
-                                        UM.Label {
-                                            text: modelData.name
-                                            color: UM.Theme.getColor("text_inactive")
-                                            Layout.preferredWidth: 110 * screenScaleFactor
-                                            elide: Text.ElideRight
-                                        }
-                                        UM.Label {
-                                            // Inert; the harness's rendered-follows
-                                            // scenarios read this label's text.
-                                            objectName: "moonrakerTemperatureDetail"
-                                            text: modelData.detail
-                                        }
-                                    }
-                                }
-                            }
+                            printerModel: root.printer
                         }
 
                         FansInfoSection {
