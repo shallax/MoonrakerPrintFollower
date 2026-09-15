@@ -18,6 +18,7 @@ from .PreviewFormatting import (
     status_icon,
     status_text,
 )
+from .PrintIdentity import index_view_for_print
 from .PrintState import LayerResolver, PrintSnapshot
 from .RemoteJobService import RemoteJobService
 
@@ -160,9 +161,15 @@ class PrintCoordinator(QObject):
                 QTimer.singleShot(1500, self._cura.nudge_cura_activity)
             elif not has_toolpath:
                 self._had_toolpath = False
+            filename = str((self._status.get("print_stats") or {}).get("filename") or "")
             job = self._files.job_key
-            view = self._index.view
-            if view is not None and view.job_key != job: view = None
+            # The view is the index's evidence for the CURRENT print —
+            # both the view's key and the files service's job can be
+            # stale from an earlier load of a DIFFERENT file (the red
+            # run: the hourglass never fired for a fresh print after
+            # any preview load, because the two stale keys agreed with
+            # each other). Compare against the print's own filename.
+            view = index_view_for_print(self._index.view, filename)
             # The downloaded file's OWN header is the authoritative
             # filament total; Moonraker's parse of it (the metadata
             # below) is the fallback. One bounded head read per
@@ -222,7 +229,6 @@ class PrintCoordinator(QObject):
                 indexing=self._index.phase == "indexing",
                 load_active=load_active,
                 filament_total=filament_total if filament_total and filament_total > 0 else None)
-            filename = str((self._status.get("print_stats") or {}).get("filename") or "")
             if self._snapshot.active and filename:
                 self._maybe_fetch_mr_metadata(filename, job)
             if config.trace_layer and time.monotonic() - self._layer_trace_at >= 5:

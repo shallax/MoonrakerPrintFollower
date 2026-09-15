@@ -1,15 +1,27 @@
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 
 PLUGIN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "plugins"))
 if PLUGIN_DIR not in sys.path:
     sys.path.insert(0, PLUGIN_DIR)
 
 from FollowController import FollowController, FollowMode, FollowState, decide_layers
+from PrintIdentity import index_view_for_print
 
 
 class FollowControllerTests(unittest.TestCase):
+    def test_index_view_for_print_keys_on_the_current_print(self):
+        # The red-run catch: a view left from loading another file
+        # must not read as index_ready for the current print.
+        view = SimpleNamespace(job_key=("scenario1.gcode", 0, 2))
+        self.assertIsNone(index_view_for_print(view, "delete-me.gcode"))
+        self.assertIs(index_view_for_print(view, "scenario1.gcode"), view)
+        # A view with no key is no evidence either.
+        self.assertIsNone(index_view_for_print(SimpleNamespace(job_key=None), "x.gcode"))
+        self.assertIsNone(index_view_for_print(None, "x.gcode"))
+
     def test_state_machine_happy_path_pause_and_resume(self):
         c = FollowController()
         self.assertEqual(c.state, FollowState.DISABLED)

@@ -1205,15 +1205,15 @@ class MonitorQtTests(unittest.TestCase):
     def test_improve_eta_hourglass_survives_the_registration_gap(self):
         # The red-run catch: improveEta publishes its own flag-set,
         # and the coordinator's load_active flips only on its NEXT
-        # snapshot rebuild — a publish in that gap must not clear the
-        # hourglass (the flag cleared instantly and the improve
-        # silently no-opped whenever a previous load's tail was not
-        # still holding load_active set).
+        # snapshot rebuild — the improve's own publish must not clear
+        # the hourglass with the stale snapshot (the flag cleared
+        # instantly and the improve silently no-opped whenever a
+        # previous load's tail was not still holding load_active set).
         model = self.monitor()
         self.deliver()
         model.improveEta()
         self.assertTrue(model.improvingEta,
-                        "the hourglass must show during the registration grace")
+                        "the hourglass must survive the improve's own publish")
 
     def test_toolhead_slots_send_exact_scripts(self):
         model = self.monitor()
