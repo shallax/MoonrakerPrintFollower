@@ -41,6 +41,31 @@ now say why.
   merge-write that preserves the file's other keys for the next
   release, and persistence failures now report once per session
   instead of vanishing.
+- **The bed-mesh range filter** — a dual-ended slider on both the
+  Information pop-over and the Preview card, one shared window so
+  the two stay synchronised: drag between the handles to move the
+  whole window, click the groove to jump the nearest handle, and
+  everything outside the window greys out on both surfaces so peaks
+  and troughs stand out. The window follows each new mesh until
+  touched and is never persisted, by design.
+- **Scale z-max** — the Preview's bed-mesh exaggeration adjusts from
+  0 (flat) to 1000×, remembered between sessions (default 20×).
+- **Klipper-faithful bed-mesh visuals** — the extended areas use
+  Klipper's own clamp (boundary values continued, no made-up
+  slope), the orange outline marks the probed bounds, hovering the
+  extended area reads the clamped value with an orange crosshair,
+  and the map no longer shows the cell-edge grid.
+- **Read-only firmware fans** — controller, temperature and heater
+  fans show their speed without a slider (Klipper regulates them;
+  the command lane refuses them fail-closed).
+- **Independent LED channels and brightness** — the channel sliders
+  hold your percentages; the brightness slider scales the result;
+  nudging one never moves the other.
+- **Eager first connection** — the printer's data appears as soon as
+  Moonraker answers: the quiet-period floor and the failure ladder
+  never gate a session that has not received a status yet, and the
+  connect transition re-broadcasts everything known to every
+  listener.
 
 ## What changed in 4.1.0
 

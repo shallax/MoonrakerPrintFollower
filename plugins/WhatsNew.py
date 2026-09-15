@@ -49,6 +49,22 @@ WHATS_NEW: Tuple[dict, ...] = (
             "A printer state that is not yet known is no longer treated as "
             "ready: the power switches and the restart buttons wait for a "
             "real state before they can be pressed.",
+            "The bed-mesh views gain a dual-ended range filter: one shared "
+            "window on the Information pop-over and the Preview card, drag "
+            "between the handles to move it, and everything outside the "
+            "window greys out on both surfaces so peaks and troughs stand "
+            "out.",
+            "Scale z-max: the Preview's bed-mesh exaggeration now adjusts "
+            "from 0 (flat) to 1000×, remembered between sessions.",
+            "Fans Klipper regulates itself (controller fans, heater fans, "
+            "temperature fans) show their speed read-only instead of a "
+            "slider that could not take effect.",
+            "The LED channels and their brightness work independently: the "
+            "channel sliders hold your percentages, the brightness slider "
+            "scales the result, and nudging one never moves the other.",
+            "The first connection is eager: the printer's data appears as "
+            "soon as Moonraker answers, instead of waiting out a "
+            "quiet-period delay.",
         ),
     },
     {
