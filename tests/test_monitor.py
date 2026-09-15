@@ -43,6 +43,7 @@ MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 CAMERA_PANE_QML = (PLUGINS / "CameraPane.qml").read_text()
 PRINT_SECTION_QML = (PLUGINS / "PrintSection.qml").read_text()
 SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text()
+TOOLHEAD_SECTION_QML = (PLUGINS / "ToolheadSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
@@ -96,13 +97,16 @@ class MonitorModelContractTests(unittest.TestCase):
                       "def home(", "def motorsOff(", "def extrude(", "def heatersOff(",
                       "def centerToolhead(", "def zToZero("):
             self.assertIn(token, MONITOR_MODEL)
+        # The toolhead block rides its component (4.3.0) — the pins
+        # follow it there.
         for token in ("id: toolheadSection", 'title: "Toolhead"', 'jog("x", -1)', 'jog("z", 1)',
                       "setJogDistance(", 'home("x")', 'home("y")', 'home("z")', '"Motors off"',
                       '"Extrude"', '"Retract"', "setExtrudeDistance(", "setExtrudeSpeed(",
-                      '"Cooldown"', "heatersOff",
                       'text: "↑ Y"', 'text: "← X"', 'text: "→ X"', 'text: "↓ Y"',
                       'text: "↑ Z"', 'text: "↓ Z"', 'text: "Centre toolhead"', 'text: "Z to 0"',
-                      "root.printer.monitorPosition"):
+                      "root.printerModel.monitorPosition"):
+            self.assertIn(token, TOOLHEAD_SECTION_QML)
+        for token in ('"Cooldown"', "heatersOff"):
             self.assertIn(token, DASHBOARD_QML)
         # The safety clause lives in the policy's copy (4.2.0): the QML
         # reads the published caption, never builds the sentence.
@@ -113,29 +117,26 @@ class MonitorModelContractTests(unittest.TestCase):
         # label on top — Cura's own label does not vertically centre.
         # Home-all lives in the Setup section only: the toolhead section
         # keeps per-axis home buttons, so no duplicate home-all controls.
-        self.assertNotIn('home("")', DASHBOARD_QML[DASHBOARD_QML.index("id: toolheadSection"):DASHBOARD_QML.index("id: macroSection")])
-        start = DASHBOARD_QML.index("id: toolheadSection")
-        end = DASHBOARD_QML.index("id: macroSection", start)
-        self.assertEqual(DASHBOARD_QML[start:end].count("PreviewSecondaryButton"), 6)
-        self.assertNotIn("contentItem", DASHBOARD_QML[start:end])
+        self.assertNotIn('home("")', TOOLHEAD_SECTION_QML)
+        self.assertEqual(TOOLHEAD_SECTION_QML.count("PreviewSecondaryButton"), 6)
+        self.assertNotIn("contentItem", TOOLHEAD_SECTION_QML)
         # The Z-offset nudges carry direction glyphs, up row first, and no
         # +/- signs: the arrows carry the direction.
         self.assertIn('"↓ " + Math.abs(modelData)', DASHBOARD_QML)
         self.assertIn('"↑ " + modelData', DASHBOARD_QML)
         self.assertLess(DASHBOARD_QML.index("model: [0.005"), DASHBOARD_QML.index("model: [-0.005"))
         # The toolhead block is gated by jogEnabled alone, never actionBusy:
-        # taps must keep working while the queue drains.
-        start = DASHBOARD_QML.index("id: toolheadSection")
-        end = DASHBOARD_QML.index("id: macroSection", start)
-        self.assertIn("jogEnabled", DASHBOARD_QML[start:end])
-        self.assertNotIn("actionBusy", DASHBOARD_QML[start:end])
+        # taps must keep working while the queue drains. The block rides
+        # its component (4.3.0) — the pins follow it there.
+        self.assertIn("jogEnabled", TOOLHEAD_SECTION_QML)
+        self.assertNotIn("actionBusy", TOOLHEAD_SECTION_QML)
         # The compass is a 3×3 grid (9 cells) with the empty centre: the
         # four arrows must appear in north-west-east-south order so the
         # south button sits under north, never under west.
-        grid = DASHBOARD_QML[DASHBOARD_QML.index('text: "↑ Y"'):DASHBOARD_QML.index('text: "↓ Y"') + len('text: "↓ Y"')]
+        grid = TOOLHEAD_SECTION_QML[TOOLHEAD_SECTION_QML.index('text: "↑ Y"'):TOOLHEAD_SECTION_QML.index('text: "↓ Y"') + len('text: "↓ Y"')]
         positions = [grid.index(token) for token in ('text: "↑ Y"', 'text: "← X"', 'text: "→ X"', 'text: "↓ Y"')]
         self.assertEqual(positions, sorted(positions))
-        compass = DASHBOARD_QML[DASHBOARD_QML.index('columns: 3'):DASHBOARD_QML.index('ColumnLayout {', DASHBOARD_QML.index('text: "↑ Y"'))]
+        compass = TOOLHEAD_SECTION_QML[TOOLHEAD_SECTION_QML.index('columns: 3'):TOOLHEAD_SECTION_QML.index('ColumnLayout {', TOOLHEAD_SECTION_QML.index('text: "↑ Y"'))]
         self.assertEqual(compass.count('PreviewSecondaryButton {'), 4)
         self.assertEqual(compass.count('Item {'), 5)
 
@@ -179,7 +180,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -232,14 +233,14 @@ class MonitorModelContractTests(unittest.TestCase):
         # the CollapsibleSectionHeader type across all three panes.
         self.assertIn("sectionExpandedMap", DASHBOARD_QML)
         self.assertIn("setSectionExpanded", MONITOR_MODEL)
-        self.assertIn('sectionId: "toolhead"', DASHBOARD_QML)
+        self.assertIn('sectionId: "toolhead"', TOOLHEAD_SECTION_QML)
         # Direct instantiations must ASSIGN the type's properties: the old
         # Loader syntax ('property string sectionId: ...') declares a local
         # property instead, which silently un-wires every header.
         self.assertNotIn("property string sectionId:", DASHBOARD_QML)
         self.assertNotIn("property string title:", DASHBOARD_QML)
         self.assertNotIn("property string sectionIcon:", DASHBOARD_QML)
-        self.assertIn('sectionIcon: "Nozzle"', DASHBOARD_QML)
+        self.assertIn('sectionIcon: "Nozzle"', TOOLHEAD_SECTION_QML)
         self.assertIn('sectionIcon: "Printer"', PRINT_SECTION_QML)
         self.assertIn('sectionId: "meshmap"', MONITOR_QML)
         self.assertIn('sectionId: "systeminfo"', MONITOR_QML)
@@ -255,21 +256,25 @@ class MonitorModelContractTests(unittest.TestCase):
         # totals — a moved section decrements one file and increments
         # another, and the totals catch a dropped section that a
         # per-file pin alone would read as "moved".
-        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 11)
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 10)
         self.assertEqual(PRINT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(SETUP_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
                          + SETUP_SECTION_QML.count("CollapsibleSectionHeader")
+                         + TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
-        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 9)
+        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 8)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(SETUP_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(TOOLHEAD_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
                          + SETUP_SECTION_QML.count('sectionIcon: "')
+                         + TOOLHEAD_SECTION_QML.count('sectionIcon: "')
                          + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
@@ -461,17 +466,17 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("consoleErrorBell", MONITOR_MODEL)
         # The extrude distance/speed rows keep their selection
         # highlighted (the author's live report).
-        self.assertIn("extrudeDistance === 5", DASHBOARD_QML)
-        self.assertIn("extrudeSpeed === 1500", DASHBOARD_QML)
+        self.assertIn("extrudeDistance === 5", TOOLHEAD_SECTION_QML)
+        self.assertIn("extrudeSpeed === 1500", TOOLHEAD_SECTION_QML)
         # The abs/rel toggle (the author's live request) and the
         # dropped 15 mm distance button.
-        self.assertIn("setPositionMode", DASHBOARD_QML)
+        self.assertIn("setPositionMode", TOOLHEAD_SECTION_QML)
         self.assertNotIn('"15"', DASHBOARD_QML)
         # The mode text is the toggle control (the author's live
         # ruling) and the Move distance combo restores the persisted
         # selection.
-        self.assertIn('text: " moves"', DASHBOARD_QML)
-        self.assertIn("jogPresets.indexOf", DASHBOARD_QML)
+        self.assertIn('text: " moves"', TOOLHEAD_SECTION_QML)
+        self.assertIn("jogPresets.indexOf", TOOLHEAD_SECTION_QML)
         # Filament state is colour-coded: green detected, orange runout.
         self.assertIn('"#43a047"', MONITOR_QML)
         self.assertIn('"#fb8c00"', MONITOR_QML)
@@ -2803,7 +2808,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertNotIn("Improve ETA — download", MONITOR_QML)
         for token in ("endstopItems", "endstopSummary",
                       "modelData.name + \": \" + modelData.state", "modelData.triggered"):
-            self.assertIn(token, DASHBOARD_QML)  # the readout lives in the Toolhead section
+            self.assertIn(token, TOOLHEAD_SECTION_QML)  # the readout lives in the Toolhead section
         self.assertNotIn('title: "Endstops"', MONITOR_QML)
         self.assertNotIn('sectionId: "endstops"', MONITOR_QML)
         # The empty-set copy lives in the projection, not the QML —
@@ -3693,7 +3698,7 @@ Item {
             # The Endstops summary row yields to the chips once they
             # exist (the author's live ruling — the chips ARE the
             # readout); it sits below the jog pad.
-            "visible: root.printer == null || root.printer.endstopItems.length === 0",
+            "visible: root.printerModel == null || root.printerModel.endstopItems.length === 0",
             "visible: root.miniChartHasSeries",
             "visible: root.printer != null && !root.miniChartHasSeries",
             "visible: root.printer != null && root.printer.temperatureItems.length > 0",
@@ -3784,7 +3789,7 @@ Item {
                 # live report: the boxes never stayed highlighted) —
                 # one family, one carve-out, not ten near-identical
                 # whitelist entries.
-                if re.match(r"visible: (root\.printer == null \|\| root\.printer\.(extrudeDistance|extrudeSpeed) !== \d+|root\.printer != null && root\.printer\.(extrudeDistance|extrudeSpeed) === \d+)$", expression):
+                if re.match(r"visible: (root\.printerModel == null \|\| root\.printerModel\.(extrudeDistance|extrudeSpeed) !== \d+|root\.printerModel != null && root\.printerModel\.(extrudeDistance|extrudeSpeed) === \d+)$", expression):
                     continue
                 self.assertIn(expression, allowed,
                               f"{path.name}:{number}: state-gated visible: {expression}")
@@ -3813,7 +3818,7 @@ Item {
         self.assertIn("enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)", DASHBOARD_QML)
         # The abs/rel word's CLICK obeys the same gate as its styling —
         # a locked control must not act (the author's catch).
-        self.assertIn("root.printer != null && root.printer.jogEnabled", DASHBOARD_QML)
+        self.assertIn("root.printerModel != null && root.printerModel.jogEnabled", TOOLHEAD_SECTION_QML)
         self.assertIn("enabled: root.printer != null && root.printer.monitorConnected", MONITOR_QML)
         # The console is special: the SECTION stays enabled while
         # disconnected (scrolling, selecting and copying the restored
