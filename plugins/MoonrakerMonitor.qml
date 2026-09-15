@@ -420,52 +420,11 @@ Component {
                         // Spacing lives on the children: collapsed sections
                         // must contribute nothing so headers stack flush.
                         spacing: 0
-
-                        CollapsibleSectionHeader {
+                        MeshSection {
                             Layout.fillWidth: true
                             printerModel: root.printer
-                            title: "Bed mesh"
-                            sectionId: "meshmap"
-                            sectionIcon: "Buildplate"
-                        }
-                        ColumnLayout {
-                            visible: root.printer == null || root.printer.sectionExpandedMap["meshmap"] !== false
-                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            Layout.fillWidth: true
-                            Layout.topMargin: UM.Theme.getSize("default_margin").height
-                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                            spacing: UM.Theme.getSize("default_margin").height
-
-                            // The mini map is the at-a-glance widget; a
-                            // click opens the pop-over detail view with
-                            // the probe-snapping crosshair. NO-REFLOW
-                            // RULE: the 90 px slot is always reserved —
-                            // the map fades in and out, and the
-                            // placeholder is an overlay inside the same
-                            // slot, so the mesh arriving (connect,
-                            // calibrate) never shifts the section.
-                            Item {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 90 * screenScaleFactor
-
-                                BedMeshMap {
-                                    id: meshMiniMap
-                                    anchors.fill: parent
-                                    compact: true
-                                    printer: root.printer
-                                    opacity: root.printer != null && root.printer.bedMeshAvailable ? 1 : 0
-                                    tooltipText: root.printer != null ? "Click for the full bed mesh map (" + root.printer.bedMeshRangeText + ")." : "Click for the full bed mesh map."
-                                    onClicked: {
-                                        root.openPopOver = root.openPopOver === "mesh" ? "" : "mesh";
-                                    }
-                                }
-
-                                UM.Label {
-                                    anchors.centerIn: parent
-                                    opacity: root.printer == null || !root.printer.bedMeshAvailable ? 1 : 0
-                                    text: "No bed mesh to show"
-                                    color: UM.Theme.getColor("text_inactive")
-                                }
+                            onPopOverToggleRequested: function (name) {
+                                root.openPopOver = root.openPopOver === name ? "" : name;
                             }
                         }
 

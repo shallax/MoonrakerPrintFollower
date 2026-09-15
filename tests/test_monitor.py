@@ -53,6 +53,7 @@ POWER_SECTION_QML = (PLUGINS / "PowerSection.qml").read_text()
 SYSTEM_SECTION_QML = (PLUGINS / "SystemSection.qml").read_text()
 SAVE_SECTION_QML = (PLUGINS / "SaveSection.qml").read_text()
 FILE_MANAGER_SECTION_QML = (PLUGINS / "FileManagerSection.qml").read_text()
+MESH_SECTION_QML = (PLUGINS / "MeshSection.qml").read_text()
 MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
@@ -190,7 +191,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -237,7 +238,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("id: infoPanel", MONITOR_QML)
         # The mesh section hosts the mini map; a click opens the shared
         # pop-over. The button is gone; the mini map's tooltip remains.
-        self.assertIn('tooltipText: root.printer != null ? "Click for the full bed mesh map ("', MONITOR_QML)
+        self.assertIn('tooltipText: root.printerModel != null ? "Click for the full bed mesh map ("', MESH_SECTION_QML)
         self.assertNotIn('id: mapButton', MONITOR_QML)
         # Cura-style collapsible sections, persisted per section, sharing
         # the CollapsibleSectionHeader type across all three panes. The
@@ -254,7 +255,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn("property string sectionIcon:", DASHBOARD_QML)
         self.assertIn('sectionIcon: "Nozzle"', TOOLHEAD_SECTION_QML)
         self.assertIn('sectionIcon: "Printer"', PRINT_SECTION_QML)
-        self.assertIn('sectionId: "meshmap"', MONITOR_QML)
+        self.assertIn('sectionId: "meshmap"', MESH_SECTION_QML)
         self.assertIn('sectionId: "systeminfo"', MONITOR_QML)
         # Plugin-drawn glyphs feed the header through a url, and the
         # frontend launcher lives in the Printer status title row.
@@ -286,7 +287,8 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(SYSTEM_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(SAVE_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(FILE_MANAGER_SECTION_QML.count("CollapsibleSectionHeader"), 1)
-        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
+        self.assertEqual(MESH_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 8)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
                          + SETUP_SECTION_QML.count("CollapsibleSectionHeader")
@@ -301,6 +303,7 @@ class MonitorModelContractTests(unittest.TestCase):
                          + SYSTEM_SECTION_QML.count("CollapsibleSectionHeader")
                          + SAVE_SECTION_QML.count("CollapsibleSectionHeader")
                          + FILE_MANAGER_SECTION_QML.count("CollapsibleSectionHeader")
+                         + MESH_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 0)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
@@ -316,7 +319,8 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(SYSTEM_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(SAVE_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(FILE_MANAGER_SECTION_QML.count('sectionIcon: "'), 0)  # The plugin glyph url
-        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
+        self.assertEqual(MESH_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 7)  # Temperature history uses the plugin glyph
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
                          + SETUP_SECTION_QML.count('sectionIcon: "')
@@ -330,6 +334,7 @@ class MonitorModelContractTests(unittest.TestCase):
                          + POWER_SECTION_QML.count('sectionIcon: "')
                          + SYSTEM_SECTION_QML.count('sectionIcon: "')
                          + SAVE_SECTION_QML.count('sectionIcon: "')
+                         + MESH_SECTION_QML.count('sectionIcon: "')
                          + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
@@ -564,7 +569,7 @@ class MonitorModelContractTests(unittest.TestCase):
                       "id: infoCollapseButton", "id: statusCollapseButton",
                       "id: infoCollapsedTitle", "id: statusCollapsedTitle",
                       "setInfoCollapsed", "setStatusCollapsed"):
-            self.assertIn(token, MONITOR_QML + MONITOR_MODEL)
+            self.assertIn(token, MONITOR_QML + MONITOR_MODEL + MESH_SECTION_QML)
         self.assertIn("infoCollapsed", MONITOR_MODEL)
         self.assertIn("statusCollapsed", MONITOR_MODEL)
         self.assertIn("cameraRefreshNonce", MONITOR_MODEL)
