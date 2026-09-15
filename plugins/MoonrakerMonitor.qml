@@ -2042,150 +2042,24 @@ Component {
                             }
                         }
 
-                        Column {
+                        FansInfoSection {
                             Layout.fillWidth: true
                             visible: root.printer != null && root.printer.fanItems.length > 0
-                            CollapsibleSectionHeader {
-                                width: parent.width
-                                printerModel: root.printer
-                                title: "Fans"
-                                sectionId: "fansinfo"
-                                sectionIcon: "Fan"
-                            }
-                            ColumnLayout {
-                                visible: root.printer == null || root.printer.sectionExpandedMap["fansinfo"] !== false
-                                anchors.left: parent.left
-                                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                                anchors.right: parent.right
-                                Layout.fillWidth: true
-                                spacing: UM.Theme.getSize("default_margin").height / 2
-
-                                Repeater {
-                                    model: root.printer != null ? root.printer.fanItems : []
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: UM.Theme.getSize("default_margin").width
-                                        UM.Label {
-                                            text: modelData.name
-                                            color: UM.Theme.getColor("text_inactive")
-                                            Layout.preferredWidth: 110 * screenScaleFactor
-                                            elide: Text.ElideRight
-                                        }
-                                        UM.Label {
-                                            text: modelData.detail
-                                        }
-                                    }
-                                }
-                            }
+                            printerModel: root.printer
                         }
-
-                        Column {
+                        FilamentSection {
                             Layout.fillWidth: true
                             visible: root.printer != null && root.printer.filamentSensorItems.length > 0
-                            CollapsibleSectionHeader {
-                                width: parent.width
-                                printerModel: root.printer
-                                title: "Filament sensors"
-                                sectionId: "filament"
-                                sectionIcon: "Spool"
-                            }
-                            ColumnLayout {
-                                visible: root.printer == null || root.printer.sectionExpandedMap["filament"] !== false
-                                anchors.left: parent.left
-                                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                                anchors.right: parent.right
-                                Layout.fillWidth: true
-                                spacing: UM.Theme.getSize("default_margin").height / 2
-
-                                Repeater {
-                                    model: root.printer != null ? root.printer.filamentSensorItems : []
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: UM.Theme.getSize("default_margin").width
-                                        UM.Label {
-                                            text: modelData.name
-                                            color: UM.Theme.getColor("text_inactive")
-                                            Layout.preferredWidth: 110 * screenScaleFactor
-                                            elide: Text.ElideRight
-                                        }
-                                        UM.Label {
-                                            text: modelData.state
-                                            color: !modelData.enabled ? UM.Theme.getColor("text_inactive") : (modelData.detected ? "#43a047" : "#fb8c00")
-                                            font: UM.Theme.getFont("medium")
-                                        }
-                                    }
-                                }
-                            }
+                            printerModel: root.printer
                         }
-
-                        Column {
-                            // NO-REFLOW RULE: the Objects list arrives
-                            // seconds INTO a print (Klipper reports the
-                            // slicer's EXCLUDE_OBJECT_DEFINE lines only
-                            // when they execute), so the section is
-                            // permanent — empty until then.
+                        ObjectsSection {
                             Layout.fillWidth: true
-                            CollapsibleSectionHeader {
-                                width: parent.width
-                                printerModel: root.printer
-                                title: "Objects"
-                                sectionId: "objects"
-                                sectionIcon: "MeshTypeNormal"
-                            }
-                            ColumnLayout {
-                                visible: root.printer == null || root.printer.sectionExpandedMap["objects"] !== false
-                                anchors.left: parent.left
-                                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                                anchors.right: parent.right
-                                Layout.fillWidth: true
-                                spacing: UM.Theme.getSize("default_margin").height / 2
-
-                                Repeater {
-                                    model: root.printer != null ? root.printer.excludeObjectItems : []
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: UM.Theme.getSize("default_margin").width
-                                        UM.Label {
-                                            text: modelData.name + (modelData.current ? "  · current" : "") + (modelData.excluded ? "  · excluded" : "")
-                                            color: modelData.excluded ? UM.Theme.getColor("text_inactive") : UM.Theme.getColor("text")
-                                            Layout.preferredWidth: 170 * screenScaleFactor
-                                            elide: Text.ElideRight
-                                        }
-                                        Cura.SecondaryButton {
-                                            // NO-REFLOW RULE: the button
-                                            // never disappears — it
-                                            // disables when the object
-                                            // cannot be excluded. The
-                                            // section-level denial joins
-                                            // the gate (4.2.0, the
-                                            // adversarial round's H2): a
-                                            // locked pane must not offer
-                                            // an action the policy
-                                            // refuses.
-                                            enabled: root.printer != null && root.printer.monitorConnected && !root.printer.actionBusy && root.printer.printActive && root.printer.sectionReason === "" && !modelData.excluded
-                                            text: "Exclude"
-                                            onClicked: {
-                                                excludeObjectDialog.targetName = modelData.name;
-                                                excludeObjectDialog.open();
-                                            }
-                                        }
-                                    }
-                                }
-                                UM.Label {
-                                    // An empty list says so instead of
-                                    // reading as a bug (the
-                                    // live request): the objects arrive
-                                    // when the slicer's EXCLUDE_OBJECT
-                                    // lines execute — seconds into a
-                                    // print.
-                                    visible: root.printer != null && root.printer.excludeObjectItems.length === 0
-                                    text: root.printer != null && root.printer.printActive ? "No objects yet — they appear as the print defines them." : "No objects — EXCLUDE_OBJECT data arrives while printing."
-                                    color: UM.Theme.getColor("text_inactive")
-                                    font: UM.Theme.getFont("small")
-                                }
+                            printerModel: root.printer
+                            onExcludeRequested: function (name) {
+                                excludeObjectDialog.targetName = name;
+                                excludeObjectDialog.open();
                             }
                         }
-
                         CollapsibleSectionHeader {
                             Layout.fillWidth: true
                             printerModel: root.printer
