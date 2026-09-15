@@ -34,6 +34,7 @@ from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
 from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_restart, can_start_print, jog_caption, section_reason
+from .PrintStartOwner import PrintStartOwner
 from datetime import datetime
 
 from .FileManager import FileManager
@@ -192,9 +193,6 @@ def value_property(kind, name, signal, default=None):
 
 
 class MoonrakerMonitorModel(PrinterOutputModel):
-    # The print-start watchdog: how long the print_stats transition
-    # may take before the plugin says the start failed.
-    FILE_PRINT_START_TIMEOUT_S = 15.0
     monitorChanged = pyqtSignal()
     webcamsChanged = pyqtSignal()
     temperatureChartChanged = pyqtSignal()
@@ -430,8 +428,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # Metascan outcomes land in the console as local notes (the
         # author's live report: the option appeared to do nothing).
         self._file_manager_note = ""
-        self._print_armed_state = ""
-        self._print_start_error = ""
+        # The print-start operation's owner (4.3.0): the armed state,
+        # the watchdog and the failure verdict moved out of the model
+        # into a capabilities-only owner — one owned operation across
+        # every start path.
+        self._print_start = PrintStartOwner(
+            file_manager=self._file_manager,
+            console=self._console,
+            commands=self._commands,
+        )
         self._file_manager.note.connect(self._on_file_manager_note)
         # Upload progress and outcome feed the popup (the
         # live request).
@@ -750,58 +755,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 if row is not None and row.thumb_path:
                     rows.append(row)
             self._file_manager.request_thumbnails(rows)
-        # The awaited print transition (round-2 D4: success is NEVER
-        # the POST reply). A start that never transitions — OR that
-        # matches the filename but never makes PROGRESS (Klipper can
-        # accept the start and freeze before the first motion — the
-        # author's live report: the UI stayed "printing" on a failed
-        # start) — explains itself and drops the assumed-active state.
-        attempt = self._file_manager.print_attempt
-        if attempt is not None:
-            stats = self._data.snapshot.core.get("print_stats") or {}
-            filename = str(stats.get("filename") or "")
-            state = str(stats.get("state") or "")
-            if filename == attempt[0]:
-                if state in ("printing", "paused"):
-                    # The job is live with the right file: the
-                    # success. No progress test — print_duration
-                    # sits at exactly 0.0 and file_position freezes
-                    # until the first extrusion, so a heat soak alone
-                    # must never read as a failed start.
-                    self._file_manager.clear_print_attempt()
-                    self._print_armed_state = ""
-                    self._print_start_error = ""
-                elif state == "error":
-                    # A cold start raises a transient Klipper error
-                    # (the extruder refuses to move below min temp)
-                    # that the print itself outlives once heated: a
-                    # failure verdict here lies while the job carries
-                    # on. Hold and remember the words — the timeout
-                    # below is the only failure verdict, and it keeps
-                    # the message.
-                    self._print_start_error = str(stats.get("message") or "").strip()
-                elif state and self._print_armed_state and state == self._print_armed_state:
-                    # Unchanged since the confirm: hold. Klipper
-                    # never clears the filename, so a re-print of the
-                    # same file starts from a stale terminal state —
-                    # that must not wipe the fresh attempt (the
-                    # adversarial round's repro).
-                    pass
-                elif state and self._print_armed_state:
-                    # A terminal state that DIFFERS from the armed
-                    # one: the printer moved and ended; the verdict
-                    # is moot. A mismatched filename never clears — a
-                    # poll in the window between the confirm and the
-                    # printer's state change must not wipe the
-                    # attempt.
-                    self._file_manager.clear_print_attempt()
-                    self._print_armed_state = ""
-                    self._print_start_error = ""
-            if self._file_manager.print_attempt is not None and time.time() - attempt[1] > self.FILE_PRINT_START_TIMEOUT_S:
-                if self._print_start_error:
-                    self._print_start_failed(f"The printer reported an error: {self._print_start_error}")
-                else:
-                    self._print_start_failed("The printer did not begin printing.")
+        # The print-start watchdog runs on the publish tick — the
+        # owner supervises the armed attempt regardless of the popup's
+        # state (a print confirmed before the popup closed still
+        # needs its verdict).
+        self._print_start.tick(self._data.snapshot.core)
         # The no-reflow rule's sibling ruling (2026-09-10):
         # while DISCONNECTED every control on the Monitor page disables
         # — the QML gates its sections and the emergency stop on this.
@@ -923,19 +881,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         for signal_name, keys in self._SIGNAL_KEYS:
             if any(previous.get(key) != values.get(key) for key in keys):
                 getattr(self, signal_name).emit()
-
-    def _print_start_failed(self, reason) -> None:
-        """The start's failure verdict: the console note and the
-        action status. The observed printer state is NEVER rewritten —
-        a live print must not read "cancelled", and the pause-first
-        jog gate must not lift beside a live nozzle (that assumption
-        belongs to the e-stop alone)."""
-        self._file_manager.clear_print_attempt()
-        self._print_armed_state = ""
-        self._print_start_error = ""
-        self._console.note(f"Print start failed — {reason}")
-        self._commands.report_status(f"Print start failed — {reason}")
-
 
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
     monitorConnected = value_property(bool, "monitorConnected", monitorChanged, False)
@@ -1132,8 +1077,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # job can never wipe the fresh attempt (the adversarial
             # round's repro).
             stats = self._data.snapshot.core.get("print_stats") or {}
-            self._print_armed_state = str(stats.get("state") or "")
-            self._print_start_error = ""
+            self._print_start.arm(str(stats.get("state") or ""))
             # The print is on its way: the file manager steps aside
             # NOW and the monitor view returns — the verdict (success
             # or failure) reports to the console and the note line,

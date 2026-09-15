@@ -554,8 +554,8 @@ class ComposedComponentTests(unittest.TestCase):
         # itself in the console, and the verdict NEVER rewrites the
         # observed printer state (a live print must not read
         # "cancelled" — the e-stop alone owns that assumption).
-        module = self.qt.load("MoonrakerMonitorModel")
-        with patch.object(module.MoonrakerMonitorModel, "FILE_PRINT_START_TIMEOUT_S", 0.0):
+        module = self.qt.load("PrintStartOwner")
+        with patch.object(module.PrintStartOwner, "FILE_PRINT_START_TIMEOUT_S", 0.0):
             model._publish()
         self.assertIsNone(model._file_manager.print_attempt)
         lines = [entry["text"] for entry in model._console.values["consoleLines"]]
@@ -610,8 +610,8 @@ class ComposedComponentTests(unittest.TestCase):
         # A transient error holds the attempt — a cold-start error
         # must not read as a failed start while the job carries on.
         self.assertIsNotNone(model._file_manager.print_attempt)
-        module = self.qt.load("MoonrakerMonitorModel")
-        with patch.object(module.MoonrakerMonitorModel, "FILE_PRINT_START_TIMEOUT_S", 0.0):
+        module = self.qt.load("PrintStartOwner")
+        with patch.object(module.PrintStartOwner, "FILE_PRINT_START_TIMEOUT_S", 0.0):
             model._publish()
         self.assertIsNone(model._file_manager.print_attempt)
         lines = [entry["text"] for entry in model._console.values["consoleLines"]]
