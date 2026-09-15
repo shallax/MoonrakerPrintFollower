@@ -55,6 +55,9 @@ SAVE_SECTION_QML = (PLUGINS / "SaveSection.qml").read_text()
 FILE_MANAGER_SECTION_QML = (PLUGINS / "FileManagerSection.qml").read_text()
 MESH_SECTION_QML = (PLUGINS / "MeshSection.qml").read_text()
 TEMP_HISTORY_SECTION_QML = (PLUGINS / "TempHistorySection.qml").read_text()
+FANS_INFO_SECTION_QML = (PLUGINS / "FansInfoSection.qml").read_text()
+FILAMENT_SECTION_QML = (PLUGINS / "FilamentSection.qml").read_text()
+OBJECTS_SECTION_QML = (PLUGINS / "ObjectsSection.qml").read_text()
 MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
@@ -192,7 +195,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML + FANS_INFO_SECTION_QML + FILAMENT_SECTION_QML + OBJECTS_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -260,7 +263,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('sectionId: "systeminfo"', MONITOR_QML)
         # Plugin-drawn glyphs feed the header through a url, and the
         # frontend launcher lives in the Printer status title row.
-        self.assertIn('sectionIcon: "Fan"', MONITOR_QML)
+        self.assertIn('sectionIcon: "Fan"', FANS_INFO_SECTION_QML)
         self.assertIn('sectionIconUrl: Qt.resolvedUrl("Thermometer.svg")', TEMP_HISTORY_SECTION_QML)
         self.assertIn('Qt.resolvedUrl("Download.svg")', MONITOR_QML)
         self.assertIn('sectionIconUrl: Qt.resolvedUrl("Power.svg")', POWER_SECTION_QML)
@@ -290,7 +293,10 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(FILE_MANAGER_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MESH_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(TEMP_HISTORY_SECTION_QML.count("CollapsibleSectionHeader"), 1)
-        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 7)
+        self.assertEqual(FANS_INFO_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(FILAMENT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(OBJECTS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 4)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
                          + SETUP_SECTION_QML.count("CollapsibleSectionHeader")
@@ -307,6 +313,9 @@ class MonitorModelContractTests(unittest.TestCase):
                          + FILE_MANAGER_SECTION_QML.count("CollapsibleSectionHeader")
                          + MESH_SECTION_QML.count("CollapsibleSectionHeader")
                          + TEMP_HISTORY_SECTION_QML.count("CollapsibleSectionHeader")
+                         + FANS_INFO_SECTION_QML.count("CollapsibleSectionHeader")
+                         + FILAMENT_SECTION_QML.count("CollapsibleSectionHeader")
+                         + OBJECTS_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 0)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
@@ -324,7 +333,10 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(FILE_MANAGER_SECTION_QML.count('sectionIcon: "'), 0)  # The plugin glyph url
         self.assertEqual(MESH_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(TEMP_HISTORY_SECTION_QML.count('sectionIcon: "'), 0)  # The plugin glyph url
-        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 7)
+        self.assertEqual(FANS_INFO_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(FILAMENT_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(OBJECTS_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 4)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
                          + SETUP_SECTION_QML.count('sectionIcon: "')
@@ -339,6 +351,9 @@ class MonitorModelContractTests(unittest.TestCase):
                          + SYSTEM_SECTION_QML.count('sectionIcon: "')
                          + SAVE_SECTION_QML.count('sectionIcon: "')
                          + MESH_SECTION_QML.count('sectionIcon: "')
+                         + FANS_INFO_SECTION_QML.count('sectionIcon: "')
+                         + FILAMENT_SECTION_QML.count('sectionIcon: "')
+                         + OBJECTS_SECTION_QML.count('sectionIcon: "')
                          + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
@@ -542,8 +557,8 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('text: " moves"', TOOLHEAD_SECTION_QML)
         self.assertIn("jogPresets.indexOf", TOOLHEAD_SECTION_QML)
         # Filament state is colour-coded: green detected, orange runout.
-        self.assertIn('"#43a047"', MONITOR_QML)
-        self.assertIn('"#fb8c00"', MONITOR_QML)
+        self.assertIn('"#43a047"', FILAMENT_SECTION_QML)
+        self.assertIn('"#fb8c00"', FILAMENT_SECTION_QML)
         self.assertNotIn('id: powerOffDialog', MONITOR_QML)
         self.assertNotIn('id: cancelPrintDialog', MONITOR_QML)
         # The right column hosts the print actions, power and the lock.
@@ -3842,7 +3857,7 @@ Item {
             # The Objects section's empty-state line (the author's
             # live request): the list arrives mid-print, an empty one
             # says so.
-            "visible: root.printer != null && root.printer.excludeObjectItems.length === 0",
+            "visible: root.printerModel != null && root.printerModel.excludeObjectItems.length === 0",
             # The console grab bar hides under the auto-collapse
             # width (the author's live ruling — a resize handle for
             # an expansion that cannot happen is a lie).
@@ -3927,11 +3942,11 @@ Item {
             "enabled: root.printerModel != null && root.printerModel.canPausePrint",
             "enabled: root.printerModel != null && root.printerModel.canResumePrint",
             "enabled: root.printerModel != null && root.printerModel.canCancelPrint",
-            "enabled: root.printer != null && root.printer.monitorConnected && !root.printer.actionBusy && root.printer.printActive && root.printer.sectionReason === \"\" && !modelData.excluded",
+            "enabled: root.printerModel != null && root.printerModel.monitorConnected && !root.printerModel.actionBusy && root.printerModel.printActive && root.printerModel.sectionReason === \"\" && !modelData.excluded",
             "enabled: root.printer != null && root.printer.monitorConnected && root.printer.consoleLines.length > 0",
             "enabled: base.bedMeshAvailable",
         ):
-            self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML + PRINT_SECTION_QML)
+            self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML + PRINT_SECTION_QML + OBJECTS_SECTION_QML)
         # The Preview load button keeps its full width: the follow button
         # no longer vanishes to widen it.
         self.assertIn("width: buttons.width - base.buttonSpacing - followButton.width", PREVIEW_CONTROLS_QML)
