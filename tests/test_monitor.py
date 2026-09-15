@@ -45,6 +45,7 @@ PRINT_SECTION_QML = (PLUGINS / "PrintSection.qml").read_text()
 SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text()
 TOOLHEAD_SECTION_QML = (PLUGINS / "ToolheadSection.qml").read_text()
 PROFILES_SECTION_QML = (PLUGINS / "ProfilesSection.qml").read_text()
+TUNING_SECTION_QML = (PLUGINS / "TuningSection.qml").read_text()
 MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
@@ -124,9 +125,9 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn("contentItem", TOOLHEAD_SECTION_QML)
         # The Z-offset nudges carry direction glyphs, up row first, and no
         # +/- signs: the arrows carry the direction.
-        self.assertIn('"↓ " + Math.abs(modelData)', DASHBOARD_QML)
-        self.assertIn('"↑ " + modelData', DASHBOARD_QML)
-        self.assertLess(DASHBOARD_QML.index("model: [0.005"), DASHBOARD_QML.index("model: [-0.005"))
+        self.assertIn('"↓ " + Math.abs(modelData)', TUNING_SECTION_QML)
+        self.assertIn('"↑ " + modelData', TUNING_SECTION_QML)
+        self.assertLess(TUNING_SECTION_QML.index("model: [0.005"), TUNING_SECTION_QML.index("model: [-0.005"))
         # The toolhead block is gated by jogEnabled alone, never actionBusy:
         # taps must keep working while the queue drains. The block rides
         # its component (4.3.0) — the pins follow it there.
@@ -182,7 +183,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -258,12 +259,13 @@ class MonitorModelContractTests(unittest.TestCase):
         # totals — a moved section decrements one file and increments
         # another, and the totals catch a dropped section that a
         # per-file pin alone would read as "moved".
-        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 8)
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 7)
         self.assertEqual(PRINT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(SETUP_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MACROS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(PROFILES_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(TUNING_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
@@ -271,13 +273,15 @@ class MonitorModelContractTests(unittest.TestCase):
                          + TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader")
                          + MACROS_SECTION_QML.count("CollapsibleSectionHeader")
                          + PROFILES_SECTION_QML.count("CollapsibleSectionHeader")
+                         + TUNING_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
-        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 6)
+        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 5)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(SETUP_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(TOOLHEAD_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MACROS_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(PROFILES_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(TUNING_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
@@ -285,6 +289,7 @@ class MonitorModelContractTests(unittest.TestCase):
                          + TOOLHEAD_SECTION_QML.count('sectionIcon: "')
                          + MACROS_SECTION_QML.count('sectionIcon: "')
                          + PROFILES_SECTION_QML.count('sectionIcon: "')
+                         + TUNING_SECTION_QML.count('sectionIcon: "')
                          + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
@@ -703,17 +708,17 @@ class MonitorModelContractTests(unittest.TestCase):
 
     def test_dashboard_shows_current_z_offset_beside_nudges(self):
         self.assertIn('text: "Current Z offset"', PRINT_SECTION_QML)
-        self.assertIn('"Current " + root.printer.zOffsetText', DASHBOARD_QML)
-        self.assertIn("adjustZOffset", DASHBOARD_QML)
+        self.assertIn('"Current " + root.printerModel.zOffsetText', TUNING_SECTION_QML)
+        self.assertIn("adjustZOffset", TUNING_SECTION_QML)
 
     def test_z_offset_buttons_are_opposites_with_equal_click_zones(self):
-        self.assertIn("id: zOffsetGrid", DASHBOARD_QML)
-        self.assertIn("model: [-0.005, -0.01, -0.025, -0.05]", DASHBOARD_QML)
-        self.assertIn("model: [0.005, 0.01, 0.025, 0.05]", DASHBOARD_QML)
+        self.assertIn("id: zOffsetGrid", TUNING_SECTION_QML)
+        self.assertIn("model: [-0.005, -0.01, -0.025, -0.05]", TUNING_SECTION_QML)
+        self.assertIn("model: [0.005, 0.01, 0.025, 0.05]", TUNING_SECTION_QML)
         # A two-column grid (up left, down right): both Repeater
         # delegates fill their cell equally, so click zones stay
         # matched and the labels cannot elide at narrow pane widths.
-        grid = DASHBOARD_QML[DASHBOARD_QML.index("id: zOffsetGrid"):DASHBOARD_QML.index('text: "Clear Z offset"')]
+        grid = TUNING_SECTION_QML[TUNING_SECTION_QML.index("id: zOffsetGrid"):TUNING_SECTION_QML.index('text: "Clear Z offset"')]
         # Up row first, down row second, each four-across with equal
         # layout cells; the up model must precede the down model.
         self.assertLess(grid.index('text: "↑ "'), grid.index('text: "↓ "'))
@@ -781,8 +786,8 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("root.printer.setLedColor", DASHBOARD_QML)
 
     def test_live_tuning_slider_ranges_expand_from_accepted_value(self):
-        self.assertIn("to: Math.max(200, root.printer != null ? Math.ceil(root.printer.speedFactorPercent * 2) : 200)", DASHBOARD_QML)
-        self.assertIn("to: Math.max(200, root.printer != null ? Math.ceil(root.printer.flowFactorPercent * 2) : 200)", DASHBOARD_QML)
+        self.assertIn("to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.speedFactorPercent * 2) : 200)", TUNING_SECTION_QML)
+        self.assertIn("to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.flowFactorPercent * 2) : 200)", TUNING_SECTION_QML)
         self.assertIn('max(10 if kind == "speed" else 50, int(percent))', CONTROLS)
         self.assertNotIn("min(200, int(percent))", CONTROLS)
         self.assertNotIn("min(150, int(percent))", CONTROLS)
@@ -793,48 +798,56 @@ class MonitorModelContractTests(unittest.TestCase):
         # funnels every interaction path (groove, handle drag, keyboard)
         # into valueTuning (the live preview) and valueCommitted (the
         # apply on completion) — the usage sites never re-derive the
-        # interaction state.
-        self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 9)
-        for slider_id in (
-            "speedSlider", "flowSlider", "fanSlider", "ledSlider",
-            "redSlider", "greenSlider", "blueSlider", "whiteSlider",
-            "pwmSlider",
-        ):
+        # interaction state. The tuning pair rides its component
+        # (4.3.0); per-file counts plus the total.
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("live: false"), 2)
+        self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 7)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("live: false") + DASHBOARD_QML.count("live: false"), 9)
+        for slider_id in ("speedSlider", "flowSlider"):
+            marker = "id: " + slider_id
+            start = TUNING_SECTION_QML.find(marker)
+            self.assertGreaterEqual(start, 0, slider_id)
+            self.assertIn("live: false", TUNING_SECTION_QML[start:start + 700], slider_id)
+        for slider_id in ("fanSlider", "ledSlider", "redSlider", "greenSlider", "blueSlider", "whiteSlider", "pwmSlider"):
             marker = "id: " + slider_id
             start = DASHBOARD_QML.find(marker)
             self.assertGreaterEqual(start, 0, slider_id)
             self.assertIn("live: false", DASHBOARD_QML[start:start + 700], slider_id)
-        self.assertGreaterEqual(DASHBOARD_QML.count("onValueCommitted:"), 9)
-        self.assertIn("previewSpeedFactor", DASHBOARD_QML)
-        self.assertIn("previewFlowFactor", DASHBOARD_QML)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("onValueCommitted:"), 2)
+        self.assertGreaterEqual(DASHBOARD_QML.count("onValueCommitted:"), 7)
+        self.assertIn("previewSpeedFactor", TUNING_SECTION_QML)
+        self.assertIn("previewFlowFactor", TUNING_SECTION_QML)
         self.assertIn("previewFanSpeed", DASHBOARD_QML)
         self.assertIn("previewLedBrightness", DASHBOARD_QML)
         self.assertIn("previewLedColor", DASHBOARD_QML)
         self.assertIn("previewPwmOutput", DASHBOARD_QML)
-        self.assertIn("function sliderSelection(slider)", DASHBOARD_QML)
+        self.assertIn("function sliderSelection(slider)", TUNING_SECTION_QML)
         self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
-        self.assertIn("root.sliderSelection(speedSlider) + \"%\"", DASHBOARD_QML)
-        self.assertIn("root.printer.setSpeedFactor(value)", DASHBOARD_QML)
-        self.assertIn("root.printer.setFlowFactor(value)", DASHBOARD_QML)
+        self.assertIn("root.sliderSelection(speedSlider) + \"%\"", TUNING_SECTION_QML)
+        self.assertIn("root.printerModel.setSpeedFactor(value)", TUNING_SECTION_QML)
+        self.assertIn("root.printerModel.setFlowFactor(value)", TUNING_SECTION_QML)
 
     def test_monitor_sliders_do_not_repeat_qml_properties(self):
         duplicate = "from: 0; to: 100; stepSize: 1\n                                        from: 0; to: 100; live: false"
         self.assertNotIn(duplicate, DASHBOARD_QML)
 
     def test_slider_qml_prevents_parent_flickable_from_stealing_drag(self):
-        self.assertIn("property bool tuningSliderPressed: false", DASHBOARD_QML)
+        self.assertIn("property bool tuningSliderPressed: tuningSection != null && tuningSection.sliderInteracting", DASHBOARD_QML)
         self.assertIn("interactive: !root.tuningSliderPressed", DASHBOARD_QML)
-        for slider_id in ("speedSlider", "flowSlider", "fanSlider", "ledSlider", "redSlider",
+        for slider_id in ("speedSlider", "flowSlider"):
+            self.assertIn("id: " + slider_id, TUNING_SECTION_QML)
+        for slider_id in ("fanSlider", "ledSlider", "redSlider",
                           "greenSlider", "blueSlider", "whiteSlider", "pwmSlider"):
             self.assertIn("id: " + slider_id, DASHBOARD_QML)
-        self.assertGreaterEqual(DASHBOARD_QML.count("root.tuningSliderPressed = interacting"), 9)
+        self.assertGreaterEqual(DASHBOARD_QML.count("root.tuningSliderPressed = interacting"), 7)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("root.sliderInteracting = interacting"), 2)
 
     def test_monitor_uses_plugin_outline_bars_and_sliders(self):
         # The themed ProgressBar/Slider render a black slab in the
         # inactive-window palette (author's screenshot) — the monitor's
         # bars and sliders are all plugin-owned outline components now,
         # so a bare themed control may not creep back in.
-        for file_text in (MONITOR_QML, DASHBOARD_QML):
+        for file_text in (MONITOR_QML, DASHBOARD_QML, TUNING_SECTION_QML):
             # Every "ProgressBar {"/"Slider {" token must be the plugin
             # outline components (the substring check covers both) —
             # the range-filter bar is the other plugin-owned
@@ -843,7 +856,8 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertEqual(file_text.count("Slider {"),
                 file_text.count("OutlineSlider {") + file_text.count("BedMeshRangeSlider {"))
         self.assertIn("OutlineProgressBar {", MONITOR_QML)
-        self.assertGreaterEqual(DASHBOARD_QML.count("OutlineSlider {"), 9)
+        self.assertGreaterEqual(DASHBOARD_QML.count("OutlineSlider {"), 7)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("OutlineSlider {"), 2)
         indicator = (PLUGINS / "LoadProgressIndicator.qml").read_text()
         # The indicator bar's track is an outline too: transparent
         # interior, lining border, Cura-blue fill.
@@ -897,10 +911,12 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("Layout.preferredHeight: 190 * screenScaleFactor", MONITOR_QML)
 
     def test_deferred_slider_and_monitor_ux_contracts(self):
-        self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 9)
-        self.assertGreaterEqual(DASHBOARD_QML.count("onValueCommitted:"), 9)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("live: false"), 2)
+        self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 7)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("onValueCommitted:"), 2)
+        self.assertGreaterEqual(DASHBOARD_QML.count("onValueCommitted:"), 7)
         self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
-        self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", DASHBOARD_QML)
+        self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", TUNING_SECTION_QML)
         self.assertIn('text: "Refresh Moonraker\'s webcam list."', CAMERA_PANE_QML)
         self.assertIn('title: "Exclude object?"', MONITOR_QML)
         tuning = (PLUGINS / "MonitorTuning.py").read_text()
@@ -1395,7 +1411,7 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         debounce = int(_re.search(r"DEBOUNCE_MS\s*=\s*(\d+)", tuning).group(1))
         self.assertEqual(debounce, 250)
         window = f"unchanged for {debounce} ms" if debounce < 1000 else f"unchanged for {debounce // 1000} seconds"
-        self.assertIn(window, DASHBOARD_QML)
+        self.assertIn(window, TUNING_SECTION_QML)
 
         commands = (PLUGINS / "MonitorCommands.py").read_text()
         click_window = int(_re.search(r"_reset_timer\.setInterval\((\d+)\)", commands).group(1))
@@ -1475,7 +1491,8 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         self.assertIn("round(gain * 100)", controls)
         self.assertIn('self._remembered_gain[name] = percent / 100.0', controls)
         self.assertIn("self._remembered_gain.get(name, 1.0)", controls)
-        self.assertGreaterEqual(DASHBOARD_QML.count("width: 52 * screenScaleFactor"), 7)
+        self.assertGreaterEqual(DASHBOARD_QML.count("width: 52 * screenScaleFactor"), 6)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("width: 52 * screenScaleFactor"), 2)
         self.assertIn("width: 150 * screenScaleFactor", DASHBOARD_QML)
         # The submit's rebuild must not kill the tuned slider's focus
         # (the author's live report): the dashboard remembers the
@@ -3541,7 +3558,7 @@ Item {
         # The z-offset nudge buttons take an exact quarter of the row
         # (a bound preferred width, not layout distribution): fillWidth
         # alone left "↑ 0.005" wider than "↑ 0.05" (the author's report).
-        self.assertIn("Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4", DASHBOARD_QML)
+        self.assertIn("Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4", TUNING_SECTION_QML)
         # The expanded chart's power axis carries its 0-100% legend,
         # pinned (never scaled), drawn OUTSIDE the plot in a reserved
         # right gutter — chips painted over the data looked janky (the
