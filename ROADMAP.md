@@ -1442,23 +1442,6 @@ pro-user planning input (2026-09-15) into this release. The round-1
 critic (2026-09-15) corrected three false premises and re-shaped the
 workstreams; every disposition is in the decisions ledger.
 
-- **Vertex-style gcode deformation (bumped from 4.2.0, the author's
-  2026-09-15 ruling; feasibility-gated after the round-1 critic).**
-  A Preview-card toggle that warps the rendered gcode so the model
-  rides the bed-mesh ridges: every vertex of the rendered layers
-  gets its own Z from the height map, times the exaggeration. The
-  per-layer prototype did not deliver the expected look and was
-  removed (logged). The Snapshot-0 mock shows the hoped-for look
-  but is not the feasibility evidence: the plugin has no
-  vertex-level reach into Cura's preview today (the only layer-data
-  contact is a presence check on `getLayerData()`), and whether the
-  warp can compose with Cura's lazily built layer meshes is the
-  question that decides whether the toggle can ship. The design
-  round therefore produces a written feasibility finding before any
-  machinery; the toggle ships in 4.3.0 only if the finding says
-  feasible, otherwise the warp moves to 4.4.0 with the Preview
-  scene work. Flagged for the author at the snapshot stop.
-
 - **Preview status strip (the pro-user's top want, ruled in
   2026-09-15).** A slim status row as the first row of the existing
   Preview card, above the title: the current temps, the
@@ -1470,9 +1453,7 @@ workstreams; every disposition is in the decisions ledger.
   third host surface (re-ruled 2026-09-15 from a separate strip).
   If the control dock lands, the strip breaks out to its own
   surface then — the card row is the simple form (the 2026-09-15
-  ruling). The deformation toggle's home — the strip row or the
-  bed-mesh controls — is a mock-round call. Snapshot-0 mock before
-  wiring, like the deformation.
+  ruling). Snapshot-0 mock before wiring.
   Round-1 corrections (2026-09-15):
   - Pause/resume is the last un-migrated command gate — the action
     policy has no pause row (two inline booleans gated on
@@ -1627,9 +1608,9 @@ workstreams; every disposition is in the decisions ledger.
   as unit-testable values BEFORE any pane slice moves — a pin
   change and the hysteresis re-derivation land in the same commit.
   The pin-retargeting pass costed and complete. Per-item criteria:
-  the deformation's is the feasibility finding; the strip's is the
-  state table, the signals and the content budget; the off-path
-  line's is the gating. Each extraction is a vertical slice — move
+  the strip's is the state table, the signals and the content
+  budget; the off-path line's is the gating. Each extraction is a
+  vertical slice — move
   one owner, redirect its callers, preserve observable behaviour,
   remove the obsolete path in the same change. A lines-per-file
   target is not an acceptance criterion; the test is that a feature
@@ -1853,6 +1834,11 @@ contrast; pairwise hue separation is the residual debt).
 
 ## Explicitly out of scope
 
+- **Gcode deformation (the vertex-style bed-mesh warp)** — permanently
+  dropped (the author's ruling, 2026-09-15): the feasibility was
+  never proven — the plugin has no vertex-level reach into Cura's
+  layer geometry, and the 4.2.0 per-layer prototype did not produce
+  the look — and the value does not repay the machinery.
 - **Multi-instance Monitor** — Cura's paradigm is one active printer at a
   time; per-printer Monitor instances do not fit.
 - **Printer.cfg editing** — Cura machines are configured in Cura; a config
