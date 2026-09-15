@@ -1,0 +1,201 @@
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.3
+import UM 1.5 as UM
+import Cura 1.1 as Cura
+
+// The Live-tuning section (4.3.0 extraction): the factor sliders and
+// the z-offset nudges moved out of the dashboard as one
+// property-driven component. sliderInteracting feeds the host's
+// repeater freeze — the sliders write it, the host binds it.
+Column {
+    id: root
+    property var printerModel: null
+    property bool sliderInteracting: false
+
+    function sliderSelection(slider) {
+        return Math.round(slider.valueAt(slider.position));
+    }
+
+    CollapsibleSectionHeader {
+        Layout.fillWidth: true
+        printerModel: root.printerModel
+        title: "Live tuning"
+        sectionId: "tuning"
+        sectionIcon: "Sliders"
+    }
+    Item {
+        width: 1
+        height: UM.Theme.getSize("default_margin").height
+    }
+
+    ColumnLayout {
+        width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
+        anchors.left: parent.left
+        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["tuning"] !== false
+        enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
+        spacing: UM.Theme.getSize("default_margin").height
+        UM.Label {
+            text: "Drag to preview a value. After release, the latest value is applied once it has been unchanged for 250 ms."
+            color: UM.Theme.getColor("text_inactive")
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 0
+            RowLayout {
+                Layout.fillWidth: true
+                UM.Label {
+                    text: "Speed factor"
+                    Layout.fillWidth: true
+                }
+                UM.Label {
+                    // The fixed width keeps the row from
+                    // reflowing as the percentage changes
+                    // (the author's live report).
+                    width: 52 * screenScaleFactor
+                    horizontalAlignment: Text.AlignRight
+                    text: root.sliderSelection(speedSlider) + "%"
+                }
+            }
+            OutlineSlider {
+                id: speedSlider
+                Layout.fillWidth: true
+                from: 10
+                to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.speedFactorPercent * 2) : 200)
+                stepSize: 1
+                live: false
+                value: root.printerModel != null ? root.printerModel.speedFactorPercent : 100
+                enabled: root.printerModel != null
+                onValueTuning: {
+                    if (root.printerModel != null)
+                        root.printerModel.previewSpeedFactor(value);
+                }
+                onValueCommitted: {
+                    if (root.printerModel != null)
+                        root.printerModel.setSpeedFactor(value);
+                }
+                onInteractingChanged: root.sliderInteracting = interacting
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 0
+            RowLayout {
+                Layout.fillWidth: true
+                UM.Label {
+                    text: "Extrusion multiplier"
+                    Layout.fillWidth: true
+                }
+                UM.Label {
+                    width: 52 * screenScaleFactor
+                    horizontalAlignment: Text.AlignRight
+                    text: root.sliderSelection(flowSlider) + "%"
+                }
+            }
+            OutlineSlider {
+                id: flowSlider
+                Layout.fillWidth: true
+                from: 50
+                to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.flowFactorPercent * 2) : 200)
+                stepSize: 1
+                live: false
+                value: root.printerModel != null ? root.printerModel.flowFactorPercent : 100
+                enabled: root.printerModel != null
+                onValueTuning: {
+                    if (root.printerModel != null)
+                        root.printerModel.previewFlowFactor(value);
+                }
+                onValueCommitted: {
+                    if (root.printerModel != null)
+                        root.printerModel.setFlowFactor(value);
+                }
+                onInteractingChanged: root.sliderInteracting = interacting
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: UM.Theme.getSize("default_margin").height / 2
+            RowLayout {
+                Layout.fillWidth: true
+                UM.Label {
+                    text: "Z-offset nudges"
+                    font: UM.Theme.getFont("medium_bold")
+                    Layout.fillWidth: true
+                }
+                UM.Label {
+                    text: root.printerModel != null ? "Current " + root.printerModel.zOffsetText : "Current —"
+                    font: UM.Theme.getFont("medium_bold")
+                }
+            }
+            Column {
+                id: zOffsetGrid
+                Layout.fillWidth: true
+                spacing: 2 * screenScaleFactor
+                property real buttonSpacing: 2 * screenScaleFactor
+
+                // The original two-row layout: all up
+                // nudges on the top row, all down on
+                // the bottom. Each button takes an
+                // exact quarter of the row: fillWidth
+                // alone leaves each button its label's
+                // implicit width as a base, and the
+                // layout shares the leftover in
+                // proportion — "↑ 0.005" and "↑ 0.05"
+                // came out different widths (the
+                // author's report). A bound preferred
+                // width — (row - 3 gaps) / 4 — makes
+                // every button the same width without
+                // depending on layout distribution.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: zOffsetGrid.buttonSpacing
+                    Repeater {
+                        model: [0.005, 0.01, 0.025, 0.05]
+                        Cura.SecondaryButton {
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4
+                            height: UM.Theme.getSize("action_button").height
+                            text: "↑ " + modelData.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
+                            tooltip: "Moves the nozzle up, away from the bed."
+                            enabled: root.printerModel != null && !root.printerModel.actionBusy && root.printerModel.sectionReason === ""
+                            onClicked: root.printerModel.adjustZOffset(modelData)
+                        }
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: zOffsetGrid.buttonSpacing
+                    Repeater {
+                        model: [-0.005, -0.01, -0.025, -0.05]
+                        Cura.SecondaryButton {
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4
+                            height: UM.Theme.getSize("action_button").height
+                            text: "↓ " + Math.abs(modelData).toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
+                            tooltip: "Moves the nozzle down, closer to the bed."
+                            enabled: root.printerModel != null && !root.printerModel.actionBusy && root.printerModel.sectionReason === ""
+                            onClicked: root.printerModel.adjustZOffset(modelData)
+                        }
+                    }
+                }
+            }
+            Cura.SecondaryButton {
+                Layout.fillWidth: true
+                text: "Clear Z offset"
+                enabled: root.printerModel != null && !root.printerModel.actionBusy && root.printerModel.sectionReason === ""
+                onClicked: root.printerModel.clearZOffset()
+            }
+        }
+    }
+
+    Item {
+        width: 1
+        height: UM.Theme.getSize("default_margin").height
+    }
+}
