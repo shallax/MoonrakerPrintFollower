@@ -19,7 +19,6 @@ Component {
         }
         property var printer: OutputDevice != null ? OutputDevice.activePrinter : null
         property bool controlsCollapsed: root.printer != null ? root.printer.controlsCollapsed : false
-        property var macroParameters: []
         // The file-manager popup's open state (Snapshot 0: the mock).
         // A printer switch closes it — a stale popup must never carry
         // actions from one machine to the next (round-2 A15).
@@ -193,49 +192,8 @@ Component {
             return Math.round(slider.valueAt(slider.position));
         }
 
-        function refreshMacroParameters() {
-            if (root.printer == null || macroSelector.currentIndex < 0) {
-                root.macroParameters = [];
-                return;
-            }
-            root.macroParameters = root.printer.macroParameterDefinitions(macroSelector.currentText);
-        }
-
-        function macroArgumentsValid() {
-            for (var i = 0; i < macroParameterRepeater.count; ++i) {
-                var item = macroParameterRepeater.itemAt(i);
-                if (item != null && item.argumentRequired && item.argumentValue.trim().length === 0) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        function macroArgumentString() {
-            var args = [];
-            for (var i = 0; i < macroParameterRepeater.count; ++i) {
-                var item = macroParameterRepeater.itemAt(i);
-                if (item == null)
-                    continue;
-                var value = item.argumentValue.trim();
-                if (value.length > 0)
-                    args.push(item.argumentName + "=" + value);
-            }
-            return args.join(" ");
-        }
-
         MoonrakerMonitor {
             id: baseMonitorComponent
-        }
-
-        Connections {
-            target: root.printer
-            function onControlsChanged() {
-                root.refreshMacroParameters();
-            }
-            function onTypedControlsChanged() {
-                root.refreshMacroParameters();
-            }
         }
 
         Component {
@@ -578,101 +536,6 @@ Component {
                         CollapsibleSectionHeader {
                             Layout.fillWidth: true
                             printerModel: root.printer
-                            title: "Macros"
-                            sectionId: "macros"
-                            sectionIcon: "Function"
-                        }
-                        ColumnLayout {
-                            id: macroSection
-                            Layout.topMargin: UM.Theme.getSize("default_margin").height
-                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                            visible: root.printer != null && root.printer.macroNames.length > 0 && root.printer.sectionExpandedMap["macros"] !== false
-                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
-                            Layout.fillWidth: true
-                            spacing: UM.Theme.getSize("default_margin").height / 2
-
-                            Cura.ComboBox {
-                                id: macroSelector
-                                Layout.fillWidth: true
-                                model: root.printer != null ? root.printer.macroNames : []
-                                onCurrentTextChanged: root.refreshMacroParameters()
-                                Component.onCompleted: root.refreshMacroParameters()
-                            }
-
-                            Repeater {
-                                id: macroParameterRepeater
-                                model: root.macroParameters
-
-                                ColumnLayout {
-                                    id: argumentRow
-                                    Layout.fillWidth: true
-                                    property string argumentName: String(modelData.name)
-                                    property bool argumentRequired: Boolean(modelData.required)
-                                    property string argumentValue: String(modelData.default)
-                                    spacing: 2 * screenScaleFactor
-
-                                    UM.Label {
-                                        Layout.fillWidth: true
-                                        text: argumentRow.argumentName + "  (" + String(modelData.type) + (argumentRow.argumentRequired ? ", required" : "") + ")"
-                                        color: UM.Theme.getColor("text_inactive")
-                                    }
-
-                                    Cura.ComboBox {
-                                        id: boolInput
-                                        Layout.fillWidth: true
-                                        visible: String(modelData.type) === "bool"
-                                        model: Boolean(modelData.hasDefault) ? ["Use macro default", "True", "False"] : ["True", "False"]
-                                        currentIndex: {
-                                            if (!Boolean(modelData.hasDefault))
-                                                return String(modelData.default).toLowerCase() === "false" ? 1 : 0;
-                                            return 0;
-                                        }
-                                        onCurrentTextChanged: {
-                                            argumentRow.argumentValue = currentText === "Use macro default" ? "" : currentText;
-                                        }
-                                    }
-
-                                    IntValidator {
-                                        id: integerValidator
-                                    }
-                                    DoubleValidator {
-                                        id: floatingValidator
-                                        notation: DoubleValidator.StandardNotation
-                                    }
-
-                                    Cura.TextField {
-                                        id: typedInput
-                                        Layout.fillWidth: true
-                                        visible: String(modelData.type) !== "bool"
-                                        text: String(modelData.default)
-                                        placeholderText: argumentRow.argumentRequired ? "Required" : "Optional"
-                                        selectByMouse: true
-                                        validator: String(modelData.type) === "int" ? integerValidator : (String(modelData.type) === "float" ? floatingValidator : null)
-                                        onTextChanged: argumentRow.argumentValue = text
-                                    }
-                                }
-                            }
-
-                            UM.Label {
-                                visible: root.macroParameters.length === 0
-                                text: "This macro has no detectable params.* inputs."
-                                color: UM.Theme.getColor("text_inactive")
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                            }
-
-                            Cura.SecondaryButton {
-                                Layout.fillWidth: true
-                                text: "Run macro"
-                                enabled: root.printer != null && macroSelector.currentIndex >= 0 && !root.printer.actionBusy && !root.printer.printActive && root.printer.sectionReason === "" && root.macroArgumentsValid()
-                                onClicked: root.printer.runMacro(macroSelector.currentText, root.macroArgumentString())
-                            }
-                        }
-
-                        CollapsibleSectionHeader {
-                            Layout.fillWidth: true
-                            printerModel: root.printer
                             title: "Temperature profiles"
                             sectionId: "profiles"
                             sectionIcon: "PrintQuality"
@@ -910,6 +773,10 @@ Component {
                                     onClicked: root.printer.clearZOffset()
                                 }
                             }
+                        }
+                        MacrosSection {
+                            Layout.fillWidth: true
+                            printerModel: root.printer
                         }
                         CollapsibleSectionHeader {
                             Layout.fillWidth: true

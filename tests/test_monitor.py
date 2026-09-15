@@ -44,6 +44,7 @@ CAMERA_PANE_QML = (PLUGINS / "CameraPane.qml").read_text()
 PRINT_SECTION_QML = (PLUGINS / "PrintSection.qml").read_text()
 SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text()
 TOOLHEAD_SECTION_QML = (PLUGINS / "ToolheadSection.qml").read_text()
+MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
@@ -180,7 +181,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -256,25 +257,29 @@ class MonitorModelContractTests(unittest.TestCase):
         # totals — a moved section decrements one file and increments
         # another, and the totals catch a dropped section that a
         # per-file pin alone would read as "moved".
-        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 10)
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 9)
         self.assertEqual(PRINT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(SETUP_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(MACROS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
                          + SETUP_SECTION_QML.count("CollapsibleSectionHeader")
                          + TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader")
+                         + MACROS_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
-        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 8)
+        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 7)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(SETUP_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(TOOLHEAD_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(MACROS_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
                          + SETUP_SECTION_QML.count('sectionIcon: "')
                          + TOOLHEAD_SECTION_QML.count('sectionIcon: "')
+                         + MACROS_SECTION_QML.count('sectionIcon: "')
                          + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
@@ -2142,7 +2147,7 @@ class MonitorQtTests(unittest.TestCase):
         model.runMacro("TEST_MACRO", "")
         self.assertEqual([r.options["body"] for r in self.scripts()], [{"script": "TEST_MACRO"}])
         # The Run button carries the same gate in the UI.
-        self.assertIn("!root.printer.printActive", DASHBOARD_QML)
+        self.assertIn("!root.printerModel.printActive", MACROS_SECTION_QML)
 
     def test_system_restarts_are_queued_one_shot_commands(self):
         model = self.monitor()
