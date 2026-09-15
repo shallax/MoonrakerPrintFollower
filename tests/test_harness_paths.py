@@ -27,6 +27,44 @@ def _resolve(base, name):
     return out.stdout.strip()
 
 
+def _container(work_dir, path):
+    out = subprocess.run(
+        ["sh", str(HELPER), "container", work_dir, path],
+        capture_output=True, text=True, check=True,
+    )
+    return out.stdout.strip()
+
+
+class ContainerPathMappingTests(unittest.TestCase):
+    def test_slot_prefix_rewrites_to_the_mount_root(self):
+        # The slot's host dir mounts at the container's /tmp/mpf —
+        # a host-form slot path must become the container form.
+        self.assertEqual(
+            _container("/tmp/mpf/slot-1", "/tmp/mpf/slot-1/xdg"), "/tmp/mpf/xdg"
+        )
+        self.assertEqual(
+            _container("/tmp/mpf/slot-1", "/tmp/mpf/slot-1/ui-artifacts/run"),
+            "/tmp/mpf/ui-artifacts/run",
+        )
+
+    def test_container_form_paths_pass_through(self):
+        # Paths already in the container form (the hardcoded /tmp/mpf
+        # sites in the runner, the driver and the boot env) are
+        # untouched.
+        self.assertEqual(
+            _container("/tmp/mpf/slot-1", "/tmp/mpf/xdg"), "/tmp/mpf/xdg"
+        )
+        self.assertEqual(
+            _container("/tmp/mpf/slot-1", "/tmp/mpf/harness_port.txt"),
+            "/tmp/mpf/harness_port.txt",
+        )
+
+    def test_serial_run_is_the_identity(self):
+        # With the shared /tmp/mpf as the work dir, the mapping is
+        # the identity — the serial run's host==container premise.
+        self.assertEqual(_container("/tmp/mpf", "/tmp/mpf/xdg"), "/tmp/mpf/xdg")
+
+
 class RunDirResolutionTests(unittest.TestCase):
     def test_absolute_name_passes_through_verbatim(self):
         # The regression itself: an absolute run-dir name must never
@@ -49,14 +87,18 @@ class RunDirResolutionTests(unittest.TestCase):
 
     def test_ui_test_resolves_both_sides_through_the_shared_rule(self):
         # The wiring: ui_test.sh must not build either side's path
-        # inline — both RUN_DIR and CONTAINER_RUN_DIR resolve through
-        # the helper, and the old doubled construction is gone.
+        # inline — RUN_DIR resolves through the helper, and the
+        # container-side path resolves through it AGAIN via the
+        # container mapping. The old doubled construction is gone.
         text = UI_TEST.read_text()
         self.assertIn(
             'RUN_DIR="$(tools/ui_test_paths.sh resolve', text
         )
         self.assertIn(
-            'CONTAINER_RUN_DIR="$(tools/ui_test_paths.sh resolve', text
+            'CONTAINER_RUN_DIR="$(container_path "$(tools/ui_test_paths.sh resolve', text
+        )
+        self.assertIn(
+            'tools/ui_test_paths.sh container "$WORK_DIR" "$1"', text
         )
         self.assertNotIn('CONTAINER_WORK_DIR}/ui-artifacts/${RUN_DIR_NAME', text)
 

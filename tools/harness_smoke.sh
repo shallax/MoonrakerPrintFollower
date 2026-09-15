@@ -45,6 +45,7 @@ docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 docker run -d --init --name "$CONTAINER" --cap-add=SYS_PTRACE \
     -v "$HARNESS_DIR:$HARNESS_DIR" mpf-cura-harness sleep infinity >/dev/null
 
+export CURA_VERSIONS_DIR="$HARNESS_DIR/cura_versions"
 python3 "$root/tools/fetch_cura.py" "$PRIMARY"
 
 # Two units, one after the other: the second boot must survive the
