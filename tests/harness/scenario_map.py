@@ -154,6 +154,7 @@ PREFIX_RULES = [
     ("key", "jogReason", "g6"),
     ("key", "canRestart", "g6"),
     ("key", "restartReason", "g6"),
+    ("key", "sectionReason", "g8"),
     # The file manager's verbs all ride the files-group scenarios.
     ("slot", "MoonrakerMonitorModel.file", "f1"),
     ("slot", "MoonrakerMonitorModel.toggleFile", "f1"),

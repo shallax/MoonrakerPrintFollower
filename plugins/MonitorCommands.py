@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from .MonitorPermissions import R_UNKNOWN, Verdict
 
 
 class MonitorCommands(QObject):
@@ -126,7 +127,7 @@ class MonitorCommands(QObject):
         self._reset_clicks()
         self.changed.emit()
 
-    def send(self, label, path, body=None, queued=False):
+    def send(self, label, path, body=None):
         if self._busy or not self._data.active: return False
         self._set_busy(True)
         # A new action supersedes any old completion banner: the receipt
@@ -221,8 +222,12 @@ class MonitorCommands(QObject):
         # invalid before execution (a print started by another
         # client). Denied entries drop with the policy's reason.
         observation = getattr(self._data, "observation", None)
-        if rule is not None and observation is not None:
-            verdict = rule(observation)
+        if rule is not None:
+            # The revalidation is FAIL-CLOSED (the phase-6 security
+            # re-review, D2): a missing observation denies, matching
+            # the click-time gate's polarity — never skip the check.
+            verdict = rule(observation) if observation is not None \
+                else Verdict("disabled", R_UNKNOWN)
             if verdict.mode != "allowed":
                 # A denial is a fresh terminal outcome: it must not
                 # hide under the completing command's receipt (the
@@ -232,7 +237,7 @@ class MonitorCommands(QObject):
                 self.report_status(f"{label} cancelled: {verdict.reason or 'no longer allowed'}")
                 self._pump_queue()
                 return
-        self.send(label, path, body, queued=True)
+        self.send(label, path, body)
 
     def quick(self, channel, script, callback):
         return self._data.request("quick-" + channel, "POST", "printer/gcode/script", callback,
@@ -247,7 +252,12 @@ class MonitorCommands(QObject):
         self._live = ""
         self._status = f"{self._tracked}: {event.get('detail') or outcome}"
         if event.get("terminal"):
-            self._busy = False
+            # Through the push-in (the phase-6 security re-review,
+            # D6): the direct assignment left the record's busy flag
+            # set after a tracked Pause/Resume/Cancel, which kept
+            # can_z_offset refusing until some later command cleared
+            # it.
+            self._set_busy(False)
             self._tracked = ""
         self.changed.emit()
         self._pump_queue()

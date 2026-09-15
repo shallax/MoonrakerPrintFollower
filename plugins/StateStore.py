@@ -55,7 +55,13 @@ class StateStore:
                         current = json.load(handle)
                     if not isinstance(current, dict):
                         current = {}
-                except FileNotFoundError:
+                except Exception:
+                    # Any undecodable-but-present file (a BOM, a
+                    # partial sync, a hand-edit) must not wedge the
+                    # save forever — the old replace-write self-healed
+                    # by overwriting; the merge falls back to an empty
+                    # document and heals on this write (the
+                    # adversarial round's M1).
                     current = {}
                 document = dict(current)
                 document.update(update)

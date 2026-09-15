@@ -36,6 +36,12 @@ class UploadController(QObject):
         self._filename, self._path = "", ""
         self._start_print = False
         self._print_outcome = ""
+        # The dispatch-time print-start gate (4.2.0, D4): consulted
+        # before the print=true field rides the upload. None = the
+        # legacy behaviour (no monitor, no gate — the upload-and-
+        # print flow must work without the Monitor page ever opened).
+        self._print_gate = None
+        self._print_refusal = ""
         self._directories, self._queue, self._seen = set(), [], set()
         self._power = []
         self._attempts = 0
@@ -43,6 +49,12 @@ class UploadController(QObject):
 
     @property
     def busy(self): return self._active or self._terminal_pending
+
+    def set_print_gate(self, gate):
+        """A dispatch-time permission callback returning a Verdict:
+        consulted before the print=true field rides the upload
+        (4.2.0, the security re-review's D4)."""
+        self._print_gate = gate
     @property
     def filename(self): return self._filename
     @property
@@ -252,7 +264,16 @@ class UploadController(QObject):
             multipart.append(part)
             fields = {"root": "gcodes"}
             if self._path: fields["path"] = self._path
-            if self._start_print: fields["print"] = "true"
+            self._print_refusal = ""
+            if self._start_print:
+                verdict = self._print_gate() if self._print_gate is not None else None
+                if verdict is not None and verdict.mode != "allowed":
+                    # The gate refused the start at dispatch: the file
+                    # still uploads, the print field does not ride it,
+                    # and the outcome says why.
+                    self._print_refusal = verdict.reason or "no longer allowed"
+                else:
+                    fields["print"] = "true"
             for name, value in fields.items():
                 part = QHttpPart()
                 part.setHeader(QNetworkRequest.KnownHeaders.ContentDispositionHeader, QVariant(f'form-data; name="{name}"'))
@@ -293,7 +314,9 @@ class UploadController(QObject):
         # while the print start failed (print_started false) or landed
         # in the job queue (print_queued) — the adapter's message must
         # say which happened, never a blanket "started the print".
-        if not error and self._start_print:
+        if not error and self._print_refusal:
+            error = f"Uploaded; print start refused: {self._print_refusal}"
+        elif not error and self._start_print:
             started, queued = payload.get("print_started"), payload.get("print_queued")
             if started is False and queued is not True:
                 error = "Uploaded; the printer refused to start the print"

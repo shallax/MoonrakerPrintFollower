@@ -33,7 +33,7 @@ from .MonitorCamera import MonitorCamera
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
-from .MonitorPermissions import REASON_DETAIL, R_UNKNOWN, Verdict, can_jog, can_restart, can_start_print
+from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_restart, can_start_print, jog_caption, section_reason
 from datetime import datetime
 
 from .FileManager import FileManager
@@ -161,7 +161,9 @@ def _toolhead_state(stored) -> dict:
 
 def _write_state(state: dict) -> None:
     # The legacy module-level name (tests pin it): a transient store
-    # with the merge-write semantics (4.2.0, F11).
+    # — note the MERGE semantics (4.2.0): foreign keys in the file
+    # survive, unlike the old fixed-document replace this name once
+    # performed.
     StateStore(_sections_path()).write(state)
 
 
@@ -232,7 +234,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                             "improvingEta", "improveEtaProgress", "improveEtaPhase", "monitorElapsed",
                             "monitorEta", "monitorEtaBasis", "monitorFinish", "monitorSpeed", "monitorFlow",
                             "monitorPosition", "monitorVelocity", "monitorFlowRate", "monitorFlowDiameter",
-                            "monitorAccelLimit", "monitorMessage", "monitorLayerSource", "filamentUsed", "filamentRemaining")),
+                            "monitorAccelLimit", "monitorMessage", "monitorLayerSource", "filamentUsed", "filamentRemaining",
+                            "sectionReason", "sectionReasonDetail")),
         ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
         ("temperatureChartChanged", ("temperatureChart",)),
         ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
@@ -252,7 +255,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("emergencyStopChanged", ("emergencyStopClicks",)),
         ("toolheadChanged", ("jogEnabled", "jogDistance", "extrudeDistance", "extrudeSpeed",
                              "homedAxes", "positionMode", "jogStatus", "jogReason", "jogReasonDetail")),
-        ("restartChanged", ("canRestart", "restartReason")),
+        ("restartChanged", ("canRestart", "restartReason", "restartReasonDetail")),
         ("controlsLockChanged", ("controlsLocked", "controlsCollapsed")),
         ("infoPaneChanged", ("infoCollapsed",)),
         ("statusPaneChanged", ("statusCollapsed",)),
@@ -362,6 +365,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._chart_config_key = None
         self._legend_payload = None
         self._data = MonitorData(client, self)
+        # The hydrated lock reaches the policy record (the phase-6
+        # security re-review, D7): a session that starts locked must
+        # read locked, not wait for the padlock to be cycled.
+        self._data.set_controls_locked(self._controls_locked)
         self._commands = MonitorCommands(self._data, self)
         self._tuning = MonitorTuning(self._data, self._commands, self)
         self._controls = MonitorControls(self._data, self._commands, self._tuning, bed_mesh, config, self)
@@ -746,10 +753,20 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         observation = self._data.observation
         jog_verdict = can_jog(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
         restart_verdict = can_restart(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
-        values["jogReason"] = jog_verdict.reason if jog_verdict.mode != "allowed" else ""
+        # The caption is the policy's jog_caption — the reason when
+        # disabled, the pause-first warning, AND the paused note
+        # (the re-review's blocker: the raw reason blanked the paused
+        # state, the one where the row must speak).
+        values["jogReason"] = jog_caption(observation) if observation is not None else R_UNKNOWN
         values["jogReasonDetail"] = REASON_DETAIL.get(jog_verdict.reason, "")
+        if values["jogReason"] == R_PAUSED_NOTE:
+            values["jogReasonDetail"] = REASON_DETAIL.get(R_PAUSED_NOTE, "")
         values["canRestart"] = restart_verdict.mode == "allowed"
         values["restartReason"] = restart_verdict.reason if restart_verdict.mode != "allowed" else ""
+        values["restartReasonDetail"] = REASON_DETAIL.get(restart_verdict.reason, "")
+        section = section_reason(observation) if observation is not None else R_UNKNOWN
+        values["sectionReason"] = section
+        values["sectionReasonDetail"] = REASON_DETAIL.get(section, "")
         values.update(self._controls.values)
         values.update(self._camera.values)
         values.update(self._toolhead.values)
@@ -1458,6 +1475,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     jogReasonDetail = value_property(str, "jogReasonDetail", toolheadChanged, "")
     canRestart = value_property(bool, "canRestart", restartChanged, False)
     restartReason = value_property(str, "restartReason", restartChanged, "")
+    restartReasonDetail = value_property(str, "restartReasonDetail", restartChanged, "")
+    # The shared section-level denial (4.2.0): the states that grey
+    # whole panes, one short form every section's Status row reads.
+    sectionReason = value_property(str, "sectionReason", monitorChanged, "")
+    sectionReasonDetail = value_property(str, "sectionReasonDetail", monitorChanged, "")
     controlsLocked = value_property(bool, "controlsLocked", controlsLockChanged, False)
     controlsCollapsed = value_property(bool, "controlsCollapsed", controlsLockChanged, False)
     infoCollapsed = value_property(bool, "infoCollapsed", infoPaneChanged, False)

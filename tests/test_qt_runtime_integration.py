@@ -312,6 +312,22 @@ class QtRuntimeTests(unittest.TestCase):
         self.qt.events(4000)
         self.assertFalse(preview.state.attached)
 
+    def test_scheduled_pause_does_not_fire_against_an_ended_print(self):
+        # 4.2.0 N4: the autonomous dispatch re-checks an OBSERVED
+        # terminal state — the poll that called observe may already
+        # be stale, and a PAUSE against a finished print must not go
+        # out.
+        client, transport = self.client()
+        pauses = self.qt.load("PauseController").PauseController(client)
+        self.addCleanup(pauses.close)
+        pauses.bind(("part", 100, 1))
+        self.assertTrue(pauses.toggle(4, 0, 10))
+        client._handle_http_status({"result": {"status": {"print_stats": {"state": "complete"}}}},
+                                   None, client._generation, time.monotonic())
+        pauses.observe(5)
+        self.assertEqual(pauses.states, {})
+        self.assertEqual([r for r in transport.requests if r.channel == "scheduled"], [])
+
     def test_pause_entry_leaves_only_when_observed_paused(self):
         # The verified-pause-only ruling: an entry leaves the list only
         # when the printer is OBSERVED paused at that layer; a missed

@@ -1224,9 +1224,10 @@ itself:
   observed) and no per-axis velocity exists, so the row is scalar
   (the author's ruling); Klipper publishes no instantaneous
   acceleration at all, so the accel row is the effective
-  `toolhead.max_accel` limit (5000.0 observed). Row titles: Speed
-  (the value is an unsigned magnitude) and Accel limit (the value
-  is the configured ceiling) — the titles say what the values are.
+  `toolhead.max_accel` limit (5000.0 observed). Row titles:
+  Velocity (the value is an unsigned magnitude) and Accel limit
+  (the value is the configured ceiling) — the titles say what the
+  values are.
   Flow rate = `live_extruder_velocity` (scalar mm/s of filament) ×
   the filament cross-section π·(d/2)², the sign preserved so a
   retraction reads negative — a negative reading is correct
@@ -1238,29 +1239,38 @@ itself:
   segment's terminal velocity), so the row can read nonzero while
   nothing extrudes; the ruling is to show it and let the live test
   decide whether travel-zeroing is worth its machinery. The
+  staleness window is up to 30 s of print time after the last
+  extrusion (MOVE_HISTORY_EXPIRE), not just the travel move. The
   travel-zeroing discriminator, if the live test demands it, is
   `live_position[3]` deltas (the extruder's E position from the
   same trapq — `motion_report.steppers` carries NAMES, not
-  positions); tiny magnitudes (|v| below ~1e-9) clamp to zero
-  before the sign decision so a cancellation artifact never reads
-  "-0.00 mm³/s" (a −3.6e-15 sample was caught live). Cadence:
+  positions); flow magnitudes below the DISPLAY threshold (0.05
+  mm³/s) clamp to zero so the %.1f format never renders "-0.0"
+  (the re-review: a 1e-9 clamp sat far below where the rounding
+  problem starts). Cadence:
   Velocity and Flow ride the core poll, Accel limit the aux poll —
   accepted, the limit only changes via SET_VELOCITY_LIMIT. The
   existing "Flow" row (extrude factor %) keeps its name and row;
   the volumetric value is a new key, not a takeover.
 - **Filament diameter (2026-09-15, round-1 corrected):** no new
-  lane — the plugin already fetches and subscribes the whole
-  configfile object (discovery every 30 s, websocket subscribe),
-  and Moonraker itself prunes `config`/`settings` from its cache
-  as "never change and can be quite large"; the read reuses what
-  is already resident. Read the TYPED path:
-  `settings.extruder.filament_diameter` is already a float with
-  defaults applied (the `config` path is the raw string). Per-tool:
-  every `[extruder*]` section is read and the ACTIVE tool's
-  diameter used, so mixed 1.75/2.85 machines read correctly per
-  tool. `filament_diameter` is a REQUIRED Klipper option, so "not
-  set" is unreachable; the reachable fallback is no extruder
-  section / config object absent → 1.75 mm. No manual override
+  lane — the plugin already fetches the whole configfile object on
+  the discovery lane (every 30 s), and Moonraker itself prunes
+  `config`/`settings` from its cache as "never change and can be
+  quite large"; the read reuses what is already resident. NOTE:
+  the websocket SUBSCRIPTION can never carry settings — the
+  discovery query is the diameter's only supplier, and a printer
+  whose discovery never lands reads "—" on the Flow row. Read the
+  TYPED path: `settings.extruder.filament_diameter` is already a
+  float with defaults applied (the `config` path is the raw
+  string; settings reflects only options Klipper actually READ —
+  filament_diameter is read unconditionally, so it is always
+  present once the object arrives). Per-tool: every `[extruder*]`
+  section is read and the ACTIVE tool's diameter used, so mixed
+  1.75/2.85 machines read correctly per tool.
+  `filament_diameter` is a REQUIRED Klipper option, so "not set"
+  is unreachable; the reachable degradation is "—" (no numeric
+  fallback — guessing 1.75 would contradict the no-override
+  ruling). No manual override
   (the author's ruling): a wrong reading is a wrong printer.cfg,
   and an override would hide a config error that also breaks
   Klipper's own volumetric features. The harness simulator's

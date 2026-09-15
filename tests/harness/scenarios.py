@@ -822,6 +822,12 @@ SCENARIOS = [
          # caption says so.
          {"op": "assert_model", "prop": "canRestart", "value": False},
          {"op": "assert_model", "prop": "jogReason", "value": "Printer state unknown"},
+         # The RENDERED witness (the phase-6 engineering re-review's
+         # D2): the disconnected decision must hold on the real item,
+         # not only in the QML source text.
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         {"op": "item_disabled", "objectName": "moonrakerJogXPlus"},
      ]},
 
     {"id": "a10", "group": "connection",
@@ -852,8 +858,15 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"},
                                     "virtual_sdcard": {"is_active": True, "progress": 0.42, "file_size": 1048576}}},
+         # The motion ticker (4.2.0): the rows' values must MOVE, not
+         # just render — armed rates feed live_velocity and
+         # live_extruder_velocity each push while printing.
+         {"op": "sim_arm", "arms": {"motion_speed_mm_s": 60, "motion_e_mm_s": 0.8}},
          {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 15},
          {"op": "wait_model", "prop": "monitorProgress", "contains": "4", "budget": 15},
+         {"op": "wait_model", "prop": "monitorVelocity", "value": "60.0 mm/s", "budget": 15},
+         {"op": "wait_model", "prop": "monitorFlowRate", "value": "1.9 mm³/s", "budget": 15},
+         {"op": "wait_model", "prop": "monitorAccelLimit", "value": "5000 mm/s²", "budget": 15},
      ]},
     {"id": "b3", "group": "status", "name": "paused renders its state word",
      "steps": [
@@ -1145,9 +1158,12 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
          {"op": "wait_rect", "objectName": "toolheadStatusCaption", "budget": 30},
-         {"op": "item_disabled", "objectName": "moonrakerJogXPlus"},
+         # The model-level polls settle the state first — the
+         # rendered check then reads a frame that has already
+         # published the denial (the re-review's D4 ordering).
          {"op": "assert_model", "prop": "jogReason", "contains": "pause first", "budget": 10},
          {"op": "assert_model", "prop": "canRestart", "value": False, "budget": 10},
+         {"op": "item_disabled", "objectName": "moonrakerJogXPlus"},
          {"op": "exec_slot", "slot": "pausePrint", "args": []},
          {"op": "sim_ledger", "needle": "print/pause", "method": "POST", "min": 1, "budget": 20},
          {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 15},
@@ -1496,6 +1512,8 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 30},
          {"op": "exec_code", "verbs": ['setProperty'], "code": SCROLL_CONTROLS},
          {"op": "wait_rect", "objectName": "moonrakerFirmwareRestart", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerHostRestart", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerKlipperRestart", "budget": 30},
          {"op": "emit_click", "text": "Firmware restart"},
          {"op": "sim_ledger", "needle": "firmware_restart", "field": "path", "min": 1, "budget": 20},
          {"op": "sim_ledger", "needle": "printer.objects.subscribe", "field": "path", "min": 1, "budget": 40},

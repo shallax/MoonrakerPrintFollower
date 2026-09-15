@@ -2348,7 +2348,7 @@ Component {
                                     UM.TooltipArea {
                                         anchors.fill: parent
                                         acceptedButtons: Qt.NoButton
-                                        text: root.printer != null && root.printer.monitorFlowRate !== "—" ? "The commanded volumetric flow — Klipper's live extruder velocity × the filament cross-section. Uses printer.cfg's filament_diameter for the active tool (" + root.printer.monitorFlowDiameter + "). Pressure advance is excluded, the value can lag during travel moves, and a negative reading while retracting is correct." : ""
+                                        text: root.printer != null && root.printer.monitorFlowRate !== "—" ? "The commanded volumetric flow — Klipper's live extruder velocity × the filament cross-section. Uses printer.cfg's filament_diameter for the active tool (" + root.printer.monitorFlowDiameter + "). Pressure advance is excluded, the value can lag for up to 30 seconds after the last extrusion, and a negative reading while retracting is correct." : ""
                                     }
                                 }
                                 UM.Label {
@@ -2523,8 +2523,14 @@ Component {
                                             // NO-REFLOW RULE: the button
                                             // never disappears — it
                                             // disables when the object
-                                            // cannot be excluded.
-                                            enabled: root.printer != null && root.printer.monitorConnected && !root.printer.actionBusy && root.printer.printActive && !modelData.excluded
+                                            // cannot be excluded. The
+                                            // section-level denial joins
+                                            // the gate (4.2.0, the
+                                            // adversarial round's H2): a
+                                            // locked pane must not offer
+                                            // an action the policy
+                                            // refuses.
+                                            enabled: root.printer != null && root.printer.monitorConnected && !root.printer.actionBusy && root.printer.printActive && root.printer.sectionReason === "" && !modelData.excluded
                                             text: "Exclude"
                                             onClicked: {
                                                 excludeObjectDialog.targetName = modelData.name;

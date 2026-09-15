@@ -298,6 +298,10 @@ class MonitorData(QObject):
             self._console_seed = None
             self._console_entries = []
             self._clear()
+            # The rebuild runs AFTER the latch reset so the record
+            # never holds a stale 'no' while the tri-state already
+            # reads 'unknown' (the adversarial round's L7).
+            self._rebuild_observation()
             self.invalidated.emit()
             self.changed.emit()
         else:
@@ -305,6 +309,7 @@ class MonitorData(QObject):
             for timer in self._timers.values(): timer.start()
             self.observe(self._client.status)
             self.refresh_all()
+            self._rebuild_observation()
 
     def _intervals(self):
         configured = {

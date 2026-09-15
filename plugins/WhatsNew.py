@@ -33,11 +33,13 @@ WHATS_NEW: Tuple[dict, ...] = (
         "items": (
             "Three new readouts on the Monitor card: Velocity, the acceleration "
             "limit Klipper has configured, and the Flow rate in mm³/s — like "
-            "Position they read a dash until Klipper reports them.",
+            "Position they read a dash until their values arrive (Flow rate "
+            "also waits for the printer.cfg diameter).",
             "Flow rate is the commanded volumetric flow — Klipper's own live "
             "extruder velocity times the filament cross-section from your "
             "printer.cfg diameter. A retraction reads negative, which is "
-            "correct, and the number can lag during a travel move.",
+            "correct, and the number can lag for up to half a minute after "
+            "the last extrusion.",
             "The filament diameter is read from printer.cfg for the tool in "
             "use, so a mixed 1.75 mm / 2.85 mm machine reads correctly. "
             "There is no override: a wrong diameter is a printer.cfg error.",

@@ -39,7 +39,6 @@ from .ToolheadPolicy import (
     extrude_distance_ok,
     extrude_speed_ok,
     jog_distance_ok,
-    jog_gate,
     make_extrude_op,
     make_home_op,
     make_jog_op,
@@ -372,7 +371,14 @@ class ToolheadController(QObject):
             self._pumping = False
 
     def _pump_dispatch(self):
-        gate = jog_gate(self._state())
+        # The dispatch gate is the SAME row the click gate publishes
+        # (the adversarial round's H1): the old jog_gate derivation
+        # was lock-blind — a move queued before the padlock went down
+        # dispatched after it. One derivation, both edges.
+        observation = getattr(self._data, "observation", None)
+        verdict = can_jog(observation) if observation is not None \
+            else Verdict("disabled", R_UNKNOWN)
+        gate = verdict.mode
         if not self._pending:
             self._pause_waiting = self._pause_in_flight = self._draining = False
             self._deadline.stop()

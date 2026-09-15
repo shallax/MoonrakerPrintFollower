@@ -24,7 +24,8 @@ now say why.
   the printer.cfg diameter (per tool, so a mixed 1.75 mm / 2.85 mm
   machine reads correctly; no override — a wrong diameter is a
   printer.cfg error). A retraction reads negative, which is correct,
-  and the number can lag during a travel move.
+  and the number can lag for up to 30 seconds after the last
+  extrusion.
 - **Disabled controls say why** — every permission now comes from
   one policy table: disconnected, unknown, locked and print-running
   states each carry a concise reason on the toolhead's status line
