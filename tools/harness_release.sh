@@ -227,7 +227,35 @@ UNITS_LIST
     done
 fi
 
-if [ "$fail" != 0 ] || [ "$hang" != 0 ]; then
+# The coverage EXECUTION check (workstream 4): the map's membership
+# is not enough — every mapped surface's scenario must have run in
+# this matrix's evidence, and every objectName'd item mapped to a
+# scenario must be addressed by one of its steps. A matrix whose
+# evidence never names a mapped control is an overclaim, not
+# coverage.
+coverage_failures=$(python3 - "$RUN_ROOT" <<'PYEOF'
+import glob
+import json
+import os
+import sys
+
+root = sys.argv[1]
+sys.path.insert(0, os.path.join(os.getcwd(), "tests", "harness"))
+from surface_coverage import check_evidence  # noqa: E402
+from scenario_map import PREFIX_RULES, SCENARIO_MAP  # noqa: E402
+
+steps = []
+for path in glob.glob(os.path.join(root, "*", "*", "evidence.json")):
+    with open(path, encoding="utf-8") as handle:
+        steps.extend(json.load(handle).get("steps", ()))
+for failure in check_evidence(SCENARIO_MAP, PREFIX_RULES, steps):
+    print("ui_test: COVERAGE", failure)
+PYEOF
+)
+if [ -n "$coverage_failures" ]; then
+    echo "$coverage_failures"
+fi
+if [ "$fail" != 0 ] || [ "$hang" != 0 ] || [ -n "$coverage_failures" ]; then
     echo "ui release gate FAILED (run root: $RUN_ROOT)"
     exit 1
 fi

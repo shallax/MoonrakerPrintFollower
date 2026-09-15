@@ -575,6 +575,20 @@ SCENE_PROBE = (
     "        result[\"children\"].append({\"err\": repr(exc)[:60]})\n"
     "result")
 
+VERDICT_SCAN = (
+    "window = _main_window()\n"
+    "hits = []\n"
+    "for item in _walk(window.contentItem()):\n"
+    "    try:\n"
+    "        label = item.property(\"text\")\n"
+    "    except Exception:\n"
+    "        label = None\n"
+    "    if isinstance(label, str) and (\"reported an error\" in label or \"did not begin printing\" in label):\n"
+    "        hits.append(label[:90])\n"
+    "result = hits\n"
+)
+
+
 E_STOP_SEQUENCE = (
     "from UM.Application import Application\n"
     "app = Application.getInstance()\n"
@@ -1043,7 +1057,14 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         # Every jog button takes a real press (the map names all six;
+         # one representative press overclaimed the pad).
          {"op": "deliver_click", "objectName": "moonrakerJogXPlus"},
+         {"op": "deliver_click", "objectName": "moonrakerJogXMinus"},
+         {"op": "deliver_click", "objectName": "moonrakerJogYPlus"},
+         {"op": "deliver_click", "objectName": "moonrakerJogYMinus"},
+         {"op": "deliver_click", "objectName": "moonrakerJogZPlus"},
+         {"op": "deliver_click", "objectName": "moonrakerJogZMinus"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
     {"id": "g2", "group": "motion", "name": "home and the mesh actions reach the peer",
@@ -1051,7 +1072,11 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerHomeX", "budget": 30},
+         # All three home buttons take a real press (the map names
+         # all three).
          {"op": "deliver_click", "objectName": "moonrakerHomeX"},
+         {"op": "deliver_click", "objectName": "moonrakerHomeY"},
+         {"op": "deliver_click", "objectName": "moonrakerHomeZ"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
     {"id": "g3", "group": "motion", "name": "the abs/rel toggle rides the command lane",
@@ -1621,6 +1646,40 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 30},
          {"op": "wait_seconds", "seconds": 2},
          {"op": "exec_code", "verbs": [], "code": FM_BUTTON_PROBE},
+     ]},
+    # The red run (the acceptance's red-run proof): the broken-start
+    # journey against a printer that stays broken — the failure
+    # verdict window must fire, recorded as the expected red.
+    {"id": "z14", "group": "probe",
+     "name": "the red run — a broken start fires the honest failure verdict (expected red)",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "click_text", "text": "File manager"},
+         {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
+         {"op": "sim_arm", "arms": {"cold_start": True, "extruder_ramp_deg_s": 30.0,
+                                    "broken_start": True}},
+         {"op": "exec_file_slot", "slot": "fileRequestPrint", "args": ["scenario1.gcode"]},
+         {"op": "deliver_click", "objectName": "printConfirmStartButton"},
+         {"op": "sim_ledger", "needle": "print/start", "method": "POST", "min": 1, "budget": 20},
+         {"op": "wait_sim", "path": "print_stats.state", "value": "error", "budget": 20},
+         {"op": "wait_exec", "code": VERDICT_SCAN,
+          "contains": "reported an error", "budget": 40, "expect_red": True},
+         {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
+     ]},
+    # The overlay half of the four-part criterion: the delete dialog's
+    # dimmer covers the pane, so a press aimed at the search box must
+    # resolve but be refused — while the dialog's own verbs still
+    # accept (the criterion's control).
+    {"id": "z15", "group": "probe",
+     "name": "the overlay half of the proof — a dimmer refuses a press aimed at a covered control",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "click_text", "text": "File manager"},
+         {"op": "sim_ledger", "needle": "files/directory", "field": "path", "min": 1, "budget": 20},
+         {"op": "exec_file_slot", "slot": "fileRequestDeleteFile", "args": ["delete-me.gcode"]},
+         {"op": "deliver_click", "objectName": "moonrakerFileSearch", "expect": "not_accepted"},
+         {"op": "deliver_click", "objectName": "deleteConfirmDeleteButton"},
+         {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
      ]},
     # The visible-interactions proof pair: the phase-0 evidence that a
     # real press/release lands — accepted by the item under the aim,

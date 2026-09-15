@@ -1,10 +1,11 @@
 """The surface→scenario map (coverage.py's check consumes this).
 
-Values are scenario ids: ``gate-N`` (the release-gate scenarios) or
-the suite spec ids in scenarios.py (``a1``..``j4``). ``_prefix_rules``
-cover whole families with one rule; ``_exclusions`` are justified
-surfaces the unit/Qt suites already own (the design allows an
-explicit, justified exclusion and nothing else).
+Values are the suite spec ids in scenarios.py (``a1``..``z14``).
+``PREFIX_RULES`` cover whole families with one rule; ``EXCLUSIONS``
+are justified surfaces the unit/Qt suites already own or the probe
+evidence defers (the design allows an explicit, justified exclusion
+and nothing else) — each entry carries reason/evidence/date/recheck
+under the workstream-4 schema.
 """
 from __future__ import annotations
 
@@ -33,9 +34,9 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.clearBedMesh": "g2",
     "MoonrakerMonitorModel.clearConsoleHistory": "d3",
     "MoonrakerMonitorModel.clearZOffset": "g4",
-    "MoonrakerMonitorModel.emergencyHoldReleased": "gate-10",
-    "MoonrakerMonitorModel.emergencyHoldStarted": "gate-10",
-    "MoonrakerMonitorModel.emergencyStopClick": "gate-10",
+    "MoonrakerMonitorModel.emergencyHoldReleased": "s7",
+    "MoonrakerMonitorModel.emergencyHoldStarted": "s7",
+    "MoonrakerMonitorModel.emergencyStopClick": "s7",
     "MoonrakerMonitorModel.excludeObject": "b11",
     "MoonrakerMonitorModel.extrude": "g4",
     "MoonrakerMonitorModel.firmwareRestart": "g9b",
@@ -109,32 +110,20 @@ SCENARIO_MAP = {
     "moonrakerJogYPlus": "g1", "moonrakerJogYMinus": "g1",
     "moonrakerJogZPlus": "g1", "moonrakerJogZMinus": "g1",
     "moonrakerHomeX": "g2", "moonrakerHomeY": "g2", "moonrakerHomeZ": "g2",
-    "moonrakerLockButton": "g8",
-    "moonrakerEmergencyButton": "gate-10",
     "moonrakerConsoleInput": "d1", "moonrakerConsoleSend": "d1",
-    "moonrakerM117Slot": "gate-3",
-    "moonrakerPreviewCard": "h3",
+    "moonrakerM117Slot": "s6",
+    "moonrakerPreviewCard": "v1",
     "moonrakerPreviewCardPanel": "z9",
     "moonrakerPreviewCardOverlay": "z9",
-    "moonrakerPreviewCardPanelHost": "v1",
     "moonrakerPreviewCardOverlayHost": "z9",
-    "consoleResizeHandle": "d5", "consoleResizeArea": "d5",
-    "infoPanel": "b1", "statusPanel": "b1",
-    "cameraViewport": "e1", "cameraControls": "e2",
+    "infoPanel": "v4", "statusPanel": "v4",
     "loadIndicatorContent": "h2",
-    "printConfirmDialog": "f6", "slicerPopup": "f1", "modifiedPopup": "f1",
-    # The dialog verbs (the round-2 H3 naming pass): each maps to the
-    # scenario that opens its dialog today. The createFolder verbs
-    # are excluded below — no scenario opens that dialog yet; its
-    # round lands with the deferred panel scenarios.
-    "printConfirmStartButton": "f6", "printConfirmCancelButton": "f6",
-    "fileManagerCloseButton": "f1",
-    "deleteConfirmDeleteButton": "f3", "deleteConfirmCancelButton": "f3",
-    "renameConfirmButton": "f7", "renameConfirmCancelButton": "f7",
-    "uploadConfirmOverwriteButton": "f2", "uploadConfirmCancelButton": "f2",
-    "uploadProgressCloseButton": "f2",
-    "printTimePopup": "f1", "columnsPopup": "f1", "pageSizePopup": "f1",
-    "gridHeader": "f1", "gridVertical": "f1", "columnResizeHandle": "f1",
+    # The dialog verbs (the round-2 H3 naming pass): the CONFIRM
+    # verbs are really pressed by their scenarios; the cancel verbs
+    # and the chrome ride the deferred popup round (excluded below).
+    "printConfirmStartButton": "f6",
+    "deleteConfirmDeleteButton": "f3",
+    "renameConfirmButton": "f7",
     # The protocol endpoints: the simulator's contract test owns the
     # wire shapes; the scenarios drive them through the real UI.
     "status_endpoint": "b1", "websocket_endpoint": "a1",
@@ -169,7 +158,7 @@ PREFIX_RULES = [
     ("key", "mcu", "c4"),
     ("key", "macro", "g5"),
     ("key", "powerDevices", "g9"),
-    ("key", "emergency", "gate-10"),
+    ("key", "emergency", "s7"),
     ("key", "controls", "g8"),
     ("key", "infoCollapsed", "d5"),
     ("key", "statusCollapsed", "d5"),
@@ -213,24 +202,219 @@ PREFIX_RULES = [
     ("key", "canRunSetup", "i2"),
 ]
 
+# The exclusion schema (the panel's workstream-4 ruling): an
+# exclusion is a NAMED surface with its reason, the evidence that
+# justified it, the date it was taken, and the condition that
+# re-opens it. `check()` treats the names as covered; the schema
+# fields are validated by test_coverage.py. An entry whose re-check
+# trigger fires must be re-probed, not carried forward silently.
 EXCLUSIONS = {
     # British-spelling formatting is a pure function of the locale —
     # unit-tested in test_monitor, invisible to scenarios.
-    "britishSpelling": "unit-tested: test_monitor.py (locale formatting)",
+    "britishSpelling": {
+        "reason": "locale formatting, a pure function",
+        "evidence": "unit-tested in test_monitor.py",
+        "date": "2026-09-15",
+        "recheck": "the formatting moves out of a pure function",
+    },
     # The console's resize GESTURE: no synthetic drag drives a QML
     # MouseArea's grab under Xvfb (QTest moves carry no button state,
     # injected moves never register as position changes). The commit
     # handler's model call is covered by d5 via setConsoleHeight; the
     # gesture itself stays unit/QML-covered.
-    "consoleResizeHandle": "d5 covers the commit via setConsoleHeight; the synthetic drag cannot drive a QML MouseArea grab",
-    "consoleResizeArea": "d5 covers the commit via setConsoleHeight; the synthetic drag cannot drive a QML MouseArea grab",
+    "consoleResizeHandle": {
+        "reason": "the synthetic drag cannot drive a QML MouseArea grab under Xvfb",
+        "evidence": "d5 covers the commit via setConsoleHeight; the phase-0 drag probe",
+        "date": "2026-09-15",
+        "recheck": "a drag primitive that carries button state lands",
+    },
+    "consoleResizeArea": {
+        "reason": "the synthetic drag cannot drive a QML MouseArea grab under Xvfb",
+        "evidence": "d5 covers the commit via setConsoleHeight; the phase-0 drag probe",
+        "date": "2026-09-15",
+        "recheck": "a drag primitive that carries button state lands",
+    },
     # The lock button's position inside the Loader-built dashboard is
     # unreachable by the harness's item walk on every boot; g8 covers
     # the lock's model path via setControlsLocked in both directions.
-    "moonrakerLockButton": "g8 covers the lock via setControlsLocked; the button is unreachable in the Loader-built dashboard",
+    "moonrakerLockButton": {
+        "reason": "unreachable in the Loader-built dashboard",
+        "evidence": "g8 covers the lock via setControlsLocked; the visual group's walk dumps",
+        "date": "2026-09-15",
+        "recheck": "the dashboard's construction changes",
+    },
     # The create-folder dialog: no scenario opens it yet — its
     # scenario lands with the deferred panel round (2026-09-15),
     # which converts this exclusion into map entries.
-    "createFolderCreateButton": "no scenario opens the create-folder dialog yet (deferred panel round, 2026-09-15)",
-    "createFolderCancelButton": "no scenario opens the create-folder dialog yet (deferred panel round, 2026-09-15)",
+    "createFolderCreateButton": {
+        "reason": "no scenario opens the create-folder dialog yet",
+        "evidence": "the deferred panel round (recorded in ROADMAP 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred panel scenarios land",
+    },
+    "createFolderCancelButton": {
+        "reason": "no scenario opens the create-folder dialog yet",
+        "evidence": "the deferred panel round (recorded in ROADMAP 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred panel scenarios land",
+    },
+    # The settings dialog: the machine-action manager exposes no
+    # public show/activate API (the z12 probe's dump), and the
+    # dialog's items are absent from the main-window walk when
+    # unopened. The i-group carries the action's handlers over the
+    # real transport; the dialog itself is a named exclusion.
+    "settingsDialog": {
+        "reason": "no public API opens the machine-settings dialog; its items are outside the walk",
+        "evidence": "the z12 probe (empty actions, absent walk items) — DECISIONS 4.1.0",
+        "date": "2026-09-15",
+        "recheck": "a public API to open the dialog is found, or Cura's stage walk changes",
+    },
+    # The Esc ladder: a window-level Shortcut stays gated while the
+    # FM popup is open, and key_press targets the main window only —
+    # an Esc scenario would need popup-window key routing first.
+    "escLadder": {
+        "reason": "key_press addresses the main window; the popup's window-level Esc routing is unbuilt",
+        "evidence": "f1's unverified Esc (the slot-close replacement) — DECISIONS 4.1.0",
+        "date": "2026-09-15",
+        "recheck": "key_press gains popup-window addressing",
+    },
+    # The file rows' context-menu MouseArea is a SIBLING of the name
+    # label — a real press aimed at the row grabs the row's
+    # background rectangle, never the menu trigger. The requests stay
+    # declared slots; the menu's actions are the dialog scenarios.
+    "rowContextMenu": {
+        "reason": "the context-menu MouseArea is a sibling of the name label — not addressable",
+        "evidence": "the f3/f6 probe dumps (the menu trigger never grabbed)",
+        "date": "2026-09-15",
+        "recheck": "the row layout moves the MouseArea onto the label",
+    },
+    # The FM popup renders in its own QQuickWindow; the named verbs
+    # inside it land (the f-group presses), but the popup's chrome
+    # (its own close/decoration) has no objectNames yet.
+    "popupChrome": {
+        "reason": "the popup window's own chrome carries no objectNames",
+        "evidence": "f1 closes via the model slot; the named-verb presses in f3/f5/f6/f7",
+        "date": "2026-09-15",
+        "recheck": "the popup chrome gains objectNames",
+    },
+    "printConfirmDialog": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "printConfirmCancelButton": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "slicerPopup": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "modifiedPopup": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "fileManagerCloseButton": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "deleteConfirmCancelButton": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "renameConfirmCancelButton": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "uploadConfirmOverwriteButton": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "uploadConfirmCancelButton": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "uploadProgressCloseButton": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "printTimePopup": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "columnsPopup": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "pageSizePopup": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "gridHeader": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "gridVertical": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "columnResizeHandle": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "moonrakerPreviewCardPanelHost": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "cameraViewport": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "cameraControls": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "moonrakerEmergencyButton": {
+        "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
+        "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
 }
