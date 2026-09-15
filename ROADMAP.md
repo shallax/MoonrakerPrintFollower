@@ -1149,10 +1149,10 @@ them. Recorded deferrals, with their evidence: the Information-pane
 round, the deferred panel scenarios, the lifecycle priorities 5/7
 (the simulator arms exist; priority 3 lives in the deterministic
 suite), the popup chrome and cancel verbs, the emit-family
-conversion. The performance record: 945 s serial against 532 s
-parallel (1.8x, the four-batch timeline), the per-unit wall clocks
-landing in every unit log, and the F06 before/after on the 400-file
-listing (9→1 pipeline evaluations per publish, 90→0 per ten ticks,
+conversion. The performance record, measured on the final tree: 1056 s serial
+against 415 s parallel (2.5x — the earlier 945 s/532 s were the
+pre-reconciliation baselines), the per-unit wall clocks landing in
+every unit log, and the F06 before/after on the 400-file listing (9→1 pipeline evaluations per publish, 90→0 per ten ticks,
 4.86→1.57 ms cold / 4.76→0.025 ms warm publish latency).
 
 ### The suite's origin (the 4.0.0 record, kept for history)
