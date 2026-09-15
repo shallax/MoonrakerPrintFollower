@@ -178,7 +178,9 @@ session reset (the startup proof and the structured subscribe refusal are
 the two triggers). An unchanged interval is not
 written back to an active QTimer, because that would restart it and starve slower
 polls. Full Klipper configuration is discovered separately; auxiliary polling asks
-only for volatile SAVE_CONFIG fields.
+for the whole wanted objects — configfile narrowed to the volatile
+SAVE_CONFIG fields — so `toolhead`'s accel ceiling rides the same lane
+(4.2.0's Accel limit row).
 
 Periodic core ticks skip overlapping requests. Forced refreshes coalesce into at
 most one follow-up, but never bypass failure backoff. Queued refreshes and completion
@@ -282,6 +284,10 @@ carries a `job_id` is cross-checked against the newest `server/history/list`
 row over the HTTP lane before it latches. Content identity keys on
 `(size, modified)` — Moonraker's `uuid` is a fresh random per extraction and
 `filename` is an echo of the request, so neither is identity.
+`RemoteFileService.request_metadata_only` (4.2.0) is the service-side
+identity-neutral fetch — the job lane's identity and cache stay untouched
+on success AND failure (the 4.0.2 hazard); the coordinator's adoption of
+it, retiring this fallback cache, lands in 4.3.0.
 Failed downloads retry on their own backoff ladder, driven by consumer
 re-requests; a failed layer hydration is latched until a new file arrives
 or the index is rebuilt, so a broken file is never re-read in full on every
@@ -342,9 +348,11 @@ lifetimes. Macro argument parsing is cached until static configuration changes.
 Camera selection is persisted through the public configuration operation.
 
 Manual toolhead control is pure policy plus one queue owner: `ToolheadPolicy`
-generates every G-code string, classifies the print state (disabled in
-unknown/error states, allowed while idle or paused) and coalesces
-adjacent same-axis jog taps. The motion controls are exposed only when
+generates every G-code string and classifies the print state at DISPATCH
+(disabled in unknown states, allowed while idle, paused or error — error
+unlocks recovery moves) and coalesces adjacent same-axis jog taps; the
+CLICK-time gate is `MonitorPermissions.can_jog` (4.2.0), the same mapping
+plus the fail-closed prelude. The motion controls are exposed only when
 moves are immediately allowed — while printing the user must pause
 explicitly first. `ToolheadController` owns the pending queue and the
 pause-first safety net: anything queued while the state was allowed drops
@@ -371,21 +379,37 @@ disconnected every control disables (the emergency stop included);
 the console keeps the transcript readable — scroll, select and copy
 work in a greyed well, only input and Send/Clear disable; the camera
 veils; and the connection dot plus the console's `#` notes mark the
-transitions.
+transitions. The permission policy (4.2.0) is one pure table:
+`MonitorPermissions` rules every action over a frozen observation
+record assembled once in `MonitorData` — the tri-state connection
+(unknown/yes/no), the print state, homing, the controls lock, the
+command lane's busy flag, `save_config_pending` and the e-stop
+assumption `assumed_stopped` (the ONE case where the plugin must not
+trust the last poll: the client rewrites the emitted state to
+cancelled and the table sees the assumption itself). Unknown fails
+closed with a reason; the reason strings and the caption sentences
+live in the policy, never in QML. The websocket carries ZERO
+mutating RPCs — every mutation rides HTTP; the socket is an
+observation feed in fact, not just by policy.
 
 The Monitor's three panes and their accordion sections are presentation
 owned by the model's published state: the expanded-section map, the pane
-collapse flags and the lock toggle live in the model, persisted through
-the plugin-owned JSON state file, and QML binds to them through declared
-properties and setter slots. The temperature history follows the same
-split: `MonitorTemperatureHistory` keeps the bounded per-sensor ring
-buffers and chart projection pure, and the model feeds them from the
-auxiliary poll — once per auxiliary reply, never per publish. The chart
-config (sensor visibility, colours, target/power toggles) persists per
-printer in the `PrinterConfig` record because sensor names differ
-between machines; the plugin-owned JSON state file keeps the chrome
-only (expanded-section map, pane collapse, controls lock), and a legacy
-global chart block migrates into the per-printer record once.
+collapse flags and the lock toggle live in the model as VALUES, and the
+FILE is owned by the `StateStore` (4.2.0) — a read-modify-write merge so
+foreign keys survive (4.3.0's UI-state store consumes the same file),
+with rate-limited failure notes through the console. QML binds to the
+model through declared properties and setter slots. The temperature
+history follows the same split: `MonitorTemperatureHistory` keeps the
+bounded per-sensor ring buffers and chart projection pure, and the
+model feeds them from the auxiliary poll — once per auxiliary reply,
+never per publish. The chart config (sensor visibility, colours,
+target/power toggles) persists per printer in the `PrinterConfig`
+record because sensor names differ between machines; the plugin-owned
+JSON state file keeps the chrome (expanded-section map, pane collapse,
+controls lock, the console height, the what's-new marker, the file
+manager's column config and the toolhead's jog/extrude selection), and
+a legacy global chart block migrates into the per-printer record once
+via the store's one deliberate replace-write.
 
 The console sends on its own request path: `printer/gcode/script`
 replies only after Klipper processes the script, and that reply's
@@ -446,8 +470,9 @@ an earlier write's terminal notification.
   the Qt tick/writes in `PreviewMotion`; never let displayed state feed back
   into physical observations.
 - New controls: add policy to a focused controller and declare the Qt property/slot
-  (toolhead control keeps script text and safety gates pure in `ToolheadPolicy`;
-  the controller owns the queue and pause sequencing).
+  (toolhead control keeps script text pure in `ToolheadPolicy`; the click-time
+  gate lives in `MonitorPermissions.can_jog` and the dispatch gate still reads
+  `ToolheadPolicy.jog_gate`; the controller owns the queue and pause sequencing).
 - New file operations: consume `FileLease`, never infer lifetime from Preview flags.
 - New index work: use the bounded index owner and generation-valid publication.
 - New Cura APIs: isolate them in Cura integration/presentation or the writer adapter.

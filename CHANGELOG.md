@@ -2,6 +2,61 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.2.0
+
+Version 4.2.0 is the printer-state release: three live motion
+readouts join the Monitor card, and every control's permission now
+comes from one policy table that says why.
+
+- **The motion cluster.** Velocity (Klipper's scalar `live_velocity`
+  magnitude), Accel limit (the effective `toolhead.max_accel` — no
+  instantaneous acceleration exists in Klipper) and Flow rate
+  (COMMANDED volumetric flow: `live_extruder_velocity` × π·(d/2)²,
+  signed — retractions read negative, tiny cancellation artifacts
+  clamp to zero). The filament diameter reads per tool from the
+  typed `configfile.settings` already resident in the snapshot;
+  there is deliberately no override — a wrong reading is a wrong
+  printer.cfg. The multiplier row is renamed "Speed factor" so the
+  live row can take Velocity. Rows read 0 at idle and "—" only
+  without a `motion_report` object; the mid-travel trapq history
+  staleness is labelled in the tooltip.
+- **One permission policy.** `MonitorPermissions`: pure functions
+  over a frozen observation record (assembled once in `MonitorData`,
+  with the tri-state connection — unknown/yes/no — as a client-layer
+  prerequisite) ruling `can_jog`, per-device `can_power`,
+  `can_restart`, `can_start_print`, `can_macro`, `can_exclude`,
+  `can_z_offset` and `can_set_absolute`, each denial carrying a
+  concise reason. Unknown fails closed with a reason; not-homed
+  stays allowed for jog and print-start; observed error allows
+  recovery moves; the e-stop assumption (`assumed_stopped`) rides
+  the record while the shipped guard-release behaviour stands. The
+  shipped `jogEnabled` stays as a projection of `can_jog`.
+- **Disabled controls say why.** The toolhead status caption is the
+  policy's short form (the reason, the pause-first warning, the
+  paused note) with the full sentence in the tooltip; the restart
+  buttons gate on `canRestart` and carry the reason.
+- **Dispatch-time revalidation.** Queued one-shots carry their
+  permission rule and re-check at dispatch — a restart clicked
+  while idle can no longer fire up to 30 s later against a print
+  another client started; denied entries drop with the reason.
+  Print-start re-checks at confirm time (the dialog button keeps an
+  honest live binding); the autonomous scheduled-pause re-checks an
+  observed print before posting.
+- **The state store.** `StateStore` owns the Monitor's persisted
+  chrome: read-modify-write merges preserve the file's foreign keys
+  for 4.3.0's UI-state store, the one-time chart migration keeps its
+  deliberate replace, and persistence failures report once per
+  session through the console instead of vanishing. The
+  identity-neutral metadata-only fetch (`request_metadata_only`)
+  ships; the print-start owner's extraction and the coordinator's
+  adoption of the metadata service defer to 4.3.0 (recorded in the
+  roadmap).
+- **The harness grew the same teeth.** The simulator is
+  field-faithful (object sets and field lists honoured on all three
+  lanes); the fixtures carry the motion/toolhead/configfile shapes;
+  the motion ticker arm drives the rows; the policy gates are pinned
+  by model assertions and the rendered `item_disabled` step.
+
 ## 4.1.0
 
 Version 4.1.0 is the deep-harness-coverage release: the real-Cura
