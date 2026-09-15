@@ -26,29 +26,27 @@ Component {
         property bool cameraConfigured: false
 
         // The camera image's visible AND source are applied
-        // IMPERATIVELY here: bindings on this dynamically created
+        // IMPERATIVELY: bindings on this dynamically created
         // document do not reliably re-evaluate when the model's
         // camera values land (the first-entry stream never
         // starting — the refresh button worked because its nonce
         // bump is the one path that provably re-drives the image on
         // their machine). The model bumps the nonce on the first URL
         // transition too, so the first entry now rides that same
-        // proven path.
+        // proven path. The URL is built here; CameraPane applies it.
         function updateCameraImage() {
             var configured = printer != null && printer.cameraUrl != null && printer.cameraUrl.toString().length > 0;
             if (cameraConfigured !== configured) {
                 cameraConfigured = configured;
             }
+            var url = "";
             if (configured) {
-                var url = printer.cameraUrl;
+                url = printer.cameraUrl;
                 if (printer.cameraRefreshNonce > 0) {
                     url = url.toString() + (url.toString().indexOf("?") >= 0 ? "&" : "?") + "mpf_reload=" + printer.cameraRefreshNonce;
                 }
-                cameraImage.source = url;
-            } else {
-                cameraImage.source = "";
             }
-            cameraImage.visible = configured;
+            cameraPane.applyCamera(url, configured);
         }
 
         Component.onCompleted: updateCameraImage()
@@ -225,7 +223,7 @@ Component {
         // holds, and the dead zone between the two prevents
         // flapping. Both thresholds come from the same fixed
         // constant, never from the post-collapse layout.
-        property bool webcamSqueezed: cameraViewport.width > 0 && cameraViewport.width < 220 * screenScaleFactor
+        property bool webcamSqueezed: cameraPane.viewportWidth > 0 && cameraPane.viewportWidth < 220 * screenScaleFactor
         property bool infoAutoCollapsed: false
         onWebcamSqueezedChanged: {
             if (webcamSqueezed && !root.infoPersistedCollapsed) {
@@ -620,8 +618,8 @@ Component {
                     anchors.fill: parent
                     spacing: UM.Theme.getSize("default_margin").height
 
-                    Cura.RoundedRectangle {
-                        id: cameraPanel
+                    CameraPane {
+                        id: cameraPane
                         Layout.fillWidth: true
                         // The webcam card ALWAYS fills: the layout
                         // allocates the console's capped preferred
@@ -630,293 +628,10 @@ Component {
                         // preferred to the header row and the webcam
                         // grows into the freed space automatically.
                         Layout.fillHeight: true
-                        Layout.preferredHeight: cameraColumn.implicitHeight
+                        Layout.preferredHeight: cameraPane.contentHeight
                         Layout.minimumHeight: 0
-                        border.color: UM.Theme.getColor("lining")
-                        border.width: UM.Theme.getSize("default_lining").width
-                        color: UM.Theme.getColor("main_background")
-                        radius: UM.Theme.getSize("default_radius").width
-
-                        ColumnLayout {
-                            id: cameraColumn
-                            anchors.fill: parent
-                            spacing: 0
-
-                            UM.Label {
-                                // The pane title, in the other panes'
-                                // style — the same large bold face as
-                                // Information and Printer status (the
-                                // author's live report).
-                                text: "Webcam"
-                                font: UM.Theme.getFont("large_bold")
-                                color: UM.Theme.getColor("text")
-                                Layout.fillWidth: true
-                                Layout.topMargin: UM.Theme.getSize("default_margin").height
-                                Layout.leftMargin: UM.Theme.getSize("default_margin").width
-                            }
-
-                            Item {
-                                id: cameraViewport
-                                objectName: "cameraViewport"
-                                Layout.fillWidth: true
-                                // The camera fills the pane ONLY while the
-                                // console is collapsed; expanded, the camera
-                                // fits its stream and the console (the
-                                // column's last child) absorbs the leftover
-                                // space (the rulings).
-                                // The viewport fills the webcam card: a
-                                // small stream centres inside the card, and
-                                // the card itself grows or fits with the
-                                // console's collapse state.
-                                Layout.fillHeight: true
-                                Layout.margins: UM.Theme.getSize("default_margin").width
-
-                                UM.Label {
-                                    anchors.centerIn: parent
-                                    // "Not configured" and "offline" are
-                                    // different states: a configured webcam is
-                                    // merely unreachable while Moonraker is
-                                    // down, and must not read as missing.
-                                    visible: !root.cameraConfigured && (root.printer == null || root.printer.webcamNames.length === 0)
-                                    text: "No webcam configured in Moonraker"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    font: UM.Theme.getFont("default")
-                                }
-
-                                UM.Label {
-                                    anchors.centerIn: parent
-                                    visible: !root.cameraConfigured && root.printer != null && root.printer.webcamNames.length > 0
-                                    text: "Camera offline — reconnecting to Moonraker…"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    font: UM.Theme.getFont("default")
-                                }
-
-                                Cura.NetworkMJPGImage {
-                                    id: cameraImage
-                                    // visible and source are owned by the
-                                    // root's updateCameraImage() — no
-                                    // bindings here to go stale.
-                                    rotation: root.printer != null ? root.printer.cameraRotation : 0
-                                    anchors.centerIn: parent
-
-                                    property bool imageRotated: rotation === 90 || rotation === 270
-                                    property real maxViewWidth: cameraViewport.width
-                                    property real maxViewHeight: cameraViewport.height
-                                    property real fitScale: {
-                                        if (imageWidth <= 0 || imageHeight <= 0) {
-                                            return 1;
-                                        }
-                                        if (imageRotated) {
-                                            return Math.min(maxViewWidth / imageHeight, maxViewHeight / imageWidth);
-                                        }
-                                        return Math.min(maxViewWidth / imageWidth, maxViewHeight / imageHeight);
-                                    }
-
-                                    width: Math.max(1, Math.floor(imageWidth * fitScale))
-                                    height: Math.max(1, Math.floor(imageHeight * fitScale))
-
-                                    transform: Scale {
-                                        origin.x: cameraImage.width / 2
-                                        origin.y: cameraImage.height / 2
-                                        xScale: root.printer != null && root.printer.cameraFlipHorizontal ? -1 : 1
-                                        yScale: root.printer != null && root.printer.cameraFlipVertical ? -1 : 1
-                                    }
-
-                                    onVisibleChanged: {
-                                        if (source !== "") {
-                                            if (visible)
-                                                start();
-                                            else
-                                                stop();
-                                        }
-                                    }
-
-                                    onSourceChanged: {
-                                        if (visible && source !== "") {
-                                            start();
-                                        }
-                                    }
-
-                                    Component.onCompleted: {
-                                        if (source !== "") {
-                                            start();
-                                        }
-                                    }
-                                }
-
-                                Timer {
-                                    // The render watchdog (the author's
-                                    // live report): a stream that
-                                    // CONNECTED but never painted a
-                                    // frame raises no error signal.
-                                    // While configured and visible, a
-                                    // frame-less image reports the
-                                    // stall every 8 s; the model's
-                                    // recovery reloads the source on
-                                    // its usual 10 s cadence, and the
-                                    // check skips once any frame has
-                                    // painted.
-                                    id: cameraStallWatchdog
-                                    interval: 8000
-                                    repeat: true
-                                    running: root.cameraConfigured && cameraImage.visible
-                                    onTriggered: {
-                                        if (cameraImage.imageWidth > 0)
-                                            return;
-                                        if (root.printer != null) {
-                                            root.printer.cameraRenderStalled();
-                                        }
-                                    }
-                                }
-
-                                Rectangle {
-                                    // A stale frame must not read as
-                                    // live: while disconnected a heavy
-                                    // neutral-grey wash and an explicit
-                                    // caption cover the camera (the
-                                    // author's live ruling; true
-                                    // per-pixel desaturation needs a
-                                    // shader Cura's Qt 5.15 line cannot
-                                    // guarantee — roadmap note). The
-                                    // webcam watchdog reuses the same
-                                    // veil while a dead stream restarts.
-                                    visible: root.cameraConfigured && (root.printer == null || !root.printer.monitorConnected || (root.printer != null && root.printer.cameraRecovering))
-                                    anchors.fill: cameraImage
-                                    color: "#c0202428"
-
-                                    UM.Label {
-                                        anchors.centerIn: parent
-                                        text: (root.printer != null && root.printer.cameraRecovering) ? "Camera recovering…" : "Camera offline"
-                                        font: UM.Theme.getFont("medium_bold")
-                                        color: "#8b949e"
-                                    }
-                                }
-
-                                Rectangle {
-                                    // A red recording dot plus "Live"
-                                    // while the stream is genuinely
-                                    // live (the request).
-                                    visible: root.cameraConfigured && root.printer != null && root.printer.monitorConnected
-                                    anchors.top: cameraImage.top
-                                    anchors.left: cameraImage.left
-                                    anchors.topMargin: UM.Theme.getSize("narrow_margin").height
-                                    anchors.leftMargin: UM.Theme.getSize("narrow_margin").height
-                                    height: 20 * screenScaleFactor
-                                    width: liveLabel.width + 20 * screenScaleFactor
-                                    radius: 10 * screenScaleFactor
-                                    color: "#99000000"
-
-                                    RowLayout {
-                                        anchors.centerIn: parent
-                                        spacing: UM.Theme.getSize("narrow_margin").width
-                                        Rectangle {
-                                            width: 8 * screenScaleFactor
-                                            height: 8 * screenScaleFactor
-                                            radius: 4 * screenScaleFactor
-                                            color: "#f85149"
-                                        }
-                                        UM.Label {
-                                            id: liveLabel
-                                            text: "Live"
-                                            color: "#ffffff"
-                                            font: UM.Theme.getFont("small")
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Camera control bar: a centred "Camera: <webcam>
-                            // <refresh>" group tucked under the feed. The dropdown
-                            // already carries the selected name, so no label repeats
-                            // it. (A plain Column ignores Layout.alignment, so the
-                            // bar must be a ColumnLayout for the centring to hold.)
-                            ColumnLayout {
-                                // No cameras, no bar: "Camera:" with an empty
-                                // dropdown and a refresh button is dead chrome
-                                // under the "No webcam configured" message.
-                                visible: root.printer != null && root.printer.webcamNames.length > 0
-                                Layout.fillWidth: true
-                                spacing: 0
-
-                                Rectangle {
-                                    width: parent.width
-                                    height: UM.Theme.getSize("default_lining").height
-                                    color: UM.Theme.getColor("lining")
-                                }
-
-                                Item {
-                                    Layout.fillWidth: true
-                                    height: cameraControls.height + 2 * UM.Theme.getSize("narrow_margin").height
-
-                                    // The author's final ruling: the
-                                    // label sits PERMANENTLY above the
-                                    // dropdown, centred, no colon — no
-                                    // conditional layouts, nothing to
-                                    // overlap the pane at any width.
-                                    ColumnLayout {
-                                        id: cameraControls
-                                        objectName: "cameraControls"
-                                        anchors.centerIn: parent
-                                        width: parent.width
-                                        spacing: 0
-
-                                        UM.Label {
-                                            Layout.alignment: Qt.AlignHCenter
-                                            text: "Camera"
-                                            font: UM.Theme.getFont("medium")
-                                            color: UM.Theme.getColor("text")
-                                        }
-
-                                        RowLayout {
-                                            Layout.alignment: Qt.AlignHCenter
-                                            // The inset keeps the combo
-                                            // from ever touching the pane
-                                            // edge at the crush (the
-                                            // author's live report).
-                                            width: Math.min(implicitWidth, parent.width - 2 * UM.Theme.getSize("narrow_margin").width)
-                                            spacing: UM.Theme.getSize("narrow_margin").width
-
-                                            Cura.ComboBox {
-                                                id: cameraSelector
-                                                visible: root.printer != null && root.printer.webcamNames.length > 1
-                                                Layout.preferredWidth: 180 * screenScaleFactor
-                                                Layout.minimumWidth: 60 * screenScaleFactor
-                                                Layout.maximumWidth: 180 * screenScaleFactor
-                                                Layout.fillWidth: true
-                                                enabled: visible
-                                                model: root.printer != null ? root.printer.webcamNames : []
-                                                currentIndex: root.printer != null ? root.printer.activeWebcamIndex : -1
-                                                onActivated: function (index) {
-                                                    if (root.printer != null) {
-                                                        root.printer.selectWebcam(index);
-                                                    }
-                                                }
-                                            }
-
-                                            UM.SimpleButton {
-                                                width: UM.Theme.getSize("small_button_icon").width
-                                                height: UM.Theme.getSize("small_button_icon").height
-                                                enabled: root.printer != null && root.printer.monitorConnected
-                                                color: UM.Theme.getColor("text_inactive")
-                                                hoverColor: UM.Theme.getColor("text")
-                                                iconSource: UM.Theme.getIcon("ArrowDoubleCircleRight")
-                                                onClicked: {
-                                                    if (root.printer != null) {
-                                                        root.printer.refreshWebcams();
-                                                    }
-                                                }
-
-                                                UM.TooltipArea {
-                                                    anchors.fill: parent
-                                                    text: "Refresh Moonraker's webcam list."
-                                                    acceptedButtons: Qt.NoButton
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        printerModel: root.printer
+                        configured: root.cameraConfigured
                     }
                     // Console: a collapsing pane beneath the
                     // webcam. printer/gcode/script returns after
