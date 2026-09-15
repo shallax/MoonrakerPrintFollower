@@ -1,5 +1,15 @@
 # TESTING.md — the real-Cura UI test harness
 
+> **Reconciliation status (2026-09-15, the 4.1.0 release):** this
+> document describes the harness as it IS. Every section below
+> carries its status inline; claims struck or amended in the 4.1.0
+> reconciliation are marked **STRUCK**/**AMENDED** with the reason,
+> and a doc-pin test fails if a struck phrase re-enters the text.
+> The sections the release gate may CITE are: §1, §2.1's delivery
+> and addressing rules, §2.3's run/artifact layout, §2.5, §3's
+> catalogue, §4's flake policy, §6. Sections marked *planned* are
+> design intent for later releases, never gate inputs.
+
 The 4.0.0 release gate: an automated suite that drives the REAL Cura
 application with REAL clicks against the REAL UI, connected to a full
 Moonraker simulator over the same websocket and HTTP transports a real
@@ -45,10 +55,17 @@ pointed at the screen, never the screen.
 
 Hard rules, in order:
 
-1. No direct slot invocation. A test expresses intent as input events
-   injected through the X server's XTEST extension — a real pointer,
-   real focus, real X-level implicit grabs, entering Cura's xcb QPA
-   exactly as a human mouse does.
+1. Real input for the critical journeys. **AMENDED (2026-09-15):**
+   the activation path is the driver's QTest-injected press/release —
+   XTEST (`xdotool`) is never invoked anywhere, and the claim that
+   it is was struck. A press is real when the delivery record shows
+   it was ACCEPTED by the target's own item chain (an overlay or a
+   disabled control fails the step by construction); the 4.1.0
+   conversion moved the critical journeys onto this path, and the
+   remaining direct-invocation steps carry their declared
+   classification in the run's evidence record. Off-viewport
+   controls are scrolled into the rendered viewport first (the
+   containment is asserted).
 2. No stubbing of the plugin's dependencies inside Cura. The model,
    the transport, the socket client, the bridge — all production code.
 3. Screenshots and video are the deliverable. Every step captures;
@@ -58,8 +75,9 @@ Hard rules, in order:
    or rendered pixels (what the X server drew), never only the
    plugin's own published values.
 5. Determinism by environment, not by luck: pinned image, pinned Cura
-   build with checksum, pinned fonts, software GL, fixed geometry,
-   seeded configuration.
+   build with checksum, pinned fonts, software GL, fixed geometry
+   (one display geometry: the 1920x1080 screen, the 1840x1040
+   window, the pinned DPI), seeded configuration.
 
 ## 2. Architecture
 
@@ -111,29 +129,38 @@ allowlist pin over `plugins/` contents guarantee it never ships.
   QTest is therefore the canonical activation path in the harness;
   XTEST remains as the per-phase human-clickability realism control
   (screen-level pointer motion and pixel behaviour), not the
-  activation mechanism. Both paths feed the same delivery
-  introspection: the driver's event filter records the receiving
-  item and whether the event was accepted, a press that did not
-  reach its intended item fails the step, and the driver asserts no
-  overlay covers the target's rect before injection.
-- **The RPC surface** is pinned (a structural test; ≤ a dozen generic
-  verbs — find / inspect / inject / capture / trace / relaunch /
-  seed-state; no verb may name a plugin feature). The listener binds
-  loopback port 0 on the GUI thread; `wait(condition, budget)` is a
-  DEFERRED reply armed by a QTimer — the GUI thread never blocks. One
-  in-flight request at a time.
-- **Continuous recording**: for every tracked item property the driver
-  installs change recorders (QML `Connections`/`onXChanged` probes)
-  appending `(monotonic_ts, value)` into a ring buffer; a frame-indexed
-  filmstrip capture fires on each change of the tracked set. Assertions
-  run over the recorded series (`watch(invariant, duration)`), not
-  over polls, and the gallery shows the timeline.
-- **Screenshots and video**: the canonical capture is the X root
-  window (`xwd -root`/`QScreen.grabWindow(0)` from a helper process),
-  synchronized on a frame swap so it can never catch a half-painted
-  frame; ffmpeg records the display for the whole scenario (the video
-  requirement). Captures are frame-stamped; an assertion's capture
-  must postdate the state change it claims.
+  activation mechanism. **IMPLEMENTED (2026-09-15):** the delivery
+  introspection the design promised — `deliver_click`/`click_text`
+  record the window's mouse events, the item under the aim, and
+  whether the press was ACCEPTED BY THE TARGET'S OWN CHAIN (a scroll
+  container grabbing a disabled child's press reads as a refusal);
+  a press that did not reach its intended item fails the step, and
+  an overlay covering the target fails it by construction (the
+  harness proved this on itself when a leftover popup scrim refused
+  the next scenario's clicks). Off-viewport controls are scrolled
+  into the rendered viewport first, with the containment asserted.
+- **The RPC surface** — **AMENDED (2026-09-15):** the driver
+  exposes 45 verbs, not the ≤ a dozen this line once promised; the
+  pinned structural test covers the runner's step-vocabulary (the
+  census-pinned ratchet: real-input steps may only grow, direct
+  invocation may only shrink), and the real-mode allowlists are
+  pinned exactly (deny-by-default for input verbs against a live
+  printer). The listener binds loopback port 0 on the GUI thread;
+  `wait(condition, budget)` is a DEFERRED reply armed by a QTimer —
+  the GUI thread never blocks. One in-flight request at a time.
+- **Continuous recording** — **STRUCK (2026-09-15, *planned*):**
+  the change recorders, the filmstrip and `watch(invariant,
+  duration)` are design intent for a later release, not gate
+  inputs. The per-step evidence record (`evidence.json`, schema 1)
+  carries what the harness records today: op, spec, verdict,
+  capture, duration, the delivery record and the mechanism-derived
+  evidence class.
+- **Screenshots and video** — **AMENDED (2026-09-15):** the
+  canonical capture is `ffmpeg x11grab` (`xwd`/`QScreen.grabWindow`
+  was struck as the claim); a capture is checked against the
+  declared SIZE (a truncated or mis-sized frame fails the step), and
+  the whole-scenario video records the same display. An assertion's
+  capture must postdate the state change it claims.
 
 ### 2.2 The Moonraker simulator
 
@@ -220,15 +247,19 @@ truth #5):
 - `make ui_test MODE=discover` — dump stage-menu coordinates.
 
 Lifecycle and isolation (a scenario is a REBIND — the production
-session boundary the plugin already supports): each scenario gets its
-own simulator instance and printer record, its own `HOME`/`XDG_*`
-under the run directory, and its own Cura process; the runner kills by
-process group and reaps before each launch. The single-instance trap
-is closed by a handshake: the runner mints a run nonce, the driver's
-first RPC reply carries `{pid, cura_version, platform_name, plugin_dir,
+session boundary the plugin already supports): **AMENDED
+(2026-09-15):** the scenarios in a group share ONE Cura boot (a
+fresh boot per scenario was never the implementation — the claim is
+corrected), and each scenario starts from the baseline geometry (a
+suite-default pre-step, so a scenario's resize can never leak into
+the next). Each unit runs in its own container and working
+directory (the isolation ruling: per-slot containers with per-slot
+`/tmp/mpf` under `harness_release.sh -j N`; the serial default keeps
+the shared-boot debris proof). The single-instance trap is closed by
+a handshake: the runner mints a run nonce, the driver's first RPC
+reply carries `{pid, cura_version, platform_name, plugin_dir,
 xdg_dirs, nonce}`, and the runner verifies it against the process it
-spawned. A `relaunch()` primitive re-handshakes for the persistence
-and reconnect groups.
+spawned.
 
 The Cura profile is seeded, not produced by driving Cura's UI: a
 pinned config directory checked into `tests/harness/config` (welcome
@@ -236,13 +267,14 @@ and What's-New dialogs suppressed, machine and printer record
 present, window geometry pinned); a pre-scenario gate asserts the
 expected stage is active and no overlay covers it.
 
-Artifacts land in `/tmp/mpf/ui-artifacts/<run>/`: `index.html` (step
-gallery: label, injected event with coordinates, condition expression,
-the full poll/transition history, the asserted item's scene rect, an
-annotated capture with pointer marker and red rect, the scenario
-video, durations, latency observations with budgets), the Cura log,
-the simulator's ledger and scenario log, and the resolved-address
-manifest.
+Artifacts land in `/tmp/mpf/ui-artifacts/<run>/`: `index.html` (the
+step gallery), `evidence.json` (the machine-readable per-step
+record — op, spec, verdict, capture, duration, the delivery record
+and the mechanism-derived evidence class, with the per-run
+classification summary), the Cura log, the simulator's ledger and
+the simulator's scenario log. **AMENDED (2026-09-15):** the
+per-step address record is *planned*, not shipped — the evidence
+record is what the gate cites today.
 
 The runner supervises the app: wall-clock cap, liveness probe, and a
 failure taxonomy — "scenario failed" / "app died" / "app never became
@@ -257,11 +289,12 @@ SIGTERM → SIGKILL. A failing run is evidence, not a mystery.
 store (never downloaded at test time). The staging step generates the
 driver's `plugin.json` for the target Cura's SDK; the pre-flight
 asserts the plugin AND the driver actually loaded before scenario 1.
-Per-version manifests record SDK verdicts, coordinate maps (Cura's
-sliders have no objectNames — their coordinates are version-pinned and
-authorized per version), theme-token names and known UI deltas.
-Manifests are generated from a live tree dump, so maintenance is
-reviewing a diff.
+Per-version manifests — **STRUCK (2026-09-15, *planned*):** the SDK
+verdicts, coordinate maps and theme-token manifests are design
+intent for a later release; `HARNESS_COORDS` is exported and never
+read today, and no manifest is written by anything. The version-swap
+proof the gate cites is the smoke set running on the secondary
+pinned Cura.
 
 ### 2.5 Real-printer mode (gospel truth #8)
 
@@ -486,30 +519,33 @@ SimulationView is the ACTIVE view (the Preview stage click).
 
 ## 4. Determinism and flake policy
 
-- A dedicated harness image pins Xvfb, Mesa (llvmpipe via
+- A dedicated harness image carries Xvfb, Mesa (llvmpipe via
   `LIBGL_ALWAYS_SOFTWARE=1`; never `QT_QUICK_BACKEND=software`),
-  fontconfig with an explicit fonts.conf, dbus, xdotool, ffmpeg,
-  Tornado and pytest — by exact version, like the rest of the repo.
-  The launcher exports `QT_QPA_PLATFORM=xcb` and `DISPLAY` explicitly;
-  the driver's pre-flight refuses to run unless
-  `platformName() == "xcb"`, the screen geometry matches the pin, and
-  the window is exposed — recorded in the manifest. The container runs
-  with `docker run --init` (docker-init as PID 1) so killed children
-  are reaped instead of piling up as zombies, and the launcher
-  (`tools/ui_test.sh`) holds an EXIT trap that kills Cura, the video
-  ffmpeg and the simulator when the run ends — a finished run leaves
-  no processes behind.
+  fontconfig, dbus, xdotool, ffmpeg and Tornado. **AMENDED
+  (2026-09-15):** the claim that every package is pinned "by exact
+  version" was struck — the Dockerfile is an unpinned base with
+  unpinned apt (the render-stack pinning is a follow-up). The
+  launcher exports `QT_QPA_PLATFORM=xcb` and `DISPLAY` explicitly;
+  the boot gate pins the window to the one display geometry
+  (1920x1080 screen, 1840x1040 window, pinned DPI) and FAILS unless
+  the pin reports BOTH the wanted window size AND the wanted screen
+  — a window larger than the screen used to pass by self-report
+  alone. The container runs with `docker run --init` (docker-init as
+  PID 1) so killed children are reaped instead of piling up as
+  zombies, and the launcher (`tools/ui_test.sh`) holds an EXIT trap
+  that kills Cura, the video ffmpeg and the simulator when the run
+  ends — a finished run leaves no processes behind.
 - Timing budgets live in a machine profile, not in scenario prose;
   each latency assertion prints its observed value against its budget
   in the gallery.
 - No retries. A flaky scenario is a failing scenario — with machinery
   so that is survivable: a measured baseline (5 clean runs on a green
   build before a scenario counts as a gate), INFRA vs PRODUCT failure
-  tags (both fail the run; the banner differs), quarantine with teeth
-  (a dated entry in TESTING.md that still blocks the release; older
-  than N days fails the suite), and per-step evidence (injected event,
-  coordinates, condition, poll history, scene rect, peer-ledger
-  slice).
+  tags and quarantine with teeth — **AMENDED (2026-09-15, both
+  *planned*):** the tags and the quarantine are design intent for a
+  later release; what ships is the per-step evidence (the
+  `evidence.json` record: op, spec, verdict, capture, duration, the
+  delivery record and the mechanism-derived evidence class).
 - The boot-time discovery intermittency (2026-09-13): the cold-boot
   race that kept the endstops (and sometimes webcams and
   temperatures) empty is closed on two fronts. The plugin now runs a
@@ -553,17 +589,19 @@ SimulationView is the ACTIVE view (the Preview stage click).
 - **Phase D — the full surface:** the suite matrix lands feature-group
   by feature-group until the suite encompasses all testing
   end-to-end.
-- **Phase E — the version swap and CI (COMPLETE, 2026-09-13):**
-  `CURA_VERSION` picks any prepared Cura; the swap is proven — the
-  demo and the webcams group run green under both 5.13.0 (the primary
-  pin) and 5.12.0 (the secondary), each with a manifest recording the
-  AppImage sha256 and the wheel pins. The release workflow runs
-  `tools/harness_release.sh` after the artifact build (240-minute
-  envelope): the 11 gates and the suite groups (connection through settings plus visual) on the primary
-  version, then the 11 gates again on the secondary — declared
-  budgets are 10 minutes per gate attempt and 15 minutes per suite
-  group attempt, up to 3 attempts per unit under the documented flake
-  policy, and the soak group (stress) stays out of the release path.
+- **Phase E — the version swap and CI (COMPLETE, 2026-09-13;
+  AMENDED 2026-09-15):** `CURA_VERSION` picks any prepared Cura; the
+  swap is proven — the smoke set runs green under both 5.13.0 (the
+  primary pin) and 5.12.0 (the secondary). The release workflow runs
+  its own matrix (smoke + the twelve suite groups on the primary,
+  the smoke again on the secondary) — it does NOT call
+  `tools/harness_release.sh`, the envelope and the retry policy this
+  line once promised were struck, and the declared budgets are 15
+  minutes per group and 20 for the smoke units with ONE attempt per
+  unit (a timeout reports HANG, distinct from a red). The local
+  `harness_release.sh -j N` runs the same units in per-slot
+  containers; the serial default keeps the shared-boot debris proof.
+  The soak group (stress) stays out of the release path.
 
 ## 6. Boundaries
 
@@ -571,8 +609,12 @@ SimulationView is the ACTIVE view (the Preview stage click).
   production behaviour. Plugin-side changes are limited to
   objectNames on the interactive QML items the scenarios address
   (inert in production) and the orchestration logging already added
-  for the 4.0.0 diagnostics. The driver, simulator, runner, scenarios
-  and manifests live under `tests/` and never ship.
+  for the 4.0.0 diagnostics. **AMENDED (2026-09-15):** 4.1.0 ships
+  findings-driven product patches (the F06 projection repair, the
+  naming passes) — those are the RELEASE's changes, each carrying
+  its red-run evidence and its regression pins; the harness itself
+  still adds no production behaviour. The driver, simulator, runner,
+  scenarios and manifests live under `tests/` and never ship.
 - Cura's own SimulationView internals are driven by XTEST events at
   authorized coordinates, verified after the fact against Cura's own
   state — never by poking Cura-private state.
