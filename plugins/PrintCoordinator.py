@@ -9,7 +9,7 @@ from urllib.parse import quote
 from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
 
-from .MonitorFormatting import filament_total_mm_from_file, parse_bed_mesh, result
+from .MonitorFormatting import filament_total_mm_from_file, parse_bed_mesh, preview_eta_text, result
 from .PreviewFormatting import (
     pause_can_toggle,
     pause_eta,
@@ -604,6 +604,10 @@ class PrintCoordinator(QObject):
             "previewBlock": self._preview_block[0] if self._preview_block is not None else {},
             "previewBlockStale": self._preview_block is None or
                 time.monotonic() - self._preview_block[1] > self.PREVIEW_BLOCK_STALE_S,
+            # The strip's middle-slot ETA: the print remaining/finish
+            # (the Monitor's own pair, composed) — the selected-layer
+            # line stays in its slot untouched.
+            "previewEtaText": preview_eta_text(self._status or {}, self._snapshot),
         })
 
     def close(self):

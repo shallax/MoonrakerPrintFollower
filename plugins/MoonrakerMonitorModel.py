@@ -1746,6 +1746,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._publish()
             return
         self._commands.send("Resume", "printer/print/resume")
+
+    @pyqtSlot()
+    def stripPausePrint(self):
+        # The Preview strip's one control dispatches by state:
+        # Resume while paused, Pause otherwise — both routes run the
+        # lane's revalidation (the same slots the Dashboard uses).
+        observation = getattr(self._data, "observation", None)
+        state = observation.state if observation is not None else ""
+        if state == "paused":
+            self.resumePrint()
+        else:
+            self.pausePrint()
     @pyqtSlot()
     def cancelPrint(self):
         if self.canCancelPrint: self._commands.send("Cancel", "printer/print/cancel")

@@ -1372,6 +1372,27 @@ SCENARIOS = [
 
 
     # ─── visual fidelity — alignment, pane exercise, rendered-follows ───
+    {"id": "v19", "group": "visual",
+     "name": "the strip renders its cells and its pause routes the lane",
+     "steps": [
+         {"op": "click_stage", "stage": "PreviewStage"},
+         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"},
+                                     "extruder": {"temperature": 205.2, "target": 210.0},
+                                     "heater_bed": {"temperature": 60.0, "target": 60.0}}},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 150},
+         # The strip's three cells render with the card; the block
+         # lands on the aux poll — the temps witness proves the block
+         # arrived (and that the strip renders the fixed pair).
+         {"op": "wait_rect", "objectName": "moonrakerStripPauseButton", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerStripTemps", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerStripSlot", "budget": 30},
+         {"op": "wait_rendered", "objectName": "moonrakerStripTemps", "contains": "205.2/210.0", "budget": 30},
+         # The strip's one control dispatches through the Monitor's
+         # revalidated lane: while printing the button reads "Pause
+         # print" and a real click sends the pause.
+         {"op": "click_text", "text": "Pause print"},
+         {"op": "sim_ledger", "needle": "print/pause", "method": "POST", "min": 1, "budget": 20},
+     ]},
     {"id": "v1", "group": "visual",
      "name": "the loaded panel renders, with Cura's </> beside the card",
      "steps": [

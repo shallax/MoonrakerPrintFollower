@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import math
 import re
 
-from .MonitorPermissions import R_UNKNOWN, Verdict, can_pause, can_resume
+from .MonitorPermissions import REASON_DETAIL, R_UNKNOWN, Verdict, can_pause, can_resume
 
 
 def result(payload):
@@ -134,6 +134,26 @@ def chart_temperature_objects(auxiliary):
     return readings
 
 
+def preview_eta_text(snapshot, physical):
+    """The strip's middle-slot ETA: the same remaining/finish pair the
+    Monitor's rows show, composed for one narrow slot. 'Paused' while
+    paused; '—' when there is nothing to say (no print, no estimate)."""
+    stats = snapshot.get("print_stats") or {}
+    sd = snapshot.get("virtual_sdcard") or {}
+    state = str(stats.get("state") or "")
+    if state == "paused":
+        return "Paused"
+    if state != "printing":
+        return "—"
+    remaining = getattr(physical, "layer_eta", None)
+    if remaining is None:
+        remaining = estimate_remaining(stats.get("print_duration"), sd.get("progress"), physical.estimated_time, physical.metadata_complete)
+    if remaining is None:
+        return "—"
+    finish = (datetime.now().astimezone() + timedelta(seconds=remaining)).strftime("%H:%M")
+    return f"{duration(remaining)} · ~{finish}"
+
+
 def duration(seconds):
     hours, rest = divmod(max(0, int(round(number(seconds)))), 3600)
     minutes, seconds = divmod(rest, 60)
@@ -192,12 +212,15 @@ def preview_block(auxiliary, observation, *, stamp, inactive=False):
     return {
         "stamp": float(stamp),
         "inactive": bool(inactive),
+        "state": str(getattr(observation, "state", "") or ""),
         "hotend": hotend,
         "bed": bed,
         "canPause": pause_verdict.mode == "allowed",
         "canResume": resume_verdict.mode == "allowed",
         "pauseReason": pause_verdict.reason,
+        "pauseReasonDetail": REASON_DETAIL.get(pause_verdict.reason, ""),
         "resumeReason": resume_verdict.reason,
+        "resumeReasonDetail": REASON_DETAIL.get(resume_verdict.reason, ""),
         "busy": bool(getattr(observation, "busy", False)),
     }
 
