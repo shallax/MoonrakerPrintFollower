@@ -583,90 +583,10 @@ Component {
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
-                        CollapsibleSectionHeader {
+                        SaveSection {
+                            id: saveSection
                             Layout.fillWidth: true
                             printerModel: root.printer
-                            title: "Configuration changes"
-                            sectionId: "save"
-                            sectionIcon: "Save"
-                        }
-                        ColumnLayout {
-                            // NO-REFLOW RULE: this whole section used to
-                            // pop into existence when Klipper flagged a
-                            // pending config (save_config_pending flips
-                            // mid-session, e.g. after a mesh calibration),
-                            // shoving every section beneath it. It now
-                            // always renders — the button disables and
-                            // the summary goes quiet when nothing is
-                            // pending.
-                            Layout.topMargin: UM.Theme.getSize("default_margin").height
-                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                            visible: root.printer == null || root.printer.sectionExpandedMap["save"] !== false
-                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
-                            Layout.fillWidth: true
-
-                            GridLayout {
-                                columns: 2
-                                columnSpacing: UM.Theme.getSize("default_margin").width
-                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
-                                Layout.fillWidth: true
-
-                                UM.Label {
-                                    height: 36 * screenScaleFactor
-                                    text: "Pending"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    Layout.preferredWidth: 110 * screenScaleFactor
-                                }
-                                UM.Label {
-                                    height: 36 * screenScaleFactor
-                                    text: root.printer != null && root.printer.saveConfigSummary.length > 0 ? root.printer.saveConfigSummary : "—"
-                                    color: UM.Theme.getColor("text")
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideRight
-                                    wrapMode: Text.NoWrap
-                                    UM.TooltipArea {
-                                        anchors.fill: parent
-                                        text: parent.text
-                                        acceptedButtons: Qt.NoButton
-                                    }
-                                }
-                            }
-                            Cura.PrimaryButton {
-                                Layout.fillWidth: true
-                                text: "Save configuration"
-                                enabled: root.printer != null && root.printer.canSaveConfig
-                                onClicked: root.printer.saveConfig()
-                            }
-                            GridLayout {
-                                columns: 2
-                                columnSpacing: UM.Theme.getSize("default_margin").width
-                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
-                                Layout.fillWidth: true
-
-                                UM.Label {
-                                    height: 36 * screenScaleFactor
-                                    text: "Save"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    Layout.preferredWidth: 110 * screenScaleFactor
-                                }
-                                UM.Label {
-                                    height: 36 * screenScaleFactor
-                                    text: root.printer != null ? (root.printer.sectionReason !== "" ? root.printer.sectionReason : (root.printer.printActive ? "Disabled during a print" : root.printer.canSaveConfig ? "Restarts Klipper" : "—")) : "—"
-                                    color: UM.Theme.getColor("text")
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideRight
-                                    wrapMode: Text.NoWrap
-                                    UM.TooltipArea {
-                                        anchors.fill: parent
-                                        // Short value in the row, full
-                                        // sentence in the tooltip (the
-                                        // author's ruling).
-                                        text: root.printer != null ? (root.printer.sectionReasonDetail !== "" ? root.printer.sectionReasonDetail : (root.printer.printActive ? "SAVE_CONFIG is disabled during a print." : root.printer.canSaveConfig ? "Saving configuration restarts Klipper." : "")) : ""
-                                        acceptedButtons: Qt.NoButton
-                                    }
-                                }
-                            }
                         }
                     }
                 }
