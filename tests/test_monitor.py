@@ -50,6 +50,7 @@ FANS_SECTION_QML = (PLUGINS / "FansSection.qml").read_text()
 LEDS_SECTION_QML = (PLUGINS / "LedsSection.qml").read_text()
 PWM_SECTION_QML = (PLUGINS / "PwmSection.qml").read_text()
 POWER_SECTION_QML = (PLUGINS / "PowerSection.qml").read_text()
+SYSTEM_SECTION_QML = (PLUGINS / "SystemSection.qml").read_text()
 MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
@@ -187,7 +188,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -263,7 +264,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # totals — a moved section decrements one file and increments
         # another, and the totals catch a dropped section that a
         # per-file pin alone would read as "moved".
-        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 3)
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 2)
         self.assertEqual(PRINT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(SETUP_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader"), 1)
@@ -274,6 +275,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(LEDS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(PWM_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(POWER_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(SYSTEM_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
@@ -286,8 +288,9 @@ class MonitorModelContractTests(unittest.TestCase):
                          + LEDS_SECTION_QML.count("CollapsibleSectionHeader")
                          + PWM_SECTION_QML.count("CollapsibleSectionHeader")
                          + POWER_SECTION_QML.count("CollapsibleSectionHeader")
+                         + SYSTEM_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
-        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 2)
+        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 1)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(SETUP_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(TOOLHEAD_SECTION_QML.count('sectionIcon: "'), 1)
@@ -298,6 +301,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(LEDS_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(PWM_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(POWER_SECTION_QML.count('sectionIcon: "'), 0)  # Power uses the plugin glyph url
+        self.assertEqual(SYSTEM_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
@@ -309,6 +313,8 @@ class MonitorModelContractTests(unittest.TestCase):
                          + FANS_SECTION_QML.count('sectionIcon: "')
                          + LEDS_SECTION_QML.count('sectionIcon: "')
                          + PWM_SECTION_QML.count('sectionIcon: "')
+                         + POWER_SECTION_QML.count('sectionIcon: "')
+                         + SYSTEM_SECTION_QML.count('sectionIcon: "')
                          + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
@@ -709,13 +715,13 @@ class MonitorModelContractTests(unittest.TestCase):
     def test_system_restart_surface(self):
         for token in ("firmwareRestart", "hostRestart", "FIRMWARE_RESTART", "machine/reboot"):
             self.assertIn(token, MONITOR_MODEL + CONTROLS)
-        for token in ('text: "Firmware restart"', 'text: "Host restart"'):
-            self.assertIn(token, DASHBOARD_QML)
+        for token in ('text: "Firmware restart"', 'text: "Host restart"', 'text: "Klipper restart"'):
+            self.assertIn(token, SYSTEM_SECTION_QML)
         # The reason copy lives in the policy (4.2.0): the row reads
         # the published restartReason — the old QML sentence was
         # superseded by the policy's short form.
         self.assertIn('"A print is running"', POLICY)
-        self.assertIn("restartReason", DASHBOARD_QML)
+        self.assertIn("restartReason", SYSTEM_SECTION_QML)
 
     def test_emergency_stop_is_pinned_outside_scrollable_controls(self):
         # The dock lives at the bottom of the dashboard, spanning the whole
