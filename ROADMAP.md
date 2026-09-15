@@ -1210,12 +1210,16 @@ itself:
 
 ## 4.2.0 — State, permissions & operation boundaries
 
-- **The motion cluster (planned 2026-09-15, round-1 corrected):**
-  three new readout rows join Position in the Monitor card grid —
-  Speed, Accel limit, Flow rate — all from the polled snapshot,
-  value-only rows reading "—" until Klipper reports them, same
-  no-reflow rule as the filament rows. Verified against the live
-  Voron mid-print (read-only queries, 2026-09-15):
+- **The motion cluster (planned 2026-09-15, round-2 rulings
+  applied):** three new readout rows join Position in the Monitor
+  card grid — Velocity, Accel limit, Flow rate — all from the
+  polled snapshot, value-only rows reading 0.00 at idle (Klipper
+  always sends the fields; "—" only when motion_report is absent),
+  same no-reflow rule as the filament rows. The shipped multiplier
+  row is renamed "Speed factor" (the author's ruling) so the new
+  live row can take "Velocity" — four personas caught the
+  duplicate-title collision independently. Verified against the
+  live Voron mid-print (read-only queries, 2026-09-15):
   `motion_report.live_velocity` is a single scalar (20.0 mm/s
   observed) and no per-axis velocity exists, so the row is scalar
   (the author's ruling); Klipper publishes no instantaneous
@@ -1233,8 +1237,14 @@ itself:
   Mid-travel the trapq serves a stale history value (the last E
   segment's terminal velocity), so the row can read nonzero while
   nothing extrudes; the ruling is to show it and let the live test
-  decide whether travel-zeroing is worth its machinery. Cadence:
-  Speed and Flow ride the core poll, Accel limit the aux poll —
+  decide whether travel-zeroing is worth its machinery. The
+  travel-zeroing discriminator, if the live test demands it, is
+  `live_position[3]` deltas (the extruder's E position from the
+  same trapq — `motion_report.steppers` carries NAMES, not
+  positions); tiny magnitudes (|v| below ~1e-9) clamp to zero
+  before the sign decision so a cancellation artifact never reads
+  "-0.00 mm³/s" (a −3.6e-15 sample was caught live). Cadence:
+  Velocity and Flow ride the core poll, Accel limit the aux poll —
   accepted, the limit only changes via SET_VELOCITY_LIMIT. The
   existing "Flow" row (extrude factor %) keeps its name and row;
   the volumetric value is a new key, not a takeover.
@@ -1349,6 +1359,54 @@ carries its reason (F10).
   supporting metadata-only requests, consumed by the coordinator
   and the file flow (F05's follow-up; the coordinator stops
   implementing its own request/cache lifecycle).
+
+**Round-2 panel rulings (2026-09-15, all author-confirmed):**
+
+- **Titles:** the live row is "Velocity" (Klipper's field name;
+  the unit rides the value) and the shipped multiplier row is
+  renamed "Speed factor" — pins, README and screenshots move with
+  the rename. The Flow row keeps its name for now (flagged for the
+  snapshot round — "Flow factor" is the symmetric candidate).
+- **Placement and reasons (the UX adjudication, accepted as
+  written):** the three rows land as one block after Position —
+  Velocity, Flow rate, Accel limit; disabled reasons render in the
+  existing per-section Status row (short form, ~30 chars) with
+  tooltips as enrichment only — a dead pane must still say why.
+  The reason copy is pinned in the same pass; the Flow rate
+  tooltip names the diameter and the active tool.
+- **Dispatch scope absorbed (the security audit's four):** the
+  queued command lane revalidates at dispatch (all three restarts
+  ride it — a clicked restart can otherwise fire up to 30 s later
+  against a print another client started); print-start is gated at
+  dispatch, not at dialog-open (the button is ungated today and
+  FileManager bypasses the central gate); explicit per-action rows
+  for G90/G91 and babystepping (SET_GCODE_OFFSET); the autonomous
+  pause dispatch re-checks the print is still printable.
+- **Policy shape:** pure functions over a frozen observation
+  record that carries `assumed_stopped` (the e-stop rewrite the
+  architecture blocker found — the policy must see the assumption,
+  not just the rewritten state); the three-valued `connected`
+  (unknown/yes/no) is built as a PREREQUISITE in the client layer
+  — today it is a bool at every seam and unknown is
+  unrepresentable; decisions carry a mode ("pause-first" is not a
+  denial) and per-power-device rows; reason strings are
+  module-level constants (value_property caches on value
+  identity); `jogEnabled` stays as the published property, a
+  projection of `can_jog` — ten shipped sites negate a two-valued
+  print_active and fail open on unknown, so the derivation shape
+  is a positive allow-list per permission, not site fixes.
+- **Harness:** the `enabled:` substring pins are REPLACED by the
+  already-built-but-unused `item_disabled` step (F09's rule), not
+  retargeted; the simulator becomes field-faithful (it currently
+  ignores object sets and field lists — the `settings`-survives-
+  the-merge claim is untestable otherwise) and its fixtures gain
+  the fields the rows read plus `toolhead.extruder`; the
+  direct-invocation ratchet is saturated at 101/101 — any
+  exec_code-style step needs a deliberate ceiling raise with a
+  DECISIONS entry.
+- **Klipper citation paths corrected** (klippy/configfile.py,
+  klippy/webhooks.py, klippy/kinematics/extruder.py,
+  klippy/chelper/kin_extruder.c — not klippy/extras/*).
 
 ## 4.3.0 — Monitor & file-manager presentation refactor
 
