@@ -1450,17 +1450,20 @@ pro-user planning input (2026-09-15) into this release.
   Snapshot-0 mock before any machinery.
 
 - **Preview status strip (the pro-user's top want, ruled in
-  2026-09-15).** A separate slim strip pinned to the Preview stage,
-  not part of the card: the current temps, the ETA/already-printed
-  line and pause/resume. Its dependency — the 4.2.0 action policy —
-  already lands. Status-only (the 2026-09-15 ruling): the factor
-  sliders, the z-offset nudges and the extrude/retract controls
-  stay in the Monitor — the Preview control dock is a 4.4.0
-  planning item with the jog pad. The strip is a third host
-  surface beside the dual-hosted card, so its placement rules in
-  both shells and its coexistence with the panel's collapsed-strip
-  form are mock-round calls, along with the deformation toggle's
-  home. Snapshot-0 mock before wiring, like the deformation.
+  2026-09-15).** A slim status row as the first row of the existing
+  Preview card, above the title: the current temps, the
+  ETA/already-printed line and pause/resume. Its dependency — the
+  4.2.0 action policy — already lands. Status-only (the 2026-09-15
+  ruling): the factor sliders, the z-offset nudges and the
+  extrude/retract controls stay in the Monitor — the Preview
+  control dock is a 4.4.0 planning item with the jog pad. On the
+  card, the strip rides its dual-host placement for free — no
+  third host surface (re-ruled 2026-09-15 from a separate strip).
+  If the control dock lands, the strip breaks out to its own
+  surface then — the card row is the simple form (the 2026-09-15
+  ruling). The deformation toggle's home — the strip row or the
+  bed-mesh controls — is a mock-round call. Snapshot-0 mock before
+  wiring, like the deformation.
 - **Off-path distance in plain words (PUF5).** `refined_fraction`
   gets its consumer: the follower's status area names how far the
   commanded head sits off the toolpath instead of throwing the
@@ -1564,7 +1567,9 @@ refactor finishes.
   looking at the actual toolpath. The Preview control dock lands with
   it: the factor sliders ruled out of the 4.3.0 strip (2026-09-15)
   find their Preview home here; z-offset and extrude/retract stay
-  Monitor-side unless 4.4.0's planning re-rules them.
+  Monitor-side unless 4.4.0's planning re-rules them. When the dock
+  lands, the status strip breaks out of the card to its own surface
+  (the 2026-09-15 ruling).
 - A shared coordinate-transform module — corrected by the pro-user
   panel: the bed-mesh overlay does NOT use homing_origin/axis_map (its
   XY comes from Cura's build volume, its Z is a lifted deviation
