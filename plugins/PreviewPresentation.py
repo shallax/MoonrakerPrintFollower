@@ -10,6 +10,7 @@ class PreviewPresentation(QObject):
     loadRequested = pyqtSignal()
     attachmentRequested = pyqtSignal()
     pauseAtLayerRequested = pyqtSignal(int)
+    printPauseRequested = pyqtSignal()
     removePauseRequested = pyqtSignal(int)
     clearPausesRequested = pyqtSignal()
     bedMeshVisibilityRequested = pyqtSignal(bool)
@@ -85,6 +86,7 @@ class PreviewPresentation(QObject):
             ("loadClicked", self.loadRequested.emit),
             ("pauseClicked", self.attachmentRequested.emit),
             ("pauseAtLayerRequested", self.pauseAtLayerRequested.emit),
+            ("printPauseRequested", self.printPauseRequested.emit),
             ("removePauseAtLayerRequested", self.removePauseRequested.emit),
             ("clearPauseAtLayersRequested", self.clearPausesRequested.emit),
             ("bedMeshVisibilityRequested", self.bedMeshVisibilityRequested.emit),

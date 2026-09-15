@@ -1018,10 +1018,12 @@ class MonitorFormattingTests(unittest.TestCase):
         block = preview_block({"extruder": {"temperature": 205.2, "target": 210.0}},
                               observation, stamp=12.5)
         self.assertEqual(block["stamp"], 12.5)
+        self.assertEqual(block["state"], "printing")
         self.assertTrue(block["canPause"])
         self.assertFalse(block["canResume"])
         self.assertEqual(block["pauseReason"], "")
         self.assertEqual(block["resumeReason"], "Print is not paused")
+        self.assertIn("Resume applies to a paused print", block["resumeReasonDetail"])
         self.assertFalse(block["inactive"])
         # The sentinel shape: no observation and no aux — everything
         # reads absent, nothing is omitted.
