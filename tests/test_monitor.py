@@ -25,6 +25,7 @@ from plugins.MonitorFormatting import (
     parse_mcu_stats,
     preview_block,
     preview_temperature_pair,
+    print_job_caption,
 )
 from plugins.MonitorPermissions import Observation
 from plugins.PrintState import LayerResolver
@@ -1193,6 +1194,37 @@ class MonitorFormattingTests(unittest.TestCase):
         hotend, bed = preview_temperature_pair({"extruder": {"temperature": None}})
         self.assertEqual(hotend, "—")
         self.assertEqual(bed, "—")
+
+    def test_print_job_caption_names_every_state(self):
+        # The caption's vocabulary (F18): disconnected and unknown
+        # name themselves (never "Idle" while the socket is down), the
+        # controls lock names itself so the dead action band keeps its
+        # context, and the job state word maps once.
+        self.assertEqual(print_job_caption(None), "")
+        self.assertEqual(print_job_caption(Observation(active=True, connection="no", state="idle",
+                                                      homed_axes="", assumed_stopped=False,
+                                                      save_config_pending=False, controls_locked=False, busy=False)),
+                         "Disconnected")
+        self.assertEqual(print_job_caption(Observation(active=True, connection="unknown", state="idle",
+                                                      homed_axes="", assumed_stopped=False,
+                                                      save_config_pending=False, controls_locked=False, busy=False)),
+                         "Printer state unknown")
+        self.assertEqual(print_job_caption(Observation(active=True, connection="yes", state="printing",
+                                                      homed_axes="", assumed_stopped=False,
+                                                      save_config_pending=False, controls_locked=True, busy=False)),
+                         "Locked")
+        self.assertEqual(print_job_caption(Observation(active=True, connection="yes", state="printing",
+                                                      homed_axes="", assumed_stopped=False,
+                                                      save_config_pending=False, controls_locked=False, busy=False)),
+                         "Printing")
+        self.assertEqual(print_job_caption(Observation(active=True, connection="yes", state="paused",
+                                                      homed_axes="", assumed_stopped=False,
+                                                      save_config_pending=False, controls_locked=False, busy=False)),
+                         "Paused")
+        self.assertEqual(print_job_caption(Observation(active=True, connection="yes", state="idle",
+                                                      homed_axes="", assumed_stopped=False,
+                                                      save_config_pending=False, controls_locked=False, busy=False)),
+                         "Idle")
 
     def test_preview_block_carries_the_verdicts_and_the_sentinel(self):
         # The block rides the aux clock: the stamp passes through
