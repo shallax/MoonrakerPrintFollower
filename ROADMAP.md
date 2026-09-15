@@ -1121,6 +1121,39 @@ budgets as hang detectors, and TESTING.md as strike-and-mark.
   merge, tag and release wait for the author's snapshot test, and
   the snapshot report names what to test.
 
+**Reconciliation (2026-09-15, the phase-6 re-review + the adversarial
+round):** the three personas re-verified the finished build against
+their round-2 findings and the fresh critic attacked it; every
+verdict and the fix record live in `review/DECISIONS.md`. The fixes
+that landed: the serial gate's scratch-tree wipe (the default path
+deleted `/tmp/mpf` itself); the slot boot wait reading the shared
+tree's stale port file; capture errors now gate the verdict; the
+evidence record's provenance fields now carry the real Cura and
+plugin versions; the scenario rollup ignores the shared probe steps;
+the delivery record names the item, not the class alone; the upload
+lane in the simulator is live (the route prefix stripped it into
+dead code — f2 now asserts both the honest success and the honest
+refusal); the F06 cache invalidates on bind/unbind and on the
+delete/rename publishes; the coverage gate gained its execution
+half (every mapped surface's scenario must run in the evidence, and
+every mapped control must be addressed by a step) with the
+structured exclusion schema; the red-run and overlay-refusal proofs
+landed as probe scenarios (z14/z15); the jog pad and the home row
+press every button; the ratchet re-counted with exec_code and
+confirm_box inside the direct set; TESTING.md's second pass struck
+the surviving false claims (the handshake, the taxonomy, the
+transcript replay, the profile budgets, the red-gallery claims, the
+letter catalogue, the 1600x1000 diagram) and the doc pin covers
+them. Recorded deferrals, with their evidence: the Information-pane
+round, the deferred panel scenarios, the lifecycle priorities 5/7
+(the simulator arms exist; priority 3 lives in the deterministic
+suite), the popup chrome and cancel verbs, the emit-family
+conversion. The performance record: 945 s serial against 532 s
+parallel (1.8x, the four-batch timeline), the per-unit wall clocks
+landing in every unit log, and the F06 before/after on the 400-file
+listing (9→1 pipeline evaluations per publish, 90→0 per ten ticks,
+4.86→1.57 ms cold / 4.76→0.025 ms warm publish latency).
+
 ### The suite's origin (the 4.0.0 record, kept for history)
 
 **Pulled into scope (2026-09-11):** the 4.0.0 release is frozen on
