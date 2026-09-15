@@ -57,7 +57,17 @@ lens can see (the 30 s timeout painted commands red; multi-extruder
 filament read "0.00 m"), so keep its brief on load-bearing claims, not
 exhaustive verification. From 3.6.0 a seventh joins: the 3D-printer
 enthusiast/pro-user persona, on feature value for the NEXT release —
-feeding planning, not gate-calls. Each brief contains:
+feeding planning, not gate-calls.
+
+**Tiered by release class (the author's ruling, 2026-09-15):** the
+round-1 critic stays for EVERY release. Plumbing releases
+(correctness/consolidation, no big new surfaces) get a slim panel:
+domain expert + engineering, plus architecture when boundaries move.
+Surface-heavy releases (new UI, new user-facing features) get the
+full seven. UX/product/pro-user do not gate plumbing releases — the
+author is the taste authority, live-tests every snapshot, and rules
+scope directly; the pro-user feeds next-release planning only.
+Each brief contains:
 
 - the agreed ROADMAP scope for the release
 - a paraphrase of how it should look and function
