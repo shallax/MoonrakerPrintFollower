@@ -185,16 +185,6 @@ Component {
             }
             return false;
         }
-        property bool anyPowerLocked: {
-            if (printer == null || printer.powerDevices == null)
-                return false;
-            for (var i = 0; i < printer.powerDevices.length; ++i) {
-                if (printer.powerDevices[i].locked && !printer.powerDevices[i].can_toggle)
-                    return true;
-            }
-            return false;
-        }
-
         MoonrakerMonitor {
             id: baseMonitorComponent
         }
@@ -577,79 +567,16 @@ Component {
                             frozenItems: root.frozenPwmOutputItems
                             interactionSink: root.receiveSliderInteraction
                         }
-                        CollapsibleSectionHeader {
+
+                        PowerSection {
+                            id: powerSection
                             Layout.fillWidth: true
                             printerModel: root.printer
-                            title: "Power"
-                            sectionId: "power"
-                            sectionIconUrl: Qt.resolvedUrl("Power.svg")
-                        }
-                        ColumnLayout {
-                            Layout.topMargin: UM.Theme.getSize("default_margin").height
-                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                            visible: root.printer != null && root.printer.powerDevices.length > 0 && root.printer.sectionExpandedMap["power"] !== false
-                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
-                            Layout.fillWidth: true
-                            spacing: UM.Theme.getSize("default_margin").height / 2
-
-                            Repeater {
-                                model: root.printer != null ? root.printer.powerDevices : []
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    UM.Label {
-                                        text: modelData.name + "  · " + modelData.status
-                                        color: UM.Theme.getColor("text_inactive")
-                                        Layout.fillWidth: true
-                                        elide: Text.ElideRight
-                                    }
-                                    Cura.SecondaryButton {
-                                        enabled: root.printer != null && modelData.can_toggle && !root.printer.actionBusy
-                                        text: modelData.status === "on" ? "Turn off" : "Turn on"
-                                        fixedWidthMode: true
-                                        width: 104 * screenScaleFactor
-                                        onClicked: {
-                                            if (modelData.status === "on" && root.printer.printActive) {
-                                                powerOffDialog.deviceName = modelData.name;
-                                                powerOffDialog.open();
-                                            } else {
-                                                root.printer.setPowerDevice(modelData.name, modelData.status !== "on");
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            GridLayout {
-                                columns: 2
-                                columnSpacing: UM.Theme.getSize("default_margin").width
-                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
-                                Layout.fillWidth: true
-
-                                UM.Label {
-                                    height: 36 * screenScaleFactor
-                                    text: "Status"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    Layout.preferredWidth: 110 * screenScaleFactor
-                                }
-                                UM.Label {
-                                    height: 36 * screenScaleFactor
-                                    text: root.printer != null && root.printer.sectionReason !== "" ? root.printer.sectionReason : (root.anyPowerLocked ? "Locked during this print" : "—")
-                                    wrapMode: Text.NoWrap
-                                    elide: Text.ElideRight
-                                    color: UM.Theme.getColor("text")
-                                    Layout.fillWidth: true
-                                    UM.TooltipArea {
-                                        anchors.fill: parent
-                                        // Short value in the row, full
-                                        // sentence in the tooltip (the
-                                        // author's ruling).
-                                        text: root.printer != null && root.printer.sectionReasonDetail !== "" ? root.printer.sectionReasonDetail : (root.anyPowerLocked ? "Power control is locked by Moonraker while this print is active." : "")
-                                        acceptedButtons: Qt.NoButton
-                                    }
-                                }
+                            onPowerOffConfirmRequested: function (deviceName) {
+                                powerOffDialog.deviceName = deviceName;
+                                powerOffDialog.open();
                             }
                         }
-
                         CollapsibleSectionHeader {
                             Layout.fillWidth: true
                             printerModel: root.printer
