@@ -59,6 +59,18 @@ class RemoteJobService:
         observation = self._state.observation
         return observation.filename if observation is not None else ""
 
+    def current_job_matches(self, history_payload, job_id) -> Optional[bool]:
+        """The metadata latch's cross-check (4.3.0): the payload can
+        only PROVE the job is current, never that it is not — an
+        unattestable reply (a transport failure, an empty history, a
+        malformed payload) returns None, not False. The caller's
+        give-up policy decides what None means."""
+        try:
+            jobs = ((history_payload or {}).get("result") or {}).get("jobs") or []
+            return bool(jobs) and str(jobs[0].get("job_id")) == str(job_id)
+        except (AttributeError, TypeError):
+            return None
+
     def observe(
         self,
         print_stats: Dict[str, Any],

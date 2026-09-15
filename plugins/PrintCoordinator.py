@@ -4,7 +4,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 import time
-from urllib.parse import quote
 
 from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
@@ -28,6 +27,10 @@ class PrintCoordinator(QObject):
     # aux landing's clock — older than this at publish time and the
     # strip renders "—" (three missed 2.5 s polls).
     PREVIEW_BLOCK_STALE_S = 8.0
+    # The metadata cross-check's bounded give-up (4.3.0): after this
+    # many failed checks for the same key the payload is accepted
+    # with the failure flagged.
+    MR_META_CHECK_LIMIT = 3
 
     def __init__(self, *, client, binding, files, index, cura, preview, pauses,
                  presentation, bed_mesh, parent=None):
@@ -54,6 +57,7 @@ class PrintCoordinator(QObject):
         self._mr_meta_asked = ("", "")
         self._mr_meta_at = 0.0
         self._mr_meta_pending = False
+        self._mr_meta_checks = 0
         # The active print's filament total parsed from the DOWNLOADED
         # file's own header (client-side): Moonraker's metadata
         # undercounts multi-extruder prints (its Cura parser read only
@@ -311,6 +315,16 @@ class PrintCoordinator(QObject):
         downloads ruling covers the file itself; the header query is
         what Moonraker's own UI uses for the same readouts).
 
+        The CONTRACT (4.3.0, the distribution): the FETCH is the file
+        service's request_metadata_only (identity-neutral, its own
+        single-flight and generation guard); the RETAINED PAYLOAD and
+        the LATCH stay here, keyed on the (filename, job) identity
+        pair; the history CROSS-CHECK lives with run identity
+        (RemoteJobService.current_job_matches — the pure decision
+        only). CLOCKS: the 30 s throttle reads time.monotonic (a
+        wall-clock step must not re-arm or stall the ladder); wall
+        time never enters the latch key.
+
         The fetch LATCHES on a completed fetch for THIS job: a slicer
         header never changes mid-print, so once we hold the metadata
         the 30 s retry ladder retires instead of re-querying for the
@@ -325,12 +339,8 @@ class PrintCoordinator(QObject):
             return  # one request at a time
         if self._mr_meta_asked == asked and time.monotonic() - self._mr_meta_at < 30:
             return  # inside the throttle window for this job
-        # Same quoting as MoonrakerProtocol.metadata_endpoint (safe="/"):
-        # subfolder files arrive with their path and must not be
-        # %2F-escaped (proxies that reject encoded slashes 404 them).
-        started = self._client.transport.send_json("follower", "mr-metadata", "GET",
-            "server/files/metadata?filename=" + quote(filename, safe="/"),
-            lambda p, e, a=asked: self._mr_meta_done(a, p, e), category="metadata")
+        started = self._files.request_metadata_only(
+            lambda p, e, a=asked: self._mr_meta_done(a, p, e))
         if not started:
             # A dropped send must leave no identity pointing at a job
             # that was never queried (the old latch satisfied forever).
@@ -338,6 +348,10 @@ class PrintCoordinator(QObject):
             self._mr_meta_at = 0.0
             return
         # Request identity commits only when the send actually started.
+        # The give-up counter spans the retry ladder for ONE key — a
+        # NEW key (a restart) starts fresh.
+        if self._mr_meta_asked != asked:
+            self._mr_meta_checks = 0
         self._mr_meta_asked = asked
         self._mr_meta_at = time.monotonic()
         self._mr_meta_pending = True
@@ -374,16 +388,33 @@ class PrintCoordinator(QObject):
         if self._closed or asked != self._mr_meta_asked:
             return  # a new fetch or a reset superseded this check
         job_id = value.get("job_id")
-        match = False
-        if not error:
-            try:
-                jobs = ((payload or {}).get("result") or {}).get("jobs") or []
-                match = bool(jobs) and str(jobs[0].get("job_id")) == str(job_id)
-            except (AttributeError, TypeError):
-                match = False
-        if match:
+        verdict = self._jobs.current_job_matches(payload, job_id)
+        if verdict:
             self._mr_meta = value
             self._mr_meta_key = asked
+            self._mr_meta_checks = 0
+        else:
+            # The cross-check can only REFUSE, never serve a wrong
+            # payload — but a check that can never pass is silent and
+            # permanent (the ~2x request load of the defect the latch
+            # retired, and a dead ETA/filament anchor for the rest of
+            # the print). The bounded give-up (4.3.0): after N failed
+            # checks for the same key the payload is accepted with
+            # the failure flagged. The cause is named per case.
+            self._mr_meta_checks += 1
+            if error:
+                cause = "the history request failed"
+            elif verdict is None:
+                cause = "the history reply was unattestable"
+            else:
+                cause = "the job id mismatched"
+            if self._mr_meta_checks >= self.MR_META_CHECK_LIMIT:
+                self._mr_meta = value
+                self._mr_meta_key = asked
+                self._mr_meta_checks = 0
+                Logger.log("w", "Moonraker metadata latched after %d failed cross-checks (%s) — the ETA and filament anchors run on an unattested header", self.MR_META_CHECK_LIMIT, cause)
+            else:
+                Logger.log("w", "Moonraker metadata cross-check failed: %s", cause)
         self.refresh()
 
     def _mr_metadata_for(self, filename, job):
@@ -407,6 +438,7 @@ class PrintCoordinator(QObject):
             self._mr_meta_asked = ("", "")
             self._mr_meta_at = 0.0
             self._mr_meta_pending = False
+            self._mr_meta_checks = 0
             self._header_total_mm = None
             self._header_total_path = ""
             self._status = {}

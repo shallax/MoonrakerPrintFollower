@@ -2955,7 +2955,7 @@ class MonitorQtTests(unittest.TestCase):
         with patch.object(module, "time", fake_time):
             deliver(20)
             self.qt.events(1)
-            meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+            meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
             self.assertEqual(len(meta), 1)
             meta[0].callback({"result": {"layer_height": 0.2, "estimated_time": 3600}}, None)
             self.qt.events(1)
@@ -2966,13 +2966,13 @@ class MonitorQtTests(unittest.TestCase):
                 tick[0] += 31.0
                 deliver(20 + step)  # each delivery differs so the poll always refreshes
                 self.qt.events(1)
-            self.assertEqual(len([r for r in self.transport.requests if r.channel == "mr-metadata"]), 1)
+            self.assertEqual(len([r for r in self.transport.requests if r.channel == "metadata-only"]), 1)
             # A same-name restart (the duration reset is a new job):
             # its failed fetch never latches, the old payload is never
             # served, and the retry fires on its own after the window.
             deliver(5, duration=5)
             self.qt.events(1)
-            meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+            meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
             self.assertEqual(len(meta), 2)
             meta[1].callback({}, "boom")
             self.qt.events(1)
@@ -2980,7 +2980,7 @@ class MonitorQtTests(unittest.TestCase):
             tick[0] += 31.0
             deliver(6, duration=5)
             self.qt.events(1)
-            self.assertEqual(len([r for r in self.transport.requests if r.channel == "mr-metadata"]), 3)
+            self.assertEqual(len([r for r in self.transport.requests if r.channel == "metadata-only"]), 3)
 
     def test_metadata_with_job_id_cross_checks_the_current_print(self):
         from types import SimpleNamespace
@@ -3005,7 +3005,7 @@ class MonitorQtTests(unittest.TestCase):
         with patch.object(module, "time", SimpleNamespace(monotonic=lambda: 1000.0, time=lambda: 1700000000.0)):
             deliver(30)
             self.qt.events(1)
-            meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+            meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
             self.assertEqual(len(meta), 1)
             meta[0].callback({"result": {"layer_height": 0.2, "estimated_time": 3600, "job_id": "1A2B"}}, None)
             self.qt.events(1)
@@ -3020,7 +3020,7 @@ class MonitorQtTests(unittest.TestCase):
             # A same-name restart whose row mismatches never latches.
             deliver(5)
             self.qt.events(1)
-            meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+            meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
             self.assertEqual(len(meta), 2)
             meta[1].callback({"result": {"layer_height": 0.3, "job_id": "9Z9Z"}}, None)
             self.qt.events(1)
@@ -3030,6 +3030,51 @@ class MonitorQtTests(unittest.TestCase):
             self.qt.events(1)
             new_key = ("part.gcode", coordinator._files.job_key)
             self.assertEqual(coordinator._mr_metadata_for(*new_key), {})
+
+    def test_metadata_cross_check_gives_up_after_the_limit_and_latches_flagged(self):
+        # The bounded give-up (4.3.0): a cross-check that can never
+        # pass (the history stays empty) is silent and permanent
+        # otherwise — after MR_META_CHECK_LIMIT failures for the same
+        # key the payload latches with the failure flagged in the log.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import sys
+        self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        module = sys.modules[type(coordinator).__module__]
+        client = self.follower.client
+        tick = [1000.0]
+        fake_time = SimpleNamespace(monotonic=lambda: tick[0], time=lambda: 1700000000.0)
+
+        def deliver(duration):
+            status = {
+                "print_stats": {"filename": "part.gcode", "state": "printing", "print_duration": duration,
+                                "info": {"current_layer": 2, "total_layer": 20}},
+                "virtual_sdcard": {"file_size": 100, "file_position": 20},
+                "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1,
+                               "absolute_coordinates": True},
+                "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
+            }
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+
+        with patch.object(module, "time", fake_time):
+            deliver(30)
+            self.qt.events(1)
+            for step in range(coordinator.MR_META_CHECK_LIMIT):
+                meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
+                meta[-1].callback({"result": {"layer_height": 0.2, "job_id": "1A2B"}}, None)
+                self.qt.events(1)
+                history = [r for r in self.transport.requests if r.channel == "mr-history"]
+                history[-1].callback({"result": {"count": 0, "jobs": []}}, None)
+                self.qt.events(1)
+                key = ("part.gcode", coordinator._files.job_key)
+                if step < coordinator.MR_META_CHECK_LIMIT - 1:
+                    self.assertEqual(coordinator._mr_metadata_for(*key), {})
+                    tick[0] += 31.0
+                    deliver(31 + step)  # each delivery differs so the poll refreshes
+                    self.qt.events(1)
+            # After the limit: the payload latched, flagged.
+            self.assertEqual(coordinator._mr_metadata_for(*key).get("layer_height"), 0.2)
 
     def test_metadata_reply_after_reset_never_latches(self):
         # A reply landing after a binding reset must not latch the old
@@ -3048,7 +3093,7 @@ class MonitorQtTests(unittest.TestCase):
         }
         client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
         self.qt.events(1)
-        meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+        meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
         self.assertEqual(len(meta), 1)
         coordinator.reset_binding()
         meta[0].callback({"result": {"layer_height": 0.2, "estimated_time": 3600, "job_id": "1A2B"}}, None)
@@ -3073,7 +3118,7 @@ class MonitorQtTests(unittest.TestCase):
         }
         client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
         self.qt.events(1)
-        meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+        meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
         self.assertEqual(len(meta), 1)
         self.assertIn("PLA/part.gcode", meta[0].path)
         self.assertNotIn("%2F", meta[0].path)
