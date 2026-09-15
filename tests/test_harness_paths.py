@@ -64,6 +64,27 @@ class ContainerPathMappingTests(unittest.TestCase):
         # the identity — the serial run's host==container premise.
         self.assertEqual(_container("/tmp/mpf", "/tmp/mpf/xdg"), "/tmp/mpf/xdg")
 
+    def test_slot_prefix_matches_at_a_component_boundary(self):
+        # slot-12 is not slot-1's tail: a naive prefix test rewrites
+        # /tmp/mpf/slot-12/x to /tmp/mpf2/x.
+        self.assertEqual(
+            _container("/tmp/mpf/slot-1", "/tmp/mpf/slot-12/xdg"), "/tmp/mpf/slot-12/xdg"
+        )
+        self.assertEqual(
+            _container("/tmp/mpf/slot-1", "/tmp/mpf/slot-1/xdg"), "/tmp/mpf/xdg"
+        )
+
+    def test_dotdot_components_are_refused(self):
+        # A `..` in either subcommand's path would escape the scratch
+        # tree (a container-side rm -rf follows it) — both refuse.
+        for args in (("container", "/tmp/mpf", "/tmp/mpf/../shared"),
+                     ("resolve", "/tmp/mpf", "../shared/run"),
+                     ("container", "/tmp/mpf", "/tmp/mpf/x/..")):
+            out = subprocess.run(
+                ["sh", str(HELPER), *args], capture_output=True, text=True,
+            )
+            self.assertEqual(out.returncode, 2, args)
+
 
 class RunDirResolutionTests(unittest.TestCase):
     def test_absolute_name_passes_through_verbatim(self):
@@ -80,10 +101,13 @@ class RunDirResolutionTests(unittest.TestCase):
     def test_host_and_container_views_resolve_the_same_suffix(self):
         # The two views of the one scratch tree differ only in their
         # base; the resolved suffix must agree or the report and the
-        # writer drift apart again.
+        # writer drift apart again. Resolved against two different
+        # bases, the suffix must be the same (the slot mount gives
+        # the container a different root path for the same tree).
         host = _resolve("/tmp/mpf", "run-001")
-        container = _resolve("/tmp/mpf", "run-001")
-        self.assertEqual(host, container)
+        container = _resolve("/tmp/mpf/slot-1", "run-001")
+        self.assertTrue(host.endswith("/ui-artifacts/run-001"), host)
+        self.assertTrue(container.endswith("/ui-artifacts/run-001"), container)
 
     def test_ui_test_resolves_both_sides_through_the_shared_rule(self):
         # The wiring: ui_test.sh must not build either side's path
@@ -105,10 +129,28 @@ class RunDirResolutionTests(unittest.TestCase):
     def test_ui_test_refuses_a_run_without_landed_evidence(self):
         # The gate half of the regression: a run whose gallery never
         # reached the reported path must fail, whatever the verdict
-        # said.
+        # said — and the suite modes' machine-readable record must
+        # land too.
         text = UI_TEST.read_text()
         self.assertIn('echo "ui_test: EVIDENCE MISSING', text)
         self.assertIn('[ ! -s "$RUN_DIR/index.html" ]', text)
+        self.assertIn('[ ! -s "$RUN_DIR/evidence.json" ]', text)
+
+    def test_boot_wait_reads_the_runs_own_work_dir(self):
+        # A slot container writes its port file into ITS /tmp/mpf —
+        # the wait must read the run's own work dir, never the shared
+        # tree's copy (a stale shared file passed every -j unit's
+        # boot gate in 4.1.0's green matrix).
+        text = UI_TEST.read_text()
+        self.assertIn('[ -s "$WORK_DIR"/harness_port.txt ]', text)
+        self.assertNotIn('[ -s /tmp/mpf/harness_port.txt ]', text)
+
+    def test_runner_env_carries_the_run_identity(self):
+        # The evidence record's provenance fields read these from the
+        # runner's environment — they must cross into the container
+        # or every record says "?".
+        text = UI_TEST.read_text()
+        self.assertIn('CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION"', text)
 
 
 class TestingDocPinTests(unittest.TestCase):

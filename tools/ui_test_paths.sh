@@ -16,13 +16,20 @@
 #       paths rewrite to the container form; everything else passes
 #       through. The serial run (work_dir IS /tmp/mpf) is the
 #       identity case.
+#
+#   Both subcommands refuse `..` components and match the work-dir
+#   prefix at a component boundary (a naive prefix test would read
+#   slot-12 as slot-1's tail and rewrite it to /tmp/mpf2).
 if [ "$#" -ne 3 ]; then
     echo "usage: ui_test_paths.sh resolve <base> <run_dir_name> | container <work_dir> <path>" >&2
     exit 2
 fi
+case "$3" in
+    *"/../"*|*/..|../*|..) echo "ui_test_paths: '..' components are not allowed: $3" >&2; exit 2 ;;
+esac
 if [ "$1" = "container" ]; then
     case "$3" in
-        "$2"*) printf '/tmp/mpf%s\n' "${3#"$2"}" ;;
+        "$2"|"$2"/*) printf '/tmp/mpf%s\n' "${3#"$2"}" ;;
         *) printf '%s\n' "$3" ;;
     esac
     exit 0
