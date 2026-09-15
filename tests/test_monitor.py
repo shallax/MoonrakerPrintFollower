@@ -40,6 +40,7 @@ POLICY = (PLUGINS / "MonitorPermissions.py").read_text()
 TYPED = "\n".join((PLUGINS / name).read_text() for name in ("MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py", "CuraIntegration.py", "MoonrakerMonitorModel.py"))
 DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
+CAMERA_PANE_QML = (PLUGINS / "CameraPane.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
@@ -185,14 +186,17 @@ class MonitorModelContractTests(unittest.TestCase):
         # zone — the record there describes the latch that never
         # re-armed when the release sat below the squeeze. The
         # literals are extracted tolerantly (regexes, never the
-        # expression text, which qmlformat owns).
+        # expression text, which qmlformat owns). The squeeze reads
+        # the CameraPane's exported viewport width — the qualifier is
+        # matched tolerantly, but both sides must be the SAME
+        # expression and the threshold stays pinned.
         comfort = re.search(
             r'infoComfortWidth: \(([0-9]+) \+ ([0-9]+) \+ ([0-9]+)\) \* screenScaleFactor \+ 4 \* UM\.Theme\.getSize\("default_margin"\)\.width',
             MONITOR_QML,
         )
         self.assertIsNotNone(comfort, "the comfort-width expression changed shape")
         squeeze = re.search(
-            r'webcamSqueezed: cameraViewport\.width > 0 && cameraViewport\.width < ([0-9]+) \* screenScaleFactor',
+            r'webcamSqueezed: ([A-Za-z0-9_.]+) > 0 && \1 < ([0-9]+) \* screenScaleFactor',
             MONITOR_QML,
         )
         self.assertIsNotNone(squeeze, "the squeeze threshold changed shape")
@@ -204,7 +208,7 @@ class MonitorModelContractTests(unittest.TestCase):
         comfort_sum = sum(int(g) for g in comfort.groups())
         self.assertGreater(
             comfort_sum + int(release_margin.group(1)),
-            int(squeeze.group(1)),
+            int(squeeze.group(2)),
             "the release point must stay above the squeeze point or the latch never re-arms",
         )
 
@@ -860,7 +864,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertGreaterEqual(DASHBOARD_QML.count("onValueCommitted:"), 9)
         self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
         self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", DASHBOARD_QML)
-        self.assertIn('text: "Refresh Moonraker\'s webcam list."', MONITOR_QML)
+        self.assertIn('text: "Refresh Moonraker\'s webcam list."', CAMERA_PANE_QML)
         self.assertIn('title: "Exclude object?"', MONITOR_QML)
         tuning = (PLUGINS / "MonitorTuning.py").read_text()
         self.assertIn("DEBOUNCE_MS = 250", tuning)
@@ -897,15 +901,15 @@ class MonitorModelContractTests(unittest.TestCase):
         # The camera bar's final shape (the author's ruling): the
         # label sits permanently ABOVE the dropdown, centred, no
         # colon — one label, no conditional layouts, nothing to
-        # overlap the pane at any width.
-        self.assertIn("Layout.preferredWidth: 180 * screenScaleFactor", MONITOR_QML)
-        self.assertIn("Layout.minimumWidth: 60 * screenScaleFactor", MONITOR_QML)
-        self.assertEqual(MONITOR_QML.count('text: "Camera"'), 1)
+        # overlap the pane at any width. The bar lives in CameraPane.
+        self.assertIn("Layout.preferredWidth: 180 * screenScaleFactor", CAMERA_PANE_QML)
+        self.assertIn("Layout.minimumWidth: 60 * screenScaleFactor", CAMERA_PANE_QML)
+        self.assertEqual(CAMERA_PANE_QML.count('text: "Camera"'), 1)
 
     def test_camera_qml_uses_the_activated_signal_index_not_bound_current_index(self):
-        self.assertIn("onActivated: function (index)", MONITOR_QML)
-        self.assertIn("selectWebcam(index)", MONITOR_QML)
-        self.assertNotIn("selectWebcam(cameraSelector.currentIndex)", MONITOR_QML)
+        self.assertIn("onActivated: function (index)", CAMERA_PANE_QML)
+        self.assertIn("selectWebcam(index)", CAMERA_PANE_QML)
+        self.assertNotIn("selectWebcam(cameraSelector.currentIndex)", CAMERA_PANE_QML)
 
     def test_camera_render_watchdogs_are_wired(self):
         # The author's live reports: a stream that CONNECTED but never
@@ -913,8 +917,8 @@ class MonitorModelContractTests(unittest.TestCase):
         # watchdog watches the frame size; and a suspend/wake leaves a
         # frozen frame whose size is already set — the model's wake
         # hook reloads the source.
-        self.assertIn("cameraStallWatchdog", MONITOR_QML)
-        self.assertIn("cameraRenderStalled()", MONITOR_QML)
+        self.assertIn("cameraStallWatchdog", CAMERA_PANE_QML)
+        self.assertIn("cameraRenderStalled()", CAMERA_PANE_QML)
         self.assertIn("def cameraRenderStalled", MONITOR_MODEL)
         self.assertIn("applicationStateChanged.connect(self._on_app_state_changed)", MONITOR_MODEL)
 
@@ -3439,7 +3443,6 @@ Item {
                       # title in the panes' style, and the camera fills
                       # the pane only while it is collapsed.
                       'sectionExpandedMap["console"]',
-                      'text: "Webcam"',
                       # The toggle keeps the other panes' button
                       # style with the theme's up/down chevrons inside
                       # it (the author's rulings).
@@ -3452,6 +3455,8 @@ Item {
                       "consoleLines", "selectByMouse",
                       "server/gcode_store?count=100"):
             self.assertIn(token, MONITOR_QML + (PLUGINS / "MonitorData.py").read_text())
+        # The webcam pane's title moved with the card (CameraPane.qml).
+        self.assertIn('text: "Webcam"', CAMERA_PANE_QML)
         # The poll gate opens on printer attach — never wired to the
         # info pane's collapse (infoCollapsed defaults to false, which
         # left the feed dead in the default layout).
@@ -3639,10 +3644,14 @@ Item {
         self.assertEqual(exempt_files, {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml"})
         for monitor_file in ("MoonrakerMonitor.qml", "MoonrakerMonitorDashboard.qml", "MoonrakerPreviewCard.qml"):
             self.assertNotIn(monitor_file, exempt_files)
+        # The camera's configured gate moved into CameraPane as
+        # `configured` (read there as root.configured): the token
+        # follows the code, so the pane's veil and Live badge stay
+        # reviewed under this rule.
         whitelist = (
             "openPopOver", "sectionExpandedMap", "Collapsed", "platformActivity",
             "previewStageActive", "configuredForFollowing", "modelData.type", "hasWhite",
-            "cameraConfigured", "tooltipText", "sectionIcon", "macroParameters",
+            "root.configured", "tooltipText", "sectionIcon", "macroParameters",
             "webcamNames", "root.busy", "root.progress", "improveEtaProgress",
             "temperatureChart.series", "allChartSensorsHidden", "selectedChartSensor",
             "hoverClockProxy",
@@ -3799,9 +3808,9 @@ Item {
         self.assertIn("connectionDotColour", MONITOR_QML)
         self.assertIn('text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."', MONITOR_QML)
         self.assertIn("id: statusCollapsedTitle", MONITOR_QML)
-        self.assertIn('text: "Live"', MONITOR_QML)
-        self.assertIn('color: "#c0202428"', MONITOR_QML)
-        self.assertIn('text: (root.printer != null && root.printer.cameraRecovering) ? "Camera recovering…" : "Camera offline"', MONITOR_QML)
+        self.assertIn('text: "Live"', CAMERA_PANE_QML)
+        self.assertIn('color: "#c0202428"', CAMERA_PANE_QML)
+        self.assertIn('text: (root.printerModel != null && root.printerModel.cameraRecovering) ? "Camera recovering…" : "Camera offline"', CAMERA_PANE_QML)
         model = self.monitor()
         # The harness may connect asynchronously during construction —
         # pin the TRANSITIONS, which are synchronous.
