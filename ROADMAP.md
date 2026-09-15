@@ -1439,70 +1439,100 @@ completion, with fixed component scope and measurable exit criteria —
 not a repository-wide redesign. The 2026-09-15 scoping ruling keeps
 4.4.0 separate and folds every 4.2.0 deferral plus the round-2
 pro-user planning input (2026-09-15) into this release. The round-1
-critic (2026-09-15) corrected three false premises and re-shaped the
-workstreams; every disposition is in the decisions ledger.
+critic (2026-09-15) corrected three false premises; the seven-persona
+panel (2026-09-15) settled the strip's shape, lane and budget, and
+the off-path readout was dropped by ruling. Every disposition is in
+the decisions ledger.
 
 - **Preview status strip (the pro-user's top want, ruled in
-  2026-09-15).** A slim status row as the first row of the existing
-  Preview card, above the title: the current temps, the
-  ETA/already-printed line and pause/resume. Status-only (the
-  2026-09-15 ruling): the factor sliders, the z-offset nudges and
-  the extrude/retract controls stay in the Monitor — the Preview
+  2026-09-15).** Two fixed rows after the card's title, directly
+  above the existing status row (re-ruled 2026-09-15 from the
+  card's first row, so the two status lines read as one block):
+  row 1 is one full-width control — "Pause print" / "Resume
+  print" (the action word always visible; the policy's reason
+  detail in the tooltip; the Detach/Attach tooltip reworded to
+  read against a card that does pause); row 2 is the temps cell
+  ("Hotend 205/210 °C · Bed 60/60 °C" — the Monitor's own labels
+  and form) and a permanent middle slot whose text changes: the
+  print ETA while a gate passes, the policy's refusal reason
+  whenever one refuses. 61 px total; every cell explicitly
+  width-bound — an implicit-width row paints past the card edge
+  (the load-indicator precedent). Status-only (the 2026-09-15
+  ruling): the factor sliders, the z-offset nudges and the
+  extrude/retract controls stay in the Monitor — the Preview
   control dock is a 4.4.0 planning item with the jog pad. On the
   card, the strip rides its dual-host placement for free — no
   third host surface (re-ruled 2026-09-15 from a separate strip).
   If the control dock lands, the strip breaks out to its own
-  surface then — the card row is the simple form (the 2026-09-15
-  ruling). Snapshot-0 mock before wiring.
-  Round-1 corrections (2026-09-15):
-  - Pause/resume is the last un-migrated command gate — the action
-    policy has no pause row (two inline booleans gated on
-    `commands.busy`, no reason). Per the standing rulings (the
-    policy owns command permissions; refusals carry the policy's
-    words), the strip adds `can_pause`/`can_resume` rows with
-    reason constants and the Dashboard's buttons migrate onto
-    them; the source-pinned policy means the pin updates are
-    costed with the rows. The strip states what it shows while
-    actionBusy — a dead Pause with no words is the failure mode
-    4.2.0 removed.
-  - The temps have no seam: temperature data and formatting live in
-    the Monitor's aux poll, and the only Preview↔Monitor wiring
-    today is the bed-mesh thresholds. The plan names the seam — a
-    slim per-poll value block published through the coordinator
-    (which republishes every refresh) — and the staleness rule:
-    the strip's temps read "—" when the feed is absent, never a
-    stale value (the preview publish channel's sticky dict never
-    removes a key).
-  - The ETA line moves the slot's content: the existing
-    current-layer slot already renders the ETA/already-printed
-    text (`selectedLayerEtaText`). The strip takes that line up;
-    the slot keeps the current-layer scheduling info. The mock
-    round settles the split and carries an explicit vertical
-    budget for the card — its growth is harness-pinned (the v1
-    geometry assertions against Cura's save row and the window).
-  - The strip's state table (idle / printing / paused /
-    disconnected / busy / error) and its signals are named in the
-    plan: `printPauseRequested` / `printResumeRequested` — never
-    `pauseClicked`, which means Attach/Detach on the card today.
-  - One card-content budget (F14) covers the strip row, the ETA
-    slot's fate and the off-path line, with a stated maximum card
-    height.
-- **Off-path distance in plain words (PUF5; premise corrected by
-  the round-1 critic).** `refined_fraction` already has a consumer
-  — its fraction and method drive the Preview path bar and the
-  follower status string. What is unused is the distance scalar,
-  discarded inside the 3 mm measurement window. The item is a
-  signature change to the shipped progress estimator: return the
-  distance and surface it in the follower's status area.
-  In-window only — the 3 mm hold stays (it stops the
-  parser-position fraction inflating the monotonic floor into a
-  staircase; the old headline example is unproducible without
-  changing the hold). The gating is defined: which states show the
-  line, what the threshold is, and what it says when there is
-  nothing to say — every Z-hop, travel and wipe is legitimately
-  off-path, so the readout must not report normal motion as an
-  anomaly. Commanded-not-sensed caveat: it cannot detect skipped
-  steps.
+  surface then — the card rows are the simple form (the
+  2026-09-15 ruling), built as a property-driven component with
+  no card-internal state so the 4.4.0 host change is a re-home,
+  not a rewrite. Snapshot-0 mock before wiring.
+
+  The panel's rulings (2026-09-15, dispositions in the ledger):
+  - The lane. The rows are `can_pause`/`can_resume` with reason
+    constants — pause/resume is the last un-migrated command gate
+    (two inline booleans today, no reasons). Both rows read
+    `pause_resume.is_paused` where available (the object joins the
+    queried set — the state proxy alone ships a live Resume on a
+    print that can never resume) and consume `R_ESTOPPED`: the
+    state table's assumed-stopped row reads "Stop issued — state
+    unconfirmed" and disables both actions BY the assumption — the
+    first consumer of the e-stop record. The mode mapping is
+    allowed / disabled+reason, never pause-first. Busy is a term
+    of the row ("A command is running", never a dead button). The
+    lane re-derives from a fresh observation at dispatch (never
+    the cached property), denies on a missing observation, reports
+    the policy's words on every refusal, and the refusal lands on
+    the middle slot — the strip's refusal surface. A "resume
+    aborted" reply settles immediately as "nothing to resume" —
+    never the 300 s window. The Dashboard's buttons migrate onto
+    the rows and gain the reason words; the print-job caption
+    reads a state property, not the permission boolean.
+  - The seam. A slim per-poll Preview value block published by the
+    aux accumulator (MonitorData's own 2.5 s clock), carried to
+    the coordinator through a new read-only edge created at the
+    output-device boundary — the only place both halves exist.
+    The block carries the arrival stamp; the strip renders "—"
+    per value when the feed is absent, stale, or the monitor is
+    inactive (the three absent causes: poll failure, printer
+    switch, never configured). Absence is an explicitly published
+    sentinel — the sticky publish dict never removes a key, and a
+    re-stamped block never goes stale. The block is generic (a
+    "Preview value block per poll with a stated staleness rule")
+    so the 4.4.0 camera thumbnail and marker readouts reuse it.
+  - The temps. Reuse `chart_temperature_objects` — never a fresh
+    classification (hotend and bed are "system" objects; a
+    temperature-filter misses them). target 0.0 means no
+    setpoint/off — the arrow is omitted; a 0.0 reading on a
+    heater with no target renders "—" (Klipper's own
+    not-measured convention); the fixed pair is hotend + bed —
+    additional extruders stay pane-only in 4.3.0; per-heater
+    staleness is not observable — the staleness rule is about the
+    feed, and the plan says so.
+  - The ETA. The middle slot carries the PRINT remaining/finish
+    (`layer_eta`, already computed by the coordinator, new over
+    the seam). The existing selected-layer slot stays untouched:
+    its string is atomic, shows no time at all while following,
+    and moving it asked for a value that does not exist on this
+    host.
+  - The state table. idle / printing / paused / disconnected /
+    busy (printer command vs card load — two unrelated busies,
+    both named) / error (download-index vs Klipper's, both named)
+    / locked / assumed-stopped. One vocabulary, written once —
+    the strip, the card's status row and the print-job caption
+    all read from it.
+  - The signals. `printPauseRequested` / `printResumeRequested`
+    (never `pauseClicked` — that means Attach/Detach today); the
+    presentation's `pauseRequested` renames to
+    `pauseAtLayerRequested` in the same pass — three pause-named
+    signals on one object is one too many.
+  - The budget. A UX budget, not a harness one: the v1 assertion
+    binds horizontally (22 px of X clearance to the save row) and
+    there are 750 px of verified vertical headroom. The real
+    constraint is the bottom-anchored card's overflow over Cura's
+    viewport — the budget states its headroom rule (what happens
+    when the 4.4.0 dock is added), not just a maximum.
 - **Operation extraction — two slices, separately revertible
   (split after the round-1 critic).** Slice one: the print-start
   owner extraction completes — the queued outcome, the
@@ -1608,9 +1638,11 @@ workstreams; every disposition is in the decisions ledger.
   as unit-testable values BEFORE any pane slice moves — a pin
   change and the hysteresis re-derivation land in the same commit.
   The pin-retargeting pass costed and complete. Per-item criteria:
-  the strip's is the state table, the signals and the content
-  budget; the off-path line's is the gating. Each extraction is a
-  vertical slice — move
+  the strip's is the state table, the signals, the content budget,
+  the staleness witness (a test that stops the feed) and its own
+  lane scenario (the refusal text via a model read and the
+  absences via assert_model). Each extraction is a vertical slice
+  — move
   one owner, redirect its callers, preserve observable behaviour,
   remove the obsolete path in the same change. A lines-per-file
   target is not an acceptance criterion; the test is that a feature
@@ -1679,7 +1711,9 @@ pause/resume beside it; macro surfacing is a 2. Missing items ranked:
 4.3.0 (2026-09-15); (2) the already-computed off-path distance in
 plain words (`refined_fraction` is thrown away today — "Head is
 12.4 mm off the toolpath"; commanded-not-sensed caveat: it cannot
-detect skipped steps) — moved to 4.3.0 (2026-09-15); (3) pause-at-Z-
+detect skipped steps) — moved to 4.3.0, then dropped there
+(2026-09-15); the marker may earn it back as a deviation callout
+beside the actual head; (3) pause-at-Z-
 height + one-click pause-at-next-layer + the layer-to-mm readout
 (`PhysicalLayer.height` has no consumer); (4) filament/colour-change
 waypoints (M600, `; filament change`) on the layer timeline with
@@ -1687,8 +1721,8 @@ time-to-go; (5) a camera thumbnail in the Preview (investigate, don't
 assume); (6) active-tool label + per-extruder path colouring.
 The ranking is stale and is re-derived at 4.4.0's planning round
 (PUF4, 2026-09-15): pause-at-layer and the layer-to-mm readout
-already ship, and items (1) and (2) moved to 4.3.0 — only
-pause-at-Z-height of the original three remains open.
+already ship, item (1) moved to 4.3.0 and item (2) was dropped
+there — only pause-at-Z-height of the original three remains open.
 Cross-cutting: the layer-hardening pack is the marker's prerequisite
 (the marker inherits the resolver's numbers, and the `;LAYER:` flip
 without the gate can increase wrong-layer risk); the version-drift
@@ -1839,6 +1873,15 @@ contrast; pairwise hue separation is the residual debt).
   never proven — the plugin has no vertex-level reach into Cura's
   layer geometry, and the 4.2.0 per-layer prototype did not produce
   the look — and the value does not repay the machinery.
+- **The off-path distance readout** — dropped at planning (the
+  author's ruling, 2026-09-15): the signal is mostly normal motion
+  (travels, Z-hops and parks exceed the window by design), the
+  anomaly cases are not visible through the commanded position,
+  and the surviving value did not repay a five-owner plumbing
+  change. A deviation callout beside the 4.4.0 physical-head
+  marker is the one shape that might earn it back — with an actual
+  head rendered, the number points at something on screen (the
+  author, 2026-09-15).
 - **Multi-instance Monitor** — Cura's paradigm is one active printer at a
   time; per-printer Monitor instances do not fit.
 - **Printer.cfg editing** — Cura machines are configured in Cura; a config
