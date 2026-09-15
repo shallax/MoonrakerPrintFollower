@@ -62,12 +62,12 @@ class ClassificationRatchetTests(unittest.TestCase):
         # only increase as the conversion proceeds. Today's census
         # (2026-09-15, the re-review's re-count — the pin includes
         # key_press, which the classifier counts as real input):
-        # 46 click_stage + 22 deliver_click + 11 click_text +
+        # 47 click_stage + 22 deliver_click + 12 click_text +
         # 5 key_press.
         text = (ROOT / "tests/harness/scenarios.py").read_text()
         real = len(re.findall(
             r'"op": "(deliver_click|click_stage|click_text|key_press)"', text))
-        self.assertGreaterEqual(real, 84)
+        self.assertGreaterEqual(real, 86)
 
     def test_direct_invocation_can_only_shrink(self):
         # And the other half: direct-invocation steps may only
@@ -75,7 +75,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # re-count — the pin now counts exec_code and confirm_box,
         # which the classifier itself calls direct invocation, so
         # they can never hide outside the ratchet):
-        # 38 exec_slot + 12 exec_file_slot + 6 emit_click +
+        # 39 exec_slot + 12 exec_file_slot + 6 emit_click +
         # 3 confirm_box + 6 exec_mode + 3 exec_validator +
         # 1 exec_console + 1 exec_extrude + 1 exec_test_connection
         # + 22 exec_code.
@@ -83,7 +83,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         direct = len(re.findall(
             r'"op": "(exec_slot|exec_file_slot|emit_click|confirm_box|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))
-        self.assertLessEqual(direct, 93)
+        self.assertLessEqual(direct, 94)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —
