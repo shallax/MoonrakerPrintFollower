@@ -60,21 +60,21 @@ class ClassificationRatchetTests(unittest.TestCase):
     def test_real_input_can_only_grow(self):
         # The F08 acceptance, pinned statically: real-input steps may
         # only increase as the conversion proceeds. Today's census:
-        # 41 click_stage + 2 deliver_click + 2 click_text.
+        # 41 click_stage + 7 deliver_click + 2 click_text.
         text = (ROOT / "tests/harness/scenarios.py").read_text()
         real = len(re.findall(r'"op": "(deliver_click|click_stage|click_text)"', text))
-        self.assertGreaterEqual(real, 45)
+        self.assertGreaterEqual(real, 48)
 
     def test_direct_invocation_can_only_shrink(self):
         # And the other half: direct-invocation steps may only
         # shrink. Today's census: 34 exec_slot + 15 exec_file_slot +
-        # 6 emit_click + 6 exec_mode + 3 click_jog + 3 exec_validator
+        # 6 emit_click + 6 exec_mode + 0 click_jog + 3 exec_validator
         # + 2 exec_console + 1 exec_extrude + 1 exec_test_connection.
         text = (ROOT / "tests/harness/scenarios.py").read_text()
         direct = len(re.findall(
             r'"op": "(exec_slot|exec_file_slot|emit_click|click_jog|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection)"', text))
-        self.assertLessEqual(direct, 71)
+        self.assertLessEqual(direct, 68)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —
