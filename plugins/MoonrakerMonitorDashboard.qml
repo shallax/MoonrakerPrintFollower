@@ -195,12 +195,6 @@ Component {
             return false;
         }
 
-        function sliderSelection(slider) {
-            if (slider == null)
-                return 0;
-            return Math.round(slider.valueAt(slider.position));
-        }
-
         MoonrakerMonitor {
             id: baseMonitorComponent
         }
@@ -574,68 +568,15 @@ Component {
                             frozenItems: root.frozenLedItems
                             interactionSink: root.receiveSliderInteraction
                         }
-                        CollapsibleSectionHeader {
+
+                        PwmSection {
+                            id: pwmSection
                             Layout.fillWidth: true
                             printerModel: root.printer
-                            title: "PWM outputs"
-                            sectionId: "pwm"
-                            sectionIcon: "ThreeDots"
+                            freezeRepeaters: root.tuningSliderPressed
+                            frozenItems: root.frozenPwmOutputItems
+                            interactionSink: root.receiveSliderInteraction
                         }
-                        ColumnLayout {
-                            Layout.topMargin: UM.Theme.getSize("default_margin").height
-                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                            visible: root.printer != null && root.printer.pwmOutputItems.length > 0 && root.printer.sectionExpandedMap["pwm"] !== false
-                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
-                            Layout.fillWidth: true
-                            Repeater {
-                                id: pwmRepeater
-                                model: root.tuningSliderPressed ? root.frozenPwmOutputItems : (root.printer != null ? root.printer.pwmOutputItems : [])
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        UM.Label {
-                                            text: modelData.name
-                                            Layout.fillWidth: true
-                                            elide: Text.ElideRight
-                                        }
-                                        UM.Label {
-                                            width: 52 * screenScaleFactor
-                                            horizontalAlignment: Text.AlignRight
-                                            text: root.sliderSelection(pwmSlider) + "%"
-                                        }
-                                    }
-                                    OutlineSlider {
-                                        id: pwmSlider
-                                        Layout.fillWidth: true
-                                        controlObject: modelData.object
-                                        controlKind: "pwm"
-                                        from: 0
-                                        to: 100
-                                        stepSize: 1
-                                        live: false
-                                        value: modelData.percent
-                                        onValueTuning: {
-                                            if (root.printer != null)
-                                                root.printer.previewPwmOutput(modelData.object, value);
-                                        }
-                                        onValueCommitted: {
-                                            if (root.printer != null)
-                                                root.printer.setPwmOutput(modelData.object, value);
-                                        }
-                                        onInteractingChanged: {
-                                            root.tuningSliderPressed = interacting;
-                                            if (interacting) {
-                                                root.tuningSliderObject = modelData.object;
-                                                root.tuningSliderKind = "pwm";
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
                         CollapsibleSectionHeader {
                             Layout.fillWidth: true
                             printerModel: root.printer

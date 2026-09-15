@@ -48,6 +48,7 @@ PROFILES_SECTION_QML = (PLUGINS / "ProfilesSection.qml").read_text()
 TUNING_SECTION_QML = (PLUGINS / "TuningSection.qml").read_text()
 FANS_SECTION_QML = (PLUGINS / "FansSection.qml").read_text()
 LEDS_SECTION_QML = (PLUGINS / "LedsSection.qml").read_text()
+PWM_SECTION_QML = (PLUGINS / "PwmSection.qml").read_text()
 MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
@@ -185,7 +186,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -261,7 +262,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # totals — a moved section decrements one file and increments
         # another, and the totals catch a dropped section that a
         # per-file pin alone would read as "moved".
-        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 5)
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 4)
         self.assertEqual(PRINT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(SETUP_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader"), 1)
@@ -270,6 +271,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(TUNING_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(FANS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(LEDS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(PWM_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
@@ -280,8 +282,9 @@ class MonitorModelContractTests(unittest.TestCase):
                          + TUNING_SECTION_QML.count("CollapsibleSectionHeader")
                          + FANS_SECTION_QML.count("CollapsibleSectionHeader")
                          + LEDS_SECTION_QML.count("CollapsibleSectionHeader")
+                         + PWM_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
-        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 3)
+        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 2)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(SETUP_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(TOOLHEAD_SECTION_QML.count('sectionIcon: "'), 1)
@@ -290,6 +293,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(TUNING_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(FANS_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(LEDS_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(PWM_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
@@ -300,6 +304,7 @@ class MonitorModelContractTests(unittest.TestCase):
                          + TUNING_SECTION_QML.count('sectionIcon: "')
                          + FANS_SECTION_QML.count('sectionIcon: "')
                          + LEDS_SECTION_QML.count('sectionIcon: "')
+                         + PWM_SECTION_QML.count('sectionIcon: "')
                          + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
@@ -745,10 +750,10 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("applyTemperaturePreset(modelData.index)", PROFILES_SECTION_QML)
         self.assertNotIn("temperaturePresetSelector", DASHBOARD_QML)
 
-    def test_pwm_controls_remain_in_dashboard(self):
-        self.assertIn("pwmOutputItems", DASHBOARD_QML)
-        self.assertIn("setPwmOutput", DASHBOARD_QML)
-        self.assertIn('title: "PWM outputs"', DASHBOARD_QML)
+    def test_pwm_controls_ride_their_component(self):
+        self.assertIn("pwmOutputItems", PWM_SECTION_QML)
+        self.assertIn("setPwmOutput", PWM_SECTION_QML)
+        self.assertIn('title: "PWM outputs"', PWM_SECTION_QML)
 
     def test_monitor_layer_tracks_remote_print_not_cura_slider(self):
         resolver = (PLUGINS / "PrintState.py").read_text()
@@ -791,7 +796,7 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertIn(token, CONTROLS + MONITOR_MODEL)
         self.assertIn("function applyLedColour()", LEDS_SECTION_QML)
         self.assertGreaterEqual(LEDS_SECTION_QML.count("applyLedColour()"), 4)
-        self.assertIn("root.tuningSliderPressed = interacting", DASHBOARD_QML)
+        self.assertIn('root.interactionSink(interacting, modelData.object, "led-red")', LEDS_SECTION_QML)
         self.assertNotIn('text: "Set colour"', DASHBOARD_QML)
         self.assertIn("root.printerModel.setLedColor", LEDS_SECTION_QML)
 
@@ -813,8 +818,9 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertGreaterEqual(TUNING_SECTION_QML.count("live: false"), 2)
         self.assertGreaterEqual(FANS_SECTION_QML.count("live: false"), 1)
         self.assertGreaterEqual(LEDS_SECTION_QML.count("live: false"), 5)
-        self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 1)
-        self.assertGreaterEqual(TUNING_SECTION_QML.count("live: false") + FANS_SECTION_QML.count("live: false") + LEDS_SECTION_QML.count("live: false") + DASHBOARD_QML.count("live: false"), 9)
+        self.assertGreaterEqual(PWM_SECTION_QML.count("live: false"), 1)
+        self.assertEqual(DASHBOARD_QML.count("live: false"), 0)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("live: false") + FANS_SECTION_QML.count("live: false") + LEDS_SECTION_QML.count("live: false") + PWM_SECTION_QML.count("live: false"), 9)
         for slider_id in ("speedSlider", "flowSlider"):
             marker = "id: " + slider_id
             start = TUNING_SECTION_QML.find(marker)
@@ -832,21 +838,24 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertIn("live: false", LEDS_SECTION_QML[start:start + 700], slider_id)
         for slider_id in ("pwmSlider",):
             marker = "id: " + slider_id
-            start = DASHBOARD_QML.find(marker)
+            start = PWM_SECTION_QML.find(marker)
             self.assertGreaterEqual(start, 0, slider_id)
-            self.assertIn("live: false", DASHBOARD_QML[start:start + 700], slider_id)
+            self.assertIn("live: false", PWM_SECTION_QML[start:start + 700], slider_id)
         self.assertGreaterEqual(TUNING_SECTION_QML.count("onValueCommitted:"), 2)
         self.assertGreaterEqual(FANS_SECTION_QML.count("onValueCommitted:"), 1)
         self.assertGreaterEqual(LEDS_SECTION_QML.count("onValueCommitted:"), 5)
-        self.assertGreaterEqual(DASHBOARD_QML.count("onValueCommitted:"), 1)
+        self.assertGreaterEqual(PWM_SECTION_QML.count("onValueCommitted:"), 1)
+        self.assertEqual(DASHBOARD_QML.count("onValueCommitted:"), 0)
         self.assertIn("previewSpeedFactor", TUNING_SECTION_QML)
         self.assertIn("previewFlowFactor", TUNING_SECTION_QML)
         self.assertIn("previewFanSpeed", FANS_SECTION_QML)
         self.assertIn("previewLedBrightness", LEDS_SECTION_QML)
         self.assertIn("previewLedColor", LEDS_SECTION_QML)
-        self.assertIn("previewPwmOutput", DASHBOARD_QML)
+        self.assertIn("previewPwmOutput", PWM_SECTION_QML)
         self.assertIn("function sliderSelection(slider)", TUNING_SECTION_QML)
-        self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
+        self.assertIn("slider.valueAt(slider.position)", PWM_SECTION_QML)
+        self.assertIn("function sliderSelection(slider)", PWM_SECTION_QML)
+        self.assertIn("root.sliderSelection(pwmSlider) + \"%\"", PWM_SECTION_QML)
         self.assertIn("root.sliderSelection(speedSlider) + \"%\"", TUNING_SECTION_QML)
         self.assertIn("function sliderSelection(slider)", FANS_SECTION_QML)
         self.assertIn("root.sliderSelection(fanSlider) + \"%\"", FANS_SECTION_QML)
@@ -855,8 +864,10 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("root.printerModel.setFlowFactor(value)", TUNING_SECTION_QML)
 
     def test_monitor_sliders_do_not_repeat_qml_properties(self):
-        duplicate = "from: 0; to: 100; stepSize: 1\n                                        from: 0; to: 100; live: false"
-        self.assertNotIn(duplicate, DASHBOARD_QML)
+        # The sliders ride their components now: the same duplicate
+        # can creep back in any of them, so the union is swept.
+        haystack = DASHBOARD_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML
+        self.assertIsNone(re.search(r"from: 0; to: 100; stepSize: 1\s*from: 0;", haystack))
 
     def test_slider_qml_prevents_parent_flickable_from_stealing_drag(self):
         self.assertIn("property bool tuningSliderPressed: false", DASHBOARD_QML)
@@ -868,19 +879,20 @@ class MonitorModelContractTests(unittest.TestCase):
         for slider_id in ("ledSlider", "redSlider",
                           "greenSlider", "blueSlider", "whiteSlider"):
             self.assertIn("id: " + slider_id, LEDS_SECTION_QML)
-        self.assertIn("id: pwmSlider", DASHBOARD_QML)
-        self.assertGreaterEqual(DASHBOARD_QML.count("root.tuningSliderPressed = interacting"), 1)
+        self.assertIn("id: pwmSlider", PWM_SECTION_QML)
+        self.assertNotIn("root.tuningSliderPressed = interacting", DASHBOARD_QML)
         self.assertGreaterEqual(TUNING_SECTION_QML.count('root.interactionSink(interacting, "", "")'), 2)
         self.assertIn('root.interactionSink(interacting, modelData.object, "fan")', FANS_SECTION_QML)
         for kind in ("led-brightness", "led-red", "led-green", "led-blue", "led-white"):
             self.assertIn('root.interactionSink(interacting, modelData.object, "%s")' % kind, LEDS_SECTION_QML)
+        self.assertIn('root.interactionSink(interacting, modelData.object, "pwm")', PWM_SECTION_QML)
 
     def test_monitor_uses_plugin_outline_bars_and_sliders(self):
         # The themed ProgressBar/Slider render a black slab in the
         # inactive-window palette (author's screenshot) — the monitor's
         # bars and sliders are all plugin-owned outline components now,
         # so a bare themed control may not creep back in.
-        for file_text in (MONITOR_QML, DASHBOARD_QML, TUNING_SECTION_QML, FANS_SECTION_QML, LEDS_SECTION_QML):
+        for file_text in (MONITOR_QML, DASHBOARD_QML, TUNING_SECTION_QML, FANS_SECTION_QML, LEDS_SECTION_QML, PWM_SECTION_QML):
             # Every "ProgressBar {"/"Slider {" token must be the plugin
             # outline components (the substring check covers both) —
             # the range-filter bar is the other plugin-owned
@@ -889,10 +901,11 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertEqual(file_text.count("Slider {"),
                 file_text.count("OutlineSlider {") + file_text.count("BedMeshRangeSlider {"))
         self.assertIn("OutlineProgressBar {", MONITOR_QML)
-        self.assertGreaterEqual(DASHBOARD_QML.count("OutlineSlider {"), 1)
+        self.assertEqual(DASHBOARD_QML.count("OutlineSlider {"), 0)
         self.assertGreaterEqual(TUNING_SECTION_QML.count("OutlineSlider {"), 2)
         self.assertGreaterEqual(FANS_SECTION_QML.count("OutlineSlider {"), 1)
         self.assertGreaterEqual(LEDS_SECTION_QML.count("OutlineSlider {"), 5)
+        self.assertGreaterEqual(PWM_SECTION_QML.count("OutlineSlider {"), 1)
         indicator = (PLUGINS / "LoadProgressIndicator.qml").read_text()
         # The indicator bar's track is an outline too: transparent
         # interior, lining border, Cura-blue fill.
@@ -949,12 +962,15 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertGreaterEqual(TUNING_SECTION_QML.count("live: false"), 2)
         self.assertGreaterEqual(FANS_SECTION_QML.count("live: false"), 1)
         self.assertGreaterEqual(LEDS_SECTION_QML.count("live: false"), 5)
-        self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 1)
+        self.assertGreaterEqual(PWM_SECTION_QML.count("live: false"), 1)
+        self.assertEqual(DASHBOARD_QML.count("live: false"), 0)
         self.assertGreaterEqual(TUNING_SECTION_QML.count("onValueCommitted:"), 2)
         self.assertGreaterEqual(FANS_SECTION_QML.count("onValueCommitted:"), 1)
         self.assertGreaterEqual(LEDS_SECTION_QML.count("onValueCommitted:"), 5)
-        self.assertGreaterEqual(DASHBOARD_QML.count("onValueCommitted:"), 1)
-        self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
+        self.assertGreaterEqual(PWM_SECTION_QML.count("onValueCommitted:"), 1)
+        self.assertEqual(DASHBOARD_QML.count("onValueCommitted:"), 0)
+        self.assertIn("slider.valueAt(slider.position)", PWM_SECTION_QML)
+        self.assertNotIn("function sliderSelection(slider)", DASHBOARD_QML)
         self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", TUNING_SECTION_QML)
         self.assertIn('text: "Refresh Moonraker\'s webcam list."', CAMERA_PANE_QML)
         self.assertIn('title: "Exclude object?"', MONITOR_QML)
@@ -1034,17 +1050,17 @@ class MonitorModelContractTests(unittest.TestCase):
                       "signal valueTuning", "signal valueCommitted", "readonly property bool interacting",
                       "keyDebounce.restart()", "control.tuningActive = true"):
             self.assertIn(token, outline)
-        self.assertIn("onValueCommitted", DASHBOARD_QML)
+        self.assertIn("onValueCommitted", DASHBOARD_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML)
         # The keyboard nudge holds the interaction state until its
         # value submits, and the fan/LED/PWM repeaters freeze while a
         # tuning slider is mid-gesture — without the hold, the
         # commit's publish rebuilt the repeaters mid-nudge and killed
         # the focused delegate (the author's live report).
-        for token in ("root.frozenFanItems = root.printer.fanControlItems",
-                      "root.tuningSliderPressed ? root.frozenPwmOutputItems"):
+        for token in ("root.frozenFanItems = root.printer.fanControlItems",):
             self.assertIn(token, DASHBOARD_QML)
         self.assertIn("root.freezeRepeaters ? root.frozenItems", FANS_SECTION_QML)
         self.assertIn("root.freezeRepeaters ? root.frozenItems", LEDS_SECTION_QML)
+        self.assertIn("root.freezeRepeaters ? root.frozenItems", PWM_SECTION_QML)
         # The bed-mesh range filter's keyboard half: focus + arrow keys.
         range_slider = (PLUGINS / "BedMeshRangeSlider.qml").read_text()
         for token in ("Keys.onLeftPressed", "Keys.onRightPressed", "Keys.onUpPressed", "forceActiveFocus()"):
@@ -1530,10 +1546,11 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         self.assertIn("round(gain * 100)", controls)
         self.assertIn('self._remembered_gain[name] = percent / 100.0', controls)
         self.assertIn("self._remembered_gain.get(name, 1.0)", controls)
-        self.assertGreaterEqual(DASHBOARD_QML.count("width: 52 * screenScaleFactor"), 1)
+        self.assertEqual(DASHBOARD_QML.count("width: 52 * screenScaleFactor"), 0)
         self.assertGreaterEqual(TUNING_SECTION_QML.count("width: 52 * screenScaleFactor"), 2)
         self.assertGreaterEqual(FANS_SECTION_QML.count("width: 52 * screenScaleFactor"), 1)
         self.assertGreaterEqual(LEDS_SECTION_QML.count("width: 52 * screenScaleFactor"), 4)
+        self.assertGreaterEqual(PWM_SECTION_QML.count("width: 52 * screenScaleFactor"), 1)
         self.assertIn("width: 150 * screenScaleFactor", LEDS_SECTION_QML)
         # The submit's rebuild must not kill the tuned slider's focus
         # (the author's live report): the dashboard remembers the
@@ -1552,11 +1569,13 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         # sliders lost focus on the apply, the singletons never).
         self.assertIn("refocusTimer.attempts = 0", DASHBOARD_QML)
         self.assertIn("focusHoldTimer.start()", DASHBOARD_QML)
-        for token in ("id: pwmRepeater",
-                      "root.tuningSliderObject = modelData.object", "refocusTimer.start()"):
+        for token in ("refocusTimer.start()",):
             self.assertIn(token, DASHBOARD_QML)
+        self.assertNotIn("root.tuningSliderObject = modelData.object", DASHBOARD_QML)
         self.assertIn("id: fanRepeater", FANS_SECTION_QML)
         self.assertIn("id: ledRepeater", LEDS_SECTION_QML)
+        self.assertIn("id: pwmRepeater", PWM_SECTION_QML)
+        self.assertIn('controlKind: "pwm"', PWM_SECTION_QML)
         for kind in ("led-red", "led-brightness", "led-green", "led-blue", "led-white"):
             self.assertIn('controlKind: "%s"' % kind, LEDS_SECTION_QML)
 
