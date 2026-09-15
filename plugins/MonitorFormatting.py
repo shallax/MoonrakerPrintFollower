@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 import math
 import re
 
+from .MonitorPermissions import R_UNKNOWN, Verdict, can_pause, can_resume
+
 
 def result(payload):
     """The 'result' field of a Moonraker reply, falling back to the
@@ -136,6 +138,68 @@ def duration(seconds):
     hours, rest = divmod(max(0, int(round(number(seconds)))), 3600)
     minutes, seconds = divmod(rest, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def preview_temperature_pair(auxiliary):
+    """The strip's fixed pair: hotend and bed, the Monitor's own
+    labels and current→target form. target 0.0 means 'no setpoint /
+    at rest' — the arrow is omitted. A missing or non-finite reading
+    renders '—'; a 0.0 reading on a heater with no target is '—' too
+    (a pre-first-sample heater reports 0.0 — Klipper's own
+    not-measured convention). Per-heater staleness is not observable
+    from object status — the strip's staleness rule is about the
+    FEED, never about this pair."""
+    aux = auxiliary or {}
+    hotend_state = None
+    bed_state = None
+    for name, value in aux.items():
+        if not isinstance(value, Mapping):
+            continue
+        lower = str(name).lower()
+        if lower == "heater_bed":
+            bed_state = value
+        elif re.fullmatch(r"extruder\d*", lower) and hotend_state is None:
+            hotend_state = value
+
+    def cell(state):
+        if not isinstance(state, Mapping):
+            return "—"
+        temperature = number(state.get("temperature"), None)
+        target = number(state.get("target"), None)
+        if temperature is None or temperature <= 0 and not (target or 0) > 0:
+            return "—"
+        if (target or 0) > 0:
+            return f"{temperature:.1f}/{target:.1f} °C"
+        return f"{temperature:.1f} °C"
+
+    return cell(hotend_state), cell(bed_state)
+
+
+def preview_block(auxiliary, observation, *, stamp, inactive=False):
+    """The Preview value block (4.3.0): the slim per-poll carrier for
+    the strip — the fixed hotend/bed pair, the pause/resume verdicts
+    (with the policy's words for the tooltips) and the arrival stamp.
+    The block is GENERIC on purpose: the 4.4.0 camera thumbnail and
+    the marker's readouts reuse the same carrier. The stamp is taken
+    at the aux landing (MonitorData's clock) and never re-stamped in
+    transit — a republished block keeps its age, so the strip's
+    staleness rule has a real clock. Absence is an explicit shape
+    (the inactive flag + '—' cells), never an omitted key — the
+    preview publish dict never removes a key."""
+    pause_verdict = can_pause(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
+    resume_verdict = can_resume(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
+    hotend, bed = preview_temperature_pair(auxiliary)
+    return {
+        "stamp": float(stamp),
+        "inactive": bool(inactive),
+        "hotend": hotend,
+        "bed": bed,
+        "canPause": pause_verdict.mode == "allowed",
+        "canResume": resume_verdict.mode == "allowed",
+        "pauseReason": pause_verdict.reason,
+        "resumeReason": resume_verdict.reason,
+        "busy": bool(getattr(observation, "busy", False)),
+    }
 
 
 # The file manager's unit and time formats (UX F10): every string in

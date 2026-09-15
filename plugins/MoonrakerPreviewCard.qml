@@ -25,6 +25,11 @@ Item {
     property string statusIconName: "Information"
     property bool bedMeshAvailable: false
     property bool bedMeshVisible: true
+    // The Preview value block (4.3.0): the Monitor's per-poll
+    // carrier — the strip reads the fixed pair, the verdicts and
+    // the aux-landing stamp through these.
+    property var previewBlock: ({})
+    property bool previewBlockStale: true
     property string bedMeshRangeText: ""
     property string bedMeshMinimumText: ""
     property string bedMeshMaximumText: ""

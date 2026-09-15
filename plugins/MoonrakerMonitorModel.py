@@ -194,6 +194,7 @@ def value_property(kind, name, signal, default=None):
 
 class MoonrakerMonitorModel(PrinterOutputModel):
     monitorChanged = pyqtSignal()
+    previewBlockChanged = pyqtSignal(dict)
     webcamsChanged = pyqtSignal()
     temperatureChartChanged = pyqtSignal()
     temperatureChartLegendChanged = pyqtSignal()
@@ -458,6 +459,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # a session invalidation restarts the window so the previous
         # printer's curves never bleed into the next one.
         self._data.auxiliaryChanged.connect(self._on_auxiliary)
+        # The Preview value block rides the aux clock: the data's
+        # emission forwards straight through to the output-device
+        # edge (the seam's carrier, 4.3.0).
+        self._data.previewBlockChanged.connect(self.previewBlockChanged)
         self._data.consoleStoreChanged.connect(self._on_console_store)
         self._data.invalidated.connect(self._on_invalidated)
         # The store's failure latch is per SESSION (A6): a new
