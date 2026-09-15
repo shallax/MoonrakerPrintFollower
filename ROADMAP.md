@@ -1436,7 +1436,9 @@ The 2026-09-14 re-sequencing inserted this release: the presentation
 debt gets a bounded delivery of its own instead of compounding under
 the physical-head feature. The review's F07 plus F06's structural
 completion, with fixed component scope and measurable exit criteria —
-not a repository-wide redesign.
+not a repository-wide redesign. The 2026-09-15 scoping ruling keeps
+4.4.0 separate and folds every 4.2.0 deferral plus the round-2
+pro-user planning input (2026-09-15) into this release.
 
 - **Vertex-style gcode deformation (bumped from 4.2.0, the author's
   2026-09-15 ruling).** A Preview-card toggle that warps the rendered
@@ -1447,6 +1449,39 @@ not a repository-wide redesign.
   warp composes with Cura's lazily built layer meshes, with a
   Snapshot-0 mock before any machinery.
 
+- **Preview status strip (the pro-user's top want, ruled in
+  2026-09-15).** The Preview card gains a status strip: the current
+  temps, the ETA/already-printed line and pause/resume beside the
+  preview itself. Its dependency — the 4.2.0 action policy — already
+  lands. The motion cluster's factor sliders stay put for now; the
+  strip's layout leaves room for them (the PUF7 context).
+  Snapshot-0 mock before wiring, like the deformation.
+- **Off-path distance in plain words (PUF5).** `refined_fraction`
+  gets its consumer: the follower's status area names how far the
+  commanded head sits off the toolpath instead of throwing the
+  number away. Commanded-not-sensed caveat: it cannot detect
+  skipped steps.
+- **Operation extraction — the print-start owner and the
+  coordinator's metadata adoption (deferred from 4.2.0).** The
+  owner extraction completes: the queued outcome, the publish-driven
+  tick and the watchdog move out of the model, and the upload path
+  adopts the shared owner — its POST-body verdict stops being the
+  only reason no false-watchdog exists today. The coordinator
+  retires its own mr-metadata cache and consumes the consolidated
+  metadata service; the rewrite of the preview's ETA/filament
+  anchors rides this release with the print-start owner, as the
+  4.2.0 deferral ruled.
+- **The UI-state store (the 4.2.0 owner's second consumer).** The
+  state-store owner created in 4.2.0 gains its second consumer —
+  one store, two releases' features, no second file. The 4.2.0
+  constraints carry over: top-level-only merge (named in
+  ARCHITECTURE), the credential class stays out, and the second
+  consumer's keys must survive the first save. Collapse state stays
+  booleans under the existing keys with sizes in a sibling map — a
+  shape change or a renamed id silently re-expands every existing
+  user's sections (the pro-user's reset vector, PUF2). The 23
+  section ids are pinned before the surface moves; unknown keys
+  default to expanded, so nothing pins them today (PUF6).
 - **View-model extraction.** A FilesViewModel owning the file
   projection: one computed file-view result (rows, total, page,
   selection, empty state) cached by data/view/history revision with
@@ -1456,25 +1491,37 @@ not a repository-wide redesign.
   update lifetimes differ: controls, console/camera,
   information/chart presentation. Each receives explicit model
   properties and emits intents — never the whole root object.
-- **Operation extraction.** The print-start operation owner (4.2.0)
-  already removes print-start supervision from the Monitor model; a
-  small UI-state store owns section sizes, collapse state and their
-  persisted schema.
 - **QML component extraction.** The file table, filter controls,
   the file confirmation dialogs, the console pane, the camera pane,
   the toolhead section and the peripheral controls become complete
-  functional components.
+  functional components. Its required companion is the
+  pin-retargeting pass (PUF3): 302 source-string assertions, 42
+  negative guards that pass vacuously once code moves, and 27
+  `.index(` slice sites need a named, costed pass — the negative
+  guards follow the code, they are not deleted.
+- **Harness evidence visibility (bumped from 4.2.0, the author's
+  2026-09-15 ruling).** The suite's inspections scroll their target
+  into view before asserting, and the evidence captures show what
+  the step actually saw — a recording that proves an inspection
+  against an off-screen item proves nothing a user could do. Lands
+  here so the extractions are gated by evidence that is itself
+  trustworthy.
+- **The Monitor card's locked case.** The print-job state already
+  names disconnected; the locked case's naming rides this refactor
+  (the round-3 reconciliation note).
 - **Exit criteria.** Object names and public surfaces used by the
   interaction tests are preserved; persistence migration and
   gesture ownership survive; resize, focus, Esc handling,
   confirm/cancel, printer switches and repeated slider grabs are
   re-verified after each extraction; measured projection
   improvements against the 4.1.0 baselines; unchanged package
-  identity. Each extraction is a vertical slice — move one owner,
-  redirect its callers, preserve observable behaviour, remove the
-  obsolete path in the same change. A lines-per-file target is not
-  an acceptance criterion; the test is that a feature change stays
-  within its component.
+  identity. The 23 section ids pinned; the no-oscillation
+  invariant named in the criteria (PUF2); the pin-retargeting pass
+  costed and complete. Each extraction is a vertical slice — move
+  one owner, redirect its callers, preserve observable behaviour,
+  remove the obsolete path in the same change. A lines-per-file
+  target is not an acceptance criterion; the test is that a feature
+  change stays within its component.
 
 ## 4.4.0 — Physical head in the Preview (moved from 4.3.0)
 
@@ -1530,15 +1577,20 @@ refactor finishes.
 **Pro-user panel input (2026-09-10, planning only):** value ranking —
 the marker is the must-have; the jog pad becomes a 1 only with Preview
 pause/resume beside it; macro surfacing is a 2. Missing items ranked:
-(1) a Preview status strip with pause/resume + temps + ETA; (2) the
-already-computed off-path distance in plain words (`refined_fraction`
-is thrown away today — "Head is 12.4 mm off the toolpath"; commanded-
-not-sensed caveat: it cannot detect skipped steps); (3) pause-at-Z-
+(1) a Preview status strip with pause/resume + temps + ETA — moved to
+4.3.0 (2026-09-15); (2) the already-computed off-path distance in
+plain words (`refined_fraction` is thrown away today — "Head is
+12.4 mm off the toolpath"; commanded-not-sensed caveat: it cannot
+detect skipped steps) — moved to 4.3.0 (2026-09-15); (3) pause-at-Z-
 height + one-click pause-at-next-layer + the layer-to-mm readout
 (`PhysicalLayer.height` has no consumer); (4) filament/colour-change
 waypoints (M600, `; filament change`) on the layer timeline with
 time-to-go; (5) a camera thumbnail in the Preview (investigate, don't
 assume); (6) active-tool label + per-extruder path colouring.
+The ranking is stale and is re-derived at 4.4.0's planning round
+(PUF4, 2026-09-15): pause-at-layer and the layer-to-mm readout
+already ship, and items (1) and (2) moved to 4.3.0 — only
+pause-at-Z-height of the original three remains open.
 Cross-cutting: the layer-hardening pack is the marker's prerequisite
 (the marker inherits the resolver's numbers, and the `;LAYER:` flip
 without the gate can increase wrong-layer risk); the version-drift
