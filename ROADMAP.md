@@ -1115,8 +1115,11 @@ budgets as hang detectors, and TESTING.md as strike-and-mark.
 - **Acceptance (the exit evidence).** Every mapped surface observed
   in a run's evidence record; every critical journey real input
   with red-run proof; the hang verdict distinct; the doc-pin green;
-  all gates green with zero warnings. The PR stops at ready — the
-  merge, tag and release wait for the author's snapshot test.
+  all gates green with zero warnings; the measured performance
+  comparison delivered (the serial-vs-parallel matrix timings and
+  the F06 before/after numbers). The PR stops at ready — the
+  merge, tag and release wait for the author's snapshot test, and
+  the snapshot report names what to test.
 
 ### The suite's origin (the 4.0.0 record, kept for history)
 
