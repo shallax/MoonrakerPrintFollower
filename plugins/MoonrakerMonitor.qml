@@ -2025,210 +2025,6 @@ Component {
                                 excludeObjectDialog.open();
                             }
                         }
-                        CollapsibleSectionHeader {
-                            Layout.fillWidth: true
-                            printerModel: root.printer
-                            title: "System"
-                            sectionId: "systeminfo"
-                            sectionIcon: "Information"
-                        }
-                        ColumnLayout {
-                            visible: root.printer == null || root.printer.sectionExpandedMap["systeminfo"] !== false
-                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            Layout.fillWidth: true
-                            Layout.topMargin: UM.Theme.getSize("default_margin").height
-                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                            spacing: UM.Theme.getSize("default_margin").height
-
-                            GridLayout {
-                                columns: 2
-                                columnSpacing: UM.Theme.getSize("default_margin").width
-                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
-                                Layout.fillWidth: true
-
-                                UM.Label {
-                                    text: "Klippy"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    Layout.preferredWidth: 110 * screenScaleFactor
-                                }
-                                UM.Label {
-                                    text: root.printer != null ? root.printer.klippyState : "—"
-                                    Layout.fillWidth: true
-                                }
-
-                                UM.Label {
-                                    text: "Host load"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    Layout.preferredWidth: 110 * screenScaleFactor
-                                }
-                                UM.Label {
-                                    text: root.printer != null ? root.printer.hostLoad : "—"
-                                    Layout.fillWidth: true
-                                }
-
-                                UM.Label {
-                                    text: "Memory free"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    Layout.preferredWidth: 110 * screenScaleFactor
-                                }
-                                UM.Label {
-                                    text: root.printer != null ? root.printer.memoryAvailable : "—"
-                                    Layout.fillWidth: true
-                                }
-
-                                UM.Label {
-                                    text: "CPU temp"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    Layout.preferredWidth: 110 * screenScaleFactor
-                                }
-                                UM.Label {
-                                    text: root.printer != null ? root.printer.cpuTemperature : "—"
-                                    Layout.fillWidth: true
-                                }
-
-                                UM.Label {
-                                    text: "Klipper"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    Layout.preferredWidth: 110 * screenScaleFactor
-                                }
-                                UM.Label {
-                                    text: root.printer != null ? root.printer.klipperVersion : "—"
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideMiddle
-                                }
-
-                                UM.Label {
-                                    text: "Moonraker"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    Layout.preferredWidth: 110 * screenScaleFactor
-                                }
-                                UM.Label {
-                                    text: root.printer != null ? root.printer.moonrakerVersion : "—"
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideMiddle
-                                }
-                            }
-
-                            // The manual Reconnect (the
-                            // live request): the recovery for a UI
-                            // stuck after a printer error or a
-                            // dropped connection — cycles the client
-                            // and re-arms the monitor.
-                            Cura.SecondaryButton {
-                                Layout.alignment: Qt.AlignRight
-                                text: "Reconnect"
-                                enabled: root.printer != null
-                                onClicked: {
-                                    if (root.printer != null) {
-                                        root.printer.reconnect();
-                                    }
-                                }
-                            }
-                        }
-
-                        Column {
-                            Layout.fillWidth: true
-                            visible: root.printer != null && root.printer.mcuItems.length > 0
-                            CollapsibleSectionHeader {
-                                width: parent.width
-                                printerModel: root.printer
-                                title: "MCUs"
-                                sectionId: "mcus"
-                                sectionIcon: "Plugin"
-                            }
-                            ColumnLayout {
-                                visible: root.printer == null || root.printer.sectionExpandedMap["mcus"] !== false
-                                anchors.left: parent.left
-                                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                                anchors.right: parent.right
-                                Layout.fillWidth: true
-                                spacing: UM.Theme.getSize("thin_margin").height
-
-                                Repeater {
-                                    model: root.printer != null ? root.printer.mcuItems : []
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: UM.Theme.getSize("thin_margin").height
-                                        UM.Label {
-                                            Layout.fillWidth: true
-                                            text: modelData.name
-                                            font: UM.Theme.getFont("medium_bold")
-                                            elide: Text.ElideRight
-                                        }
-                                        // Each datum gets its own labelled row,
-                                        // in the same fixed 110 px column as
-                                        // the other readouts in the pane.
-                                        GridLayout {
-                                            columns: 2
-                                            columnSpacing: UM.Theme.getSize("default_margin").width
-                                            rowSpacing: UM.Theme.getSize("default_margin").height / 2
-                                            Layout.fillWidth: true
-
-                                            UM.Label {
-                                                text: "Load"
-                                                color: UM.Theme.getColor("text_inactive")
-                                                Layout.preferredWidth: 110 * screenScaleFactor
-                                            }
-                                            UM.Label {
-                                                text: modelData.load
-                                                Layout.fillWidth: true
-                                            }
-
-                                            UM.Label {
-                                                text: "Task"
-                                                color: UM.Theme.getColor("text_inactive")
-                                                Layout.preferredWidth: 110 * screenScaleFactor
-                                            }
-                                            UM.Label {
-                                                text: modelData.task
-                                                Layout.fillWidth: true
-                                            }
-
-                                            UM.Label {
-                                                text: "Clock"
-                                                color: UM.Theme.getColor("text_inactive")
-                                                Layout.preferredWidth: 110 * screenScaleFactor
-                                            }
-                                            UM.Label {
-                                                text: modelData.frequency
-                                                Layout.fillWidth: true
-                                            }
-
-                                            UM.Label {
-                                                text: "Memory"
-                                                color: UM.Theme.getColor("text_inactive")
-                                                Layout.preferredWidth: 110 * screenScaleFactor
-                                            }
-                                            UM.Label {
-                                                text: modelData.memory
-                                                Layout.fillWidth: true
-                                            }
-
-                                            UM.Label {
-                                                text: "Connection"
-                                                color: UM.Theme.getColor("text_inactive")
-                                                Layout.preferredWidth: 110 * screenScaleFactor
-                                            }
-                                            UM.Label {
-                                                text: modelData.transport
-                                                Layout.fillWidth: true
-                                            }
-
-                                            UM.Label {
-                                                text: "Version"
-                                                color: UM.Theme.getColor("text_inactive")
-                                                Layout.preferredWidth: 110 * screenScaleFactor
-                                            }
-                                            UM.Label {
-                                                text: modelData.version
-                                                Layout.fillWidth: true
-                                                elide: Text.ElideMiddle
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -2437,6 +2233,15 @@ Component {
                                     return "—";
                                 }
                                 color: UM.Theme.getColor("text_inactive")
+                            }
+                            SystemInfoSection {
+                                Layout.fillWidth: true
+                                printerModel: root.printer
+                            }
+                            McusSection {
+                                Layout.fillWidth: true
+                                visible: root.printer != null && root.printer.mcuItems.length > 0
+                                printerModel: root.printer
                             }
                         }
                     }
