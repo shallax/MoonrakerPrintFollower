@@ -1825,6 +1825,18 @@ weaker than Mainsail's for anyone with a library.
   whenever a key is set and the stream host is remote. Loopback-only
   listener, header-buffer cap, per-connection upstreams.
 
+## 4.5.0 — Configurable sections (candidate)
+
+A candidate from the author (2026-09-15): show/hide and re-order the
+Monitor's collapsible sections — possibly whole panes — the way the
+file manager's columns already work. The machinery it builds on is
+mostly shipped or landing now: the 23 pinned section ids (4.3.0's
+exact-set pin — any rename, re-order or visibility rule must respect
+it), the collapse map as the persistence precedent, the file
+manager's column UI (visibility + drag re-order) as the interaction
+precedent, and the UI-state store's sizes map as the persistence
+home. Unplanned until 4.4.0 ships.
+
 ## 4.0.0 notes — WebSockets as a transport swap (panel history)
 
 The socket remains the right long-term transport, but the domain panel
