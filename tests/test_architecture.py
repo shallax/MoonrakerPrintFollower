@@ -152,7 +152,8 @@ class SourceContractTests(unittest.TestCase):
             "MonitorTuning": set(),
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
             "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
-            "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PrinterConfig", "StateStore", "ToolheadController", "ToolheadPolicy", "WhatsNew"},
+            "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PrintStartOwner", "PrinterConfig", "StateStore", "ToolheadController", "ToolheadPolicy", "WhatsNew"},
+            "PrintStartOwner": set(),
             "StateStore": set(),
             "ConsoleController": {"ConsolePolicy"},
             "ToolheadController": {"ToolheadPolicy", "MonitorPermissions"},
@@ -435,7 +436,7 @@ class CompositionStructureTests(unittest.TestCase):
                      "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "NativeNozzleLifecycle",
                      "PauseController", "PauseScheduleService", "PreviewFollower", "PreviewFormatting",
                      "PreviewMotion", "PreviewPresentation", "PreviewSmoothing", "PrintCoordinator",
-                     "PrinterBinding", "PrinterConfig", "PrintState",
+                     "PrintStartOwner", "PrinterBinding", "PrinterConfig", "PrintState",
                      "ConsoleController", "ConsolePolicy", "RemoteFileService", "RemoteJobService",
                      "ToolheadController", "ToolheadPolicy", "UploadController"):
             source = (PLUGINS / (name + ".py")).read_text()
