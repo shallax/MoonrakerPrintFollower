@@ -1179,11 +1179,15 @@ SCENARIOS = [
          {"op": "assert_model", "prop": "resumeReasonDetail", "value": "Resume applies to a paused print — this print is still running.", "budget": 10},
          {"op": "assert_model", "prop": "pauseReason", "value": "", "budget": 10},
          {"op": "assert_model", "prop": "pauseReasonDetail", "value": "", "budget": 10},
+         # The print-job caption reads the STATE word (4.3.0) — a
+         # busy lane must never read as "Printing".
+         {"op": "assert_model", "prop": "printJobCaption", "value": "Printing", "budget": 10},
          {"op": "exec_slot", "slot": "pausePrint", "args": []},
          {"op": "sim_ledger", "needle": "print/pause", "method": "POST", "min": 1, "budget": 20},
          {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 15},
          # Paused keeps the shipped caption — moves run immediately.
          {"op": "assert_model", "prop": "jogReason", "value": "Paused — moves run immediately", "budget": 10},
+         {"op": "assert_model", "prop": "printJobCaption", "value": "Paused", "budget": 10},
          # The rows flip with the pause: the resume side opens, the
          # pause side names why it refuses.
          {"op": "assert_model", "prop": "resumeReason", "value": "", "budget": 10},

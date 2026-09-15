@@ -217,6 +217,7 @@ PREFIX_RULES = [
     ("key", "hasBedMesh", "h6"),
     ("key", "hasQuadGantryLevel", "g2"),
     ("key", "printActive", "b1"),
+    ("key", "printJobCaption", "g6"),
     ("key", "canPausePrint", "g6"),
     ("key", "canResumePrint", "g6"),
     ("key", "pauseReason", "g6"),

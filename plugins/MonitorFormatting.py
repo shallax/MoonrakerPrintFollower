@@ -160,6 +160,18 @@ def duration(seconds):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
+def print_job_caption(observation) -> str:
+    """The print-job caption's state read (4.3.0): the STATE word
+    mapped once — never a permission boolean, so a busy lane never
+    reads as "Printing". Disconnected and unknown name themselves
+    instead of lying "Idle" while the socket is down."""
+    if observation is None:
+        return ""
+    if observation.connection != "yes":
+        return "Disconnected" if observation.connection == "no" else "Printer state unknown"
+    return {"printing": "Printing", "paused": "Paused"}.get(observation.state, "Idle")
+
+
 def preview_temperature_pair(auxiliary):
     """The strip's fixed pair: hotend and bed, the Monitor's own
     labels and current→target form. target 0.0 means 'no setpoint /

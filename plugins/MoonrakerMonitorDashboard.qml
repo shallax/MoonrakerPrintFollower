@@ -560,96 +560,10 @@ Component {
                             }
                         }
 
-                        CollapsibleSectionHeader {
+                        PrintSection {
                             Layout.fillWidth: true
                             printerModel: root.printer
-                            title: "Print"
-                            sectionId: "print"
-                            sectionIcon: "Printer"
-                        }
-                        ColumnLayout {
-                            visible: root.printer == null || root.printer.sectionExpandedMap["print"] !== false
-                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
-                            Layout.fillWidth: true
-                            Layout.topMargin: UM.Theme.getSize("default_margin").height
-                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                            spacing: UM.Theme.getSize("default_margin").height
-
-                            UM.Label {
-                                // A permanent state caption gives the
-                                // always-present action row context (the
-                                // UX panel: a dead Pause|Resume|Cancel
-                                // band with no caption read as an error
-                                // state on idle printers).
-                                height: 36 * screenScaleFactor
-                                text: root.printer != null ? (root.printer.printActive ? (root.printer.canResumePrint ? "Paused" : "Printing") : "Idle") : ""
-                                color: UM.Theme.getColor("text_inactive")
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                wrapMode: Text.NoWrap
-                            }
-
-                            RowLayout {
-                                // NO-REFLOW RULE (the ruling):
-                                // the action buttons never disappear —
-                                // they disable. The row used to vanish
-                                // entirely when no action applied and
-                                // reappear mid-session, reflowing every
-                                // control beneath it (the jog-reflow
-                                // hazard).
-                                Layout.fillWidth: true
-                                spacing: UM.Theme.getSize("default_margin").width / 2
-
-                                Cura.SecondaryButton {
-                                    Layout.fillWidth: true
-                                    text: "Pause"
-                                    enabled: root.printer != null && root.printer.canPausePrint
-                                    // The refusal words (4.3.0): the policy's
-                                    // short form rides the tooltip — a dead
-                                    // Pause must never be silent.
-                                    tooltip: root.printer != null && !root.printer.canPausePrint && root.printer.pauseReason.length > 0 ? root.printer.pauseReason : "Pause the current print immediately (Klipper PAUSE)."
-                                    onClicked: root.printer.pausePrint()
-                                }
-
-                                Cura.PrimaryButton {
-                                    Layout.fillWidth: true
-                                    text: "Resume"
-                                    enabled: root.printer != null && root.printer.canResumePrint
-                                    tooltip: root.printer != null && !root.printer.canResumePrint && root.printer.resumeReason.length > 0 ? root.printer.resumeReason : "Resume the paused print (Klipper RESUME)."
-                                    onClicked: root.printer.resumePrint()
-                                }
-
-                                Cura.SecondaryButton {
-                                    Layout.fillWidth: true
-                                    text: "Cancel"
-                                    enabled: root.printer != null && root.printer.canCancelPrint
-                                    onClicked: cancelPrintDialog.open()
-                                }
-                            }
-
-                            GridLayout {
-                                columns: 2
-                                Layout.fillWidth: true
-                                columnSpacing: UM.Theme.getSize("default_margin").width
-                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
-                                UM.Label {
-                                    text: "Layer height"
-                                    color: UM.Theme.getColor("text_inactive")
-                                }
-                                UM.Label {
-                                    text: root.printer != null ? root.printer.monitorLayerHeight : "—"
-                                    Layout.fillWidth: true
-                                }
-                                UM.Label {
-                                    text: "Current Z offset"
-                                    color: UM.Theme.getColor("text_inactive")
-                                }
-                                UM.Label {
-                                    text: root.printer != null ? root.printer.zOffsetText : "—"
-                                    Layout.fillWidth: true
-                                }
-                            }
+                            onCancelRequested: cancelPrintDialog.open()
                         }
 
                         CollapsibleSectionHeader {

@@ -53,6 +53,7 @@ from .FileManagerPolicy import (
 from .MonitorFormatting import (
     core_values,
     endstop_values,
+    print_job_caption,
     file_disk_text,
     file_row_payload,
     file_timestamp,
@@ -254,7 +255,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
         ("endstopsChanged", ("endstopItems", "endstopSummary")),
-        ("actionChanged", ("printActive", "canPausePrint", "canResumePrint", "pauseReason", "pauseReasonDetail", "resumeReason", "resumeReasonDetail", "canCancelPrint", "actionBusy",
+        ("actionChanged", ("printActive", "printJobCaption", "canPausePrint", "canResumePrint", "pauseReason", "pauseReasonDetail", "resumeReason", "resumeReasonDetail", "canCancelPrint", "actionBusy",
                            "actionStatus", "emergencyHoldProgress")),
         ("controlsChanged", ("monitorLayerHeight", "macroNames", "hasQuadGantryLevel", "hasBedMesh", "canRunSetup",
                              "temperaturePresetNames", "canApplyTemperaturePreset", "speedFactorPercent", "flowFactorPercent",
@@ -870,6 +871,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             pauseReasonDetail=REASON_DETAIL.get(pause_verdict.reason, ""),
             resumeReason=resume_verdict.reason,
             resumeReasonDetail=REASON_DETAIL.get(resume_verdict.reason, ""),
+            printJobCaption=print_job_caption(observation),
             canCancelPrint=commands.print_active and not commands.busy, actionBusy=commands.busy,
             actionStatus=commands.status, emergencyStopClicks=commands.clicks,
             emergencyHoldProgress=commands.hold_progress, powerDevices=self._controls.power_devices(),
@@ -954,6 +956,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     monitorAccelLimit = value_property(str, "monitorAccelLimit", monitorChanged, "—")
     monitorMessage = value_property(str, "monitorMessage", monitorChanged, "")
     printActive = value_property(bool, "printActive", actionChanged, False)
+    printJobCaption = value_property(str, "printJobCaption", actionChanged, "")
     canPausePrint = value_property(bool, "canPausePrint", actionChanged, False)
     canResumePrint = value_property(bool, "canResumePrint", actionChanged, False)
     pauseReason = value_property(str, "pauseReason", actionChanged, "")
