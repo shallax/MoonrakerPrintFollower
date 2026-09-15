@@ -2,6 +2,61 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.1.0
+
+Version 4.1.0 is the deep-harness-coverage release: the real-Cura
+gate's coverage and proof machinery, the parallel local matrix, and
+the review-driven product repairs, each shipped with its evidence.
+
+- **The parallel local matrix.** `tools/harness_release.sh -j N` runs
+  the gate's units in per-slot containers, each with its own working
+  directory (the isolation ruling) — the local full matrix takes 532
+  s against the 945 s serial baseline (a measured 1.8x). The serial
+  run stays the default: one container and a shared scratch tree, so
+  the second unit proves the first unit's debris does not break it.
+- **The evidence spine, with teeth.** Every step records its op,
+  target spec, verdict, capture, duration, the delivery record
+  (which item accepted the press, which was under the aim) and a
+  mechanism-derived class in `evidence.json`; a capture whose size
+  does not match the declared geometry fails the step; the coverage
+  EXECUTION check joins the surface map to the run's evidence, so a
+  mapped surface whose scenario never ran — or whose mapped control
+  no step addressed — fails the gate; and a run whose evidence never
+  lands at the reported path fails whatever the verdict said (the
+  4.0.2 bug shipped the exact failure this closes — its galleries
+  are lost; 4.1.0's gate refuses to pass that way).
+- **Real input, verified delivery.** The jog pad, the home row, the
+  file-manager confirms, the console and the pause/resume buttons
+  ride real press/release events whose acceptance is checked against
+  the target's own item chain — a disabled control or a covering
+  dimmer refuses the press and the step reads it (proven live by the
+  z10/z11/z15 proof scenarios). The broken-start journey runs as a
+  red scenario (z14): the failure verdict must fire, recorded as the
+  expected red. The remaining direct-invocation steps are counted
+  and classified, and the ratchet pins keep the balance from
+  sliding back.
+- **The file manager no longer re-sorts on a temperature tick.** The
+  file-view projection now runs once per revision set: measured on a
+  staged 400-file listing, ten unchanged publishes went from 90
+  pipeline evaluations to zero, and publish latency from 4.76 ms to
+  0.025 ms warm (4.86 → 1.57 ms cold), with byte-identical rows.
+  Binds, deletes and renames invalidate the cache, and a refused
+  directory listing now surfaces the walk-error banner.
+- **Upload refusals say why.** A nested refusal body (Moonraker's
+  newer error shape) now unwraps into the popup's status line
+  instead of a generic transport error, and the simulator's upload
+  lane answers the honest body — the scenario proves both the
+  accepted and the refused verdicts.
+- **The testing document describes the real harness.** TESTING.md's
+  claims are reconciled section by section (struck claims are marked
+  with their reasons, and a doc-pin test fails if one re-enters);
+  the exclusion records carry their reason, evidence, date and
+  re-check trigger.
+
+The deferred remainder — the Information-pane round, the deferred
+panel scenarios, the harness-level lifecycle scenarios — is recorded
+in the roadmap with its evidence and its re-check triggers.
+
 ## 4.0.2
 
 Version 4.0.2 is a correctness release: five repairs to the transfer
