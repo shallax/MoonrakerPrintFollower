@@ -1210,9 +1210,38 @@ itself:
 
 ## 4.2.0 — State, permissions & operation boundaries
 
-- **Volumetric flow rate (2026-09-13):** the printer
-  status shows the current volumetric flow rate in mm³/s — a small
-  readout riding the state layer this version consolidates.
+- **The motion cluster (planned 2026-09-15):** the Monitor card's
+  readout grid grows four live rows — Velocity, Max accel, Flow
+  rate, alongside the existing Position row — all from the polled
+  snapshot, same no-reflow rule as the filament rows. Verified
+  against the live Voron mid-print (read-only queries, 2026-09-15):
+  `motion_report.live_velocity` is a single scalar (20.0 mm/s
+  observed) and no per-axis velocity exists, so the Velocity row is
+  scalar (the author's ruling); Klipper publishes no instantaneous
+  acceleration at all, so the accel row is the effective
+  `toolhead.max_accel` limit (5000.0 observed) — calm and exact
+  where a derived Δv/Δt would be noisy at poll intervals (the
+  author's ruling). Flow rate = `live_extruder_velocity` (scalar
+  mm/s of filament, 0.08–0.34 mm/s observed mid-print) × the
+  filament cross-section π·(d/2)² — live-measured (the author's
+  ruling), the sign preserved so a retraction reads negative (the
+  live negative observation is being caught by a background sample
+  watch). The existing "Flow" row (extrude factor %) keeps its name
+  and row; the volumetric value is a new key, not a takeover.
+- **Filament diameter (2026-09-15):** a per-printer setting,
+  defaulting to auto — a one-shot `configfile` read at connect.
+  Verified live: `printer/objects/query?configfile` returns the
+  parsed config and `config["extruder"]["filament_diameter"]` is
+  `"1.75"` (a string) on the Voron; nested dotted queries
+  (`configfile.config.extruder`) return empty dicts, so the whole
+  configfile object arrives as one unit — fetch once at connect,
+  never subscribe (78 sections, too heavy to poll). Falls back to
+  1.75 mm where the printer's config does not set it, and is
+  always overridable by hand.
+- **Permission rewiring order (2026-09-15):** the visible controls
+  first (jog/extrude/position), then the restart and power locks —
+  implementation order, not a behaviour change; every control lands
+  in this release working.
 - **The Post-Processing button's vertical alignment (validated
   out, 2026-09-13):** the one-card refactor settled this — the card
   now lives inside Cura's own saveButton row between the `</>` button
