@@ -207,9 +207,10 @@ class BedMeshTests(unittest.TestCase):
         # the download icon, the glyph kept the angle the hourglass
         # froze at — an assignment from inside the animation cannot
         # win against the animation binding, so the idle STATE forces
-        # the reset instead.
-        self.assertIn('name: "idle"', MONITOR_QML)
-        self.assertIn("target: etaGlyph", MONITOR_QML)
+        # the reset instead. The glyph rides the job section (4.3.0).
+        job = (PLUGINS / "JobSection.qml").read_text()
+        self.assertIn('name: "idle"', job)
+        self.assertIn("target: etaGlyph", job)
 
     def test_saved_profiles_are_ordered_and_loadable(self):
         self.assertEqual(mesh_profiles({"profiles": {"summer": {}, "default": {}, "winter": {}}, "profile_name": "winter"}), ["winter", "default", "summer"])
