@@ -890,14 +890,25 @@ SCENARIOS = [
     # ─── console ──────────────────────────────────────────────
     {"id": "d1", "group": "console", "name": "a sent command's response renders",
      "steps": [
-         {"op": "exec_console", "text": "M105"},
+         {"op": "click_stage", "stage": "MonitorStage"},
+         # The console's expand is chrome state (a declared slot,
+         # like the popup close); the typing and the send are real
+         # input: the field takes a real press to focus, the command
+         # is typed, and the named Send button takes the real press.
+         {"op": "exec_slot", "slot": "setConsoleExpanded", "args": [True]},
+         {"op": "deliver_click", "objectName": "moonrakerConsoleInput"},
+         {"op": "key_press", "key": "M"},
+         {"op": "key_press", "key": "1"},
+         {"op": "key_press", "key": "0"},
+         {"op": "key_press", "key": "5"},
+         {"op": "deliver_click", "objectName": "moonrakerConsoleSend"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
     {"id": "d3", "group": "console", "name": "clear empties the console",
      "steps": [
          {"op": "sim_set", "state": {"console_lines": [{"type": "response", "message": "// line %d" % i,
                                                        "time": 1.0} for i in range(10)]}},
-         {"op": "exec_slot", "slot": "clearConsoleHistory", "args": []},
+         {"op": "click_text", "text": "Clear"},
          {"op": "assert_model", "prop": "consoleHistory", "value": []},
      ]},
     {"id": "d5", "group": "console", "name": "the console resize commits through the model",
