@@ -113,6 +113,11 @@ SCENARIO_MAP = {
     "moonrakerJogXPlus": "g1", "moonrakerJogXMinus": "g1",
     "moonrakerJogYPlus": "g1", "moonrakerJogYMinus": "g1",
     "moonrakerJogZPlus": "g1", "moonrakerJogZMinus": "g1",
+    # The policy-fed surfaces (4.2.0): the caption's rendered state
+    # and the restart buttons (v18 presses the firmware one).
+    "toolheadStatusCaption": "g6",
+    "moonrakerFirmwareRestart": "v18", "moonrakerHostRestart": "v18",
+    "moonrakerKlipperRestart": "v18",
     "moonrakerHomeX": "g2", "moonrakerHomeY": "g2", "moonrakerHomeZ": "g2",
     "moonrakerConsoleInput": "d1", "moonrakerConsoleSend": "d1",
     "moonrakerM117Slot": "s6",
@@ -144,6 +149,11 @@ SCENARIO_MAP = {
 }
 
 PREFIX_RULES = [
+    # The policy projections (4.2.0) ride the motion scenarios that
+    # exercise the gates: the caption pair and the restart pair.
+    ("key", "jogReason", "g6"),
+    ("key", "canRestart", "g6"),
+    ("key", "restartReason", "g6"),
     # The file manager's verbs all ride the files-group scenarios.
     ("slot", "MoonrakerMonitorModel.file", "f1"),
     ("slot", "MoonrakerMonitorModel.toggleFile", "f1"),

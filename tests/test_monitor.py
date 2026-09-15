@@ -33,6 +33,7 @@ CHANGELOG = (ROOT / "CHANGELOG.md").read_text()
 DATA = (PLUGINS / "MonitorData.py").read_text()
 CONTROLS = (PLUGINS / "MonitorControls.py").read_text()
 FORMATTING = (PLUGINS / "MonitorFormatting.py").read_text()
+POLICY = (PLUGINS / "MonitorPermissions.py").read_text()
 TYPED = "\n".join((PLUGINS / name).read_text() for name in ("MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py", "CuraIntegration.py", "MoonrakerMonitorModel.py"))
 DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
@@ -80,8 +81,11 @@ class MonitorModelContractTests(unittest.TestCase):
                       '"Cooldown"', "heatersOff",
                       'text: "↑ Y"', 'text: "← X"', 'text: "→ X"', 'text: "↓ Y"',
                       'text: "↑ Z"', 'text: "↓ Z"', 'text: "Centre toolhead"', 'text: "Z to 0"',
-                      "Toolhead moves are disabled during a print", "root.printer.monitorPosition"):
+                      "root.printer.monitorPosition"):
             self.assertIn(token, DASHBOARD_QML)
+        # The safety clause lives in the policy's copy (4.2.0): the QML
+        # reads the published caption, never builds the sentence.
+        self.assertIn("Toolhead moves are disabled during a print", POLICY)
         # The six directional buttons carry no +/- signs (the arrows are the
         # direction) and use the PreviewSecondaryButton idiom: Cura's
         # native button underneath (hover/tooltip), a centred theme-coloured

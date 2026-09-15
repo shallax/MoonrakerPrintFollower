@@ -39,7 +39,29 @@ R_DISCONNECTED = "Printer not connected"
 R_ESTOPPED = "Emergency stop issued"
 R_LOCKED = "Controls locked"
 R_PRINTING = "A print is running"
+R_NOT_PRINTING = "No print is running"
 R_BUSY = "A command is running"
+# The toolhead caption's non-denial states: pause-first is a MODE,
+# not a refusal — but the caption still names it (the shipped
+# sentence), and the paused note preserves the shipped readout.
+R_PAUSE_FIRST = "Moves disabled — pause first"
+R_PAUSED_NOTE = "Paused — moves run immediately"
+
+
+# The long tooltip sentences (the UX adjudication: the short form
+# rides the row, the full sentence the tooltip — both from the
+# policy, the QML builds no sentences).
+REASON_DETAIL = {
+    R_UNKNOWN: "The printer's state has not been observed yet — check the connection.",
+    R_DISCONNECTED: "The printer is not connected — reconnect before using the controls.",
+    R_ESTOPPED: "An emergency stop was issued — commands stay refused until the connection is cycled.",
+    R_LOCKED: "The controls are locked — unlock them with the padlock.",
+    R_PAUSE_FIRST: "Toolhead moves are disabled during a print — pause first.",
+    R_PAUSED_NOTE: "Printer is paused — moves run immediately; a print resumes from Klipper's recorded position.",
+    R_PRINTING: "A print is running — pause or finish it first.",
+    R_BUSY: "A command is running — wait for it to finish.",
+    R_NOT_PRINTING: "Nothing to exclude — this fires only while a print runs.",
+}
 
 
 @dataclass(frozen=True)
@@ -56,11 +78,17 @@ class Verdict:
 def _prelude(obs: Observation):
     """The shared fail-closed prelude — the positive allow-list's
     first gate, checked by every action. Returns a reason constant
-    or None. Unknown is never idle (F10)."""
+    or None. Unknown is never idle (F10).
+
+    The e-stop assumption deliberately does NOT block here: the
+    shipped ruling releases the print guards immediately (the state
+    reads cancelled and jog unlocks for recovery), and the command
+    REFUSAL rides the lane's own e-stop lifecycle plus the follow-up
+    disconnect — the record carries assumed_stopped so the dispatch
+    predicates can see it, not so the click-time gates change."""
     if obs.connection == "unknown": return R_UNKNOWN
     if obs.connection != "yes": return R_DISCONNECTED
     if not obs.active: return R_UNKNOWN
-    if obs.assumed_stopped: return R_ESTOPPED
     if obs.controls_locked: return R_LOCKED
     return None
 
@@ -81,10 +109,21 @@ def can_jog(obs: Observation) -> Verdict:
     blocked = _prelude(obs)
     if blocked: return Verdict("disabled", blocked)
     state = obs.state
-    if state == "printing": return Verdict("pause-first", "")
+    if state == "printing": return Verdict("pause-first", R_PAUSE_FIRST)
     if state in {"standby", "paused", "complete", "cancelled", "error"}:
         return Verdict("allowed", "")
     return Verdict("disabled", R_UNKNOWN)
+
+
+def jog_caption(obs: Observation) -> str:
+    """The toolhead section's Status-row caption: the short form for
+    every state — the reason when disabled, the pause-first warning,
+    the paused note — and '' when there is nothing to say."""
+    verdict = can_jog(obs)
+    if verdict.mode == "disabled": return verdict.reason
+    if verdict.mode == "pause-first": return R_PAUSE_FIRST
+    if obs.state == "paused": return R_PAUSED_NOTE
+    return ""
 
 
 def can_set_absolute(obs: Observation) -> Verdict:
@@ -133,9 +172,19 @@ def can_start_print(obs: Observation) -> Verdict:
 
 
 def can_macro(obs: Observation) -> Verdict:
-    """Macros and object exclusion follow the one-shot shape:
-    refused while a print runs, queued behind the lane otherwise."""
+    """Macros follow the one-shot shape: refused while a print
+    runs, queued behind the lane otherwise."""
     return can_restart(obs)
+
+
+def can_exclude(obs: Observation) -> Verdict:
+    """Object exclusion fires only mid-print — the positive shape of
+    the shipped gate (a print must be running to exclude)."""
+    blocked = _prelude(obs)
+    if blocked: return Verdict("disabled", blocked)
+    if obs.state not in {"printing", "paused"}:
+        return Verdict("disabled", R_NOT_PRINTING)
+    return Verdict("allowed", "")
 
 
 def can_z_offset(obs: Observation) -> Verdict:

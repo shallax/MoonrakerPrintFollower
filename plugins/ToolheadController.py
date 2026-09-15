@@ -21,6 +21,7 @@ import time
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
+from .MonitorPermissions import R_UNKNOWN, Verdict, can_jog
 from .ToolheadPolicy import (
     EXTRUDE_DISTANCE_DEFAULT,
     EXTRUDE_SPEED_DEFAULT,
@@ -105,7 +106,6 @@ class ToolheadController(QObject):
     def observe(self):
         core = self._data.snapshot.core
         auxiliary = self._data.snapshot.auxiliary
-        state = str((core.get("print_stats") or {}).get("state") or "")
         toolhead = auxiliary.get("toolhead") or {}
         gcode_move = core.get("gcode_move") or {}
         absolute = bool(gcode_move.get("absolute_coordinates", True))
@@ -125,12 +125,19 @@ class ToolheadController(QObject):
             # the truth again, and the estimate re-syncs (or clears
             # when the printer reports nothing).
             self._z_estimate = self._polled_z()
+        # The policy projection (4.2.0, A4): jogEnabled stays the
+        # published property, now fed by the permissions table's
+        # can_jog — the same state mapping as before (the shipped
+        # jog_gate), plus the fail-closed prelude. Motion controls
+        # are exposed only when moves are immediately allowed: while
+        # printing the user must pause explicitly first. The
+        # pause-first queue stays as the safety net for anything
+        # that slips through (and drops on resume).
+        observation = getattr(self._data, "observation", None)
+        jog_verdict = can_jog(observation) if observation is not None \
+            else Verdict("disabled", R_UNKNOWN)
         self._values = {
-            # Motion controls are exposed only when moves are immediately
-            # allowed: while printing the user must pause explicitly first.
-            # The pause-first queue stays as the safety net for anything
-            # that slips through (and drops on resume).
-            "jogEnabled": bool(self._data.active and self._data.connected and jog_gate(state) == "allowed"),
+            "jogEnabled": jog_verdict.mode == "allowed",
             "jogDistance": self._jog_distance,
             "extrudeDistance": self._extrude_distance,
             "extrudeSpeed": self._extrude_speed,

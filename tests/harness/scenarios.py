@@ -817,6 +817,11 @@ SCENARIOS = [
          {"op": "sim_klippy"},
          {"op": "wait_model", "prop": "monitorConnected", "value": False, "budget": 30},
          {"op": "assert_model", "prop": "jogEnabled", "value": False},
+         # The policy gate (4.2.0): a never-observed session is
+         # UNKNOWN, not idle — the restart gate fails closed and the
+         # caption says so.
+         {"op": "assert_model", "prop": "canRestart", "value": False},
+         {"op": "assert_model", "prop": "jogReason", "value": "Printer state unknown"},
      ]},
 
     {"id": "a10", "group": "connection",
@@ -1134,9 +1139,20 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
          {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 15},
+         # The policy gate (4.2.0): while printing the jog button
+         # renders disabled (pause-first), the caption names the
+         # mode, and the restart gate refuses.
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         {"op": "wait_rect", "objectName": "toolheadStatusCaption", "budget": 30},
+         {"op": "item_disabled", "objectName": "moonrakerJogXPlus"},
+         {"op": "assert_model", "prop": "jogReason", "contains": "pause first", "budget": 10},
+         {"op": "assert_model", "prop": "canRestart", "value": False, "budget": 10},
          {"op": "exec_slot", "slot": "pausePrint", "args": []},
          {"op": "sim_ledger", "needle": "print/pause", "method": "POST", "min": 1, "budget": 20},
          {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 15},
+         # Paused keeps the shipped caption — moves run immediately.
+         {"op": "assert_model", "prop": "jogReason", "value": "Paused — moves run immediately", "budget": 10},
          {"op": "exec_slot", "slot": "resumePrint", "args": []},
          {"op": "sim_ledger", "needle": "print/resume", "method": "POST", "min": 1, "budget": 20},
      ]},
@@ -1147,8 +1163,13 @@ SCENARIOS = [
          {"op": "wait_model", "prop": "monitorState", "contains": "standby", "budget": 10},
          {"op": "exec_slot", "slot": "setControlsLocked", "args": [True]},
          {"op": "assert_model", "prop": "controlsLocked", "value": True, "budget": 10},
+         # The policy gate (4.2.0): the lock's reason reaches the
+         # caption and the jog gate through the observation record.
+         {"op": "assert_model", "prop": "jogEnabled", "value": False, "budget": 10},
+         {"op": "assert_model", "prop": "jogReason", "value": "Controls locked", "budget": 10},
          {"op": "exec_slot", "slot": "setControlsLocked", "args": [False]},
          {"op": "assert_model", "prop": "controlsLocked", "value": False, "budget": 10},
+         {"op": "assert_model", "prop": "jogEnabled", "value": True, "budget": 10},
      ]},
     {"id": "g9", "group": "motion", "name": "power devices list and toggle",
      "steps": [
@@ -1474,6 +1495,7 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_rect", "objectName": "moonrakerControlsPane", "budget": 30},
          {"op": "exec_code", "verbs": ['setProperty'], "code": SCROLL_CONTROLS},
+         {"op": "wait_rect", "objectName": "moonrakerFirmwareRestart", "budget": 30},
          {"op": "emit_click", "text": "Firmware restart"},
          {"op": "sim_ledger", "needle": "firmware_restart", "field": "path", "min": 1, "budget": 20},
          {"op": "sim_ledger", "needle": "printer.objects.subscribe", "field": "path", "min": 1, "budget": 40},
@@ -1642,6 +1664,10 @@ SCENARIOS = [
          # not a klippyState value; the observable is the print state
          # flipping to error with the stop's message.
          {"op": "wait_model", "prop": "monitorState", "contains": "error", "budget": 20},
+         # The shipped error-state row (4.2.0, explicit): the e-stop's
+         # recovery path — error ALLOWS the restart, the assumption
+         # blocks until the cycle.
+         {"op": "assert_model", "prop": "canRestart", "value": True},
          {"op": "exec_slot", "slot": "emergencyHoldReleased", "args": []},
          {"op": "exec_slot", "slot": "firmwareRestart", "args": []},
          {"op": "sim_ledger", "needle": "firmware_restart", "min": 1, "budget": 20},

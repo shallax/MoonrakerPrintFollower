@@ -252,21 +252,31 @@ class MonitorData(QObject):
         return self._observation
 
     def set_controls_locked(self, locked):
-        """The model's chrome push-in (A3): a no-op when unchanged."""
+        """The model's chrome push-in (A3): a no-op when unchanged.
+        The emit rides later(0) — a synchronous emit here would
+        re-enter consumers mid-gesture (the setter's own publish is
+        already running)."""
         locked = bool(locked)
         if locked == self._controls_locked: return
         self._controls_locked = locked
         self._rebuild_observation()
-        self.changed.emit()
+        self.later(0, self.changed.emit)
 
     def set_commands_busy(self, busy):
         """The command lane's busy push-in (A3): a no-op when
-        unchanged."""
+        unchanged. The record updates WITHOUT emitting — every emit
+        here re-publishes the whole model, and the toolhead's observe
+        re-syncs its Z estimate from the stale snapshot whenever the
+        queue holds no Z op: rapid nudge taps walked back to the old
+        position between commands (the harness caught it), and a
+        synchronous emit re-entered the lane's own queue pump. The
+        next core poll (<=1 s) publishes the fresh busy flag; the
+        tight per-click gate is actionBusy, which never rode this
+        path."""
         busy = bool(busy)
         if busy == self._commands_busy: return
         self._commands_busy = busy
         self._rebuild_observation()
-        self.changed.emit()
 
     def set_active(self, active):
         if bool(active) == self._active: return

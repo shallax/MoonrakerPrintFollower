@@ -33,6 +33,7 @@ from .MonitorCamera import MonitorCamera
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
+from .MonitorPermissions import REASON_DETAIL, R_UNKNOWN, Verdict, can_jog, can_restart
 from datetime import datetime
 
 from .FileManager import FileManager
@@ -214,6 +215,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     emergencyStopChanged = pyqtSignal()
     typedControlsChanged = pyqtSignal()
     toolheadChanged = pyqtSignal()
+    # The policy-fed restart gate and its reason (4.2.0).
+    restartChanged = pyqtSignal()
     sectionsChanged = pyqtSignal()
     controlsLockChanged = pyqtSignal()
     infoPaneChanged = pyqtSignal()
@@ -253,7 +256,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                              "canSaveConfig")),
         ("emergencyStopChanged", ("emergencyStopClicks",)),
         ("toolheadChanged", ("jogEnabled", "jogDistance", "extrudeDistance", "extrudeSpeed",
-                             "homedAxes", "positionMode", "jogStatus")),
+                             "homedAxes", "positionMode", "jogStatus", "jogReason", "jogReasonDetail")),
+        ("restartChanged", ("canRestart", "restartReason")),
         ("controlsLockChanged", ("controlsLocked", "controlsCollapsed")),
         ("infoPaneChanged", ("infoCollapsed",)),
         ("statusPaneChanged", ("statusCollapsed",)),
@@ -721,7 +725,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The no-reflow rule's sibling ruling (2026-09-10):
         # while DISCONNECTED every control on the Monitor page disables
         # — the QML gates its sections and the emergency stop on this.
-        values["monitorConnected"] = self._client.connected
+        # The tri-state (4.2.0): unknown folds to False, exactly the
+        # bool every existing consumer saw before.
+        values["monitorConnected"] = self._data.connection_state == "yes"
+        # The policy projections (4.2.0): the caption and the restart
+        # gate come from the table — one derivation, both view
+        # models. A missing observation fails closed.
+        observation = self._data.observation
+        jog_verdict = can_jog(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
+        restart_verdict = can_restart(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
+        values["jogReason"] = jog_verdict.reason if jog_verdict.mode != "allowed" else ""
+        values["jogReasonDetail"] = REASON_DETAIL.get(jog_verdict.reason, "")
+        values["canRestart"] = restart_verdict.mode == "allowed"
+        values["restartReason"] = restart_verdict.reason if restart_verdict.mode != "allowed" else ""
         values.update(self._controls.values)
         values.update(self._camera.values)
         values.update(self._toolhead.values)
@@ -1413,6 +1429,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     homedAxes = value_property(str, "homedAxes", toolheadChanged, "")
     positionMode = value_property(str, "positionMode", toolheadChanged, "")
     jogStatus = value_property(str, "jogStatus", toolheadChanged, "")
+    # The policy-fed captions and the restart gate (4.2.0): the
+    # defaults fail closed until the first observation lands.
+    jogReason = value_property(str, "jogReason", toolheadChanged, "")
+    jogReasonDetail = value_property(str, "jogReasonDetail", toolheadChanged, "")
+    canRestart = value_property(bool, "canRestart", restartChanged, False)
+    restartReason = value_property(str, "restartReason", restartChanged, "")
     controlsLocked = value_property(bool, "controlsLocked", controlsLockChanged, False)
     controlsCollapsed = value_property(bool, "controlsCollapsed", controlsLockChanged, False)
     infoCollapsed = value_property(bool, "infoCollapsed", infoPaneChanged, False)
