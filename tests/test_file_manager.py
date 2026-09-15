@@ -971,6 +971,32 @@ class FileManagerServiceTests(unittest.TestCase):
         self.service.current_rows()
         self.assertEqual(self.service.projection_count, 3)
 
+    def test_bind_does_not_reserve_the_previous_machines_rows_from_the_cache(self):
+        # A printer switch clears the rows; the projection cache
+        # must not serve the previous machine's view on the next
+        # read (the re-review's cache-invalidation catch).
+        self.service.open()
+        self.directory("path=gcodes&", [("a.gcode", {}), ("b.gcode", {})])
+        self.deliver("history/list", {"result": {"jobs": []}})
+        rows = self.service.current_rows()
+        self.assertEqual([row.relpath for row in rows], ["a.gcode", "b.gcode"])
+        self.service.bind()
+        self.deliver("history/list", {"result": {"jobs": []}})
+        self.assertEqual(self.service.current_rows(), [])
+
+    def test_delete_publishes_without_the_deleted_row(self):
+        # The delete's own changed.emit publishes before the
+        # batch-drain refresh: the cache must not re-serve the
+        # deleted row in the interim.
+        self.service.open()
+        self.directory("path=gcodes&", [("a.gcode", {}), ("b.gcode", {})])
+        self.deliver("history/list", {"result": {"jobs": []}})
+        self.service.current_rows()
+        self.service.delete_files(["a.gcode"], "")
+        self.deliver("server/files/gcodes/a.gcode", {"result": "ok"})
+        rows = self.service.current_rows()
+        self.assertEqual([row.relpath for row in rows], ["b.gcode"])
+
     def test_filter_option_counts_are_cached_with_the_view(self):
         self.service.open()
         self.directory("path=gcodes&", [("a.gcode", {}), ("b.gcode", {})])

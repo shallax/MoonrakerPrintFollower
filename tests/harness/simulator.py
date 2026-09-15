@@ -791,7 +791,12 @@ class StatusHandler(tornado.web.RequestHandler):
                 self._printer.state["virtual_sdcard"].update({"is_active": True, "progress": 0.0,
                                                               "file_size": len(self._printer.gcode_bytes)})
             self.write(json.dumps({"result": "ok"}))
-        elif path == "server/files/upload":
+        elif path == "files/upload":
+            # The route strips the server/ prefix — the handler must
+            # match the STRIPPED form, like every sibling branch. The
+            # prefixed match never fired: uploads fell through to the
+            # catch-all's bare ok, the honest body was unreachable
+            # and fail_upload could never refuse anything.
             # The upload lane, honestly shaped: refused or accepted
             # (holds ride the route_delay_ms lane in prepare — it is
             # async-safe, a blocking sleep would freeze the pump).

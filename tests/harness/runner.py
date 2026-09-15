@@ -216,7 +216,7 @@ def scenario(expect_fail=False):
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome absent, window at the pinned geometry", gate, shot("01-gate")))
         seeded = wait_stage("PrepareStage", timeout_ms=60000)
         steps.append(("02-seed", "the seeded profile sits on PrepareStage",
                       "stage == PrepareStage", seeded.get("ok") is True, shot("02-seed")))
@@ -250,8 +250,12 @@ def scenario(expect_fail=False):
 def _verdict(steps):
     """The suite verdict: failures print to stdout too, so a cell's
     job log names the failing steps even when the gallery upload dies
-    (the two flaky groups once failed with no reachable evidence)."""
-    failed = [name for name, _, _, ok, _ in steps if not ok]
+    (the two flaky groups once failed with no reachable evidence). A
+    capture that refused to land (shot()'s dimension check) is a
+    failure too — a PASS whose galleries are all broken is not
+    evidence."""
+    failed = [name for name, _, _, ok, cap in steps
+              if not ok or (isinstance(cap, tuple) and cap[1])]
     if failed:
         print(f"ui_test: FAILED steps: {', '.join(failed)}")
     return 0 if not failed else 1
@@ -280,14 +284,29 @@ DIRECT_INVOCATION_OPS = frozenset((
     "confirm_box", "exec_mode", "exec_validator", "exec_console",
     "exec_extrude", "exec_test_connection", "exec_code"))
 
-REAL_INPUT_OPS = frozenset(("deliver_click", "click_stage", "click_text"))
+REAL_INPUT_OPS = frozenset(("deliver_click", "click_stage", "click_text",
+                            "key_press"))
+
+
+def _delivery_name(identified):
+    # A readable name for a delivery record's hit/grabber: the
+    # objectName when the item carries one, else the class chain's
+    # first entry.
+    if not isinstance(identified, dict):
+        return identified
+    if identified.get("objectName"):
+        return f"{identified['objectName']} ({identified.get('class')})"
+    return identified.get("class") or "no item"
 
 
 def _classify(op, delivery):
     if op in REAL_INPUT_OPS:
         # Real input; the delivery record decides. click_stage's
-        # acceptance is the stage transition itself (the effect).
-        if isinstance(delivery, dict) and delivery.get("accepted"):
+        # acceptance is the stage transition itself (the effect);
+        # key_press's is the driver's sent flag.
+        if isinstance(delivery, dict) and (
+                delivery.get("accepted")
+                or (op == "key_press" and delivery.get("sent"))):
             return "ui-interaction"
         return "application-integration"
     if op in DIRECT_INVOCATION_OPS:
@@ -326,7 +345,10 @@ def write_evidence(title):
     for entry in EVIDENCE:
         by_class[entry["class"]] += 1
         sid = entry["scenario"]
-        if sid is None:
+        if sid is None or entry["class"] == "diagnostic-probe":
+            # Probe-class steps (waits, reads, the boot) say nothing
+            # about a scenario's input mechanism; folding them into
+            # the minimum made every scenario read diagnostic-probe.
             continue
         order = CLASS_ORDER[entry["class"]]
         if sid not in scenario_min or order < CLASS_ORDER[scenario_min[sid]]:
@@ -337,7 +359,7 @@ def write_evidence(title):
         "cura": os.environ.get("CURA_VERSION", "?"),
         "plugin": os.environ.get("PLUGIN_VERSION", "?"),
         "mode": os.environ.get("HARNESS_MODE", ""),
-        "written": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "written": time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime()),
         "classification": {
             "steps": by_class,
             "scenario_minimum": scenario_min,
@@ -1048,7 +1070,7 @@ def scenario9():
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome absent, window at the pinned geometry", gate, shot("01-gate")))
         wait_stage("PrepareStage", timeout_ms=60000)
         click_stage("PreviewStage")
         preview = wait_stage("PreviewStage", timeout_ms=20000)
@@ -1118,7 +1140,7 @@ def scenario8():
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome absent, window at the pinned geometry", gate, shot("01-gate")))
         wait_stage("PrepareStage", timeout_ms=60000)
         click_stage("MonitorStage")
         monitor = wait_stage("MonitorStage", timeout_ms=20000)
@@ -1202,7 +1224,7 @@ def scenario10():
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome absent, window at the pinned geometry", gate, shot("01-gate")))
         wait_stage("PrepareStage", timeout_ms=60000)
         click_stage("MonitorStage")
         monitor = wait_stage("MonitorStage", timeout_ms=20000)
@@ -1273,7 +1295,7 @@ def scenario11():
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome absent, window at the pinned geometry", gate, shot("01-gate")))
         wait_stage("PrepareStage", timeout_ms=60000)
         click_stage("MonitorStage")
         monitor = wait_stage("MonitorStage", timeout_ms=20000)
@@ -1347,7 +1369,7 @@ def scenario7():
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome absent, window at the pinned geometry", gate, shot("01-gate")))
         wait_stage("PrepareStage", timeout_ms=60000)
         click_stage("MonitorStage")
         monitor = wait_stage("MonitorStage", timeout_ms=20000)
@@ -1415,7 +1437,7 @@ def scenario6():
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome absent, window at the pinned geometry", gate, shot("01-gate")))
         wait_stage("PrepareStage", timeout_ms=60000)
         click_stage("PreviewStage")
         preview = wait_stage("PreviewStage", timeout_ms=20000)
@@ -1505,7 +1527,7 @@ def scenario5():
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome absent, window at the pinned geometry", gate, shot("01-gate")))
         wait_stage("PrepareStage", timeout_ms=60000)
         click_stage("MonitorStage")
         monitor = wait_stage("MonitorStage", timeout_ms=20000)
@@ -1597,7 +1619,7 @@ def scenario4():
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome absent, window at the pinned geometry", gate, shot("01-gate")))
         wait_stage("PrepareStage", timeout_ms=60000)
         # The list delay is armed BEFORE the Monitor entry: the hard
         # ordering (the view must come up while the list is pending).
@@ -1678,7 +1700,7 @@ def scenario3():
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome absent, window at the pinned geometry", gate, shot("01-gate")))
         wait_stage("PrepareStage", timeout_ms=60000)
         click_stage("MonitorStage")
         monitor = wait_stage("MonitorStage", timeout_ms=20000)
@@ -1748,7 +1770,7 @@ def scenario2(expect_fail=False):
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome absent, window at the pinned geometry", gate, shot("01-gate")))
         wait_stage("PrepareStage", timeout_ms=60000)
         click_stage("PreviewStage")
         preview = wait_stage("PreviewStage", timeout_ms=20000)
@@ -1840,7 +1862,7 @@ def scenario1(expect_fail=False):
         steps.append(boot_step(hello))
         gate = ensure_ready()
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, shot("01-gate")))
+                      "welcome absent, window at the pinned geometry", gate, shot("01-gate")))
         wait_stage("PrepareStage", timeout_ms=60000)
         click_stage("MonitorStage")
         monitor = wait_stage("MonitorStage", timeout_ms=20000)
@@ -1972,11 +1994,11 @@ def suite_run(group_id):
         gate = ensure_ready()
         _gate_cap = shot("01-gate")
         steps.append(("01-gate", "boot gate: active machine present, no welcome overlay",
-                      "welcome not up", gate, _gate_cap))
+                      "welcome absent, window at the pinned geometry", gate, _gate_cap))
         EVIDENCE.append(_evidence_entry({"id": group_id}, -2, {"op": "boot_gate"},
                                         "01-gate", gate,
                                         "boot gate: active machine present, no welcome overlay",
-                                        "welcome not up", _gate_cap, time.monotonic()))
+                                        "welcome absent, window at the pinned geometry", _gate_cap, time.monotonic()))
         wait_stage("PrepareStage", timeout_ms=60000)
         for spec in specs:
             sim_http("/harness/reset", "POST", {})
@@ -2007,15 +2029,32 @@ def suite_scenario(spec, step_fn=None):
     # shared boot (the round-2 H1/M-3). A one-shot resize — the boot
     # pin's late reapplies would otherwise yank the window back to
     # the baseline mid-scenario, right after the scenario's own
-    # crush resize.
+    # crush resize. The driver verifies the size it applied; a
+    # mismatch is a recorded failing step, not a swallowed exception.
     _want = [int(part) for part in WINDOW_SIZE.split("x")]
     for index, step in enumerate(spec.get("steps", ())):
         if index == 0:
             try:
-                rpc({"id": 1, "cmd": "resize", "w": _want[0], "h": _want[1]},
-                    timeout=40)
+                reply = rpc({"id": 1, "cmd": "resize", "w": _want[0], "h": _want[1]},
+                            timeout=40)
+                _got = reply.get("size") or []
+                _ok = bool(reply.get("ok")
+                           and [int(_got[0]), int(_got[1])] == _want)
             except Exception:
-                pass
+                _ok = False
+                _got = []
+            if not _ok:
+                name = f"{spec['id']}-00-geometry"
+                cap = shot(name)
+                steps.append((name,
+                              "the calibration pre-step: window at the baseline geometry",
+                              f"resize to {WINDOW_SIZE} verified; the window reports {_got}",
+                              False, cap))
+                EVIDENCE.append(_evidence_entry(
+                    spec, -3, {"op": "resize"}, name, False,
+                    "the calibration pre-step: window at the baseline geometry",
+                    f"resize to {WINDOW_SIZE} verified; the window reports {_got}",
+                    cap, time.monotonic()))
         name = f"{spec['id']}-{index:02d}"
         started = time.monotonic()
         try:
@@ -2216,7 +2255,7 @@ def suite_step(step):
         time.sleep(0.6)
         delivery = reply.get("delivery") or {}
         landed = bool(reply.get("ok") and delivery.get("accepted"))
-        note = (f"the press was accepted by {delivery.get('grabber')}") if landed \
+        note = (f"the press was accepted by {_delivery_name(delivery.get('grabber'))}") if landed \
             else f"the press was NOT accepted [delivery={delivery!r}]"
         return landed, f"real click on the rendered '{step['text']}'", note, delivery
     if op == "deliver_click":
@@ -2235,17 +2274,18 @@ def suite_step(step):
             # real item is under the aim) but no item accepted the
             # press — a disabled control refuses the click.
             refused = bool(reply.get("ok") and not delivery.get("accepted") and delivery.get("hit"))
-            note = (f"the press was refused by {delivery.get('hit')}") if refused \
+            note = (f"the press was refused by {_delivery_name(delivery.get('hit'))}") if refused \
                 else f"unexpected delivery [delivery={delivery!r}]"
             return refused, f"a refused press/release on {step.get('objectName') or step.get('text')}", note, delivery
         landed = bool(reply.get("ok") and delivery.get("accepted"))
-        note = (f"the press was accepted by {delivery.get('grabber')}") if landed \
+        note = (f"the press was accepted by {_delivery_name(delivery.get('grabber'))}") if landed \
             else f"the press was NOT accepted [delivery={delivery!r}]"
         return landed, f"a real press/release on {step.get('objectName') or step.get('text')}", note, delivery
     if op == "key_press":
         reply = rpc({"id": 1, "cmd": "key_press", "key": step["key"]})
         time.sleep(0.4)
-        return bool(reply.get("ok") and reply.get("sent")), f"the {step['key']} key", "sent"
+        sent = bool(reply.get("ok") and reply.get("sent"))
+        return sent, f"the {step['key']} key", "sent", {"sent": sent}
     if op == "scroll_into_view":
         request = {"id": 1, "cmd": "scroll_into_view"}
         if "objectName" in step:

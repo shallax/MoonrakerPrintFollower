@@ -423,17 +423,27 @@ class HarnessServer(QObject):
         if cmd == "resize":
             # Programmatic window geometry — the min/max layout
             # exercise (no WM under Xvfb, so the app resizes itself).
-            # The reply reports the size the window actually took.
+            # The reply reports the size the window actually took,
+            # after a reapply loop: a single setGeometry can be
+            # reverted by a late boot-pin reapply (the stale-read
+            # class window_pin was rewritten to fix), so the verb
+            # keeps applying until the read-back holds.
             try:
                 window = _main_window()
                 if window is None:
                     return {"id": request_id, "ok": False, "error": "no window"}
                 _win = os.environ.get("HARNESS_WINDOW", "1840x1040").split("x")
-                window.setGeometry(0, 0, int(request.get("w", int(_win[0]))),
-                                   int(request.get("h", int(_win[1]))))
-                time.sleep(2)
-                return {"id": request_id, "ok": True,
-                        "size": [window.width(), window.height()]}
+                want = [int(request.get("w", int(_win[0]))),
+                        int(request.get("h", int(_win[1])))]
+                got = [0, 0]
+                for _attempt in range(5):
+                    window.setGeometry(0, 0, want[0], want[1])
+                    time.sleep(0.8)
+                    got = [window.width(), window.height()]
+                    if got == want:
+                        break
+                return {"id": request_id, "ok": True, "size": got,
+                        "wanted": want}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "quit":
@@ -1708,6 +1718,29 @@ def _accepted_by(grabber, target):
     return False
 
 
+def _identify(item):
+    # An identified item for the delivery record: the objectName (or
+    # None), its class, and the parent chain. The class alone said
+    # "QQuickItem" for every press — the name is what discriminates.
+    if item is None:
+        return None
+    try:
+        name = item.objectName()
+    except Exception:
+        name = None
+    chain = [item.metaObject().className()]
+    node = item
+    for _ in range(4):
+        try:
+            node = node.parentItem()
+        except Exception:
+            break
+        if node is None:
+            break
+        chain.append(node.metaObject().className())
+    return {"objectName": name or None, "class": chain[0], "chain": chain}
+
+
 def _deliver_press(window, x, y, button, target=None):
     # A QTest press/release with delivery introspection. The hit is
     # the item geometrically under the aim point BEFORE the press;
@@ -1737,8 +1770,8 @@ def _deliver_press(window, x, y, button, target=None):
         window.removeEventFilter(filt)
     return {
         "accepted": _accepted_by(grabber, target),
-        "grabber": grabber.metaObject().className() if grabber is not None else None,
-        "hit": hit.metaObject().className() if hit is not None else None,
+        "grabber": _identify(grabber),
+        "hit": _identify(hit),
         "events": events[:12],
     }
 
