@@ -26,6 +26,32 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "4.3.0",
+        "headline": "Version 4.3.0 is the section release: the Monitor page is "
+            "rebuilt out of small self-contained sections, and the Preview "
+            "card gains a status strip.",
+        "items": (
+            "The Monitor page is now built from self-contained sections — "
+            "every collapsible section is its own component, so the page "
+            "stays readable and each part can change on its own.",
+            "The Preview card gains a status strip under the title: Pause "
+            "and Resume, the hotend and bed temperatures, and the remaining "
+            "time — and when a pause is not available the strip says why.",
+            "Pause and Resume answer to the same permission policy as the "
+            "rest of the Monitor: busy, disconnected and unknown states are "
+            "all named.",
+            "Clicking a slider's track now moves the handle and applies the "
+            "value — a track click used to move the handle while "
+            "discarding the request.",
+            "The print-job caption names Disconnected, Printer state "
+            "unknown and Locked — never a lying Idle.",
+            "Section expansion and pane sizes persist through the same "
+            "state file the rest of the plugin uses.",
+            "The test harness records what each step looked at and where "
+            "it was, and draws the highlight onto the captured screenshots.",
+        ),
+    },
+    {
         "version": "4.2.0",
         "headline": "Version 4.2.0 is the printer-state release: three live motion "
             "readouts join the Monitor card, and the controls that cannot be used "

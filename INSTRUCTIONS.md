@@ -220,42 +220,47 @@ pins in the same commit as any change to a control.
 
 ### Adding a collapsible section
 
-The controls pane is a column of collapsible sections; `controlContent` in
-`MoonrakerMonitorDashboard.qml` has `spacing: 0` on purpose — spacing lives on
-the children, because a collapsed section's hidden content must contribute
-nothing so the headers stack flush like Cura's accordion. Do not reintroduce
-layout spacing; a `visible: false` layout child is excluded from layout, but
-the remaining siblings' gaps come only from their own `Layout.*Margin`s.
+Since 4.3.0 every collapsible section is its own property-driven
+component; the panes are thin shells. A new section is a new QML
+file, never inline content:
 
-Each section is two direct children of the pane's content column:
-
-1. Header — a `CollapsibleSectionHeader` (the shared type in
-   `plugins/CollapsibleSectionHeader.qml`, instantiated directly — no
-   Loader) with `printerModel: root.printer`, `title`, `sectionId` and
+1. The component (`FooSection.qml`) — a `Column` root with
+   `property var printerModel: null`, then the shared
+   `CollapsibleSectionHeader` (`plugins/CollapsibleSectionHeader.qml`,
+   instantiated directly — no Loader) with `width: parent.width`,
+   `printerModel: root.printerModel`, `title`, `sectionId` and
    `sectionIcon`. The icon must be one Cura's own QML references (the
    header resolves `UM.Theme.getIcon(sectionIcon)` at runtime; guessing
    names risks an empty slot). Known-good names: Printer, House, Nozzle,
    Function, PrintQuality, Sliders, Spinner, Star, ThreeDots, CircleOutline,
    Settings, Save, Buildplate, MeshTypeNormal, Spool, Fan, Plugin,
    LinkExternal, Information, ChevronSingleDown/Left, ArrowDoubleCircleRight.
-2. Content — a `ColumnLayout` directly after the header with
-   `visible: root.printer == null || root.printer.sectionExpandedMap["<id>"] !== false`
-   and `Layout.topMargin`/`Layout.bottomMargin` of `default_margin`. The
-   missing-key check is deliberate: sections not in the map are expanded.
-   Sections that should disappear entirely when their data is absent wrap
-   header + content in a `Column` carrying the data's own `visible`
-   condition.
+2. Content — a `ColumnLayout` with the anchored width form
+   (`width: parent.width - narrow_margin - section_icon / 2`,
+   `anchors.left: parent.left` with the same left margin),
+   `visible: root.printerModel == null || root.printerModel.sectionExpandedMap["<id>"] !== false`.
+   The missing-key check is deliberate: sections not in the map are
+   expanded. Explicit spacer Items replace the host pane's
+   top/bottom margins — the pane's `spacing: 0` contract means gaps
+   live on the children, so a collapsed section contributes nothing
+   and headers stack flush.
+3. The host instantiation is a SIBLING in the pane's content column:
+   `FooSection { Layout.fillWidth: true; printerModel: root.printer }`.
+   Never nested inside another section's instantiation (valid QML,
+   wrong layout — the adjacency pin catches it). Content never reads
+   the host's ids: cross-surface requests cross the boundary as
+   signals (pop-over toggles, dialog confirmations) or the shared
+   interaction sink. Capability gates (hide when the data is absent)
+   stay on the host instantiation's `visible`.
 
-Then update the pins in `tests/test_monitor.py` in the same commit: the
-`CollapsibleSectionHeader` counts and the `sectionIcon:` counts per QML
-file must match the number of sections. Section ids are unique across all
-panes (the map is shared): print, setup, toolhead, macros, profiles,
-tuning, fans, leds, pwm, power, system, save on the controls pane;
-meshmap, job, temps, fansinfo, filament, objects, systeminfo, mcus,
-temphistory on the Information and Printer status panes; console
-(the console pane) and fileManager (the file-manager popup) on the
-Monitor's own surface. Persistence is
-automatic — the stored map only records sections the user has touched.
+Then update the pins in `tests/test_monitor.py` in the same commit:
+the `CollapsibleSectionHeader` counts and the `sectionIcon:` counts
+per QML file plus the totals, and the section-id haystack — a moved
+section decrements one file and increments another, and the totals
+catch a dropped section that a per-file pin alone would read as
+"moved". Section ids are unique across all panes (the map is
+shared). Persistence is automatic — the stored map only records
+sections the user has touched.
 
 ### Collapsing a whole pane
 
