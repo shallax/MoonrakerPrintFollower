@@ -198,6 +198,27 @@ class QtRuntimeTests(unittest.TestCase):
         model._data._update(auxiliary={"display_status": {"message": "probe-m117-x", "progress": 0.6}})
         self.assertEqual(model.monitorMessage, "probe-m117-x")
 
+    def test_filtered_aux_refresh_preserves_the_discovery_settings(self):
+        # The diameter read's residency claim (round-1 B1, round-2
+        # engineering F2): the discovery lane delivers the WHOLE
+        # configfile — settings included — and the later
+        # field-filtered aux refresh must not erase it: the merge
+        # carries previous keys through (MonitorData._merge_aux).
+        model, _client, _transport = self.monitor()
+        data = model._data
+        data._objects({"result": {"objects": ["print_stats", "configfile", "toolhead"]}}, None)
+        data._aux({"result": {"status": {"configfile": {
+            "save_config_pending": False, "save_config_pending_items": {},
+            "config": {"extruder": {"filament_diameter": "1.75"}},
+            "settings": {"extruder": {"filament_diameter": 1.75}}}}}}, None)
+        # The aux lane's filtered refresh carries ONLY the save-config
+        # fields for configfile — settings must survive from before.
+        data._aux({"result": {"status": {"configfile": {
+            "save_config_pending": True, "save_config_pending_items": {}}}}}, None)
+        configfile = data.snapshot.auxiliary.get("configfile") or {}
+        self.assertTrue(configfile.get("save_config_pending"))
+        self.assertEqual(configfile.get("settings", {}).get("extruder", {}).get("filament_diameter"), 1.75)
+
     def test_unknown_machine_migration_is_retried_when_stack_appears(self):
         prefs = Preferences({"moonraker_print_follower/url": "http://legacy",
                              "moonraker_print_follower/enabled": True})

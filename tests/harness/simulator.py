@@ -84,17 +84,30 @@ KICKOFF_STATE: Dict[str, Any] = {
         "is_active": False,
         "file_size": 0,
     },
-    "motion_report": {"live_position": [100.0, 100.0, 0.4, 0.0]},
+    # The motion rows (4.2.0) read these scalars: the sim carries the
+    # real object shape (live_velocity, live_extruder_velocity,
+    # steppers as NAMES) so tests against the sim are honest.
+    "motion_report": {"live_position": [100.0, 100.0, 0.4, 0.0],
+                      "live_velocity": 0.0, "live_extruder_velocity": 0.0,
+                      "steppers": ["extruder", "stepper_x", "stepper_y", "stepper_z"]},
     "display_status": {"message": "", "progress": 0.0},
-    "toolhead": {"homed_axes": "xyz"},
+    # The accel ceiling and the ACTIVE tool (the per-tool diameter
+    # read keys off extruder) ride the aux poll with homed_axes.
+    "toolhead": {"homed_axes": "xyz", "extruder": "extruder", "max_accel": 5000.0,
+                 "max_velocity": 500.0, "position": [100.0, 100.0, 0.4, 0.0]},
     "heater_bed": {"temperature": 0.0, "target": 0.0},
     "extruder": {"temperature": 0.0, "target": 0.0},
     "system_stats": {"sysload": 0.1, "memavail": 1000000},
     "fan": {"speed": 0.0},
     # The plugin subscribes to configfile for the save-config surface
     # (saveConfigPending) and to bed_mesh for the mesh render — a
-    # faithful sim must carry both objects even while empty.
-    "configfile": {"save_config_pending": False, "save_config_pending_items": {}},
+    # faithful sim must carry both objects even while empty. The
+    # config/settings pair mirrors the real object: config holds the
+    # raw STRING, settings the typed float (the diameter read uses
+    # settings).
+    "configfile": {"save_config_pending": False, "save_config_pending_items": {},
+                   "config": {"extruder": {"filament_diameter": "1.75"}},
+                   "settings": {"extruder": {"filament_diameter": 1.75}}},
     "bed_mesh": {"profile_name": "", "probed_matrix": [], "mesh_min": [], "mesh_max": [], "profiles": {}},
 }
 
@@ -164,6 +177,10 @@ class PrinterState:
         # refusal/hold, the accepted-but-never-confirmed pause, the
         # injected clock and the push transcript.
         self.temp_tick_deg_c = 0.0
+        # The motion ticker (4.2.0): armed speeds advance the live
+        # positions and set the velocities each push while printing.
+        self.motion_speed_mm_s = 0.0
+        self.motion_e_mm_s = 0.0
         self.fail_upload = False
         self.accept_pause_without_state = False
         self.clock_skew_ms = 0.0
@@ -300,6 +317,10 @@ class PrinterState:
                         entry["modified"] = self.now()
             elif name == "temp_tick_deg_c":
                 self.temp_tick_deg_c = float(value or 0.0)
+            elif name == "motion_speed_mm_s":
+                self.motion_speed_mm_s = float(value or 0.0)
+            elif name == "motion_e_mm_s":
+                self.motion_e_mm_s = float(value or 0.0)
             elif name == "fail_upload":
                 self.fail_upload = bool(value)
             elif name == "accept_pause_without_state":
@@ -340,6 +361,8 @@ class PrinterState:
         self.fail_pause_script = False
         self.corrupt_frame_once = False
         self.temp_tick_deg_c = 0.0
+        self.motion_speed_mm_s = 0.0
+        self.motion_e_mm_s = 0.0
         self.fail_upload = False
         self.accept_pause_without_state = False
         self.clock_skew_ms = 0.0
@@ -351,6 +374,23 @@ class PrinterState:
                                "time": time.time()}]
         self.ledger = []
         self.inflight = 0
+
+    def query_status(self, objects: Dict[str, Any]) -> Dict[str, Any]:
+        """The faithful objects/query reply: only the NAMED objects,
+        honouring per-object field lists (None = the whole object),
+        as Moonraker does. The field-list honesty is load-bearing —
+        the plugin's filtered aux refresh and the settings-survival
+        merge can only be tested against a sim that filters."""
+        status: Dict[str, Any] = {}
+        for name, fields in (objects or {}).items():
+            if name not in self.state:
+                continue
+            value = self.state[name]
+            if fields is None or not isinstance(value, dict):
+                status[name] = value
+            else:
+                status[name] = {field: value[field] for field in fields if field in value}
+        return status
 
     def now(self) -> float:
         # The injected-clock seam: every wall-clock read the arms
@@ -410,6 +450,19 @@ class PrinterState:
                     temp = float(entry.get("temperature") or 0.0)
                     entry["temperature"] = round(
                         temp + self.temp_tick_deg_c * self.push_cadence_ms / 1000.0, 2)
+        elif self.motion_speed_mm_s and stats.get("state") == "printing":
+            # The motion ticker (4.2.0): the motion rows' scenarios
+            # need a moving head — advances the live positions and
+            # sets the velocities from the armed rates. The sim
+            # serves what is scripted: Klipper's 30 s E-trapq
+            # history fallback is NOT modelled (it lands with the
+            # travel-zeroing work if that ships).
+            motion = self.state["motion_report"]
+            step_s = self.push_cadence_ms / 1000.0
+            motion["live_position"][0] = round(motion["live_position"][0] + self.motion_speed_mm_s * step_s, 4)
+            motion["live_position"][3] = round(motion["live_position"][3] + self.motion_e_mm_s * step_s, 4)
+            motion["live_velocity"] = self.motion_speed_mm_s
+            motion["live_extruder_velocity"] = self.motion_e_mm_s
         # Every state object participates in the changes-only diff, not
         # just the original five — configfile, fan, gcode_move and the
         # rest ride the same contract (the pump used to drop them and
@@ -462,9 +515,7 @@ class SimulatorWebSocket(tornado.websocket.WebSocketHandler):
         if method == "printer.objects.subscribe":
             self._subscribe(request_id, params)
         elif method == "printer.objects.query":
-            self._respond(request_id, {"status": {name: dict(self._printer.state[name])
-                                                  for name in params.get("objects", {})
-                                                  if name in self._printer.state}})
+            self._respond(request_id, {"status": self._printer.query_status(params.get("objects") or {})})
         elif method == "printer.objects.list":
             self._respond(request_id, {"objects": list(self._printer.objects_available)})
         elif method == "server.info":
@@ -599,7 +650,12 @@ class StatusHandler(tornado.web.RequestHandler):
         self.set_header("Content-Type", "application/json")
         objects = ",".join(CORE_OBJECTS)
         if path == "objects/query":
-            self.write(json.dumps({"result": {"status": self._printer.state}}))
+            # The GET core poll names its objects as bare query
+            # parameters (?print_stats&motion_report&...); reply with
+            # exactly those, like Moonraker — the wholesale dump hid
+            # the field-list dishonesty (the round-2 domain P3).
+            objects = {name: None for name in self.request.query_arguments}
+            self.write(json.dumps({"result": {"status": self._printer.query_status(objects)}}))
         elif path == "objects/list":
             self.write(json.dumps({"result": {"objects": list(self._printer.objects_available)}}))
         elif path == "info":
@@ -669,9 +725,7 @@ class StatusHandler(tornado.web.RequestHandler):
         except Exception:
             body = {}
         if path == "objects/query":
-            wanted = (body.get("objects") or {}).keys()
-            status = {name: self._printer.state[name] for name in wanted if name in self._printer.state}
-            self.write(json.dumps({"result": {"status": status}}))
+            self.write(json.dumps({"result": {"status": self._printer.query_status(body.get("objects") or {})}}))
         elif path == "emergency_stop":
             # The emergency: the printer cancels into an error state
             # and Klippy shuts down — the real host announces it (the
