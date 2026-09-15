@@ -123,6 +123,15 @@ SCENARIO_MAP = {
     "cameraViewport": "e1", "cameraControls": "e2",
     "loadIndicatorContent": "h2",
     "printConfirmDialog": "f6", "slicerPopup": "f1", "modifiedPopup": "f1",
+    # The dialog verbs (the round-2 H3 naming pass): each maps to the
+    # scenario that opens its dialog today. The createFolder verbs
+    # are excluded below — no scenario opens that dialog yet; its
+    # round lands with the deferred panel scenarios.
+    "printConfirmStartButton": "f6", "printConfirmCancelButton": "f6",
+    "deleteConfirmDeleteButton": "f3", "deleteConfirmCancelButton": "f3",
+    "renameConfirmButton": "f7", "renameConfirmCancelButton": "f7",
+    "uploadConfirmOverwriteButton": "f2", "uploadConfirmCancelButton": "f2",
+    "uploadProgressCloseButton": "f2",
     "printTimePopup": "f1", "columnsPopup": "f1", "pageSizePopup": "f1",
     "gridHeader": "f1", "gridVertical": "f1", "columnResizeHandle": "f1",
     # The protocol endpoints: the simulator's contract test owns the
@@ -218,4 +227,9 @@ EXCLUSIONS = {
     # unreachable by the harness's item walk on every boot; g8 covers
     # the lock's model path via setControlsLocked in both directions.
     "moonrakerLockButton": "g8 covers the lock via setControlsLocked; the button is unreachable in the Loader-built dashboard",
+    # The create-folder dialog: no scenario opens it yet — its
+    # scenario lands with the deferred panel round (2026-09-15),
+    # which converts this exclusion into map entries.
+    "createFolderCreateButton": "no scenario opens the create-folder dialog yet (deferred panel round, 2026-09-15)",
+    "createFolderCancelButton": "no scenario opens the create-folder dialog yet (deferred panel round, 2026-09-15)",
 }

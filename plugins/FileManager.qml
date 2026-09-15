@@ -271,6 +271,7 @@ Item {
                 width: parent.width
                 spacing: UM.Theme.getSize("narrow_margin").width
                 Cura.PrimaryButton {
+                    objectName: "printConfirmStartButton"
                     focusPolicy: Qt.StrongFocus
                     text: "Start print"
                     Layout.fillWidth: true
@@ -282,6 +283,7 @@ Item {
                     }
                 }
                 Cura.SecondaryButton {
+                    objectName: "printConfirmCancelButton"
                     focusPolicy: Qt.StrongFocus
                     text: "Cancel"
                     Layout.fillWidth: true
@@ -346,6 +348,7 @@ Item {
                 width: parent.width
                 spacing: UM.Theme.getSize("narrow_margin").width
                 Cura.PrimaryButton {
+                    objectName: "deleteConfirmDeleteButton"
                     focusPolicy: Qt.StrongFocus
                     text: "Delete"
                     Layout.fillWidth: true
@@ -357,6 +360,7 @@ Item {
                     }
                 }
                 Cura.SecondaryButton {
+                    objectName: "deleteConfirmCancelButton"
                     focusPolicy: Qt.StrongFocus
                     text: "Cancel"
                     Layout.fillWidth: true
@@ -418,11 +422,13 @@ Item {
             RowLayout {
                 width: parent.width
                 Cura.SecondaryButton {
+                    objectName: "createFolderCancelButton"
                     Layout.fillWidth: true
                     text: "Cancel"
                     onClicked: createFolderDialog.close()
                 }
                 Cura.PrimaryButton {
+                    objectName: "createFolderCreateButton"
                     Layout.fillWidth: true
                     text: "Create"
                     onClicked: root.submitNewFolder()
@@ -517,12 +523,14 @@ Item {
                 width: parent.width
                 spacing: UM.Theme.getSize("narrow_margin").width
                 Cura.PrimaryButton {
+                    objectName: "renameConfirmButton"
                     focusPolicy: Qt.StrongFocus
                     text: root.printerModel != null && root.printerModel.fileRenameConflict ? "Overwrite" : "Rename"
                     Layout.fillWidth: true
                     onClicked: root.confirmRename()
                 }
                 Cura.SecondaryButton {
+                    objectName: "renameConfirmCancelButton"
                     focusPolicy: Qt.StrongFocus
                     text: "Cancel"
                     Layout.fillWidth: true
@@ -606,6 +614,7 @@ Item {
                 width: parent.width
                 spacing: UM.Theme.getSize("narrow_margin").width
                 Cura.PrimaryButton {
+                    objectName: "uploadConfirmOverwriteButton"
                     focusPolicy: Qt.StrongFocus
                     text: "Overwrite"
                     Layout.fillWidth: true
@@ -617,6 +626,7 @@ Item {
                     }
                 }
                 Cura.SecondaryButton {
+                    objectName: "uploadConfirmCancelButton"
                     focusPolicy: Qt.StrongFocus
                     text: "Cancel"
                     Layout.fillWidth: true
@@ -705,6 +715,7 @@ Item {
                 width: parent.width
                 spacing: UM.Theme.getSize("narrow_margin").width
                 Cura.PrimaryButton {
+                    objectName: "uploadProgressCloseButton"
                     focusPolicy: Qt.StrongFocus
                     text: "Close"
                     Layout.fillWidth: true
