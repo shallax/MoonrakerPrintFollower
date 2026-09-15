@@ -90,7 +90,7 @@ class PrintCoordinator(QObject):
         presentation.controlsChanged.connect(self._publish)
         presentation.loadRequested.connect(self.confirm_load)
         presentation.attachmentRequested.connect(self.toggle_attachment)
-        presentation.pauseRequested.connect(self.toggle_pause)
+        presentation.pauseAtLayerRequested.connect(self.toggle_pause)
         presentation.removePauseRequested.connect(self.remove_pause)
         presentation.clearPausesRequested.connect(pauses.clear)
 

@@ -635,6 +635,14 @@ class MoonrakerClient(QObject):
         if command is not None:
             self.commandChanged.emit(command.as_dict())
 
+    def settle_command(self, name: str, detail: str) -> None:
+        """The benign terminal path (4.3.0): the printer's own words
+        settle a tracked command immediately — a "resume aborted"
+        never waits out the Resume expectation's long window."""
+        command = self._session.commands.settled(name, detail)
+        if command is not None:
+            self.commandChanged.emit(command.as_dict())
+
     def expire_commands(self) -> None:
         generation = self._generation
         changed = self._session.commands.expire()

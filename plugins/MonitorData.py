@@ -250,6 +250,10 @@ class MonitorData(QObject):
             save_config_pending=bool(configfile.get("save_config_pending")),
             controls_locked=self._controls_locked,
             busy=self._commands_busy,
+            # The authoritative paused bit: None until the
+            # pause_resume object has been observed — the rows fall
+            # back to the state word with that caveat.
+            is_paused=(aux.get("pause_resume") or {}).get("is_paused"),
         )
         self._observation = observation
 
@@ -528,6 +532,14 @@ class MonitorData(QObject):
                     seen.append((stamp, text))
                     continue
                 seen.append((stamp, text))
+                if "resume aborted" in text.lower():
+                    # Klipper's no-op verdict on a RESUME with nothing
+                    # paused (CLEAR_PAUSE leaves the state proxy
+                    # reading "paused" forever): settle the tracked
+                    # Resume immediately as a benign terminal — the
+                    # 300 s window is for a slow re-heat, never for a
+                    # command the printer has already refused.
+                    self._client.settle_command("Resume", "Nothing to resume")
                 responses.append({
                     "text": text[:MAX_LINE],
                     "error": text.startswith("!!"),
