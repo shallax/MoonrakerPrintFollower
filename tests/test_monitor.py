@@ -49,6 +49,7 @@ TUNING_SECTION_QML = (PLUGINS / "TuningSection.qml").read_text()
 FANS_SECTION_QML = (PLUGINS / "FansSection.qml").read_text()
 LEDS_SECTION_QML = (PLUGINS / "LedsSection.qml").read_text()
 PWM_SECTION_QML = (PLUGINS / "PwmSection.qml").read_text()
+POWER_SECTION_QML = (PLUGINS / "PowerSection.qml").read_text()
 MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
@@ -150,7 +151,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('"MoonrakerMonitorBedMesh.qml"', OUTPUT_PLUGIN)
         self.assertIn('Qt.createComponent("MoonrakerMonitorDashboard.qml"', BED_MESH_QML)  # the shell's async load
         self.assertIn("MoonrakerMonitor", DASHBOARD_QML)
-        self.assertIn("Power control is locked by Moonraker while this print is active.", DASHBOARD_QML)
+        self.assertIn("Power control is locked by Moonraker while this print is active.", POWER_SECTION_QML)
 
     def test_output_plugin_selects_the_same_dashboard_through_one_model(self):
         self.assertIn("from .MoonrakerMonitorModel import MoonrakerMonitorModel", OUTPUT_PLUGIN)
@@ -186,7 +187,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -255,14 +256,14 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('sectionIcon: "Fan"', MONITOR_QML)
         self.assertIn('sectionIconUrl: Qt.resolvedUrl("Thermometer.svg")', MONITOR_QML)
         self.assertIn('Qt.resolvedUrl("Download.svg")', MONITOR_QML)
-        self.assertIn('sectionIconUrl: Qt.resolvedUrl("Power.svg")', DASHBOARD_QML)
+        self.assertIn('sectionIconUrl: Qt.resolvedUrl("Power.svg")', POWER_SECTION_QML)
         self.assertIn('text: "Open the Moonraker frontend."', MONITOR_QML)
         self.assertNotIn('text: "Open Moonraker frontend"', MONITOR_QML)
         # The section machinery (4.3.0): per-file counts PLUS the
         # totals — a moved section decrements one file and increments
         # another, and the totals catch a dropped section that a
         # per-file pin alone would read as "moved".
-        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 4)
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 3)
         self.assertEqual(PRINT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(SETUP_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader"), 1)
@@ -272,6 +273,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(FANS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(LEDS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(PWM_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(POWER_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
@@ -283,6 +285,7 @@ class MonitorModelContractTests(unittest.TestCase):
                          + FANS_SECTION_QML.count("CollapsibleSectionHeader")
                          + LEDS_SECTION_QML.count("CollapsibleSectionHeader")
                          + PWM_SECTION_QML.count("CollapsibleSectionHeader")
+                         + POWER_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 2)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
@@ -294,6 +297,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(FANS_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(LEDS_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(PWM_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(POWER_SECTION_QML.count('sectionIcon: "'), 0)  # Power uses the plugin glyph url
         self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
@@ -516,7 +520,12 @@ class MonitorModelContractTests(unittest.TestCase):
         # The print actions ride their component (4.3.0).
         for token in ('text: "Pause"', 'text: "Resume"', 'text: "Cancel"', "cancelRequested()"):
             self.assertIn(token, PRINT_SECTION_QML)
-        for token in ('title: "Power"', "powerOffDialog.open()", "controlsCollapsed",
+        self.assertIn('title: "Power"', POWER_SECTION_QML)
+        self.assertIn("onPowerOffConfirmRequested", DASHBOARD_QML)
+        self.assertIn("powerOffConfirmRequested(modelData.name)", POWER_SECTION_QML)
+        self.assertIn("property bool anyPowerLocked", POWER_SECTION_QML)
+        self.assertNotIn("anyPowerLocked", DASHBOARD_QML)
+        for token in ("powerOffDialog.open()", "controlsCollapsed",
                       "id: collapsedTitle", "rotation: 90",
                       '"Lock all controls."', '"Unlock all controls."', "PadlockLocked.svg", "PadlockUnlocked.svg",
                       "setControlsLocked", "setControlsCollapsed"):
