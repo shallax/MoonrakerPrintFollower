@@ -847,7 +847,11 @@ class HarnessServer(QObject):
                             value = item.property("objectName" if by_name else "text")
                         except Exception:
                             continue
-                        if value == wanted and bool(item.isVisible()):
+                        # Qt's isVisible() lies for a popup's items
+                        # under the WM-less Xvfb (the window reports
+                        # invisible while its content renders) — the
+                        # parent-chain check is the truth.
+                        if value == wanted and _effectively_visible(item):
                             window, target = _window, item
                             break
                     if target is not None:
@@ -1528,15 +1532,28 @@ def _main_window():
 
 
 def _click_windows():
-    # The click walks' window union: the main window first (its tree
-    # holds the plugin surface and the in-tree Popups), then the
-    # popup windows — the FM dialogs render in whichever topology
-    # this Cura uses, and the walk covers both. Popup windows are
-    # shallow, so the bounded depth keeps the union walk from
-    # stalling the GUI thread the way the all-windows deep walk did.
-    windows = _lookup_windows()
-    for index, window in enumerate(windows):
-        yield window, _walk(window.contentItem(), depth=24 if index == 0 else 12)
+    # The click walks' window union: EVERY QQuickWindow, not the
+    # visibility-filtered list — a popup's window reports isVisible
+    # False under the WM-less Xvfb while its content is genuinely on
+    # screen (the rename dialog's verbs were unreachable through the
+    # filtered walk). The main window first, then the rest by size;
+    # zero-area windows are skipped. The FM dialogs render deep in
+    # whichever topology this Cura uses, and the probes proved reach
+    # at depth 96. A click is a deliberate per-step operation, so its
+    # walk may take seconds — the stall warning applies to the
+    # observation dumps, not here.
+    from PyQt6.QtQuick import QQuickWindow
+    windows = [w for w in QGuiApplication.topLevelWindows()
+               if isinstance(w, QQuickWindow)]
+    windows.sort(key=lambda w: (w is _main_window(), w.width() * w.height()),
+                 reverse=True)
+    for window in windows:
+        if window.width() * window.height() <= 0:
+            continue
+        try:
+            yield window, _walk(window.contentItem(), depth=96)
+        except AttributeError:
+            continue
 
 
 class _DeliveryFilter(QObject):

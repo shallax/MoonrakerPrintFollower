@@ -250,7 +250,8 @@ CENSUS_PROBE = (
     "result")
 
 FM_POPUP_PROBE = (
-    "result = {\"matches\": [], \"fields\": []}\n"
+    "import json as _json\n"
+    "result = {\"matches\": [], \"fields\": [], \"names\": []}\n"
     "for window in _lookup_windows():\n"
     "    for item in _walk(window.contentItem(), depth=96):\n"
     "        if not item.isVisible():\n"
@@ -264,13 +265,21 @@ FM_POPUP_PROBE = (
     "            placeholder = item.property(\"placeholderText\")\n"
     "        except Exception:\n"
     "            placeholder = None\n"
+    "        try:\n"
+    "            name = item.property(\"objectName\")\n"
+    "        except Exception:\n"
+    "            name = None\n"
     "        p = item.mapToScene(QPointF(0, 0))\n"
+    "        if isinstance(name, str) and name:\n"
+    "            result[\"names\"].append([cls[:18], name[:40], round(p.x()), round(p.y())])\n"
     "        if isinstance(label, str) and any(k in label for k in (\"benchy\", \"Rename\", \"Cancel\", \"Save\")):\n"
     "            result[\"matches\"].append([cls[:18], label[:34], round(p.x()), round(p.y()),\n"
     "                                         round(item.width()), round(item.height())])\n"
     "        if isinstance(placeholder, str) and placeholder.strip():\n"
     "            result[\"fields\"].append([cls[:18], placeholder[:30], round(p.x()), round(p.y()),\n"
     "                                         round(item.width()), round(item.height())])\n"
+    "with open('/tmp/mpf/fm_popup_probe.json', 'w') as _f:\n"
+    "    _json.dump(result, _f)\n"
     "result")
 
 PRESETS_PROBE = (
@@ -1523,6 +1532,11 @@ SCENARIOS = [
          {"op": "exec_file_slot", "slot": "fileRequestRename", "args": ["benchy.gcode"]},
          {"op": "wait_seconds", "seconds": 2},
          {"op": "exec_code", "verbs": [], "code": FM_POPUP_PROBE},
+         # The round-2 H3 proof: a real press lands on a NAMED VERB
+         # inside the open Popup and the dialog closes — the walk,
+         # the delivery and the effect in one step.
+         {"op": "deliver_click", "objectName": "renameConfirmCancelButton"},
+         {"op": "wait_rect", "objectName": "renameConfirmCancelButton", "absent": True, "budget": 20},
      ]},
 
     # ─── real-printer read-only (observation; see TESTING.md §2.5) ───
