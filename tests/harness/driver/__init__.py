@@ -783,6 +783,7 @@ class HarnessServer(QObject):
             # target's own chain).
             try:
                 wanted = str(request.get("text") or "")
+                _begin_walk("click", 96)
                 matches = []
                 for _window, items in _click_windows():
                     for item in items:
@@ -817,7 +818,8 @@ class HarnessServer(QObject):
                 button = Qt.MouseButton.RightButton if str(request.get("button")) == "right" else Qt.MouseButton.LeftButton
                 delivery = _deliver_press(window, x, y, button, target)
                 return {"id": request_id, "ok": True, "mechanism": "deliver",
-                        "aim": [x, y], "text": wanted, "delivery": delivery}
+                        "aim": [x, y], "text": wanted, "delivery": delivery,
+                        "geometry": _geometry_of(target), "walk": dict(_WALK_STATS)}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "click_item":
@@ -902,7 +904,8 @@ class HarnessServer(QObject):
                 delivery = _deliver_press(window, x, y, Qt.MouseButton.LeftButton, target)
                 return {"id": request_id, "ok": True, "mechanism": "deliver",
                         "aim": [x, y], "window": window.objectName() or "",
-                        "delivery": delivery, "wanted": wanted}
+                        "delivery": delivery, "wanted": wanted,
+                        "geometry": _geometry_of(target), "walk": dict(_WALK_STATS)}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "scroll_into_view":
@@ -919,6 +922,7 @@ class HarnessServer(QObject):
                 qtest = _import_qtest()
                 if not qtest:
                     return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
+                _begin_walk("click", 96)
                 target = None
                 for _window, items in _click_windows():
                     for item in items:
@@ -971,7 +975,8 @@ class HarnessServer(QObject):
                         "scrolled": before != (round(origin.y()), round(origin.y() + target.height())),
                         "before": before,
                         "after": (round(origin.y()), round(origin.y() + target.height())),
-                        "viewport": round(viewport_h)}
+                        "viewport": round(viewport_h),
+                        "geometry": _geometry_of(target), "walk": dict(_WALK_STATS)}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "key_press":
@@ -998,6 +1003,7 @@ class HarnessServer(QObject):
                 wanted_name = str(request.get("objectName") or "")
                 wanted_text = str(request.get("text") or "")
                 wanted_class = str(request.get("className") or "")
+                _begin_walk("lookup", 64)
                 window = _main_window()
                 if request.get("window"):
                     pos = window.position()
@@ -1005,7 +1011,7 @@ class HarnessServer(QObject):
                             "rect": {"x": round(pos.x()), "y": round(pos.y()),
                                      "w": round(window.width()),
                                      "h": round(window.height())},
-                            "found": "window"}
+                            "found": "window", "walk": dict(_WALK_STATS)}
                 best = None
                 name_matches = []
                 for window in _lookup_windows():
@@ -1032,7 +1038,8 @@ class HarnessServer(QObject):
                                (wanted_class and klass == wanted_class):
                                 if "Button" in klass:
                                     return {"id": request_id, "ok": True,
-                                            "rect": self._rect(item), "found": klass}
+                                            "rect": self._rect(item), "found": klass,
+                                            "walk": dict(_WALK_STATS)}
                                 if best is None or (item.width() * item.height() >
                                                     best.width() * best.height()):
                                     best = item
@@ -1041,11 +1048,13 @@ class HarnessServer(QObject):
                     # (then leftmost) is the row the user reads first.
                     name_matches.sort()
                     return {"id": request_id, "ok": True,
-                            "rect": name_matches[0][2], "found": "objectName"}
+                            "rect": name_matches[0][2], "found": "objectName",
+                            "walk": dict(_WALK_STATS)}
                 if best is not None:
                     return {"id": request_id, "ok": True,
                             "rect": self._rect(best),
-                            "found": best.metaObject().className()}
+                            "found": best.metaObject().className(),
+                            "walk": dict(_WALK_STATS)}
                 return {"id": request_id, "ok": False,
                         "error": "no visible item matched",
                         "objectName": wanted_name, "text": wanted_text,
@@ -1057,6 +1066,7 @@ class HarnessServer(QObject):
             # rendered-follows-model probes read this.
             try:
                 wanted = str(request.get("objectName") or "")
+                _begin_walk("lookup", 64)
                 matches = []
                 for window in _lookup_windows():
                     for item in _walk(window.contentItem(), depth=64):
@@ -1080,7 +1090,8 @@ class HarnessServer(QObject):
                             except Exception:
                                 label = None
                             texts.append(str(label))
-                        return {"id": request_id, "ok": True, "texts": texts}
+                        return {"id": request_id, "ok": True, "texts": texts,
+                                "walk": dict(_WALK_STATS)}
                     # Shared names (repeater rows): the topmost row.
                     matches.sort()
                     item = matches[0][2]
@@ -1088,7 +1099,8 @@ class HarnessServer(QObject):
                         label = item.property("text")
                     except Exception:
                         label = None
-                    return {"id": request_id, "ok": True, "text": str(label)}
+                    return {"id": request_id, "ok": True, "text": str(label),
+                            "walk": dict(_WALK_STATS)}
                 return {"id": request_id, "ok": False,
                         "error": "no visible item with that objectName",
                         "objectName": wanted}
@@ -1592,6 +1604,7 @@ def _lookup_windows():
     visible = [w for w in windows if w.isVisible()]
     visible.sort(key=lambda w: (w is _main_window(), w.width() * w.height()),
                  reverse=True)
+    _WALK_STATS["windows"] = len(visible)
     return visible
 
 
@@ -1610,6 +1623,25 @@ def _effectively_visible(item):
     return True
 
 
+# The walk provenance (the review's C9): every resolving reply states
+# WHICH walk resolved its target. "click" is the unfiltered depth-96
+# walk over every QQuickWindow; "lookup" is the visibility-filtered
+# depth-64 walk. The evidence layer records the mode with each entry.
+_WALK_STATS = {"mode": "", "depth": 0, "items": 0, "windows": 0}
+
+
+def _begin_walk(mode, depth):
+    _WALK_STATS.update({"mode": mode, "depth": depth, "items": 0, "windows": 0})
+
+
+def _geometry_of(item):
+    # The item's scene rect — what the capture frame must be able to
+    # outline. Window-relative rects drift with window placement; the
+    # scene coordinates are stable across the pinned geometry.
+    scene = item.mapToScene(QPointF(0, 0))
+    return [round(scene.x()), round(scene.y()), round(item.width()), round(item.height())]
+
+
 def _walk(root, depth=24):
     # Depth-first over QQuickItem.childItems() — the VISUAL tree.
     # findChildren(QQuickItem) instead walks the whole QObject graph
@@ -1618,6 +1650,7 @@ def _walk(root, depth=24):
     stack = [(root, 0)]
     while stack:
         item, level = stack.pop()
+        _WALK_STATS["items"] += 1
         yield item
         if level < depth:
             stack.extend((child, level + 1) for child in item.childItems())
@@ -1656,6 +1689,7 @@ def _click_windows():
     for window in windows:
         if window.width() * window.height() <= 0:
             continue
+        _WALK_STATS["windows"] += 1
         try:
             yield window, _walk(window.contentItem(), depth=96)
         except AttributeError:
