@@ -18,6 +18,7 @@ PRESENTATION = (PLUGINS / "PreviewPresentation.py").read_text()
 PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 MAIN_DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
+SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text()
 PREVIEW_CONTROLS = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 EMPTY_PREVIEW = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 
@@ -214,13 +215,13 @@ class BedMeshTests(unittest.TestCase):
         self.assertEqual(mesh_profiles({"profiles": {"summer": {}, "default": {}, "winter": {}}, "profile_name": "winter"}), ["winter", "default", "summer"])
         self.assertIn("shlex.quote(name)", MONITOR_CONTROLS)
         self.assertIn("BED_MESH_PROFILE LOAD=", MONITOR_CONTROLS)
-        self.assertIn('text: "Load saved mesh"', MAIN_DASHBOARD)
+        self.assertIn('text: "Load saved mesh"', SETUP_SECTION_QML)
 
     def test_clearing_active_mesh_does_not_delete_saved_profiles(self):
         self.assertIn('"BED_MESH_CLEAR"', MONITOR_CONTROLS)
         self.assertNotIn("BED_MESH_PROFILE REMOVE", MONITOR_CONTROLS)
-        self.assertIn('text: "Clear mesh"', MAIN_DASHBOARD)
-        self.assertIn('text: "Calibrate mesh"', MAIN_DASHBOARD)
+        self.assertIn('text: "Clear mesh"', SETUP_SECTION_QML)
+        self.assertIn('text: "Calibrate mesh"', SETUP_SECTION_QML)
 
 
 if __name__ == "__main__":

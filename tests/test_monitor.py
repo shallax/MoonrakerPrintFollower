@@ -42,6 +42,7 @@ DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 CAMERA_PANE_QML = (PLUGINS / "CameraPane.qml").read_text()
 PRINT_SECTION_QML = (PLUGINS / "PrintSection.qml").read_text()
+SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
@@ -178,7 +179,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
@@ -254,17 +255,21 @@ class MonitorModelContractTests(unittest.TestCase):
         # totals — a moved section decrements one file and increments
         # another, and the totals catch a dropped section that a
         # per-file pin alone would read as "moved".
-        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 12)
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 11)
         self.assertEqual(PRINT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(SETUP_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
         self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
                          + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
+                         + SETUP_SECTION_QML.count("CollapsibleSectionHeader")
                          + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
-        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 10)
+        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 9)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(SETUP_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
                          + PRINT_SECTION_QML.count('sectionIcon: "')
+                         + SETUP_SECTION_QML.count('sectionIcon: "')
                          + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
@@ -3676,8 +3681,8 @@ Item {
         allowed = {
             # Capability-static gates (the UX panel's ruling): these
             # only change on a printer switch, which is user-initiated.
-            "visible: root.printer != null && root.printer.hasQuadGantryLevel",
-            "visible: root.printer != null && root.printer.hasBedMesh",
+            "visible: root.printerModel != null && root.printerModel.hasQuadGantryLevel",
+            "visible: root.printerModel != null && root.printerModel.hasBedMesh",
             # Firmware-regulated fans swap the slider for a read-only
             # row (the author's live report): the model's writable
             # flag picks the face.
