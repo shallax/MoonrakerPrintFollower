@@ -577,95 +577,12 @@ Component {
                                 powerOffDialog.open();
                             }
                         }
-                        CollapsibleSectionHeader {
+
+                        SystemSection {
+                            id: systemSection
                             Layout.fillWidth: true
                             printerModel: root.printer
-                            title: "System"
-                            sectionId: "system"
-                            sectionIcon: "Settings"
                         }
-                        ColumnLayout {
-                            Layout.topMargin: UM.Theme.getSize("default_margin").height
-                            Layout.bottomMargin: UM.Theme.getSize("default_margin").height
-                            visible: root.printer == null || root.printer.sectionExpandedMap["system"] !== false
-                            Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-                            enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)
-                            Layout.fillWidth: true
-                            spacing: UM.Theme.getSize("default_margin").height / 2
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: UM.Theme.getSize("default_margin").width / 2
-                                Cura.SecondaryButton {
-                                    Layout.fillWidth: true
-                                    text: "Firmware restart"
-                                    objectName: "moonrakerFirmwareRestart"
-                                    // The policy gate (4.2.0): the
-                                    // reason rides the tooltip when
-                                    // the button is denied.
-                                    tooltip: "Restart Klipper's firmware process (FIRMWARE_RESTART)." + (root.printer != null && !root.printer.canRestart && root.printer.restartReasonDetail !== "" ? " " + root.printer.restartReasonDetail : "")
-                                    enabled: root.printer != null && root.printer.canRestart
-                                    onClicked: root.printer.firmwareRestart()
-                                }
-                                Cura.SecondaryButton {
-                                    Layout.fillWidth: true
-                                    text: "Host restart"
-                                    objectName: "moonrakerHostRestart"
-                                    tooltip: "Reboot the host Moonraker runs on (machine/reboot)." + (root.printer != null && !root.printer.canRestart && root.printer.restartReasonDetail !== "" ? " " + root.printer.restartReasonDetail : "")
-                                    enabled: root.printer != null && root.printer.canRestart
-                                    onClicked: root.printer.hostRestart()
-                                }
-                            }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: UM.Theme.getSize("default_margin").width / 2
-                                Cura.SecondaryButton {
-                                    // On its own row: three long labels
-                                    // in one row crushed each other and
-                                    // the text left its bounds (the
-                                    // author's live report).
-                                    Layout.fillWidth: true
-                                    text: "Klipper restart"
-                                    objectName: "moonrakerKlipperRestart"
-                                    tooltip: "Restart Klipper entirely (printer/restart): reloads the config and reconnects the MCU." + (root.printer != null && !root.printer.canRestart && root.printer.restartReasonDetail !== "" ? " " + root.printer.restartReasonDetail : "")
-                                    enabled: root.printer != null && root.printer.canRestart
-                                    onClicked: root.printer.klipperRestart()
-                                }
-                            }
-                            GridLayout {
-                                columns: 2
-                                columnSpacing: UM.Theme.getSize("default_margin").width
-                                rowSpacing: UM.Theme.getSize("default_margin").height / 2
-                                Layout.fillWidth: true
-
-                                UM.Label {
-                                    height: 36 * screenScaleFactor
-                                    text: "Status"
-                                    color: UM.Theme.getColor("text_inactive")
-                                    Layout.preferredWidth: 110 * screenScaleFactor
-                                }
-                                UM.Label {
-                                    height: 36 * screenScaleFactor
-                                    // The restart reason is the policy's
-                                    // own (4.2.0): the row carries it,
-                                    // the tooltip is enrichment.
-                                    text: root.printer != null && root.printer.restartReason !== "" ? root.printer.restartReason : "—"
-                                    wrapMode: Text.NoWrap
-                                    elide: Text.ElideRight
-                                    color: UM.Theme.getColor("text")
-                                    Layout.fillWidth: true
-                                    UM.TooltipArea {
-                                        anchors.fill: parent
-                                        // Short value in the row, full
-                                        // sentence in the tooltip (the
-                                        // author's ruling).
-                                        text: root.printer != null ? root.printer.restartReasonDetail : ""
-                                        acceptedButtons: Qt.NoButton
-                                    }
-                                }
-                            }
-                        }
-
                         CollapsibleSectionHeader {
                             Layout.fillWidth: true
                             printerModel: root.printer
