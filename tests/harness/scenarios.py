@@ -735,6 +735,38 @@ else:
         result = {"dragged": True, "from": [handle_x, handle_y], "h": round(target.height()), "dy": dy}
 """
 
+P_SLIDER_CLICK = """from PyQt6.QtCore import QPoint, Qt, QPointF
+def _import_qtest():
+    from PyQt6.QtTest import QTest
+    return QTest
+window = _main_window()
+result = {}
+slider = None
+def _walk(item):
+    for child in item.childItems():
+        if "OutlineSlider" in str(child.metaObject().className()):
+            return child
+        found = _walk(child)
+        if found is not None:
+            return found
+    return None
+slider = _walk(window.contentItem())
+if slider is None:
+    result = {"error": "no OutlineSlider found"}
+else:
+    scene = slider.mapToScene(QPointF(0, 0))
+    # The track click: 20% of the width sits clear of the handle for
+    # any value at or right of centre — the click must move the value
+    # AND commit (the live report: a track click moved the handle and
+    # never submitted).
+    click_x = round(scene.x() + slider.width() * 0.2)
+    click_y = round(scene.y() + slider.height() / 2)
+    qtest = _import_qtest()
+    qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(click_x, click_y))
+    qtest.QTest.qWait(300)
+    result = {"clicked": True, "value": slider.value, "x": click_x, "y": click_y}
+"""
+
 P_FOLLOW_READ = """from UM.Application import Application
 app = Application.getInstance()
 result = {}
@@ -1759,6 +1791,21 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "firmwareRestart", "args": []},
          {"op": "sim_ledger", "needle": "firmware_restart", "min": 1, "budget": 20},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+     ]},
+    {"id": "s8", "group": "smoke", "name": "a track click on a plugin slider moves AND commits",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "sim_set", "state": {"print_stats": {"state": "standby", "filename": ""},
+                                     "fan": {"speed": 0.5}}},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+         # The fans section renders a writable slider row from the
+         # sim's fan object; the probe clicks the TRACK (clear of the
+         # handle) — the live report: the handle moved and the commit
+         # never fired (drag+release and keyboard worked; a click
+         # submitted nothing).
+         {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         {"op": "exec_code", "verbs": ["mouseClick"], "code": P_SLIDER_CLICK},
+         {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
      ]},
 
     # ─── geometry probes (diagnostics, not release gates) ─────────

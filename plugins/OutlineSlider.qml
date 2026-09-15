@@ -43,11 +43,25 @@ Slider {
 
     // The native groove path: a click/drag commits through onMoved
     // (live: false defers the value to the release, where pressed is
-    // already false).
+    // already false). A track CLICK's single move happens DURING the
+    // press and the release fires no further onMoved — the commit
+    // must come from the press-release edge or a click moves the
+    // handle and never submits (the author's live report, 2026-09-15).
+    property bool movedWhilePressed: false
     onMoved: {
         valueTuning(selectedValue());
-        if (!pressed)
+        if (!pressed) {
             valueCommitted(selectedValue());
+            movedWhilePressed = false;
+        } else {
+            movedWhilePressed = true;
+        }
+    }
+    onPressedChanged: {
+        if (!pressed && movedWhilePressed) {
+            movedWhilePressed = false;
+            valueCommitted(selectedValue());
+        }
     }
 
     // The handle path: swallowed by the overlay so a press within the

@@ -96,11 +96,15 @@ class ClassificationRatchetTests(unittest.TestCase):
         # Resume exec — the lane's revalidation witness must dispatch
         # through the real slot while the state forbids it, and no
         # real-input path exists for a click on a refused control.
+        # And s8's track-click probe — the slider's click path has no
+        # real-input op (the driver clicks by objectName/text only,
+        # and the probe clicks BY GEOMETRY on the track), so the
+        # witness is the inline QTest click.
         text = (ROOT / "tests/harness/scenarios.py").read_text()
         direct = len(re.findall(
             r'"op": "(exec_slot|exec_file_slot|emit_click|confirm_box|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))
-        self.assertLessEqual(direct, 104)
+        self.assertLessEqual(direct, 105)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —
