@@ -146,7 +146,10 @@ def _build_native_draw(address, factory=None):
         return None
 
     def native_draw(mode, count, element_type, byte_offset):
-        native(mode, count, element_type, ctypes.c_void_p(byte_offset))
+        # int() first: Cura's range indices are numpy integers, which
+        # the ctypes pointer constructor rejects ('cannot be
+        # converted to pointer', the live report).
+        native(mode, count, element_type, ctypes.c_void_p(int(byte_offset)))
 
     return native_draw
 

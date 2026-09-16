@@ -230,7 +230,16 @@ class RenderBatchAdaptationTests(unittest.TestCase):
 
         draw = _build_native_draw(0xCAFE, factory=fake_factory)
         self.assertIsNotNone(draw)
-        draw(4, 50, 5125, 400)
+
+        class OffsetLike:
+            # The stand-in for Cura's numpy range indices: int-
+            # convertible but rejected by ctypes' pointer constructor
+            # without an explicit int() (the live report's 'cannot be
+            # converted to pointer').
+            def __int__(self):
+                return 400
+
+        draw(4, 50, 5125, OffsetLike())
         self.assertEqual(seen[0], [c.c_uint, c.c_int, c.c_uint, c.c_void_p])
         self.assertEqual(seen[1][:3], [4, 50, 5125])
         self.assertIsInstance(seen[1][3], c.c_void_p)
