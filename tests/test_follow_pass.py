@@ -169,6 +169,9 @@ class _FakeScene:
     def getRoot(self):
         return self.root
 
+    def getActiveCamera(self):
+        return object()
+
 
 class _FakeController:
     def __init__(self):
@@ -236,11 +239,6 @@ class _FakeView:
 
     def getNozzleNode(self):
         return self.nozzle
-
-
-class _FakeScene:
-    def getActiveCamera(self):
-        return object()
 
 
 class _FakeBatch:
@@ -338,11 +336,15 @@ class FollowPassLifecycleTests(unittest.TestCase):
         follow_pass.setFollowView(_FakeView(nozzle=nozzle))
         follow_pass.setFollowState(1, 1.0)
         follow_pass._render_toolhead(object())
-        follow_pass.setFollowState(1, 2.0)
+        follow_pass.setFollowState(1, 1.5)
         follow_pass._render_toolhead(object())
         self.assertEqual(len(nozzle.positions), 2)
         first, second = [tuple(round(float(c), 4) for c in position) for position in nozzle.positions]
-        self.assertNotEqual(first, second)
+        # The polygon points are (0,0,0), (1,0,0), (2,0,0): the whole
+        # position lands on point 1, and the half-way fraction
+        # interpolates exactly between points 1 and 2.
+        self.assertEqual(first, (1.0, 0.0, 0.0))
+        self.assertEqual(second, (1.5, 0.0, 0.0))
 
     def test_toolhead_missing_mesh_fails_cleanly(self):
         follow_pass, _ = self._pass_with_mesh(layers=_polygon_layers())
