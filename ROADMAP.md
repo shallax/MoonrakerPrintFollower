@@ -1462,6 +1462,20 @@ baked-pause fixture ride the 4.4.0 harness work; the resume-button
 grey-out and the monitor's first-paint lazy loading were ruled
 deferrable and sit in 4.4.0.
 
+The render-architecture experiment closed inside this release. The
+reviewer's MoonrakerFollowPass — a plugin-owned pass substituting
+Cura's SimulationPass with de-indexed geometry — was built, put
+behind a settings debug toggle, and removed outright by the author's
+ruling after it proved never to attach in live Cura: its compositor
+assumption does not match Cura 5.13's SimulationView plugin, and the
+author's soak of the native path showed no leak signature. Live
+following rides Cura's native SimulationPass (the path the author
+profiled: current-RSS oscillates in a bounded band and ends below
+its start; both former smoking-gun allocations release in-run), the
+4.2.0 native nozzle lifecycle repair was restored with the removal
+(the vanished-toolhead regression), and a refused settings save is
+now visible in the dialog and logged with its reason.
+
 The 2026-09-14 re-sequencing inserted this release: the presentation
 debt gets a bounded delivery of its own instead of compounding under
 the physical-head feature. The review's F07 plus F06's structural
