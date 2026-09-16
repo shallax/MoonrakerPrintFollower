@@ -25,9 +25,11 @@ from PyQt6.QtCore import QObject, QTimer
 
 from .CuraAdapter import (
     preview_max_paths,
+    reset_follow_pass,
     reset_preview_layer_data,
     set_preview_minimum_path,
     set_preview_path,
+    update_follow_pass,
 )
 from .PreviewSmoothing import advance_display, interpolate_target
 
@@ -162,6 +164,9 @@ class PreviewMotion(QObject):
     def reset(self) -> None:
         """Stop animating; the next write() re-synchronises from the view."""
         self._timer.stop()
+        # The follow pass hands the compositor layer back to Cura's
+        # own pass; the next write re-attaches if following resumes.
+        reset_follow_pass()
         self._layer = self._target = self._displayed = None
         self._velocity = 0.0
         self._history.clear()
@@ -220,6 +225,13 @@ class PreviewMotion(QObject):
                 set_preview_minimum_path(view, 0)
                 self._min_set = True
         self._remember()
+        # The follow pass's uniform rides every preview write — the
+        # pass renders the same displayed position from Cura's own
+        # layer data instead of the per-frame ranged render (the
+        # review's render architecture). Guarded: any failure keeps
+        # the vanilla preview in control.
+        update_follow_pass(view, self._layer if self._layer is not None else 0,
+                           fraction * maximum)
 
     def _trace(self, event: str, now: float, layer, fraction: float, method: str = "") -> None:
         if not self._trace_path:
