@@ -11,6 +11,9 @@ import Cura 1.1 as Cura
 ColumnLayout {
     id: root
     spacing: 0
+    // The harness address (the s8 track-click scenario scrolls the
+    // section into view before pressing the fan slider).
+    objectName: "moonrakerFansSection"
     property var printerModel: null
     property bool freezeRepeaters: false
     property var frozenItems: []
