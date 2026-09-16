@@ -827,6 +827,7 @@ class HarnessServer(QObject):
             # controls on the plugin's surface).
             try:
                 wanted = str(request.get("objectName") or "")
+                _begin_walk("lookup", 24)
                 window = _main_window()
                 target = None
                 for item in _walk(window.contentItem()):
@@ -849,7 +850,9 @@ class HarnessServer(QObject):
                 signal = getattr(target, "clicked", None)
                 if signal is not None:
                     signal.emit()
-                    return {"id": request_id, "ok": True, "aim": "clicked.emit()", "objectName": wanted}
+                    return {"id": request_id, "ok": True, "aim": "clicked.emit()",
+                            "objectName": wanted,
+                            "geometry": _geometry_of(target), "walk": dict(_WALK_STATS)}
                 scene = target.mapToScene(QPointF(0, 0))
                 x = round(scene.x() + target.width() / 2)
                 y = round(scene.y() + target.height() / 2)
@@ -859,7 +862,8 @@ class HarnessServer(QObject):
                 qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton,
                                        Qt.KeyboardModifier.NoModifier, QPoint(x, y))
                 qtest.QTest.qWait(150)
-                return {"id": request_id, "ok": True, "aim": [x, y], "objectName": wanted}
+                return {"id": request_id, "ok": True, "aim": [x, y], "objectName": wanted,
+                        "geometry": _geometry_of(target), "walk": dict(_WALK_STATS)}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "deliver_click":
@@ -873,6 +877,7 @@ class HarnessServer(QObject):
                 qtest = _import_qtest()
                 if not qtest:
                     return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
+                _begin_walk("click", 96)
                 window = None
                 target = None
                 for _window, items in _click_windows():
@@ -1635,11 +1640,18 @@ def _begin_walk(mode, depth):
 
 
 def _geometry_of(item):
-    # The item's scene rect — what the capture frame must be able to
-    # outline. Window-relative rects drift with window placement; the
-    # scene coordinates are stable across the pinned geometry.
+    # The item's SCREEN rect — what the capture frame outlines. The
+    # window's origin is added to the scene rect: a moved window (the
+    # real-printer mode, a WM repositioning) must not silently shift
+    # the outline off its element.
+    try:
+        window = item.window()
+        origin = window.position() if window is not None else QPointF(0, 0)
+    except Exception:
+        origin = QPointF(0, 0)
     scene = item.mapToScene(QPointF(0, 0))
-    return [round(scene.x()), round(scene.y()), round(item.width()), round(item.height())]
+    return [round(origin.x() + scene.x()), round(origin.y() + scene.y()),
+            round(item.width()), round(item.height())]
 
 
 def _walk(root, depth=24):

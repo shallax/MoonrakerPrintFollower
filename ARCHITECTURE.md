@@ -83,7 +83,7 @@ private follower state to either integration.
 | `MonitorTuning.py` | Debounce, pending tuning values, revision/confirmation timers | QML or printer discovery |
 | `MonitorControls.py` | Macro, preset, fan/LED/PWM, setup and power/exclusion dispatch (the restart guards included), each through the permission policy's `_allowed` gate | Qt model inheritance |
 | `ToolheadPolicy.py` | Pure jog/home/extrude G-code, the DISPATCH-time jog gate and jog-queue coalescing (the click-time gate is `MonitorPermissions.can_jog`) | Qt, timers or networking |
-| `MonitorPermissions.py` | Pure permission policy: the frozen observation record and the action rulings table (can_jog, can_power, can_restart, can_start_print, …) with disabled reasons | Qt, networking or mutable state |
+| `MonitorPermissions.py` | Pure permission policy: the frozen observation record and the action rulings table (can_jog, can_power, can_restart, can_start_print, can_pause, can_resume, …) with disabled reasons; `is_paused` (the authoritative paused bit) and `pause_resume_supported` (the capability signal) ride the observation | Qt, networking or mutable state |
 | `StateStore.py` | The Monitor state file's explicit owner: the read-modify-write merge, the atomic replace and the rate-limited failure reporting | Qt, networking or value coercion |
 | `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
@@ -283,10 +283,14 @@ carries a `job_id` is cross-checked against the newest `server/history/list`
 row over the HTTP lane before it latches. Content identity keys on
 `(size, modified)` — Moonraker's `uuid` is a fresh random per extraction and
 `filename` is an echo of the request, so neither is identity.
-`RemoteFileService.request_metadata_only` (4.2.0) is the service-side
+`RemoteFileService.request_metadata_only` is the service-side
 identity-neutral fetch — the job lane's identity and cache stay untouched
-on success AND failure (the 4.0.2 hazard); the coordinator's adoption of
-it, retiring this fallback cache, lands in 4.3.0.
+on success AND failure (the 4.0.2 hazard). The coordinator adopts it
+(4.3.0) through a bounded cross-check: the payload's job id must match
+the newest history row, the give-up latches only the unattestable
+causes, and a mismatched job id refuses without latching (the anchors
+stay empty for that print). A job change clears the in-flight pending
+flag — the lane never wedges across a print boundary.
 Failed downloads retry on their own backoff ladder, driven by consumer
 re-requests; a failed layer hydration is latched until a new file arrives
 or the index is rebuilt, so a broken file is never re-read in full on every
@@ -378,17 +382,22 @@ disconnected every control disables (the emergency stop included);
 the console keeps the transcript readable — scroll, select and copy
 work in a greyed well, only input and Send/Clear disable; the camera
 veils; and the connection dot plus the console's `#` notes mark the
-transitions. The permission policy (4.2.0) is one pure table:
+transitions. The permission policy is one pure table:
 `MonitorPermissions` rules every action over a frozen observation
 record assembled once in `MonitorData` — the tri-state connection
 (unknown/yes/no), the print state, homing, the controls lock, the
-command lane's busy flag, `save_config_pending` and the e-stop
+command lane's busy flag, `save_config_pending`, the e-stop
 assumption `assumed_stopped` (the ONE case where the plugin must not
 trust the last poll: the client rewrites the emitted state to
-cancelled and the table sees the assumption itself). Unknown fails
-closed with a reason; the reason strings and the caption sentences
-live in the policy, never in QML. The websocket carries ZERO
-mutating RPCs — every mutation rides HTTP; the socket is an
+cancelled and the table sees the assumption itself), and — 4.3.0 —
+the pause/resume pair: `is_paused` (the authoritative paused bit,
+ridden on the CORE lane so it arrives with the state word) and
+`pause_resume_supported` (the capability signal from the observed
+object list — a printer without the module fails the rows closed
+with R_UNSUPPORTED, never a fallthrough to the state word). Unknown
+fails closed with a reason; the reason strings and the caption
+sentences live in the policy, never in QML. The websocket carries
+ZERO mutating RPCs — every mutation rides HTTP; the socket is an
 observation feed in fact, not just by policy.
 
 The Monitor's three panes and their accordion sections are presentation
@@ -420,17 +429,40 @@ device's `_print_verdict`.
 every collapsible section is its own property-driven QML component
 (thirteen in the controls dashboard, nine in the monitor), each
 reading a `printerModel` property and never the host's ids. The
-hosts keep the panes, the dialogs, the pop-over and the emergency
-dock; cross-surface requests cross the boundary as signals
-(pop-over toggles, the power-off and exclude-object confirmations)
-or as a single interaction sink — the sliders report their
-interaction through `receiveSliderInteraction` so the freeze lists
-and the refocus settle stay single-owner on the dashboard root.
-The capability gates (fans, filament, temperatures, MCUs) stay on
-the host instantiations. The console remains a pane: its
-auto-collapse latch, camera-area resize mapping and the host's
-printer-change resets are structural entanglements, not section
-content.
+rule runs BOTH directions: a host never names a section's ids
+either — it reaches a section through the instantiation id (the
+refocus walk roots at `fansSection`/`ledsSection`/`pwmSection`;
+`meshSection.refreshMap()` is the accessor the monitor's
+typed-controls handler calls) or through a signal. The hosts keep
+the panes, the dialogs, the pop-over and the emergency dock;
+cross-surface requests cross the boundary as signals (pop-over
+toggles, the power-off and exclude-object confirmations) or as a
+single interaction sink — the sliders report their interaction
+through `receiveSliderInteraction`, which snapshots the freeze
+lists BEFORE the flag flips, re-arms a watchdog on every press (a
+cancelled gesture can never latch the pane) and resets on printer
+change. The capability gates ride the SECTION bodies (the section
+hides or refuses while its data or permission is absent); the
+console remains a pane: its auto-collapse latch, camera-area
+resize mapping and the host's printer-change resets are structural
+entanglements, not section content.
+
+**The Preview value-block seam (4.3.0).** The Monitor's data path
+publishes one per-poll block — the strip's verdicts, the state
+word, the temps pair and the aux-landing stamp — through
+`MonitorData.previewBlockChanged` into the output-device edge and
+`PrintCoordinator.receive_preview_block`, which deduplicates by the
+block's own stamp (never re-stamped in transit). The staleness rule
+reads the aux-landing stamp against `PREVIEW_BLOCK_STALE_S` AND the
+client's connection truth — a dead feed publishes no events, so the
+stamp alone can never age on the path the rule exists for. The
+strip applies the rule in `MoonrakerPreviewCard`: never-arrived,
+stale and not-following are three named states, never one
+connection claim. The seam's ownership row: the strip owns its
+cells and the refusal vocabulary (the policy's constants); the
+coordinator owns the block, the staleness truth and the publishing
+cadence; `MonitorData` owns the block's content and its landing
+stamp.
 
 The console sends on its own request path: `printer/gcode/script`
 replies only after Klipper processes the script, and that reply's

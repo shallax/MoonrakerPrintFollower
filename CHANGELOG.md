@@ -37,10 +37,11 @@ gains a status strip with a single pause policy behind it.
   arm moves into its own owner with its timeout; the coordinator
   adopts Moonraker's metadata only when the job matches, with a
   bounded give-up per key.
-- **The UI-state store.** Section expansion and pane sizes persist
-  through the state file's second consumer with atomic merge
-  writes (O_NOFOLLOW, 0600, no NaN); the chart's flat-map
-  migration merges and deletes only what it owns.
+- **The UI-state store.** Section expansion persists through the
+  state file's second consumer with atomic merge writes (O_NOFOLLOW,
+  0600, no NaN); the chart's flat-map migration merges and deletes
+  only what it owns. (Pane sizes land with the configurable
+  sections, not this release.)
 - **The slider track-click fix.** Clicking the slider track moves
   the handle AND commits the value — a track click used to move
   the handle while silently discarding the request.

@@ -15,10 +15,6 @@ Column {
     property var frozenItems: []
     property var interactionSink: null
 
-    function sliderSelection(slider) {
-        return Math.round(slider.valueAt(slider.position));
-    }
-
     CollapsibleSectionHeader {
         width: parent.width
         printerModel: root.printerModel
@@ -26,6 +22,12 @@ Column {
         sectionId: "leds"
         sectionIcon: "Star"
     }
+    Item {
+        width: 1
+        height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["leds"] !== false
+    }
+
     ColumnLayout {
         width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
         anchors.left: parent.left
@@ -43,7 +45,7 @@ Column {
                 function previewLedColour() {
                     if (root.printerModel == null)
                         return;
-                    root.printerModel.previewLedColor(modelData.object, root.sliderSelection(redSlider), root.sliderSelection(greenSlider), root.sliderSelection(blueSlider), modelData.hasWhite ? root.sliderSelection(whiteSlider) : 0, -1);
+                    root.printerModel.previewLedColor(modelData.object, redSlider.selectedValue(), greenSlider.selectedValue(), blueSlider.selectedValue(), modelData.hasWhite ? whiteSlider.selectedValue() : 0, -1);
                 }
 
                 function applyLedColour() {
@@ -55,7 +57,7 @@ Column {
                     // passing it here as the gain zeroed
                     // every channel nudge while the LED
                     // was off (the author's live report).
-                    root.printerModel.setLedColor(modelData.object, root.sliderSelection(redSlider), root.sliderSelection(greenSlider), root.sliderSelection(blueSlider), modelData.hasWhite ? root.sliderSelection(whiteSlider) : 0, -1);
+                    root.printerModel.setLedColor(modelData.object, redSlider.selectedValue(), greenSlider.selectedValue(), blueSlider.selectedValue(), modelData.hasWhite ? whiteSlider.selectedValue() : 0, -1);
                 }
 
                 RowLayout {
@@ -68,7 +70,7 @@ Column {
                     UM.Label {
                         width: 150 * screenScaleFactor
                         horizontalAlignment: Text.AlignRight
-                        text: "Brightness " + root.sliderSelection(ledSlider) + "%"
+                        text: "Brightness " + ledSlider.selectedValue() + "%"
                     }
                 }
                 OutlineSlider {
@@ -126,7 +128,7 @@ Column {
                     UM.Label {
                         width: 52 * screenScaleFactor
                         horizontalAlignment: Text.AlignRight
-                        text: root.sliderSelection(redSlider) + "%"
+                        text: redSlider.selectedValue() + "%"
                     }
 
                     UM.Label {
@@ -154,7 +156,7 @@ Column {
                     UM.Label {
                         width: 52 * screenScaleFactor
                         horizontalAlignment: Text.AlignRight
-                        text: root.sliderSelection(greenSlider) + "%"
+                        text: greenSlider.selectedValue() + "%"
                     }
 
                     UM.Label {
@@ -182,7 +184,7 @@ Column {
                     UM.Label {
                         width: 52 * screenScaleFactor
                         horizontalAlignment: Text.AlignRight
-                        text: root.sliderSelection(blueSlider) + "%"
+                        text: blueSlider.selectedValue() + "%"
                     }
 
                     UM.Label {
@@ -213,7 +215,7 @@ Column {
                         visible: modelData.hasWhite
                         width: 52 * screenScaleFactor
                         horizontalAlignment: Text.AlignRight
-                        text: root.sliderSelection(whiteSlider) + "%"
+                        text: whiteSlider.selectedValue() + "%"
                     }
                 }
             }
@@ -223,5 +225,6 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["leds"] !== false
     }
 }

@@ -92,6 +92,23 @@ def pane_values():
             {"layer": 78, "eta": "in 00:12:05"},
         ],
         "pauseAtLayerUnavailableText": "",
+        # The strip's value block (4.3.0): the card applies the
+        # staleness rule — the capture shows the strip WORKING (a live
+        # printing pair and the ETA), not its degraded state.
+        "previewBlock": {
+            "state": "printing",
+            "canPause": True,
+            "canResume": False,
+            "pauseReason": "",
+            "resumeReason": "Print is not paused",
+            "resumeReasonDetail": "Resume applies to a paused print — this print is still running.",
+            "hotend": "205.2/210.0 °C",
+            "bed": "60.0/60.0 °C",
+            "stamp": 0.0,
+            "inactive": False,
+        },
+        "previewBlockStale": False,
+        "previewEtaText": "00:18:42 · ~14:36",
     }
 
 def render(output_dir: str) -> None:

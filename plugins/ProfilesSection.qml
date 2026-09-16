@@ -12,7 +12,7 @@ Column {
     property var printerModel: null
 
     CollapsibleSectionHeader {
-        Layout.fillWidth: true
+        width: parent.width
         printerModel: root.printerModel
         title: "Temperature profiles"
         sectionId: "profiles"
@@ -21,6 +21,7 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["profiles"] !== false
     }
 
     ColumnLayout {
@@ -87,5 +88,6 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["profiles"] !== false
     }
 }

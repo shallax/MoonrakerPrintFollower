@@ -249,6 +249,7 @@ class MonitorData(QObject):
         stats = core.get("print_stats") or {}
         configfile = aux.get("configfile") or {}
         toolhead = aux.get("toolhead") or {}
+        objects = getattr(self._snapshot, "objects", ()) or ()
         observation = Observation(
             active=self._active,
             connection=self.connection_state,
@@ -258,10 +259,15 @@ class MonitorData(QObject):
             save_config_pending=bool(configfile.get("save_config_pending")),
             controls_locked=self._controls_locked,
             busy=self._commands_busy,
-            # The authoritative paused bit: None until the
-            # pause_resume object has been observed — the rows fall
-            # back to the state word with that caveat.
-            is_paused=(aux.get("pause_resume") or {}).get("is_paused"),
+            # The authoritative paused bit rides the CORE lane (4.3.0):
+            # it arrives with the state word, never one aux interval
+            # later. None until the object has been observed.
+            is_paused=(core.get("pause_resume") or {}).get("is_paused"),
+            # The capability signal: the observed object list is the
+            # only proof the pause endpoint exists — an empty list is
+            # "not observed yet", an observed list without the module
+            # fails the rows closed.
+            pause_resume_supported=None if not objects else ("pause_resume" in objects),
         )
         self._observation = observation
 

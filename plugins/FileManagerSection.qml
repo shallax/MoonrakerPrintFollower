@@ -18,6 +18,12 @@ Column {
         sectionId: "fileManager"
         sectionIconUrl: Qt.resolvedUrl("Download.svg")
     }
+    Item {
+        width: 1
+        height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["fileManager"] !== false
+    }
+
     ColumnLayout {
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["fileManager"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
@@ -54,5 +60,6 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["fileManager"] !== false
     }
 }

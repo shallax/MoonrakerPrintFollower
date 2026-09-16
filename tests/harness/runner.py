@@ -2396,10 +2396,17 @@ def suite_step(step):
         if not matched:
             matched = matched_count()
         expected = int(step.get("min", 1))
+        ceiling = step.get("max")
         detail = "; ".join(f"{e['method']} {e['path']} {e['ms']:.0f}ms"
                            for e in matched[-6:])
-        return len(matched) >= expected, "the peer's ledger counted requests", \
-            f"{needle!r}: {len(matched)} (>= {expected}) [{detail}]"
+        if ceiling is not None:
+            ok = expected <= len(matched) <= int(ceiling)
+            bound = f" ({expected}..{ceiling})"
+        else:
+            ok = len(matched) >= expected
+            bound = f" (>= {expected})"
+        return ok, "the peer's ledger counted requests", \
+            f"{needle!r}: {len(matched)}{bound} [{detail}]"
     if op == "model_read":
         value = exec_rpc(MODEL_READ_TEMPLATE.replace("PROP_PLACEHOLDER", json.dumps(step["prop"])))
         SUITE_STATE["model"][step["prop"]] = value
@@ -2519,13 +2526,15 @@ def suite_step(step):
         time.sleep(1.5)
         aim = str(reply.get("aim") or "clicked")
         label = "a real click on" if "emit" not in aim else "the clicked signal of"
-        return bool(reply.get("ok")), f"{label} {step['button']} ({aim})", "clicked"
+        return bool(reply.get("ok")), f"{label} {step['button']} ({aim})", "clicked", None, \
+            reply.get("geometry"), reply.get("walk")
     if op == "click_item":
         reply = rpc({"id": 1, "cmd": "click_item", "objectName": step["objectName"]})
         time.sleep(1.5)
         aim = str(reply.get("aim") or "clicked")
         label = "a real click on" if "emit" not in aim else "the clicked signal of"
-        return bool(reply.get("ok")), f"{label} {step['objectName']} ({aim})", "clicked"
+        return bool(reply.get("ok")), f"{label} {step['objectName']} ({aim})", "clicked", None, \
+            reply.get("geometry"), reply.get("walk")
     if op == "item_disabled":
         code = ITEM_STATE_TEMPLATE.replace("NAME_PLACEHOLDER", json.dumps(step["objectName"]))
         reply = exec_rpc(code)
@@ -2714,7 +2723,7 @@ def suite_step(step):
         seen_note = ("observed earlier" if (observed or SUITE_STATE["rect"].get(("seen", key)))
                      else "never observed in this scenario")
         return (ok, f"{key} {'left the rendered tree' if step.get('absent') else 'entered the rendered tree'}",
-                f"now {now} ({seen_note})", None, None, geometry, reply.get("walk"))
+                f"now {now} ({seen_note})", None, geometry, reply.get("walk"))
 
     if op == "census":
         # The data-render census: every data class present in the

@@ -136,16 +136,12 @@ def main():
         client = follower.client
         client._handle_http_status({"result": {"status": fake_status("printing")}}, None, client._generation, time.monotonic())
         # The filament readouts need the slicer's total, which arrives
-        # with the metadata fetch — answer it like Moonraker would.
+        # with the metadata fetch — answer it like Moonraker would, on
+        # the lane 4.3.0 actually sends (channel "files", method
+        # "metadata-only" — the retired "mr-metadata" channel is dead).
         for request in transport.requests:
-            if getattr(request, "channel", "") == "mr-metadata":
-                request.callback({"result": {"layer_height": 0.2, "filament_total": 42000.0,
-                                             "estimated_time": 3600}}, None)
-                break
-        # The filament readouts need the slicer's total, which arrives
-        # with the metadata fetch — answer it like Moonraker would.
-        for request in transport.requests:
-            if getattr(request, "channel", "") == "mr-metadata":
+            if getattr(request, "channel", "") == "files" and \
+                    getattr(request, "method", "") == "metadata-only":
                 request.callback({"result": {"layer_height": 0.2, "filament_total": 42000.0,
                                              "estimated_time": 3600}}, None)
                 break

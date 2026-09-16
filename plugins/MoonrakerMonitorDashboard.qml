@@ -27,6 +27,12 @@ Component {
             if (root.printer != null) {
                 root.printer.setFileManagerOpen(false);
             }
+            // A machine switch must not carry the old printer's
+            // frozen lists or focus target into the new session —
+            // the sink state is per-printer.
+            tuningSliderPressed = false;
+            tuningSliderObject = "";
+            tuningSliderKind = "";
         }
         // The document root sits in the bubbling chain of EVERY
         // focused item in the stage, so Esc closes the popup no
@@ -83,23 +89,48 @@ Component {
         property string tuningSliderObject: ""
         property string tuningSliderKind: ""
         // Slider sections report interaction through this sink — the
-        // freeze and the refocus target stay single-owner here.
+        // freeze and the refocus target stay single-owner here. The
+        // press edge snapshots the live lists BEFORE the flag flips:
+        // the repeaters' freeze bindings re-evaluate on the flag, so
+        // the frozen lists must already hold this gesture's snapshot.
+        // A gesture that dies without its release edge (the lane's
+        // enabled flips mid-drag, a grab stolen) can never latch the
+        // dashboard — the watchdog clears the freeze, and a printer
+        // change resets everything.
         function receiveSliderInteraction(interacting, object, kind) {
-            tuningSliderPressed = interacting;
-            if (interacting) {
-                tuningSliderObject = object;
-                tuningSliderKind = kind;
-            }
-        }
-        onTuningSliderPressedChanged: {
-            if (tuningSliderPressed && root.printer != null) {
+            if (interacting && !tuningSliderPressed && root.printer != null) {
                 root.frozenFanItems = root.printer.fanControlItems;
                 root.frozenLedItems = root.printer.ledItems;
                 root.frozenPwmOutputItems = root.printer.pwmOutputItems;
             }
+            tuningSliderPressed = interacting;
+            if (interacting) {
+                tuningSliderObject = object;
+                tuningSliderKind = kind;
+                sliderWatchdog.restart();
+            }
+        }
+        onTuningSliderPressedChanged: {
             if (!tuningSliderPressed && root.tuningSliderObject !== "") {
                 refocusTimer.attempts = 0;
                 refocusTimer.start();
+            }
+        }
+        // The watchdog (the security re-review's sink latch): every
+        // press re-arms it; a cancelled gesture never re-arms, so the
+        // freeze and the focus target clear instead of latching the
+        // pane on a stale snapshot.
+        Timer {
+            id: sliderWatchdog
+            interval: 10000
+            repeat: false
+            onTriggered: {
+                if (!tuningSliderPressed) {
+                    return;
+                }
+                tuningSliderPressed = false;
+                tuningSliderObject = "";
+                tuningSliderKind = "";
             }
         }
         // The refocus RETRIES until the walk lands: the repeater
@@ -167,21 +198,17 @@ Component {
             // not the repeater — iterating the repeater's children
             // found nothing (the probe's reproduction: focus died on
             // the apply and the walk never saw a slider). itemAt is
-            // the real delegate accessor.
-            for (var r = 0; r < fanRepeater.count; ++r) {
-                if (root.focusSliderIn(fanRepeater.itemAt(r), target, kind)) {
-                    return true;
-                }
+            // the real delegate accessor, and the repeaters ride
+            // their sections (4.3.0) — the walk roots at the section
+            // instantiations; the host never names a section's ids.
+            if (root.focusSliderIn(fansSection, target, kind)) {
+                return true;
             }
-            for (var l = 0; l < ledRepeater.count; ++l) {
-                if (root.focusSliderIn(ledRepeater.itemAt(l), target, kind)) {
-                    return true;
-                }
+            if (root.focusSliderIn(ledsSection, target, kind)) {
+                return true;
             }
-            for (var p = 0; p < pwmRepeater.count; ++p) {
-                if (root.focusSliderIn(pwmRepeater.itemAt(p), target, kind)) {
-                    return true;
-                }
+            if (root.focusSliderIn(pwmSection, target, kind)) {
+                return true;
             }
             return false;
         }
@@ -490,12 +517,6 @@ Component {
                             printerModel: root.printer
                         }
 
-                        TuningSection {
-                            id: tuningSection
-                            Layout.fillWidth: true
-                            printerModel: root.printer
-                            interactionSink: root.receiveSliderInteraction
-                        }
                         MacrosSection {
                             Layout.fillWidth: true
                             printerModel: root.printer
@@ -503,6 +524,12 @@ Component {
                         ProfilesSection {
                             Layout.fillWidth: true
                             printerModel: root.printer
+                        }
+                        TuningSection {
+                            id: tuningSection
+                            Layout.fillWidth: true
+                            printerModel: root.printer
+                            interactionSink: root.receiveSliderInteraction
                         }
 
                         FansSection {

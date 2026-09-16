@@ -13,11 +13,13 @@ from plugins.MonitorPermissions import (
     R_PAUSE_FIRST,
     R_ALREADY_PAUSED,
     R_ALREADY_PRINTING,
+    R_CLEARED_PAUSE,
     R_ESTOPPED,
     R_NOTHING_TO_PAUSE,
     R_PAUSED_NOTE,
     R_PRINTING,
     R_UNKNOWN,
+    R_UNSUPPORTED,
     Verdict,
     can_jog,
     can_macro,
@@ -35,7 +37,8 @@ from plugins.MonitorPermissions import (
 def obs(**overrides):
     fields = dict(active=True, connection="yes", state="standby", homed_axes="xyz",
                   assumed_stopped=False, save_config_pending=False,
-                  controls_locked=False, busy=False)
+                  controls_locked=False, busy=False,
+                  pause_resume_supported=True)
     fields.update(overrides)
     return Observation(**fields)
 
@@ -179,7 +182,18 @@ class PauseResumeRowTests(unittest.TestCase):
         # CLEAR_PAUSE leaves print_stats reading "paused" with
         # is_paused cleared — the state proxy would offer a live
         # Resume on a print that can never resume; the bit refuses.
-        self.assertEqual(can_resume(obs(state="paused", is_paused=False)), Verdict("disabled", R_ALREADY_PRINTING))
+        self.assertEqual(can_resume(obs(state="paused", is_paused=False)), Verdict("disabled", R_CLEARED_PAUSE))
+        # The CLEAR_PAUSE pair: the state word says paused while the
+        # authoritative bit says RESUME can never succeed — the pause
+        # side names the real state (paused), never "nothing".
+        self.assertEqual(can_pause(obs(state="paused", is_paused=False)), Verdict("disabled", R_ALREADY_PAUSED))
+        # The capability gate (the domain re-review): a printer whose
+        # observed object list lacks pause_resume has no endpoint —
+        # absence fails closed; an unobserved list fails closed too.
+        self.assertEqual(can_pause(obs(state="printing", pause_resume_supported=False)), Verdict("disabled", R_UNSUPPORTED))
+        self.assertEqual(can_resume(obs(state="paused", pause_resume_supported=False)), Verdict("disabled", R_UNSUPPORTED))
+        self.assertEqual(can_pause(obs(state="printing", pause_resume_supported=None)), Verdict("disabled", R_UNKNOWN))
+        self.assertEqual(can_resume(obs(state="paused", pause_resume_supported=None)), Verdict("disabled", R_UNKNOWN))
         # A genuinely paused print pauses/resumes even when the state
         # word lags behind the object.
         self.assertEqual(can_resume(obs(state="printing", is_paused=True)), Verdict("allowed", ""))
@@ -187,7 +201,7 @@ class PauseResumeRowTests(unittest.TestCase):
         # The state-proxy-paused / bit-cleared world: nothing is
         # pausable — the honest reason is the nothing-to-pause form
         # (the resume side carries the trap's words, R_ALREADY_PRINTING).
-        self.assertEqual(can_pause(obs(state="paused", is_paused=False)), Verdict("disabled", R_NOTHING_TO_PAUSE))
+        self.assertEqual(can_pause(obs(state="paused", is_paused=False)), Verdict("disabled", R_ALREADY_PAUSED))
 
     def test_the_fallback_is_the_state_word(self):
         # The bit is None until the pause_resume object has been
