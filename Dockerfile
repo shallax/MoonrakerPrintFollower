@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm /tmp/gitleaks.tar.gz
 
 RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir PyQt6==6.11.0 PyQt6-Qt6==6.11.2 ruff==0.16.6 coverage
+    && /opt/venv/bin/pip install --no-cache-dir PyQt6==6.11.0 PyQt6-Qt6==6.11.2 ruff==0.16.6 coverage numpy
 
 ENV PATH="/opt/venv/bin:$PATH" \
     QT_QPA_PLATFORM=offscreen

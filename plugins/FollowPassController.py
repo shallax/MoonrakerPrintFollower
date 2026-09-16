@@ -16,14 +16,24 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from UM.Logger import Logger
+# The controller is UM-free at module level: it imports safely in any
+# environment (test or runtime), and every Cura dependency resolves
+# lazily where a Cura application is guaranteed (attach/detach run
+# only inside Cura, or no-op).
+from .FollowMesh import PASS_NAME
 
-from .FollowPass import FollowPass, PASS_NAME
-
-ACTIVE: Optional[FollowPass] = None
+ACTIVE = None  # type: Optional[object]
 _ORIGINAL_BINDINGS: Optional[List[str]] = None
 _SIMULATION_PASS = None
 _CAPABLE = True
+
+
+def _log(message: str) -> None:
+    try:
+        from UM.Logger import Logger
+        Logger.log("i", "%s", message)
+    except Exception:
+        pass
 
 
 def _find_layer_data():
@@ -55,6 +65,13 @@ def attach(view) -> bool:
     if not _CAPABLE:
         return False
     try:
+        from .FollowPass import FollowPass
+    except Exception:
+        # No Cura renderer classes available: the capability is
+        # absent, and the vanilla preview remains in control.
+        _CAPABLE = False
+        return False
+    try:
         renderer = view.getRenderer()
         if renderer is None:
             return False
@@ -84,10 +101,10 @@ def attach(view) -> bool:
         if simulation_pass is not None:
             simulation_pass.setEnabled(False)
         ACTIVE.setEnabled(True)
-        Logger.log("i", "Moonraker follow pass attached (the review's render architecture)")
+        _log("Moonraker follow pass attached (the review's render architecture)")
         return True
     except Exception as exc:
-        Logger.log("i", "Moonraker follow pass attach skipped: %r", exc)
+        _log(f"Moonraker follow pass attach skipped: {exc!r}")
         _CAPABLE = False
         return False
 
@@ -147,6 +164,6 @@ def detach(view=None) -> None:
                 if composite is not None:
                     composite.setLayerBindings(list(_ORIGINAL_BINDINGS))
             _ORIGINAL_BINDINGS = None
-        Logger.log("i", "Moonraker follow pass detached")
+        _log("Moonraker follow pass detached")
     except Exception:
         pass

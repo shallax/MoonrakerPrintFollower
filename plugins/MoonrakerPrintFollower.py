@@ -51,7 +51,10 @@ class MoonrakerPrintFollower(QObject, Extension):
     def deinitialize(self):
         self._whats_new.close()
         # The follow pass leaves no stale pass or compositor binding
-        # behind on teardown (a plugin reload's clean slate).
+        # behind on teardown (a plugin reload's clean slate). The
+        # controller is UM-free at module level, so the import is
+        # safe in any environment; shutdown no-ops without an
+        # attached pass.
         from .FollowPassController import shutdown
         shutdown()
         self._runtime.close()
