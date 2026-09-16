@@ -23,7 +23,12 @@ import time
 
 from PyQt6.QtCore import QObject, QTimer
 
-from .CuraAdapter import preview_max_paths, set_preview_minimum_path, set_preview_path
+from .CuraAdapter import (
+    preview_max_paths,
+    reset_preview_layer_data,
+    set_preview_minimum_path,
+    set_preview_path,
+)
 from .PreviewSmoothing import advance_display, interpolate_target
 
 # 200 ms, down from 33: every tick drives a set_preview_path on the
@@ -111,6 +116,13 @@ class PreviewMotion(QObject):
             self._ramp_to = fraction
             self._obs_time = now
             self._timer.stop()
+            # The per-layer release (the live report's native RSS
+            # steps): drop the EXITING layer's cached mesh/jump data
+            # BEFORE the new path is written, so the new layer's build
+            # never allocates while the old layer's cache is still
+            # held. One cache slot, one reset — the entering layer
+            # holds nothing yet.
+            reset_preview_layer_data(self._cura.view)
             self._write(fraction)
             return
         self._history.append((now, fraction))
