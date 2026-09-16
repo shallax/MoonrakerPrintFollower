@@ -828,6 +828,31 @@ class StatusHandler(tornado.web.RequestHandler):
                         self._printer.scenario(
                             pause_resume={"is_paused": False})
                     tornado.ioloop.IOLoop.current().add_callback(clear_flip)
+                elif upper.startswith("SET_FAN_SPEED") or upper.startswith("M106"):
+                    # The fan slider's commit (the s8 track-click
+                    # proof): Klipper applies the speed to the fan —
+                    # the plugin sends M106 S<n> for the plain "fan"
+                    # and SET_FAN_SPEED SPEED=<x> for named fans. The
+                    # peer's state must land on the clicked value for
+                    # the scenario to assert against.
+                    speed = 0.0
+                    if upper.startswith("SET_FAN_SPEED"):
+                        for arg in script.strip()[len("SET_FAN_SPEED"):].split():
+                            if arg.upper().startswith("SPEED="):
+                                try:
+                                    speed = float(arg.split("=", 1)[1])
+                                except ValueError:
+                                    speed = 0.0
+                    else:
+                        for arg in script.strip().split()[1:]:
+                            if arg.upper().startswith("S"):
+                                try:
+                                    speed = float(arg[1:]) / 255.0
+                                except ValueError:
+                                    speed = 0.0
+                    def fan_flip():
+                        self._printer.scenario(fan={"speed": round(speed, 3)})
+                    tornado.ioloop.IOLoop.current().add_callback(fan_flip)
         elif path == "device_power/device":
             # The controls pane's toggle. Real Moonraker semantics (the
             # domain review): the locked refusal fires ONLY while a

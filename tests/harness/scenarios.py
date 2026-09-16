@@ -745,26 +745,86 @@ slider = None
 def _walk(item):
     for child in item.childItems():
         if "OutlineSlider" in str(child.metaObject().className()):
-            return child
+            # The FANS slider (the sim's "fan" object) — the walk's
+            # first OutlineSlider is the tuning speed slider, far
+            # down the dashboard and not the scenario's target.
+            try:
+                if child.property("controlKind") == "fan" and child.property("controlObject") == "fan":
+                    return child
+            except Exception:
+                pass
         found = _walk(child)
         if found is not None:
             return found
     return None
 slider = _walk(window.contentItem())
 if slider is None:
-    result = {"error": "no OutlineSlider found"}
+    result = {"error": "no fan slider found"}
 else:
     scene = slider.mapToScene(QPointF(0, 0))
-    # The track click: 20% of the width sits clear of the handle for
-    # any value at or right of centre — the click must move the value
-    # AND commit (the live report: a track click moved the handle and
-    # never submitted).
-    click_x = round(scene.x() + slider.width() * 0.2)
-    click_y = round(scene.y() + slider.height() / 2)
-    qtest = _import_qtest()
-    qtest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(click_x, click_y))
-    qtest.qWait(300)
-    result = {"clicked": True, "value": slider.property("value"), "x": click_x, "y": click_y}
+    # The visibility rule: the scenario scrolls the fans section into
+    # view first — a still-clipped slider is a step error, never a
+    # silent miss (a click past the window's edge hits nothing).
+    if scene.x() < 0 or scene.y() < 0 or scene.x() + slider.width() > window.width() or scene.y() + slider.height() > window.height():
+        result = {"error": "fan slider off-screen at %s (window %sx%s)" % (scene, window.width(), window.height())}
+    else:
+        before = slider.property("value")
+        # The track click: 20% of the track sits clear of the handle
+        # for any value at or right of centre — the click must move
+        # the value AND commit (the live report: a track click moved
+        # the handle and never submitted). The native groove CENTERS
+        # the handle on the click, so landing on exactly 20% needs
+        # the half-handle lead-in (without it the first run's click
+        # landed on 18.3 — the peer's fan then read 0.18, which is
+        # the clicked value, not the aimed one).
+        left_pad = slider.property("leftPadding")
+        avail = slider.property("availableWidth")
+        handle_w = 16
+        for child in slider.childItems():
+            if "RoundedRectangle" in str(child.metaObject().className()) and 0 < child.width() <= 40:
+                handle_w = child.width()
+                break
+        click_x = round(scene.x() + left_pad + handle_w / 2 + 0.2 * (avail - handle_w))
+        click_y = round(scene.y() + slider.height() / 2)
+        qtest = _import_qtest()
+        qtest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(click_x, click_y))
+        qtest.qWait(300)
+        result = {"clicked": True, "before": before, "x": click_x, "y": click_y}
+        try:
+            after = slider.property("value")
+            result["after"] = after
+            if after == before:
+                result["error"] = "the track click did not move the value (still %s)" % (after,)
+        except RuntimeError:
+            # The commit's publish rebuilt the fan repeater and the
+            # pressed slider died mid-wait — the interaction itself
+            # succeeded (the rebuild IS the commit's echo). The
+            # committed value is asserted peer-side by the ledger and
+            # the sim's fan speed.
+            result["rebuilt"] = True
+"""
+
+STRIP_PAUSE_READY = """window = _main_window()
+result = {}
+def _find(item):
+    try:
+        if item.objectName() == "moonrakerStripPauseButton":
+            return item
+    except Exception:
+        pass
+    for child in item.childItems():
+        found = _find(child)
+        if found is not None:
+            return found
+    return None
+btn = _find(window.contentItem())
+if btn is None:
+    result = {"error": "no strip pause button"}
+else:
+    # The block lands on the aux poll BEHIND the model's verdicts —
+    # a press while the strip still reads the idle block falls
+    # through a disabled button to the stage's background MouseArea.
+    result = {"enabled": bool(btn.property("enabled")), "text": str(btn.property("text") or "")}
 """
 
 P_FOLLOW_READ = """from UM.Application import Application
@@ -1428,15 +1488,18 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerStripTemps", "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerStripSlot", "budget": 30},
          {"op": "wait_rendered", "objectName": "moonrakerStripTemps", "contains": "205.2/210.0 °C · 60.0/60.0 °C", "budget": 30},
-         # The verdict lane settles BEFORE the click: a press while
-         # the block's verdicts still read the transition state hits
-         # a disabled button (the press falls through to the stage's
-         # background MouseArea).
-         {"op": "wait_model", "prop": "canPausePrint", "value": True, "budget": 15},
+         # The strip's own verdict lane settles BEFORE the click: the
+         # block lands on the aux poll behind the model's verdicts, so
+         # a press while the strip still reads the idle block hits a
+         # disabled button (the press falls through to the stage's
+         # background MouseArea — the gate's own failure). The wait
+         # reads the BUTTON's enabled state, the exact gate the press
+         # must pass.
+         {"op": "wait_exec", "code": STRIP_PAUSE_READY, "contains": '"enabled": true', "budget": 15},
          # The strip's one control dispatches through the Monitor's
          # revalidated lane: while printing the button reads "Pause
-         # print" and a real click sends the pause.
-         {"op": "click_text", "text": "Pause print"},
+         # print" and a real press sends the pause.
+         {"op": "deliver_click", "objectName": "moonrakerStripPauseButton"},
          {"op": "sim_ledger", "needle": "print/pause", "method": "POST", "min": 1, "budget": 20},
      ]},
     {"id": "v1", "group": "visual",
@@ -1812,12 +1875,18 @@ SCENARIOS = [
          # sim's fan object; the probe clicks the TRACK (clear of the
          # handle) — the live report: the handle moved and the commit
          # never fired (drag+release and keyboard worked; a click
-         # submitted nothing).
+         # submitted nothing). The fans section sits below the fold
+         # of the dashboard's scroll — the click must land like a
+         # human's would: scrolled into view, then pressed.
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         {"op": "scroll_into_view", "objectName": "moonrakerFansSection"},
          {"op": "exec_code", "verbs": ["mouseClick"], "code": P_SLIDER_CLICK},
          # One track click commits exactly ONCE (the UX re-review:
-         # a minimum passes a duplicate commit silently).
+         # a minimum passes a duplicate commit silently) — and the
+         # peer's fan lands on the clicked 20% (the moved value
+         # travelled; a moved handle with no commit is the live bug).
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "max": 1, "budget": 20},
+         {"op": "wait_sim", "path": "fan.speed", "value": 0.2, "budget": 15},
      ]},
 
     # ─── geometry probes (diagnostics, not release gates) ─────────
