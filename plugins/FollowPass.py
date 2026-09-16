@@ -38,8 +38,6 @@ from .FollowMesh import PASS_NAME, build_follow_mesh
 class FollowPass(RenderPass):
     """Renders the followed toolpath with uniform-driven progress."""
 
-    _toolhead_error_logged = False
-
     def __init__(self):
         super().__init__(PASS_NAME, 1, 1)
         self._shader: Optional[ShaderProgram] = None
@@ -52,6 +50,7 @@ class FollowPass(RenderPass):
         self._layer = 0
         self._path = 0.0
         self._toolhead_enabled = True
+        self._toolhead_error_logged = False
 
     def setFollowView(self, view) -> None:
         """The SimulationView whose visibility toggles and active
@@ -82,6 +81,8 @@ class FollowPass(RenderPass):
         self._mesh = build_follow_mesh(layer_data)
         self._batch = None
         self._shader = None
+        # A new file gets a fresh diagnostic window.
+        self._toolhead_error_logged = False
 
     def _ensure_batch(self) -> Optional[RenderBatch]:
         if self._batch is not None:
@@ -105,26 +106,36 @@ class FollowPass(RenderPass):
         camera = self._scene.getActiveCamera()
         if camera is None:
             return
-        self._shader.setUniformValue("u_current_layer", self._layer)
-        self._shader.setUniformValue("u_current_path", self._path)
-        # The visibility toggles and the active extruder, read exactly
-        # as Cura's own pass reads them, so the two renders agree.
-        if self._view is not None:
+        # The RenderPass contract: the pass draws into ITS OWN render
+        # target, so bind() before any drawing and release() after —
+        # even when a draw raises, the FBO must not stay bound (the
+        # review's fix; a leaked binding makes Cura's renderer go
+        # spectacularly strange).
+        self.bind()
+        try:
+            self._shader.setUniformValue("u_current_layer", self._layer)
+            self._shader.setUniformValue("u_current_path", self._path)
+            # The visibility toggles and the active extruder, read
+            # exactly as Cura's own pass reads them, so the two
+            # renders agree.
+            if self._view is not None:
+                try:
+                    self._shader.setUniformValue("u_show_travel_moves", 1 if self._view.getShowTravelMoves() else 0)
+                    self._shader.setUniformValue("u_show_helpers", 1 if self._view.getShowHelpers() else 0)
+                    self._shader.setUniformValue("u_show_skin", 1 if self._view.getShowSkin() else 0)
+                    self._shader.setUniformValue("u_show_infill", 1 if self._view.getShowInfill() else 0)
+                except Exception:
+                    pass
             try:
-                self._shader.setUniformValue("u_show_travel_moves", 1 if self._view.getShowTravelMoves() else 0)
-                self._shader.setUniformValue("u_show_helpers", 1 if self._view.getShowHelpers() else 0)
-                self._shader.setUniformValue("u_show_skin", 1 if self._view.getShowSkin() else 0)
-                self._shader.setUniformValue("u_show_infill", 1 if self._view.getShowInfill() else 0)
+                from cura.Settings.ExtruderManager import ExtruderManager
+                self._shader.setUniformValue("u_active_extruder",
+                                             float(max(0, ExtruderManager.getInstance().activeExtruderIndex)))
             except Exception:
                 pass
-        try:
-            from cura.Settings.ExtruderManager import ExtruderManager
-            self._shader.setUniformValue("u_active_extruder",
-                                         float(max(0, ExtruderManager.getInstance().activeExtruderIndex)))
-        except Exception:
-            pass
-        batch.render(camera)
-        self._render_toolhead(camera)
+            batch.render(camera)
+            self._render_toolhead(camera)
+        finally:
+            self.release()
 
     def _render_toolhead(self, camera) -> None:
         """The toolhead indicator — Cura's own NozzleNode and
@@ -139,6 +150,11 @@ class FollowPass(RenderPass):
         from UM.Math.Vector import Vector
         try:
             nozzle = self._view.getNozzleNode()
+            if nozzle is None:
+                return
+            mesh = nozzle.getMeshData()
+            if mesh is None:
+                return
             nozzle.setPosition(Vector(head[0], head[1], head[2]))
             if self._nozzle_shader is None:
                 from UM.View.GL.OpenGL import OpenGL
@@ -150,14 +166,16 @@ class FollowPass(RenderPass):
                 self._nozzle_shader.setUniformValue("u_color", Color(
                     *Application.getInstance().getTheme().getColor("layerview_nozzle").getRgb()))
             nozzle_batch = RenderBatch(self._nozzle_shader, type=RenderBatch.RenderType.Transparent)
-            nozzle_batch.addItem(nozzle.getWorldTransformation(), mesh=nozzle.getMeshData())
+            nozzle_batch.addItem(nozzle.getWorldTransformation(), mesh=mesh)
             nozzle_batch.render(camera)
         except Exception as exc:
-            if not FollowPass._toolhead_error_logged:
-                FollowPass._toolhead_error_logged = True
+            if not self._toolhead_error_logged:
+                # A one-shot diagnostic, never per frame; reset when a
+                # new scene/file is installed.
+                self._toolhead_error_logged = True
                 try:
                     from UM.Logger import Logger
-                    Logger.log("e", "Moonraker follow pass toolhead render failed once: %r", exc)
+                    Logger.log("w", "Moonraker follow-pass toolhead render failed: %r", exc)
                 except Exception:
                     pass
 

@@ -55,6 +55,37 @@ def _bindings_swapped(bindings, target: str, replacement: str) -> List[str]:
     return [replacement if name == target else name for name in bindings]
 
 
+def _ensure_nozzle_node(view):
+    """Ensure Cura's normal SimulationView nozzle exists in the scene.
+
+    This reproduces the public lifecycle work SimulationView performs
+    on ViewActivateEvent — a live file loaded into an already-active
+    Preview can miss that transition (the old lifecycle repair's
+    legitimate half). It touches no SimulationPass internals.
+    """
+    try:
+        nozzle = view.getNozzleNode()
+        if nozzle is None:
+            return None
+        controller = view.getController()
+        if controller is None:
+            return None
+        scene = controller.getScene()
+        if scene is None:
+            return None
+        root = scene.getRoot()
+        if root is None:
+            return None
+        if nozzle.getParent() is not root:
+            nozzle.setParent(root)
+        # SimulationView keeps it hidden from ordinary scene rendering
+        # because the explicit pass renders it.
+        nozzle.setVisible(False)
+        return nozzle
+    except Exception:
+        return None
+
+
 def attach(view) -> bool:
     """Substitute the follow pass for Cura's SimulationPass. Returns
     whether the substitution is active; the vanilla path stays active
@@ -88,6 +119,12 @@ def attach(view) -> bool:
         node, layer_data = _find_layer_data()
         if node is None or layer_data is None:
             return False
+        # Cura's own ViewActivateEvent lifecycle for the nozzle (the
+        # legitimate repair), so the follow pass's toolhead has the
+        # same nozzle Cura would use. Left in place on detach — the
+        # restored native pass expects it; Cura unparents it on
+        # ViewDeactivateEvent.
+        _ensure_nozzle_node(view)
         if ACTIVE is None:
             ACTIVE = FollowPass()
             renderer.addRenderPass(ACTIVE)
