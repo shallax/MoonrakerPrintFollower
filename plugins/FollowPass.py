@@ -59,8 +59,10 @@ class FollowPass(RenderPass):
         self._view = view
 
     def setFollowState(self, layer: int, path: float, toolhead: bool = True) -> None:
-        """The 33 ms tick: uniforms only, no buffers change."""
-        self._layer = int(layer)
+        """The 33 ms tick: uniforms only, no buffers change. The
+        progress values stay floats — the shader uniforms are floats
+        (the reviewer's type consistency)."""
+        self._layer = float(layer)
         self._path = float(path)
         self._toolhead_enabled = bool(toolhead)
 
@@ -90,9 +92,13 @@ class FollowPass(RenderPass):
         if self._mesh is None or self._node is None:
             return None
         if self._shader is None:
+            # The OpenGL factory, not ShaderProgram().load(): Uranium's
+            # factory selects the 41core variant on a core context and
+            # the legacy one otherwise (the review's catch — a bare
+            # load() always requests the generic variant).
+            from UM.View.GL.OpenGL import OpenGL
             shader_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "follow_lines.shader")
-            self._shader = ShaderProgram()
-            self._shader.load(shader_path)
+            self._shader = OpenGL.getInstance().createShaderProgram(shader_path)
         batch = RenderBatch(self._shader, type=RenderBatch.RenderType.Solid,
                             mode=RenderBatch.RenderMode.Lines)
         batch.addItem(self._node.getWorldTransformation(), self._mesh)
@@ -185,7 +191,7 @@ class FollowPass(RenderPass):
         layer_data = self._layer_data
         if layer_data is None:
             return None
-        polygons_layer = layer_data.getLayer(self._layer)
+        polygons_layer = layer_data.getLayer(int(self._layer))
         if polygons_layer is None:
             return None
         path = float(self._path)

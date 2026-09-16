@@ -42,20 +42,20 @@ README = (ROOT / "README.md").read_text()
 
 class SdkCompatibilityTests(unittest.TestCase):
     def test_package_declares_sdk_8_0_floor(self):
-        self.assertEqual(PACKAGE["sdk_version"], "8.0.0")
-        self.assertEqual(PACKAGE["sdk_version_semver"], "8.0.0")
+        self.assertEqual(PACKAGE["sdk_version"], "8.11.0")
+        self.assertEqual(PACKAGE["sdk_version_semver"], "8.11.0")
 
     def test_plugin_declares_complete_cura_5_sdk_8_line(self):
         self.assertEqual(
             PLUGIN_META["supported_sdk_versions"],
-            [f"8.{minor}.0" for minor in range(13)],
+            ["8.11.0", "8.12.0"],
         )
         self.assertEqual(PLUGIN_META["api"], 8)
 
     def test_readme_states_cura_5_compatibility_boundary(self):
-        self.assertIn("Cura 5.0–5.13 / SDK 8.0–8.12", README)
+        self.assertIn("Cura 5.11–5.13 / SDK 8.11–8.12", README)
         self.assertIn("Cura 4.x / SDK 7.x is not supported", README)
-        self.assertIn("Qt 6 / PyQt6 boundary", README)
+        self.assertIn("5.11 floor", README)
 
     def test_does_not_depend_on_post_8_0_machine_action_properties(self):
         self.assertNotIn("shouldOpenAsDialog", MACHINE_ACTION)

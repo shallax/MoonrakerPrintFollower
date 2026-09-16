@@ -54,7 +54,10 @@ class MoonrakerPrintFollower(QObject, Extension):
         # behind on teardown (a plugin reload's clean slate). The
         # controller is UM-free at module level, so the import is
         # safe in any environment; shutdown no-ops without an
-        # attached pass.
+        # attached pass. The leak probe stops too — no dead runtime
+        # retained, no timer stacking on re-register.
         from .FollowPassController import shutdown
         shutdown()
+        from .LeakProbe import stop_leak_probe
+        stop_leak_probe()
         self._runtime.close()

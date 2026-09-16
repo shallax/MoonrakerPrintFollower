@@ -362,3 +362,26 @@ def start_leak_probe(runtime, parent=None):
     global _ACTIVE
     _ACTIVE = LeakProbe(runtime, parent)
     return _ACTIVE
+
+
+def stop_leak_probe():
+    """The teardown path: the probe must not survive plugin
+    deinitialisation with a dead runtime and a live timer (the
+    review's lifecycle catch — re-registering would otherwise retain
+    the old closed runtime and stack another timer)."""
+    global _ACTIVE
+    probe = _ACTIVE
+    _ACTIVE = None
+    if probe is None:
+        return
+    try:
+        probe._timer.stop()
+        probe._timer.deleteLater()
+    except Exception:
+        pass
+    probe.runtime = None
+    if probe._enabled:
+        try:
+            tracemalloc.stop()
+        except Exception:
+            pass

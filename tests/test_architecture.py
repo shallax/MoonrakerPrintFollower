@@ -165,7 +165,7 @@ class SourceContractTests(unittest.TestCase):
             "ToolheadPolicy": set(),
             "MoonrakerOutputDevice": {"CuraOutputWriter", "MonitorPermissions", "UploadController"},
             "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice"},
-            "MoonrakerPrintFollower": {"FollowerRuntime", "FollowPassController", "WhatsNewOverlay"},
+            "MoonrakerPrintFollower": {"FollowerRuntime", "FollowPassController", "LeakProbe", "WhatsNewOverlay"},
             "MoonrakerProtocol": set(),
             "MoonrakerSession": {"MoonrakerSocket", "MoonrakerTransport"},
             "MoonrakerSocket": {"SocketFraming"},

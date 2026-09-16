@@ -1,13 +1,20 @@
 """The follow pass's mesh baking — UM-free so the logic is testable
 on any host with numpy (the pass module itself imports UM).
 
-A plugin MeshData over Cura's flat-line LayerData, referencing its
-arrays (no copy) and adding the two progress attributes:
+Cura's flat-line LayerData shares vertices between adjacent lines
+(A B C D with index pairs A-B, B-C, C-D), so no single vertex can
+carry a line identity. The follow representation is de-indexed: the
+vertices and the consumed attributes are expanded through the
+flattened index array into two unique endpoints per line, and the
+mesh carries NO indices — the pass draws plain GL_LINES by array
+(the per-frame ranged EBO path is avoided entirely). The expansion
+is one-time, bounded memory per loaded file.
 
-a_layer: the layer index of every vertex.
-a_line: the within-layer line index of every vertex (both vertices of
-        a line carry the same value, so a culled line loses both
-        endpoints together).
+The progress attributes are float32 (opengl_type "float"): Uranium
+passes attributes through setAttributeBuffer, which uses normalized
+attributes — integer GLSL attributes need different treatment, and
+the layer/line ranges are far below float32's integer-precision
+limit.
 """
 from __future__ import annotations
 
@@ -15,9 +22,9 @@ PASS_NAME = "moonraker_follow"
 
 
 def build_follow_mesh(layer_data, mesh_factory=None):
-    """Bake the progress attributes into a MeshData over the source
-    arrays. mesh_factory is injectable for tests (the real UM
-    MeshData comes from the pass module)."""
+    """Bake the progress attributes into a de-indexed MeshData over
+    the source arrays. mesh_factory is injectable for tests (the real
+    UM MeshData comes from the pass module)."""
     if mesh_factory is None:
         from UM.Mesh.MeshData import MeshData
         mesh_factory = MeshData
@@ -33,42 +40,48 @@ def build_follow_mesh(layer_data, mesh_factory=None):
         return None
     if vertices is None or indices is None or not counts:
         return None
-    vertex_count = len(vertices)
-    if vertex_count == 0:
+    index_count = len(indices)
+    if index_count == 0:
         return None
-    layers = numpy.empty(vertex_count, numpy.int32)
-    lines = numpy.empty(vertex_count, numpy.int32)
-    cursor = 0
-    for layer in sorted(counts):
-        size = int(counts[layer])
-        if size <= 0 or cursor + size > vertex_count:
-            continue
-        end = cursor + size
-        layers[cursor:end] = layer
-        lines[cursor:end] = numpy.arange(size, dtype=numpy.int32) // 2
-        cursor = end
-    if cursor < vertex_count:
-        # Vertices beyond the element-count table: mark them past the
-        # end of the last layer so they never render.
-        layers[cursor:] = 1 << 30
-        lines[cursor:] = 0
-    attributes = {
-        "layer": {"opengl_type": "int", "value": layers, "opengl_name": "a_layer"},
-        "line": {"opengl_type": "int", "value": lines, "opengl_name": "a_line"},
-    }
-    # Carry the source layer-data's per-vertex attributes by reference
-    # (extruder, line_type, material_color) so the shader's colouring
-    # and visibility rules see the same values as Cura's own pass.
+    # The de-index: every index pair becomes two unique endpoints.
+    expanded_vertices = vertices[indices]
+    attributes = {}
     try:
         for name in layer_data.attributeNames():
-            if name in ("layer", "line", "prev_line_types"):
+            if name in ("prev_line_types",):
                 continue
             attribute = layer_data.getAttribute(name)
             value = attribute.get("value")
-            if value is None or len(value) != vertex_count:
+            if value is None or len(value) != len(vertices):
                 continue
-            attributes[name] = dict(attribute)
+            expanded = value[indices]
+            entry = dict(attribute)
+            entry["value"] = expanded
+            attributes[name] = entry
     except (AttributeError, TypeError):
-        pass
-    return mesh_factory(vertices=vertices, indices=indices, colors=colors,
+        attributes = {}
+    # The progress metadata, float32 (the reviewer's attribute typing):
+    # layer L owns indices [start, start + counts[L]) — counts are
+    # index counts, two per line — and each expanded vertex carries
+    # the layer and the within-layer line id (both endpoints of a
+    # line share the same id).
+    layers = numpy.empty(index_count, numpy.float32)
+    lines = numpy.empty(index_count, numpy.float32)
+    cursor = 0
+    for layer in sorted(counts):
+        size = int(counts[layer])
+        if size <= 0 or cursor + size > index_count:
+            continue
+        end = cursor + size
+        layers[cursor:end] = float(layer)
+        lines[cursor:end] = numpy.arange(size, dtype=numpy.float32) // 2.0
+        cursor = end
+    if cursor < index_count:
+        # Indices beyond the element-count table: mark them past the
+        # end of the last layer so they never render.
+        layers[cursor:] = float(1 << 30)
+        lines[cursor:] = 0.0
+    attributes["layer"] = {"opengl_type": "float", "value": layers, "opengl_name": "a_layer"}
+    attributes["line"] = {"opengl_type": "float", "value": lines, "opengl_name": "a_line"}
+    return mesh_factory(vertices=expanded_vertices, indices=None, colors=colors[indices] if colors is not None else None,
                         attributes=attributes)
