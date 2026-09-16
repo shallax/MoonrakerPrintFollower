@@ -13,16 +13,16 @@ vertex =
 
     uniform lowp float u_active_extruder;
     uniform lowp float u_shade_factor;
-    uniform highp int u_current_layer;
-    uniform highp int u_current_path;
+    uniform highp float u_current_layer;
+    uniform highp float u_current_path;
 
     attribute highp float a_extruder;
     attribute highp float a_line_type;
     attribute highp vec4 a_vertex;
     attribute lowp vec4 a_color;
     attribute lowp vec4 a_material_color;
-    attribute highp int a_layer;
-    attribute highp int a_line;
+    attribute highp float a_layer;
+    attribute highp float a_line;
 
     varying lowp vec4 v_color;
     varying float v_line_type;
@@ -102,16 +102,16 @@ vertex41core =
 
     uniform lowp float u_active_extruder;
     uniform lowp float u_shade_factor;
-    uniform highp int u_current_layer;
-    uniform highp int u_current_path;
+    uniform highp float u_current_layer;
+    uniform highp float u_current_path;
 
     in highp float a_extruder;
     in highp float a_line_type;
     in highp vec4 a_vertex;
     in lowp vec4 a_color;
     in lowp vec4 a_material_color;
-    in highp int a_layer;
-    in highp int a_line;
+    in highp float a_layer;
+    in highp float a_line;
 
     out lowp vec4 v_color;
     out float v_line_type;
@@ -176,8 +176,8 @@ fragment41core =
 [defaults]
 u_active_extruder = 0.0
 u_shade_factor = 0.60
-u_current_layer = 0
-u_current_path = 0
+u_current_layer = 0.0
+u_current_path = 0.0
 u_show_travel_moves = 0
 u_show_helpers = 1
 u_show_skin = 1

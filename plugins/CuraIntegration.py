@@ -102,8 +102,8 @@ class CuraIntegration(QObject):
             self._writing += 1
             try:
                 current = view.getCurrentLayer()
-                view.setCurrentLayer(max(0, int(current) - 1))
-                view.setCurrentLayer(int(current))
+                view.setLayer(max(0, int(current) - 1))
+                view.setLayer(int(current))
             finally:
                 self._writing -= 1
         except Exception:

@@ -62,48 +62,64 @@ class FollowMeshBakeTests(unittest.TestCase):
         def getIndices(self):
             return self.indices
 
-    def _bake(self, counts):
+    def _bake(self, counts, indices=None):
         from plugins.FollowMesh import build_follow_mesh
-        # 8 vertices, 8 indices: layers 1 and 3 with two lines each.
-        vertices = numpy.zeros((8, 3), numpy.float32)
-        indices = numpy.arange(8, dtype=numpy.int32)
-        colors = numpy.ones((8, 4), numpy.float32)
+        # The review's shared-vertex fixture: four vertices, three
+        # lines via six indices — A-B, B-C, C-D — so vertices 1 and 2
+        # are shared between adjacent lines.
+        vertices = numpy.array([[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]], numpy.float32)
+        if indices is None:
+            indices = numpy.array([0, 1, 1, 2, 2, 3], numpy.int32)
+        else:
+            indices = numpy.asarray(indices, numpy.int32)
+        colors = numpy.arange(4 * 4, dtype=numpy.float32).reshape((4, 4))
         extra = {
             "extruder": {"opengl_type": "float", "opengl_name": "a_extruder",
-                         "value": numpy.zeros(8, numpy.float32)},
+                         "value": numpy.arange(4, dtype=numpy.float32)},
             "line_type": {"opengl_type": "float", "opengl_name": "a_line_type",
-                          "value": numpy.ones(8, numpy.float32)},
+                          "value": numpy.ones(4, numpy.float32)},
         }
         layer_data = _FakeLayerData(vertices, indices, colors, counts, extra)
-        return build_follow_mesh(layer_data, mesh_factory=self._FakeMeshData), layer_data
+        return build_follow_mesh(layer_data, mesh_factory=self._FakeMeshData), layer_data, indices
 
-    def test_bakes_layer_and_line_attributes(self):
-        mesh, layer_data = self._bake({1: 4, 3: 4})
+    def test_deindexes_through_the_real_index_array(self):
+        # The follow mesh is a de-indexed GL_LINES mesh: two unique
+        # endpoints per line, expanded through the flattened indices,
+        # and NO index buffer at all (glDrawArrays).
+        mesh, layer_data, indices = self._bake({1: 4, 3: 2})
         self.assertIsNotNone(mesh)
+        self.assertIsNone(mesh.getIndices())
+        self.assertEqual(mesh.getVertices().shape, (6, 3))
+        numpy.testing.assert_array_equal(mesh.getVertices(), layer_data.getVertices()[indices])
+        numpy.testing.assert_array_equal(mesh.colors, layer_data.getColors()[indices])
+        numpy.testing.assert_array_equal(mesh.getAttribute("extruder")["value"],
+                                         layer_data.getAttribute("extruder")["value"][indices])
+
+    def test_bakes_float_layer_and_line_attributes(self):
+        mesh, _, _ = self._bake({1: 4, 3: 2})
         layer_attr = mesh.getAttribute("layer")
         line_attr = mesh.getAttribute("line")
+        self.assertEqual(layer_attr["opengl_type"], "float")
+        self.assertEqual(line_attr["opengl_type"], "float")
         self.assertEqual(layer_attr["opengl_name"], "a_layer")
         self.assertEqual(line_attr["opengl_name"], "a_line")
-        self.assertEqual(list(layer_attr["value"]), [1, 1, 1, 1, 3, 3, 3, 3])
-        self.assertEqual(list(line_attr["value"]), [0, 0, 1, 1, 0, 0, 1, 1])
-
-    def test_references_the_source_arrays(self):
-        mesh, layer_data = self._bake({1: 4, 3: 4})
-        self.assertTrue(numpy.shares_memory(mesh.getVertices(), layer_data.getVertices()))
-        self.assertTrue(numpy.shares_memory(mesh.getIndices(), layer_data.getIndices()))
-        self.assertTrue(numpy.shares_memory(mesh.getAttribute("extruder")["value"],
-                                            layer_data.getAttribute("extruder")["value"]))
+        # Layer 1 owns the first four indices (two lines); layer 3 the
+        # last two (one line). Both endpoints of a line share its id.
+        self.assertEqual(list(layer_attr["value"]), [1.0, 1.0, 1.0, 1.0, 3.0, 3.0])
+        self.assertEqual(list(line_attr["value"]), [0.0, 0.0, 1.0, 1.0, 0.0, 0.0])
 
     def test_vertices_beyond_the_counts_table_never_render(self):
-        mesh, layer_data = self._bake({1: 4})
+        mesh, _, _ = self._bake({1: 4})
         layer_attr = mesh.getAttribute("layer")
-        self.assertEqual(list(layer_attr["value"]), [1, 1, 1, 1, 1 << 30, 1 << 30, 1 << 30, 1 << 30])
+        self.assertEqual(list(layer_attr["value"]), [1.0, 1.0, 1.0, 1.0, float(1 << 30), float(1 << 30)])
 
     def test_bake_fails_cleanly_without_geometry(self):
         from plugins.FollowMesh import build_follow_mesh
         layer_data = _FakeLayerData([], [], [], {})
         self.assertIsNone(build_follow_mesh(layer_data, mesh_factory=self._FakeMeshData))
         layer_data = _FakeLayerData(numpy.zeros((4, 3)), numpy.arange(4), numpy.ones((4, 4)), {})
+        self.assertIsNone(build_follow_mesh(layer_data, mesh_factory=self._FakeMeshData))
+        layer_data = _FakeLayerData(numpy.zeros((4, 3)), numpy.array([], numpy.int32), numpy.ones((4, 4)), {1: 2})
         self.assertIsNone(build_follow_mesh(layer_data, mesh_factory=self._FakeMeshData))
 
 
@@ -414,15 +430,24 @@ class FollowPassControllerTests(unittest.TestCase):
         self._original_active = controller.ACTIVE
         self._original_bindings = controller._ORIGINAL_BINDINGS
         self._original_sim = controller._SIMULATION_PASS
+        self._original_attached = controller._ATTACHED
+        self._original_added = controller._ACTIVE_ADDED
+        self._original_renderer = controller._RENDERER
         controller.ACTIVE = None
         controller._ORIGINAL_BINDINGS = None
         controller._SIMULATION_PASS = None
+        controller._ATTACHED = False
+        controller._ACTIVE_ADDED = False
+        controller._RENDERER = None
         controller._CAPABLE = True
 
     def tearDown(self):
         self.controller.ACTIVE = self._original_active
         self.controller._ORIGINAL_BINDINGS = self._original_bindings
         self.controller._SIMULATION_PASS = self._original_sim
+        self.controller._ATTACHED = self._original_attached
+        self.controller._ACTIVE_ADDED = self._original_added
+        self.controller._RENDERER = self._original_renderer
         self.controller._CAPABLE = True
 
     def _patch_layer_data(self):
@@ -508,6 +533,47 @@ class FollowPassControllerTests(unittest.TestCase):
         root = self.view.controller.scene.getRoot()
         self.controller.detach(self.view)
         self.assertIs(nozzle.parent, root)
+
+    def test_attach_rolls_back_when_the_native_pass_refuses(self):
+        # The transaction: a failure mid-mutation must restore the
+        # compositor binding, re-enable the native pass, and remove
+        # the follow pass from the renderer.
+        class _RefusingPass(_FakeSimulationPass):
+            def __init__(self):
+                super().__init__()
+                self.refuse = True
+
+            def setEnabled(self, enabled):
+                if self.refuse:
+                    raise RuntimeError("refused")
+                return super().setEnabled(enabled)
+
+        self.view.simulation_pass = _RefusingPass()
+        with self._patch_layer_data():
+            self.assertFalse(self.controller.attach(self.view))
+        self.assertEqual(self.view.renderer.composite.bindings,
+                         ["default", "selection", "simulationview"])
+        self.assertIn(self.controller.ACTIVE, self.view.renderer.removed)
+        self.assertFalse(self.controller._ATTACHED)
+        self.assertIsNone(self.controller._ORIGINAL_BINDINGS)
+        self.assertIsNone(self.controller._SIMULATION_PASS)
+
+    def test_a_pass_without_set_enabled_rides_the_membership_path(self):
+        # The defensive old-API path: no setEnabled on the pass means
+        # renderer membership controls it.
+        class _NoSetEnabledPass:
+            def __init__(self):
+                self.enabled = True
+
+            def isEnabled(self):
+                return self.enabled
+
+        self.view.simulation_pass = _NoSetEnabledPass()
+        with self._patch_layer_data():
+            self.assertTrue(self.controller.attach(self.view))
+        self.assertIn(self.view.simulation_pass, self.view.renderer.removed)
+        self.controller.detach(self.view)
+        self.assertIn(self.view.simulation_pass, self.view.renderer.added)
 
 
 if __name__ == "__main__":

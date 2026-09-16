@@ -9,7 +9,7 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
 - **Release:** 4.3.0
-- **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
+- **Target:** Cura 5.11–5.13 / SDK 8.11–8.12
 
 ## What changed in 4.3.0
 
@@ -370,11 +370,11 @@ After verifying the integrated plugin with your printers, the separate Moonraker
 
 ## Cura / SDK compatibility
 
-The plugin targets the complete Cura 5.x SDK 8 line from **Cura 5.0 / SDK 8.0** through **Cura 5.13 / SDK 8.12**. The package declares SDK 8.0 as its minimum package SDK, while `plugin.json` explicitly records SDK 8.0 through 8.12 support.
+The plugin targets **Cura 5.11 / SDK 8.11** through **Cura 5.13 / SDK 8.12**. The package declares SDK 8.11 as its minimum package SDK, and `plugin.json` records exactly SDK 8.11 and 8.12 (the follow render pass's compositor APIs set the floor).
 
-The implementation stays on APIs already present in Cura 5.0 where practical: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls and Cura's native nozzle interface. Optional Qt conveniences such as request transfer timeouts are capability-checked where required.
+The implementation stays on APIs present across Cura 5.11–5.13: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls, its render pass and compositor APIs, and Cura's native nozzle interface. Optional conveniences are capability-checked where required.
 
-Cura 4.x / SDK 7.x is not supported. Cura 5.0 is the Qt 6 / PyQt6 boundary and this plugin intentionally targets that runtime.
+Cura 4.x / SDK 7.x is not supported, and Cura 5.0–5.10 are no longer advertised: the follow render pass relies on render-pass enable/disable APIs that set the 5.11 floor.
 
 Actual rendering, output-device presentation, webcam streaming and printer interaction should still be smoke-tested on representative Cura releases before publishing a compatibility claim.
 
