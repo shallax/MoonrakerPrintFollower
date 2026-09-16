@@ -762,8 +762,8 @@ else:
     click_x = round(scene.x() + slider.width() * 0.2)
     click_y = round(scene.y() + slider.height() / 2)
     qtest = _import_qtest()
-    qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(click_x, click_y))
-    qtest.QTest.qWait(300)
+    qtest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(click_x, click_y))
+    qtest.qWait(300)
     result = {"clicked": True, "value": slider.value, "x": click_x, "y": click_y}
 """
 
@@ -1415,13 +1415,16 @@ SCENARIOS = [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"},
                                      "extruder": {"temperature": 205.2, "target": 210.0},
                                      "heater_bed": {"temperature": 60.0, "target": 60.0}}},
-         {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 150},
          # The strip's three cells render with the card; the block
          # lands on the aux poll — the temps witness proves the block
          # arrived (and that the strip renders the WHOLE unlabelled
          # pair: hotend first, bed second — the elided-labelled-form
-         # pin, the UX re-review).
-         {"op": "wait_rect", "objectName": "moonrakerStripPauseButton", "budget": 30},
+         # pin, the UX re-review). The surface witness waits on the
+         # strip button, never the pane root: in the UNSLICED
+         # printing state Cura hosts the pane root at zero size (its
+         # children render fine), so the lookup's size filter skips
+         # the root — the sliced v1 state resolves it.
+         {"op": "wait_rect", "objectName": "moonrakerStripPauseButton", "budget": 150},
          {"op": "wait_rect", "objectName": "moonrakerStripTemps", "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerStripSlot", "budget": 30},
          {"op": "wait_rendered", "objectName": "moonrakerStripTemps", "contains": "205.2/210.0 °C · 60.0/60.0 °C", "budget": 30},

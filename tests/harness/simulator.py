@@ -786,19 +786,42 @@ class StatusHandler(tornado.web.RequestHandler):
                                                  "message": "simulated PAUSE refusal"}}))
             else:
                 self.write(json.dumps({"result": "ok"}))
-                if script.strip().upper() == "PAUSE" and \
+                upper = script.strip().upper()
+                if upper == "PAUSE" and \
                         self._printer.state["print_stats"].get("state") == "printing" and \
                         not self._printer.accept_pause_without_state:
                     # Real ordering: the ack returns FIRST and the
                     # state transition lands on a later tick — Klipper
                     # expands the macro asynchronously. The plugin's
                     # confirmation must survive that window (the
-                    # domain review's ordering fix).
+                    # domain review's ordering fix). Klipper's own
+                    # cmd_PAUSE also sets pause_resume.is_paused — the
+                    # authoritative bit the 4.3.0 rows read.
                     def flip():
                         self._printer.scenario(
                             print_stats={**self._printer.state["print_stats"],
-                                         "state": "paused"})
+                                         "state": "paused"},
+                            pause_resume={"is_paused": True})
                     tornado.ioloop.IOLoop.current().add_callback(flip)
+                elif upper == "RESUME" and \
+                        self._printer.state["print_stats"].get("state") == "paused":
+                    # cmd_RESUME: the bit clears with the state — the
+                    # authoritative-bit path's happy resume.
+                    def resume_flip():
+                        self._printer.scenario(
+                            print_stats={**self._printer.state["print_stats"],
+                                         "state": "printing"},
+                            pause_resume={"is_paused": False})
+                    tornado.ioloop.IOLoop.current().add_callback(resume_flip)
+                elif upper == "CLEAR_PAUSE" and \
+                        self._printer.state["print_stats"].get("state") == "paused":
+                    # cmd_CLEAR_PAUSE: the queue clears, the bit
+                    # clears, the state word stays "paused" — the
+                    # R_CLEARED_PAUSE path.
+                    def clear_flip():
+                        self._printer.scenario(
+                            pause_resume={"is_paused": False})
+                    tornado.ioloop.IOLoop.current().add_callback(clear_flip)
         elif path == "device_power/device":
             # The controls pane's toggle. Real Moonraker semantics (the
             # domain review): the locked refusal fires ONLY while a
