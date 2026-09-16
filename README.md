@@ -13,9 +13,9 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 
 ## What changed in 4.3.0
 
-Version 4.3.0 is the section release: every collapsible section of
-the Monitor page is its own component, and the Preview card gains a
-status strip.
+Version 4.3.0 is the QML componentisation release: every
+collapsible section of the Monitor page is its own component, and
+the Preview card gains a status strip.
 
 - **Every section its own component** — the Monitor page's panes
   are now thin shells; all twenty-two collapsible sections ride

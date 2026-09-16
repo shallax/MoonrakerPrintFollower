@@ -27,9 +27,9 @@ from typing import List, Tuple
 WHATS_NEW: Tuple[dict, ...] = (
     {
         "version": "4.3.0",
-        "headline": "Version 4.3.0 is the section release: the Monitor page is "
-            "rebuilt out of small self-contained sections, and the Preview "
-            "card gains a status strip.",
+        "headline": "Version 4.3.0 is the QML componentisation release: the "
+            "Monitor page is rebuilt out of small self-contained sections, "
+            "and the Preview card gains a status strip.",
         "items": (
             "The Monitor page is now built from self-contained sections — "
             "every collapsible section is its own component, so the page "
@@ -49,6 +49,17 @@ WHATS_NEW: Tuple[dict, ...] = (
             "state file the rest of the plugin uses.",
             "The test harness records what each step looked at and where "
             "it was, and draws the highlight onto the captured screenshots.",
+            "Cura 5.11 or newer (SDK 8.11+) is now the floor — older "
+            "Cura versions are no longer supported.",
+            "The live nozzle indicator in Preview is reliable again for "
+            "prints loaded while Preview is already open.",
+            "Settings that refuse to save now say which field is wrong "
+            "instead of silently discarding the change.",
+            "Open Browser after an upload now actually opens the "
+            "browser.",
+            "Memory diagnostics (a toggle on the Diagnostics page) log "
+            "the process size and the fastest-growing allocations once "
+            "a minute, so a memory climb can be tracked down.",
         ),
     },
     {
