@@ -38,6 +38,8 @@ from .FollowMesh import PASS_NAME, build_follow_mesh
 class FollowPass(RenderPass):
     """Renders the followed toolpath with uniform-driven progress."""
 
+    _toolhead_error_logged = False
+
     def __init__(self):
         super().__init__(PASS_NAME, 1, 1)
         self._shader: Optional[ShaderProgram] = None
@@ -150,8 +152,14 @@ class FollowPass(RenderPass):
             nozzle_batch = RenderBatch(self._nozzle_shader, type=RenderBatch.RenderType.Transparent)
             nozzle_batch.addItem(nozzle.getWorldTransformation(), mesh=nozzle.getMeshData())
             nozzle_batch.render(camera)
-        except Exception:
-            pass
+        except Exception as exc:
+            if not FollowPass._toolhead_error_logged:
+                FollowPass._toolhead_error_logged = True
+                try:
+                    from UM.Logger import Logger
+                    Logger.log("e", "Moonraker follow pass toolhead render failed once: %r", exc)
+                except Exception:
+                    pass
 
     def _head_position(self):
         """Cura's own head derivation: the path index over the current
