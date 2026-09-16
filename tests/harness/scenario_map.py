@@ -127,6 +127,9 @@ SCENARIO_MAP = {
     "moonrakerPreviewCard": "v1",
     "moonrakerStripPauseButton": "v19",
     "moonrakerStripTemps": "v19", "moonrakerStripSlot": "v19",
+    # The fans section's harness address (the s8 track-click scenario
+    # scrolls it into view before the press).
+    "moonrakerFansSection": "s8",
     "moonrakerPreviewCardPanel": "z9",
     "moonrakerPreviewCardOverlay": "z9",
     "moonrakerPreviewCardOverlayHost": "z9",

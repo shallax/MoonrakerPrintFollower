@@ -3,6 +3,7 @@ one-permitted-fake's fidelity. Skipped wherever tornado is absent (the
 stdlib host and the pinned dev image; the harness image pins it)."""
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import unittest
@@ -406,6 +407,21 @@ if tornado is not None:
                     # (the 4.3.0 rows read it — the harness's g6/s6
                     # Resume refusals traced to this gap).
                     self.assertEqual(state["pause_resume"]["is_paused"], bit, route)
+            self.io_loop.run_sync(exercise)
+
+        def test_fan_commands_move_the_fan(self):
+            # The s8 track-click proof's peer half: the fan slider's
+            # commit posts the speed and Klipper applies it — M106
+            # S<n> for the plain fan, SET_FAN_SPEED for named ones.
+            async def exercise():
+                client = AsyncHTTPClient()
+                for script, expected in (("M106 S51", 0.2),
+                                         ("SET_FAN_SPEED FAN=fan SPEED=0.35", 0.35)):
+                    await client.fetch(self.base + "/printer/gcode/script", method="POST",
+                                       body=json.dumps({"script": script}))
+                    await asyncio.sleep(0.05)
+                    state = json.loads((await client.fetch(self.base + "/harness/state")).body)["result"]
+                    self.assertAlmostEqual(state["fan"]["speed"], expected, places=3, msg=script)
             self.io_loop.run_sync(exercise)
 
         def test_delete_removes_the_file_from_the_listing(self):
