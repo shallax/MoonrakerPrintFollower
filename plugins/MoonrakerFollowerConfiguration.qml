@@ -56,6 +56,7 @@ Cura.MachineAction {
                 "z_tolerance": zToleranceField.text,
                 "trace_layer": layerTraceBox.checked,
                 "trace_http": httpTraceBox.checked,
+                "memory_diagnostics_log": memoryDiagnosticsBox.checked,
                 "frontend_url": frontendUrlField.text,
                 "output_format": outputFormatBox.currentIndex === 1 ? "ufp" : "gcode",
                 "upload_dialog": uploadDialogBox.checked,
@@ -795,6 +796,17 @@ Cura.MachineAction {
                             id: httpTraceBox
                             text: "Log HTTP requests (diagnostics)"
                             checked: manager.settingsTraceHttp
+                        }
+                        UM.CheckBox {
+                            id: memoryDiagnosticsBox
+                            text: "Log memory diagnostics once a minute (diagnostics)"
+                            checked: manager.settingsMemoryDiagnosticsLog
+                        }
+                        UM.Label {
+                            width: parent.width
+                            text: "Memory diagnostics write to moonraker_leak.log in your home folder: the process size, growing QML item classes, growing plugin collections, and the fastest-growing Python allocations — the leak-hunt instrument."
+                            wrapMode: Text.WordWrap
+                            color: UM.Theme.getColor("text_inactive")
                         }
 
                         UM.Label {

@@ -149,6 +149,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
     def settingsTraceLayer(self) -> bool:
         return self._config().trace_layer
 
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsMemoryDiagnosticsLog(self) -> bool:
+        return self._config().memory_diagnostics_log
+
     @pyqtProperty(str, notify=settingsChanged)
     def settingsAuxInterval(self) -> str:
         return str(self._config().aux_interval_ms)
@@ -380,6 +384,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "show_toolhead_indicator": bool(raw.get("show_toolhead_indicator", True)),
                 "trace_layer": bool(raw.get("trace_layer", False)),
                 "trace_http": bool(raw.get("trace_http", False)),
+                "memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False)),
                 "feed_mode": feed_mode,
                 "follow_mode": mode,
                 "frontend_url": str(raw.get("frontend_url") or "").strip(),
