@@ -7,8 +7,9 @@ import Cura 1.1 as Cura
 // The Macros section (4.3.0 extraction): the selector, the typed
 // parameter rows and the run gate moved out of the dashboard as one
 // property-driven component, owning the parameter lifecycle.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
     property var macroParameters: []
 
@@ -54,23 +55,18 @@ Column {
     }
 
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "Macros"
         sectionId: "macros"
         sectionIcon: "Function"
     }
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["macros"] !== false
-    }
-
     ColumnLayout {
         id: macroSection
-        width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.topMargin: UM.Theme.getSize("default_margin").height
+        Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.fillWidth: true
         visible: root.printerModel != null && root.printerModel.macroNames.length > 0 && root.printerModel.sectionExpandedMap["macros"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
         spacing: UM.Theme.getSize("default_margin").height / 2
@@ -151,11 +147,5 @@ Column {
             enabled: root.printerModel != null && macroSelector.currentIndex >= 0 && !root.printerModel.actionBusy && !root.printerModel.printActive && root.printerModel.sectionReason === "" && root.macroArgumentsValid()
             onClicked: root.printerModel.runMacro(macroSelector.currentText, root.macroArgumentString())
         }
-    }
-
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["macros"] !== false
     }
 }

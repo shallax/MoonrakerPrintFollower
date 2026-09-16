@@ -442,7 +442,13 @@ through `receiveSliderInteraction`, which snapshots the freeze
 lists BEFORE the flag flips, re-arms a watchdog on every press (a
 cancelled gesture can never latch the pane) and resets on printer
 change. The capability gates ride the SECTION bodies (the section
-hides or refuses while its data or permission is absent); the
+hides or refuses while its data or permission is absent). Each
+section's root is a `ColumnLayout` (`spacing: 0`) with the header on
+`Layout.fillWidth` and the content carrying the gap as Layout
+margins on its own gated visibility — probe-verified: a plain Column
+root counts invisible children into its implicit height (a collapsed
+section kept its hidden content in the pane's scroll length), and a
+width binding on a layout-managed child breaks to zero. The
 console remains a pane: its auto-collapse latch, camera-area
 resize mapping and the host's printer-change resets are structural
 entanglements, not section content.

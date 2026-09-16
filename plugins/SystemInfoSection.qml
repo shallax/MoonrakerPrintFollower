@@ -7,28 +7,24 @@ import Cura 1.1 as Cura
 // The System section (4.3.0 extraction): the host readouts and
 // the manual Reconnect out of the monitor as one
 // property-driven component.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
 
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "System"
         sectionId: "systeminfo"
         sectionIcon: "Information"
     }
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["systeminfo"] !== false
-    }
-
     ColumnLayout {
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["systeminfo"] !== false
-        width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.topMargin: UM.Theme.getSize("default_margin").height
+        Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.fillWidth: true
         spacing: UM.Theme.getSize("default_margin").height
 
         GridLayout {
@@ -115,10 +111,5 @@ Column {
                 }
             }
         }
-    }
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["systeminfo"] !== false
     }
 }

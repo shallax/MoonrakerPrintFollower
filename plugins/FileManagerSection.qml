@@ -7,29 +7,25 @@ import Cura 1.1 as Cura
 // The File-manager section (4.3.0 extraction): the trigger row out of
 // the dashboard as one property-driven component. The popup itself
 // stays a stage-level sibling of the panes.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
 
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "File manager"
         sectionId: "fileManager"
         sectionIconUrl: Qt.resolvedUrl("Download.svg")
     }
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["fileManager"] !== false
-    }
-
     ColumnLayout {
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["fileManager"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
-        width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.topMargin: UM.Theme.getSize("default_margin").height
+        Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.fillWidth: true
         spacing: UM.Theme.getSize("default_margin").height
 
         UM.Label {
@@ -55,11 +51,5 @@ Column {
                 text: root.printerModel != null && root.printerModel.monitorConnected ? "Open the file manager." : "The printer is disconnected."
             }
         }
-    }
-
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["fileManager"] !== false
     }
 }

@@ -7,28 +7,24 @@ import Cura 1.1 as Cura
 // The Toolhead section (4.3.0 extraction): the header, the jog pad,
 // the extrusion controls, the endstops and the status rows moved out
 // of the dashboard as one property-driven component.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
 
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "Toolhead"
         sectionId: "toolhead"
         sectionIcon: "Nozzle"
     }
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["toolhead"] !== false
-    }
-
     ColumnLayout {
         id: toolheadSection
-        width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.topMargin: UM.Theme.getSize("default_margin").height
+        Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.fillWidth: true
         visible: root.printerModel != null && root.printerModel.sectionExpandedMap["toolhead"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
         spacing: UM.Theme.getSize("default_margin").height / 2
@@ -700,11 +696,5 @@ Column {
                 wrapMode: Text.NoWrap
             }
         }
-    }
-
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["toolhead"] !== false
     }
 }

@@ -7,27 +7,23 @@ import Cura 1.1 as Cura
 // The System section (4.3.0 extraction): the restart buttons and the
 // policy-reason row out of the dashboard as one property-driven
 // component.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
 
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "System"
         sectionId: "system"
         sectionIcon: "Settings"
     }
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["system"] !== false
-    }
-
     ColumnLayout {
-        width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.topMargin: UM.Theme.getSize("default_margin").height
+        Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.fillWidth: true
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["system"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
         spacing: UM.Theme.getSize("default_margin").height / 2
@@ -103,11 +99,5 @@ Column {
                 }
             }
         }
-    }
-
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["system"] !== false
     }
 }

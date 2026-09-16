@@ -9,13 +9,14 @@ import Cura 1.1 as Cura
 // Layout.* properties of the host pane are reproduced with plain
 // anchors and paddings inside the Column — the pane's spacing: 0
 // contract stays the host's.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
     signal cancelRequested
 
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "Print"
         sectionId: "print"
@@ -25,16 +26,11 @@ Column {
     // The pane's spacing: 0 contract puts the gaps on the children —
     // the top and bottom gaps are explicit spacers (the collapsed
     // content hides them with itself).
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["print"] !== false
-    }
-
     ColumnLayout {
-        width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.topMargin: UM.Theme.getSize("default_margin").height
+        Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.fillWidth: true
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["print"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
         spacing: UM.Theme.getSize("default_margin").height
@@ -112,11 +108,5 @@ Column {
                 Layout.fillWidth: true
             }
         }
-    }
-
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["print"] !== false
     }
 }

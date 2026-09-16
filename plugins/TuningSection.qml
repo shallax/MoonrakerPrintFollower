@@ -8,28 +8,24 @@ import Cura 1.1 as Cura
 // the z-offset nudges moved out of the dashboard as one
 // property-driven component. The sliders report interaction
 // through the host sink, so the freeze machinery stays single-owner.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
     property var interactionSink: null
 
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "Live tuning"
         sectionId: "tuning"
         sectionIcon: "Sliders"
     }
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["tuning"] !== false
-    }
-
     ColumnLayout {
-        width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.topMargin: UM.Theme.getSize("default_margin").height
+        Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.fillWidth: true
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["tuning"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
         spacing: UM.Theme.getSize("default_margin").height
@@ -195,11 +191,5 @@ Column {
                 onClicked: root.printerModel.clearZOffset()
             }
         }
-    }
-
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["tuning"] !== false
     }
 }
