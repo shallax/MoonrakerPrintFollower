@@ -331,6 +331,31 @@ G1 X5 Y0 Z0.2
         finally:
             os.remove(path)
 
+    def test_compact_hydration_anchor_follows_the_followed_layer(self):
+        # The eviction window anchors to the FOLLOWED layer, not to the
+        # worker's last pick: a prefetched look-ahead layer survives
+        # while the print is on the anchor, and a backward-jump
+        # hydration cannot evict the layers around the live layer.
+        data = (b"G90\n;LAYER:0\nG1 X1 Y1 Z0.2\nG1 X2 Y2 Z0.2\n;LAYER:1\nG1 X3 Y3 Z0.4\n"
+                b";LAYER:2\nG1 X4 Y4 Z0.6\n;LAYER:3\nG1 X5 Y5 Z0.8\n;LAYER:4\nG1 X6 Y6 Z1.0\n")
+        with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False) as handle:
+            path = handle.name
+            handle.write(data)
+        try:
+            index = build_index_from_file(path, compact=True)
+            # The live print is on layer 2; the worker prefetches 3.
+            self.assertTrue(hydrate_layer_from_file(index, path, 1, keep_anchor=2))
+            self.assertTrue(hydrate_layer_from_file(index, path, 2, keep_anchor=2))
+            self.assertTrue(hydrate_layer_from_file(index, path, 3, keep_anchor=2))
+            self.assertEqual(index.hydrated_layers, {1, 2, 3})
+            # A stray hydration of an old layer cannot evict the window
+            # around the followed layer.
+            self.assertTrue(hydrate_layer_from_file(index, path, 0, keep_anchor=2))
+            self.assertEqual(index.hydrated_layers, {1, 2, 3})
+            self.assertEqual(index.motion_count(0), 0)
+        finally:
+            os.remove(path)
+
     def test_compact_hydration_preserves_relative_and_inch_state(self):
         # Compact indexes must remember modal state at the layer boundary.
         # Otherwise hydrating only the selected layer would incorrectly parse

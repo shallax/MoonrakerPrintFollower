@@ -478,6 +478,49 @@ if QT_AVAILABLE:
                             "the reset must land before the new layer's path write")
             self.assertEqual([call for call in view.calls if call[0] == "reset"], [("reset",), ("reset",)])
 
+        def test_a_replacement_view_receives_its_minimum_write(self):
+            # The once-per-view minimum keys to the VIEW, not a
+            # session flag: after a new file load replaces the view,
+            # the new view must still receive its minimum (the review
+            # repro: the stale flag kept the replacement view's
+            # nonzero minimum).
+            from contextlib import contextmanager
+            from plugins.PreviewMotion import PreviewMotion
+
+            class FakeView:
+                def __init__(self):
+                    self.calls = []
+                    self.max_paths = 100
+
+                def getMaxPaths(self):
+                    return self.max_paths
+
+                def setPath(self, value):
+                    self.calls.append(("path", value))
+
+                def setMinimumPath(self, value):
+                    self.calls.append(("min", value))
+
+            class FakeCura:
+                def __init__(self):
+                    self.view = None
+
+                @contextmanager
+                def writing_preview(self):
+                    yield
+
+            cura = FakeCura()
+            motion = PreviewMotion(cura, remember=lambda: None)
+            first = FakeView()
+            cura.view = first
+            motion.write(0, 0.5)
+            motion.write(1, 0.1)
+            self.assertEqual(first.calls.count(("min", 0)), 1)
+            second = FakeView()
+            cura.view = second
+            motion.write(2, 0.2)
+            self.assertEqual(second.calls.count(("min", 0)), 1)
+
     class SocketFragmentMergeTests(unittest.TestCase):
         """The 2026-09-16 live report: M117 invisible while printing.
         Moonraker pushes only the CHANGED fields per object, and the

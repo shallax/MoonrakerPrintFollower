@@ -556,12 +556,19 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
     )
 
 
-def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int) -> bool:
+def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
+                            keep_anchor: Optional[int] = None) -> bool:
     """Populate motion data for one layer of a compact large-file index.
 
     Boundary indexing keeps RAM bounded for huge files. Motion commands are then
     loaded only for layers actually viewed during the live print. Byte-position
     following remains available while hydration is pending.
+
+    keep_anchor names the FOLLOWED layer: the eviction window keeps
+    [anchor-1, anchor+1] around it, so a prefetched look-ahead layer
+    survives and the window follows the print rather than whichever
+    layer the background worker picked last. Without an anchor the
+    hydrated layer is the anchor.
     """
     if not index.compact or layer in index.hydrated_layers:
         return True
@@ -620,13 +627,13 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int) -> b
             # growth): hydration was demand-driven as the print
             # advanced and nothing ever dropped an old layer, so a long
             # print accumulated motion arrays for every layer it
-            # crossed. Drop everything older than the transition —
-            # the previous, current and look-ahead layers still hold
-            # arrays, and any reader of an evicted layer sees an empty
-            # array (the same degraded fallback as a never-hydrated
-            # one).
+            # crossed. The window keeps the previous, current and
+            # look-ahead layers around the anchor; any reader of an
+            # evicted layer sees an empty array (the same degraded
+            # fallback as a never-hydrated one).
+            anchor = layer if keep_anchor is None else keep_anchor
             for old in sorted(index.hydrated_layers):
-                if old < layer - 1:
+                if old < anchor - 1 or old > anchor + 1:
                     index.motion_offsets[old] = array("Q")
                     index.motion_x[old] = array("f")
                     index.motion_y[old] = array("f")

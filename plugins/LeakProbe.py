@@ -4,8 +4,8 @@ The settings' diagnostics toggle ("Log memory diagnostics once a
 minute") arms one tick per minute appending to ~/moonraker_leak.log,
 naming WHAT grows, on three axes:
 
-- the process RSS (per-platform: /proc, ru_maxrss, the Windows
-  working set),
+- the process's current resident size (per-platform: /proc, mach
+  task_info, the Windows working set),
 - tracemalloc's fastest-growing Python allocation tracebacks,
 - the QML side's per-class item counts (diffed tick-to-tick), and
 - the plugin runtime's own collection sizes (diffed tick-to-tick),
@@ -38,10 +38,11 @@ _TOP_N = 8
 
 
 def _rss_kb() -> int:
-    # Linux: the live RSS from /proc. macOS: ru_maxrss — the MAXIMUM
-    # since start, bytes there, KB on Linux (the max tracks the
-    # overnight slope fine). Windows: the working set via ctypes —
-    # the resource module does not exist there.
+    # Linux: the live RSS from /proc. macOS: the CURRENT resident size
+    # via mach task_info — ru_maxrss there is the peak since start,
+    # which can only rise and can never show a fall after cleanup (the
+    # review). Windows: the working set via the documented psapi
+    # export, PageFaultCount as its real DWORD width.
     try:
         with open("/proc/self/status", encoding="utf-8") as handle:
             for line in handle:
@@ -49,12 +50,42 @@ def _rss_kb() -> int:
                     return int(line.split()[1])
     except OSError:
         pass
-    if resource is not None:
+    if sys.platform == "darwin":
         try:
-            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-            if sys.platform == "darwin":
-                rss //= 1024
-            return int(rss)
+            import ctypes
+            import ctypes.util
+
+            libc = ctypes.CDLL(ctypes.util.find_library("c"))
+            libc.mach_task_self.restype = ctypes.c_uint32
+
+            class _TimeValue(ctypes.Structure):
+                _fields_ = [("seconds", ctypes.c_int32), ("microseconds", ctypes.c_int32)]
+
+            class _BasicInfo(ctypes.Structure):
+                _fields_ = [("virtual_size", ctypes.c_uint64),
+                            ("resident_size", ctypes.c_uint64),
+                            ("resident_size_max", ctypes.c_uint64),
+                            ("user_time", _TimeValue),
+                            ("system_time", _TimeValue),
+                            ("policy", ctypes.c_int32),
+                            ("suspend_count", ctypes.c_int32)]
+
+            info = _BasicInfo()
+            count = ctypes.c_uint32(ctypes.sizeof(info) // 4)
+            kernel = libc.task_info(libc.mach_task_self(), 20,  # MACH_TASK_BASIC_INFO
+                                    ctypes.byref(info), ctypes.byref(count))
+            if kernel == 0 and info.resident_size:
+                return int(info.resident_size) // 1024
+        except Exception:
+            pass
+        if resource is not None:
+            try:
+                return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) // 1024
+            except Exception:
+                pass
+    elif resource is not None:
+        try:
+            return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
         except Exception:
             pass
     if sys.platform == "win32":
@@ -62,7 +93,7 @@ def _rss_kb() -> int:
             import ctypes
 
             class _Counters(ctypes.Structure):
-                _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_size_t),
+                _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong),
                             ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
                             ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
                             ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
@@ -70,8 +101,11 @@ def _rss_kb() -> int:
 
             counters = _Counters()
             counters.cb = ctypes.sizeof(_Counters)
-            ctypes.windll.kernel32.GetProcessMemoryInfo(
-                ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb)
+            try:
+                getter = ctypes.windll.psapi.GetProcessMemoryInfo
+            except Exception:
+                getter = ctypes.windll.kernel32.K32GetProcessMemoryInfo
+            getter(ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb)
             return int(counters.WorkingSetSize) // 1024
         except Exception:
             pass
