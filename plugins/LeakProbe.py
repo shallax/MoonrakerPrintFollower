@@ -261,6 +261,16 @@ class LeakProbe:
         except Exception as exc:
             self._log(f"rss-err {exc!r}")
         try:
+            # The stage at each tick: the native RSS jumps (no Python
+            # trace) must be pinned to the page that was showing when
+            # they happened (the 2026-09-16 report).
+            from UM.Application import Application
+            controller = Application.getInstance().getController()
+            stage = controller.getActiveStage()
+            self._log("stage=%s" % (getattr(stage, "getPluginId", lambda: "?")() if stage is not None else "None"))
+        except Exception as exc:
+            self._log(f"stage-err {exc!r}")
+        try:
             qml = _qml_class_counts()
             for row in _diff(self._qml_previous, qml):
                 self._log(f"  qml {row[0]}: {row[1]} -> {row[2]}")
