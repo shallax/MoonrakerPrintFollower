@@ -110,7 +110,11 @@ def _offset_pointer(offset: int):
     helper so this module still loads on hosts without PyQt6 (the
     tests import it)."""
     from PyQt6 import sip
-    return sip.voidptr(offset)
+    # Sized so the binding's converter accepts it: an unsized voidptr
+    # raises IndexError('object has an unknown size') at draw time.
+    # The size is arbitrary — only the stored address (the byte
+    # offset) reaches OpenGL.
+    return sip.voidptr(offset, 1)
 
 
 def patch_method(func, pairs, inject=None):
@@ -223,17 +227,15 @@ def _schedule_simulation_pass(retries: int = 20) -> None:
 def apply_renderer_adaptations() -> None:
     """The plugin's entry: patch what the installed Cura matches, log
     each outcome, and never fail the plugin."""
-    try:
-        from UM.View.RenderBatch import RenderBatch
-        from UM.View.GL.OpenGL import OpenGL
-    except Exception as exc:
-        _log(f"skipped: UM render imports unavailable: {exc!r}")
-        return
-    try:
-        if _patch_render_batch(RenderBatch, OpenGL):
-            _log("applied RenderBatch: ranged draws reuse the full cached index buffer")
-        else:
-            _log("skipped RenderBatch: source mismatch (version gate)")
-    except Exception as exc:
-        _log(f"skipped RenderBatch: patch error {exc!r}")
+    # The index-buffer reuse patch stays DISABLED (the binding's
+    # verdict): PyQt6 6.6 converts glDrawElements' void* argument
+    # through the buffer protocol, and every representation of a raw
+    # byte offset was rejected in turn (ctypes pointer: '1-dimensional
+    # buffer required'; unsized voidptr: 'unknown size'; sized
+    # voidptr: 'buffer type is not the same as the array type'). The
+    # binding cannot carry a pointer VALUE, so ranged draws cannot
+    # address the full cached buffer by offset. The machinery stays
+    # for a future binding that can.
+    _log("skipped RenderBatch: the PyQt6 6.6 binding cannot pass a byte offset "
+         "through glDrawElements' void* argument (the live-verified verdict)")
     _schedule_simulation_pass()
