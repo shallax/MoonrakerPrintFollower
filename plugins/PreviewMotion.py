@@ -67,11 +67,15 @@ INTER_POLL_MAX = 30.0
 # the timer does not tick forever through a pause.
 TICK_EPSILON = 1e-6
 class PreviewMotion(QObject):
-    def __init__(self, cura, remember, parent=None, trace_path=None):
+    def __init__(self, cura, remember, parent=None, trace_path=None, toolhead_enabled=None):
         super().__init__(parent)
         self._cura = cura
         self._remember = remember
         self._trace_path = trace_path
+        # The toolhead-indicator toggle, supplied by the runtime (the
+        # follow pass renders the toolhead; the flag rides the write
+        # path so the pass matches the configured feature).
+        self._toolhead_enabled = toolhead_enabled
         self._trace_next = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_MS)
@@ -230,8 +234,14 @@ class PreviewMotion(QObject):
         # layer data instead of the per-frame ranged render (the
         # review's render architecture). Guarded: any failure keeps
         # the vanilla preview in control.
+        toolhead = True
+        if self._toolhead_enabled is not None:
+            try:
+                toolhead = bool(self._toolhead_enabled())
+            except Exception:
+                toolhead = True
         update_follow_pass(view, self._layer if self._layer is not None else 0,
-                           fraction * maximum)
+                           fraction * maximum, toolhead=toolhead)
 
     def _trace(self, event: str, now: float, layer, fraction: float, method: str = "") -> None:
         if not self._trace_path:

@@ -21,6 +21,7 @@ same integration SimulationView itself performs.
 """
 from __future__ import annotations
 
+import math
 import os
 from typing import Optional
 
@@ -100,17 +101,27 @@ class FollowPass(RenderPass):
     def __init__(self):
         super().__init__(PASS_NAME, 1, 1)
         self._shader: Optional[ShaderProgram] = None
+        self._nozzle_shader = None
         self._batch: Optional[RenderBatch] = None
         self._mesh: Optional[MeshData] = None
         self._node: Optional[SceneNode] = None
         self._layer_data = None
+        self._view = None
         self._layer = 0
         self._path = 0.0
+        self._toolhead_enabled = True
 
-    def setFollowState(self, layer: int, path: float) -> None:
+    def setFollowView(self, view) -> None:
+        """The SimulationView whose visibility toggles and active
+        extruder the pass mirrors (the same reads as Cura's own
+        pass)."""
+        self._view = view
+
+    def setFollowState(self, layer: int, path: float, toolhead: bool = True) -> None:
         """The 33 ms tick: uniforms only, no buffers change."""
         self._layer = int(layer)
         self._path = float(path)
+        self._toolhead_enabled = bool(toolhead)
 
     def setFollowScene(self, node: Optional[SceneNode], layer_data) -> None:
         """Install (or clear) the followed toolpath. The mesh is built
@@ -154,4 +165,84 @@ class FollowPass(RenderPass):
             return
         self._shader.setUniformValue("u_current_layer", self._layer)
         self._shader.setUniformValue("u_current_path", self._path)
+        # The visibility toggles and the active extruder, read exactly
+        # as Cura's own pass reads them, so the two renders agree.
+        if self._view is not None:
+            try:
+                self._shader.setUniformValue("u_show_travel_moves", 1 if self._view.getShowTravelMoves() else 0)
+                self._shader.setUniformValue("u_show_helpers", 1 if self._view.getShowHelpers() else 0)
+                self._shader.setUniformValue("u_show_skin", 1 if self._view.getShowSkin() else 0)
+                self._shader.setUniformValue("u_show_infill", 1 if self._view.getShowInfill() else 0)
+            except Exception:
+                pass
+        try:
+            from cura.Settings.ExtruderManager import ExtruderManager
+            self._shader.setUniformValue("u_active_extruder",
+                                         float(max(0, ExtruderManager.getInstance().activeExtruderIndex)))
+        except Exception:
+            pass
         batch.render(camera)
+        self._render_toolhead(camera)
+
+    def _render_toolhead(self, camera) -> None:
+        """The toolhead indicator — Cura's own NozzleNode and
+        color.shader (all public API, the same pieces SimulationPass
+        uses), positioned by the same polygon walk Cura performs, so
+        the indicator survives the SimulationPass handoff."""
+        if self._view is None or not self._toolhead_enabled:
+            return
+        head = self._head_position()
+        if head is None:
+            return
+        from UM.Math.Vector import Vector
+        try:
+            nozzle = self._view.getNozzleNode()
+            nozzle.setPosition(Vector(head[0], head[1], head[2]))
+            if self._nozzle_shader is None:
+                from UM.View.GL.OpenGL import OpenGL
+                from UM.Resources import Resources
+                from UM.Math.Color import Color
+                from UM.Application import Application
+                self._nozzle_shader = OpenGL.getInstance().createShaderProgram(
+                    Resources.getPath(Resources.Shaders, "color.shader"))
+                self._nozzle_shader.setUniformValue("u_color", Color(
+                    *Application.getInstance().getTheme().getColor("layerview_nozzle").getRgb()))
+            nozzle_batch = RenderBatch(self._nozzle_shader, type=RenderBatch.RenderType.Transparent)
+            nozzle_batch.addItem(nozzle.getWorldTransformation(), mesh=nozzle.getMeshData())
+            nozzle_batch.render(camera)
+        except Exception:
+            pass
+
+    def _head_position(self):
+        """Cura's own head derivation: the path index over the current
+        layer's polygons, interpolated by the fractional ratio."""
+        layer_data = self._layer_data
+        if layer_data is None:
+            return None
+        polygons_layer = layer_data.getLayer(self._layer)
+        if polygons_layer is None:
+            return None
+        path = float(self._path)
+        if math.isnan(path):
+            index = 0
+        else:
+            index = int(path)
+        ratio = path - math.floor(path)
+        from UM.Math.Vector import Vector
+        for polygon in polygons_layer.polygons:
+            data = polygon.data
+            size = data.size // 3
+            if index >= size:
+                index -= size
+                continue
+            pos_a = Vector(float(data[index][0]), float(data[index][1]), float(data[index][2]))
+            if ratio <= 0.0001 or index + 1 == len(data):
+                head = pos_a
+            else:
+                pos_b = Vector(float(data[index + 1][0]), float(data[index + 1][1]),
+                               float(data[index + 1][2]))
+                head = pos_a * (1.0 - ratio) + pos_b * ratio
+            if self._node is not None:
+                head += self._node.getWorldPosition()
+            return head
+        return None

@@ -109,14 +109,14 @@ def reset_preview_layer_data(view) -> None:
         view.resetLayerData()
 
 
-def update_follow_pass(view, layer: int, path_units: float) -> None:
+def update_follow_pass(view, layer: int, path_units: float, toolhead: bool = True) -> None:
     """The follow pass's per-tick uniform (the review's render
     architecture). Attaches lazily on the first write; every failure
     leaves the vanilla preview in control."""
     try:
         from .FollowPassController import attach, update
         if attach(view):
-            update(int(layer), float(path_units))
+            update(int(layer), float(path_units), toolhead)
     except Exception:
         pass
 
