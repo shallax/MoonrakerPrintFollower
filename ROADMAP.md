@@ -1708,7 +1708,9 @@ exact-set pin — any rename, re-order or visibility rule must respect
 it), the collapse map as the persistence precedent, the file
 manager's column UI (visibility + drag re-order) as the interaction
 precedent, and the UI-state store's merge-write path as the persistence
-home. Unplanned until the 4.5.0 physical-head marker ships.
+home. Planned FIRST (the author's 2026-09-16 ruling): the configurable
+sections land ahead of the 4.5.0 physical-head pack, which builds on
+the machinery here.
 
 The author's 2026-09-16 backlog for this release (ruled live, in
 order of their report):
@@ -1735,10 +1737,11 @@ order of their report):
 
 What a web dashboard cannot do: show the real machine inside the slice.
 The 4.3.0 presentation refactor lands first (the 2026-09-14
-re-sequencing): the marker's interactive controls depend on the
-common action policy and session ownership from 4.2.0, and its
-lifecycle boundaries are proven by the 4.0.2 repairs and the 4.1.0
-scenarios. The layer-hardening/foreign-heights pack becomes an
+re-sequencing), and 4.4.0's configurable sections precede the head
+work (the author's 2026-09-16 swap ruling): the marker's interactive
+controls depend on the common action policy and session ownership
+from 4.2.0, and its lifecycle boundaries are proven by the 4.0.2
+repairs and the 4.1.0 scenarios. The layer-hardening/foreign-heights pack becomes an
 explicit gate for the resolver/coordinate work, scoped to the
 behaviour the marker relies on; continuous-Z/vase support stays a
 distinct capability and is not a requirement for every preceding
