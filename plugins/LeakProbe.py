@@ -165,7 +165,40 @@ class LeakProbe:
         self._trace_snapshot = None
         self._qml_previous = {}
         self._sizes_previous = {}
+        self._log_path = self._pick_log_path()
+        # One registration line per launch: the pid and install path
+        # name the instance, and the raw toggle value proves what the
+        # preference read saw — the Windows run logged nothing at all
+        # and the silence could not say why.
+        try:
+            from UM.Application import Application
+            from .PrinterConfig import PrinterConfigStore
+            raw = Application.getInstance().getPreferences().getValue(
+                PrinterConfigStore.LEGACY_MAP["memory_diagnostics_log"])
+        except Exception as exc:
+            raw = f"read-err {exc!r}"
+        self._log(f"registered toggle={raw!r} pid={os.getpid()} "
+                  f"path={os.path.dirname(os.path.dirname(os.path.abspath(__file__)))} "
+                  f"platform={sys.platform} log={self._log_path}")
         self._timer.start()
+
+    @staticmethod
+    def _pick_log_path() -> str:
+        # The home-dir file first (the documented location); if the
+        # home write is unavailable, the Cura preferences dir keeps
+        # the instrument working and the registration line names the
+        # chosen path.
+        candidate = Path.home() / "moonraker_leak.log"
+        try:
+            with open(candidate, "a", encoding="utf-8"):
+                pass
+            return str(candidate)
+        except OSError:
+            try:
+                from UM.Resources import Resources
+                return str(Path(Resources.getStoragePath(Resources.Preferences)) / "moonraker_leak.log")
+            except Exception:
+                return str(candidate)
 
     def _enabled_now(self) -> bool:
         # The settings' diagnostics toggle — read live each minute,
@@ -246,7 +279,7 @@ class LeakProbe:
 
     def _log(self, message):
         try:
-            with open(_LOG_PATH, "a", encoding="utf-8") as handle:
+            with open(getattr(self, "_log_path", _LOG_PATH), "a", encoding="utf-8") as handle:
                 handle.write(f"{time.time():.0f} {message}\n")
                 handle.flush()
         except Exception:
