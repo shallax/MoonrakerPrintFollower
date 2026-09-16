@@ -1052,7 +1052,7 @@ ordered by dependency:
   feeds 4.2.0 planning only.
 - **The phase-2 rulings (2026-09-14, the author):** the architecture
   review's re-sequencing adopted fully (the presentation refactor
-  becomes 4.3.0, the physical head moves to 4.4.0); the TESTING.md
+  becomes 4.3.0, the physical head moves to 4.5.0); the TESTING.md
   reconciliation moves into 4.1.0 (re-ruling the round-6 deferral);
   draft PR #19 closes as superseded with nothing of the review lost
   and every finding dispositioned; 1920x1080 everywhere.
@@ -1432,12 +1432,26 @@ carries its reason (F10).
 
 ## 4.3.0 — Monitor & file-manager presentation refactor
 
+SHIPPED 2026-09-16 (branch release/v4.3.0, awaiting the author's
+snapshot nod): the strip, the pause/resume policy rows, the
+print-start owner, the metadata adoption, the UI-state store, the
+caption states, the slider track-click fix, the harness evidence
+layer, and the full per-section extraction (22 components). The
+phase-6 re-review and a fresh adversarial round dispositioned in
+`review/DECISIONS.md`; their blockers are fixed (the refocus walk's
+cross-document ids, the misplaced System/MCUs instantiations, the
+zero-width headers, the spacer gates, the pause_resume lane and
+capability fail-closed, the metadata mismatch no-latch, the strip's
+three absent states and the unlabelled temps pair). The strip's
+staleness witness (a test that stops the feed) rides the
+pre-release harness run.
+
 The 2026-09-14 re-sequencing inserted this release: the presentation
 debt gets a bounded delivery of its own instead of compounding under
 the physical-head feature. The review's F07 plus F06's structural
 completion, with fixed component scope and measurable exit criteria —
 not a repository-wide redesign. The 2026-09-15 scoping ruling keeps
-4.4.0 separate and folds every 4.2.0 deferral plus the round-2
+4.5.0 separate and folds every 4.2.0 deferral plus the round-2
 pro-user planning input (2026-09-15) into this release. The round-1
 critic (2026-09-15) corrected three false premises; the seven-persona
 panel (2026-09-15) settled the strip's shape, lane and budget, and
@@ -1460,13 +1474,13 @@ the decisions ledger.
   (the load-indicator precedent). Status-only (the 2026-09-15
   ruling): the factor sliders, the z-offset nudges and the
   extrude/retract controls stay in the Monitor — the Preview
-  control dock is a 4.4.0 planning item with the jog pad. On the
+  control dock is a 4.5.0 planning item with the jog pad. On the
   card, the strip rides its dual-host placement for free — no
   third host surface (re-ruled 2026-09-15 from a separate strip).
   If the control dock lands, the strip breaks out to its own
   surface then — the card rows are the simple form (the
   2026-09-15 ruling), built as a property-driven component with
-  no card-internal state so the 4.4.0 host change is a re-home,
+  no card-internal state so the 4.5.0 host change is a re-home,
   not a rewrite. Snapshot-0 mock before wiring.
 
   The panel's rulings (2026-09-15, dispositions in the ledger):
@@ -1500,7 +1514,7 @@ the decisions ledger.
     sentinel — the sticky publish dict never removes a key, and a
     re-stamped block never goes stale. The block is generic (a
     "Preview value block per poll with a stated staleness rule")
-    so the 4.4.0 camera thumbnail and marker readouts reuse it.
+    so the 4.5.0 camera thumbnail and marker readouts reuse it.
   - The temps. Reuse `chart_temperature_objects` — never a fresh
     classification (hotend and bed are "system" objects; a
     temperature-filter misses them). target 0.0 means no
@@ -1532,7 +1546,7 @@ the decisions ledger.
     there are 750 px of verified vertical headroom. The real
     constraint is the bottom-anchored card's overflow over Cura's
     viewport — the budget states its headroom rule (what happens
-    when the 4.4.0 dock is added), not just a maximum.
+    when the 4.5.0 dock is added), not just a maximum.
 - **Operation extraction — two slices, separately revertible
   (split after the round-1 critic).** Slice one: the print-start
   owner extraction completes — the queued outcome, the
@@ -1654,7 +1668,19 @@ the decisions ledger.
   target is not an acceptance criterion; the test is that a feature
   change stays within its component.
 
-## 4.4.0 — Physical head in the Preview (moved from 4.3.0)
+## 4.4.0 — Configurable sections
+
+A candidate from the author (2026-09-15): show/hide and re-order the
+Monitor's collapsible sections — possibly whole panes — the way the
+file manager's columns already work. The machinery it builds on is
+mostly shipped or landing now: the 23 pinned section ids (4.3.0's
+exact-set pin — any rename, re-order or visibility rule must respect
+it), the collapse map as the persistence precedent, the file
+manager's column UI (visibility + drag re-order) as the interaction
+precedent, and the UI-state store's merge-write path as the persistence
+home. Unplanned until the 4.5.0 physical-head marker ships.
+
+## 4.5.0 — Physical head in the Preview (moved from 4.3.0)
 
 What a web dashboard cannot do: show the real machine inside the slice.
 The 4.3.0 presentation refactor lands first (the 2026-09-14
@@ -1690,7 +1716,7 @@ refactor finishes.
   looking at the actual toolpath. The Preview control dock lands with
   it: the factor sliders ruled out of the 4.3.0 strip (2026-09-15)
   find their Preview home here; z-offset and extrude/retract stay
-  Monitor-side unless 4.4.0's planning re-rules them. When the dock
+  Monitor-side unless 4.5.0's planning re-rules them. When the dock
   lands, the status strip breaks out of the card to its own surface
   (the 2026-09-15 ruling).
 - A shared coordinate-transform module — corrected by the pro-user
@@ -1725,7 +1751,7 @@ height + one-click pause-at-next-layer + the layer-to-mm readout
 waypoints (M600, `; filament change`) on the layer timeline with
 time-to-go; (5) a camera thumbnail in the Preview (investigate, don't
 assume); (6) active-tool label + per-extruder path colouring.
-The ranking is stale and is re-derived at 4.4.0's planning round
+The ranking is stale and is re-derived at 4.5.0's planning round
 (PUF4, 2026-09-15): pause-at-layer and the layer-to-mm readout
 already ship, item (1) moved to 4.3.0 and item (2) was dropped
 there — only pause-at-Z-height of the original three remains open.
@@ -1831,17 +1857,6 @@ weaker than Mainsail's for anyone with a library.
   whenever a key is set and the stream host is remote. Loopback-only
   listener, header-buffer cap, per-connection upstreams.
 
-## 4.5.0 — Configurable sections (candidate)
-
-A candidate from the author (2026-09-15): show/hide and re-order the
-Monitor's collapsible sections — possibly whole panes — the way the
-file manager's columns already work. The machinery it builds on is
-mostly shipped or landing now: the 23 pinned section ids (4.3.0's
-exact-set pin — any rename, re-order or visibility rule must respect
-it), the collapse map as the persistence precedent, the file
-manager's column UI (visibility + drag re-order) as the interaction
-precedent, and the UI-state store's sizes map as the persistence
-home. Unplanned until 4.4.0 ships.
 
 ## 4.0.0 notes — WebSockets as a transport swap (panel history)
 
@@ -1896,7 +1911,7 @@ contrast; pairwise hue separation is the residual debt).
   (travels, Z-hops and parks exceed the window by design), the
   anomaly cases are not visible through the commanded position,
   and the surviving value did not repay a five-owner plumbing
-  change. A deviation callout beside the 4.4.0 physical-head
+  change. A deviation callout beside the 4.5.0 physical-head
   marker is the one shape that might earn it back — with an actual
   head rendered, the number points at something on screen (the
   author, 2026-09-15).
