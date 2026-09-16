@@ -23,6 +23,9 @@ Cura.MachineAction {
     property bool validTranslation: manager.validTranslation(translateInputField.text, translateOutputField.text)
     property bool connectionRequested: enabledBox.checked || (urlField.text.trim() !== "" && urlField.text.trim() !== "http://" && urlField.text.trim() !== "https://")
     property bool canSave: validPollInterval && validAuxInterval && validConsoleInterval && validZTolerance && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
+    // A refused save must be visible: the dialog accepted nothing and
+    // said nothing, so the change seemed to revert (the live report).
+    property bool saveRefused: false
 
     function followMode() {
         if (completedMode.checked)
@@ -35,8 +38,10 @@ Cura.MachineAction {
     }
 
     function save(closeDialog) {
-        if (!base.canSave)
+        if (!base.canSave) {
+            saveRefused = true;
             return;
+        }
         var saved = manager.saveConfig({
                 "enabled": enabledBox.checked,
                 "url": urlField.text,
@@ -70,6 +75,7 @@ Cura.MachineAction {
                 "filename_translate_output": translateOutputField.text,
                 "filename_translate_remove": translateRemoveField.text
             });
+        saveRefused = !saved;
         if (saved && closeDialog)
             actionDialog.close();
     }
@@ -102,10 +108,21 @@ Cura.MachineAction {
         text: manager.machineName
     }
 
+    UM.Label {
+        id: saveRefusedLabel
+        anchors.top: machineLabel.bottom
+        anchors.topMargin: UM.Theme.getSize("default_margin").height / 2
+        anchors.left: parent.left
+        anchors.leftMargin: UM.Theme.getSize("default_margin").width
+        visible: saveRefused
+        text: "Settings were not saved — fix the highlighted fields and save again."
+        color: UM.Theme.getColor("error")
+    }
+
     UM.TabRow {
         id: tabBar
         z: 5
-        anchors.top: machineLabel.bottom
+        anchors.top: saveRefusedLabel.visible ? saveRefusedLabel.bottom : machineLabel.bottom
         anchors.topMargin: UM.Theme.getSize("default_margin").height
         width: parent.width
 
