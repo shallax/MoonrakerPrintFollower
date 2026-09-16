@@ -129,8 +129,8 @@ class SourceContractTests(unittest.TestCase):
             "BedMeshPresenter": {"BedMeshSceneNode"},
             "BedMeshSceneNode": set(),
             "CameraBridge": set(),
-            "CuraAdapter": {"FollowPassController"},  # the follow pass's guarded hooks
-            "CuraIntegration": {"CuraLifecycleBridge"},
+            "CuraAdapter": set(),
+            "CuraIntegration": {"CuraLifecycleBridge", "NativeNozzleLifecycle"},
             "CuraLifecycleBridge": set(),
             "CuraOutputWriter": set(),
             "LeakProbe": {"PrinterConfig"},  # the gated overnight-leak instrument — the preference key's owner
@@ -165,14 +165,12 @@ class SourceContractTests(unittest.TestCase):
             "ToolheadPolicy": set(),
             "MoonrakerOutputDevice": {"CuraOutputWriter", "MonitorPermissions", "UploadController"},
             "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice"},
-            "MoonrakerPrintFollower": {"FollowerRuntime", "FollowPassController", "LeakProbe", "WhatsNewOverlay"},
+            "MoonrakerPrintFollower": {"FollowerRuntime", "LeakProbe", "WhatsNewOverlay"},
             "MoonrakerProtocol": set(),
             "MoonrakerSession": {"MoonrakerSocket", "MoonrakerTransport"},
             "MoonrakerSocket": {"SocketFraming"},
             "MoonrakerTransport": {"MoonrakerProtocol"},
-            "FollowMesh": set(),
-            "FollowPass": {"FollowMesh"},
-            "FollowPassController": {"FollowMesh", "FollowPass"},
+            "NativeNozzleLifecycle": set(),
             "SocketFraming": set(),
             "PauseController": {"PauseScheduleService"},
             "PauseScheduleService": set(),
@@ -193,7 +191,7 @@ class SourceContractTests(unittest.TestCase):
             "WhatsNewOverlay": set(),
         }
         # Cura adapters sanctioned to import cura APIs.
-        cura_exceptions = {"CuraOutputWriter", "FollowPass", "MoonrakerFollowerMachineAction", "MoonrakerMonitorModel", "MoonrakerOutputDevice", "PrinterBinding"}
+        cura_exceptions = {"CuraOutputWriter", "MoonrakerFollowerMachineAction", "MoonrakerMonitorModel", "MoonrakerOutputDevice", "PrinterBinding"}
         # The output plugin and Machine Action receive the follower at the
         # documented composition boundary; PrinterConfig and BedMeshPresenter
         # only contain the string inside preference-key literals.
@@ -216,10 +214,11 @@ class SourceContractTests(unittest.TestCase):
         # The architectural invariant (the review's ruling): production
         # plugin code never assigns to methods or attributes on classes
         # imported from Cura/Uranium — the renderer integration rides
-        # the public APIs (addRenderPass, setLayerBindings). The
-        # retired patch modules must not reappear.
+        # the public APIs. The retired patch module must not reappear;
+        # the nozzle lifecycle repair is the sanctioned exception, its
+        # own module, public APIs only.
         self.assertFalse((PLUGINS / "RendererAdaptation.py").is_file())
-        self.assertFalse((PLUGINS / "NativeNozzleLifecycle.py").is_file())
+        self.assertTrue((PLUGINS / "NativeNozzleLifecycle.py").is_file())
         for path in PLUGINS.glob("*.py"):
             tree = ast.parse(path.read_text(), filename=path.name)
             foreign = set()
