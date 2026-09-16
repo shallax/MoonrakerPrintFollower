@@ -26,7 +26,13 @@ from PyQt6.QtCore import QObject, QTimer
 from .CuraAdapter import preview_max_paths, set_preview_minimum_path, set_preview_path
 from .PreviewSmoothing import advance_display, interpolate_target
 
-TICK_MS = 33
+# 200 ms, down from 33: every tick drives a set_preview_path on the
+# simulation view — at 30 fps that is a render-driving loop for the
+# WHOLE print, and the live report's native RSS jumps (2.2 GB steps
+# with no Python trace) are its accumulation on real GPU drivers.
+# 5 fps is visually identical for a head moving at layer-fraction
+# speeds and cuts the render traffic six-fold.
+TICK_MS = 200
 # The physical rate is derived from a sliding window of observations, not
 # from consecutive polls: per-poll deltas are tiny and quantised at fast
 # polling rates, and differencing them makes the glide speed wobble.
@@ -73,6 +79,7 @@ class PreviewMotion(QObject):
         self._target = None
         self._displayed = None
         self._velocity = 0.0
+        self._min_set = False
         self._history = deque()
         self._last = 0.0
         # Interpolation ramp state: the two most recent observations and
@@ -192,7 +199,12 @@ class PreviewMotion(QObject):
             return
         with self._cura.writing_preview():
             set_preview_path(view, fraction * maximum)
-            set_preview_minimum_path(view, 0)
+            # The minimum is constant while following — writing it on
+            # every tick was a second view mutation per frame. Set it
+            # once per view and leave it.
+            if not self._min_set:
+                set_preview_minimum_path(view, 0)
+                self._min_set = True
         self._remember()
 
     def _trace(self, event: str, now: float, layer, fraction: float, method: str = "") -> None:
