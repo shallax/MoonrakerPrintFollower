@@ -54,6 +54,22 @@ class StateStoreTests(unittest.TestCase):
         self.assertIsNone(store.read())
         self.assertEqual(len(self.notes), 2)
 
+    def test_write_survives_a_platform_without_ono_follow(self):
+        # Windows: os has no O_NOFOLLOW, and the old unconditional
+        # flag turned EVERY state write into a failure — the
+        # what's-new marker never persisted and the overlay offered
+        # itself on every launch (the author's Windows run). The
+        # open must degrade to the plain flags there.
+        saved = getattr(os, "O_NOFOLLOW", None)
+        try:
+            del os.O_NOFOLLOW
+            self.assertTrue(self.store.write({"whatsNewSeen": "4.3.0"}))
+            with open(self.path, encoding="utf-8") as handle:
+                self.assertEqual(json.load(handle)["whatsNewSeen"], "4.3.0")
+        finally:
+            if saved is not None:
+                os.O_NOFOLLOW = saved
+
     def test_write_failure_reports_once_per_session(self):
         store = StateStore(os.path.join(self.dir.name, "missing", "sections.json"),
                            note=lambda kind, text: self.notes.append((kind, text)))

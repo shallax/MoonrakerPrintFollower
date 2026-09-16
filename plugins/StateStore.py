@@ -76,9 +76,16 @@ class StateStore:
                 document = dict(update)
             # O_NOFOLLOW: a pre-existing symlink at the .tmp path must
             # not be written through (truncating whatever it points
-            # at, as this user); 0o600: the file now carries two
-            # features' state.
-            fd = os.open(self._path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            # at, as this user). The flag is POSIX-only — Windows has
+            # no such risk at .tmp and its os lacks the constant, so
+            # the open must degrade there (the author's Windows run:
+            # every state write failed and the what's-new marker never
+            # persisted); 0o600: the file now carries two features'
+            # state.
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(self._path + ".tmp", flags, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 # allow_nan=False: NaN/Infinity round-trip through
                 # Python's own loader but are non-standard JSON for
