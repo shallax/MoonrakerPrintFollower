@@ -93,7 +93,11 @@ class CameraBridge(QObject):
             if reply is not None:
                 try: reply.abort()
                 except Exception: pass
+                try: reply.deleteLater()
+                except Exception: pass
             try: socket.abort()
+            except Exception: pass
+            try: socket.deleteLater()
             except Exception: pass
         self._relays.clear()
 
@@ -185,10 +189,18 @@ class CameraBridge(QObject):
     def _on_upstream_finished(self, socket: QTcpSocket, reply: QNetworkReply) -> None:
         relay = self._relays.get(socket)
         if relay is None or relay[0] is not reply:
+            # A reply whose relay is already gone: still release the
+            # NAM-owned object (the live report: finished replies and
+            # accepted sockets accumulated while the tracking dict
+            # stayed empty).
+            try: reply.deleteLater()
+            except Exception: pass
             return
         # Pop on every exit: the error path previously relied on the
         # abort->disconnected signal to clean up, a fragile dependency.
         self._relays.pop(socket, None)
+        try: reply.deleteLater()
+        except Exception: pass
         if reply.error() != QNetworkReply.NetworkError.NoError:
             code = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
             Logger.log("i", "Moonraker camera bridge upstream failed: %s (HTTP %s)", reply.errorString(), code)
@@ -210,3 +222,10 @@ class CameraBridge(QObject):
         if relay is not None and relay[0] is not None:
             try: relay[0].abort()
             except Exception: pass
+            try: relay[0].deleteLater()
+            except Exception: pass
+        # The accepted socket is parented to the server, which never
+        # destroys it — every connection must release itself (the live
+        # report: 100 completed requests left 100 sockets alive).
+        try: socket.deleteLater()
+        except Exception: pass

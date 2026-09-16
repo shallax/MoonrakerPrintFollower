@@ -758,6 +758,17 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertIn(b"multipart/x-mixed-replace", bytes(payload))
         self.assertTrue(any(path == "/webcam/?action=stream" and key == "test-key"
                             for path, key in received), received)
+        # The bridge must release its relay objects: the accepted
+        # socket is parented to the server and the reply to the NAM —
+        # without deleteLater both survive every request (the live
+        # report: 100 completed requests left 100 sockets alive).
+        socket.abort()
+        for _ in range(200):
+            self.qt.events(10)
+            if not bridge._server.findChildren(QTcpSocket):
+                break
+        self.assertEqual(bridge._server.findChildren(QTcpSocket), [])
+        self.assertEqual(bridge._relays, {})
 
     def test_real_http_thumbnail_fetch_follows_metadata_path(self):
         # Live-proven: a real Moonraker answers <file>.png with 404 —
