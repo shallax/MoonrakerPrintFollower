@@ -224,7 +224,11 @@ Item {
 
             Row {
                 width: parent.width
-                height: UM.Theme.getFont("default").pixelSize
+                // The row sizes from its labels' natural line height:
+                // the theme's default font is point-sized (pixelSize
+                // reads -1), so a pixelSize-bound row collapsed to the
+                // clipped line box and chopped the glyphs (the gate's
+                // census measured a 10 px row with 7 px ink).
                 spacing: base.buttonSpacing
 
                 UM.Label {
@@ -234,7 +238,6 @@ Item {
                     // °C" ≈ 149 px at the default font) fits with
                     // slack; the labelled form never did.
                     width: 160 * screenScaleFactor
-                    height: parent.height
                     color: UM.Theme.getColor("text")
                     font: UM.Theme.getFont("default")
                     verticalAlignment: Text.AlignVCenter
@@ -255,7 +258,6 @@ Item {
                     id: stripSlot
                     objectName: "moonrakerStripSlot"
                     width: 130 * screenScaleFactor
-                    height: parent.height
                     horizontalAlignment: Text.AlignRight
                     color: UM.Theme.getColor("text_inactive")
                     font: UM.Theme.getFont("default")
