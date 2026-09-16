@@ -97,3 +97,12 @@ def set_preview_path(view, value: float) -> None:
 def set_preview_minimum_path(view, value: int) -> None:
     if view is not None and hasattr(view, "setMinimumPath"):
         view.setMinimumPath(value)
+
+
+def reset_preview_layer_data(view) -> None:
+    """Drop the current layer's cached mesh/jump data (Cura's
+    resetLayerData): the per-layer release the follower calls at each
+    layer transition so the render accumulation never spans layers
+    (the live report's native RSS jumps)."""
+    if view is not None and hasattr(view, "resetLayerData"):
+        view.resetLayerData()

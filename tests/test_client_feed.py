@@ -433,6 +433,51 @@ if QT_AVAILABLE:
             self.assertNotIn(10, controller.layers)
             self.assertNotIn(10, controller.states)
 
+    class PreviewMotionReleaseTests(unittest.TestCase):
+        def test_layer_change_resets_the_exiting_layers_cache_before_the_write(self):
+            # The per-layer release (the live report's native RSS
+            # steps): the exiting layer's cached mesh/jump data is
+            # dropped BEFORE the new path is written — one cache slot,
+            # one reset per transition.
+            from contextlib import contextmanager
+            from plugins.PreviewMotion import PreviewMotion
+
+            class FakeView:
+                def __init__(self):
+                    self.calls = []
+                    self.max_paths = 100
+
+                def getMaxPaths(self):
+                    return self.max_paths
+
+                def setPath(self, value):
+                    self.calls.append(("path", value))
+
+                def setMinimumPath(self, value):
+                    self.calls.append(("min", value))
+
+                def resetLayerData(self):
+                    self.calls.append(("reset",))
+
+            class FakeCura:
+                def __init__(self, view):
+                    self.view = view
+
+                @contextmanager
+                def writing_preview(self):
+                    yield
+
+            view = FakeView()
+            motion = PreviewMotion(FakeCura(view), remember=lambda: None)
+            motion.write(0, 0.5)
+            resets_before = [i for i, call in enumerate(view.calls) if call[0] == "reset"]
+            motion.write(1, 0.1)
+            second_path = next(i for i, call in enumerate(view.calls)
+                               if call[0] == "path" and abs(call[1] - 10.0) < 1e-9)
+            self.assertTrue(any(i > resets_before[-1] for i in [second_path]),
+                            "the reset must land before the new layer's path write")
+            self.assertEqual([call for call in view.calls if call[0] == "reset"], [("reset",), ("reset",)])
+
     class SocketFragmentMergeTests(unittest.TestCase):
         """The 2026-09-16 live report: M117 invisible while printing.
         Moonraker pushes only the CHANGED fields per object, and the
