@@ -31,13 +31,7 @@ from .CuraAdapter import (
 )
 from .PreviewSmoothing import advance_display, interpolate_target
 
-# 200 ms, down from 33: every tick drives a set_preview_path on the
-# simulation view — at 30 fps that is a render-driving loop for the
-# WHOLE print, and the live report's native RSS jumps (2.2 GB steps
-# with no Python trace) are its accumulation on real GPU drivers.
-# 5 fps is visually identical for a head moving at layer-fraction
-# speeds and cuts the render traffic six-fold.
-TICK_MS = 200
+TICK_MS = 33
 # The physical rate is derived from a sliding window of observations, not
 # from consecutive polls: per-poll deltas are tiny and quantised at fast
 # polling rates, and differencing them makes the glide speed wobble.
