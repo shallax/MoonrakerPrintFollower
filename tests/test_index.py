@@ -356,6 +356,34 @@ G1 X5 Y0 Z0.2
         finally:
             os.remove(path)
 
+    def test_compact_hydration_anchor_reads_the_indexes_followed_layer(self):
+        # The production connection (the review repro): the service
+        # updates the followed layer every poll and the worker reads
+        # the LATEST anchor at completion — a prefetch of layer+1 must
+        # not drift the window ahead of the print, and a worker
+        # finishing after an anchor change applies the new policy.
+        data = (b"G90\n;LAYER:0\nG1 X1 Y1 Z0.2\nG1 X2 Y2 Z0.2\n;LAYER:1\nG1 X3 Y3 Z0.4\n"
+                b";LAYER:2\nG1 X4 Y4 Z0.6\n;LAYER:3\nG1 X5 Y5 Z0.8\n;LAYER:4\nG1 X6 Y6 Z1.0\n"
+                b";LAYER:5\nG1 X7 Y7 Z1.2\n")
+        with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False) as handle:
+            path = handle.name
+            handle.write(data)
+        try:
+            index = build_index_from_file(path, compact=True)
+            index.followed_layer = 3
+            self.assertTrue(hydrate_layer_from_file(index, path, 2))
+            self.assertTrue(hydrate_layer_from_file(index, path, 3))
+            self.assertTrue(hydrate_layer_from_file(index, path, 4))  # the prefetch
+            self.assertEqual(index.hydrated_layers, {2, 3, 4})
+            # The print advances; a later worker applies the latest
+            # anchor and evicts the stale previous layer.
+            index.followed_layer = 4
+            self.assertTrue(hydrate_layer_from_file(index, path, 5))
+            self.assertEqual(index.hydrated_layers, {3, 4, 5})
+            self.assertEqual(index.motion_count(2), 0)
+        finally:
+            os.remove(path)
+
     def test_compact_hydration_preserves_relative_and_inch_state(self):
         # Compact indexes must remember modal state at the layer boundary.
         # Otherwise hydrating only the selected layer would incorrectly parse

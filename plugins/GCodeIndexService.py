@@ -66,7 +66,6 @@ class GCodeIndexService(QObject):
         self._wanted = self._restored = self._save = False
         self._hydrate = set()
         self._hydrating = None
-        self._followed = None
         self._failed_hydrate = set()
         self._closed = False
         self._error = ""
@@ -92,7 +91,6 @@ class GCodeIndexService(QObject):
         self._wanted = self._restored = self._save = False
         self._hydrate.clear()
         self._hydrating = None
-        self._followed = None
         self._failed_hydrate.clear()
         self._error = ""
         # Keep _busy until the submitted worker actually completes. No new task
@@ -108,10 +106,25 @@ class GCodeIndexService(QObject):
         if view is not None and 0 <= layer < len(view.ranges) and not view.hydrated(layer):
             # Only the current and next layer are useful; never grow a work queue.
             self._hydrate = {int(layer), int(layer) + 1}
-            # The eviction window anchors to the FOLLOWED layer, not to
-            # whichever pending pick the worker hydrates next.
-            self._followed = int(layer)
             self._advance()
+
+    def set_followed_layer(self, layer):
+        """Anchor the retention window to the LIVE print's layer.
+
+        Updated every poll, even when that layer is already hydrated,
+        so the window follows the print between hydrations — the anchor
+        is never the REQUESTED layer (a prefetch would drift the window
+        one layer ahead of the print, the review repro).
+        """
+        if not isinstance(layer, int) or layer < 0 or self._view is None:
+            return
+        index = self._view._index
+        with index.cache_lock:
+            index.followed_layer = layer
+        # A moved anchor may have stranded a pending prefetch outside
+        # the window; drop it before the worker picks it.
+        self._hydrate = {n for n in self._hydrate if layer - 1 <= n <= layer + 1}
+        self._advance()
 
     def _on_files_changed(self):
         # A new file (or a re-downloaded one) invalidates failed hydration
@@ -141,8 +154,11 @@ class GCodeIndexService(QObject):
             cancel = self._cancel
             self._submit("build", lambda: build_index_from_file(lease.path, cancel), lease)
             return
+        index = self._view._index
         self._hydrate = {n for n in self._hydrate if n < len(self._view.ranges) and not self._view.hydrated(n)
-                         and n not in self._failed_hydrate}
+                         and n not in self._failed_hydrate
+                         and (index.followed_layer is None
+                              or index.followed_layer - 1 <= n <= index.followed_layer + 1)}
         if self._hydrate:
             lease = self._files.lease()
             if lease is None:
@@ -151,11 +167,10 @@ class GCodeIndexService(QObject):
             layer = min(self._hydrate)
             self._hydrate.remove(layer)
             self._hydrating = layer
-            index = self._view._index
-            anchor = self._followed
-            self._submit("hydrate",
-                         lambda: hydrate_layer_from_file(index, lease.path, layer, keep_anchor=anchor),
-                         lease)
+            # No anchor argument: the worker reads the index's
+            # followed_layer at COMPLETION, so a worker that finishes
+            # after an anchor change applies the latest policy.
+            self._submit("hydrate", lambda: hydrate_layer_from_file(index, lease.path, layer), lease)
         elif self._save and strong:
             self._save = False
             index = self._view._index

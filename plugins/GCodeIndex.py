@@ -69,6 +69,11 @@ class LayerMotionIndex:
     pauses: Tuple[int, ...] = ()
     compact: bool = False
     hydrated_layers: set[int] = field(default_factory=set, repr=False)
+    # The LIVE print's layer — the retention window's anchor, updated
+    # by the service every poll even when that layer is already
+    # hydrated. Runtime state: never saved to or restored from the
+    # cache.
+    followed_layer: Optional[int] = field(default=None, repr=False)
     cache_lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def __bool__(self) -> bool:
@@ -567,8 +572,10 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
     keep_anchor names the FOLLOWED layer: the eviction window keeps
     [anchor-1, anchor+1] around it, so a prefetched look-ahead layer
     survives and the window follows the print rather than whichever
-    layer the background worker picked last. Without an anchor the
-    hydrated layer is the anchor.
+    layer the background worker picked last. Without keep_anchor the
+    anchor is the index's followed_layer (set by the service, read
+    HERE at completion so a worker finishing after an anchor change
+    applies the latest policy), then the hydrated layer.
     """
     if not index.compact or layer in index.hydrated_layers:
         return True
@@ -631,7 +638,11 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int,
             # look-ahead layers around the anchor; any reader of an
             # evicted layer sees an empty array (the same degraded
             # fallback as a never-hydrated one).
-            anchor = layer if keep_anchor is None else keep_anchor
+            anchor = keep_anchor
+            if anchor is None:
+                anchor = index.followed_layer
+            if anchor is None:
+                anchor = layer
             for old in sorted(index.hydrated_layers):
                 if old < anchor - 1 or old > anchor + 1:
                     index.motion_offsets[old] = array("Q")
