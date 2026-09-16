@@ -332,28 +332,41 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 return False
 
             # The sliders deliver JS numbers (e.g. 250.0); the legacy
-            # text fields delivered digit strings. Accept both.
-            interval = int(float(str(raw.get("poll_interval_ms", "")).strip()))
-            aux_interval = int(float(str(raw.get("aux_interval_ms", "")).strip()))
-            console_interval = int(float(str(raw.get("console_interval_ms", "")).strip()))
-            tolerance = float(str(raw.get("z_tolerance", "")).strip())
-            retry_interval = float(str(raw.get("ready_retry_interval_s", "")).strip())
+            # text fields delivered digit strings. Accept both. Every
+            # refusal names its reason in the log — a save that fails
+            # validation must never fail silently (the toggle-revert
+            # report: the dialog accepted nothing and said nothing).
+            try:
+                interval = int(float(str(raw.get("poll_interval_ms", "")).strip()))
+                aux_interval = int(float(str(raw.get("aux_interval_ms", "")).strip()))
+                console_interval = int(float(str(raw.get("console_interval_ms", "")).strip()))
+                tolerance = float(str(raw.get("z_tolerance", "")).strip())
+                retry_interval = float(str(raw.get("ready_retry_interval_s", "")).strip())
+            except ValueError as exc:
+                Logger.log("w", "Moonraker settings save refused: unparsable field (%s)", exc)
+                return False
             url = normalise_url(str(raw.get("url", "")))
             enabled = bool(raw.get("enabled", False))
             if not (250 <= interval <= 3_600_000):
+                Logger.log("w", "Moonraker settings save refused: poll interval out of range")
                 return False
             if not (250 <= aux_interval <= 60_000) or not (250 <= console_interval <= 60_000):
+                Logger.log("w", "Moonraker settings save refused: aux/console interval out of range")
                 return False
             if not (0.005 <= tolerance <= 0.250):
+                Logger.log("w", "Moonraker settings save refused: z tolerance out of range")
                 return False
             if not (0.1 <= retry_interval <= 60.0):
+                Logger.log("w", "Moonraker settings save refused: retry interval out of range")
                 return False
             if enabled and not self._url_is_usable(url):
+                Logger.log("w", "Moonraker settings save refused: the URL is not usable")
                 return False
 
             trans_input = str(raw.get("filename_translate_input") or "")
             trans_output = str(raw.get("filename_translate_output") or "")
             if len(trans_input) != len(trans_output):
+                Logger.log("w", "Moonraker settings save refused: translate input/output lengths differ")
                 return False
 
             mode = str(raw.get("follow_mode") or FollowMode.EXACT.value)

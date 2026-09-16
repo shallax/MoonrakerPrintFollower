@@ -62,6 +62,13 @@ class SdkCompatibilityTests(unittest.TestCase):
         self.assertNotIn("getSupportedActionMachineList", MACHINE_ACTION)
         self.assertIn("getMachineActionManager().addSupportedAction", MACHINE_ACTION)
 
+    def test_settings_qml_surfaces_a_refused_save(self):
+        # The save-refusal surface (the toggle-revert report): the
+        # dialog must show when a save was refused, never accept and
+        # discard silently.
+        self.assertIn("saveRefused", CONFIG_QML)
+        self.assertIn("Settings were not saved", CONFIG_QML)
+
     def test_settings_qml_avoids_um_controls_added_in_sdk_8_3(self):
         for newer_control in (
             "UM.TextField",
