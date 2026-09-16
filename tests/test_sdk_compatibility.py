@@ -35,8 +35,6 @@ CAMERA_PANE_QML = QML_SOURCES["CameraPane.qml"]
 UPLOAD_QML = QML_SOURCES["MoonrakerUploadDialog.qml"]
 ACTION_QML = QML_SOURCES["MoonrakerPreviewCard.qml"]
 EMPTY_QML = QML_SOURCES["MoonrakerPreviewCard.qml"]
-FOLLOW_PASS = (PLUGINS / "FollowPass.py").read_text()
-FOLLOW_CONTROLLER = (PLUGINS / "FollowPassController.py").read_text()
 README = (ROOT / "README.md").read_text()
 
 
@@ -88,11 +86,10 @@ class SdkCompatibilityTests(unittest.TestCase):
             "getCurrentPath",
         ):
             self.assertIn(token, PLUGIN)
-        # The follow-pass architecture exercises the capability-guarded
-        # SimulationView accessors through the public APIs (the nozzle
-        # lifecycle hack is gone).
-        self.assertIn("view.getSimulationPass()", FOLLOW_CONTROLLER)
-        self.assertIn("self._view.getNozzleNode()", FOLLOW_PASS)
+        # The nozzle lifecycle repair (the 4.2.0 shipped behaviour,
+        # restored with the follow pass's removal) rides the public
+        # SimulationView/SimulationPass APIs.
+        self.assertIn("keep_native_nozzle_visible", PLUGIN)
 
     def test_optional_qt_timeout_api_is_capability_guarded(self):
         for source in (PLUGIN, CLIENT, MACHINE_ACTION, MONITOR_MODEL):

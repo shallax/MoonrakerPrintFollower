@@ -245,9 +245,11 @@ class PreviewFollower:
             # a slow drag detached only after ~3 s). The window now
             # covers just the moment after an attach.
         self.update_eta(snapshot, index)
-        # The toolhead indicator renders through the follow pass (the
-        # review's architecture); the native nozzle lifecycle hack is
-        # gone. nozzle_valid stays as the observation record.
+        # The toolhead is Cura's own nozzle, rendered by its own
+        # SimulationPass; the lifecycle repair keeps it present for a
+        # plugin-loaded file (the 4.2.0 shipped behaviour, restored
+        # with the follow pass's removal).
+        if self._state.nozzle_valid and config.show_toolhead_indicator: self._cura.show_nozzle()
         return "Printer paused" if snapshot.observation.state == "paused" else "Following", hydration
 
     def _follow_path(self, view, layer, status, index, *, smooth=True):

@@ -41,9 +41,7 @@ class FollowerRuntime:
         # "Diagnostics"); it is never written in ordinary operation.
         trace_name = os.environ.get("MOONRAKER_FOLLOWER_SMOOTHING_TRACE")
         trace_path = os.path.join(cache_dir, trace_name) if trace_name else None
-        self.motion = PreviewMotion(self.cura, self.preview.remember, parent, trace_path=trace_path,
-                                    toolhead_enabled=lambda: self.binding.config.show_toolhead_indicator,
-                                    follow_pass_enabled=lambda: self.binding.config.follow_pass_enabled)
+        self.motion = PreviewMotion(self.cura, self.preview.remember, parent, trace_path=trace_path)
         self.preview.bind_motion(self.motion)
         self.pauses = PauseController(self.client, parent)
         self.presentation = PreviewPresentation(application, self.cura, parent)

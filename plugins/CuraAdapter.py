@@ -107,25 +107,3 @@ def reset_preview_layer_data(view) -> None:
     claim about the renderer's per-frame allocations (the review)."""
     if view is not None and hasattr(view, "resetLayerData"):
         view.resetLayerData()
-
-
-def update_follow_pass(view, layer: int, path_units: float, toolhead: bool = True) -> None:
-    """The follow pass's per-tick uniform (the review's render
-    architecture). Attaches lazily on the first write; every failure
-    leaves the vanilla preview in control. The pass rides the config's
-    debug toggle: PreviewMotion only calls here while it is on."""
-    try:
-        from .FollowPassController import attach, update
-        if attach(view):
-            update(int(layer), float(path_units), toolhead)
-    except Exception:
-        pass
-
-
-def reset_follow_pass() -> None:
-    """Restore Cura's own SimulationPass (a detach, a reset)."""
-    try:
-        from .FollowPassController import detach
-        detach()
-    except Exception:
-        pass

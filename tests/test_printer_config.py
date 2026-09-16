@@ -244,18 +244,6 @@ class PrinterConfigTests(unittest.TestCase):
         store.set(cfg)
         self.assertFalse(store.get().show_toolhead_indicator)
 
-    def test_follow_pass_toggle_defaults_off_and_round_trips(self):
-        # The debug toggle for the experimental render pass: off by
-        # default (the vanilla-path soak ruling), on only by choice.
-        self.assertFalse(PrinterConfig().follow_pass_enabled)
-        cfg = PrinterConfig.from_dict({"follow_pass_enabled": True})
-        self.assertTrue(cfg.follow_pass_enabled)
-
-        prefs = FakePreferences()
-        store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
-        store.set(cfg)
-        self.assertTrue(store.get().follow_pass_enabled)
-
     def test_camera_selection_round_trips_per_printer(self):
         active = ["printer-a", "Printer A"]
         store = PrinterConfigStore(FakePreferences(), lambda: tuple(active))
