@@ -478,6 +478,60 @@ if QT_AVAILABLE:
                             "the reset must land before the new layer's path write")
             self.assertEqual([call for call in view.calls if call[0] == "reset"], [("reset",), ("reset",)])
 
+        def test_the_follow_pass_rides_the_debug_toggle(self):
+            # The experimental pass's per-write uniform runs only
+            # while the toggle reads on; a falling edge hands the
+            # compositor back exactly once. Off (the soak default),
+            # nothing of the pass machinery is invoked at all.
+            from contextlib import contextmanager
+            from unittest import mock
+            from plugins.PreviewMotion import PreviewMotion
+
+            class FakeView:
+                def __init__(self):
+                    self.calls = []
+                    self.max_paths = 100
+
+                def getMaxPaths(self):
+                    return self.max_paths
+
+                def setPath(self, value):
+                    self.calls.append(("path", value))
+
+                def setMinimumPath(self, value):
+                    self.calls.append(("min", value))
+
+            class FakeCura:
+                def __init__(self):
+                    self.view = None
+
+                @contextmanager
+                def writing_preview(self):
+                    yield
+
+            enabled = {"value": False}
+            cura = FakeCura()
+            motion = PreviewMotion(cura, remember=lambda: None,
+                                   follow_pass_enabled=lambda: enabled["value"])
+            view = FakeView()
+            cura.view = view
+            with mock.patch("plugins.PreviewMotion.update_follow_pass") as updater, \
+                 mock.patch("plugins.PreviewMotion.reset_follow_pass") as resetter:
+                motion.write(0, 0.5)   # toggle off: no pass write
+                updater.assert_not_called()
+                enabled["value"] = True
+                motion.write(1, 0.6)   # toggle on: the uniform rides
+                updater.assert_called_once_with(view, 1, 60.0, toolhead=True)
+                motion.write(2, 0.7)   # still on: every write rides
+                self.assertEqual(updater.call_count, 2)
+                enabled["value"] = False
+                motion.write(3, 0.8)   # falling edge: one detach, no write
+                resetter.assert_called_once_with()
+                self.assertEqual(updater.call_count, 2)
+                enabled["value"] = True
+                motion.write(4, 0.9)   # back on: the pass resumes
+                self.assertEqual(updater.call_count, 3)
+
         def test_a_replacement_view_receives_its_minimum_write(self):
             # The once-per-view minimum keys to the VIEW, not a
             # session flag: after a new file load replaces the view,

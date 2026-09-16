@@ -112,7 +112,8 @@ def reset_preview_layer_data(view) -> None:
 def update_follow_pass(view, layer: int, path_units: float, toolhead: bool = True) -> None:
     """The follow pass's per-tick uniform (the review's render
     architecture). Attaches lazily on the first write; every failure
-    leaves the vanilla preview in control."""
+    leaves the vanilla preview in control. The pass rides the config's
+    debug toggle: PreviewMotion only calls here while it is on."""
     try:
         from .FollowPassController import attach, update
         if attach(view):
