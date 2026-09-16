@@ -51,7 +51,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
     def test_document_names_the_runtime_components_and_services(self):
         for module in (
             "PrinterBinding.py", "PrinterConfig.py", "CuraIntegration.py", "CuraAdapter.py",
-            "CuraLifecycleBridge.py", "NativeNozzleLifecycle.py", "FollowController.py",
+            "CuraLifecycleBridge.py", "FollowController.py",
             "PreviewPresentation.py", "PreviewFollower.py", "PreviewFormatting.py",
             "PreviewMotion.py", "PreviewSmoothing.py",
             "PrintCoordinator.py", "PrintState.py", "RemoteFileService.py", "DownloadStream.py",
@@ -130,10 +130,10 @@ class SourceContractTests(unittest.TestCase):
             "BedMeshSceneNode": set(),
             "CameraBridge": set(),
             "CuraAdapter": {"FollowPassController"},  # the follow pass's guarded hooks
-            "CuraIntegration": {"CuraLifecycleBridge", "NativeNozzleLifecycle"},
+            "CuraIntegration": {"CuraLifecycleBridge"},
             "CuraLifecycleBridge": set(),
             "CuraOutputWriter": set(),
-            "LeakProbe": {"PrinterConfig", "RendererAdaptation"},  # the gated overnight-leak instrument — the preference key's owner and the adaptation's evidence counters
+            "LeakProbe": {"PrinterConfig"},  # the gated overnight-leak instrument — the preference key's owner
             "DownloadStream": set(),
             "FileDownload": {"RemoteFileService"},
             "FileManager": {"FileManagerPolicy", "MoonrakerProtocol"},
@@ -165,16 +165,14 @@ class SourceContractTests(unittest.TestCase):
             "ToolheadPolicy": set(),
             "MoonrakerOutputDevice": {"CuraOutputWriter", "MonitorPermissions", "UploadController"},
             "MoonrakerOutputDevicePlugin": {"MoonrakerMonitorModel", "MoonrakerOutputDevice"},
-            "MoonrakerPrintFollower": {"FollowerRuntime", "WhatsNewOverlay"},
+            "MoonrakerPrintFollower": {"FollowerRuntime", "FollowPassController", "WhatsNewOverlay"},
             "MoonrakerProtocol": set(),
             "MoonrakerSession": {"MoonrakerSocket", "MoonrakerTransport"},
             "MoonrakerSocket": {"SocketFraming"},
             "MoonrakerTransport": {"MoonrakerProtocol"},
-            "RendererAdaptation": set(),
             "FollowPass": set(),
             "FollowPassController": {"FollowPass"},
             "SocketFraming": set(),
-            "NativeNozzleLifecycle": set(),
             "PauseController": {"PauseScheduleService"},
             "PauseScheduleService": set(),
             "PreviewFollower": {"CuraAdapter", "FollowController", "MoonrakerProtocol"},
@@ -212,6 +210,34 @@ class SourceContractTests(unittest.TestCase):
                 self.assertNotIn("_follower", source, module)
             if module not in cura_exceptions:
                 self.assertNotIn("from cura.", source, module)
+
+    def test_no_monkeypatching_of_cura_or_uranium_classes(self):
+        # The architectural invariant (the review's ruling): production
+        # plugin code never assigns to methods or attributes on classes
+        # imported from Cura/Uranium — the renderer integration rides
+        # the public APIs (addRenderPass, setLayerBindings). The
+        # retired patch modules must not reappear.
+        self.assertFalse((PLUGINS / "RendererAdaptation.py").is_file())
+        self.assertFalse((PLUGINS / "NativeNozzleLifecycle.py").is_file())
+        for path in PLUGINS.glob("*.py"):
+            tree = ast.parse(path.read_text(), filename=path.name)
+            foreign = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module and (
+                        node.module == "UM" or node.module.startswith("UM.")
+                        or node.module == "cura" or node.module.startswith("cura.")):
+                    foreign.update(alias.asname or alias.name for alias in node.names)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) \
+                                and target.value.id in foreign:
+                            self.fail(f"{path.name}: assigns to the Cura/Uranium class "
+                                      f"{target.value.id}.{target.attr} — the public-API-only invariant")
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                        and node.func.id == "setattr" and node.args \
+                        and isinstance(node.args[0], ast.Name) and node.args[0].id in foreign:
+                    self.fail(f"{path.name}: setattr on the Cura/Uranium class {node.args[0].id}")
 
     def test_local_import_graph_is_acyclic(self):
         graph = {path.stem: {n.module for n in ast.walk(ast.parse(path.read_text()))
@@ -442,7 +468,7 @@ class CompositionStructureTests(unittest.TestCase):
                      "CuraOutputWriter", "DownloadStream", "FollowController", "GCodeIndex", "GCodeIndexService",
                      "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting",
                      "MonitorTuning", "MoonrakerClient", "MoonrakerMonitorModel", "MoonrakerPrintFollower",
-                     "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "NativeNozzleLifecycle",
+                     "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport",
                      "PauseController", "PauseScheduleService", "PreviewFollower", "PreviewFormatting",
                      "PreviewMotion", "PreviewPresentation", "PreviewSmoothing", "PrintCoordinator",
                      "PrintStartOwner", "PrinterBinding", "PrinterConfig", "PrintState",
