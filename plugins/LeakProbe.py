@@ -16,6 +16,9 @@ take the plugin down.
 """
 from __future__ import annotations
 
+import os
+import resource
+import sys
 import time
 import tracemalloc
 from collections import deque
@@ -29,11 +32,24 @@ _TOP_N = 8
 
 
 def _rss_kb() -> int:
-    with open("/proc/self/status", encoding="utf-8") as handle:
-        for line in handle:
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1])
-    return 0
+    # Linux: the live RSS from /proc. macOS (the author's machine):
+    # ru_maxrss — the MAXIMUM since start, bytes there, KB on Linux.
+    # The max tracks the overnight slope fine (the 32 GB report's
+    # shape); a current-value read needs an external tool on macOS.
+    try:
+        with open("/proc/self/status", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except OSError:
+        pass
+    try:
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if sys.platform == "darwin":
+            rss //= 1024
+        return int(rss)
+    except Exception:
+        return 0
 
 
 def _qml_class_counts():
@@ -122,7 +138,11 @@ class LeakProbe:
         self._trace_snapshot = None
         self._qml_previous = {}
         self._sizes_previous = {}
-        self._log("start")
+        # The pid and the install path name the instance: the author's
+        # log showed three starts — multiple installed copies each
+        # register their own probe.
+        self._log("start pid=%s path=%s platform=%s" % (
+            os.getpid(), os.path.dirname(os.path.dirname(os.path.abspath(__file__))), sys.platform))
         self._timer.start()
 
     def _top_traces(self) -> list:
@@ -149,8 +169,8 @@ class LeakProbe:
     def _tick(self):
         try:
             self._log("rss=%dkb" % _rss_kb())
-        except Exception:
-            pass
+        except Exception as exc:
+            self._log(f"rss-err {exc!r}")
         try:
             qml = _qml_class_counts()
             for row in _diff(self._qml_previous, qml):
