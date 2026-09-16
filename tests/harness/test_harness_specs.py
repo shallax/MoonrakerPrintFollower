@@ -24,6 +24,18 @@ def _inline_code_values(spec):
 
 
 class HarnessSpecTests(unittest.TestCase):
+    def test_ui_test_holds_one_run_per_container(self):
+        # The 2026-09-16 census loss: two ui_test runs sharing one
+        # container restage the workdir and kill each other's
+        # simulator mid-scenario. The script must carry the
+        # per-container lock so a second run refuses up front.
+        script = (os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))) + "/tools/ui_test.sh")
+        with open(script, encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn(".ui_test-lock-$CONTAINER", source)
+        self.assertIn("one run per container at a time", source)
+        self.assertIn("trap 'rm -rf \"$LOCK_DIR\"' EXIT", source)
     def test_spec_ids_are_unique(self):
         ids = [spec["id"] for spec in _scenarios.SCENARIOS]
         duplicates = sorted({name for name in ids if ids.count(name) > 1})

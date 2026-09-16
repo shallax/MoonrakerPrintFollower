@@ -18,6 +18,25 @@ PLUGIN_VERSION="$(python3 -c 'import json; print(json.load(open("package.json"))
 
 CONTAINER="${HARNESS_CONTAINER:-mpf-cura513}"
 CONTAINER_WORK_DIR="/tmp/mpf"
+# ONE run per container at a time: a second run restages the shared
+# workdir and kills the first run's simulator mid-scenario (the
+# 2026-09-16 census loss). The lock is per-container so the gate's
+# parallel slots (each with its own container) still run together.
+# A holder that died without releasing leaves a stale lock — its pid
+# fails the liveness check and the lock is reclaimed.
+LOCK_DIR="$CONTAINER_WORK_DIR/.ui_test-lock-$CONTAINER"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+        rm -rf "$LOCK_DIR"
+        mkdir "$LOCK_DIR"
+    else
+        echo "ui_test: another harness run holds container $CONTAINER (pid ${holder:-unknown}) — one run per container at a time" >&2
+        exit 1
+    fi
+fi
+echo "$$" > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT
 # One display geometry for the whole suite (the round-2 contract):
 # the Xvfb screen, the capture SIZE and the window pin all resolve
 # from here, and the runner consumes them through the environment.
