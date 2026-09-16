@@ -111,12 +111,13 @@ class PreviewMotion(QObject):
             self._ramp_to = fraction
             self._obs_time = now
             self._timer.stop()
-            # The per-layer release (the live report's native RSS
-            # steps): drop the EXITING layer's cached mesh/jump data
-            # BEFORE the new path is written, so the new layer's build
-            # never allocates while the old layer's cache is still
-            # held. One cache slot, one reset — the entering layer
-            # holds nothing yet.
+            # A targeted per-transition cleanup, BEFORE the new path
+            # is written so the new layer builds while the old layer's
+            # cache slot is empty. resetLayerData only drops Cura's
+            # cached CURRENT solid-layer/travel mesh references — it
+            # is not a general graphics reset and does not bound the
+            # renderer's per-frame allocations (the review); the
+            # render-path work belongs to the renderer adaptation.
             reset_preview_layer_data(self._cura.view)
             self._write(fraction)
             return

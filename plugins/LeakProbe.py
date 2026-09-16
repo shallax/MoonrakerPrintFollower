@@ -24,6 +24,7 @@ import time
 import tracemalloc
 from collections import deque
 from pathlib import Path
+from typing import Tuple
 
 from PyQt6.QtCore import QTimer
 
@@ -37,20 +38,24 @@ _INTERVAL_MS = 60_000
 _TOP_N = 8
 
 
-def _rss_kb() -> int:
-    # Linux: the live RSS from /proc. macOS: the CURRENT resident size
-    # via mach task_info — ru_maxrss there is the peak since start,
-    # which can only rise and can never show a fall after cleanup (the
-    # review). Windows: the working set via the documented psapi
-    # export, PageFaultCount as its real DWORD width.
+def _rss_kb() -> Tuple[int, str]:
+    """(resident KB, source). The source names WHAT was measured —
+    current resident vs a peak fallback vs a failed read — so a log
+    line can never be mistaken for a current-RSS reading (the review:
+    the macOS peak fallback was silently labeled as RSS).
+    """
+    # Linux: the live RSS from /proc.
     try:
         with open("/proc/self/status", encoding="utf-8") as handle:
             for line in handle:
                 if line.startswith("VmRSS:"):
-                    return int(line.split()[1])
+                    return int(line.split()[1]), "proc-current"
     except OSError:
         pass
     if sys.platform == "darwin":
+        # The CURRENT resident size via mach task_info — ru_maxrss is
+        # the peak since start, which can only rise and can never show
+        # a fall after cleanup.
         try:
             import ctypes
             import ctypes.util
@@ -75,17 +80,17 @@ def _rss_kb() -> int:
             kernel = libc.task_info(libc.mach_task_self(), 20,  # MACH_TASK_BASIC_INFO
                                     ctypes.byref(info), ctypes.byref(count))
             if kernel == 0 and info.resident_size:
-                return int(info.resident_size) // 1024
-        except Exception:
-            pass
+                return int(info.resident_size) // 1024, "mach-current"
+        except Exception as exc:
+            return 0, f"mach-failed:{exc!r}"[:48]
         if resource is not None:
             try:
-                return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) // 1024
+                return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) // 1024, "ru_maxrss-peak-fallback"
             except Exception:
                 pass
     elif resource is not None:
         try:
-            return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+            return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss), "ru_maxrss-peak-fallback"
         except Exception:
             pass
     if sys.platform == "win32":
@@ -105,11 +110,14 @@ def _rss_kb() -> int:
                 getter = ctypes.windll.psapi.GetProcessMemoryInfo
             except Exception:
                 getter = ctypes.windll.kernel32.K32GetProcessMemoryInfo
-            getter(ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb)
-            return int(counters.WorkingSetSize) // 1024
-        except Exception:
-            pass
-    return 0
+            # The API's return is a BOOL — a failure must be reported,
+            # not silently read as zero.
+            if not getter(ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+                return 0, "win32-failed:GetProcessMemoryInfo"
+            return int(counters.WorkingSetSize) // 1024, "win32-working-set"
+        except Exception as exc:
+            return 0, f"win32-failed:{exc!r}"[:48]
+    return 0, "unavailable"
 
 
 def _qml_class_counts():
@@ -291,7 +299,8 @@ class LeakProbe:
             self._log("start pid=%s path=%s platform=%s" % (
                 os.getpid(), os.path.dirname(os.path.dirname(os.path.abspath(__file__))), sys.platform))
         try:
-            self._log("rss=%dkb" % _rss_kb())
+            rss, source = _rss_kb()
+            self._log(f"rss={rss}kb src={source}")
         except Exception as exc:
             self._log(f"rss-err {exc!r}")
         try:
