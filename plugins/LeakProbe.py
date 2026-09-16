@@ -327,6 +327,15 @@ class LeakProbe:
             self._sizes_previous = sizes
         except Exception as exc:
             self._log(f"  size-err {exc!r}")
+        try:
+            # The render-path adaptation's evidence (the review's
+            # acceptance): buffer creations stay bounded across frames,
+            # and prev_line_types rebuilds only on a source change.
+            from .RendererAdaptation import COUNTERS
+            self._log(f"  render-adaptation index_buffers_created={COUNTERS['index_buffers_created'][0]} "
+                      f"prev_line_types_recomputes={COUNTERS['prev_line_types_recomputes'][0]}")
+        except Exception:
+            pass
         for line in self._top_traces():
             self._log(line)
 
