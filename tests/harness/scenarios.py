@@ -764,7 +764,7 @@ else:
     qtest = _import_qtest()
     qtest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(click_x, click_y))
     qtest.qWait(300)
-    result = {"clicked": True, "value": slider.value, "x": click_x, "y": click_y}
+    result = {"clicked": True, "value": slider.property("value"), "x": click_x, "y": click_y}
 """
 
 P_FOLLOW_READ = """from UM.Application import Application
@@ -1428,6 +1428,11 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerStripTemps", "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerStripSlot", "budget": 30},
          {"op": "wait_rendered", "objectName": "moonrakerStripTemps", "contains": "205.2/210.0 °C · 60.0/60.0 °C", "budget": 30},
+         # The verdict lane settles BEFORE the click: a press while
+         # the block's verdicts still read the transition state hits
+         # a disabled button (the press falls through to the stage's
+         # background MouseArea).
+         {"op": "wait_model", "prop": "canPausePrint", "value": True, "budget": 15},
          # The strip's one control dispatches through the Monitor's
          # revalidated lane: while printing the button reads "Pause
          # print" and a real click sends the pause.

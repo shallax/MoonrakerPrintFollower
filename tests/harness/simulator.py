@@ -751,12 +751,18 @@ class StatusHandler(tornado.web.RequestHandler):
         elif path in ("print/pause", "print/resume", "print/cancel"):
             # The host's own state machine: the pause/resume/cancel
             # requests actually move print_stats, so the model's
-            # canPausePrint/canResumePrint gates follow the flow.
+            # canPausePrint/canResumePrint gates follow the flow. The
+            # authoritative bit rides the same transition (Klipper's
+            # cmd_PAUSE arms it, cmd_RESUME and the cancel's
+            # CLEAR_PAUSE clear it — the 4.3.0 rows read it).
             next_state = {"print/pause": "paused",
                           "print/resume": "printing",
                           "print/cancel": "cancelled"}[path]
-            self._printer.scenario(print_stats={**self._printer.state["print_stats"],
-                                                "state": next_state})
+            next_bit = path == "print/pause"
+            self._printer.scenario(
+                print_stats={**self._printer.state["print_stats"],
+                             "state": next_state},
+                pause_resume={"is_paused": next_bit})
             self.write(json.dumps({"result": "ok"}))
         elif path == "files/move":
             # Moonraker's move actually renames the file in the store —
