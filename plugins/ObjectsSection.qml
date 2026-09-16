@@ -8,8 +8,9 @@ import Cura 1.1 as Cura
 // out of the monitor as one property-driven component. The
 // confirmation dialog stays with the host — the section requests
 // it through a signal.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
     signal excludeRequested(string name)
 
@@ -20,7 +21,7 @@ Column {
     // permanent — empty until then.
     Layout.fillWidth: true
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "Objects"
         sectionId: "objects"
@@ -28,9 +29,7 @@ Column {
     }
     ColumnLayout {
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["objects"] !== false
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-        anchors.right: parent.right
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         spacing: UM.Theme.getSize("default_margin").height / 2
 

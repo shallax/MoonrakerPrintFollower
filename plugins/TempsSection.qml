@@ -7,11 +7,12 @@ import Cura 1.1 as Cura
 // The Temperatures section (4.3.0 extraction): the sensor rows
 // out of the monitor as one property-driven component. The host
 // keeps the capability gate.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "Temperatures"
         sectionId: "temps"
@@ -19,9 +20,7 @@ Column {
     }
     ColumnLayout {
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["temps"] !== false
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-        anchors.right: parent.right
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         spacing: UM.Theme.getSize("default_margin").height / 2
 

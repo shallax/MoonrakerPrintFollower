@@ -8,30 +8,26 @@ import Cura 1.1 as Cura
 // channel sliders out of the dashboard as one property-driven
 // component. The host owns the freeze lists and the refocus settle;
 // the sliders report interaction through the sink.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
     property bool freezeRepeaters: false
     property var frozenItems: []
     property var interactionSink: null
 
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "LEDs"
         sectionId: "leds"
         sectionIcon: "Star"
     }
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["leds"] !== false
-    }
-
     ColumnLayout {
-        width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.topMargin: UM.Theme.getSize("default_margin").height
+        Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.fillWidth: true
         visible: root.printerModel != null && root.printerModel.ledItems.length > 0 && root.printerModel.sectionExpandedMap["leds"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
         spacing: UM.Theme.getSize("thin_margin").height
@@ -220,11 +216,5 @@ Column {
                 }
             }
         }
-    }
-
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["leds"] !== false
     }
 }

@@ -205,10 +205,13 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
         # The extraction's header contract (the re-reviews' zero-width
-        # catch): every section component's header is explicitly
-        # width-bound. Layout.fillWidth is inert inside the Column
-        # roots — a header sized that way renders 0 px wide and loses
-        # its click target entirely.
+        # catch, probe-verified): every section component's root is a
+        # ColumnLayout (a plain Column counts invisible children in
+        # its implicit height — a collapsed section kept its hidden
+        # content in the pane's scroll length), and the header rides
+        # Layout.fillWidth — a width: parent.width binding inside the
+        # layout root breaks and renders 0 px, losing the click
+        # target entirely.
         for section_qml in (PRINT_SECTION_QML, SETUP_SECTION_QML, TOOLHEAD_SECTION_QML,
                             MACROS_SECTION_QML, PROFILES_SECTION_QML, TUNING_SECTION_QML,
                             FANS_SECTION_QML, LEDS_SECTION_QML, PWM_SECTION_QML,
@@ -217,9 +220,11 @@ class MonitorModelContractTests(unittest.TestCase):
                             TEMP_HISTORY_SECTION_QML, FANS_INFO_SECTION_QML,
                             FILAMENT_SECTION_QML, OBJECTS_SECTION_QML, TEMPS_SECTION_QML,
                             SYSTEM_INFO_SECTION_QML, MCUS_SECTION_QML, JOB_SECTION_QML):
+            self.assertIn("ColumnLayout {\n    id: root\n    spacing: 0", section_qml)
             header = section_qml[section_qml.index("CollapsibleSectionHeader {"):
                                  section_qml.index("CollapsibleSectionHeader {") + 400]
-            self.assertIn("width: parent.width", header)
+            self.assertIn("Layout.fillWidth: true", header)
+            self.assertNotIn("width: parent.width", header)
         # The two monitor sections sit in the STATUS PANE, not inside
         # the chart pop-over's legend repeater (the adversarial
         # critic's misplaced-insertion catch): the instantiation

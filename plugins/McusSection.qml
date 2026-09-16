@@ -7,11 +7,12 @@ import Cura 1.1 as Cura
 // The MCUs section (4.3.0 extraction): the per-MCU readout
 // rows out of the monitor as one property-driven component.
 // The host keeps the capability gate.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "MCUs"
         sectionId: "mcus"
@@ -19,9 +20,7 @@ Column {
     }
     ColumnLayout {
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["mcus"] !== false
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
-        anchors.right: parent.right
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         spacing: UM.Theme.getSize("thin_margin").height
 

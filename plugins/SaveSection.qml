@@ -7,23 +7,18 @@ import Cura 1.1 as Cura
 // The Configuration-changes section (4.3.0 extraction): the save
 // button, the pending summary and the save-reason row out of the
 // dashboard as one property-driven component.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
 
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "Configuration changes"
         sectionId: "save"
         sectionIcon: "Save"
     }
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["save"] !== false
-    }
-
     ColumnLayout {
         // NO-REFLOW RULE: this whole section used to
         // pop into existence when Klipper flagged a
@@ -33,9 +28,10 @@ Column {
         // always renders — the button disables and
         // the summary goes quiet when nothing is
         // pending.
-        width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.topMargin: UM.Theme.getSize("default_margin").height
+        Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.fillWidth: true
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["save"] !== false
         enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)
 
@@ -100,11 +96,5 @@ Column {
                 }
             }
         }
-    }
-
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["save"] !== false
     }
 }

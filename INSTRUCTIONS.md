@@ -224,10 +224,11 @@ Since 4.3.0 every collapsible section is its own property-driven
 component; the panes are thin shells. A new section is a new QML
 file, never inline content:
 
-1. The component (`FooSection.qml`) — a `Column` root with
-   `property var printerModel: null`, then the shared
-   `CollapsibleSectionHeader` (`plugins/CollapsibleSectionHeader.qml`,
-   instantiated directly — no Loader) with `width: parent.width`,
+1. The component (`FooSection.qml`) — a `ColumnLayout` root
+   (`id: root`, `spacing: 0`) with `property var printerModel: null`,
+   then the shared `CollapsibleSectionHeader`
+   (`plugins/CollapsibleSectionHeader.qml`, instantiated directly —
+   no Loader) with `Layout.fillWidth: true`,
    `printerModel: root.printerModel`, `title`, `sectionId` and
    `sectionIcon`. The icon must be one Cura's own QML references (the
    header resolves `UM.Theme.getIcon(sectionIcon)` at runtime; guessing
@@ -235,15 +236,18 @@ file, never inline content:
    Function, PrintQuality, Sliders, Spinner, Star, ThreeDots, CircleOutline,
    Settings, Save, Buildplate, MeshTypeNormal, Spool, Fan, Plugin,
    LinkExternal, Information, ChevronSingleDown/Left, ArrowDoubleCircleRight.
-2. Content — a `ColumnLayout` with the anchored width form
-   (`width: parent.width - narrow_margin - section_icon / 2`,
-   `anchors.left: parent.left` with the same left margin),
+2. Content — a `ColumnLayout` with `Layout.topMargin`/
+   `Layout.bottomMargin` of `default_margin`, `Layout.leftMargin` of
+   `narrow_margin + section_icon / 2`, `Layout.fillWidth: true`, and
    `visible: root.printerModel == null || root.printerModel.sectionExpandedMap["<id>"] !== false`.
    The missing-key check is deliberate: sections not in the map are
-   expanded. Explicit spacer Items replace the host pane's
-   top/bottom margins — the pane's `spacing: 0` contract means gaps
-   live on the children, so a collapsed section contributes nothing
-   and headers stack flush.
+   expanded. The margins ride the gated content, so a collapsed
+   section contributes nothing and headers stack flush. NO spacer
+   Items, NO anchors, NO `width: parent.width` inside the layout
+   root — the layout manages its children (probe-verified: a plain
+   Column root counted the invisible children's implicit heights
+   into the pane's scroll length, and a width binding inside the
+   layout broke to 0).
 3. The host instantiation is a SIBLING in the pane's content column:
    `FooSection { Layout.fillWidth: true; printerModel: root.printer }`.
    Never nested inside another section's instantiation (valid QML,
@@ -252,9 +256,7 @@ file, never inline content:
    never names the section's ids — it reaches the section through
    the instantiation id (an accessor function) or a signal. The
    capability gates (hide while the data is absent, refuse while the
-   permission is absent) ride the SECTION body; the spacer Items are
-   gated on the section's expansion state so a collapsed section
-   contributes nothing.
+   permission is absent) ride the SECTION body.
 
 Then update the pins in `tests/test_monitor.py` in the same commit:
 the `CollapsibleSectionHeader` counts and the `sectionIcon:` counts

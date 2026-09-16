@@ -8,31 +8,27 @@ import Cura 1.1 as Cura
 // and its legend out of the monitor as one property-driven component.
 // The host feeds the mini-series state and owns the shared pop-over
 // behind a toggle signal.
-Column {
+ColumnLayout {
     id: root
+    spacing: 0
     property var printerModel: null
     property var miniSeries: []
     property bool miniHasSeries: false
     signal popOverToggleRequested(string name)
 
     CollapsibleSectionHeader {
-        width: parent.width
+        Layout.fillWidth: true
         printerModel: root.printerModel
         title: "Temperature history"
         sectionId: "temphistory"
         sectionIconUrl: Qt.resolvedUrl("Thermometer.svg")
     }
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["temphistory"] !== false
-    }
-
     ColumnLayout {
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["temphistory"] !== false
-        width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
-        anchors.left: parent.left
-        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.topMargin: UM.Theme.getSize("default_margin").height
+        Layout.bottomMargin: UM.Theme.getSize("default_margin").height
+        Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.fillWidth: true
         spacing: UM.Theme.getSize("default_margin").height
 
         // The mini widget graphs the primary sensors
@@ -127,11 +123,5 @@ Column {
                 }
             }
         }
-    }
-
-    Item {
-        width: 1
-        height: UM.Theme.getSize("default_margin").height
-        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["temphistory"] !== false
     }
 }
