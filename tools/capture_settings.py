@@ -212,6 +212,10 @@ class SettingsManager(QObject):
     def settingsTraceHttp(self):
         return False
 
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsMemoryDiagnosticsLog(self):
+        return False
+
     @pyqtProperty(str, notify=settingsChanged)
     def cacheStatus(self):
         return ""

@@ -1,9 +1,11 @@
-"""TEMPORARY overnight-leak instrumentation (stripped before release).
+"""The overnight-leak instrument, gated OFF by default.
 
-One tick per minute appends a line to ~/moonraker_leak.log naming
-WHAT grows, on three axes:
+The settings' diagnostics toggle ("Log memory diagnostics once a
+minute") arms one tick per minute appending to ~/moonraker_leak.log,
+naming WHAT grows, on three axes:
 
-- the process RSS,
+- the process RSS (per-platform: /proc, ru_maxrss, the Windows
+  working set),
 - tracemalloc's fastest-growing Python allocation tracebacks,
 - the QML side's per-class item counts (diffed tick-to-tick), and
 - the plugin runtime's own collection sizes (diffed tick-to-tick),
@@ -12,12 +14,11 @@ WHAT grows, on three axes:
 A run whose RSS climbs while tracemalloc stays flat and the item
 counts hold is a texture/GL-side accumulation, which narrows the hunt
 to the rendering paths. Everything is wrapped: the probe must never
-take the plugin down.
+take the plugin down, and nothing runs until the toggle is on.
 """
 from __future__ import annotations
 
 import os
-import resource
 import sys
 import time
 import tracemalloc
@@ -26,16 +27,21 @@ from pathlib import Path
 
 from PyQt6.QtCore import QTimer
 
+try:
+    import resource  # Unix only — absent on Windows
+except ImportError:
+    resource = None
+
 _LOG_PATH = Path.home() / "moonraker_leak.log"
 _INTERVAL_MS = 60_000
 _TOP_N = 8
 
 
 def _rss_kb() -> int:
-    # Linux: the live RSS from /proc. macOS (the author's machine):
-    # ru_maxrss — the MAXIMUM since start, bytes there, KB on Linux.
-    # The max tracks the overnight slope fine (the 32 GB report's
-    # shape); a current-value read needs an external tool on macOS.
+    # Linux: the live RSS from /proc. macOS: ru_maxrss — the MAXIMUM
+    # since start, bytes there, KB on Linux (the max tracks the
+    # overnight slope fine). Windows: the working set via ctypes —
+    # the resource module does not exist there.
     try:
         with open("/proc/self/status", encoding="utf-8") as handle:
             for line in handle:
@@ -43,13 +49,33 @@ def _rss_kb() -> int:
                     return int(line.split()[1])
     except OSError:
         pass
-    try:
-        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        if sys.platform == "darwin":
-            rss //= 1024
-        return int(rss)
-    except Exception:
-        return 0
+    if resource is not None:
+        try:
+            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            if sys.platform == "darwin":
+                rss //= 1024
+            return int(rss)
+        except Exception:
+            pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            class _Counters(ctypes.Structure):
+                _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_size_t),
+                            ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                            ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+            counters = _Counters()
+            counters.cb = ctypes.sizeof(_Counters)
+            ctypes.windll.kernel32.GetProcessMemoryInfo(
+                ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb)
+            return int(counters.WorkingSetSize) // 1024
+        except Exception:
+            pass
+    return 0
 
 
 def _qml_class_counts():
@@ -134,16 +160,25 @@ class LeakProbe:
         # the QML engine during plugin load — the allocator tax and
         # the engine walk mid-initialization stalled Cura's startup
         # after "Loading plugins" (the author's report). Everything
-        # defers to the first timed tick, a minute into the session.
+        # defers to the first enabled tick, a minute into the session.
+        self._enabled = False
         self._trace_snapshot = None
         self._qml_previous = {}
         self._sizes_previous = {}
-        # The pid and the install path name the instance: the author's
-        # log showed three starts — multiple installed copies each
-        # register their own probe.
-        self._log("start pid=%s path=%s platform=%s" % (
-            os.getpid(), os.path.dirname(os.path.dirname(os.path.abspath(__file__))), sys.platform))
         self._timer.start()
+
+    def _enabled_now(self) -> bool:
+        # The settings' diagnostics toggle — read live each minute,
+        # so the instrument turns on and off without a restart. The
+        # key comes from PrinterConfig's map, the preference store's
+        # single owner.
+        try:
+            from UM.Application import Application
+            from .PrinterConfig import PrinterConfigStore
+            return bool(Application.getInstance().getPreferences().getValue(
+                PrinterConfigStore.LEGACY_MAP["memory_diagnostics_log"]))
+        except Exception:
+            return False
 
     def _top_traces(self) -> list:
         try:
@@ -167,6 +202,27 @@ class LeakProbe:
             return [f"trace-err {exc!r}"]
 
     def _tick(self):
+        if not self._enabled_now():
+            if self._enabled:
+                # The toggle went off: drop the allocator tax and the
+                # trace window so re-enabling starts a fresh one.
+                self._enabled = False
+                try:
+                    tracemalloc.stop()
+                except Exception:
+                    pass
+                self._trace_snapshot = None
+                self._qml_previous = {}
+                self._sizes_previous = {}
+                self._log("stop")
+            return
+        if not self._enabled:
+            self._enabled = True
+            # The pid and the install path name the instance: the
+            # author's log showed three starts — multiple installed
+            # copies each register their own probe.
+            self._log("start pid=%s path=%s platform=%s" % (
+                os.getpid(), os.path.dirname(os.path.dirname(os.path.abspath(__file__))), sys.platform))
         try:
             self._log("rss=%dkb" % _rss_kb())
         except Exception as exc:

@@ -827,26 +827,6 @@ else:
     result = {"enabled": bool(btn.property("enabled")), "text": str(btn.property("text") or "")}
 """
 
-LEAK_SAMPLE = """window = _main_window()
-result = {}
-try:
-    with open("/proc/self/status") as f:
-        for line in f:
-            if line.startswith("VmRSS"):
-                result["rss_kb"] = int(line.split()[1])
-                break
-except Exception as exc:
-    result["rss_err"] = repr(exc)[:60]
-try:
-    result["items"] = sum(1 for _ in _walk(window.contentItem(), depth=96))
-except Exception as exc:
-    result["items_err"] = repr(exc)[:60]
-try:
-    result["windows"] = len(windows)
-except Exception as exc:
-    result["windows_err"] = repr(exc)[:60]
-"""
-
 P_FOLLOW_READ = """from UM.Application import Application
 app = Application.getInstance()
 result = {}
@@ -1944,50 +1924,6 @@ SCENARIOS = [
          {"op": "wait_seconds", "seconds": 2},
          {"op": "exec_code", "verbs": [], "code": FM_BUTTON_PROBE},
      ]},
-    # TEMPORARY leak census (removed before ship): samples the Cura
-    # process's RSS and the window's item count every minute against
-    # a busy sim — the overnight 32 GB report's repro harness.
-    {"id": "z98", "group": "leak",
-     "name": "long-run memory census",
-     "steps": [
-         {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"},
-                                     "virtual_sdcard": {"is_active": True, "progress": 0.3, "file_size": 1000000},
-                                     "extruder": {"temperature": 205.2, "target": 210.0},
-                                     "heater_bed": {"temperature": 60.0, "target": 60.0},
-                                     "fan": {"speed": 0.5}}},
-         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
-         {"op": "exec_code", "verbs": [], "code": LEAK_SAMPLE},
-     ] + [{"op": "wait_seconds", "seconds": 60}, {"op": "exec_code", "verbs": [], "code": LEAK_SAMPLE}] * 30,
-     },
-    # TEMPORARY probe sanity (removed before ship): boots with the
-    # leak-instrumented package so the probe's own log can be checked.
-    {"id": "z97", "group": "debug",
-     "name": "leak-probe sanity",
-     "steps": [
-         {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
-         {"op": "wait_seconds", "seconds": 150},
-     ]},
-    # TEMPORARY entry-cycle census (removed before ship): six
-    # enter/leave rounds of the monitor page with the camera
-    # streaming — the author's observed enter-page growth, reproduced
-    # under the RSS sampler.
-    {"id": "z96", "group": "debug",
-     "name": "monitor entry-cycle census",
-     "steps": [
-         {"op": "click_stage", "stage": "PrepareStage"},
-         {"op": "wait_seconds", "seconds": 5},
-         {"op": "exec_code", "verbs": [], "code": LEAK_SAMPLE},
-     ] + [
-         {"op": "click_stage", "stage": "MonitorStage"},
-         {"op": "wait_seconds", "seconds": 8},
-         {"op": "exec_code", "verbs": [], "code": LEAK_SAMPLE},
-         {"op": "click_stage", "stage": "PrepareStage"},
-         {"op": "wait_seconds", "seconds": 8},
-         {"op": "exec_code", "verbs": [], "code": LEAK_SAMPLE},
-     ] * 6,
-     },
     # The red run (the acceptance's red-run proof): the broken-start
     # journey against a printer that stays broken — the failure
     # verdict window must fire, recorded as the expected red.
