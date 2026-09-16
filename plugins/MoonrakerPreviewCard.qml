@@ -470,22 +470,24 @@ Item {
                             width: scheduledPauseList.width
                             height: UM.Theme.getSize("action_button").height
                             spacing: base.buttonSpacing
-                            // The ROLES come off the ListModel's row object
-                            // (`model`), never `modelData` — modelData is
-                            // a JS-array-model concept and reads
-                            // undefined against a ListModel (the live
-                            // report: every row read layer 0).
-                            property int pauseLayer: Number(model.layer)
-                            property string pauseEta: String(model.eta || "")
+                            // The roles are DIRECT delegate-context
+                            // properties for a ListModel (the canonical
+                            // idiom) — `modelData` is a JS-array-model
+                            // concept and read undefined (the live
+                            // report: every row read layer 0), and
+                            // `model.layer` crashed the pinned
+                            // container's engine at load.
+                            property int pauseLayer: Number(layer)
+                            property string pauseEta: String(eta || "")
                             // "scheduled" | "fired" | "failed" | "timed_out" |
                             // "baked" — a missed pause STAYS listed, restyled
                             // in the error colour (the verified-pause-only
                             // ruling); a baked pause is read-only (the
                             // ruling).
-                            property string pauseState: String(model.state || "scheduled")
+                            property string pauseState: String(state || "scheduled")
                             readonly property bool pauseMissed: pauseState === "failed" || pauseState === "timed_out"
                             readonly property bool pauseBaked: pauseState === "baked"
-                            readonly property bool pausePassed: model.passed === true || pauseState === "passed"
+                            readonly property bool pausePassed: passed === true || pauseState === "passed"
 
                             UM.Label {
                                 width: Math.max(0, parent.width - removePauseButton.width - parent.spacing)
