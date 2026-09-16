@@ -616,6 +616,22 @@ def hydrate_layer_from_file(index: LayerMotionIndex, path: str, layer: int) -> b
             index.motion_y[layer] = ys
             index.motion_z[layer] = zs
             index.hydrated_layers.add(layer)
+            # The retention bound (the live report's progress-driven
+            # growth): hydration was demand-driven as the print
+            # advanced and nothing ever dropped an old layer, so a long
+            # print accumulated motion arrays for every layer it
+            # crossed. Drop everything older than the transition —
+            # the previous, current and look-ahead layers still hold
+            # arrays, and any reader of an evicted layer sees an empty
+            # array (the same degraded fallback as a never-hydrated
+            # one).
+            for old in sorted(index.hydrated_layers):
+                if old < layer - 1:
+                    index.motion_offsets[old] = array("Q")
+                    index.motion_x[old] = array("f")
+                    index.motion_y[old] = array("f")
+                    index.motion_z[old] = array("f")
+                    index.hydrated_layers.remove(old)
         return True
     except OSError:
         return False
