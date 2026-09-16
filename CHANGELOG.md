@@ -4,9 +4,10 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 ## 4.3.0
 
-Version 4.3.0 is the section release: every collapsible section
-of the Monitor page is its own component, and the Preview card
-gains a status strip with a single pause policy behind it.
+Version 4.3.0 is the QML componentisation release: every
+collapsible section of the Monitor page is its own component, and
+the Preview card gains a status strip with a single pause policy
+behind it.
 
 - **Every section its own component.** The Monitor page's panes
   are now thin shells. All twenty-two collapsible sections ride
@@ -91,6 +92,26 @@ gains a status strip with a single pause policy behind it.
 - **The harness log scan.** Every UI run reads the Cura log and
   fails on plugin-originated warnings, errors and polish loops —
   no scenario needed to catch them.
+- **The SDK floor.** Cura 5.11 / SDK 8.11 is now the minimum —
+  the package and metadata declare exactly SDK 8.11 and 8.12, and
+  Cura 4.x / SDK 7.x is not supported.
+- **The native nozzle repair.** The 4.2.0 nozzle lifecycle repair
+  is restored: a print loaded while Preview is already open keeps
+  Cura's own nozzle visible, so the live indicator stays reliable.
+- **The memory work, closed out.** The camera bridge's socket and
+  reply objects are deleted on completion, the G-code hydration
+  cache evicts beyond its bound, and the author's soak of the
+  native follow path shows a bounded, oscillating current-RSS band
+  that ends below its start. The experimental follow render pass
+  (an alternative to Cura's own SimulationPass) was removed after
+  live testing — following rides Cura's native renderer exactly as
+  before.
+- **A refused settings save is never silent.** The dialog shows a
+  red notice naming the refusal, and the log records the reason.
+- **Open Browser works.** The upload completion action's handler
+  was held only by a weak reference (Uranium's message signals
+  store plain functions weakly) and was collected before the
+  click; it is now a bound method, and failures log the target.
 
 ## 4.2.0
 
