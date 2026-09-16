@@ -133,6 +133,7 @@ class SourceContractTests(unittest.TestCase):
             "CuraIntegration": {"CuraLifecycleBridge", "NativeNozzleLifecycle"},
             "CuraLifecycleBridge": set(),
             "CuraOutputWriter": set(),
+            "LeakProbe": set(),  # temporary overnight-leak instrumentation — stripped before release
             "DownloadStream": set(),
             "FileDownload": {"RemoteFileService"},
             "FileManager": {"FileManagerPolicy", "MoonrakerProtocol"},
@@ -344,12 +345,14 @@ class SourceContractTests(unittest.TestCase):
             "QHttpMultiPart": "QtNetwork",
             "QHttpPart": "QtNetwork",
             "QQuickItem": "QtQuick",
+            "QQuickWindow": "QtQuick",
             "QMessageBox": "QtWidgets",
             "QAbstractAnimation": "QtCore",
             "QEasingCurve": "QtCore",
             "QPropertyAnimation": "QtCore",
             "QMetaObject": "QtCore",
             "QQmlComponent": "QtQml",
+            "QQmlEngine": "QtQml",
             "qmlEngine": "QtQml",
         }
         import ast
