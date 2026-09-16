@@ -194,7 +194,7 @@ class SourceContractTests(unittest.TestCase):
             "WhatsNewOverlay": set(),
         }
         # Cura adapters sanctioned to import cura APIs.
-        cura_exceptions = {"CuraOutputWriter", "MoonrakerFollowerMachineAction", "MoonrakerMonitorModel", "MoonrakerOutputDevice", "PrinterBinding"}
+        cura_exceptions = {"CuraOutputWriter", "FollowPass", "MoonrakerFollowerMachineAction", "MoonrakerMonitorModel", "MoonrakerOutputDevice", "PrinterBinding"}
         # The output plugin and Machine Action receive the follower at the
         # documented composition boundary; PrinterConfig and BedMeshPresenter
         # only contain the string inside preference-key literals.

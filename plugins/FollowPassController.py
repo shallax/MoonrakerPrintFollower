@@ -74,6 +74,7 @@ def attach(view) -> bool:
         if ACTIVE is None:
             ACTIVE = FollowPass()
             renderer.addRenderPass(ACTIVE)
+        ACTIVE.setFollowView(view)
         ACTIVE.setFollowScene(node, layer_data)
         if ACTIVE._mesh is None:
             return False
@@ -91,11 +92,11 @@ def attach(view) -> bool:
         return False
 
 
-def update(layer: int, path_units: float) -> None:
+def update(layer: int, path_units: float, toolhead: bool = True) -> None:
     """The per-tick uniform update — the pass is fed the same value
     the preview path writes, so the visuals match the glide."""
     if ACTIVE is not None and ACTIVE.isEnabled():
-        ACTIVE.setFollowState(layer, path_units)
+        ACTIVE.setFollowState(layer, path_units, toolhead)
 
 
 def detach() -> None:
