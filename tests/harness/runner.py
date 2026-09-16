@@ -109,7 +109,37 @@ def shot(name):
     expected = tuple(int(part) for part in SIZE.split("x"))
     if _png_size(path) != expected:
         return (path, f"capture failed: frame is {_png_size(path)}, expected {expected}")
+    # The highlight-on-capture rule: the harness composites an outline
+    # onto the frame for the element the step resolved — the evidence
+    # geometry, never Cura QML.
+    if _FRAME_OUTLINE[0] is not None:
+        _outline(path, _FRAME_OUTLINE[0])
     return (path, None)
+
+
+def _outline(path, geometry):
+    """Draw the step's evidence geometry onto the captured frame (a
+    harness-side overlay — the product QML never draws it)."""
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        return
+    try:
+        x, y, w, h = (round(part) for part in geometry)
+        with Image.open(path) as image:
+            draw = ImageDraw.Draw(image)
+            for offset in (0, 1, 2):
+                draw.rectangle(
+                    [x - offset, y - offset, x + w + offset, y + h + offset],
+                    outline="#ffd11f", width=1)
+            image.save(path)
+    except Exception:
+        pass
+
+
+# The geometry the NEXT shot outlines (set by the step executor from
+# the evidence entry's geometry — cleared by the executor after use).
+_FRAME_OUTLINE = [None]
 
 
 def wait_stage(wanted, timeout_ms=20000):
@@ -314,7 +344,8 @@ def _classify(op, delivery):
     return "diagnostic-probe"
 
 
-def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, started, delivery=None):
+def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, started,
+                    delivery=None, geometry=None, walk=None):
     path, capture_error = capture if isinstance(capture, tuple) else (capture, None)
     op = step.get("op") if isinstance(step, dict) else "boot"
     return {
@@ -331,6 +362,12 @@ def _evidence_entry(spec, index, step, name, ok, action, assertion, capture, sta
         "capture_error": capture_error,
         "duration_ms": round((time.monotonic() - started) * 1000),
         "delivery": delivery,
+        # The evidence-visibility fields (the review's C8/C9): the
+        # resolved element's scene rect — what the capture outlines —
+        # and the walk that resolved it, each its own channel so
+        # neither can collide with the delivery record.
+        "geometry": geometry,
+        "walk": walk,
         "class": _classify(op, delivery),
     }
 
@@ -2061,10 +2098,15 @@ def suite_scenario(spec, step_fn=None):
             result = step_fn(step)
             ok, action, assertion = result[:3]
             delivery = result[3] if len(result) > 3 else None
+            geometry = result[4] if len(result) > 4 else None
+            walk = result[5] if len(result) > 5 else None
+            _FRAME_OUTLINE[0] = geometry
             capture = shot(name)
+            _FRAME_OUTLINE[0] = None
             steps.append((name, action, assertion, ok, capture))
             EVIDENCE.append(_evidence_entry(spec, index, step, name, ok, action,
-                                            assertion, capture, started, delivery))
+                                            assertion, capture, started, delivery,
+                                            geometry, walk))
         except Exception as exc:
             capture = shot(name)
             steps.append((name, f"{spec['name']}: {step.get('op')}",
@@ -2257,7 +2299,8 @@ def suite_step(step):
         landed = bool(reply.get("ok") and delivery.get("accepted"))
         note = (f"the press was accepted by {_delivery_name(delivery.get('grabber'))}") if landed \
             else f"the press was NOT accepted [delivery={delivery!r}]"
-        return landed, f"real click on the rendered '{step['text']}'", note, delivery
+        return landed, f"real click on the rendered '{step['text']}'", note, delivery, \
+            reply.get("geometry"), reply.get("walk")
     if op == "deliver_click":
         request = {"id": 1, "cmd": "deliver_click"}
         if "objectName" in step:
@@ -2279,11 +2322,13 @@ def suite_step(step):
             refused = bool(reply.get("ok") and not delivery.get("accepted") and delivery.get("hit"))
             note = (f"the press was refused by {_delivery_name(delivery.get('hit'))}") if refused \
                 else f"unexpected delivery [delivery={delivery!r}]"
-            return refused, f"a refused press/release on {step.get('objectName') or step.get('text')}", note, delivery
+            return refused, f"a refused press/release on {step.get('objectName') or step.get('text')}", note, delivery, \
+                reply.get("geometry"), reply.get("walk")
         landed = bool(reply.get("ok") and delivery.get("accepted"))
         note = (f"the press was accepted by {_delivery_name(delivery.get('grabber'))}") if landed \
             else f"the press was NOT accepted [delivery={delivery!r}]"
-        return landed, f"a real press/release on {step.get('objectName') or step.get('text')}", note, delivery
+        return landed, f"a real press/release on {step.get('objectName') or step.get('text')}", note, delivery, \
+            reply.get("geometry"), reply.get("walk")
     if op == "key_press":
         reply = rpc({"id": 1, "cmd": "key_press", "key": step["key"]})
         time.sleep(0.4)
@@ -2305,7 +2350,8 @@ def suite_step(step):
         contained = bool(reply.get("ok") and reply.get("contained"))
         note = (f"contained ({reply.get('after')} within viewport {reply.get('viewport')})"
                 if contained else f"NOT contained [reply={reply!r}]")
-        return contained, f"scrolled {step.get('objectName') or step.get('text')} into view", note
+        return contained, f"scrolled {step.get('objectName') or step.get('text')} into view", note, None, \
+            reply.get("geometry"), reply.get("walk")
     if op == "emit_click":
         code = EMIT_TEMPLATE.replace("TEXT_PLACEHOLDER", json.dumps(step["text"]))
         reply = exec_rpc(code)
@@ -2350,10 +2396,17 @@ def suite_step(step):
         if not matched:
             matched = matched_count()
         expected = int(step.get("min", 1))
+        ceiling = step.get("max")
         detail = "; ".join(f"{e['method']} {e['path']} {e['ms']:.0f}ms"
                            for e in matched[-6:])
-        return len(matched) >= expected, "the peer's ledger counted requests", \
-            f"{needle!r}: {len(matched)} (>= {expected}) [{detail}]"
+        if ceiling is not None:
+            ok = expected <= len(matched) <= int(ceiling)
+            bound = f" ({expected}..{ceiling})"
+        else:
+            ok = len(matched) >= expected
+            bound = f" (>= {expected})"
+        return ok, "the peer's ledger counted requests", \
+            f"{needle!r}: {len(matched)}{bound} [{detail}]"
     if op == "model_read":
         value = exec_rpc(MODEL_READ_TEMPLATE.replace("PROP_PLACEHOLDER", json.dumps(step["prop"])))
         SUITE_STATE["model"][step["prop"]] = value
@@ -2473,13 +2526,15 @@ def suite_step(step):
         time.sleep(1.5)
         aim = str(reply.get("aim") or "clicked")
         label = "a real click on" if "emit" not in aim else "the clicked signal of"
-        return bool(reply.get("ok")), f"{label} {step['button']} ({aim})", "clicked"
+        return bool(reply.get("ok")), f"{label} {step['button']} ({aim})", "clicked", None, \
+            reply.get("geometry"), reply.get("walk")
     if op == "click_item":
         reply = rpc({"id": 1, "cmd": "click_item", "objectName": step["objectName"]})
         time.sleep(1.5)
         aim = str(reply.get("aim") or "clicked")
         label = "a real click on" if "emit" not in aim else "the clicked signal of"
-        return bool(reply.get("ok")), f"{label} {step['objectName']} ({aim})", "clicked"
+        return bool(reply.get("ok")), f"{label} {step['objectName']} ({aim})", "clicked", None, \
+            reply.get("geometry"), reply.get("walk")
     if op == "item_disabled":
         code = ITEM_STATE_TEMPLATE.replace("NAME_PLACEHOLDER", json.dumps(step["objectName"]))
         reply = exec_rpc(code)
@@ -2530,7 +2585,9 @@ def suite_step(step):
                     f"driver: {reply.get('error', reply)}")
         rect = reply["rect"]
         SUITE_STATE["rect"][key] = rect
-        return True, f"the rect of {key} ({reply.get('found')})", f"{rect}"
+        geometry = [rect["x"], rect["y"], rect["w"], rect["h"]]
+        return True, f"the rect of {key} ({reply.get('found')})", f"{rect}", None, \
+            geometry, reply.get("walk")
 
     if op == "assert_aligned":
         # Geometry pins: centre alignment on one axis, containment,
@@ -2659,10 +2716,14 @@ def suite_step(step):
                            float(step.get("poll", 1.0))))
         reply = rpc({"id": 1, "cmd": "rect", **ref})
         now = "absent" if not reply.get("ok") else reply["rect"]
+        geometry = None
+        if reply.get("ok") and isinstance(reply.get("rect"), dict):
+            rect = reply["rect"]
+            geometry = [rect["x"], rect["y"], rect["w"], rect["h"]]
         seen_note = ("observed earlier" if (observed or SUITE_STATE["rect"].get(("seen", key)))
                      else "never observed in this scenario")
         return (ok, f"{key} {'left the rendered tree' if step.get('absent') else 'entered the rendered tree'}",
-                f"now {now} ({seen_note})")
+                f"now {now} ({seen_note})", None, geometry, reply.get("walk"))
 
     if op == "census":
         # The data-render census: every data class present in the

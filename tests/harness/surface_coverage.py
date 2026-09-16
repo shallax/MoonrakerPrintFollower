@@ -49,10 +49,17 @@ def extract() -> Dict[str, List[str]]:
         protocol = handle.read()
     for match in re.finditer(r"def (\w*endpoint)\(", protocol):
         surfaces["route"].append(match.group(1))
-    with open(os.path.join(PLUGINS, "MoonrakerMonitorModel.py"), encoding="utf-8") as handle:
-        model = handle.read()
-    for match in re.finditer(r'(\w+) = value_property\(', model):
-        surfaces["key"].append(match.group(1))
+    # The key family scans every plugin module: a value_property that
+    # moves to an extracted view model must stay in the matrix (the
+    # one-file read let moved declarations vanish silently).
+    for name in sorted(os.listdir(PLUGINS)):
+        path = os.path.join(PLUGINS, name)
+        if not (name.endswith(".py") and os.path.isfile(path)):
+            continue
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        for match in re.finditer(r'(\w+) = value_property\(', source):
+            surfaces["key"].append(match.group(1))
     for kind in surfaces:
         surfaces[kind] = sorted(set(surfaces[kind]))
     return surfaces

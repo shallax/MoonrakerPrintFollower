@@ -92,11 +92,19 @@ class ClassificationRatchetTests(unittest.TestCase):
         # 3 confirm_box + 6 exec_mode + 3 exec_validator +
         # 1 exec_console + 1 exec_extrude + 1 exec_test_connection
         # + 23 exec_code.
+        # One more deliberate raise (4.3.0, DECISIONS): g6's refused
+        # Resume exec — the lane's revalidation witness must dispatch
+        # through the real slot while the state forbids it, and no
+        # real-input path exists for a click on a refused control.
+        # And s8's track-click probe — the slider's click path has no
+        # real-input op (the driver clicks by objectName/text only,
+        # and the probe clicks BY GEOMETRY on the track), so the
+        # witness is the inline QTest click.
         text = (ROOT / "tests/harness/scenarios.py").read_text()
         direct = len(re.findall(
             r'"op": "(exec_slot|exec_file_slot|emit_click|confirm_box|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))
-        self.assertLessEqual(direct, 103)
+        self.assertLessEqual(direct, 105)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —
@@ -165,7 +173,24 @@ class EvidenceRecordTests(unittest.TestCase):
         self.assertEqual(entry["capture"], "f1-00.png")
         self.assertIsNone(entry["capture_error"])
         self.assertIsNone(entry["delivery"])
+        self.assertIsNone(entry["geometry"])
+        self.assertIsNone(entry["walk"])
         self.assertGreaterEqual(entry["duration_ms"], 0)
+
+    def test_entry_carries_the_evidence_geometry_and_walk(self):
+        # The evidence-visibility fields (C8/C9): each resolving step
+        # records the element's scene rect and the walk that resolved
+        # it, on their own channels — never folded into delivery.
+        entry = runner._evidence_entry(
+            {"id": "f1"}, 0, {"op": "scroll_into_view", "text": "Turn off"}, "f1-01",
+            True, "scrolled", "contained", (SCRATCH + "/f1-01.png", None),
+            time.monotonic(), delivery={"accepted": True},
+            geometry=[640, 312, 104, 36], walk={"mode": "click", "depth": 96,
+                                                "items": 41, "windows": 3})
+        self.assertEqual(entry["geometry"], [640, 312, 104, 36])
+        self.assertEqual(entry["walk"], {"mode": "click", "depth": 96,
+                                         "items": 41, "windows": 3})
+        self.assertEqual(entry["delivery"], {"accepted": True})
 
     def test_capture_error_splits_from_the_path(self):
         entry = runner._evidence_entry(

@@ -29,7 +29,11 @@ class RemoteFileIdentity:
 
 # The core status objects — one shared list for the HTTP query string,
 # the subscription set and the class routing table (they must not drift).
-CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh")
+# pause_resume rides the CORE lane (4.3.0, the domain re-review): the
+# authoritative paused bit must arrive with the state word, not one
+# aux interval later — the refusal words and the visible state would
+# otherwise disagree on every pause transition.
+CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh", "pause_resume")
 
 
 def _secure_scheme(scheme: str) -> bool:

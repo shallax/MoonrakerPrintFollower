@@ -93,6 +93,15 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             # card's slider intents land on the model's shared window;
             # the presenter then mirrors it to the Preview surfaces.
             self._follower.presentation.bedMeshThresholdsRequested.connect(monitor.setBedMeshThresholds)
+            # The strip's one control routes through the Monitor's
+            # lane — the revalidated pause/resume slots, never a raw
+            # command path.
+            self._follower.presentation.printPauseRequested.connect(monitor.stripPausePrint)
+            # The Preview value block (4.3.0): the read-only edge at
+            # the output-device boundary — the only place both halves
+            # exist. The monitor's per-poll block lands on the
+            # coordinator through the thin facade.
+            monitor.previewBlockChanged.connect(self._follower.receive_preview_block)
             device._printers = [monitor]
 
         # Refresh the display identity on every install: a cached monitor

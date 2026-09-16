@@ -220,42 +220,50 @@ pins in the same commit as any change to a control.
 
 ### Adding a collapsible section
 
-The controls pane is a column of collapsible sections; `controlContent` in
-`MoonrakerMonitorDashboard.qml` has `spacing: 0` on purpose — spacing lives on
-the children, because a collapsed section's hidden content must contribute
-nothing so the headers stack flush like Cura's accordion. Do not reintroduce
-layout spacing; a `visible: false` layout child is excluded from layout, but
-the remaining siblings' gaps come only from their own `Layout.*Margin`s.
+Since 4.3.0 every collapsible section is its own property-driven
+component; the panes are thin shells. A new section is a new QML
+file, never inline content:
 
-Each section is two direct children of the pane's content column:
-
-1. Header — a `CollapsibleSectionHeader` (the shared type in
-   `plugins/CollapsibleSectionHeader.qml`, instantiated directly — no
-   Loader) with `printerModel: root.printer`, `title`, `sectionId` and
+1. The component (`FooSection.qml`) — a `Column` root with
+   `property var printerModel: null`, then the shared
+   `CollapsibleSectionHeader` (`plugins/CollapsibleSectionHeader.qml`,
+   instantiated directly — no Loader) with `width: parent.width`,
+   `printerModel: root.printerModel`, `title`, `sectionId` and
    `sectionIcon`. The icon must be one Cura's own QML references (the
    header resolves `UM.Theme.getIcon(sectionIcon)` at runtime; guessing
    names risks an empty slot). Known-good names: Printer, House, Nozzle,
    Function, PrintQuality, Sliders, Spinner, Star, ThreeDots, CircleOutline,
    Settings, Save, Buildplate, MeshTypeNormal, Spool, Fan, Plugin,
    LinkExternal, Information, ChevronSingleDown/Left, ArrowDoubleCircleRight.
-2. Content — a `ColumnLayout` directly after the header with
-   `visible: root.printer == null || root.printer.sectionExpandedMap["<id>"] !== false`
-   and `Layout.topMargin`/`Layout.bottomMargin` of `default_margin`. The
-   missing-key check is deliberate: sections not in the map are expanded.
-   Sections that should disappear entirely when their data is absent wrap
-   header + content in a `Column` carrying the data's own `visible`
-   condition.
+2. Content — a `ColumnLayout` with the anchored width form
+   (`width: parent.width - narrow_margin - section_icon / 2`,
+   `anchors.left: parent.left` with the same left margin),
+   `visible: root.printerModel == null || root.printerModel.sectionExpandedMap["<id>"] !== false`.
+   The missing-key check is deliberate: sections not in the map are
+   expanded. Explicit spacer Items replace the host pane's
+   top/bottom margins — the pane's `spacing: 0` contract means gaps
+   live on the children, so a collapsed section contributes nothing
+   and headers stack flush.
+3. The host instantiation is a SIBLING in the pane's content column:
+   `FooSection { Layout.fillWidth: true; printerModel: root.printer }`.
+   Never nested inside another section's instantiation (valid QML,
+   wrong layout — the adjacency pin catches it). The id boundary runs
+   BOTH directions: content never reads the host's ids, AND the host
+   never names the section's ids — it reaches the section through
+   the instantiation id (an accessor function) or a signal. The
+   capability gates (hide while the data is absent, refuse while the
+   permission is absent) ride the SECTION body; the spacer Items are
+   gated on the section's expansion state so a collapsed section
+   contributes nothing.
 
-Then update the pins in `tests/test_monitor.py` in the same commit: the
-`CollapsibleSectionHeader` counts and the `sectionIcon:` counts per QML
-file must match the number of sections. Section ids are unique across all
-panes (the map is shared): print, setup, toolhead, macros, profiles,
-tuning, fans, leds, pwm, power, system, save on the controls pane;
-meshmap, job, temps, fansinfo, filament, objects, systeminfo, mcus,
-temphistory on the Information and Printer status panes; console
-(the console pane) and fileManager (the file-manager popup) on the
-Monitor's own surface. Persistence is
-automatic — the stored map only records sections the user has touched.
+Then update the pins in `tests/test_monitor.py` in the same commit:
+the `CollapsibleSectionHeader` counts and the `sectionIcon:` counts
+per QML file plus the totals, and the section-id haystack — a moved
+section decrements one file and increments another, and the totals
+catch a dropped section that a per-file pin alone would read as
+"moved". Section ids are unique across all panes (the map is
+shared). Persistence is automatic — the stored map only records
+sections the user has touched.
 
 ### Collapsing a whole pane
 
@@ -307,24 +315,36 @@ cycle, and mangles values through configparser.
 
 - File shape: `{"sections": {...}, "controlsCollapsed": bool,
   "controlsLocked": bool, "infoCollapsed": bool, "statusCollapsed": bool,
-  "consoleHeight": int, "fileManagerColumns": {...}, "temperatureChart": {...},
-  "toolhead": {...}, "whatsNewSeen": ...}` — new fields default via
+  "consoleHeight": int, "fileManagerColumns": {...},
+  "toolhead": {...}, "whatsNewSeen": ...}` — the model's save payload
+  rewrites these WHOLE top-level keys per save. `temperatureChart` is
+  read-only here (it migrated into the per-printer record; the
+  migration deletes the key once). The UI-state store's `sections`
+  key lives as a top-level SIBLING of these: anything nested inside
+  it gets erased by the next whole-key save. New fields default via
   `bool(decoded.get(..., False))` and the column config goes through
   `FileManagerPolicy.normalise_columns` (the file manager owns it; the
   model only merges and saves).
   The first shipped format was a flat section map; `_read_state` migrates
-  it, so new fields must default with `bool(decoded.get(..., False))` and
-  never break legacy reads.
+  it — recognised ONLY when every value is a bool, so a document that
+  lacks `sections` and carries the UI-state store's sibling keys never
+  hydrates them as sections. New fields must default with
+  `bool(decoded.get(..., False))` and never break legacy reads.
 - The FILE is the `StateStore`'s (4.2.0): writes are atomic
-  (`.tmp` + `os.replace`) read-modify-write MERGES on every change —
-  foreign keys survive (4.3.0's UI-state store consumes the same
-  file). The one deliberate full-document replace is the one-time
-  chart migration (`_save_state(replace=True)`). A missing file is
-  the first run — silent; genuine failures note once per session
-  through the console.
-- The model owns the values: slots mutate fields, `_save_state()`,
+  (`.tmp` + `os.replace`, O_NOFOLLOW + 0o600) read-modify-write
+  MERGES on every change — foreign keys survive (4.3.0's UI-state
+  store consumes the same file). `write(..., delete=(...))` drops
+  named keys inside the merge — the chart migration's only job. The
+  full-document replace is GONE: it was the sibling rule's single
+  exception and silently erased every other consumer's keys. A
+  missing file is the first run — silent; genuine failures note once
+  per session through the console.
+- The model owns its values: slots mutate fields, `_save_state()`,
   then `_publish()`. QML binds to the model properties and calls the
-  setter slots — never a local default.
+  setter slots — never a local default. The sections map is the
+  exception (4.3.0): it persists through the `UiStateStore`, the
+  file's second consumer — the model hydrates it but no longer
+  writes it.
 - Every new property and slot also goes into the surface lists in
   `tests/test_composed_components.py` (the properties string and the slot
   list) and the `_SIGNAL_KEYS` grouping in the model.

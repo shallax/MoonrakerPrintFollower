@@ -23,7 +23,11 @@ from plugins.MonitorFormatting import (
     infer_macro_parameters,
     parse_bed_mesh,
     parse_mcu_stats,
+    preview_block,
+    preview_temperature_pair,
+    print_job_caption,
 )
+from plugins.MonitorPermissions import Observation
 from plugins.PrintState import LayerResolver
 from qt_runtime_support import QT_AVAILABLE, ROOT, ScriptedSocket, ScriptedTransport, runtime
 
@@ -37,6 +41,29 @@ POLICY = (PLUGINS / "MonitorPermissions.py").read_text()
 TYPED = "\n".join((PLUGINS / name).read_text() for name in ("MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py", "CuraIntegration.py", "MoonrakerMonitorModel.py"))
 DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
+CAMERA_PANE_QML = (PLUGINS / "CameraPane.qml").read_text()
+PRINT_SECTION_QML = (PLUGINS / "PrintSection.qml").read_text()
+SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text()
+TOOLHEAD_SECTION_QML = (PLUGINS / "ToolheadSection.qml").read_text()
+PROFILES_SECTION_QML = (PLUGINS / "ProfilesSection.qml").read_text()
+TUNING_SECTION_QML = (PLUGINS / "TuningSection.qml").read_text()
+FANS_SECTION_QML = (PLUGINS / "FansSection.qml").read_text()
+LEDS_SECTION_QML = (PLUGINS / "LedsSection.qml").read_text()
+PWM_SECTION_QML = (PLUGINS / "PwmSection.qml").read_text()
+POWER_SECTION_QML = (PLUGINS / "PowerSection.qml").read_text()
+SYSTEM_SECTION_QML = (PLUGINS / "SystemSection.qml").read_text()
+SAVE_SECTION_QML = (PLUGINS / "SaveSection.qml").read_text()
+FILE_MANAGER_SECTION_QML = (PLUGINS / "FileManagerSection.qml").read_text()
+MESH_SECTION_QML = (PLUGINS / "MeshSection.qml").read_text()
+TEMP_HISTORY_SECTION_QML = (PLUGINS / "TempHistorySection.qml").read_text()
+FANS_INFO_SECTION_QML = (PLUGINS / "FansInfoSection.qml").read_text()
+FILAMENT_SECTION_QML = (PLUGINS / "FilamentSection.qml").read_text()
+OBJECTS_SECTION_QML = (PLUGINS / "ObjectsSection.qml").read_text()
+TEMPS_SECTION_QML = (PLUGINS / "TempsSection.qml").read_text()
+SYSTEM_INFO_SECTION_QML = (PLUGINS / "SystemInfoSection.qml").read_text()
+MCUS_SECTION_QML = (PLUGINS / "McusSection.qml").read_text()
+JOB_SECTION_QML = (PLUGINS / "JobSection.qml").read_text()
+MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
 PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
 BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
@@ -46,6 +73,21 @@ FILE_MANAGER_QML = (PLUGINS / "FileManager.qml").read_text()
 QMLDIR = (PLUGINS / "qmldir").read_text()
 OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
 CAPTURE_HARNESS = (ROOT / "tools" / "capture_monitor.py").read_text()
+
+# The 23 section ids are the persistence keys (INSTRUCTIONS: the stored
+# map only records touched sections; unknown keys default to expanded).
+# 22 exist as sectionId: literals across the panes; the console pane's
+# id is not a sectionId: property — it is pinned separately.
+SECTION_IDS = {
+    # Controls pane
+    "print", "setup", "toolhead", "macros", "profiles", "tuning",
+    "fans", "leds", "pwm", "power", "system", "save",
+    # Information and Printer status panes
+    "meshmap", "job", "temps", "fansinfo", "filament", "objects",
+    "systeminfo", "mcus", "temphistory",
+    # The Monitor's own surface
+    "console", "fileManager",
+}
 
 
 class MonitorModelContractTests(unittest.TestCase):
@@ -75,14 +117,17 @@ class MonitorModelContractTests(unittest.TestCase):
                       "def home(", "def motorsOff(", "def extrude(", "def heatersOff(",
                       "def centerToolhead(", "def zToZero("):
             self.assertIn(token, MONITOR_MODEL)
+        # The toolhead block rides its component (4.3.0) — the pins
+        # follow it there.
         for token in ("id: toolheadSection", 'title: "Toolhead"', 'jog("x", -1)', 'jog("z", 1)',
                       "setJogDistance(", 'home("x")', 'home("y")', 'home("z")', '"Motors off"',
                       '"Extrude"', '"Retract"', "setExtrudeDistance(", "setExtrudeSpeed(",
-                      '"Cooldown"', "heatersOff",
                       'text: "↑ Y"', 'text: "← X"', 'text: "→ X"', 'text: "↓ Y"',
                       'text: "↑ Z"', 'text: "↓ Z"', 'text: "Centre toolhead"', 'text: "Z to 0"',
-                      "root.printer.monitorPosition"):
-            self.assertIn(token, DASHBOARD_QML)
+                      "root.printerModel.monitorPosition"):
+            self.assertIn(token, TOOLHEAD_SECTION_QML)
+        for token in ('"Cooldown"', "heatersOff"):
+            self.assertIn(token, PROFILES_SECTION_QML)
         # The safety clause lives in the policy's copy (4.2.0): the QML
         # reads the published caption, never builds the sentence.
         self.assertIn("Toolhead moves are disabled during a print", POLICY)
@@ -92,29 +137,26 @@ class MonitorModelContractTests(unittest.TestCase):
         # label on top — Cura's own label does not vertically centre.
         # Home-all lives in the Setup section only: the toolhead section
         # keeps per-axis home buttons, so no duplicate home-all controls.
-        self.assertNotIn('home("")', DASHBOARD_QML[DASHBOARD_QML.index("id: toolheadSection"):DASHBOARD_QML.index("id: macroSection")])
-        start = DASHBOARD_QML.index("id: toolheadSection")
-        end = DASHBOARD_QML.index("id: macroSection", start)
-        self.assertEqual(DASHBOARD_QML[start:end].count("PreviewSecondaryButton"), 6)
-        self.assertNotIn("contentItem", DASHBOARD_QML[start:end])
+        self.assertNotIn('home("")', TOOLHEAD_SECTION_QML)
+        self.assertEqual(TOOLHEAD_SECTION_QML.count("PreviewSecondaryButton"), 6)
+        self.assertNotIn("contentItem", TOOLHEAD_SECTION_QML)
         # The Z-offset nudges carry direction glyphs, up row first, and no
         # +/- signs: the arrows carry the direction.
-        self.assertIn('"↓ " + Math.abs(modelData)', DASHBOARD_QML)
-        self.assertIn('"↑ " + modelData', DASHBOARD_QML)
-        self.assertLess(DASHBOARD_QML.index("model: [0.005"), DASHBOARD_QML.index("model: [-0.005"))
+        self.assertIn('"↓ " + Math.abs(modelData)', TUNING_SECTION_QML)
+        self.assertIn('"↑ " + modelData', TUNING_SECTION_QML)
+        self.assertLess(TUNING_SECTION_QML.index("model: [0.005"), TUNING_SECTION_QML.index("model: [-0.005"))
         # The toolhead block is gated by jogEnabled alone, never actionBusy:
-        # taps must keep working while the queue drains.
-        start = DASHBOARD_QML.index("id: toolheadSection")
-        end = DASHBOARD_QML.index("id: macroSection", start)
-        self.assertIn("jogEnabled", DASHBOARD_QML[start:end])
-        self.assertNotIn("actionBusy", DASHBOARD_QML[start:end])
+        # taps must keep working while the queue drains. The block rides
+        # its component (4.3.0) — the pins follow it there.
+        self.assertIn("jogEnabled", TOOLHEAD_SECTION_QML)
+        self.assertNotIn("actionBusy", TOOLHEAD_SECTION_QML)
         # The compass is a 3×3 grid (9 cells) with the empty centre: the
         # four arrows must appear in north-west-east-south order so the
         # south button sits under north, never under west.
-        grid = DASHBOARD_QML[DASHBOARD_QML.index('text: "↑ Y"'):DASHBOARD_QML.index('text: "↓ Y"') + len('text: "↓ Y"')]
+        grid = TOOLHEAD_SECTION_QML[TOOLHEAD_SECTION_QML.index('text: "↑ Y"'):TOOLHEAD_SECTION_QML.index('text: "↓ Y"') + len('text: "↓ Y"')]
         positions = [grid.index(token) for token in ('text: "↑ Y"', 'text: "← X"', 'text: "→ X"', 'text: "↓ Y"')]
         self.assertEqual(positions, sorted(positions))
-        compass = DASHBOARD_QML[DASHBOARD_QML.index('columns: 3'):DASHBOARD_QML.index('ColumnLayout {', DASHBOARD_QML.index('text: "↑ Y"'))]
+        compass = TOOLHEAD_SECTION_QML[TOOLHEAD_SECTION_QML.index('columns: 3'):TOOLHEAD_SECTION_QML.index('ColumnLayout {', TOOLHEAD_SECTION_QML.index('text: "↑ Y"'))]
         self.assertEqual(compass.count('PreviewSecondaryButton {'), 4)
         self.assertEqual(compass.count('Item {'), 5)
 
@@ -122,7 +164,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('"MoonrakerMonitorBedMesh.qml"', OUTPUT_PLUGIN)
         self.assertIn('Qt.createComponent("MoonrakerMonitorDashboard.qml"', BED_MESH_QML)  # the shell's async load
         self.assertIn("MoonrakerMonitor", DASHBOARD_QML)
-        self.assertIn("Power control is locked by Moonraker while this print is active.", DASHBOARD_QML)
+        self.assertIn("Power control is locked by Moonraker while this print is active.", POWER_SECTION_QML)
 
     def test_output_plugin_selects_the_same_dashboard_through_one_model(self):
         self.assertIn("from .MoonrakerMonitorModel import MoonrakerMonitorModel", OUTPUT_PLUGIN)
@@ -150,6 +192,83 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("EMERGENCY STOP", DASHBOARD_QML)
         self.assertNotIn("Emergency stop?", DASHBOARD_QML)
 
+    def test_section_ids_are_pinned_as_the_persistence_keys(self):
+        # The 22 sectionId: literals are pinned as an exact set and the
+        # console pane — whose id is not a sectionId: property — by its
+        # expansion reference: a renamed id or an unlisted section must
+        # not slip through silently (an unknown key defaults to expanded,
+        # so the pin is the only guard on the persistence vocabulary).
+        # The section-id literals ride their components (4.3.0): the
+        # extraction scans the hosts AND every extracted section file.
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML + FANS_INFO_SECTION_QML + FILAMENT_SECTION_QML + OBJECTS_SECTION_QML + TEMPS_SECTION_QML + SYSTEM_INFO_SECTION_QML + MCUS_SECTION_QML + JOB_SECTION_QML))
+        self.assertEqual(literals, SECTION_IDS - {"console"})
+        self.assertEqual(len(SECTION_IDS), 23)
+        self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
+        # The extraction's header contract (the re-reviews' zero-width
+        # catch): every section component's header is explicitly
+        # width-bound. Layout.fillWidth is inert inside the Column
+        # roots — a header sized that way renders 0 px wide and loses
+        # its click target entirely.
+        for section_qml in (PRINT_SECTION_QML, SETUP_SECTION_QML, TOOLHEAD_SECTION_QML,
+                            MACROS_SECTION_QML, PROFILES_SECTION_QML, TUNING_SECTION_QML,
+                            FANS_SECTION_QML, LEDS_SECTION_QML, PWM_SECTION_QML,
+                            POWER_SECTION_QML, SYSTEM_SECTION_QML, SAVE_SECTION_QML,
+                            FILE_MANAGER_SECTION_QML, MESH_SECTION_QML,
+                            TEMP_HISTORY_SECTION_QML, FANS_INFO_SECTION_QML,
+                            FILAMENT_SECTION_QML, OBJECTS_SECTION_QML, TEMPS_SECTION_QML,
+                            SYSTEM_INFO_SECTION_QML, MCUS_SECTION_QML, JOB_SECTION_QML):
+            header = section_qml[section_qml.index("CollapsibleSectionHeader {"):
+                                 section_qml.index("CollapsibleSectionHeader {") + 400]
+            self.assertIn("width: parent.width", header)
+        # The two monitor sections sit in the STATUS PANE, not inside
+        # the chart pop-over's legend repeater (the adversarial
+        # critic's misplaced-insertion catch): the instantiation
+        # follows ObjectsSection in the pane's own content.
+        objects_at = MONITOR_QML.index("ObjectsSection {")
+        system_at = MONITOR_QML.index("SystemInfoSection {")
+        mcus_at = MONITOR_QML.index("McusSection {")
+        self.assertLess(objects_at, system_at)
+        self.assertLess(system_at, mcus_at)
+        pane_close = MONITOR_QML.index("                    }\n                }\n", objects_at)
+        self.assertLess(mcus_at, pane_close)
+        # The mesh section's refresh rides an accessor — the monitor's
+        # handler calls it through the instantiation id, never the
+        # component's own id (the dangling-id fix).
+        self.assertIn("function refreshMap()", MESH_SECTION_QML)
+        self.assertIn("meshSection.refreshMap()", MONITOR_QML)
+
+    def test_no_oscillation_thresholds_keep_the_release_above_the_squeeze(self):
+        # The auto-collapse latch (MoonrakerMonitor.qml:205-239): the
+        # release point must sit ABOVE the squeeze point with a dead
+        # zone — the record there describes the latch that never
+        # re-armed when the release sat below the squeeze. The
+        # literals are extracted tolerantly (regexes, never the
+        # expression text, which qmlformat owns). The squeeze reads
+        # the CameraPane's exported viewport width — the qualifier is
+        # matched tolerantly, but both sides must be the SAME
+        # expression and the threshold stays pinned.
+        comfort = re.search(
+            r'infoComfortWidth: \(([0-9]+) \+ ([0-9]+) \+ ([0-9]+)\) \* screenScaleFactor \+ 4 \* UM\.Theme\.getSize\("default_margin"\)\.width',
+            MONITOR_QML,
+        )
+        self.assertIsNotNone(comfort, "the comfort-width expression changed shape")
+        squeeze = re.search(
+            r'webcamSqueezed: ([A-Za-z0-9_.]+) > 0 && \1 < ([0-9]+) \* screenScaleFactor',
+            MONITOR_QML,
+        )
+        self.assertIsNotNone(squeeze, "the squeeze threshold changed shape")
+        release_margin = re.search(
+            r'root\.width >= infoComfortWidth \+ ([0-9]+) \* screenScaleFactor',
+            MONITOR_QML,
+        )
+        self.assertIsNotNone(release_margin, "the release threshold changed shape")
+        comfort_sum = sum(int(g) for g in comfort.groups())
+        self.assertGreater(
+            comfort_sum + int(release_margin.group(1)),
+            int(squeeze.group(2)),
+            "the release point must stay above the squeeze point or the latch never re-arms",
+        )
+
     def test_controls_live_in_the_collapsible_column_and_the_left_is_read_only(self):
         # The left panel carries no printer commands: only the camera list,
         # the read-outs and view configuration remain there.
@@ -160,40 +279,140 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("id: infoPanel", MONITOR_QML)
         # The mesh section hosts the mini map; a click opens the shared
         # pop-over. The button is gone; the mini map's tooltip remains.
-        self.assertIn('tooltipText: root.printer != null ? "Click for the full bed mesh map ("', MONITOR_QML)
+        self.assertIn('tooltipText: root.printerModel != null ? "Click for the full bed mesh map ("', MESH_SECTION_QML)
         self.assertNotIn('id: mapButton', MONITOR_QML)
         # Cura-style collapsible sections, persisted per section, sharing
-        # the CollapsibleSectionHeader type across all three panes.
-        self.assertIn("sectionExpandedMap", DASHBOARD_QML)
+        # the CollapsibleSectionHeader type across all three panes. The
+        # sections ride their components (4.3.0) — the expansion map is
+        # read by every one of them.
+        self.assertIn("sectionExpandedMap", PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML)
         self.assertIn("setSectionExpanded", MONITOR_MODEL)
-        self.assertIn('sectionId: "toolhead"', DASHBOARD_QML)
+        self.assertIn('sectionId: "toolhead"', TOOLHEAD_SECTION_QML)
         # Direct instantiations must ASSIGN the type's properties: the old
         # Loader syntax ('property string sectionId: ...') declares a local
         # property instead, which silently un-wires every header.
         self.assertNotIn("property string sectionId:", DASHBOARD_QML)
         self.assertNotIn("property string title:", DASHBOARD_QML)
         self.assertNotIn("property string sectionIcon:", DASHBOARD_QML)
-        self.assertIn('sectionIcon: "Nozzle"', DASHBOARD_QML)
-        self.assertIn('sectionIcon: "Printer"', DASHBOARD_QML)
-        self.assertIn('sectionId: "meshmap"', MONITOR_QML)
-        self.assertIn('sectionId: "systeminfo"', MONITOR_QML)
+        self.assertIn('sectionIcon: "Nozzle"', TOOLHEAD_SECTION_QML)
+        self.assertIn('sectionIcon: "Printer"', PRINT_SECTION_QML)
+        self.assertIn('sectionId: "meshmap"', MESH_SECTION_QML)
+        self.assertIn('sectionId: "systeminfo"', SYSTEM_INFO_SECTION_QML)
         # Plugin-drawn glyphs feed the header through a url, and the
         # frontend launcher lives in the Printer status title row.
-        self.assertIn('sectionIcon: "Fan"', MONITOR_QML)
-        self.assertIn('sectionIconUrl: Qt.resolvedUrl("Thermometer.svg")', MONITOR_QML)
-        self.assertIn('Qt.resolvedUrl("Download.svg")', MONITOR_QML)
-        self.assertIn('sectionIconUrl: Qt.resolvedUrl("Power.svg")', DASHBOARD_QML)
+        self.assertIn('sectionIcon: "Fan"', FANS_INFO_SECTION_QML)
+        self.assertIn('sectionIconUrl: Qt.resolvedUrl("Thermometer.svg")', TEMP_HISTORY_SECTION_QML)
+        self.assertIn('Qt.resolvedUrl("Download.svg")', JOB_SECTION_QML)
+        self.assertIn('sectionIconUrl: Qt.resolvedUrl("Power.svg")', POWER_SECTION_QML)
         self.assertIn('text: "Open the Moonraker frontend."', MONITOR_QML)
         self.assertNotIn('text: "Open Moonraker frontend"', MONITOR_QML)
-        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 13)
-        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 9)
-        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 11)
-        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 8)  # Temperature history uses the plugin glyph
+        # The section machinery (4.3.0): per-file counts PLUS the
+        # totals — a moved section decrements one file and increments
+        # another, and the totals catch a dropped section that a
+        # per-file pin alone would read as "moved".
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader"), 0)
+        # Every extracted section is a SIBLING instantiation in the
+        # pane — a section nested inside another's instantiation is
+        # valid QML and loads, but renders inside the wrong Column.
+        self.assertIn("                        }\n                        SaveSection {", DASHBOARD_QML)
+        self.assertEqual(PRINT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(SETUP_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(MACROS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(PROFILES_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(TUNING_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(FANS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(LEDS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(PWM_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(POWER_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(SYSTEM_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(SAVE_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(FILE_MANAGER_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(MESH_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(TEMP_HISTORY_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(FANS_INFO_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(FILAMENT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(OBJECTS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(TEMPS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(SYSTEM_INFO_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(MCUS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(JOB_SECTION_QML.count("CollapsibleSectionHeader"), 1)
+        self.assertEqual(MONITOR_QML.count("CollapsibleSectionHeader"), 0)
+        self.assertEqual(DASHBOARD_QML.count("CollapsibleSectionHeader")
+                         + PRINT_SECTION_QML.count("CollapsibleSectionHeader")
+                         + SETUP_SECTION_QML.count("CollapsibleSectionHeader")
+                         + TOOLHEAD_SECTION_QML.count("CollapsibleSectionHeader")
+                         + MACROS_SECTION_QML.count("CollapsibleSectionHeader")
+                         + PROFILES_SECTION_QML.count("CollapsibleSectionHeader")
+                         + TUNING_SECTION_QML.count("CollapsibleSectionHeader")
+                         + FANS_SECTION_QML.count("CollapsibleSectionHeader")
+                         + LEDS_SECTION_QML.count("CollapsibleSectionHeader")
+                         + PWM_SECTION_QML.count("CollapsibleSectionHeader")
+                         + POWER_SECTION_QML.count("CollapsibleSectionHeader")
+                         + SYSTEM_SECTION_QML.count("CollapsibleSectionHeader")
+                         + SAVE_SECTION_QML.count("CollapsibleSectionHeader")
+                         + FILE_MANAGER_SECTION_QML.count("CollapsibleSectionHeader")
+                         + MESH_SECTION_QML.count("CollapsibleSectionHeader")
+                         + TEMP_HISTORY_SECTION_QML.count("CollapsibleSectionHeader")
+                         + FANS_INFO_SECTION_QML.count("CollapsibleSectionHeader")
+                         + FILAMENT_SECTION_QML.count("CollapsibleSectionHeader")
+                         + OBJECTS_SECTION_QML.count("CollapsibleSectionHeader")
+                         + TEMPS_SECTION_QML.count("CollapsibleSectionHeader")
+                         + SYSTEM_INFO_SECTION_QML.count("CollapsibleSectionHeader")
+                         + MCUS_SECTION_QML.count("CollapsibleSectionHeader")
+                         + JOB_SECTION_QML.count("CollapsibleSectionHeader")
+                         + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
+        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 0)
+        self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(SETUP_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(TOOLHEAD_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(MACROS_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(PROFILES_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(TUNING_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(FANS_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(LEDS_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(PWM_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(POWER_SECTION_QML.count('sectionIcon: "'), 0)  # Power uses the plugin glyph url
+        self.assertEqual(SYSTEM_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(SAVE_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(FILE_MANAGER_SECTION_QML.count('sectionIcon: "'), 0)  # The plugin glyph url
+        self.assertEqual(MESH_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(TEMP_HISTORY_SECTION_QML.count('sectionIcon: "'), 0)  # The plugin glyph url
+        self.assertEqual(FANS_INFO_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(FILAMENT_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(OBJECTS_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(TEMPS_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(SYSTEM_INFO_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(MCUS_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(JOB_SECTION_QML.count('sectionIcon: "'), 1)
+        self.assertEqual(MONITOR_QML.count('sectionIcon: "'), 0)
+        self.assertEqual(DASHBOARD_QML.count('sectionIcon: "')
+                         + PRINT_SECTION_QML.count('sectionIcon: "')
+                         + SETUP_SECTION_QML.count('sectionIcon: "')
+                         + TOOLHEAD_SECTION_QML.count('sectionIcon: "')
+                         + MACROS_SECTION_QML.count('sectionIcon: "')
+                         + PROFILES_SECTION_QML.count('sectionIcon: "')
+                         + TUNING_SECTION_QML.count('sectionIcon: "')
+                         + FANS_SECTION_QML.count('sectionIcon: "')
+                         + LEDS_SECTION_QML.count('sectionIcon: "')
+                         + PWM_SECTION_QML.count('sectionIcon: "')
+                         + POWER_SECTION_QML.count('sectionIcon: "')
+                         + SYSTEM_SECTION_QML.count('sectionIcon: "')
+                         + SAVE_SECTION_QML.count('sectionIcon: "')
+                         + MESH_SECTION_QML.count('sectionIcon: "')
+                         + FANS_INFO_SECTION_QML.count('sectionIcon: "')
+                         + FILAMENT_SECTION_QML.count('sectionIcon: "')
+                         + OBJECTS_SECTION_QML.count('sectionIcon: "')
+                         + TEMPS_SECTION_QML.count('sectionIcon: "')
+                         + SYSTEM_INFO_SECTION_QML.count('sectionIcon: "')
+                         + MCUS_SECTION_QML.count('sectionIcon: "')
+                         + JOB_SECTION_QML.count('sectionIcon: "')
+                         + MONITOR_QML.count('sectionIcon: "'), 19)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
         # sectionIcon: count is unchanged.
-        self.assertIn('sectionId: "fileManager"', DASHBOARD_QML)
-        self.assertIn('text: "File manager"', DASHBOARD_QML)
+        self.assertIn('sectionId: "fileManager"', FILE_MANAGER_SECTION_QML)
+        self.assertIn('text: "File manager"', FILE_MANAGER_SECTION_QML)
         self.assertIn("fileManagerOpen", DASHBOARD_QML)
         self.assertIn("FileManager 1.0 FileManager.qml", QMLDIR)
         # Opening the popup must trigger the walk (the Snapshot 1
@@ -379,25 +598,32 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("consoleErrorBell", MONITOR_MODEL)
         # The extrude distance/speed rows keep their selection
         # highlighted (the author's live report).
-        self.assertIn("extrudeDistance === 5", DASHBOARD_QML)
-        self.assertIn("extrudeSpeed === 1500", DASHBOARD_QML)
+        self.assertIn("extrudeDistance === 5", TOOLHEAD_SECTION_QML)
+        self.assertIn("extrudeSpeed === 1500", TOOLHEAD_SECTION_QML)
         # The abs/rel toggle (the author's live request) and the
         # dropped 15 mm distance button.
-        self.assertIn("setPositionMode", DASHBOARD_QML)
+        self.assertIn("setPositionMode", TOOLHEAD_SECTION_QML)
         self.assertNotIn('"15"', DASHBOARD_QML)
         # The mode text is the toggle control (the author's live
         # ruling) and the Move distance combo restores the persisted
         # selection.
-        self.assertIn('text: " moves"', DASHBOARD_QML)
-        self.assertIn("jogPresets.indexOf", DASHBOARD_QML)
+        self.assertIn('text: " moves"', TOOLHEAD_SECTION_QML)
+        self.assertIn("jogPresets.indexOf", TOOLHEAD_SECTION_QML)
         # Filament state is colour-coded: green detected, orange runout.
-        self.assertIn('"#43a047"', MONITOR_QML)
-        self.assertIn('"#fb8c00"', MONITOR_QML)
+        self.assertIn('"#43a047"', FILAMENT_SECTION_QML)
+        self.assertIn('"#fb8c00"', FILAMENT_SECTION_QML)
         self.assertNotIn('id: powerOffDialog', MONITOR_QML)
         self.assertNotIn('id: cancelPrintDialog', MONITOR_QML)
         # The right column hosts the print actions, power and the lock.
-        for token in ('text: "Pause"', 'text: "Resume"', 'text: "Cancel"', "cancelPrintDialog.open()",
-                      'title: "Power"', "powerOffDialog.open()", "controlsCollapsed",
+        # The print actions ride their component (4.3.0).
+        for token in ('text: "Pause"', 'text: "Resume"', 'text: "Cancel"', "cancelRequested()"):
+            self.assertIn(token, PRINT_SECTION_QML)
+        self.assertIn('title: "Power"', POWER_SECTION_QML)
+        self.assertIn("onPowerOffConfirmRequested", DASHBOARD_QML)
+        self.assertIn("powerOffConfirmRequested(modelData.name)", POWER_SECTION_QML)
+        self.assertIn("property bool anyPowerLocked", POWER_SECTION_QML)
+        self.assertNotIn("anyPowerLocked", DASHBOARD_QML)
+        for token in ("powerOffDialog.open()", "controlsCollapsed",
                       "id: collapsedTitle", "rotation: 90",
                       '"Lock all controls."', '"Unlock all controls."', "PadlockLocked.svg", "PadlockUnlocked.svg",
                       "setControlsLocked", "setControlsCollapsed"):
@@ -415,7 +641,7 @@ class MonitorModelContractTests(unittest.TestCase):
                       "id: infoCollapseButton", "id: statusCollapseButton",
                       "id: infoCollapsedTitle", "id: statusCollapsedTitle",
                       "setInfoCollapsed", "setStatusCollapsed"):
-            self.assertIn(token, MONITOR_QML + MONITOR_MODEL)
+            self.assertIn(token, MONITOR_QML + MONITOR_MODEL + MESH_SECTION_QML + JOB_SECTION_QML)
         self.assertIn("infoCollapsed", MONITOR_MODEL)
         self.assertIn("statusCollapsed", MONITOR_MODEL)
         self.assertIn("cameraRefreshNonce", MONITOR_MODEL)
@@ -457,7 +683,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # The mini chart carries a live legend row (dot, name, value) so
         # the unlabelled sparklines stay readable, and the mesh detail's
         # readout row is permanent so the map never resizes on hover.
-        self.assertIn("modelData.label + \" \" + value", MONITOR_QML)
+        self.assertIn("modelData.label + \" \" + value", TEMP_HISTORY_SECTION_QML)
         self.assertIn("Hover the map for probe coordinates", MONITOR_QML)
         # The chart's hover values live in a cursor-following tooltip
         # OUTSIDE the clipped card (allowed to overflow any boundary) —
@@ -479,7 +705,8 @@ class MonitorModelContractTests(unittest.TestCase):
         # strip keeps breathing room below the plot.
         self.assertIn('toFixed(0) + "°C"', TEMP_CHART_QML)
         self.assertIn('points[index][1].toFixed(1) + "°C"', TEMP_CHART_QML)
-        self.assertEqual(MONITOR_QML.count('toFixed(1) + "°C"'), 2)
+        self.assertEqual(MONITOR_QML.count('toFixed(1) + "°C"'), 1)
+        self.assertEqual(TEMP_HISTORY_SECTION_QML.count('toFixed(1) + "°C"'), 1)
         self.assertIn("Math.max(1, height - 22)", TEMP_CHART_QML)
         # The console history lives in a terminal-styled pane: dark,
         # fixed-width, newest line pinned to the bottom, with a prompt
@@ -512,38 +739,38 @@ class MonitorModelContractTests(unittest.TestCase):
         # non-primary sensors stand in for the mini chart.
         self.assertIn("others.slice(0, 2)", MONITOR_QML)
         self.assertIn("2 - primary.length", MONITOR_QML)
-        self.assertIn('"series": root.miniChartSeries', MONITOR_QML)
+        self.assertIn('"series": root.miniSeries', TEMP_HISTORY_SECTION_QML)
         # The Layer row discloses which source produced the value, and
         # the terminal picks an installed monospace face at runtime
         # (the generic and comma lists do not resolve everywhere).
-        self.assertIn("monitorLayerSource", MONITOR_QML)
-        self.assertIn("monitorLayerSource !== undefined", MONITOR_QML)
-        self.assertIn("Layer source: ", MONITOR_QML)
+        self.assertIn("monitorLayerSource", JOB_SECTION_QML)
+        self.assertIn("monitorLayerSource !== undefined", JOB_SECTION_QML)
+        self.assertIn("Layer source: ", JOB_SECTION_QML)
         # The model DECLARES the source (a dynamic setProperty would be
         # undefined at QML creation and the .length read would throw).
         self.assertIn('value_property(str, "monitorLayerSource", monitorChanged, "")', MONITOR_MODEL)
         self.assertIn('"monitorLayerSource"', MONITOR_MODEL)
         # A slim bar under the layer value shows the within-layer
         # progress; it hides while the layer has no height anchor.
-        self.assertIn("monitorLayerProgress >= 0", MONITOR_QML)
-        self.assertIn("Layer progress — how far through the current layer.", MONITOR_QML)
-        self.assertIn("without loading it into the preview", MONITOR_QML)
+        self.assertIn("monitorLayerProgress >= 0", JOB_SECTION_QML)
+        self.assertIn("Layer progress — how far through the current layer.", JOB_SECTION_QML)
+        self.assertIn("without loading it into the preview", JOB_SECTION_QML)
         # The glyph's in-progress state: a non-clickable hourglass.
-        self.assertIn('Qt.resolvedUrl("Hourglass.svg")', MONITOR_QML)
-        self.assertIn("root.printer.improvingEta", MONITOR_QML)
+        self.assertIn('Qt.resolvedUrl("Hourglass.svg")', JOB_SECTION_QML)
+        self.assertIn("root.printerModel.improvingEta", JOB_SECTION_QML)
         # Both progress figures carry two decimals.
-        self.assertIn("monitorProgress.toFixed(2)", MONITOR_QML)
-        self.assertIn("(root.printer.monitorLayerProgress * 100).toFixed(2)", MONITOR_QML)
+        self.assertIn("monitorProgress.toFixed(2)", JOB_SECTION_QML)
+        self.assertIn("(root.printerModel.monitorLayerProgress * 100).toFixed(2)", JOB_SECTION_QML)
         # The Improve-ETA bar: determinate during the download, a
         # plugin-owned sweep while resolving/indexing (Cura's themed
         # indeterminate renders as a static full bar).
-        self.assertIn("improveEtaProgress", MONITOR_QML)
-        self.assertIn("NumberAnimation on sweepPhase", MONITOR_QML)
-        self.assertIn("(1 - Math.abs(2 * improveEtaBar.sweepPhase - 1))", MONITOR_QML)
-        self.assertIn("The spacer keeps the glyph hugging", MONITOR_QML)
-        self.assertIn("SequentialAnimation on rotation", MONITOR_QML)
-        self.assertIn("PauseAnimation", MONITOR_QML)
-        self.assertIn("root.printer.improveEtaPhase", MONITOR_QML)
+        self.assertIn("improveEtaProgress", JOB_SECTION_QML)
+        self.assertIn("NumberAnimation on sweepPhase", JOB_SECTION_QML)
+        self.assertIn("(1 - Math.abs(2 * improveEtaBar.sweepPhase - 1))", JOB_SECTION_QML)
+        self.assertIn("The spacer keeps the glyph hugging", JOB_SECTION_QML)
+        self.assertIn("SequentialAnimation on rotation", JOB_SECTION_QML)
+        self.assertIn("PauseAnimation", JOB_SECTION_QML)
+        self.assertIn("root.printerModel.improveEtaPhase", JOB_SECTION_QML)
         self.assertIn("download_fraction", MONITOR_MODEL + (PLUGINS / "RemoteFileService.py").read_text())
         self.assertIn('"monitorLayerProgress"', MONITOR_MODEL)
         self.assertIn("function monoFamily()", MONITOR_QML)
@@ -570,24 +797,24 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("setShowProbePoints", MONITOR_QML)
         # Terminal order: the history sits above the input row.
         self.assertLess(MONITOR_QML.index("id: consoleText"), MONITOR_QML.index("id: consoleInput"))
-        self.assertIn("All sensors hidden — click to re-enable one in the chart.", MONITOR_QML)
+        self.assertIn("All sensors hidden — click to re-enable one in the chart.", TEMP_HISTORY_SECTION_QML)
 
     def test_system_section_has_the_manual_reconnect(self):
         # The author's live request: a Reconnect in the System
         # section for a UI stuck after a printer error.
-        self.assertIn('text: "Reconnect"', MONITOR_QML)
-        self.assertIn("root.printer.reconnect()", MONITOR_QML)
+        self.assertIn('text: "Reconnect"', SYSTEM_INFO_SECTION_QML)
+        self.assertIn("root.printerModel.reconnect()", SYSTEM_INFO_SECTION_QML)
 
     def test_system_restart_surface(self):
         for token in ("firmwareRestart", "hostRestart", "FIRMWARE_RESTART", "machine/reboot"):
             self.assertIn(token, MONITOR_MODEL + CONTROLS)
-        for token in ('text: "Firmware restart"', 'text: "Host restart"'):
-            self.assertIn(token, DASHBOARD_QML)
+        for token in ('text: "Firmware restart"', 'text: "Host restart"', 'text: "Klipper restart"'):
+            self.assertIn(token, SYSTEM_SECTION_QML)
         # The reason copy lives in the policy (4.2.0): the row reads
         # the published restartReason — the old QML sentence was
         # superseded by the policy's short form.
         self.assertIn('"A print is running"', POLICY)
-        self.assertIn("restartReason", DASHBOARD_QML)
+        self.assertIn("restartReason", SYSTEM_SECTION_QML)
 
     def test_emergency_stop_is_pinned_outside_scrollable_controls(self):
         # The dock lives at the bottom of the dashboard, spanning the whole
@@ -603,18 +830,18 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn('emergencyButton.clicks >= 2 ? "white"', DASHBOARD_QML)
 
     def test_dashboard_shows_current_z_offset_beside_nudges(self):
-        self.assertIn('text: "Current Z offset"', DASHBOARD_QML)
-        self.assertIn('"Current " + root.printer.zOffsetText', DASHBOARD_QML)
-        self.assertIn("adjustZOffset", DASHBOARD_QML)
+        self.assertIn('text: "Current Z offset"', PRINT_SECTION_QML)
+        self.assertIn('"Current " + root.printerModel.zOffsetText', TUNING_SECTION_QML)
+        self.assertIn("adjustZOffset", TUNING_SECTION_QML)
 
     def test_z_offset_buttons_are_opposites_with_equal_click_zones(self):
-        self.assertIn("id: zOffsetGrid", DASHBOARD_QML)
-        self.assertIn("model: [-0.005, -0.01, -0.025, -0.05]", DASHBOARD_QML)
-        self.assertIn("model: [0.005, 0.01, 0.025, 0.05]", DASHBOARD_QML)
+        self.assertIn("id: zOffsetGrid", TUNING_SECTION_QML)
+        self.assertIn("model: [-0.005, -0.01, -0.025, -0.05]", TUNING_SECTION_QML)
+        self.assertIn("model: [0.005, 0.01, 0.025, 0.05]", TUNING_SECTION_QML)
         # A two-column grid (up left, down right): both Repeater
         # delegates fill their cell equally, so click zones stay
         # matched and the labels cannot elide at narrow pane widths.
-        grid = DASHBOARD_QML[DASHBOARD_QML.index("id: zOffsetGrid"):DASHBOARD_QML.index('text: "Clear Z offset"')]
+        grid = TUNING_SECTION_QML[TUNING_SECTION_QML.index("id: zOffsetGrid"):TUNING_SECTION_QML.index('text: "Clear Z offset"')]
         # Up row first, down row second, each four-across with equal
         # layout cells; the up model must precede the down model.
         self.assertLess(grid.index('text: "↑ "'), grid.index('text: "↓ "'))
@@ -626,15 +853,15 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn("fixedWidthMode: true", grid)
 
     def test_temperature_presets_are_buttons_not_an_implied_selection(self):
-        self.assertIn("temperaturePresetItems", DASHBOARD_QML)
-        self.assertIn('modelData.active ? "Active — "', DASHBOARD_QML)
-        self.assertIn("applyTemperaturePreset(modelData.index)", DASHBOARD_QML)
+        self.assertIn("temperaturePresetItems", PROFILES_SECTION_QML)
+        self.assertIn('modelData.active ? "Active — "', PROFILES_SECTION_QML)
+        self.assertIn("applyTemperaturePreset(modelData.index)", PROFILES_SECTION_QML)
         self.assertNotIn("temperaturePresetSelector", DASHBOARD_QML)
 
-    def test_pwm_controls_remain_in_dashboard(self):
-        self.assertIn("pwmOutputItems", DASHBOARD_QML)
-        self.assertIn("setPwmOutput", DASHBOARD_QML)
-        self.assertIn('title: "PWM outputs"', DASHBOARD_QML)
+    def test_pwm_controls_ride_their_component(self):
+        self.assertIn("pwmOutputItems", PWM_SECTION_QML)
+        self.assertIn("setPwmOutput", PWM_SECTION_QML)
+        self.assertIn('title: "PWM outputs"', PWM_SECTION_QML)
 
     def test_monitor_layer_tracks_remote_print_not_cura_slider(self):
         resolver = (PLUGINS / "PrintState.py").read_text()
@@ -660,9 +887,9 @@ class MonitorModelContractTests(unittest.TestCase):
             '"Main MCU"',
         ):
             self.assertIn(token, TYPED)
-        self.assertIn("modelData.load", MONITOR_QML)
-        self.assertIn("modelData.frequency", MONITOR_QML)
-        self.assertIn("modelData.transport", MONITOR_QML)
+        self.assertIn("modelData.load", MCUS_SECTION_QML)
+        self.assertIn("modelData.frequency", MCUS_SECTION_QML)
+        self.assertIn("modelData.transport", MCUS_SECTION_QML)
 
     def test_addressable_led_colour_is_controllable(self):
         for token in (
@@ -675,15 +902,15 @@ class MonitorModelContractTests(unittest.TestCase):
             "SET_LED LED=",
         ):
             self.assertIn(token, CONTROLS + MONITOR_MODEL)
-        self.assertIn("function applyLedColour()", DASHBOARD_QML)
-        self.assertGreaterEqual(DASHBOARD_QML.count("applyLedColour()"), 4)
-        self.assertIn("root.tuningSliderPressed = interacting", DASHBOARD_QML)
+        self.assertIn("function applyLedColour()", LEDS_SECTION_QML)
+        self.assertGreaterEqual(LEDS_SECTION_QML.count("applyLedColour()"), 4)
+        self.assertIn('root.interactionSink(interacting, modelData.object, "led-red")', LEDS_SECTION_QML)
         self.assertNotIn('text: "Set colour"', DASHBOARD_QML)
-        self.assertIn("root.printer.setLedColor", DASHBOARD_QML)
+        self.assertIn("root.printerModel.setLedColor", LEDS_SECTION_QML)
 
     def test_live_tuning_slider_ranges_expand_from_accepted_value(self):
-        self.assertIn("to: Math.max(200, root.printer != null ? Math.ceil(root.printer.speedFactorPercent * 2) : 200)", DASHBOARD_QML)
-        self.assertIn("to: Math.max(200, root.printer != null ? Math.ceil(root.printer.flowFactorPercent * 2) : 200)", DASHBOARD_QML)
+        self.assertIn("to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.speedFactorPercent * 2) : 200)", TUNING_SECTION_QML)
+        self.assertIn("to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.flowFactorPercent * 2) : 200)", TUNING_SECTION_QML)
         self.assertIn('max(10 if kind == "speed" else 50, int(percent))', CONTROLS)
         self.assertNotIn("min(200, int(percent))", CONTROLS)
         self.assertNotIn("min(150, int(percent))", CONTROLS)
@@ -694,48 +921,87 @@ class MonitorModelContractTests(unittest.TestCase):
         # funnels every interaction path (groove, handle drag, keyboard)
         # into valueTuning (the live preview) and valueCommitted (the
         # apply on completion) — the usage sites never re-derive the
-        # interaction state.
-        self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 9)
-        for slider_id in (
-            "speedSlider", "flowSlider", "fanSlider", "ledSlider",
-            "redSlider", "greenSlider", "blueSlider", "whiteSlider",
-            "pwmSlider",
-        ):
+        # interaction state. The tuning pair rides its component
+        # (4.3.0); per-file counts plus the total.
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("live: false"), 2)
+        self.assertGreaterEqual(FANS_SECTION_QML.count("live: false"), 1)
+        self.assertGreaterEqual(LEDS_SECTION_QML.count("live: false"), 5)
+        self.assertGreaterEqual(PWM_SECTION_QML.count("live: false"), 1)
+        self.assertEqual(DASHBOARD_QML.count("live: false"), 0)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("live: false") + FANS_SECTION_QML.count("live: false") + LEDS_SECTION_QML.count("live: false") + PWM_SECTION_QML.count("live: false"), 9)
+        for slider_id in ("speedSlider", "flowSlider"):
             marker = "id: " + slider_id
-            start = DASHBOARD_QML.find(marker)
+            start = TUNING_SECTION_QML.find(marker)
             self.assertGreaterEqual(start, 0, slider_id)
-            self.assertIn("live: false", DASHBOARD_QML[start:start + 700], slider_id)
-        self.assertGreaterEqual(DASHBOARD_QML.count("onValueCommitted:"), 9)
-        self.assertIn("previewSpeedFactor", DASHBOARD_QML)
-        self.assertIn("previewFlowFactor", DASHBOARD_QML)
-        self.assertIn("previewFanSpeed", DASHBOARD_QML)
-        self.assertIn("previewLedBrightness", DASHBOARD_QML)
-        self.assertIn("previewLedColor", DASHBOARD_QML)
-        self.assertIn("previewPwmOutput", DASHBOARD_QML)
-        self.assertIn("function sliderSelection(slider)", DASHBOARD_QML)
-        self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
-        self.assertIn("root.sliderSelection(speedSlider) + \"%\"", DASHBOARD_QML)
-        self.assertIn("root.printer.setSpeedFactor(value)", DASHBOARD_QML)
-        self.assertIn("root.printer.setFlowFactor(value)", DASHBOARD_QML)
+            self.assertIn("live: false", TUNING_SECTION_QML[start:start + 700], slider_id)
+        for slider_id in ("fanSlider",):
+            marker = "id: " + slider_id
+            start = FANS_SECTION_QML.find(marker)
+            self.assertGreaterEqual(start, 0, slider_id)
+            self.assertIn("live: false", FANS_SECTION_QML[start:start + 700], slider_id)
+        for slider_id in ("ledSlider", "redSlider", "greenSlider", "blueSlider", "whiteSlider"):
+            marker = "id: " + slider_id
+            start = LEDS_SECTION_QML.find(marker)
+            self.assertGreaterEqual(start, 0, slider_id)
+            self.assertIn("live: false", LEDS_SECTION_QML[start:start + 700], slider_id)
+        for slider_id in ("pwmSlider",):
+            marker = "id: " + slider_id
+            start = PWM_SECTION_QML.find(marker)
+            self.assertGreaterEqual(start, 0, slider_id)
+            self.assertIn("live: false", PWM_SECTION_QML[start:start + 700], slider_id)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("onValueCommitted:"), 2)
+        self.assertGreaterEqual(FANS_SECTION_QML.count("onValueCommitted:"), 1)
+        self.assertGreaterEqual(LEDS_SECTION_QML.count("onValueCommitted:"), 5)
+        self.assertGreaterEqual(PWM_SECTION_QML.count("onValueCommitted:"), 1)
+        self.assertEqual(DASHBOARD_QML.count("onValueCommitted:"), 0)
+        self.assertIn("previewSpeedFactor", TUNING_SECTION_QML)
+        self.assertIn("previewFlowFactor", TUNING_SECTION_QML)
+        self.assertIn("previewFanSpeed", FANS_SECTION_QML)
+        self.assertIn("previewLedBrightness", LEDS_SECTION_QML)
+        self.assertIn("previewLedColor", LEDS_SECTION_QML)
+        self.assertIn("previewPwmOutput", PWM_SECTION_QML)
+        # The four component-local copies of the slider value helper
+        # are gone (the engineering re-review): every call site reads
+        # the slider's own selectedValue() — one definition in
+        # OutlineSlider, the components cannot drift.
+        self.assertNotIn("function sliderSelection", TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML)
+        self.assertIn("pwmSlider.selectedValue() + \"%\"", PWM_SECTION_QML)
+        self.assertIn("speedSlider.selectedValue() + \"%\"", TUNING_SECTION_QML)
+        self.assertIn("fanSlider.selectedValue() + \"%\"", FANS_SECTION_QML)
+        self.assertIn('controlKind: "fan"', FANS_SECTION_QML)
+        self.assertIn("root.printerModel.setSpeedFactor(value)", TUNING_SECTION_QML)
+        self.assertIn("root.printerModel.setFlowFactor(value)", TUNING_SECTION_QML)
 
     def test_monitor_sliders_do_not_repeat_qml_properties(self):
-        duplicate = "from: 0; to: 100; stepSize: 1\n                                        from: 0; to: 100; live: false"
-        self.assertNotIn(duplicate, DASHBOARD_QML)
+        # The sliders ride their components now: the same duplicate
+        # can creep back in any of them, so the union is swept.
+        haystack = DASHBOARD_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML
+        self.assertIsNone(re.search(r"from: 0; to: 100; stepSize: 1\s*from: 0;", haystack))
 
     def test_slider_qml_prevents_parent_flickable_from_stealing_drag(self):
         self.assertIn("property bool tuningSliderPressed: false", DASHBOARD_QML)
+        self.assertIn("function receiveSliderInteraction(interacting, object, kind)", DASHBOARD_QML)
         self.assertIn("interactive: !root.tuningSliderPressed", DASHBOARD_QML)
-        for slider_id in ("speedSlider", "flowSlider", "fanSlider", "ledSlider", "redSlider",
-                          "greenSlider", "blueSlider", "whiteSlider", "pwmSlider"):
-            self.assertIn("id: " + slider_id, DASHBOARD_QML)
-        self.assertGreaterEqual(DASHBOARD_QML.count("root.tuningSliderPressed = interacting"), 9)
+        for slider_id in ("speedSlider", "flowSlider"):
+            self.assertIn("id: " + slider_id, TUNING_SECTION_QML)
+        self.assertIn("id: fanSlider", FANS_SECTION_QML)
+        for slider_id in ("ledSlider", "redSlider",
+                          "greenSlider", "blueSlider", "whiteSlider"):
+            self.assertIn("id: " + slider_id, LEDS_SECTION_QML)
+        self.assertIn("id: pwmSlider", PWM_SECTION_QML)
+        self.assertNotIn("root.tuningSliderPressed = interacting", DASHBOARD_QML)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count('root.interactionSink(interacting, "", "")'), 2)
+        self.assertIn('root.interactionSink(interacting, modelData.object, "fan")', FANS_SECTION_QML)
+        for kind in ("led-brightness", "led-red", "led-green", "led-blue", "led-white"):
+            self.assertIn('root.interactionSink(interacting, modelData.object, "%s")' % kind, LEDS_SECTION_QML)
+        self.assertIn('root.interactionSink(interacting, modelData.object, "pwm")', PWM_SECTION_QML)
 
     def test_monitor_uses_plugin_outline_bars_and_sliders(self):
         # The themed ProgressBar/Slider render a black slab in the
         # inactive-window palette (author's screenshot) — the monitor's
         # bars and sliders are all plugin-owned outline components now,
         # so a bare themed control may not creep back in.
-        for file_text in (MONITOR_QML, DASHBOARD_QML):
+        for file_text in (MONITOR_QML, DASHBOARD_QML, TUNING_SECTION_QML, FANS_SECTION_QML, LEDS_SECTION_QML, PWM_SECTION_QML, JOB_SECTION_QML):
             # Every "ProgressBar {"/"Slider {" token must be the plugin
             # outline components (the substring check covers both) —
             # the range-filter bar is the other plugin-owned
@@ -743,8 +1009,12 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertEqual(file_text.count("ProgressBar {"), file_text.count("OutlineProgressBar {"))
             self.assertEqual(file_text.count("Slider {"),
                 file_text.count("OutlineSlider {") + file_text.count("BedMeshRangeSlider {"))
-        self.assertIn("OutlineProgressBar {", MONITOR_QML)
-        self.assertGreaterEqual(DASHBOARD_QML.count("OutlineSlider {"), 9)
+        self.assertIn("OutlineProgressBar {", JOB_SECTION_QML)
+        self.assertEqual(DASHBOARD_QML.count("OutlineSlider {"), 0)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("OutlineSlider {"), 2)
+        self.assertGreaterEqual(FANS_SECTION_QML.count("OutlineSlider {"), 1)
+        self.assertGreaterEqual(LEDS_SECTION_QML.count("OutlineSlider {"), 5)
+        self.assertGreaterEqual(PWM_SECTION_QML.count("OutlineSlider {"), 1)
         indicator = (PLUGINS / "LoadProgressIndicator.qml").read_text()
         # The indicator bar's track is an outline too: transparent
         # interior, lining border, Cura-blue fill.
@@ -764,9 +1034,9 @@ class MonitorModelContractTests(unittest.TestCase):
         # rounded ends"), never a full pill — and every bar/slider
         # radius needs cornerSide, because Cura.RoundedRectangle forces
         # radius 0 without it (the corners silently render square).
-        for text in (bar, indicator, MONITOR_QML):
+        for text in (bar, indicator, JOB_SECTION_QML):
             self.assertIn('UM.Theme.getSize("progressbar_radius")', text)
-        for text, corners in ((bar, 2), (slider, 3), (indicator, 3), (MONITOR_QML, 3)):
+        for text, corners in ((bar, 2), (slider, 3), (indicator, 3), (JOB_SECTION_QML, 3)):
             self.assertEqual(text.count("cornerSide:"), corners, text[:40])
         # The pop-over shell must tolerate instantiation without a
         # parent (the engine gate creates every document standalone):
@@ -780,7 +1050,7 @@ class MonitorModelContractTests(unittest.TestCase):
         panel = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
         self.assertIn("The indicator is a SIBLING of the buttons Row", panel)
         self.assertIn("Collapsing the pane hides the pop-over's", MONITOR_QML)
-        self.assertIn('monitorEta === "Paused" ? ""', MONITOR_QML)
+        self.assertIn('monitorEta === "Paused" ? ""', JOB_SECTION_QML)
         # The "Collecting temperature history…" placeholder stays ABSENT:
         # the author ruled the waiting state annoying and dropped it
         # before; the changelog quote was struck instead (the filling
@@ -798,11 +1068,27 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("Layout.preferredHeight: 190 * screenScaleFactor", MONITOR_QML)
 
     def test_deferred_slider_and_monitor_ux_contracts(self):
-        self.assertGreaterEqual(DASHBOARD_QML.count("live: false"), 9)
-        self.assertGreaterEqual(DASHBOARD_QML.count("onValueCommitted:"), 9)
-        self.assertIn("slider.valueAt(slider.position)", DASHBOARD_QML)
-        self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", DASHBOARD_QML)
-        self.assertIn('text: "Refresh Moonraker\'s webcam list."', MONITOR_QML)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("live: false"), 2)
+        self.assertGreaterEqual(FANS_SECTION_QML.count("live: false"), 1)
+        self.assertGreaterEqual(LEDS_SECTION_QML.count("live: false"), 5)
+        self.assertGreaterEqual(PWM_SECTION_QML.count("live: false"), 1)
+        self.assertEqual(DASHBOARD_QML.count("live: false"), 0)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("onValueCommitted:"), 2)
+        self.assertGreaterEqual(FANS_SECTION_QML.count("onValueCommitted:"), 1)
+        self.assertGreaterEqual(LEDS_SECTION_QML.count("onValueCommitted:"), 5)
+        self.assertGreaterEqual(PWM_SECTION_QML.count("onValueCommitted:"), 1)
+        self.assertEqual(DASHBOARD_QML.count("onValueCommitted:"), 0)
+        self.assertNotIn("function sliderSelection(slider)", DASHBOARD_QML)
+        # The refocus walk roots at the section instantiations (the
+        # architecture re-review's dangling-id fix) — the dashboard
+        # never names a section's repeater id.
+        for repeater_id in ("fanRepeater", "ledRepeater", "pwmRepeater"):
+            self.assertNotIn(repeater_id, DASHBOARD_QML)
+        self.assertIn("root.focusSliderIn(fansSection, target, kind)", DASHBOARD_QML)
+        self.assertIn("root.focusSliderIn(ledsSection, target, kind)", DASHBOARD_QML)
+        self.assertIn("root.focusSliderIn(pwmSection, target, kind)", DASHBOARD_QML)
+        self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", TUNING_SECTION_QML)
+        self.assertIn('text: "Refresh Moonraker\'s webcam list."', CAMERA_PANE_QML)
         self.assertIn('title: "Exclude object?"', MONITOR_QML)
         tuning = (PLUGINS / "MonitorTuning.py").read_text()
         self.assertIn("DEBOUNCE_MS = 250", tuning)
@@ -839,15 +1125,15 @@ class MonitorModelContractTests(unittest.TestCase):
         # The camera bar's final shape (the author's ruling): the
         # label sits permanently ABOVE the dropdown, centred, no
         # colon — one label, no conditional layouts, nothing to
-        # overlap the pane at any width.
-        self.assertIn("Layout.preferredWidth: 180 * screenScaleFactor", MONITOR_QML)
-        self.assertIn("Layout.minimumWidth: 60 * screenScaleFactor", MONITOR_QML)
-        self.assertEqual(MONITOR_QML.count('text: "Camera"'), 1)
+        # overlap the pane at any width. The bar lives in CameraPane.
+        self.assertIn("Layout.preferredWidth: 180 * screenScaleFactor", CAMERA_PANE_QML)
+        self.assertIn("Layout.minimumWidth: 60 * screenScaleFactor", CAMERA_PANE_QML)
+        self.assertEqual(CAMERA_PANE_QML.count('text: "Camera"'), 1)
 
     def test_camera_qml_uses_the_activated_signal_index_not_bound_current_index(self):
-        self.assertIn("onActivated: function (index)", MONITOR_QML)
-        self.assertIn("selectWebcam(index)", MONITOR_QML)
-        self.assertNotIn("selectWebcam(cameraSelector.currentIndex)", MONITOR_QML)
+        self.assertIn("onActivated: function (index)", CAMERA_PANE_QML)
+        self.assertIn("selectWebcam(index)", CAMERA_PANE_QML)
+        self.assertNotIn("selectWebcam(cameraSelector.currentIndex)", CAMERA_PANE_QML)
 
     def test_camera_render_watchdogs_are_wired(self):
         # The author's live reports: a stream that CONNECTED but never
@@ -855,8 +1141,8 @@ class MonitorModelContractTests(unittest.TestCase):
         # watchdog watches the frame size; and a suspend/wake leaves a
         # frozen frame whose size is already set — the model's wake
         # hook reloads the source.
-        self.assertIn("cameraStallWatchdog", MONITOR_QML)
-        self.assertIn("cameraRenderStalled()", MONITOR_QML)
+        self.assertIn("cameraStallWatchdog", CAMERA_PANE_QML)
+        self.assertIn("cameraRenderStalled()", CAMERA_PANE_QML)
         self.assertIn("def cameraRenderStalled", MONITOR_MODEL)
         self.assertIn("applicationStateChanged.connect(self._on_app_state_changed)", MONITOR_MODEL)
 
@@ -880,17 +1166,17 @@ class MonitorModelContractTests(unittest.TestCase):
                       "signal valueTuning", "signal valueCommitted", "readonly property bool interacting",
                       "keyDebounce.restart()", "control.tuningActive = true"):
             self.assertIn(token, outline)
-        self.assertIn("onValueCommitted", DASHBOARD_QML)
+        self.assertIn("onValueCommitted", DASHBOARD_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML)
         # The keyboard nudge holds the interaction state until its
         # value submits, and the fan/LED/PWM repeaters freeze while a
         # tuning slider is mid-gesture — without the hold, the
         # commit's publish rebuilt the repeaters mid-nudge and killed
         # the focused delegate (the author's live report).
-        for token in ("root.frozenFanItems = root.printer.fanControlItems",
-                      "root.tuningSliderPressed ? root.frozenFanItems",
-                      "root.tuningSliderPressed ? root.frozenLedItems",
-                      "root.tuningSliderPressed ? root.frozenPwmOutputItems"):
+        for token in ("root.frozenFanItems = root.printer.fanControlItems",):
             self.assertIn(token, DASHBOARD_QML)
+        self.assertIn("root.freezeRepeaters ? root.frozenItems", FANS_SECTION_QML)
+        self.assertIn("root.freezeRepeaters ? root.frozenItems", LEDS_SECTION_QML)
+        self.assertIn("root.freezeRepeaters ? root.frozenItems", PWM_SECTION_QML)
         # The bed-mesh range filter's keyboard half: focus + arrow keys.
         range_slider = (PLUGINS / "BedMeshRangeSlider.qml").read_text()
         for token in ("Keys.onLeftPressed", "Keys.onRightPressed", "Keys.onUpPressed", "forceActiveFocus()"):
@@ -927,6 +1213,86 @@ class MonitorModelContractTests(unittest.TestCase):
 
 
 class MonitorFormattingTests(unittest.TestCase):
+    def test_preview_temperature_pair_renders_the_fixed_pair(self):
+        # The strip's fixed pair: hotend and bed with the
+        # current→target form. target 0.0 = no setpoint — the arrow
+        # is omitted; a 0.0 reading on a heater with no target is
+        # "—" (Klipper's not-measured convention); missing objects
+        # render "—".
+        hotend, bed = preview_temperature_pair({
+            "extruder": {"temperature": 205.2, "target": 210.0},
+            "heater_bed": {"temperature": 60.0, "target": 60.0},
+        })
+        self.assertEqual(hotend, "205.2/210.0 °C")
+        self.assertEqual(bed, "60.0/60.0 °C")
+        hotend, bed = preview_temperature_pair({
+            "extruder": {"temperature": 23.4, "target": 0.0},
+            "heater_bed": {"temperature": 0.0, "target": 0.0},
+        })
+        self.assertEqual(hotend, "23.4 °C")
+        self.assertEqual(bed, "—")
+        hotend, bed = preview_temperature_pair({"extruder": {"temperature": None}})
+        self.assertEqual(hotend, "—")
+        self.assertEqual(bed, "—")
+
+    def test_print_job_caption_names_every_state(self):
+        # The caption's vocabulary (F18): disconnected and unknown
+        # name themselves (never "Idle" while the socket is down), the
+        # controls lock names itself so the dead action band keeps its
+        # context, and the job state word maps once.
+        self.assertEqual(print_job_caption(None), "")
+        self.assertEqual(print_job_caption(Observation(active=True, connection="no", state="idle",
+                                                      homed_axes="", assumed_stopped=False,
+                                                      save_config_pending=False, controls_locked=False, busy=False)),
+                         "Disconnected")
+        self.assertEqual(print_job_caption(Observation(active=True, connection="unknown", state="idle",
+                                                      homed_axes="", assumed_stopped=False,
+                                                      save_config_pending=False, controls_locked=False, busy=False)),
+                         "Printer state unknown")
+        self.assertEqual(print_job_caption(Observation(active=True, connection="yes", state="printing",
+                                                      homed_axes="", assumed_stopped=False,
+                                                      save_config_pending=False, controls_locked=True, busy=False)),
+                         "Locked")
+        self.assertEqual(print_job_caption(Observation(active=True, connection="yes", state="printing",
+                                                      homed_axes="", assumed_stopped=False,
+                                                      save_config_pending=False, controls_locked=False, busy=False)),
+                         "Printing")
+        self.assertEqual(print_job_caption(Observation(active=True, connection="yes", state="paused",
+                                                      homed_axes="", assumed_stopped=False,
+                                                      save_config_pending=False, controls_locked=False, busy=False)),
+                         "Paused")
+        self.assertEqual(print_job_caption(Observation(active=True, connection="yes", state="idle",
+                                                      homed_axes="", assumed_stopped=False,
+                                                      save_config_pending=False, controls_locked=False, busy=False)),
+                         "Idle")
+
+    def test_preview_block_carries_the_verdicts_and_the_sentinel(self):
+        # The block rides the aux clock: the stamp passes through
+        # untouched, the verdicts come from the same policy rows the
+        # Dashboard reads (one derivation — the surfaces cannot
+        # disagree), and absence is an explicit shape.
+        observation = Observation(active=True, connection="yes", state="printing",
+                                  homed_axes="xyz", assumed_stopped=False,
+                                  save_config_pending=False, controls_locked=False, busy=False,
+                                  pause_resume_supported=True)
+        block = preview_block({"extruder": {"temperature": 205.2, "target": 210.0}},
+                              observation, stamp=12.5)
+        self.assertEqual(block["stamp"], 12.5)
+        self.assertEqual(block["state"], "printing")
+        self.assertTrue(block["canPause"])
+        self.assertFalse(block["canResume"])
+        self.assertEqual(block["pauseReason"], "")
+        self.assertEqual(block["resumeReason"], "Print is not paused")
+        self.assertIn("Resume applies to a paused print", block["resumeReasonDetail"])
+        self.assertFalse(block["inactive"])
+        # The sentinel shape: no observation and no aux — everything
+        # reads absent, nothing is omitted.
+        block = preview_block({}, None, stamp=0.0, inactive=True)
+        self.assertTrue(block["inactive"])
+        self.assertFalse(block["canPause"])
+        self.assertEqual(block["hotend"], "—")
+        self.assertEqual(block["bed"], "—")
+
     def test_macro_parameter_inference_types_defaults(self):
         definitions = infer_macro_parameters("""
             {% set enabled = params.ENABLED|default(True) %}
@@ -984,7 +1350,7 @@ class MonitorFormattingTests(unittest.TestCase):
         # The 4.2.0 rename: the multiplier row reads "Speed factor"
         # and no plain "Speed" caption survives in the Monitor card
         # (the UX re-review's ask for a mechanical pin).
-        self.assertIn('text: "Speed factor"', MONITOR_QML)
+        self.assertIn('text: "Speed factor"', JOB_SECTION_QML)
         self.assertNotIn('text: "Speed"', MONITOR_QML)
 
     def test_motion_rows_report_the_live_values(self):
@@ -1248,7 +1614,7 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         debounce = int(_re.search(r"DEBOUNCE_MS\s*=\s*(\d+)", tuning).group(1))
         self.assertEqual(debounce, 250)
         window = f"unchanged for {debounce} ms" if debounce < 1000 else f"unchanged for {debounce // 1000} seconds"
-        self.assertIn(window, DASHBOARD_QML)
+        self.assertIn(window, TUNING_SECTION_QML)
 
         commands = (PLUGINS / "MonitorCommands.py").read_text()
         click_window = int(_re.search(r"_reset_timer\.setInterval\((\d+)\)", commands).group(1))
@@ -1297,8 +1663,8 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         controls = (PLUGINS / "MonitorControls.py").read_text()
         self.assertIn('"writable": fan_writable(name)', controls)
         self.assertIn("if not fan_writable(name):", controls)
-        self.assertIn("visible: modelData.writable", DASHBOARD_QML)
-        self.assertIn("Firmware-controlled — speed is read-only", DASHBOARD_QML)
+        self.assertIn("visible: modelData.writable", FANS_SECTION_QML)
+        self.assertIn("Firmware-controlled — speed is read-only", FANS_SECTION_QML)
 
     def test_led_channels_are_absolute_and_the_labels_hold_their_width(self):
         # The author's live report: the chroma normalisation made
@@ -1317,7 +1683,7 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         # brightness slider as a gain — passing it zeroed every
         # channel nudge while the LED was off (the author's live
         # report).
-        self.assertIn("root.sliderSelection(whiteSlider) : 0, -1);", DASHBOARD_QML)
+        self.assertIn("whiteSlider.selectedValue() : 0, -1);", LEDS_SECTION_QML)
         # The brightness slider is the USER'S GAIN, unlinked from the
         # channel peak (the author's ruling): the channel sliders
         # hold the set percentages (seeded once from the first-seen
@@ -1328,8 +1694,12 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         self.assertIn("round(gain * 100)", controls)
         self.assertIn('self._remembered_gain[name] = percent / 100.0', controls)
         self.assertIn("self._remembered_gain.get(name, 1.0)", controls)
-        self.assertGreaterEqual(DASHBOARD_QML.count("width: 52 * screenScaleFactor"), 7)
-        self.assertIn("width: 150 * screenScaleFactor", DASHBOARD_QML)
+        self.assertEqual(DASHBOARD_QML.count("width: 52 * screenScaleFactor"), 0)
+        self.assertGreaterEqual(TUNING_SECTION_QML.count("width: 52 * screenScaleFactor"), 2)
+        self.assertGreaterEqual(FANS_SECTION_QML.count("width: 52 * screenScaleFactor"), 1)
+        self.assertGreaterEqual(LEDS_SECTION_QML.count("width: 52 * screenScaleFactor"), 4)
+        self.assertGreaterEqual(PWM_SECTION_QML.count("width: 52 * screenScaleFactor"), 1)
+        self.assertIn("width: 150 * screenScaleFactor", LEDS_SECTION_QML)
         # The submit's rebuild must not kill the tuned slider's focus
         # (the author's live report): the dashboard remembers the
         # slider's object and re-grants focus on the new delegate.
@@ -1347,11 +1717,15 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         # sliders lost focus on the apply, the singletons never).
         self.assertIn("refocusTimer.attempts = 0", DASHBOARD_QML)
         self.assertIn("focusHoldTimer.start()", DASHBOARD_QML)
-        for token in ("id: fanRepeater", "id: ledRepeater", "id: pwmRepeater",
-                      "root.tuningSliderObject = modelData.object", "refocusTimer.start()",
-                      'controlKind: "led-red"', 'root.tuningSliderKind = "led-red"',
-                      'controlKind: "led-brightness"'):
+        for token in ("refocusTimer.start()",):
             self.assertIn(token, DASHBOARD_QML)
+        self.assertNotIn("root.tuningSliderObject = modelData.object", DASHBOARD_QML)
+        self.assertIn("id: fanRepeater", FANS_SECTION_QML)
+        self.assertIn("id: ledRepeater", LEDS_SECTION_QML)
+        self.assertIn("id: pwmRepeater", PWM_SECTION_QML)
+        self.assertIn('controlKind: "pwm"', PWM_SECTION_QML)
+        for kind in ("led-red", "led-brightness", "led-green", "led-blue", "led-white"):
+            self.assertIn('controlKind: "%s"' % kind, LEDS_SECTION_QML)
 
     def test_consumers_use_the_shared_classification_tables(self):
         data = (PLUGINS / "MonitorData.py").read_text()
@@ -1986,10 +2360,10 @@ class MonitorQtTests(unittest.TestCase):
         # lives ONLY in the Monitor's Print job grid (first row, so its
         # columns are the grid's columns — a separate row read as
         # misaligned); the Dashboard's print section does not repeat it.
-        self.assertIn('text: "Last action"', MONITOR_QML)
-        self.assertIn('root.printer.actionStatus.length > 0 ? root.printer.actionStatus : "—"', MONITOR_QML)
+        self.assertIn('text: "Last action"', JOB_SECTION_QML)
+        self.assertIn('root.printerModel.actionStatus.length > 0 ? root.printerModel.actionStatus : "—"', JOB_SECTION_QML)
         self.assertNotIn("visible: root.printer != null && root.printer.actionStatus.length > 0", MONITOR_QML)
-        self.assertLess(MONITOR_QML.index('text: "Last action"'), MONITOR_QML.index('text: "Layer"'))
+        self.assertLess(JOB_SECTION_QML.index('text: "Last action"'), JOB_SECTION_QML.index('text: "Layer"'))
         self.assertNotIn('text: "Last action"', DASHBOARD_QML)
 
     def test_macros_refuse_while_printing(self):
@@ -2005,7 +2379,7 @@ class MonitorQtTests(unittest.TestCase):
         model.runMacro("TEST_MACRO", "")
         self.assertEqual([r.options["body"] for r in self.scripts()], [{"script": "TEST_MACRO"}])
         # The Run button carries the same gate in the UI.
-        self.assertIn("!root.printer.printActive", DASHBOARD_QML)
+        self.assertIn("!root.printerModel.printActive", MACROS_SECTION_QML)
 
     def test_system_restarts_are_queued_one_shot_commands(self):
         model = self.monitor()
@@ -2141,6 +2515,53 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(model._sections, {"setup": False, "toolhead": True})
         self.assertFalse(model.controlsCollapsed)
         self.assertFalse(model.controlsLocked)
+
+    def test_a_sections_less_document_with_sibling_keys_is_not_a_flat_map(self):
+        # The flat-map legacy shape is recognised ONLY when every value
+        # is a bool: a document that lacks `sections` and carries the
+        # UI-state store's sibling keys must not hydrate them as
+        # sections (the silent collapse-state reset, 4.3.0).
+        import UM.Resources as UMResourcesModule
+        section_path = UMResourcesModule.Resources.getStoragePath(
+            UMResourcesModule.Resources.Preferences,
+            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        with open(section_path, "w", encoding="utf-8") as handle:
+            json.dump({"sectionSizes": {"info": 240.0}, "setup": False}, handle)
+        model = self.monitor()
+        self.assertEqual(model._sections, {})
+
+    def test_the_ui_state_store_owns_the_sections_writes(self):
+        import UM.Resources as UMResourcesModule
+        section_path = UMResourcesModule.Resources.getStoragePath(
+            UMResourcesModule.Resources.Preferences,
+            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        with open(section_path, "w", encoding="utf-8") as handle:
+            json.dump({"sections": {"setup": False},
+                       "controlsLocked": True,
+                       "sectionSizes": {"info": 240.0}}, handle)
+        model = self.monitor()
+        model.setSectionExpanded("toolhead", False)
+        with open(section_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        # The section write merged: the sibling keys survive untouched.
+        self.assertEqual(payload["sections"], {"setup": False, "toolhead": False})
+        self.assertTrue(payload["controlsLocked"])
+        self.assertEqual(payload["sectionSizes"], {"info": 240.0})
+
+    def test_the_store_delete_drops_only_the_named_keys(self):
+        from plugins.StateStore import StateStore
+        import tempfile
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "state.json")
+            store = StateStore(path)
+            store.write({"sections": {"setup": False}, "temperatureChart": {"visible": {}},
+                         "controlsLocked": True})
+            store.write({}, delete=("temperatureChart",))
+            payload = json.load(open(path, "r", encoding="utf-8"))
+            self.assertNotIn("temperatureChart", payload)
+            self.assertEqual(payload["sections"], {"setup": False})
+            self.assertTrue(payload["controlsLocked"])
 
     def test_corrupt_panel_state_file_degrades_to_defaults(self):
         # A truncated or hand-edited file must never raise or hydrate
@@ -2606,12 +3027,12 @@ class MonitorQtTests(unittest.TestCase):
     def test_endstop_and_eta_surfaces(self):
         # The Improve-ETA action is a small download glyph beside the
         # Remaining value, not a full-width button row.
-        improve = MONITOR_QML[MONITOR_QML.index('Qt.resolvedUrl("Download.svg")'):MONITOR_QML.index("onClicked: root.printer.improveEta()")]
+        improve = JOB_SECTION_QML[JOB_SECTION_QML.index('Qt.resolvedUrl("Download.svg")'):JOB_SECTION_QML.index("onClicked: root.printerModel.improveEta()")]
         self.assertIn("Download.svg", improve)
         self.assertNotIn("Improve ETA — download", MONITOR_QML)
         for token in ("endstopItems", "endstopSummary",
                       "modelData.name + \": \" + modelData.state", "modelData.triggered"):
-            self.assertIn(token, DASHBOARD_QML)  # the readout lives in the Toolhead section
+            self.assertIn(token, TOOLHEAD_SECTION_QML)  # the readout lives in the Toolhead section
         self.assertNotIn('title: "Endstops"', MONITOR_QML)
         self.assertNotIn('sectionId: "endstops"', MONITOR_QML)
         # The empty-set copy lives in the projection, not the QML —
@@ -2623,7 +3044,7 @@ class MonitorQtTests(unittest.TestCase):
                       "printer/query_endstops/status", "refresh_endstops"):
             self.assertIn(token, MONITOR_MODEL + (PLUGINS / "MonitorData.py").read_text())
         for token in ("improveEta()", "monitorEtaBasis === \"blend\"", "monitorEtaBasis === \"index\""):
-            self.assertIn(token, MONITOR_QML)
+            self.assertIn(token, JOB_SECTION_QML)
         for token in ("monitorEtaBasis", "def improveEta(", "layer_eta", "remaining_end",
                       "request_monitor_download"):
             self.assertIn(token, MONITOR_MODEL + (PLUGINS / "MonitorFormatting.py").read_text()
@@ -2789,7 +3210,7 @@ class MonitorQtTests(unittest.TestCase):
         with patch.object(module, "time", fake_time):
             deliver(20)
             self.qt.events(1)
-            meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+            meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
             self.assertEqual(len(meta), 1)
             meta[0].callback({"result": {"layer_height": 0.2, "estimated_time": 3600}}, None)
             self.qt.events(1)
@@ -2800,13 +3221,13 @@ class MonitorQtTests(unittest.TestCase):
                 tick[0] += 31.0
                 deliver(20 + step)  # each delivery differs so the poll always refreshes
                 self.qt.events(1)
-            self.assertEqual(len([r for r in self.transport.requests if r.channel == "mr-metadata"]), 1)
+            self.assertEqual(len([r for r in self.transport.requests if r.channel == "metadata-only"]), 1)
             # A same-name restart (the duration reset is a new job):
             # its failed fetch never latches, the old payload is never
             # served, and the retry fires on its own after the window.
             deliver(5, duration=5)
             self.qt.events(1)
-            meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+            meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
             self.assertEqual(len(meta), 2)
             meta[1].callback({}, "boom")
             self.qt.events(1)
@@ -2814,7 +3235,7 @@ class MonitorQtTests(unittest.TestCase):
             tick[0] += 31.0
             deliver(6, duration=5)
             self.qt.events(1)
-            self.assertEqual(len([r for r in self.transport.requests if r.channel == "mr-metadata"]), 3)
+            self.assertEqual(len([r for r in self.transport.requests if r.channel == "metadata-only"]), 3)
 
     def test_metadata_with_job_id_cross_checks_the_current_print(self):
         from types import SimpleNamespace
@@ -2839,7 +3260,7 @@ class MonitorQtTests(unittest.TestCase):
         with patch.object(module, "time", SimpleNamespace(monotonic=lambda: 1000.0, time=lambda: 1700000000.0)):
             deliver(30)
             self.qt.events(1)
-            meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+            meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
             self.assertEqual(len(meta), 1)
             meta[0].callback({"result": {"layer_height": 0.2, "estimated_time": 3600, "job_id": "1A2B"}}, None)
             self.qt.events(1)
@@ -2854,7 +3275,7 @@ class MonitorQtTests(unittest.TestCase):
             # A same-name restart whose row mismatches never latches.
             deliver(5)
             self.qt.events(1)
-            meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+            meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
             self.assertEqual(len(meta), 2)
             meta[1].callback({"result": {"layer_height": 0.3, "job_id": "9Z9Z"}}, None)
             self.qt.events(1)
@@ -2864,6 +3285,113 @@ class MonitorQtTests(unittest.TestCase):
             self.qt.events(1)
             new_key = ("part.gcode", coordinator._files.job_key)
             self.assertEqual(coordinator._mr_metadata_for(*new_key), {})
+
+    def test_files_view_model_keeps_stable_identities_behind_the_list(self):
+        # The view model (4.3.0): the QAbstractListModel behind the
+        # list-valued projection — the relpath is the row identity,
+        # so a rebuild re-anchors delegates by identity, never by
+        # position.
+        from plugins.FilesViewModel import FilesViewModel
+        view = FilesViewModel()
+        rows = [{"relpath": "a.gcode", "name": "a"},
+                {"relpath": "b.gcode", "name": "b"},
+                {"relpath": "c.gcode", "name": "c"}]
+        view.set_rows(rows)
+        self.assertEqual(view.rowCount(), 3)
+        self.assertEqual(view.data(view.index(1)), "b.gcode")
+        # A reordered rebuild keeps each row's identity attached to
+        # its file.
+        view.set_rows([rows[2], rows[0], rows[1]])
+        self.assertEqual(view.data(view.index(0)), "c.gcode")
+        self.assertEqual(view.data(view.index(2)), "b.gcode")
+
+    def test_metadata_cross_check_refuses_a_mismatched_job_without_latching(self):
+        # The bounded give-up (4.3.0): a cross-check that can never
+        # pass (the history stays empty) is silent and permanent
+        # otherwise — after MR_META_CHECK_LIMIT failures for the same
+        # key the payload latches with the failure flagged in the log.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import sys
+        self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        module = sys.modules[type(coordinator).__module__]
+        client = self.follower.client
+        tick = [1000.0]
+        fake_time = SimpleNamespace(monotonic=lambda: tick[0], time=lambda: 1700000000.0)
+
+        def deliver(duration):
+            status = {
+                "print_stats": {"filename": "part.gcode", "state": "printing", "print_duration": duration,
+                                "info": {"current_layer": 2, "total_layer": 20}},
+                "virtual_sdcard": {"file_size": 100, "file_position": 20},
+                "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1, "extrude_factor": 1,
+                               "absolute_coordinates": True},
+                "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
+            }
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+
+        with patch.object(module, "time", fake_time):
+            deliver(30)
+            self.qt.events(1)
+            for step in range(coordinator.MR_META_CHECK_LIMIT):
+                meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
+                meta[-1].callback({"result": {"layer_height": 0.2, "job_id": "1A2B"}}, None)
+                self.qt.events(1)
+                history = [r for r in self.transport.requests if r.channel == "mr-history"]
+                history[-1].callback({"result": {"count": 0, "jobs": []}}, None)
+                self.qt.events(1)
+                key = ("part.gcode", coordinator._files.job_key)
+                if step < coordinator.MR_META_CHECK_LIMIT - 1:
+                    self.assertEqual(coordinator._mr_metadata_for(*key), {})
+                    tick[0] += 31.0
+                    deliver(31 + step)  # each delivery differs so the poll refreshes
+                    self.qt.events(1)
+            # A mismatched job id is PROOF the payload describes a
+            # different job — the give-up must never latch it (the
+            # identity bleed the cross-check exists to prevent). The
+            # anchors stay empty for the whole print.
+            self.assertEqual(coordinator._mr_metadata_for(*key), {})
+
+    def test_metadata_cross_check_gives_up_only_for_unattestable_replies(self):
+        # The bounded give-up applies to the causes that cannot ATTEST
+        # (the history request failed, the reply was unattestable) —
+        # after the limit the payload latches with the failure flagged.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import sys
+        self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        module = sys.modules[type(coordinator).__module__]
+        client = self.follower.client
+        tick = [1000.0]
+        fake_time = SimpleNamespace(monotonic=lambda: tick[0], time=lambda: 1700000000.0)
+        status = {
+            "print_stats": {"filename": "part.gcode", "state": "printing", "print_duration": 30,
+                            "info": {"current_layer": 2, "total_layer": 20}},
+            "virtual_sdcard": {"file_size": 100, "file_position": 20},
+            "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1,
+                           "extrude_factor": 1, "absolute_coordinates": True},
+            "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
+        }
+        with patch.object(module, "time", fake_time):
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+            self.qt.events(1)
+            for step in range(coordinator.MR_META_CHECK_LIMIT):
+                meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
+                meta[-1].callback({"result": {"layer_height": 0.2, "job_id": "1A2B"}}, None)
+                self.qt.events(1)
+                history = [r for r in self.transport.requests if r.channel == "mr-history"]
+                history[-1].callback(None, "boom")
+                self.qt.events(1)
+                key = ("part.gcode", coordinator._files.job_key)
+                if step < coordinator.MR_META_CHECK_LIMIT - 1:
+                    self.assertEqual(coordinator._mr_metadata_for(*key), {})
+                    tick[0] += 31.0
+                    client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+                    self.qt.events(1)
+            # After the limit: the payload latched, flagged.
+            self.assertEqual(coordinator._mr_metadata_for(*key).get("layer_height"), 0.2)
 
     def test_metadata_reply_after_reset_never_latches(self):
         # A reply landing after a binding reset must not latch the old
@@ -2882,7 +3410,7 @@ class MonitorQtTests(unittest.TestCase):
         }
         client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
         self.qt.events(1)
-        meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+        meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
         self.assertEqual(len(meta), 1)
         coordinator.reset_binding()
         meta[0].callback({"result": {"layer_height": 0.2, "estimated_time": 3600, "job_id": "1A2B"}}, None)
@@ -2907,7 +3435,7 @@ class MonitorQtTests(unittest.TestCase):
         }
         client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
         self.qt.events(1)
-        meta = [r for r in self.transport.requests if r.channel == "mr-metadata"]
+        meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
         self.assertEqual(len(meta), 1)
         self.assertIn("PLA/part.gcode", meta[0].path)
         self.assertNotIn("%2F", meta[0].path)
@@ -3209,7 +3737,6 @@ Item {
                       # title in the panes' style, and the camera fills
                       # the pane only while it is collapsed.
                       'sectionExpandedMap["console"]',
-                      'text: "Webcam"',
                       # The toggle keeps the other panes' button
                       # style with the theme's up/down chevrons inside
                       # it (the author's rulings).
@@ -3222,6 +3749,8 @@ Item {
                       "consoleLines", "selectByMouse",
                       "server/gcode_store?count=100"):
             self.assertIn(token, MONITOR_QML + (PLUGINS / "MonitorData.py").read_text())
+        # The webcam pane's title moved with the card (CameraPane.qml).
+        self.assertIn('text: "Webcam"', CAMERA_PANE_QML)
         # The poll gate opens on printer attach — never wired to the
         # info pane's collapse (infoCollapsed defaults to false, which
         # left the feed dead in the default layout).
@@ -3258,9 +3787,9 @@ Item {
         # print through complete/cancelled until the next job starts
         # (the UX panel): the gate is the model's readout flag, not
         # printActive.
-        self.assertIn('text: "Filament used"', MONITOR_QML)
-        self.assertIn('text: "Filament remaining"', MONITOR_QML)
-        self.assertLess(MONITOR_QML.index('text: "Finish"'), MONITOR_QML.index('text: "Filament used"'))
+        self.assertIn('text: "Filament used"', JOB_SECTION_QML)
+        self.assertIn('text: "Filament remaining"', JOB_SECTION_QML)
+        self.assertLess(JOB_SECTION_QML.index('text: "Finish"'), JOB_SECTION_QML.index('text: "Filament used"'))
         # NO-REFLOW RULE: the rows are permanent — the values read "—"
         # until Klipper reports them; nothing hides them any more, and
         # the readout-visibility gate is gone from the model too.
@@ -3269,7 +3798,7 @@ Item {
         # The z-offset nudge buttons take an exact quarter of the row
         # (a bound preferred width, not layout distribution): fillWidth
         # alone left "↑ 0.005" wider than "↑ 0.05" (the author's report).
-        self.assertIn("Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4", DASHBOARD_QML)
+        self.assertIn("Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4", TUNING_SECTION_QML)
         # The expanded chart's power axis carries its 0-100% legend,
         # pinned (never scaled), drawn OUTSIDE the plot in a reserved
         # right gutter — chips painted over the data looked janky (the
@@ -3409,10 +3938,14 @@ Item {
         self.assertEqual(exempt_files, {"MoonrakerFollowerConfiguration.qml", "MoonrakerUploadDialog.qml"})
         for monitor_file in ("MoonrakerMonitor.qml", "MoonrakerMonitorDashboard.qml", "MoonrakerPreviewCard.qml"):
             self.assertNotIn(monitor_file, exempt_files)
+        # The camera's configured gate moved into CameraPane as
+        # `configured` (read there as root.configured): the token
+        # follows the code, so the pane's veil and Live badge stay
+        # reviewed under this rule.
         whitelist = (
             "openPopOver", "sectionExpandedMap", "Collapsed", "platformActivity",
             "previewStageActive", "configuredForFollowing", "modelData.type", "hasWhite",
-            "cameraConfigured", "tooltipText", "sectionIcon", "macroParameters",
+            "root.configured", "tooltipText", "sectionIcon", "macroParameters",
             "webcamNames", "root.busy", "root.progress", "improveEtaProgress",
             "temperatureChart.series", "allChartSensorsHidden", "selectedChartSensor",
             "hoverClockProxy",
@@ -3420,8 +3953,8 @@ Item {
         allowed = {
             # Capability-static gates (the UX panel's ruling): these
             # only change on a printer switch, which is user-initiated.
-            "visible: root.printer != null && root.printer.hasQuadGantryLevel",
-            "visible: root.printer != null && root.printer.hasBedMesh",
+            "visible: root.printerModel != null && root.printerModel.hasQuadGantryLevel",
+            "visible: root.printerModel != null && root.printerModel.hasBedMesh",
             # Firmware-regulated fans swap the slider for a read-only
             # row (the author's live report): the model's writable
             # flag picks the face.
@@ -3432,9 +3965,9 @@ Item {
             # The Endstops summary row yields to the chips once they
             # exist (the author's live ruling — the chips ARE the
             # readout); it sits below the jog pad.
-            "visible: root.printer == null || root.printer.endstopItems.length === 0",
-            "visible: root.miniChartHasSeries",
-            "visible: root.printer != null && !root.miniChartHasSeries",
+            "visible: root.printerModel == null || root.printerModel.endstopItems.length === 0",
+            "visible: root.miniHasSeries",
+            "visible: root.printerModel != null && !root.miniHasSeries",
             "visible: root.printer != null && root.printer.temperatureItems.length > 0",
             "visible: root.printer != null && root.printer.fanItems.length > 0",
             "visible: root.printer != null && root.printer.filamentSensorItems.length > 0",
@@ -3447,7 +3980,7 @@ Item {
             # The Objects section's empty-state line (the author's
             # live request): the list arrives mid-print, an empty one
             # says so.
-            "visible: root.printer != null && root.printer.excludeObjectItems.length === 0",
+            "visible: root.printerModel != null && root.printerModel.excludeObjectItems.length === 0",
             # The console grab bar hides under the auto-collapse
             # width (the author's live ruling — a resize handle for
             # an expansion that cannot happen is a lie).
@@ -3523,20 +4056,20 @@ Item {
                 # live report: the boxes never stayed highlighted) —
                 # one family, one carve-out, not ten near-identical
                 # whitelist entries.
-                if re.match(r"visible: (root\.printer == null \|\| root\.printer\.(extrudeDistance|extrudeSpeed) !== \d+|root\.printer != null && root\.printer\.(extrudeDistance|extrudeSpeed) === \d+)$", expression):
+                if re.match(r"visible: (root\.printerModel == null \|\| root\.printerModel\.(extrudeDistance|extrudeSpeed) !== \d+|root\.printerModel != null && root\.printerModel\.(extrudeDistance|extrudeSpeed) === \d+)$", expression):
                     continue
                 self.assertIn(expression, allowed,
                               f"{path.name}:{number}: state-gated visible: {expression}")
         # The replacement: every SESSION state lives in `enabled`.
         for enabled in (
-            "enabled: root.printer != null && root.printer.canPausePrint",
-            "enabled: root.printer != null && root.printer.canResumePrint",
-            "enabled: root.printer != null && root.printer.canCancelPrint",
-            "enabled: root.printer != null && root.printer.monitorConnected && !root.printer.actionBusy && root.printer.printActive && root.printer.sectionReason === \"\" && !modelData.excluded",
+            "enabled: root.printerModel != null && root.printerModel.canPausePrint",
+            "enabled: root.printerModel != null && root.printerModel.canResumePrint",
+            "enabled: root.printerModel != null && root.printerModel.canCancelPrint",
+            "enabled: root.printerModel != null && root.printerModel.monitorConnected && !root.printerModel.actionBusy && root.printerModel.printActive && root.printerModel.sectionReason === \"\" && !modelData.excluded",
             "enabled: root.printer != null && root.printer.monitorConnected && root.printer.consoleLines.length > 0",
             "enabled: base.bedMeshAvailable",
         ):
-            self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML)
+            self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML + PRINT_SECTION_QML + OBJECTS_SECTION_QML)
         # The Preview load button keeps its full width: the follow button
         # no longer vanishes to widen it.
         self.assertIn("width: buttons.width - base.buttonSpacing - followButton.width", PREVIEW_CONTROLS_QML)
@@ -3548,11 +4081,11 @@ Item {
         # the console, the camera refresh and the emergency stop all
         # disable on it.
         self.assertIn("monitorConnected", MONITOR_MODEL)
-        self.assertIn("enabled: root.printer != null && root.printer.monitorConnected", DASHBOARD_QML)
-        self.assertIn("enabled: root.printer == null || (!root.printer.controlsLocked && root.printer.monitorConnected)", DASHBOARD_QML)
+        self.assertIn("enabled: root.printerModel != null && root.printerModel.monitorConnected", FILE_MANAGER_SECTION_QML)
+        self.assertIn("enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)", FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + TUNING_SECTION_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + FILE_MANAGER_SECTION_QML)
         # The abs/rel word's CLICK obeys the same gate as its styling —
         # a locked control must not act (the author's catch).
-        self.assertIn("root.printer != null && root.printer.jogEnabled", DASHBOARD_QML)
+        self.assertIn("root.printerModel != null && root.printerModel.jogEnabled", TOOLHEAD_SECTION_QML)
         self.assertIn("enabled: root.printer != null && root.printer.monitorConnected", MONITOR_QML)
         # The console is special: the SECTION stays enabled while
         # disconnected (scrolling, selecting and copying the restored
@@ -3569,9 +4102,9 @@ Item {
         self.assertIn("connectionDotColour", MONITOR_QML)
         self.assertIn('text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."', MONITOR_QML)
         self.assertIn("id: statusCollapsedTitle", MONITOR_QML)
-        self.assertIn('text: "Live"', MONITOR_QML)
-        self.assertIn('color: "#c0202428"', MONITOR_QML)
-        self.assertIn('text: (root.printer != null && root.printer.cameraRecovering) ? "Camera recovering…" : "Camera offline"', MONITOR_QML)
+        self.assertIn('text: "Live"', CAMERA_PANE_QML)
+        self.assertIn('color: "#c0202428"', CAMERA_PANE_QML)
+        self.assertIn('text: (root.printerModel != null && root.printerModel.cameraRecovering) ? "Camera recovering…" : "Camera offline"', CAMERA_PANE_QML)
         model = self.monitor()
         # The harness may connect asynchronously during construction —
         # pin the TRANSITIONS, which are synchronous.

@@ -42,6 +42,7 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     @pyqtSlot()
     def confirmForceLoadCurrentPrint(self): self._runtime.coordinator.confirm_load()
+    def receive_preview_block(self, block): self._runtime.coordinator.receive_preview_block(block)
     def confirmDownloadForMonitor(self): self._runtime.coordinator.download_for_monitor()
 
     @pyqtSlot()

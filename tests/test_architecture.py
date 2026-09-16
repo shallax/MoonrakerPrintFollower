@@ -147,12 +147,15 @@ class SourceContractTests(unittest.TestCase):
             "MonitorCommands": {"MonitorPermissions"},
             "MonitorControls": {"MonitorFormatting", "MonitorPermissions"},
             "MonitorData": {"ConsolePolicy", "MonitorFormatting", "MonitorPermissions", "MoonrakerSession"},
-            "MonitorFormatting": set(),
+            "MonitorFormatting": {"MonitorPermissions"},
             "MonitorPermissions": set(),
             "MonitorTuning": set(),
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
             "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
-            "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PrinterConfig", "StateStore", "ToolheadController", "ToolheadPolicy", "WhatsNew"},
+            "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "FilesViewModel", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PrintStartOwner", "PrinterConfig", "StateStore", "ToolheadController", "ToolheadPolicy", "UiStateStore", "WhatsNew"},
+            "FilesViewModel": set(),
+            "PrintStartOwner": set(),
+            "UiStateStore": set(),
             "StateStore": set(),
             "ConsoleController": {"ConsolePolicy"},
             "ToolheadController": {"ToolheadPolicy", "MonitorPermissions"},
@@ -435,9 +438,9 @@ class CompositionStructureTests(unittest.TestCase):
                      "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "NativeNozzleLifecycle",
                      "PauseController", "PauseScheduleService", "PreviewFollower", "PreviewFormatting",
                      "PreviewMotion", "PreviewPresentation", "PreviewSmoothing", "PrintCoordinator",
-                     "PrinterBinding", "PrinterConfig", "PrintState",
+                     "PrintStartOwner", "PrinterBinding", "PrinterConfig", "PrintState",
                      "ConsoleController", "ConsolePolicy", "RemoteFileService", "RemoteJobService",
-                     "ToolheadController", "ToolheadPolicy", "UploadController"):
+                     "ToolheadController", "ToolheadPolicy", "FilesViewModel", "UiStateStore", "UploadController"):
             source = (PLUGINS / (name + ".py")).read_text()
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.FunctionDef) and node.name == "__init__":

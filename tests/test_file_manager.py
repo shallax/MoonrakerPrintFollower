@@ -946,30 +946,33 @@ class FileManagerServiceTests(unittest.TestCase):
         # F06: a temperature tick must not sort the file list. One
         # pipeline evaluation per (data, history, view, minute) set;
         # every page helper, count and the empty state read the
-        # cached rows.
-        self.service.open()
-        self.directory("path=gcodes&", [("a.gcode", {}), ("b.gcode", {}), ("c.gcode", {})])
-        self.deliver("history/list", {"result": {"jobs": []}})
-        self.service.current_rows()
-        self.assertEqual(self.service.projection_count, 1)
-        # The model's reads inside ONE publish: still one evaluation.
-        self.service.page_rows()
-        self.service.total_count()
-        self.service.page_index()
-        self.service.page_number()
-        self.service.empty_state()
-        self.service.selection_state(self.service.page_rows())
-        self.service.filter_option_counts_cached(now=10.0)
-        self.assertEqual(self.service.projection_count, 1)
-        # A view change: exactly one more.
-        self.service.view.change_search("a")
-        self.service.current_rows()
-        self.assertEqual(self.service.projection_count, 2)
-        # A data change (metascan): exactly one more.
-        self.service.scan_metadata("a.gcode")
-        self.deliver("metascan", {"result": {"layer_height": 0.3}})
-        self.service.current_rows()
-        self.assertEqual(self.service.projection_count, 3)
+        # cached rows. The clock is frozen: the minute bucket in the
+        # cache key reads the live wall clock, so a run straddling a
+        # minute boundary would count a false second evaluation.
+        with patch("plugins.FileManager.time.time", return_value=10.0):
+            self.service.open()
+            self.directory("path=gcodes&", [("a.gcode", {}), ("b.gcode", {}), ("c.gcode", {})])
+            self.deliver("history/list", {"result": {"jobs": []}})
+            self.service.current_rows()
+            self.assertEqual(self.service.projection_count, 1)
+            # The model's reads inside ONE publish: still one evaluation.
+            self.service.page_rows()
+            self.service.total_count()
+            self.service.page_index()
+            self.service.page_number()
+            self.service.empty_state()
+            self.service.selection_state(self.service.page_rows())
+            self.service.filter_option_counts_cached(now=10.0)
+            self.assertEqual(self.service.projection_count, 1)
+            # A view change: exactly one more.
+            self.service.view.change_search("a")
+            self.service.current_rows()
+            self.assertEqual(self.service.projection_count, 2)
+            # A data change (metascan): exactly one more.
+            self.service.scan_metadata("a.gcode")
+            self.deliver("metascan", {"result": {"layer_height": 0.3}})
+            self.service.current_rows()
+            self.assertEqual(self.service.projection_count, 3)
 
     def test_bind_does_not_reserve_the_previous_machines_rows_from_the_cache(self):
         # A printer switch clears the rows; the projection cache

@@ -31,6 +31,7 @@ QML_FILES = sorted(path.name for path in PLUGINS.glob("*.qml"))
 QML_SOURCES = {path.name: path.read_text() for path in PLUGINS.glob("*.qml")}
 CONFIG_QML = QML_SOURCES["MoonrakerFollowerConfiguration.qml"]
 MONITOR_QML = QML_SOURCES["MoonrakerMonitor.qml"]
+CAMERA_PANE_QML = QML_SOURCES["CameraPane.qml"]
 UPLOAD_QML = QML_SOURCES["MoonrakerUploadDialog.qml"]
 ACTION_QML = QML_SOURCES["MoonrakerPreviewCard.qml"]
 EMPTY_QML = QML_SOURCES["MoonrakerPreviewCard.qml"]
@@ -126,9 +127,11 @@ class SdkCompatibilityTests(unittest.TestCase):
             self.assertIn("import QtQuick.Controls 2.15", qml)
 
     def test_monitor_uses_cura_network_mjpeg_component(self):
-        self.assertIn("Cura.NetworkMJPGImage", MONITOR_QML)
-        self.assertNotIn("WebEngine", MONITOR_QML)
-        self.assertNotIn("VideoOutput", MONITOR_QML)
+        # The image lives in the camera card (CameraPane.qml): the
+        # negative guards follow it there, or they pass vacuously.
+        self.assertIn("Cura.NetworkMJPGImage", CAMERA_PANE_QML)
+        self.assertNotIn("WebEngine", CAMERA_PANE_QML)
+        self.assertNotIn("VideoOutput", CAMERA_PANE_QML)
 
 
 if __name__ == "__main__":

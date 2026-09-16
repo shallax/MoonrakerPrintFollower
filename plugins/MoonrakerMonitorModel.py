@@ -33,7 +33,10 @@ from .MonitorCamera import MonitorCamera
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls
 from .MonitorData import MonitorData
-from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_restart, can_start_print, jog_caption, section_reason
+from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, jog_caption, section_reason
+from .FilesViewModel import FilesViewModel
+from .PrintStartOwner import PrintStartOwner
+from .UiStateStore import UiStateStore
 from datetime import datetime
 
 from .FileManager import FileManager
@@ -50,6 +53,7 @@ from .FileManagerPolicy import (
 from .MonitorFormatting import (
     core_values,
     endstop_values,
+    print_job_caption,
     file_disk_text,
     file_row_payload,
     file_timestamp,
@@ -121,7 +125,14 @@ def _read_state(store=None) -> dict:
     if isinstance(decoded, dict):
         sections = decoded.get("sections")
         if not isinstance(sections, dict):
-            sections = decoded  # legacy flat section map
+            # The legacy flat section map — recognised ONLY when every
+            # value is a bool: a document that lacks `sections` and
+            # carries the UI-state store's sibling keys must not
+            # hydrate them as sections (4.3.0, the second consumer).
+            if all(isinstance(value, bool) for value in decoded.values()):
+                sections = decoded
+            else:
+                sections = {}
         return {
             "sections": {str(key): _state_bool(value) for key, value in sections.items()},
             "whatsNewSeen": str(decoded.get("whatsNewSeen") or ""),
@@ -192,10 +203,8 @@ def value_property(kind, name, signal, default=None):
 
 
 class MoonrakerMonitorModel(PrinterOutputModel):
-    # The print-start watchdog: how long the print_stats transition
-    # may take before the plugin says the start failed.
-    FILE_PRINT_START_TIMEOUT_S = 15.0
     monitorChanged = pyqtSignal()
+    previewBlockChanged = pyqtSignal(dict)
     webcamsChanged = pyqtSignal()
     temperatureChartChanged = pyqtSignal()
     temperatureChartLegendChanged = pyqtSignal()
@@ -246,7 +255,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
         ("endstopsChanged", ("endstopItems", "endstopSummary")),
-        ("actionChanged", ("printActive", "canPausePrint", "canResumePrint", "canCancelPrint", "actionBusy",
+        ("actionChanged", ("printActive", "printJobCaption", "canPausePrint", "canResumePrint", "pauseReason", "pauseReasonDetail", "resumeReason", "resumeReasonDetail", "canCancelPrint", "actionBusy",
                            "actionStatus", "emergencyHoldProgress")),
         ("controlsChanged", ("monitorLayerHeight", "macroNames", "hasQuadGantryLevel", "hasBedMesh", "canRunSetup",
                              "temperaturePresetNames", "canApplyTemperaturePreset", "speedFactorPercent", "flowFactorPercent",
@@ -345,6 +354,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_columns_state = state["fileManagerColumns"]
         self._camera_refresh_nonce = 0
         self._sections = state["sections"]
+        # The UI-state store (4.3.0): the sections map's persistence
+        # moves to the second consumer — the model's save payload
+        # stops rewriting the whole map, so the two writers can no
+        # longer clobber each other at the top level.
+        self._ui_state = UiStateStore(store=self._store)
+        # The files view model (4.3.0): the stable-identity surface
+        # behind the list-valued projection — an internal
+        # collaborator, never the published surface.
+        self._files_model = FilesViewModel(self)
+        self._files_model_rev = -1
         self._toolhead_state = state["toolhead"]
         # The chart config is per-printer (sensor names differ between
         # machines): it lives in the PrinterConfig record, adopting the
@@ -358,7 +377,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         elif state.get("temperatureChart"):
             self._chart_config = state["temperatureChart"]
             self._apply_chart_config()
-            self._save_state(replace=True)  # rewrite the global file chrome-only
+            # The legacy global block migrates into the per-printer
+            # record once: the store deletes ONLY that key — a
+            # full-document rewrite would erase the UI-state store's
+            # sibling keys (4.3.0, the sibling rule's single
+            # exception removed).
+            self._store.write({"sections": dict(self._sections)}, delete=("temperatureChart",))
         else:
             self._chart_config = {}
         self._history = TemperatureHistory()
@@ -430,8 +454,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # Metascan outcomes land in the console as local notes (the
         # author's live report: the option appeared to do nothing).
         self._file_manager_note = ""
-        self._print_armed_state = ""
-        self._print_start_error = ""
+        # The print-start operation's owner (4.3.0): the armed state,
+        # the watchdog and the failure verdict moved out of the model
+        # into a capabilities-only owner — one owned operation across
+        # every start path.
+        self._print_start = PrintStartOwner(
+            file_manager=self._file_manager,
+            console=self._console,
+            commands=self._commands,
+        )
         self._file_manager.note.connect(self._on_file_manager_note)
         # Upload progress and outcome feed the popup (the
         # live request).
@@ -453,6 +484,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # a session invalidation restarts the window so the previous
         # printer's curves never bleed into the next one.
         self._data.auxiliaryChanged.connect(self._on_auxiliary)
+        # The Preview value block rides the aux clock: the data's
+        # emission forwards straight through to the output-device
+        # edge (the seam's carrier, 4.3.0).
+        self._data.previewBlockChanged.connect(self.previewBlockChanged)
         self._data.consoleStoreChanged.connect(self._on_console_store)
         self._data.invalidated.connect(self._on_invalidated)
         # The store's failure latch is per SESSION (A6): a new
@@ -627,6 +662,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             payload["checked"] = row.relpath in selection
             payload["printing"] = row.relpath == printing_relpath
             rows.append(payload)
+        # The view model rebuilds ONLY when the projection's revision
+        # moves — the per-publish cost stays on the cached rows.
+        if fm.projection_count != self._files_model_rev:
+            self._files_model_rev = fm.projection_count
+            self._files_model.set_rows(rows)
         total = fm.total_count()
         size = fm.view.page_size
         if size == "all":
@@ -750,58 +790,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 if row is not None and row.thumb_path:
                     rows.append(row)
             self._file_manager.request_thumbnails(rows)
-        # The awaited print transition (round-2 D4: success is NEVER
-        # the POST reply). A start that never transitions — OR that
-        # matches the filename but never makes PROGRESS (Klipper can
-        # accept the start and freeze before the first motion — the
-        # author's live report: the UI stayed "printing" on a failed
-        # start) — explains itself and drops the assumed-active state.
-        attempt = self._file_manager.print_attempt
-        if attempt is not None:
-            stats = self._data.snapshot.core.get("print_stats") or {}
-            filename = str(stats.get("filename") or "")
-            state = str(stats.get("state") or "")
-            if filename == attempt[0]:
-                if state in ("printing", "paused"):
-                    # The job is live with the right file: the
-                    # success. No progress test — print_duration
-                    # sits at exactly 0.0 and file_position freezes
-                    # until the first extrusion, so a heat soak alone
-                    # must never read as a failed start.
-                    self._file_manager.clear_print_attempt()
-                    self._print_armed_state = ""
-                    self._print_start_error = ""
-                elif state == "error":
-                    # A cold start raises a transient Klipper error
-                    # (the extruder refuses to move below min temp)
-                    # that the print itself outlives once heated: a
-                    # failure verdict here lies while the job carries
-                    # on. Hold and remember the words — the timeout
-                    # below is the only failure verdict, and it keeps
-                    # the message.
-                    self._print_start_error = str(stats.get("message") or "").strip()
-                elif state and self._print_armed_state and state == self._print_armed_state:
-                    # Unchanged since the confirm: hold. Klipper
-                    # never clears the filename, so a re-print of the
-                    # same file starts from a stale terminal state —
-                    # that must not wipe the fresh attempt (the
-                    # adversarial round's repro).
-                    pass
-                elif state and self._print_armed_state:
-                    # A terminal state that DIFFERS from the armed
-                    # one: the printer moved and ended; the verdict
-                    # is moot. A mismatched filename never clears — a
-                    # poll in the window between the confirm and the
-                    # printer's state change must not wipe the
-                    # attempt.
-                    self._file_manager.clear_print_attempt()
-                    self._print_armed_state = ""
-                    self._print_start_error = ""
-            if self._file_manager.print_attempt is not None and time.time() - attempt[1] > self.FILE_PRINT_START_TIMEOUT_S:
-                if self._print_start_error:
-                    self._print_start_failed(f"The printer reported an error: {self._print_start_error}")
-                else:
-                    self._print_start_failed("The printer did not begin printing.")
+        # The print-start watchdog runs on the publish tick — the
+        # owner supervises the armed attempt regardless of the popup's
+        # state (a print confirmed before the popup closed still
+        # needs its verdict).
+        self._print_start.tick(self._data.snapshot.core)
         # The no-reflow rule's sibling ruling (2026-09-10):
         # while DISCONNECTED every control on the Monitor page disables
         # — the QML gates its sections and the emergency stop on this.
@@ -848,7 +841,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._console_errors_seen = error_count
         values["consoleErrorBell"] = self._console_error_bell
         commands, mesh = self._commands, self._mesh.snapshot
-        state_word = commands.state
+        # The pause/resume rows (4.3.0): the last un-migrated command
+        # gate becomes policy projections — one derivation, the
+        # reasons ride the strip's middle slot and the Dashboard's
+        # tooltips.
+        pause_verdict = can_pause(observation)
+        resume_verdict = can_resume(observation)
         # The heightmap range filter (the author's request): ONE
         # window drives both surfaces — the Monitor pop-over reads the
         # published keys, the Preview card and scene node follow
@@ -867,8 +865,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         else:
             threshold_low, threshold_high = mesh_min, mesh_max
         values.update(printActive=commands.print_active,
-            canPausePrint=state_word == "printing" and not commands.busy,
-            canResumePrint=commands.state == "paused" and not commands.busy,
+            canPausePrint=pause_verdict.mode == "allowed",
+            canResumePrint=resume_verdict.mode == "allowed",
+            pauseReason=pause_verdict.reason,
+            pauseReasonDetail=REASON_DETAIL.get(pause_verdict.reason, ""),
+            resumeReason=resume_verdict.reason,
+            resumeReasonDetail=REASON_DETAIL.get(resume_verdict.reason, ""),
+            printJobCaption=print_job_caption(observation),
             canCancelPrint=commands.print_active and not commands.busy, actionBusy=commands.busy,
             actionStatus=commands.status, emergencyStopClicks=commands.clicks,
             emergencyHoldProgress=commands.hold_progress, powerDevices=self._controls.power_devices(),
@@ -924,19 +927,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             if any(previous.get(key) != values.get(key) for key in keys):
                 getattr(self, signal_name).emit()
 
-    def _print_start_failed(self, reason) -> None:
-        """The start's failure verdict: the console note and the
-        action status. The observed printer state is NEVER rewritten —
-        a live print must not read "cancelled", and the pause-first
-        jog gate must not lift beside a live nozzle (that assumption
-        belongs to the e-stop alone)."""
-        self._file_manager.clear_print_attempt()
-        self._print_armed_state = ""
-        self._print_start_error = ""
-        self._console.note(f"Print start failed — {reason}")
-        self._commands.report_status(f"Print start failed — {reason}")
-
-
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
     monitorConnected = value_property(bool, "monitorConnected", monitorChanged, False)
     monitorFilename = value_property(str, "monitorFilename", monitorChanged, "")
@@ -966,8 +956,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     monitorAccelLimit = value_property(str, "monitorAccelLimit", monitorChanged, "—")
     monitorMessage = value_property(str, "monitorMessage", monitorChanged, "")
     printActive = value_property(bool, "printActive", actionChanged, False)
+    printJobCaption = value_property(str, "printJobCaption", actionChanged, "")
     canPausePrint = value_property(bool, "canPausePrint", actionChanged, False)
     canResumePrint = value_property(bool, "canResumePrint", actionChanged, False)
+    pauseReason = value_property(str, "pauseReason", actionChanged, "")
+    pauseReasonDetail = value_property(str, "pauseReasonDetail", actionChanged, "")
+    resumeReason = value_property(str, "resumeReason", actionChanged, "")
+    resumeReasonDetail = value_property(str, "resumeReasonDetail", actionChanged, "")
     canCancelPrint = value_property(bool, "canCancelPrint", actionChanged, False)
     actionBusy = value_property(bool, "actionBusy", actionChanged, False)
     actionStatus = value_property(str, "actionStatus", actionChanged, "")
@@ -1132,8 +1127,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # job can never wipe the fresh attempt (the adversarial
             # round's repro).
             stats = self._data.snapshot.core.get("print_stats") or {}
-            self._print_armed_state = str(stats.get("state") or "")
-            self._print_start_error = ""
+            self._print_start.arm(str(stats.get("state") or ""))
             # The print is on its way: the file manager steps aside
             # NOW and the monitor view returns — the verdict (success
             # or failure) reports to the console and the note line,
@@ -1630,7 +1624,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         sections = dict(self._sections)
         sections[str(section)] = bool(expanded)
         self._sections = sections
-        self._save_state()
+        # The sections map persists through the UI-state store — the
+        # model's save no longer rewrites the whole map (4.3.0).
+        self._ui_state.set_sections(self._sections)
         self._publish()
 
     @pyqtSlot(str, bool)
@@ -1739,9 +1735,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         else:
             self._store_notes.append(text)
 
-    def _save_state(self, replace=False):
+    def _save_state(self):
         self._store.write({
-            "sections": dict(self._sections),
             "whatsNewSeen": self._whats_new_seen,
             "controlsCollapsed": self._controls_collapsed,
             "controlsLocked": self._controls_locked,
@@ -1758,15 +1753,44 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "extrudeDistance": self._values.get("extrudeDistance", EXTRUDE_DISTANCE_DEFAULT),
                 "extrudeSpeed": self._values.get("extrudeSpeed", EXTRUDE_SPEED_DEFAULT),
             },
-        }, merge=not replace)
+        })
     @pyqtSlot(object)
     def updateMoonrakerStatus(self, status): self._data.observe(status)
     @pyqtSlot()
     def pausePrint(self):
-        if self.canPausePrint: self._commands.send("Pause", "printer/print/pause")
+        # The lane's revalidation (4.3.0): the verdict is re-derived
+        # from a FRESH observation at dispatch — never the cached
+        # property — and a refusal reports the policy's words. A
+        # missing observation denies (the pump's fail-closed polarity,
+        # not the upload path's None-allows artefact).
+        observation = getattr(self._data, "observation", None)
+        verdict = can_pause(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
+        if verdict.mode != "allowed":
+            self._commands.report_status(f"Pause refused: {verdict.reason}")
+            self._publish()
+            return
+        self._commands.send("Pause", "printer/print/pause")
     @pyqtSlot()
     def resumePrint(self):
-        if self.canResumePrint: self._commands.send("Resume", "printer/print/resume")
+        observation = getattr(self._data, "observation", None)
+        verdict = can_resume(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
+        if verdict.mode != "allowed":
+            self._commands.report_status(f"Resume refused: {verdict.reason}")
+            self._publish()
+            return
+        self._commands.send("Resume", "printer/print/resume")
+
+    @pyqtSlot()
+    def stripPausePrint(self):
+        # The Preview strip's one control dispatches by state:
+        # Resume while paused, Pause otherwise — both routes run the
+        # lane's revalidation (the same slots the Dashboard uses).
+        observation = getattr(self._data, "observation", None)
+        state = observation.state if observation is not None else ""
+        if state == "paused":
+            self.resumePrint()
+        else:
+            self.pausePrint()
     @pyqtSlot()
     def cancelPrint(self):
         if self.canCancelPrint: self._commands.send("Cancel", "printer/print/cancel")

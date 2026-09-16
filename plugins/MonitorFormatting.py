@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 import math
 import re
 
+from .MonitorPermissions import REASON_DETAIL, R_UNKNOWN, Verdict, can_pause, can_resume
+
 
 def result(payload):
     """The 'result' field of a Moonraker reply, falling back to the
@@ -66,6 +68,8 @@ TEMPERATURE_OBJECT_PREFIXES = ("heater_generic ", "temperature_", "bme280 ", "ht
 FILAMENT_OBJECT_PREFIXES = ("filament_switch_sensor ", "filament_motion_sensor ")
 MCU_OBJECT_PREFIXES = ("mcu ",)
 
+# pause_resume rides the CORE lane (4.3.0) — it must NOT appear here:
+# the aux merge would overwrite the core value one slow interval later.
 _SYSTEM_OBJECTS = {"heater_bed", "fan", "exclude_object", "system_stats", "webhooks", "mcu",
                    "configfile", "toolhead", "quad_gantry_level", "bed_mesh", "display_status"}
 
@@ -131,10 +135,112 @@ def chart_temperature_objects(auxiliary):
     return readings
 
 
+def preview_eta_text(snapshot, physical):
+    """The strip's middle-slot ETA: the same remaining/finish pair the
+    Monitor's rows show, composed for one narrow slot. 'Paused' while
+    paused; '—' when there is nothing to say (no print, no estimate)."""
+    stats = snapshot.get("print_stats") or {}
+    sd = snapshot.get("virtual_sdcard") or {}
+    state = str(stats.get("state") or "")
+    if state == "paused":
+        return "Paused"
+    if state != "printing":
+        return "—"
+    remaining = getattr(physical, "layer_eta", None)
+    if remaining is None:
+        remaining = estimate_remaining(stats.get("print_duration"), sd.get("progress"), physical.estimated_time, physical.metadata_complete)
+    if remaining is None:
+        return "—"
+    finish = (datetime.now().astimezone() + timedelta(seconds=remaining)).strftime("%H:%M")
+    return f"{duration(remaining)} · ~{finish}"
+
+
 def duration(seconds):
     hours, rest = divmod(max(0, int(round(number(seconds)))), 3600)
     minutes, seconds = divmod(rest, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def print_job_caption(observation) -> str:
+    """The print-job caption's state read (4.3.0): the STATE word
+    mapped once — never a permission boolean, so a busy lane never
+    reads as "Printing". Disconnected and unknown name themselves
+    instead of lying "Idle" while the socket is down; the controls
+    lock names itself so the dead action band keeps its context
+    (the locked-case naming, F18). The lock wins over the job word —
+    the Job section's own status row still shows the job state."""
+    if observation is None:
+        return ""
+    if observation.connection != "yes":
+        return "Disconnected" if observation.connection == "no" else "Printer state unknown"
+    if observation.controls_locked:
+        return "Locked"
+    return {"printing": "Printing", "paused": "Paused"}.get(observation.state, "Idle")
+
+
+def preview_temperature_pair(auxiliary):
+    """The strip's fixed pair: hotend and bed, the Monitor's own
+    labels and current→target form. target 0.0 means 'no setpoint /
+    at rest' — the arrow is omitted. A missing or non-finite reading
+    renders '—'; a 0.0 reading on a heater with no target is '—' too
+    (a pre-first-sample heater reports 0.0 — Klipper's own
+    not-measured convention). Per-heater staleness is not observable
+    from object status — the strip's staleness rule is about the
+    FEED, never about this pair."""
+    aux = auxiliary or {}
+    hotend_state = None
+    bed_state = None
+    for name, value in aux.items():
+        if not isinstance(value, Mapping):
+            continue
+        lower = str(name).lower()
+        if lower == "heater_bed":
+            bed_state = value
+        elif re.fullmatch(r"extruder\d*", lower) and hotend_state is None:
+            hotend_state = value
+
+    def cell(state):
+        if not isinstance(state, Mapping):
+            return "—"
+        temperature = number(state.get("temperature"), None)
+        target = number(state.get("target"), None)
+        if temperature is None or temperature <= 0 and not (target or 0) > 0:
+            return "—"
+        if (target or 0) > 0:
+            return f"{temperature:.1f}/{target:.1f} °C"
+        return f"{temperature:.1f} °C"
+
+    return cell(hotend_state), cell(bed_state)
+
+
+def preview_block(auxiliary, observation, *, stamp, inactive=False):
+    """The Preview value block (4.3.0): the slim per-poll carrier for
+    the strip — the fixed hotend/bed pair, the pause/resume verdicts
+    (with the policy's words for the tooltips) and the arrival stamp.
+    The block is GENERIC on purpose: the 4.4.0 camera thumbnail and
+    the marker's readouts reuse the same carrier. The stamp is taken
+    at the aux landing (MonitorData's clock) and never re-stamped in
+    transit — a republished block keeps its age, so the strip's
+    staleness rule has a real clock. Absence is an explicit shape
+    (the inactive flag + '—' cells), never an omitted key — the
+    preview publish dict never removes a key."""
+    pause_verdict = can_pause(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
+    resume_verdict = can_resume(observation) if observation is not None else Verdict("disabled", R_UNKNOWN)
+    hotend, bed = preview_temperature_pair(auxiliary)
+    return {
+        "stamp": float(stamp),
+        "inactive": bool(inactive),
+        "state": str(getattr(observation, "state", "") or ""),
+        "hotend": hotend,
+        "bed": bed,
+        "canPause": pause_verdict.mode == "allowed",
+        "canResume": resume_verdict.mode == "allowed",
+        "pauseReason": pause_verdict.reason,
+        "pauseReasonDetail": REASON_DETAIL.get(pause_verdict.reason, ""),
+        "resumeReason": resume_verdict.reason,
+        "resumeReasonDetail": REASON_DETAIL.get(resume_verdict.reason, ""),
+        "busy": bool(getattr(observation, "busy", False)),
+    }
 
 
 # The file manager's unit and time formats (UX F10): every string in

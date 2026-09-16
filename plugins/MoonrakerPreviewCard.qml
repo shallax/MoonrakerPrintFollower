@@ -25,6 +25,16 @@ Item {
     property string statusIconName: "Information"
     property bool bedMeshAvailable: false
     property bool bedMeshVisible: true
+    // The Preview value block (4.3.0): the Monitor's per-poll
+    // carrier — the strip reads the fixed pair, the verdicts and
+    // the aux-landing stamp through these.
+    property var previewBlock: ({})
+    property bool previewBlockStale: true
+    property string previewEtaText: ""
+    // The strip's derived state, computed in updateStrip(): a stale
+    // or inactive block reads absent everywhere.
+    property bool stripValid: false
+    property bool stripPaused: false
     property string bedMeshRangeText: ""
     property string bedMeshMinimumText: ""
     property string bedMeshMaximumText: ""
@@ -73,6 +83,7 @@ Item {
 
     signal loadClicked
     signal pauseClicked
+    signal printPauseRequested
     signal bedMeshVisibilityRequested(bool visible)
     signal bedMeshThresholdsRequested(real low, real high)
     signal bedMeshExaggerationRequested(real scale)
@@ -93,7 +104,68 @@ Item {
 
     onGateVisibleChanged: updateCardGate()
 
-    Component.onCompleted: updateCardGate()
+    // The strip's state machine (4.3.0): the block's verdicts, the
+    // staleness flag and the state word arrive as one setProperty-fed
+    // value — the cells are rewritten imperatively on every change,
+    // never left to bindings. The absent case names WHICH absence:
+    // never-arrived, stale, and not-following are three different
+    // facts — one connection claim for all three was a lie.
+    function stripSlotText() {
+        var b = base.previewBlock;
+        if (b === null || b === undefined)
+            return "Waiting for the printer";
+        if (base.previewBlockStale)
+            return "Feed is stale";
+        if (b.inactive === true)
+            return "Not following";
+        if (b.state === "paused")
+            return b.canResume ? base.previewEtaText : (b.resumeReason.length > 0 ? b.resumeReason : "—");
+        if (b.state === "printing")
+            return b.canPause ? base.previewEtaText : (b.pauseReason.length > 0 ? b.pauseReason : "—");
+        return b.pauseReason.length > 0 ? b.pauseReason : "—";
+    }
+
+    function stripPauseTooltip() {
+        var b = base.previewBlock;
+        if (b === null || b === undefined)
+            return "Waiting for the printer's first live values.";
+        if (base.previewBlockStale)
+            return "The feed is stale — the strip reads the last live values as '—'.";
+        if (b.inactive === true)
+            return "The monitor is not following this printer — the strip stays quiet.";
+        if (stripPaused) {
+            if (b.canResume)
+                return "Resume the paused print (Klipper RESUME).";
+            return b.resumeReasonDetail.length > 0 ? b.resumeReasonDetail : b.resumeReason;
+        }
+        if (b.canPause)
+            return "Pause the current print immediately (Klipper PAUSE).";
+        return b.pauseReasonDetail.length > 0 ? b.pauseReasonDetail : b.pauseReason;
+    }
+
+    function updateStrip() {
+        stripValid = !base.previewBlockStale && base.previewBlock !== null && base.previewBlock !== undefined && base.previewBlock.inactive !== true;
+        stripPaused = stripValid && base.previewBlock.state === "paused";
+        // The pair renders WITHOUT the "Hotend"/"Bed" labels (the UX
+        // re-review's ruling): the labelled form measured 229 px in a
+        // 300 px row and elided the bed's number — the one value the
+        // pair exists to show. Hotend first, bed second: unambiguous
+        // to the machine's owner.
+        stripTemps.text = stripValid ? base.previewBlock.hotend + " · " + base.previewBlock.bed : "—";
+        stripSlot.text = stripSlotText();
+        stripPauseButton.enabled = stripValid && (stripPaused ? base.previewBlock.canResume : base.previewBlock.canPause);
+        stripPauseButton.text = stripPaused ? "Resume print" : "Pause print";
+        stripPauseButton.tooltip = stripPauseTooltip();
+    }
+
+    onPreviewBlockChanged: updateStrip()
+    onPreviewBlockStaleChanged: updateStrip()
+    onPreviewEtaTextChanged: updateStrip()
+
+    Component.onCompleted: {
+        updateCardGate();
+        updateStrip();
+    }
 
     // The panel shell's strip sizing reads these.
     readonly property bool panelVisible: followerPanel.visible
@@ -129,6 +201,73 @@ Item {
                 text: "Moonraker Print Follower"
                 source: UM.Theme.getIcon("Nozzle")
                 font: UM.Theme.getFont("medium_bold")
+            }
+
+            // THE STRIP (4.3.0): two fixed rows between the title and
+            // the status row — one full-width Pause/Resume control on
+            // row 1; the temps cell and the middle slot on row 2.
+            // Every cell is explicitly width-bound: an implicit-width
+            // row paints past the card edge (the load-indicator
+            // precedent). The cells are driven IMPERATIVELY from the
+            // block's change handlers — bindings on setProperty-fed
+            // values go stale on this dynamically created component
+            // (engine-proven).
+            PreviewSecondaryButton {
+                id: stripPauseButton
+                objectName: "moonrakerStripPauseButton"
+                width: parent.width
+                height: UM.Theme.getSize("action_button").height
+                // The action word is ALWAYS visible; the enablement
+                // and the words are written by updateStrip().
+                onClicked: base.printPauseRequested()
+            }
+
+            Row {
+                width: parent.width
+                height: UM.Theme.getFont("default").pixelSize
+                spacing: base.buttonSpacing
+
+                UM.Label {
+                    id: stripTemps
+                    objectName: "moonrakerStripTemps"
+                    // The unlabelled pair ("205.2/210.0 °C · 60.0/60.0
+                    // °C" ≈ 149 px at the default font) fits with
+                    // slack; the labelled form never did.
+                    width: 160 * screenScaleFactor
+                    height: parent.height
+                    color: UM.Theme.getColor("text")
+                    font: UM.Theme.getFont("default")
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                    clip: true
+                }
+
+                UM.Label {
+                    // The permanent middle slot: its TEXT changes —
+                    // the print ETA while a gate passes, the policy's
+                    // refusal reason whenever one refuses. The slot
+                    // discharges "nothing silently unclickable":
+                    // whenever the control is disabled, this cell
+                    // says why in the policy's own words. Sized
+                    // against the vocabulary it carries — the old
+                    // 118 px cell cut "A command is running" mid-word;
+                    // the full sentence rides the tooltip.
+                    id: stripSlot
+                    objectName: "moonrakerStripSlot"
+                    width: 130 * screenScaleFactor
+                    height: parent.height
+                    horizontalAlignment: Text.AlignRight
+                    color: UM.Theme.getColor("text_inactive")
+                    font: UM.Theme.getFont("default")
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                    clip: true
+                    UM.TooltipArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.NoButton
+                        text: stripPauseTooltip()
+                    }
+                }
             }
 
             Cura.IconWithText {

@@ -18,6 +18,7 @@ PRESENTATION = (PLUGINS / "PreviewPresentation.py").read_text()
 PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
 MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
 MAIN_DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
+SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text()
 PREVIEW_CONTROLS = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 EMPTY_PREVIEW = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
 
@@ -206,21 +207,22 @@ class BedMeshTests(unittest.TestCase):
         # the download icon, the glyph kept the angle the hourglass
         # froze at — an assignment from inside the animation cannot
         # win against the animation binding, so the idle STATE forces
-        # the reset instead.
-        self.assertIn('name: "idle"', MONITOR_QML)
-        self.assertIn("target: etaGlyph", MONITOR_QML)
+        # the reset instead. The glyph rides the job section (4.3.0).
+        job = (PLUGINS / "JobSection.qml").read_text()
+        self.assertIn('name: "idle"', job)
+        self.assertIn("target: etaGlyph", job)
 
     def test_saved_profiles_are_ordered_and_loadable(self):
         self.assertEqual(mesh_profiles({"profiles": {"summer": {}, "default": {}, "winter": {}}, "profile_name": "winter"}), ["winter", "default", "summer"])
         self.assertIn("shlex.quote(name)", MONITOR_CONTROLS)
         self.assertIn("BED_MESH_PROFILE LOAD=", MONITOR_CONTROLS)
-        self.assertIn('text: "Load saved mesh"', MAIN_DASHBOARD)
+        self.assertIn('text: "Load saved mesh"', SETUP_SECTION_QML)
 
     def test_clearing_active_mesh_does_not_delete_saved_profiles(self):
         self.assertIn('"BED_MESH_CLEAR"', MONITOR_CONTROLS)
         self.assertNotIn("BED_MESH_PROFILE REMOVE", MONITOR_CONTROLS)
-        self.assertIn('text: "Clear mesh"', MAIN_DASHBOARD)
-        self.assertIn('text: "Calibrate mesh"', MAIN_DASHBOARD)
+        self.assertIn('text: "Clear mesh"', SETUP_SECTION_QML)
+        self.assertIn('text: "Calibrate mesh"', SETUP_SECTION_QML)
 
 
 if __name__ == "__main__":

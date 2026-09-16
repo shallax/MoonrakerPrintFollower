@@ -8,8 +8,51 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.2.0
+- **Release:** 4.3.0
 - **Target:** Cura 5.0–5.13 / SDK 8.0–8.12
+
+## What changed in 4.3.0
+
+Version 4.3.0 is the section release: every collapsible section of
+the Monitor page is its own component, and the Preview card gains a
+status strip.
+
+- **Every section its own component** — the Monitor page's panes
+  are now thin shells; all twenty-two collapsible sections ride
+  their own property-driven QML components (thirteen in the
+  controls dashboard, nine in the monitor). The panes, dialogs,
+  pop-over and the emergency dock stay with the hosts; the slider
+  freeze/refocus machinery is single-owner behind one interaction
+  sink; the pop-over and confirmation dialogs are requested
+  through signals. The console remains a pane by design.
+- **The Preview status strip** — two fixed rows under the card
+  title: Pause/Resume (status-only, driven by the permission
+  policy's rows with the reason words as the tooltip), the hotend/
+  bed pair, and the middle slot carrying the print ETA or the
+  policy's refusal reason. Fed by per-poll preview blocks with an
+  explicit staleness clock — a stale strip says so instead of
+  pretending.
+- **One pause policy** — `can_pause`/`can_resume` join the policy
+  table: busy is a row terminator, never pause-first, and the
+  verdicts publish with the reason words the buttons carry.
+- **Print-start ownership and metadata adoption** — the print-start
+  arm owns its timeout; the coordinator adopts Moonraker's
+  metadata only when the job matches, with a bounded give-up per
+  key.
+- **The UI-state store** — section expansion persists through the
+  state file's second consumer with atomic merge writes; the
+  chart's flat-map migration merges and deletes only what it owns.
+  (Pane sizes land with the configurable sections, not this
+  release.)
+- **The slider track-click fix** — clicking the slider track moves
+  the handle AND commits the value; a track click no longer
+  silently discards the request.
+- **The caption states** — the print-job caption names
+  Disconnected, Printer state unknown and Locked — never a lying
+  "Idle" while the socket is down.
+- **Harness evidence visibility** — every resolving step records
+  the element's geometry and the walk that resolved it, and the
+  harness composites the outline onto each captured frame.
 
 ## What changed in 4.2.0
 

@@ -735,6 +735,38 @@ else:
         result = {"dragged": True, "from": [handle_x, handle_y], "h": round(target.height()), "dy": dy}
 """
 
+P_SLIDER_CLICK = """from PyQt6.QtCore import QPoint, Qt, QPointF
+def _import_qtest():
+    from PyQt6.QtTest import QTest
+    return QTest
+window = _main_window()
+result = {}
+slider = None
+def _walk(item):
+    for child in item.childItems():
+        if "OutlineSlider" in str(child.metaObject().className()):
+            return child
+        found = _walk(child)
+        if found is not None:
+            return found
+    return None
+slider = _walk(window.contentItem())
+if slider is None:
+    result = {"error": "no OutlineSlider found"}
+else:
+    scene = slider.mapToScene(QPointF(0, 0))
+    # The track click: 20% of the width sits clear of the handle for
+    # any value at or right of centre — the click must move the value
+    # AND commit (the live report: a track click moved the handle and
+    # never submitted).
+    click_x = round(scene.x() + slider.width() * 0.2)
+    click_y = round(scene.y() + slider.height() / 2)
+    qtest = _import_qtest()
+    qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(click_x, click_y))
+    qtest.QTest.qWait(300)
+    result = {"clicked": True, "value": slider.value, "x": click_x, "y": click_y}
+"""
+
 P_FOLLOW_READ = """from UM.Application import Application
 app = Application.getInstance()
 result = {}
@@ -1170,11 +1202,28 @@ SCENARIOS = [
          {"op": "assert_model", "prop": "jogReason", "contains": "pause first", "budget": 10},
          {"op": "assert_model", "prop": "canRestart", "value": False, "budget": 10},
          {"op": "item_disabled", "objectName": "moonrakerJogXPlus"},
+         # The lane's revalidation (4.3.0): while PRINTING a Resume
+         # refuses with the policy's words, no command leaves the
+         # plugin, and the projected reasons name both rows.
+         {"op": "exec_slot", "slot": "resumePrint", "args": []},
+         {"op": "assert_model", "prop": "actionStatus", "contains": "Resume refused: Print is not paused", "budget": 10},
+         {"op": "assert_model", "prop": "resumeReason", "value": "Print is not paused", "budget": 10},
+         {"op": "assert_model", "prop": "resumeReasonDetail", "value": "Resume applies to a paused print — this print is still running.", "budget": 10},
+         {"op": "assert_model", "prop": "pauseReason", "value": "", "budget": 10},
+         {"op": "assert_model", "prop": "pauseReasonDetail", "value": "", "budget": 10},
+         # The print-job caption reads the STATE word (4.3.0) — a
+         # busy lane must never read as "Printing".
+         {"op": "assert_model", "prop": "printJobCaption", "value": "Printing", "budget": 10},
          {"op": "exec_slot", "slot": "pausePrint", "args": []},
          {"op": "sim_ledger", "needle": "print/pause", "method": "POST", "min": 1, "budget": 20},
          {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 15},
          # Paused keeps the shipped caption — moves run immediately.
          {"op": "assert_model", "prop": "jogReason", "value": "Paused — moves run immediately", "budget": 10},
+         {"op": "assert_model", "prop": "printJobCaption", "value": "Paused", "budget": 10},
+         # The rows flip with the pause: the resume side opens, the
+         # pause side names why it refuses.
+         {"op": "assert_model", "prop": "resumeReason", "value": "", "budget": 10},
+         {"op": "assert_model", "prop": "pauseReason", "value": "Print is already paused", "budget": 10},
          {"op": "exec_slot", "slot": "resumePrint", "args": []},
          {"op": "sim_ledger", "needle": "print/resume", "method": "POST", "min": 1, "budget": 20},
      ]},
@@ -1359,6 +1408,29 @@ SCENARIOS = [
 
 
     # ─── visual fidelity — alignment, pane exercise, rendered-follows ───
+    {"id": "v19", "group": "visual",
+     "name": "the strip renders its cells and its pause routes the lane",
+     "steps": [
+         {"op": "click_stage", "stage": "PreviewStage"},
+         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"},
+                                     "extruder": {"temperature": 205.2, "target": 210.0},
+                                     "heater_bed": {"temperature": 60.0, "target": 60.0}}},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 150},
+         # The strip's three cells render with the card; the block
+         # lands on the aux poll — the temps witness proves the block
+         # arrived (and that the strip renders the WHOLE unlabelled
+         # pair: hotend first, bed second — the elided-labelled-form
+         # pin, the UX re-review).
+         {"op": "wait_rect", "objectName": "moonrakerStripPauseButton", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerStripTemps", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerStripSlot", "budget": 30},
+         {"op": "wait_rendered", "objectName": "moonrakerStripTemps", "contains": "205.2/210.0 °C · 60.0/60.0 °C", "budget": 30},
+         # The strip's one control dispatches through the Monitor's
+         # revalidated lane: while printing the button reads "Pause
+         # print" and a real click sends the pause.
+         {"op": "click_text", "text": "Pause print"},
+         {"op": "sim_ledger", "needle": "print/pause", "method": "POST", "min": 1, "budget": 20},
+     ]},
     {"id": "v1", "group": "visual",
      "name": "the loaded panel renders, with Cura's </> beside the card",
      "steps": [
@@ -1721,6 +1793,23 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "firmwareRestart", "args": []},
          {"op": "sim_ledger", "needle": "firmware_restart", "min": 1, "budget": 20},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+     ]},
+    {"id": "s8", "group": "smoke", "name": "a track click on a plugin slider moves AND commits",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "sim_set", "state": {"print_stats": {"state": "standby", "filename": ""},
+                                     "fan": {"speed": 0.5}}},
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+         # The fans section renders a writable slider row from the
+         # sim's fan object; the probe clicks the TRACK (clear of the
+         # handle) — the live report: the handle moved and the commit
+         # never fired (drag+release and keyboard worked; a click
+         # submitted nothing).
+         {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         {"op": "exec_code", "verbs": ["mouseClick"], "code": P_SLIDER_CLICK},
+         # One track click commits exactly ONCE (the UX re-review:
+         # a minimum passes a duplicate commit silently).
+         {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "max": 1, "budget": 20},
      ]},
 
     # ─── geometry probes (diagnostics, not release gates) ─────────

@@ -1052,7 +1052,7 @@ ordered by dependency:
   feeds 4.2.0 planning only.
 - **The phase-2 rulings (2026-09-14, the author):** the architecture
   review's re-sequencing adopted fully (the presentation refactor
-  becomes 4.3.0, the physical head moves to 4.4.0); the TESTING.md
+  becomes 4.3.0, the physical head moves to 4.5.0); the TESTING.md
   reconciliation moves into 4.1.0 (re-ruling the round-6 deferral);
   draft PR #19 closes as superseded with nothing of the review lost
   and every finding dispositioned; 1920x1080 everywhere.
@@ -1432,51 +1432,255 @@ carries its reason (F10).
 
 ## 4.3.0 — Monitor & file-manager presentation refactor
 
+SHIPPED 2026-09-16 (branch release/v4.3.0, awaiting the author's
+snapshot nod): the strip, the pause/resume policy rows, the
+print-start owner, the metadata adoption, the UI-state store, the
+caption states, the slider track-click fix, the harness evidence
+layer, and the full per-section extraction (22 components). The
+phase-6 re-review and a fresh adversarial round dispositioned in
+`review/DECISIONS.md`; their blockers are fixed (the refocus walk's
+cross-document ids, the misplaced System/MCUs instantiations, the
+zero-width headers, the spacer gates, the pause_resume lane and
+capability fail-closed, the metadata mismatch no-latch, the strip's
+three absent states and the unlabelled temps pair). The strip's
+staleness witness (a test that stops the feed) rides the
+pre-release harness run.
+
 The 2026-09-14 re-sequencing inserted this release: the presentation
 debt gets a bounded delivery of its own instead of compounding under
 the physical-head feature. The review's F07 plus F06's structural
 completion, with fixed component scope and measurable exit criteria —
-not a repository-wide redesign.
+not a repository-wide redesign. The 2026-09-15 scoping ruling keeps
+4.5.0 separate and folds every 4.2.0 deferral plus the round-2
+pro-user planning input (2026-09-15) into this release. The round-1
+critic (2026-09-15) corrected three false premises; the seven-persona
+panel (2026-09-15) settled the strip's shape, lane and budget, and
+the off-path readout was dropped by ruling. Every disposition is in
+the decisions ledger.
 
-- **Vertex-style gcode deformation (bumped from 4.2.0, the author's
-  2026-09-15 ruling).** A Preview-card toggle that warps the rendered
-  gcode so the model rides the bed-mesh ridges: every vertex of the
-  rendered layers gets its own Z from the height map, times the
-  exaggeration. The per-layer prototype did not deliver the expected
-  look and was removed (logged); the design round must settle how the
-  warp composes with Cura's lazily built layer meshes, with a
-  Snapshot-0 mock before any machinery.
+- **Preview status strip (the pro-user's top want, ruled in
+  2026-09-15).** Two fixed rows after the card's title, directly
+  above the existing status row (re-ruled 2026-09-15 from the
+  card's first row, so the two status lines read as one block):
+  row 1 is one full-width control — "Pause print" / "Resume
+  print" (the action word always visible; the policy's reason
+  detail in the tooltip; the Detach/Attach tooltip reworded to
+  read against a card that does pause); row 2 is the temps cell
+  ("Hotend 205/210 °C · Bed 60/60 °C" — the Monitor's own labels
+  and form) and a permanent middle slot whose text changes: the
+  print ETA while a gate passes, the policy's refusal reason
+  whenever one refuses. 61 px total; every cell explicitly
+  width-bound — an implicit-width row paints past the card edge
+  (the load-indicator precedent). Status-only (the 2026-09-15
+  ruling): the factor sliders, the z-offset nudges and the
+  extrude/retract controls stay in the Monitor — the Preview
+  control dock is a 4.5.0 planning item with the jog pad. On the
+  card, the strip rides its dual-host placement for free — no
+  third host surface (re-ruled 2026-09-15 from a separate strip).
+  If the control dock lands, the strip breaks out to its own
+  surface then — the card rows are the simple form (the
+  2026-09-15 ruling), built as a property-driven component with
+  no card-internal state so the 4.5.0 host change is a re-home,
+  not a rewrite. Snapshot-0 mock before wiring.
 
+  The panel's rulings (2026-09-15, dispositions in the ledger):
+  - The lane. The rows are `can_pause`/`can_resume` with reason
+    constants — pause/resume is the last un-migrated command gate
+    (two inline booleans today, no reasons). Both rows read
+    `pause_resume.is_paused` where available (the object joins the
+    queried set — the state proxy alone ships a live Resume on a
+    print that can never resume) and consume `R_ESTOPPED`: the
+    state table's assumed-stopped row reads "Stop issued — state
+    unconfirmed" and disables both actions BY the assumption — the
+    first consumer of the e-stop record. The mode mapping is
+    allowed / disabled+reason, never pause-first. Busy is a term
+    of the row ("A command is running", never a dead button). The
+    lane re-derives from a fresh observation at dispatch (never
+    the cached property), denies on a missing observation, reports
+    the policy's words on every refusal, and the refusal lands on
+    the middle slot — the strip's refusal surface. A "resume
+    aborted" reply settles immediately as "nothing to resume" —
+    never the 300 s window. The Dashboard's buttons migrate onto
+    the rows and gain the reason words; the print-job caption
+    reads a state property, not the permission boolean.
+  - The seam. A slim per-poll Preview value block published by the
+    aux accumulator (MonitorData's own 2.5 s clock), carried to
+    the coordinator through a new read-only edge created at the
+    output-device boundary — the only place both halves exist.
+    The block carries the arrival stamp; the strip renders "—"
+    per value when the feed is absent, stale, or the monitor is
+    inactive (the three absent causes: poll failure, printer
+    switch, never configured). Absence is an explicitly published
+    sentinel — the sticky publish dict never removes a key, and a
+    re-stamped block never goes stale. The block is generic (a
+    "Preview value block per poll with a stated staleness rule")
+    so the 4.5.0 camera thumbnail and marker readouts reuse it.
+  - The temps. Reuse `chart_temperature_objects` — never a fresh
+    classification (hotend and bed are "system" objects; a
+    temperature-filter misses them). target 0.0 means no
+    setpoint/off — the arrow is omitted; a 0.0 reading on a
+    heater with no target renders "—" (Klipper's own
+    not-measured convention); the fixed pair is hotend + bed —
+    additional extruders stay pane-only in 4.3.0; per-heater
+    staleness is not observable — the staleness rule is about the
+    feed, and the plan says so.
+  - The ETA. The middle slot carries the PRINT remaining/finish
+    (`layer_eta`, already computed by the coordinator, new over
+    the seam). The existing selected-layer slot stays untouched:
+    its string is atomic, shows no time at all while following,
+    and moving it asked for a value that does not exist on this
+    host.
+  - The state table. idle / printing / paused / disconnected /
+    busy (printer command vs card load — two unrelated busies,
+    both named) / error (download-index vs Klipper's, both named)
+    / locked / assumed-stopped. One vocabulary, written once —
+    the strip, the card's status row and the print-job caption
+    all read from it.
+  - The signals. `printPauseRequested` / `printResumeRequested`
+    (never `pauseClicked` — that means Attach/Detach today); the
+    presentation's `pauseRequested` renames to
+    `pauseAtLayerRequested` in the same pass — three pause-named
+    signals on one object is one too many.
+  - The budget. A UX budget, not a harness one: the v1 assertion
+    binds horizontally (22 px of X clearance to the save row) and
+    there are 750 px of verified vertical headroom. The real
+    constraint is the bottom-anchored card's overflow over Cura's
+    viewport — the budget states its headroom rule (what happens
+    when the 4.5.0 dock is added), not just a maximum.
+- **Operation extraction — two slices, separately revertible
+  (split after the round-1 critic).** Slice one: the print-start
+  owner extraction completes — the queued outcome, the
+  publish-driven tick and the watchdog move out of the model, and
+  the upload path adopts the shared owner. Deterministic,
+  unit-testable, no user-visible change; its own evidence. Slice
+  two: the coordinator's metadata adoption. Before it, the
+  consolidated service's contract is written down — fetch plus
+  retained payload plus latch semantics plus job-identity
+  discipline. The coordinator's mr-metadata cache is not a plain
+  cache: its latch retired a ~1,200-identical-request retry ladder
+  and its job-id cross-check against the newest
+  `server/history/list` row prevents the wrong-job readout;
+  adopting the bare fetch as-is reintroduces both. The contract
+  keeps them; explicit unit tests (fake fetch, no latch on
+  failure) move with the code. The rewrite of the preview's
+  ETA/filament anchors rides this slice — the 4.2.0 record's
+  riskiest area, kept apart from slice one so its regression
+  signal stays clean.
+- **The UI-state store (the 4.2.0 owner's second consumer).** New
+  module `UiStateStore.py` owns section sizes, collapse state and
+  their persisted schema, consuming the 4.2.0 `StateStore` — one
+  store, two releases' features, no second file. The 4.2.0
+  constraints carry over: top-level-only merge (named in
+  ARCHITECTURE), the credential class stays out. The shape
+  requirement is written down: the Monitor's save payload rewrites
+  nine whole top-level keys per save, so the UI state lives as
+  top-level siblings of those nine — never nested inside `sections`
+  or `toolhead` — and the sizes sibling map is a tenth top-level
+  key with the same protection argument. Collapse state stays
+  booleans under the existing keys — a shape change or a renamed
+  id silently re-expands every existing user's sections (the
+  pro-user's reset vector, PUF2). The section-id pin is corrected
+  and lands first (F11): six ids are already pinned by name; the
+  pin becomes a literal set plus a length assertion so the console
+  pane — whose id is not a `sectionId:` literal — cannot be
+  missed.
 - **View-model extraction.** A FilesViewModel owning the file
-  projection: one computed file-view result (rows, total, page,
-  selection, empty state) cached by data/view/history revision with
-  deliberate date-filter expiry, published through a
-  QAbstractListModel with stable row identities — the F06
-  structural completion. Then the focused view models where their
-  update lifetimes differ: controls, console/camera,
+  projection as an INTERNAL collaborator: the model keeps the
+  public property names (pinned by name AND by base class) and
+  `fileManagerRows` stays a list-valued projection — the harness
+  reads it as a value and the file-list delegates consume dict
+  rows. The genuinely new part is the QAbstractListModel with
+  stable row identities behind that surface; the revision-keyed
+  cache and the date-filter expiry already ship (the F06
+  `projection_count`-pinned cache). Then the focused view models
+  where their update lifetimes differ: controls, console/camera,
   information/chart presentation. Each receives explicit model
-  properties and emits intents — never the whole root object.
-- **Operation extraction.** The print-start operation owner (4.2.0)
-  already removes print-start supervision from the Monitor model; a
-  small UI-state store owns section sizes, collapse state and their
-  persisted schema.
-- **QML component extraction.** The file table, filter controls,
-  the file confirmation dialogs, the console pane, the camera pane,
-  the toolhead section and the peripheral controls become complete
-  functional components.
+  properties and emits intents — never the whole root object. The
+  coverage gate's surface extractor reads one hard-coded file: it
+  becomes a directory scan in the same commit as any
+  `value_property` move, so a moved declaration cannot vanish from
+  the matrix.
+- **QML component extraction.** EVERY collapsible section becomes
+  its own property-driven QML component (the author's ruling,
+  2026-09-15: each section within a pane is its own file, not a
+  huge block in the monitor QML) — the controls pane's twelve
+  sections, the Information/Printer-status panes' nine, the console
+  pane, the camera pane, the file table, the filter controls and
+  the file confirmation dialogs. The panes become thin composition
+  shells over the per-section components; the section-id and
+  sectionIcon literals move WITH their components (the pinned-set
+  test widens to scan the component files). Its required companion is the
+  pin-retargeting pass, re-derived at the pass start with the
+  counting method stated (the round-1 critic's counts: 339
+  positive / 52 negative source-constant assertions, or 265
+  `assertIn` sites / 406 executed assertions / 43 `assertNotIn`
+  against QML text; the 27 `.index(` sites reproduce). Three
+  families, three treatments: the string assertions retarget once
+  the module-level source constants are widened (they read whole
+  files); the count pins are arithmetic over a file's text and are
+  re-derived against the new file set — a moved section otherwise
+  reads as a lost section; the `.index()` anchors fail hard
+  (ValueError) and are replaced with named structural markers that
+  survive a move. The negative guards are the dangerous half —
+  they pass vacuously once the code moves — and must follow the
+  code, never deleted; the pass names how each guard follows. The
+  pass runs AFTER `qmlformat` (the pre-commit gate formats staged
+  QML); the qmldir entry and the two banned filenames are on the
+  checklist.
+- **Harness evidence visibility (bumped from 4.2.0, the author's
+  2026-09-15 ruling).** The suite's inspections scroll their target
+  into view before asserting, and the evidence captures show what
+  the step actually saw — a recording that proves an inspection
+  against an off-screen item proves nothing a user could do.
+  Implemented as a new op or an opt-in driver flag, not a silent
+  change to existing inspections: the scroll walk resolves its
+  target through a different window set (visibility-filtered at
+  depth 64 vs the click walk's unfiltered depth 96) and it mutates
+  `contentY` — the four inspection ops sit in `REAL_SAFE_OPS`, the
+  tuple between a scenario and a live printer, and it moves with
+  the change in the same commit. The evidence entry gains the
+  geometry field so the capture genuinely shows what the step saw.
+- **The print-job caption's disconnected and locked states.** The
+  premise is corrected (F18): the caption reads "Idle" while the
+  socket is down — the surface that names disconnected today is
+  `monitorState`. The caption gains both states, folded in with the
+  strip's status vocabulary so one ruling covers both.
 - **Exit criteria.** Object names and public surfaces used by the
   interaction tests are preserved; persistence migration and
   gesture ownership survive; resize, focus, Esc handling,
   confirm/cancel, printer switches and repeated slider grabs are
-  re-verified after each extraction; measured projection
-  improvements against the 4.1.0 baselines; unchanged package
-  identity. Each extraction is a vertical slice — move one owner,
-  redirect its callers, preserve observable behaviour, remove the
-  obsolete path in the same change. A lines-per-file target is not
-  an acceptance criterion; the test is that a feature change stays
-  within its component.
+  re-verified after each extraction; NO REGRESSION against the
+  4.1.0 baselines — the old wording asked to improve on numbers
+  already banked post-improvement — via `projection_count` and the
+  publish-latency probe; unchanged package identity. The
+  no-oscillation invariant becomes testable: the three pane-width
+  constants, the two thresholds and the release margin are pinned
+  as unit-testable values BEFORE any pane slice moves — a pin
+  change and the hysteresis re-derivation land in the same commit.
+  The pin-retargeting pass costed and complete. Per-item criteria:
+  the strip's is the state table, the signals, the content budget,
+  the staleness witness (a test that stops the feed) and its own
+  lane scenario (the refusal text via a model read and the
+  absences via assert_model). Each extraction is a vertical slice
+  — move
+  one owner, redirect its callers, preserve observable behaviour,
+  remove the obsolete path in the same change. A lines-per-file
+  target is not an acceptance criterion; the test is that a feature
+  change stays within its component.
 
-## 4.4.0 — Physical head in the Preview (moved from 4.3.0)
+## 4.4.0 — Configurable sections
+
+A candidate from the author (2026-09-15): show/hide and re-order the
+Monitor's collapsible sections — possibly whole panes — the way the
+file manager's columns already work. The machinery it builds on is
+mostly shipped or landing now: the 23 pinned section ids (4.3.0's
+exact-set pin — any rename, re-order or visibility rule must respect
+it), the collapse map as the persistence precedent, the file
+manager's column UI (visibility + drag re-order) as the interaction
+precedent, and the UI-state store's merge-write path as the persistence
+home. Unplanned until the 4.5.0 physical-head marker ships.
+
+## 4.5.0 — Physical head in the Preview (moved from 4.3.0)
 
 What a web dashboard cannot do: show the real machine inside the slice.
 The 4.3.0 presentation refactor lands first (the 2026-09-14
@@ -1488,7 +1692,7 @@ explicit gate for the resolver/coordinate work, scoped to the
 behaviour the marker relies on; continuous-Z/vase support stays a
 distinct capability and is not a requirement for every preceding
 maintenance release. If feature value demands, the marker's
-display-only slice may proceed after 4.2.0 while the presentation
+display-only slice may proceed after 4.3.0 while the presentation
 refactor finishes.
 
 - A live physical-position marker overlaid on the Preview scene. The
@@ -1509,7 +1713,12 @@ refactor finishes.
   single-nozzle machines that changes nothing — the real multi-extruder
   feature is an active-tool label and per-tool path colouring.
 - A floating jog pad in the Preview panel, so the head can be moved while
-  looking at the actual toolpath.
+  looking at the actual toolpath. The Preview control dock lands with
+  it: the factor sliders ruled out of the 4.3.0 strip (2026-09-15)
+  find their Preview home here; z-offset and extrude/retract stay
+  Monitor-side unless 4.5.0's planning re-rules them. When the dock
+  lands, the status strip breaks out of the card to its own surface
+  (the 2026-09-15 ruling).
 - A shared coordinate-transform module — corrected by the pro-user
   panel: the bed-mesh overlay does NOT use homing_origin/axis_map (its
   XY comes from Cura's build volume, its Z is a lifted deviation
@@ -1530,15 +1739,22 @@ refactor finishes.
 **Pro-user panel input (2026-09-10, planning only):** value ranking —
 the marker is the must-have; the jog pad becomes a 1 only with Preview
 pause/resume beside it; macro surfacing is a 2. Missing items ranked:
-(1) a Preview status strip with pause/resume + temps + ETA; (2) the
-already-computed off-path distance in plain words (`refined_fraction`
-is thrown away today — "Head is 12.4 mm off the toolpath"; commanded-
-not-sensed caveat: it cannot detect skipped steps); (3) pause-at-Z-
+(1) a Preview status strip with pause/resume + temps + ETA — moved to
+4.3.0 (2026-09-15); (2) the already-computed off-path distance in
+plain words (`refined_fraction` is thrown away today — "Head is
+12.4 mm off the toolpath"; commanded-not-sensed caveat: it cannot
+detect skipped steps) — moved to 4.3.0, then dropped there
+(2026-09-15); the marker may earn it back as a deviation callout
+beside the actual head; (3) pause-at-Z-
 height + one-click pause-at-next-layer + the layer-to-mm readout
 (`PhysicalLayer.height` has no consumer); (4) filament/colour-change
 waypoints (M600, `; filament change`) on the layer timeline with
 time-to-go; (5) a camera thumbnail in the Preview (investigate, don't
 assume); (6) active-tool label + per-extruder path colouring.
+The ranking is stale and is re-derived at 4.5.0's planning round
+(PUF4, 2026-09-15): pause-at-layer and the layer-to-mm readout
+already ship, item (1) moved to 4.3.0 and item (2) was dropped
+there — only pause-at-Z-height of the original three remains open.
 Cross-cutting: the layer-hardening pack is the marker's prerequisite
 (the marker inherits the resolver's numbers, and the `;LAYER:` flip
 without the gate can increase wrong-layer risk); the version-drift
@@ -1641,6 +1857,7 @@ weaker than Mainsail's for anyone with a library.
   whenever a key is set and the stream host is remote. Loopback-only
   listener, header-buffer cap, per-connection upstreams.
 
+
 ## 4.0.0 notes — WebSockets as a transport swap (panel history)
 
 The socket remains the right long-term transport, but the domain panel
@@ -1684,6 +1901,20 @@ contrast; pairwise hue separation is the residual debt).
 
 ## Explicitly out of scope
 
+- **Gcode deformation (the vertex-style bed-mesh warp)** — permanently
+  dropped (the author's ruling, 2026-09-15): the feasibility was
+  never proven — the plugin has no vertex-level reach into Cura's
+  layer geometry, and the 4.2.0 per-layer prototype did not produce
+  the look — and the value does not repay the machinery.
+- **The off-path distance readout** — dropped at planning (the
+  author's ruling, 2026-09-15): the signal is mostly normal motion
+  (travels, Z-hops and parks exceed the window by design), the
+  anomaly cases are not visible through the commanded position,
+  and the surviving value did not repay a five-owner plumbing
+  change. A deviation callout beside the 4.5.0 physical-head
+  marker is the one shape that might earn it back — with an actual
+  head rendered, the number points at something on screen (the
+  author, 2026-09-15).
 - **Multi-instance Monitor** — Cura's paradigm is one active printer at a
   time; per-printer Monitor instances do not fit.
 - **Printer.cfg editing** — Cura machines are configured in Cura; a config
