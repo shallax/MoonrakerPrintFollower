@@ -11,7 +11,6 @@ from UM.Logger import Logger
 from UM.Backend.Backend import BackendState
 
 from .CuraLifecycleBridge import CuraLifecycleBridge
-from .NativeNozzleLifecycle import keep_native_nozzle_visible
 
 # Layer heights read per event-loop tick while building the table.
 _HEIGHTS_PER_TICK = 200
@@ -398,10 +397,6 @@ class CuraIntegration(QObject):
         if not expected and not absorbed: self.invalidate("Cura file replaced")
         self.fileLoaded.emit(str(path))
         self.queue(self._refresh, 260)
-
-    def show_nozzle(self):
-        if self.preview_active and self._view is not None:
-            keep_native_nozzle_visible(self._view)
 
     def close(self):
         if self._closed: return

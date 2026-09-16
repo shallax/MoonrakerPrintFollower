@@ -99,8 +99,34 @@ def update(layer: int, path_units: float, toolhead: bool = True) -> None:
         ACTIVE.setFollowState(layer, path_units, toolhead)
 
 
-def detach() -> None:
-    """Restore Cura's SimulationPass at its current state."""
+def shutdown() -> None:
+    """The plugin-teardown path: restore the compositor and Cura's
+    pass (detach), then remove the follow pass from the renderer and
+    clear every held reference — a plugin reload must not leave a
+    stale pass or a stale binding behind."""
+    global ACTIVE, _ORIGINAL_BINDINGS, _SIMULATION_PASS
+    try:
+        if ACTIVE is not None and ACTIVE.isEnabled():
+            detach()
+        if ACTIVE is not None:
+            from UM.Application import Application
+            for v in Application.getInstance().getController().getAllViews():
+                if hasattr(v, "getSimulationPass"):
+                    renderer = v.getRenderer()
+                    if renderer is not None:
+                        renderer.removeRenderPass(ACTIVE)
+                    break
+        ACTIVE = None
+        _ORIGINAL_BINDINGS = None
+        _SIMULATION_PASS = None
+    except Exception:
+        pass
+
+
+def detach(view=None) -> None:
+    """Restore Cura's SimulationPass at its current state. The view is
+    optional — without one, the SimulationView is found through the
+    application (the normal path); tests pass their own."""
     global ACTIVE, _ORIGINAL_BINDINGS, _SIMULATION_PASS
     try:
         if ACTIVE is not None and ACTIVE.isEnabled():
@@ -110,12 +136,12 @@ def detach() -> None:
             _SIMULATION_PASS.setEnabled(True)
             _SIMULATION_PASS = None
         if _ORIGINAL_BINDINGS is not None:
-            from UM.Application import Application
-            view = None
-            for v in Application.getInstance().getController().getAllViews():
-                if hasattr(v, "getSimulationPass"):
-                    view = v
-                    break
+            if view is None:
+                from UM.Application import Application
+                for v in Application.getInstance().getController().getAllViews():
+                    if hasattr(v, "getSimulationPass"):
+                        view = v
+                        break
             if view is not None:
                 composite = view.getRenderer().getRenderPass("composite")
                 if composite is not None:

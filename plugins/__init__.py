@@ -15,10 +15,6 @@ def register(app):
     # tick, so an idle timer is the whole cost until it is enabled.
     from .LeakProbe import start_leak_probe
     start_leak_probe(follower._runtime, app)
-    # The render-path allocation patches (the review): in-memory,
-    # version-gated, never touching Cura's files.
-    from .RendererAdaptation import apply_renderer_adaptations
-    apply_renderer_adaptations()
 
     output_plugin = MoonrakerOutputDevicePlugin(app, follower)
     return {
