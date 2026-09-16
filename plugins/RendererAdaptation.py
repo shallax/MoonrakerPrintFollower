@@ -129,12 +129,26 @@ def _resolve_native_draw_elements():
         address = 0
     if not address:
         return None
-    factory = ctypes.WINFUNCTYPE if sys.platform == "win32" else ctypes.CFUNCTYPE
+    return _build_native_draw(address)
+
+
+def _build_native_draw(address, factory=None):
+    """Wrap a resolved glDrawElements address as a callable that
+    accepts the patched code's plain-int byte offset and builds the
+    pointer argument the prototype demands (the live report: the raw
+    prototype rejected a plain int with 'wrong type')."""
+    if factory is None:
+        factory = ctypes.WINFUNCTYPE if sys.platform == "win32" else ctypes.CFUNCTYPE
     prototype = factory(None, ctypes.c_uint, ctypes.c_int, ctypes.c_uint, ctypes.c_void_p)
     try:
-        return prototype(address)
+        native = prototype(address)
     except (AttributeError, TypeError):
         return None
+
+    def native_draw(mode, count, element_type, byte_offset):
+        native(mode, count, element_type, ctypes.c_void_p(byte_offset))
+
+    return native_draw
 
 
 def patch_method(func, pairs, inject=None):
