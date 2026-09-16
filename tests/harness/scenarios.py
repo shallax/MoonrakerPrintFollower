@@ -422,16 +422,18 @@ P_PAUSE_SCHEDULED = (
     "        break\n"
     "result")
 
-P_ROW_GONE = (
+P_ROW_PASSED = (
     "window = _main_window()\n"
-    "result = {\"row_gone\": True}\n"
+    "result = {\"passed\": False, \"label\": \"\"}\n"
     "for item in _walk(window.contentItem()):\n"
     "    try:\n"
     "        label = item.property(\"text\")\n"
     "    except Exception:\n"
     "        label = None\n"
     "    if isinstance(label, str) and label.startswith(\"End of layer\") and bool(item.isVisible()):\n"
-    "        result[\"row_gone\"] = False\n"
+    "        result[\"label\"] = label[:60]\n"
+    "        if \"passed\" in label:\n"
+    "            result[\"passed\"] = True\n"
     "        break\n"
     "result")
 
@@ -1758,7 +1760,9 @@ SCENARIOS = [
          {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true', "budget": 20},
          {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 60},
          {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
-         {"op": "wait_exec", "code": P_ROW_GONE, "contains": '"row_gone": true', "budget": 20},
+         # The 4.3.0 ruling: a fired pause STAYS listed, restyled as
+         # passed — the row must not disappear.
+         {"op": "wait_exec", "code": P_ROW_PASSED, "contains": '"passed": true', "budget": 20},
      ]},
     {"id": "p7", "group": "preview",
      "name": "a refused PAUSE keeps the entry restyled as not taken",
