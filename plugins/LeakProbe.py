@@ -207,11 +207,19 @@ class LeakProbe:
         self._trace_snapshot = None
         self._qml_previous = {}
         self._sizes_previous = {}
+        self._log_path = _LOG_PATH
+        # The file must not exist at all unless the diagnostics toggle
+        # is ON (the ruling): nothing is written — not even a
+        # registration line — while the checkbox is unticked. The
+        # first enabled tick creates the file and logs the start line.
+        if not self._enabled_now():
+            self._timer.start()
+            return
         self._log_path = self._pick_log_path()
-        # One registration line per launch: the pid and install path
-        # name the instance, and the raw toggle value proves what the
-        # preference read saw — the Windows run logged nothing at all
-        # and the silence could not say why.
+        # One registration line per launch with the toggle ON: the pid
+        # and install path name the instance, and the raw toggle value
+        # proves what the preference read saw — the Windows run logged
+        # nothing at all and the silence could not say why.
         try:
             from UM.Application import Application
             from .PrinterConfig import PrinterConfigStore
@@ -293,6 +301,11 @@ class LeakProbe:
             return
         if not self._enabled:
             self._enabled = True
+            if not Path(str(self._log_path)).exists():
+                # The toggle turned on after launch: the file is
+                # created on the first enabled tick (the no-file-while-
+                # off ruling).
+                self._log_path = self._pick_log_path()
             # The pid and the install path name the instance: the
             # author's log showed three starts — multiple installed
             # copies each register their own probe.
