@@ -115,8 +115,8 @@ class PreviewMotion(QObject):
             # is written so the new layer builds while the old layer's
             # cache slot is empty. resetLayerData only drops Cura's
             # cached CURRENT solid-layer/travel mesh references — it
-            # is not a general graphics reset. The per-frame render
-            # path is the follow pass's job.
+            # is not a general graphics reset; the per-frame rendering
+            # is Cura's own SimulationPass.
             reset_preview_layer_data(self._cura.view)
             self._write(fraction)
             return
