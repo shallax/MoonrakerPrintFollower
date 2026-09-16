@@ -396,11 +396,16 @@ if tornado is not None:
                 await client.fetch(self.base + "/harness/scenario", method="POST",
                                    body=json.dumps({"print_stats": {"state": "printing",
                                                                     "filename": "x.gcode"}}))
-                for route, expected in (("print/pause", "paused"), ("print/resume", "printing"),
-                                        ("print/cancel", "cancelled")):
+                for route, expected, bit in (("print/pause", "paused", True),
+                                             ("print/resume", "printing", False),
+                                             ("print/cancel", "cancelled", False)):
                     await client.fetch(self.base + f"/printer/{route}", method="POST", body=b"{}")
                     state = json.loads((await client.fetch(self.base + "/harness/state")).body)["result"]
                     self.assertEqual(state["print_stats"]["state"], expected, route)
+                    # The authoritative bit rides the transition
+                    # (the 4.3.0 rows read it — the harness's g6/s6
+                    # Resume refusals traced to this gap).
+                    self.assertEqual(state["pause_resume"]["is_paused"], bit, route)
             self.io_loop.run_sync(exercise)
 
         def test_delete_removes_the_file_from_the_listing(self):
