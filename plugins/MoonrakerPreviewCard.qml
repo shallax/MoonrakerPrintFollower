@@ -120,21 +120,21 @@ Item {
             keep[incoming[i].layer] = true;
         }
         for (var r = pauseListModel.count - 1; r >= 0; r--) {
-            if (!keep[pauseListModel.get(r).layer]) {
+            if (!keep[pauseListModel.get(r).layerNo]) {
                 pauseListModel.remove(r);
             }
         }
         for (var k = 0; k < incoming.length; k++) {
             var row = incoming[k];
             var payload = {
-                "layer": row.layer,
+                "layerNo": row.layer,
                 "eta": row.eta,
-                "state": row.state,
+                "pauseWord": row.state,
                 "passed": row.passed === true
             };
             var at = -1;
             for (var f = 0; f < pauseListModel.count; f++) {
-                if (pauseListModel.get(f).layer === row.layer) {
+                if (pauseListModel.get(f).layerNo === row.layer) {
                     at = f;
                     break;
                 }
@@ -144,13 +144,13 @@ Item {
                 // at its sorted position among the existing rows.
                 var pos = pauseListModel.count;
                 for (var s = 0; s < pauseListModel.count; s++) {
-                    if (pauseListModel.get(s).layer > row.layer) {
+                    if (pauseListModel.get(s).layerNo > row.layer) {
                         pos = s;
                         break;
                     }
                 }
                 pauseListModel.insert(pos, payload);
-            } else if (pauseListModel.get(at).eta !== row.eta || pauseListModel.get(at).state !== row.state || pauseListModel.get(at).passed !== payload.passed) {
+            } else if (pauseListModel.get(at).eta !== row.eta || pauseListModel.get(at).pauseWord !== row.state || pauseListModel.get(at).passed !== payload.passed) {
                 pauseListModel.set(at, payload);
             }
         }
@@ -476,15 +476,23 @@ Item {
                             // concept and read undefined (the live
                             // report: every row read layer 0), and
                             // `model.layer` crashed the pinned
-                            // container's engine at load.
-                            property int pauseLayer: Number(layer)
+                            // container's engine at load. The layer and
+                            // state ROLES carry non-colliding names
+                            // (layerNo, pauseWord): bare `layer` and
+                            // `state` hit Qt's built-in Item.layer /
+                            // Item.state properties on some engines,
+                            // which shadow the roles and read
+                            // NaN / "" — every row then shows layer 0
+                            // (the live report) while eta and passed
+                            // still resolve.
+                            property int pauseLayer: Number(layerNo)
                             property string pauseEta: String(eta || "")
                             // "scheduled" | "fired" | "failed" | "timed_out" |
                             // "baked" — a missed pause STAYS listed, restyled
                             // in the error colour (the verified-pause-only
                             // ruling); a baked pause is read-only (the
                             // ruling).
-                            property string pauseState: String(state || "scheduled")
+                            property string pauseState: String(pauseWord || "scheduled")
                             readonly property bool pauseMissed: pauseState === "failed" || pauseState === "timed_out"
                             readonly property bool pauseBaked: pauseState === "baked"
                             readonly property bool pausePassed: passed === true || pauseState === "passed"
