@@ -67,8 +67,11 @@ _RANGED_DRAW_FRAGMENT = """\
 _RANGED_DRAW_REPLACEMENT = """\
         else:
             # The render-path adaptation: the byte offset into the
-            # full cached buffer selects the range.
-            _mpf_offset = ctypes.c_void_p(self._render_range[0] * 4)
+            # full cached buffer selects the range. The pointer is
+            # sip.voidptr — PyQt6's void* type (a ctypes pointer
+            # fails the conversion: 'a 1-dimensional buffer is
+            # required', the live report's crash).
+            _mpf_offset = _mpf_offset_ptr(self._render_range[0] * 4)
             if self._render_mode == self.RenderMode.Triangles:
                 self._gl.glDrawRangeElements(self._render_mode, self._render_range[0], self._render_range[1], self._render_range[1] - self._render_range[0], self._gl.GL_UNSIGNED_INT, _mpf_offset)
             else:
@@ -99,6 +102,15 @@ _PREV_LINE_TYPES_REPLACEMENT = """\
                     _mpf_recomputes[0] += 1
                 prev_line_types = layer_data._mpf_prev_line_types_cache[1]
                 layer_data._attributes["prev_line_types"] =  {'opengl_type': 'float', 'value': prev_line_types, 'opengl_name': 'a_prev_line_type'}"""
+
+
+def _offset_pointer(offset: int):
+    """A PyQt6.sip.voidptr for the byte offset — PyQt6's void* type
+    (sip is not a top-level module there). The import stays inside the
+    helper so this module still loads on hosts without PyQt6 (the
+    tests import it)."""
+    from PyQt6 import sip
+    return sip.voidptr(offset)
 
 
 def patch_method(func, pairs, inject=None):
@@ -145,7 +157,12 @@ def _wrap_index_creation_counter(OpenGL) -> None:
     original = OpenGL.createIndexBuffer
 
     def counted(self, mesh, **kwargs):
-        if kwargs.get("force_recreate") or not hasattr(mesh, OpenGL.IndexBufferProperty):
+        # Count only what will really create a buffer: a cached hit is
+        # not a creation, and a mesh without indices returns None
+        # without one (the review: attempts must not count as
+        # creations).
+        if (kwargs.get("force_recreate") or not hasattr(mesh, OpenGL.IndexBufferProperty)) \
+                and mesh.hasIndices():
             COUNTERS["index_buffers_created"][0] += 1
         return original(self, mesh, **kwargs)
 
@@ -153,12 +170,14 @@ def _wrap_index_creation_counter(OpenGL) -> None:
     OpenGL.createIndexBuffer = counted
 
 
-def _patch_render_batch(RenderBatch, OpenGL) -> bool:
+def _patch_render_batch(RenderBatch, OpenGL, offset_ptr=None) -> bool:
+    if offset_ptr is None:
+        offset_ptr = _offset_pointer
     patched = patch_method(
         RenderBatch._renderItem,
         [(_RANGED_BUFFER_FRAGMENT, _RANGED_BUFFER_REPLACEMENT),
          (_RANGED_DRAW_FRAGMENT, _RANGED_DRAW_REPLACEMENT)],
-        inject={"ctypes": ctypes},
+        inject={"ctypes": ctypes, "_mpf_offset_ptr": offset_ptr},
     )
     if patched is None:
         return False

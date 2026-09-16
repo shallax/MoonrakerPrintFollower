@@ -37,6 +37,17 @@ class FakeRenderMode:
     Lines = 1
 
 
+class FakeVoidPtr:
+    """The test stand-in for sip.voidptr — carries the pointer value."""
+
+    def __init__(self, value):
+        self.value = value
+
+
+def fake_offset_ptr(offset):
+    return FakeVoidPtr(offset)
+
+
 class FakeIndexBuffer:
     def bind(self):
         pass
@@ -91,9 +102,10 @@ class FakeGL:
 
 
 class FakeMesh:
-    def __init__(self):
+    def __init__(self, indices=True):
         self.vertex_count = 1
         self.face_count = 10
+        self.indices = indices
 
     def getVertexCount(self):
         return self.vertex_count
@@ -102,7 +114,7 @@ class FakeMesh:
         return self.face_count
 
     def hasIndices(self):
-        return True
+        return self.indices
 
     def hasNormals(self):
         return False
@@ -161,7 +173,7 @@ class RenderBatchAdaptationTests(unittest.TestCase):
         COUNTERS["index_buffers_created"][0] = 0
         self.original = FakeRenderBatch._renderItem
         self.addCleanup(lambda: setattr(FakeRenderBatch, "_renderItem", self.original))
-        self.assertTrue(_patch_render_batch(FakeRenderBatch, OpenGL))
+        self.assertTrue(_patch_render_batch(FakeRenderBatch, OpenGL, offset_ptr=fake_offset_ptr))
 
     def test_ranged_draws_use_the_cached_buffer_and_a_byte_offset(self):
         batch = FakeRenderBatch()
@@ -176,7 +188,7 @@ class RenderBatchAdaptationTests(unittest.TestCase):
         self.assertIsInstance(draw[3], int)
         # The byte offset selects the range: start * 4 for uint32.
         offset = draw[4]
-        self.assertIsInstance(offset, ctypes.c_void_p)
+        self.assertIsInstance(offset, FakeVoidPtr)
         self.assertEqual(offset.value, 100 * 4)
 
     def test_thousands_of_frames_create_one_buffer(self):
@@ -207,6 +219,12 @@ class RenderBatchAdaptationTests(unittest.TestCase):
         self.assertEqual(COUNTERS["index_buffers_created"][0], 1)
         OpenGL.getInstance().createIndexBuffer(mesh, force_recreate=True, index_start=0, index_stop=5)
         self.assertEqual(COUNTERS["index_buffers_created"][0], 2)
+
+    def test_the_counter_wrap_skips_meshes_without_indices(self):
+        # An attempt on an index-less mesh creates nothing and must
+        # not count as a creation (the review's counter precision).
+        OpenGL.getInstance().createIndexBuffer(FakeMesh(indices=False))
+        self.assertEqual(COUNTERS["index_buffers_created"][0], 0)
 
 
 class VersionGateTests(unittest.TestCase):
