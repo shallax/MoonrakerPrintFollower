@@ -44,8 +44,26 @@ class _FakeLayerData:
 
 @unittest.skipUnless(NUMPY, "numpy not available")
 class FollowMeshBakeTests(unittest.TestCase):
+    class _FakeMeshData:
+        # The UM-free stand-in for MeshData: records what the bake
+        # passes to it (the real UM MeshData comes from FollowPass).
+        def __init__(self, vertices=None, indices=None, colors=None, attributes=None):
+            self.vertices = vertices
+            self.indices = indices
+            self.colors = colors
+            self.attributes = attributes
+
+        def getAttribute(self, name):
+            return self.attributes[name]
+
+        def getVertices(self):
+            return self.vertices
+
+        def getIndices(self):
+            return self.indices
+
     def _bake(self, counts):
-        from plugins.FollowPass import build_follow_mesh
+        from plugins.FollowMesh import build_follow_mesh
         # 8 vertices, 8 indices: layers 1 and 3 with two lines each.
         vertices = numpy.zeros((8, 3), numpy.float32)
         indices = numpy.arange(8, dtype=numpy.int32)
@@ -57,7 +75,7 @@ class FollowMeshBakeTests(unittest.TestCase):
                           "value": numpy.ones(8, numpy.float32)},
         }
         layer_data = _FakeLayerData(vertices, indices, colors, counts, extra)
-        return build_follow_mesh(layer_data), layer_data
+        return build_follow_mesh(layer_data, mesh_factory=self._FakeMeshData), layer_data
 
     def test_bakes_layer_and_line_attributes(self):
         mesh, layer_data = self._bake({1: 4, 3: 4})
@@ -82,11 +100,11 @@ class FollowMeshBakeTests(unittest.TestCase):
         self.assertEqual(list(layer_attr["value"]), [1, 1, 1, 1, 1 << 30, 1 << 30, 1 << 30, 1 << 30])
 
     def test_bake_fails_cleanly_without_geometry(self):
-        from plugins.FollowPass import build_follow_mesh
+        from plugins.FollowMesh import build_follow_mesh
         layer_data = _FakeLayerData([], [], [], {})
-        self.assertIsNone(build_follow_mesh(layer_data))
+        self.assertIsNone(build_follow_mesh(layer_data, mesh_factory=self._FakeMeshData))
         layer_data = _FakeLayerData(numpy.zeros((4, 3)), numpy.arange(4), numpy.ones((4, 4)), {})
-        self.assertIsNone(build_follow_mesh(layer_data))
+        self.assertIsNone(build_follow_mesh(layer_data, mesh_factory=self._FakeMeshData))
 
 
 try:

@@ -73,7 +73,10 @@ if [ "$#" -gt 0 ] && [ -n "$container_image" ] && [ "$container_image" = "$image
     fi
 fi
 if [ "$warm_ok" = "true" ]; then
-    docker exec -i -w /work "$name" "$@"
+    # The container's Python 3.12 unittest discover does not put
+    # tests/ on sys.path (the host's 3.14 does), so the Qt suite's
+    # qt_runtime_support import would fail there.
+    docker exec -i -w /work -e PYTHONPATH=/work/tests "$name" "$@"
 else
     # The stale container must not be torn down while another invocation
     # is still executing inside it (parallel make targets can race this
@@ -90,8 +93,8 @@ else
     # files as the host.
     mkdir -p /tmp/mpf
     if [ -n "$gitdir" ]; then
-        docker run --rm --user "$(id -u):$(id -g)" -v "$root":/work -v "$gitdir:$gitdir:ro" -v "$common_gitdir:$common_gitdir:ro" -v /tmp/mpf:/tmp/mpf moonraker-print-follower-dev "$@"
+        docker run --rm --user "$(id -u):$(id -g)" -e PYTHONPATH=/work/tests -v "$root":/work -v "$gitdir:$gitdir:ro" -v "$common_gitdir:$common_gitdir:ro" -v /tmp/mpf:/tmp/mpf moonraker-print-follower-dev "$@"
     else
-        docker run --rm --user "$(id -u):$(id -g)" -v "$root":/work -v /tmp/mpf:/tmp/mpf moonraker-print-follower-dev "$@"
+        docker run --rm --user "$(id -u):$(id -g)" -e PYTHONPATH=/work/tests -v "$root":/work -v /tmp/mpf:/tmp/mpf moonraker-print-follower-dev "$@"
     fi
 fi
