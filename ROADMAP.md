@@ -1749,6 +1749,14 @@ maintenance release. If feature value demands, the marker's
 display-only slice may proceed after 4.3.0 while the presentation
 refactor finishes.
 
+- The nozzle repair's remaining private-state writes (the author's
+  2026-09-16 ruling, backlog): the 4.2.0 NativeNozzleLifecycle
+  synchronises Cura's layer-switch suppression through two
+  SimulationPass private fields. 4.5.0 replaces them with the
+  all-public form — nozzle parenting, setEnabled, setActivity and
+  the view's public getCompatibilityMode() — and accepts the
+  one-frame nozzle flicker at layer transitions. Until then the
+  sanctioned exception stands in the monkeypatch contract test.
 - A live physical-position marker overlaid on the Preview scene. The
   position source is `motion_report.live_position` plus
   `gcode_move.homing_origin`/`axis_map` — already implemented as
