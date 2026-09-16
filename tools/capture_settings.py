@@ -148,6 +148,10 @@ class SettingsManager(QObject):
         return True
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def settingsFollowPass(self):
+        return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def settingsZFallback(self):
         return True
 

@@ -146,6 +146,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
         return self._config().show_toolhead_indicator
 
     @pyqtProperty(bool, notify=settingsChanged)
+    def settingsFollowPass(self) -> bool:
+        return self._config().follow_pass_enabled
+
+    @pyqtProperty(bool, notify=settingsChanged)
     def settingsTraceLayer(self) -> bool:
         return self._config().trace_layer
 
@@ -382,6 +386,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "path_smoothing": bool(raw.get("path_smoothing", True)),
                 "eta_learn": bool(raw.get("eta_learn", False)),
                 "show_toolhead_indicator": bool(raw.get("show_toolhead_indicator", True)),
+                "follow_pass_enabled": bool(raw.get("follow_pass_enabled", False)),
                 "trace_layer": bool(raw.get("trace_layer", False)),
                 "trace_http": bool(raw.get("trace_http", False)),
                 "memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False)),

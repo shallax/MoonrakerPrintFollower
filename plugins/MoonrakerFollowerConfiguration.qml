@@ -52,6 +52,7 @@ Cura.MachineAction {
                 "eta_learn": etaLearnBox.checked,
                 "auto_preview": autoPreviewBox.checked,
                 "show_toolhead_indicator": toolheadIndicatorBox.checked,
+                "follow_pass_enabled": followPassBox.checked,
                 "z_fallback": zFallbackBox.checked,
                 "z_tolerance": zToleranceField.text,
                 "trace_layer": layerTraceBox.checked,
@@ -801,6 +802,11 @@ Cura.MachineAction {
                             id: memoryDiagnosticsBox
                             text: "Log memory diagnostics once a minute (diagnostics)"
                             checked: manager.settingsMemoryDiagnosticsLog
+                        }
+                        UM.CheckBox {
+                            id: followPassBox
+                            text: "Use experimental follow render pass (diagnostics)"
+                            checked: manager.settingsFollowPass
                         }
                         UM.Label {
                             width: parent.width

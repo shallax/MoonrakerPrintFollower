@@ -124,6 +124,9 @@ class PrinterConfig:
     eta_learn: bool = False
     path_smoothing: bool = True
     show_toolhead_indicator: bool = True
+    # The experimental follow render pass — a debug toggle, off until
+    # the vanilla-path soak verdict (it never attached in live Cura).
+    follow_pass_enabled: bool = False
     follow_mode: str = "exact"
 
     # Integrated Moonraker upload settings.
@@ -271,6 +274,7 @@ class PrinterConfig:
         for key in (
             "enabled", "moonraker_layer_is_one_based", "auto_preview",
             "z_fallback", "path_follow", "path_smoothing", "show_toolhead_indicator",
+            "follow_pass_enabled",
             "eta_learn",
             "trace_layer", "trace_http", "memory_diagnostics_log",
             "upload_dialog", "upload_start_print", "upload_remember_state",

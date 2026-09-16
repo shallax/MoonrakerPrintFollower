@@ -67,7 +67,8 @@ INTER_POLL_MAX = 30.0
 # the timer does not tick forever through a pause.
 TICK_EPSILON = 1e-6
 class PreviewMotion(QObject):
-    def __init__(self, cura, remember, parent=None, trace_path=None, toolhead_enabled=None):
+    def __init__(self, cura, remember, parent=None, trace_path=None, toolhead_enabled=None,
+                 follow_pass_enabled=None):
         super().__init__(parent)
         self._cura = cura
         self._remember = remember
@@ -76,6 +77,12 @@ class PreviewMotion(QObject):
         # follow pass renders the toolhead; the flag rides the write
         # path so the pass matches the configured feature).
         self._toolhead_enabled = toolhead_enabled
+        # The follow pass's debug toggle, read on every write — off
+        # until the config's checkbox says otherwise (the soak
+        # default). The last-read value tracks the falling edge so an
+        # unchecked box detaches the pass once, immediately.
+        self._follow_pass_enabled = follow_pass_enabled
+        self._follow_pass_was_on = False
         self._trace_next = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_MS)
@@ -169,7 +176,11 @@ class PreviewMotion(QObject):
         self._timer.stop()
         # The follow pass hands the compositor layer back to Cura's
         # own pass; the next write re-attaches if following resumes.
+        # Detach stays unconditional: it is quiet and idempotent when
+        # nothing was attached, and the toggle must never leave a
+        # stale pass behind.
         reset_follow_pass()
+        self._follow_pass_was_on = False
         self._layer = self._target = self._displayed = None
         self._velocity = 0.0
         self._history.clear()
@@ -232,7 +243,21 @@ class PreviewMotion(QObject):
         # pass renders the same displayed position from Cura's own
         # layer data instead of the per-frame ranged render (the
         # review's render architecture). Guarded: any failure keeps
-        # the vanilla preview in control.
+        # the vanilla preview in control. The pass itself rides the
+        # debug toggle: off, the vanilla path runs untouched.
+        follow_pass = False
+        if self._follow_pass_enabled is not None:
+            try:
+                follow_pass = bool(self._follow_pass_enabled())
+            except Exception:
+                follow_pass = False
+        if self._follow_pass_was_on and not follow_pass:
+            # The toggle fell while following: hand the compositor
+            # layer back once (a detach, not a per-tick churn).
+            reset_follow_pass()
+        self._follow_pass_was_on = follow_pass
+        if not follow_pass:
+            return
         toolhead = True
         if self._toolhead_enabled is not None:
             try:

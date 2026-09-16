@@ -228,6 +228,7 @@ def detach(view=None) -> None:
     scene parent is deliberately left alone — the restored native
     pass expects it, and Cura unparents on ViewDeactivateEvent."""
     global ACTIVE, _ATTACHED, _ORIGINAL_BINDINGS, _SIMULATION_PASS
+    was_attached = _ATTACHED
     try:
         if _ATTACHED and ACTIVE is not None:
             ACTIVE.setFollowScene(None, None)
@@ -248,6 +249,7 @@ def detach(view=None) -> None:
                     composite.setLayerBindings(list(_ORIGINAL_BINDINGS))
             _ORIGINAL_BINDINGS = None
         _ATTACHED = False
-        _log("Moonraker follow pass detached")
+        if was_attached:
+            _log("Moonraker follow pass detached")
     except Exception:
         pass
