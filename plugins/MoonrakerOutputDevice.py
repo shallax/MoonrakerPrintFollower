@@ -195,8 +195,14 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
                 self._message = Message(f"Uploaded '{self._upload.filename}' to {self.getName()}{suffix}.", 30 if config.upload_autohide_message else 0, True)
                 self._message.setTitle("Moonraker")
                 self._message.addAction("open_browser", "Open Browser", "globe", "Open the configured Moonraker frontend")
-                self._message.actionTriggered.connect(lambda message, action:
-                    QDesktopServices.openUrl(QUrl(config.frontend_target)) if action == "open_browser" else None)
+                # Uranium's Signal stores plain functions weakly — a
+                # lambda here is collected before the click and the
+                # button lands on nothing (the live report). A bound
+                # method on this long-lived device survives; the target
+                # is captured because a later upload replaces the
+                # upload object before the button is clicked.
+                self._browser_target = config.frontend_target
+                self._message.actionTriggered.connect(self._on_message_action)
                 self._message.show()
                 self.writeSuccess.emit(self)
             elif error:
@@ -205,3 +211,13 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
         finally:
             self._upload.terminal_delivered()
             self.writeFinished.emit(self)
+
+    def _on_message_action(self, message, action):
+        if action != "open_browser":
+            return
+        try:
+            target = getattr(self, "_browser_target", "") or self._upload.config.frontend_target
+            if not QDesktopServices.openUrl(QUrl(target)):
+                Logger.log("w", "Moonraker Print Follower: could not open the browser for %s", target)
+        except Exception as error:
+            Logger.log("w", "Moonraker Print Follower: could not open the browser: %s", error)

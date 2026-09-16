@@ -293,6 +293,13 @@ class SourceContractTests(unittest.TestCase):
             "lambda r=reply, p=relpath, g=generation, t=path, l=large: self._thumb_finished(p, r, g, t, l)",
             manager,
         )
+        # Uranium's Signal stores plain functions weakly — a lambda
+        # connected to Message.actionTriggered is collected before the
+        # click and the button lands on nothing (the live report).
+        # Message actions connect bound methods only.
+        device = (PLUGINS / "MoonrakerOutputDevice.py").read_text()
+        self.assertNotIn("actionTriggered.connect(lambda", device)
+        self.assertIn("actionTriggered.connect(self._on_message_action", device)
 
     def test_redirect_policy_guards_the_api_key(self):
         # The X-Api-Key rides redirects unless the transport pins the
