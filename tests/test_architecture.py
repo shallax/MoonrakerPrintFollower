@@ -129,7 +129,7 @@ class SourceContractTests(unittest.TestCase):
             "BedMeshPresenter": {"BedMeshSceneNode"},
             "BedMeshSceneNode": set(),
             "CameraBridge": set(),
-            "CuraAdapter": set(),
+            "CuraAdapter": {"FollowPassController"},  # the follow pass's guarded hooks
             "CuraIntegration": {"CuraLifecycleBridge", "NativeNozzleLifecycle"},
             "CuraLifecycleBridge": set(),
             "CuraOutputWriter": set(),
@@ -171,6 +171,8 @@ class SourceContractTests(unittest.TestCase):
             "MoonrakerSocket": {"SocketFraming"},
             "MoonrakerTransport": {"MoonrakerProtocol"},
             "RendererAdaptation": set(),
+            "FollowPass": set(),
+            "FollowPassController": {"FollowPass"},
             "SocketFraming": set(),
             "NativeNozzleLifecycle": set(),
             "PauseController": {"PauseScheduleService"},
