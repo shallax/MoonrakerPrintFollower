@@ -1228,8 +1228,8 @@ class MonitorFormattingTests(unittest.TestCase):
             "extruder": {"temperature": 205.2, "target": 210.0},
             "heater_bed": {"temperature": 60.0, "target": 60.0},
         })
-        self.assertEqual(hotend, "205.2/210.0 °C")
-        self.assertEqual(bed, "60.0/60.0 °C")
+        self.assertEqual(hotend, "205.2 → 210.0 °C")
+        self.assertEqual(bed, "60.0 → 60.0 °C")
         hotend, bed = preview_temperature_pair({
             "extruder": {"temperature": 23.4, "target": 0.0},
             "heater_bed": {"temperature": 0.0, "target": 0.0},
@@ -4003,6 +4003,18 @@ Item {
             # the scrolled edge.
             "visible: flick.height > 0 && flick.contentY > 2",
             "visible: flick.height > 0 && flick.contentY < flick.contentHeight - flick.height - 2",
+            # The preview card's pause-list chevrons: the same idiom,
+            # on the capped five-row ListView.
+            "visible: pauseListView.height > 0 && pauseListView.contentY > 2",
+            "visible: pauseListView.height > 0 && pauseListView.contentY < pauseListView.contentHeight - pauseListView.height - 2",
+            # The bed-mesh legend collapses when the mesh is hidden —
+            # the author granted the reflow (the card reflows instead
+            # of keeping a faded gap).
+            "visible: base.bedMeshAvailable && base.bedMeshVisible",
+            # The monitor's loading prompt: the printer binding not
+            # resolved yet (the entry window) or connected with no
+            # data landed (the 2026-09-16 request).
+            "visible: !root.statusCollapsed && (root.printer == null || root.printer.monitorLoading)",
             "visible: root.thumbStateLarge(root.confirmRelpath()) === \"ready\" && confirmThumb.status !== Image.Error",
             "visible: root.thumbStateLarge(root.confirmRelpath()) === \"loading\"",
             "visible: root.thumbStateLarge(root.confirmRelpath()) === \"failed\" || root.thumbStateLarge(root.confirmRelpath()) === \"none\"",

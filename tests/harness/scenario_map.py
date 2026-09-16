@@ -244,6 +244,16 @@ PREFIX_RULES = [
 # fields are validated by test_coverage.py. An entry whose re-check
 # trigger fires must be re-probed, not carried forward silently.
 EXCLUSIONS = {
+    # The pause list's stable ListModel: a probe-only seam (the
+    # 2026-09-16 layer-0 diagnosis reads the synced rows back through
+    # it); the pause-row scenario that supersedes this lands with the
+    # baked-pause harness fixture.
+    "moonrakerPauseListModel": {
+        "reason": "probe seam for the sync diagnosis; no scenario reads the model object itself",
+        "evidence": "the container repro reads the synced rows end to end",
+        "date": "2026-09-16",
+        "recheck": "the baked-pause pause-row scenario lands",
+    },
     # British-spelling formatting is a pure function of the locale —
     # unit-tested in test_monitor, invisible to scenarios.
     "britishSpelling": {

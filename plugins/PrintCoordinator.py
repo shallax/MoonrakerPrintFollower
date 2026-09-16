@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
+from datetime import datetime, timedelta
 import time
 
 from PyQt6.QtCore import QObject, QTimer
@@ -11,7 +12,7 @@ from UM.Logger import Logger
 from .MonitorFormatting import filament_total_mm_from_file, parse_bed_mesh, preview_eta_text, result
 from .PreviewFormatting import (
     pause_can_toggle,
-    pause_eta,
+    pause_items,
     pause_summary,
     pause_unavailable,
     status_icon,
@@ -570,7 +571,14 @@ class PrintCoordinator(QObject):
     def toggle_pause(self, human_layer):
         total = self._snapshot.layer.total
         if total is None and self._cura.max_layer is not None: total = self._cura.max_layer + 1
-        self._pauses.toggle(int(human_layer) - 1, self._snapshot.layer.index, total)
+        layer = int(human_layer) - 1
+        # The backstop for the gating above: a baked pause at the layer
+        # makes a manual schedule impossible, however the request
+        # arrived.
+        baked = set(self._index.view.pause_layers) if self._index.view is not None else set()
+        if layer in baked:
+            return
+        self._pauses.toggle(layer, self._snapshot.layer.index, total)
         self._publish()
 
     def remove_pause(self, human_layer):
@@ -582,13 +590,21 @@ class PrintCoordinator(QObject):
         selected, current, total = self._cura.selected_layer, snapshot.layer.index, snapshot.layer.total
         if total is None and self._cura.max_layer is not None: total = self._cura.max_layer + 1
         scheduled = selected is not None and selected in self._pauses.layers
-        can_toggle = pause_can_toggle(snapshot.active, selected, current, total)
-        unavailable = pause_unavailable(snapshot.active, can_toggle, scheduled, current, selected)
-        items = []
-        for layer in sorted(self._pauses.layers):
-            remaining = self._preview.remaining(layer, self._index.view, end=True)
-            items.append({"layer": layer + 1, "eta": pause_eta(remaining, self._preview.format_duration),
-                          "state": self._pauses.states.get(layer, "scheduled")})
+        # The gcode's baked pauses join the list as read-only rows (the
+        # ruling), and a baked layer blocks the manual toggle — the two
+        # can never double up.
+        baked = set(self._index.view.pause_layers) if self._index.view is not None else set()
+        baked_block = selected is not None and selected in baked
+        can_toggle = not baked_block and pause_can_toggle(snapshot.active, selected, current, total)
+        unavailable = ("a pause is baked into the gcode at this layer" if baked_block
+                       else pause_unavailable(snapshot.active, can_toggle, scheduled, current, selected))
+        items = pause_items(
+            set(self._pauses.layers), self._pauses.states, baked,
+            lambda layer: self._preview.remaining(layer, self._index.view, end=True),
+            self._preview.format_duration,
+            current=current,
+            clock=lambda remaining: (datetime.now().astimezone() + timedelta(seconds=remaining)).strftime("%H:%M"),
+        )
         compact = status_text(
             detail=self._detail,
             load_requested=self._load_requested,

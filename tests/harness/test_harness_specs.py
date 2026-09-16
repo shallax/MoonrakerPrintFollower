@@ -36,6 +36,23 @@ class HarnessSpecTests(unittest.TestCase):
         self.assertIn(".ui_test-lock-$CONTAINER", source)
         self.assertIn("one run per container at a time", source)
         self.assertIn("trap 'rm -rf \"$LOCK_DIR\"' EXIT", source)
+
+    def test_every_run_scans_the_cura_log_for_plugin_noise(self):
+        # The 2026-09-16 log-scan ruling: every run reads the Cura log
+        # and fails on plugin-originated noise regardless of scenario
+        # — the polish loop slipped through because no scenario
+        # asserted it. The scan, its match set and the runner-verdict
+        # propagation must all be pinned.
+        script = (os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))) + "/tools/ui_test.sh")
+        with open(script, encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("scan_cura_log", source)
+        self.assertIn("grep -nE 'Moonraker_Print_Follower|/Moonraker[A-Za-z]+\\.qml'", source)
+        self.assertIn("CURA LOG NOISE (the log-scan ruling)", source)
+        self.assertIn("|| RUNNER_RC=$?", source)
+        self.assertIn('if [ "${RUNNER_RC:-0}" -ne 0 ]; then', source)
+
     def test_spec_ids_are_unique(self):
         ids = [spec["id"] for spec in _scenarios.SCENARIOS]
         duplicates = sorted({name for name in ids if ids.count(name) > 1})

@@ -177,6 +177,17 @@ class MoonrakerClient(QObject):
         socket = self._session.socket
         generation = self._generation
         self._socket_started_at = time.monotonic()
+        # One connection per handler, however many starts a session
+        # sees: the old code connected a FRESH closure every cycle and
+        # never disconnected — the author's Windows log showed three
+        # "upgraded" lines per single upgrade at boot and five after
+        # the file load, one per accumulated layer. Disconnect the
+        # previous cycle's handlers before connecting this one's.
+        for signal, handler in getattr(self, "_socket_handlers", ()):
+            try:
+                signal.disconnect(handler)
+            except Exception:
+                pass
 
         def on_sync(status, stamp):
             if self._socket_started_at is not None:
@@ -235,6 +246,14 @@ class MoonrakerClient(QObject):
             self._subscribe()
 
         socket.upgraded.connect(on_upgraded)
+        self._socket_handlers = [
+            (socket.syncSnapshot, on_sync),
+            (socket.failed, on_failed),
+            (socket.subscribeRefused, on_refused),
+            (socket.klippyReady, on_klippy_ready),
+            (socket.klippyLost, on_klippy_lost),
+            (socket.upgraded, on_upgraded),
+        ]
         socket.start(
             websocket_endpoint(self._base_url),
             self._api_key,
@@ -243,7 +262,16 @@ class MoonrakerClient(QObject):
         )
         # The startup proof (the fallback-on-silence ruling): real data
         # within the window, or the feed degrades to HTTP with a reason.
-        self._proof_timer.timeout.connect(lambda: self._proof_failed(generation))
+        # Its handler accumulates the same way the socket handlers did —
+        # one tracked connection per cycle.
+        proof_handler = getattr(self, "_proof_handler", None)
+        if proof_handler is not None:
+            try:
+                self._proof_timer.timeout.disconnect(proof_handler)
+            except Exception:
+                pass
+        self._proof_handler = lambda: self._proof_failed(generation)
+        self._proof_timer.timeout.connect(self._proof_handler)
         self._proof_timer.start()
 
     def _proof_failed(self, generation: int) -> None:

@@ -17,6 +17,12 @@ RowLayout {
     property string phase: ""
 
     spacing: UM.Theme.getSize("narrow_margin").width
+    // A FIXED height (the label's natural line height — stable font
+    // metrics, not a layout feedback): the busy flip repaints the
+    // content without changing the layout's size. A visible-toggle
+    // changing the row's implicit height fed a polish loop on the
+    // author's Windows run.
+    height: Math.max(16 * screenScaleFactor, phaseLabel.implicitHeight)
 
     // The busy gate lives on an INNER row: bindings on the ROOT
     // object do not track setProperty-driven changes (engine-proven).
@@ -107,6 +113,7 @@ RowLayout {
             }
         }
         UM.Label {
+            id: phaseLabel
             text: root.phase + (root.progress >= 0 ? " " + (root.progress * 100).toFixed(0) + "%" : "")
             color: UM.Theme.getColor("text_inactive")
             Layout.maximumWidth: 140 * screenScaleFactor

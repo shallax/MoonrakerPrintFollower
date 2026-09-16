@@ -184,6 +184,15 @@ class ChartPayloadTests(unittest.TestCase):
         self.assertEqual(by_name["temperature_fan part"]["label"], "Part (fan)")
         self.assertEqual(len(payload["palette"]), 10)
         self.assertTrue(payload["filling"])
+        # A temperature_host and a temperature_sensor with the same
+        # suffix (the author's raspberry_pi pair) render distinct
+        # labels — the host reading carries "(host)".
+        pair = TemperatureHistory()
+        pair.observe({"temperature_host raspberry_pi": {"temperature": 50.0},
+                      "temperature_sensor raspberry_pi": {"temperature": 50.0}}, 1000.0)
+        by_pair = {series["name"]: series for series in chart_payload(pair, {})["series"]}
+        self.assertEqual(by_pair["temperature_host raspberry_pi"]["label"], "Raspberry pi (host)")
+        self.assertEqual(by_pair["temperature_sensor raspberry_pi"]["label"], "Raspberry pi")
 
     def test_persisted_config_overrides_flow_through(self):
         history = TemperatureHistory()

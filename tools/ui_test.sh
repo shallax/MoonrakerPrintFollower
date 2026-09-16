@@ -53,6 +53,21 @@ HARNESS_WINDOW="${HARNESS_WINDOW:-1840x1040}"
 container_path() {
     tools/ui_test_paths.sh container "$WORK_DIR" "$1"
 }
+# The 2026-09-16 log-scan ruling: EVERY run reads the Cura log and
+# fails on plugin-originated noise — issues no scenario asserts (a
+# fresh layout's polish loop, an unexpected plugin warning). It runs
+# on the success path and after a failed runner alike; only the
+# plugin's own lines count, so Cura's own boot noise stays invisible.
+scan_cura_log() {
+    scan="$(grep -nE 'Moonraker_Print_Follower|/Moonraker[A-Za-z]+\.qml' "$WORK_DIR"/cura_run.log 2>/dev/null \
+        | grep -E 'WARNING|ERROR|polish loop' || true)"
+    if [ -n "$scan" ]; then
+        echo "ui_test: CURA LOG NOISE (the log-scan ruling) - fix the code, never the filter:" >&2
+        echo "$scan" >&2
+        exit 1
+    fi
+    echo "ui_test: cura.log scan clean"
+}
 # The deterministic scratch root. Everything a run needs lives
 # under it and is CREATED here, never assumed — /tmp does not
 # survive a reboot, and an unprepared tree must provision itself
@@ -437,16 +452,17 @@ case "$MODE" in
                 CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
                 REAL_URL="${REAL_URL:-}" \
                 REAL_API_KEY="${REAL_API_KEY:-}" \
-                python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
+                python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}" || RUNNER_RC=$?
         else
             docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
                 HARNESS_COORDS="$COORDS" HARNESS_MODE="$MODE" \
                 HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
                 CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
-                python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}"
+                python3 /tmp/mpf/harness_runner.py "$MODE" "${SCENARIO_GROUP:-}" || RUNNER_RC=$?
         fi
         ;;
 esac
+scan_cura_log
 echo "ui_test: gallery at $RUN_DIR/index.html"
 # A run whose evidence never landed at the reported path is a failed
 # run whatever the verdict said — the doubled-path bug went green
@@ -466,3 +482,11 @@ case "${MODE:-scenario}" in
         fi
         ;;
 esac
+# The runner's verdict survives the log scan and the evidence checks:
+# the || capture above swallows it from set -e, so it exits here. A
+# conditional exit (never a bare one — an unconditional exit at the
+# end makes shellcheck's flow analysis mark the trap-invoked cleanup
+# unreachable).
+if [ "${RUNNER_RC:-0}" -ne 0 ]; then
+    exit "$RUNNER_RC"
+fi

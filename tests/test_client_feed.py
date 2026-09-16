@@ -8,8 +8,9 @@ from tests.qt_runtime_support import QT_AVAILABLE, ScriptedTransport
 if QT_AVAILABLE:
     from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal
 
+    from plugins.MonitorData import MonitorData
     from plugins.MoonrakerClient import MoonrakerClient
-    from plugins.MoonrakerSession import MoonrakerSession
+    from plugins.MoonrakerSession import MoonrakerSession, PollPolicy
 
 
     class ScriptedSocket(QObject):
@@ -302,6 +303,173 @@ class ClientFeedTests(unittest.TestCase):
         self.client.configure("http://p", "k", 750, feed_mode="http")
         self.client.start()
         self.assertFalse(self.client.rpc_available())
+
+if QT_AVAILABLE:
+
+    @unittest.skipUnless(QT_AVAILABLE, "Qt runtime not available")
+    class MonitorDataBootChainTests(unittest.TestCase):
+        """The 2026-09-16 live report: the first M117 of a session took
+        ~30 s because the boot-time objects request fell into the
+        websocket bootstrap window and nothing re-fired it until the
+        discovery tick. The chain must complete on every boot."""
+
+        class FakeDataClient(QObject):
+            statusReceived = pyqtSignal(object)
+            commandChanged = pyqtSignal(object)
+            sessionInvalidated = pyqtSignal()
+            connectionChanged = pyqtSignal(object)
+
+            def __init__(self):
+                super().__init__()
+                from types import SimpleNamespace
+                self.connected = False
+                self.status = {}
+                self.effective_feed_mode = "websocket"
+                self.aux_interval_ms = 2500
+                self.console_interval_ms = 1000
+                self.session = SimpleNamespace(
+                    base_url="http://p", generation=0, poll_policy=PollPolicy(),
+                    snapshot=SimpleNamespace(printer_state=""))
+                self.transport = SimpleNamespace(
+                    cancel_owner=lambda *args: None,
+                    send_json=lambda *args, **kwargs: True)
+                self.drains = 0
+                self.aux_sets = []
+                self.rpc_ok = False
+
+            def drain_aux(self):
+                self.drains += 1
+                return None, 0.0
+
+            def set_auxiliary_objects(self, names):
+                self.aux_sets.append(set(names))
+
+            def rpc(self, method, params, callback):
+                return self.rpc_ok
+
+            def force_refresh(self):
+                pass
+
+        class ProbeData(MonitorData):
+            def __init__(self, client):
+                super().__init__(client)
+                self.discovery_calls = 0
+                self.later_calls = []
+
+            def refresh_discovery(self):
+                self.discovery_calls += 1
+
+            def later(self, delay_ms, callback):
+                self.later_calls.append((delay_ms, callback))
+
+        def setUp(self):
+            self.app = QCoreApplication.instance() or QCoreApplication([])
+            self.client = self.FakeDataClient()
+            self.data = self.ProbeData(self.client)
+            self.data.set_active(True)
+            # set_active fires the lanes once (the boot pass); the
+            # asserts below drive the ticks manually, so silence the
+            # timers.
+            for timer in self.data._timers.values():
+                timer.stop()
+
+        def test_aux_tick_rearms_discovery_while_the_objects_list_is_missing(self):
+            self.data.discovery_calls = 0
+            self.data.refresh_aux()
+            self.assertEqual(self.data.discovery_calls, 1)
+            self.assertEqual(self.client.drains, 0)
+
+        def test_aux_tick_drains_once_objects_are_known(self):
+            self.data._update(objects=("display_status",))
+            self.data.discovery_calls = 0
+            self.data.refresh_aux()
+            self.assertEqual(self.data.discovery_calls, 0)
+            self.assertEqual(self.client.drains, 1)
+            self.assertIn({"display_status"}, self.client.aux_sets)
+
+        def test_boot_dropped_discovery_request_retries_in_one_second(self):
+            self.client.rpc_ok = False
+            self.data.request("objects", "GET", "printer/objects/list",
+                              lambda payload, error: None,
+                              category="discovery", rpc=("printer.objects.list", {}))
+            self.assertTrue(self.data.later_calls)
+            delay_ms, callback = self.data.later_calls[-1]
+            self.assertEqual(delay_ms, 1000)
+            # The retry is the bound refresh_discovery (the probe
+            # overrides the method to count calls, so pin the bound
+            # self and the override's own function).
+            self.assertIs(callback.__self__, self.data)
+            self.assertIs(callback.__func__, self.ProbeData.refresh_discovery)
+            # With the RPC lane live the request rides it: no retry is
+            # scheduled and nothing falls through to the wire.
+            self.client.rpc_ok = True
+            self.data.later_calls = []
+            self.data.request("objects", "GET", "printer/objects/list",
+                              lambda payload, error: None,
+                              category="discovery", rpc=("printer.objects.list", {}))
+            self.assertEqual(self.data.later_calls, [])
+
+
+if QT_AVAILABLE:
+
+    class PauseControllerLifecycleTests(unittest.TestCase):
+        def test_confirmed_pause_stays_listed_as_passed_and_removable(self):
+            # The 2026-09-16 ruling: a confirmed pause STAYS in the
+            # list, dimmed "passed" (the rows never vanish mid-print),
+            # and the user can still remove it by hand.
+            from unittest.mock import Mock
+            from plugins.PauseController import PauseController
+            client = Mock()
+            controller = PauseController(client)
+            controller.bind(("job-key",))
+            self.assertTrue(controller.toggle(10, 9, 100))
+            self.assertIn(10, controller.layers)
+            controller._states[10] = "fired"
+            controller._target = 10
+            controller._command_changed({"name": "ScheduledPause", "outcome": "confirmed"})
+            self.assertIn(10, controller.layers)
+            self.assertEqual(controller.states.get(10), "passed")
+            controller.remove(10)
+            self.assertNotIn(10, controller.layers)
+            self.assertNotIn(10, controller.states)
+
+    class SocketFragmentMergeTests(unittest.TestCase):
+        """The 2026-09-16 live report: M117 invisible while printing.
+        Moonraker pushes only the CHANGED fields per object, and the
+        progress flood during a print overwrote the one-shot message
+        fragment in the accumulator before the drain — the fragments
+        must MERGE per object."""
+
+        def setUp(self):
+            from plugins.MoonrakerSocket import MoonrakerSocket
+            self.app = QCoreApplication.instance() or QCoreApplication([])
+            self.socket = MoonrakerSocket()
+            self.socket._core_names = {"print_stats", "pause_resume"}
+            self.socket._aux_names = {"display_status"}
+
+        def test_one_shot_fields_survive_the_progress_flood(self):
+            self.socket._apply_patch({
+                "print_stats": {"state": "printing"},
+                "display_status": {"message": "probe-4819"},
+            })
+            for _ in range(5):
+                self.socket._apply_patch({
+                    "print_stats": {"print_duration": 12.5},
+                    "display_status": {"progress": 0.5},
+                })
+            core, _ = self.socket.drain_core()
+            aux, _ = self.socket.drain_aux()
+            self.assertEqual(core["print_stats"],
+                             {"state": "printing", "print_duration": 12.5})
+            self.assertEqual(aux["display_status"],
+                             {"message": "probe-4819", "progress": 0.5})
+
+        def test_non_mapping_values_still_replace(self):
+            self.socket._apply_patch({"print_stats": {"state": "printing"}})
+            self.socket._apply_patch({"print_stats": 7})
+            core, _ = self.socket.drain_core()
+            self.assertEqual(core["print_stats"], 7)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -398,6 +398,18 @@ class PrinterConfigStore:
             self.PREF_KEY,
             json.dumps(data, sort_keys=True, separators=(",", ":")),
         )
+        # The leak instrument reads the legacy per-field key — mirror
+        # the active machine's toggle so the probe's read tracks the
+        # current config (the 2026-09-16 report: the setting was on
+        # in the UI but the probe read the stale legacy key and
+        # stayed silent).
+        machine_id, _ = self.identity()
+        entry = data.get(machine_id)
+        if isinstance(entry, dict):
+            self._preferences.setValue(
+                self.LEGACY_MAP["memory_diagnostics_log"],
+                bool(entry.get("memory_diagnostics_log", False)),
+            )
 
     def _legacy_config(self) -> PrinterConfig:
         raw = {}

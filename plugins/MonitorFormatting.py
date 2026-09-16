@@ -41,9 +41,16 @@ def friendly(name):
 def chart_label(name):
     """The chart/pane label: friendly(), with the family kept for fan
     objects so a temperature_fan's reading cannot be mistaken for a
-    heater of the same suffix."""
+    heater of the same suffix — and the host's own temperature marked
+    "(host)", because a temperature_host and a temperature_sensor with
+    the same suffix (the author's raspberry_pi pair) otherwise render
+    as the SAME name twice in the temperature lists."""
     label = friendly(name)
-    return label + " (fan)" if object_kind(name) == "fan" else label
+    if object_kind(name) == "fan":
+        return label + " (fan)"
+    if str(name).lower().startswith("temperature_host "):
+        return label + " (host)"
+    return label
 
 
 # One classification policy for Klipper printer objects. MonitorData uses it
@@ -207,7 +214,9 @@ def preview_temperature_pair(auxiliary):
         if temperature is None or temperature <= 0 and not (target or 0) > 0:
             return "—"
         if (target or 0) > 0:
-            return f"{temperature:.1f}/{target:.1f} °C"
+            # The arrow form (the author's 2026-09-16 ruling): the
+            # preview pair reads current → desired, like the Monitor.
+            return f"{temperature:.1f} → {target:.1f} °C"
         return f"{temperature:.1f} °C"
 
     return cell(hotend_state), cell(bed_state)

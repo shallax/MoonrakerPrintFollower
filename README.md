@@ -53,6 +53,32 @@ status strip.
 - **Harness evidence visibility** — every resolving step records
   the element's geometry and the walk that resolved it, and the
   harness composites the outline onto each captured frame.
+- **Baked pauses in the Preview list** — pauses baked into the
+  gcode appear as read-only rows, sorted with the manual schedule;
+  a baked layer refuses a manual pause on top, and passed rows dim
+  as "baked · passed".
+- **The pause list rework** — five rows with a scroll cap and
+  up/down affordances, a stable in-place model (the scroll never
+  jumps on refreshes or add/remove), wall-clock ETAs, a red ✕
+  remove glyph, and confirmed pauses that stay listed as "passed".
+- **The M117 fix** — status messages no longer vanish while
+  printing: Moonraker's per-field pushes now merge in the socket
+  accumulator, and the boot chain subscribes within one aux tick.
+- **Windows fixes** — platform-aware state-store flags, single
+  upgrade/sync lines after reconnects, and the diagnostics toggle
+  that actually arms the probe.
+- **The leak instrument** — a gated per-minute memory probe
+  behind a Diagnostics-page toggle, cross-platform and silent
+  while disabled.
+- **Preview card polish** — arrow temperature pairs, black ETA and
+  mesh labels, the status line above the strip, the bed-mesh
+  button at the card's foot, the reflowing mesh legend, "(host)"
+  duplicate-temperature labels, and layout-stable loading/prompt
+  overlays.
+- **The monitor loading prompt** — a centred loading note while
+  connected with no data yet.
+- **The harness log scan** — every UI run reads the Cura log and
+  fails on plugin-originated warnings and polish loops.
 
 ## What changed in 4.2.0
 

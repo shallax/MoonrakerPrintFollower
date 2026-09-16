@@ -753,6 +753,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._improving_eta = False
         self._skip_clear_once = False
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
+        # Connected with no auxiliary data landed yet: the pane's
+        # loading state (the 2026-09-16 request — the empty grey page
+        # on entry reads as dead, not as arriving).
+        values["monitorLoading"] = bool(self._client.connected and not self._data.snapshot.auxiliary)
         # The M117 message lives on Klipper's display_status object,
         # not print_stats — the Print-job slot reads it from the aux
         # snapshot (the report: M117 showed nowhere).
@@ -955,6 +959,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     monitorFlowDiameter = value_property(str, "monitorFlowDiameter", monitorChanged, "—")
     monitorAccelLimit = value_property(str, "monitorAccelLimit", monitorChanged, "—")
     monitorMessage = value_property(str, "monitorMessage", monitorChanged, "")
+    # Connected with no auxiliary data landed yet — the pane's honest
+    # empty state (the 2026-09-16 request: a Loading prompt instead of
+    # a grey page on entry).
+    monitorLoading = value_property(bool, "monitorLoading", monitorChanged, False)
     printActive = value_property(bool, "printActive", actionChanged, False)
     printJobCaption = value_property(str, "printJobCaption", actionChanged, "")
     canPausePrint = value_property(bool, "canPausePrint", actionChanged, False)

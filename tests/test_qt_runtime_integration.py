@@ -329,9 +329,10 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual([r for r in transport.requests if r.channel == "scheduled"], [])
 
     def test_pause_entry_leaves_only_when_observed_paused(self):
-        # The verified-pause-only ruling: an entry leaves the list only
-        # when the printer is OBSERVED paused at that layer; a missed
-        # pause stays listed, marked.
+        # The verified-pause-only ruling, amended 2026-09-16: an
+        # OBSERVED pause leaves the list only when the user removes
+        # it — it stays, dimmed "passed". A missed pause stays
+        # listed, marked.
         client, transport = self.client()
         pauses = self.qt.load("PauseController").PauseController(client)
         self.addCleanup(pauses.close)
@@ -345,6 +346,9 @@ class QtRuntimeTests(unittest.TestCase):
         client._handle_http_status({"result": {"status": {"print_stats": {"state": "paused"}}}},
                                    None, client._generation, time.monotonic())
         self.qt.events(1)
+        self.assertIn(4, pauses.layers)
+        self.assertEqual(pauses.states.get(4), "passed")
+        pauses.remove(4)
         self.assertNotIn(4, pauses.layers)
         # A missed pause stays listed, restyled — never silently dropped.
         self.assertTrue(pauses.toggle(6, 0, 10))

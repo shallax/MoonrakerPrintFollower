@@ -1446,6 +1446,22 @@ three absent states and the unlabelled temps pair). The strip's
 staleness witness (a test that stops the feed) rides the
 pre-release harness run.
 
+The author's 2026-09-16 rulings folded into this release and
+shipped: the baked-gcode pauses as read-only rows (index pause pass,
+cache v5, manual gating, passed rows), the pause-list rework (five-row
+cap, whats-new-style arrows, the stable in-place ListModel, clock
+ETAs, the red ✕, passed manual pauses staying listed), the M117
+fragment-merge fix plus the boot-chain re-arm, the Windows
+multi-start disconnect, the bed-mesh legend reflow and the card's
+text rulings (arrow temps, black ETA/mesh labels, status line above
+the strip, the bed-mesh button at the foot), the "(host)" duplicate
+temperature label, the monitor loading prompt, the leak-toggle
+mirror, the polish-loop-free loading/prompt overlays, and the
+harness cura.log scan. The pause-row interaction scenario and the
+baked-pause fixture ride the 4.4.0 harness work; the resume-button
+grey-out and the monitor's first-paint lazy loading were ruled
+deferrable and sit in 4.4.0.
+
 The 2026-09-14 re-sequencing inserted this release: the presentation
 debt gets a bounded delivery of its own instead of compounding under
 the physical-head feature. The review's F07 plus F06's structural

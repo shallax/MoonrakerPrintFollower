@@ -51,9 +51,39 @@ def pause_unavailable(active: bool, can_toggle: bool, scheduled: bool,
     return ""
 
 
-def pause_eta(remaining: Optional[float], format_duration) -> str:
-    return "in " + format_duration(remaining) if remaining is not None else "ETA unavailable"
+def pause_eta(remaining: Optional[float], format_duration, clock=None) -> str:
+    """The row's ETA: the countdown plus the estimated wall-clock
+    finish (the 2026-09-16 ruling — the clock alone is what the user
+    checks against the print)."""
+    if remaining is None:
+        return "ETA unavailable"
+    text = "in " + format_duration(remaining)
+    if clock is not None:
+        text += " · ~" + clock(remaining)
+    return text
 
 
 def pause_summary(items) -> str:
     return "End-of-layer PAUSE: " + ", ".join(str(item["layer"]) for item in items) if items else ""
+
+
+def pause_items(manual, states, baked, remaining_for, format_duration, current=None, clock=None) -> list:
+    """The merged, layer-sorted pause rows: the manual schedule plus the
+    gcode's baked pauses (read-only rows; the ruling). A manual entry at
+    a baked layer is impossible, so the manual row wins there — the
+    gate prevents the double. A baked row the print has already crossed
+    stays listed (no removal, no reflow) but is marked passed."""
+    items = []
+    for layer in manual:
+        items.append({"layer": layer + 1,
+                      "eta": pause_eta(remaining_for(layer), format_duration, clock),
+                      "state": states.get(layer, "scheduled")})
+    for layer in baked:
+        if layer in manual:
+            continue
+        items.append({"layer": layer + 1,
+                      "eta": pause_eta(remaining_for(layer), format_duration, clock),
+                      "state": "baked",
+                      "passed": current is not None and current > layer})
+    items.sort(key=lambda item: item["layer"])
+    return items
