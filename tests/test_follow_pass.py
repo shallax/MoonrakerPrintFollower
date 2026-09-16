@@ -158,16 +158,69 @@ class _FakeRenderer:
         self.removed.append(render_pass)
 
 
+class _FakeRoot:
+    pass
+
+
+class _FakeScene:
+    def __init__(self):
+        self.root = _FakeRoot()
+
+    def getRoot(self):
+        return self.root
+
+
+class _FakeController:
+    def __init__(self):
+        self.scene = _FakeScene()
+
+    def getScene(self):
+        return self.scene
+
+
+class _FakeNozzle:
+    def __init__(self, mesh=True):
+        self.mesh = object() if mesh else None
+        self.parent = None
+        self.visible = True
+        self.positions = []
+        self.set_parent_calls = 0
+
+    def getMeshData(self):
+        return self.mesh
+
+    def getWorldTransformation(self):
+        return object()
+
+    def setPosition(self, position):
+        self.positions.append(position)
+
+    def getParent(self):
+        return self.parent
+
+    def setParent(self, parent):
+        self.parent = parent
+        self.set_parent_calls += 1
+
+    def setVisible(self, visible):
+        self.visible = visible
+
+
 class _FakeView:
-    def __init__(self, bindings=("default", "selection", "simulationview")):
+    def __init__(self, bindings=("default", "selection", "simulationview"), nozzle=None):
         self.renderer = _FakeRenderer(bindings)
         self.simulation_pass = _FakeSimulationPass()
+        self.controller = _FakeController()
+        self.nozzle = nozzle
 
     def getRenderer(self):
         return self.renderer
 
     def getSimulationPass(self):
         return self.simulation_pass
+
+    def getController(self):
+        return self.controller
 
     def getShowTravelMoves(self):
         return True
@@ -182,7 +235,7 @@ class _FakeView:
         return True
 
     def getNozzleNode(self):
-        return None
+        return self.nozzle
 
 
 class _FakeScene:
@@ -267,48 +320,84 @@ class FollowPassLifecycleTests(unittest.TestCase):
             self.assertIsNot(follow_pass._mesh, first_mesh)
 
     def test_toolhead_reuses_the_nozzle_geometry(self):
-        class _FakePolygon:
-            def __init__(self):
-                self.data = numpy.array([[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]], numpy.float32)
-
-        class _FakePolygonsLayer:
-            def __init__(self):
-                self.polygons = [_FakePolygon()]
-
-        follow_pass, _ = self._pass_with_mesh(layers={1: _FakePolygonsLayer(), 3: _FakePolygonsLayer()})
+        follow_pass, _ = self._pass_with_mesh(layers=_polygon_layers())
         follow_pass._nozzle_shader = _FakeShader()
-        meshes = []
-
-        class _FakeNozzle:
-            def __init__(self):
-                self.mesh = object()
-                self.positions = []
-
-            def getMeshData(self):
-                meshes.append(self.mesh)
-                return self.mesh
-
-            def getWorldTransformation(self):
-                return object()
-
-            def setPosition(self, position):
-                self.positions.append(position)
-
         nozzle = _FakeNozzle()
-
-        class _ViewWithNozzle(_FakeView):
-            def getNozzleNode(self):
-                return nozzle
-
-        follow_pass.setFollowView(_ViewWithNozzle())
+        follow_pass.setFollowView(_FakeView(nozzle=nozzle))
         follow_pass.setFollowState(1, 2.0)
         follow_pass._render_toolhead(object())
         follow_pass._render_toolhead(object())
         # The nozzle's own mesh object is reused; nothing persistent
         # is constructed per frame.
-        self.assertEqual(len(meshes), 2)
-        self.assertIs(meshes[0], meshes[1])
         self.assertEqual(len(nozzle.positions), 2)
+
+    def test_toolhead_position_changes_with_fractional_path(self):
+        follow_pass, _ = self._pass_with_mesh(layers=_polygon_layers())
+        follow_pass._nozzle_shader = _FakeShader()
+        nozzle = _FakeNozzle()
+        follow_pass.setFollowView(_FakeView(nozzle=nozzle))
+        follow_pass.setFollowState(1, 1.0)
+        follow_pass._render_toolhead(object())
+        follow_pass.setFollowState(1, 2.0)
+        follow_pass._render_toolhead(object())
+        self.assertEqual(len(nozzle.positions), 2)
+        first, second = [tuple(round(float(c), 4) for c in position) for position in nozzle.positions]
+        self.assertNotEqual(first, second)
+
+    def test_toolhead_missing_mesh_fails_cleanly(self):
+        follow_pass, _ = self._pass_with_mesh(layers=_polygon_layers())
+        follow_pass._nozzle_shader = _FakeShader()
+        nozzle = _FakeNozzle(mesh=False)
+        follow_pass.setFollowView(_FakeView(nozzle=nozzle))
+        follow_pass.setFollowState(1, 2.0)
+        follow_pass._render_toolhead(object())  # must not raise
+        self.assertEqual(len(nozzle.positions), 0)
+        self.assertFalse(follow_pass._toolhead_error_logged)
+
+    def test_follow_pass_binds_before_render_and_releases_after(self):
+        follow_pass, _ = self._pass_with_mesh()
+        follow_pass._shader = _FakeShader()
+        batch = _FakeBatch()
+        follow_pass._batch = batch
+        events = []
+        follow_pass.bind = lambda: events.append("bind")
+        follow_pass.release = lambda: events.append("release")
+        original_render = batch.render
+        batch.render = lambda camera: events.append("draw")
+        try:
+            follow_pass.render()
+        finally:
+            batch.render = original_render
+        self.assertEqual(events, ["bind", "draw", "release"])
+
+    def test_follow_pass_releases_even_when_batch_render_raises(self):
+        follow_pass, _ = self._pass_with_mesh()
+        follow_pass._shader = _FakeShader()
+        batch = _FakeBatch()
+        follow_pass._batch = batch
+        released = []
+
+        def broken_render(camera):
+            raise RuntimeError("boom")
+
+        batch.render = broken_render
+        follow_pass.bind = lambda: None
+        follow_pass.release = lambda: released.append(True)
+        with self.assertRaises(RuntimeError):
+            follow_pass.render()
+        self.assertEqual(released, [True])
+
+
+def _polygon_layers():
+    class _FakePolygon:
+        def __init__(self):
+            self.data = numpy.array([[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]], numpy.float32)
+
+    class _FakePolygonsLayer:
+        def __init__(self):
+            self.polygons = [_FakePolygon()]
+
+    return {1: _FakePolygonsLayer(), 3: _FakePolygonsLayer()}
 
 
 @unittest.skipUnless(UM_AVAILABLE and NUMPY, "UM and numpy required")
@@ -380,6 +469,43 @@ class FollowPassControllerTests(unittest.TestCase):
         self.assertIsNone(self.controller.ACTIVE)
         self.assertIsNone(self.controller._ORIGINAL_BINDINGS)
         self.assertIsNone(self.controller._SIMULATION_PASS)
+
+    def _attach_with_nozzle(self, nozzle):
+        self.view = _FakeView(nozzle=nozzle)
+        with self._patch_layer_data():
+            self.assertTrue(self.controller.attach(self.view))
+        return nozzle
+
+    def test_attach_ensures_nozzle_is_parented_to_scene_root(self):
+        nozzle = self._attach_with_nozzle(_FakeNozzle())
+        self.assertIs(nozzle.parent, self.view.controller.scene.getRoot())
+
+    def test_attach_hides_nozzle_from_normal_scene_rendering(self):
+        nozzle = self._attach_with_nozzle(_FakeNozzle())
+        self.assertFalse(nozzle.visible)
+
+    def test_attach_does_not_reparent_nozzle_when_already_correct(self):
+        nozzle = _FakeNozzle()
+        self.view = _FakeView(nozzle=nozzle)
+        nozzle.setParent(self.view.controller.scene.getRoot())
+        self.assertEqual(nozzle.set_parent_calls, 1)
+        with self._patch_layer_data():
+            self.assertTrue(self.controller.attach(self.view))
+        self.assertEqual(nozzle.set_parent_calls, 1)  # untouched
+        self.assertIs(nozzle.parent, self.view.controller.scene.getRoot())
+
+    def test_updates_do_not_touch_nozzle_parent(self):
+        nozzle = self._attach_with_nozzle(_FakeNozzle())
+        parent = nozzle.parent
+        for tick in range(10):
+            self.controller.update(tick % 3, 0.5, toolhead=True)
+        self.assertIs(nozzle.parent, parent)
+
+    def test_detach_leaves_nozzle_parented_for_native_simulation_pass(self):
+        nozzle = self._attach_with_nozzle(_FakeNozzle())
+        root = self.view.controller.scene.getRoot()
+        self.controller.detach(self.view)
+        self.assertIs(nozzle.parent, root)
 
 
 if __name__ == "__main__":
