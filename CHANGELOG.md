@@ -51,6 +51,46 @@ gains a status strip with a single pause policy behind it.
 - **Harness evidence visibility.** Every resolving step records
   the element's geometry and the walk that resolved it, and the
   harness composites the outline onto each captured frame.
+- **Baked pauses in the Preview list.** Pauses baked into the
+  gcode (the PauseAtHeight `PAUSE`/`M0` block after a layer's
+  elapsed marker) appear in the pause list as read-only rows,
+  sorted with the manual schedule. A baked layer refuses a manual
+  pause on top, a passed baked row dims as "baked · passed", and
+  the rows never vanish mid-print.
+- **The pause list rework.** Five rows visible with a scroll cap,
+  up/down affordances in the whats-new idiom, a stable in-place
+  model so the scroll never jumps on the refresh poll or on
+  add/remove, wall-clock ETAs ("in 12m · ~14:32"), a red ✕
+  remove glyph, and confirmed manual pauses that stay listed,
+  dimmed "passed", still removable.
+- **The M117 fix.** Moonraker pushes only the changed fields per
+  notify, and the print's progress flood overwrote the one-shot
+  message fragment before the drain — M117s vanished while
+  printing. Fragments now merge per object in the socket
+  accumulator, and the boot chain re-arms discovery within one
+  aux tick so the first message never waits out a discovery
+  interval.
+- **The Windows fixes.** The O_NOFOLLOW state-store guard is now
+  platform-aware (every write failed there before), the socket
+  disconnects the previous cycle's handlers before reconnecting
+  (the multiplied upgrade/sync lines), and the settings'
+  diagnostics toggle mirrors into the leak instrument's
+  preference key so the probe actually arms.
+- **The leak instrument.** A gated, self-contained per-minute
+  probe (RSS, tracemalloc growth, per-class QML diffs) behind a
+  Diagnostics-page toggle; cross-platform, log path on
+  registration, silent while disabled.
+- **Preview card polish.** The arrow temperature pair, the black
+  ETA and mesh labels, the status line above the strip, the
+  bed-mesh button at the card's foot, the collapsing mesh legend
+  (the card reflows instead of keeping a faded gap), the duplicate
+  temperature entry labelled "(host)", and stable-height loading
+  and prompt overlays that keep the layout free of polish loops.
+- **The monitor loading prompt.** Connected-with-no-data shows a
+  centred loading note instead of the empty pane.
+- **The harness log scan.** Every UI run reads the Cura log and
+  fails on plugin-originated warnings, errors and polish loops —
+  no scenario needed to catch them.
 
 ## 4.2.0
 

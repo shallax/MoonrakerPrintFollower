@@ -340,16 +340,26 @@ class MoonrakerSocket(QObject):
         # notify_gcode_response and anything else unsubscribed: ignore.
 
     def _apply_patch(self, patch: Dict[str, Any]) -> None:
-        """Raw-fragment accumulation: plain dict update, no deepcopy and
-        no consumer work at push rate (F6). One object may route to BOTH
-        classes (bed_mesh: core geometry + aux mesh profiles — A8)."""
+        """Raw-fragment accumulation, no deepcopy and no consumer work
+        at push rate (F6). One object may route to BOTH classes (bed_mesh:
+        core geometry + aux mesh profiles — A8).
+
+        Fragments MERGE per object: Moonraker pushes only the fields
+        that changed, and while printing the progress flood (tens of
+        notifies per second) would otherwise overwrite a one-shot
+        field — an M117 message fragment lived ~30 ms before the next
+        progress-only fragment replaced it and the drain never saw it
+        (the live report: M117 invisible while printing, visible when
+        idle)."""
         stamp = time.monotonic()
         for name, value in patch.items():
             if name in self._core_names:
-                self._core[name] = value
+                previous = self._core.get(name)
+                self._core[name] = dict(previous, **value) if isinstance(previous, dict) and isinstance(value, dict) else value
                 self._core_stamp = stamp
             if name in self._aux_names:
-                self._aux[name] = value
+                previous = self._aux.get(name)
+                self._aux[name] = dict(previous, **value) if isinstance(previous, dict) and isinstance(value, dict) else value
                 self._aux_stamp = stamp
 
     def _send_keepalive(self) -> None:

@@ -1487,7 +1487,7 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerStripPauseButton", "budget": 150},
          {"op": "wait_rect", "objectName": "moonrakerStripTemps", "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerStripSlot", "budget": 30},
-         {"op": "wait_rendered", "objectName": "moonrakerStripTemps", "contains": "205.2/210.0 °C · 60.0/60.0 °C", "budget": 30},
+         {"op": "wait_rendered", "objectName": "moonrakerStripTemps", "contains": "205.2 → 210.0 °C · 60.0 → 60.0 °C", "budget": 30},
          # The strip's own verdict lane settles BEFORE the click: the
          # block lands on the aux poll behind the model's verdicts, so
          # a press while the strip still reads the idle block hits a
@@ -2124,5 +2124,11 @@ SCENARIOS = [
      "name": "the real dwell: poll latency over a steady window",
      "steps": [
          {"op": "dwell", "minutes": 5, "path": "/printer/info"},
+     ]},
+    {"id": "r6", "group": "real", "real_safe": True,
+     "name": "the M117 witness: the live message reaches the slot",
+     "steps": [
+         {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
+         {"op": "wait_model", "prop": "monitorMessage", "contains": "claude-m117-probe", "budget": 60},
      ]},
 ]

@@ -110,11 +110,12 @@ class PauseController(QObject):
         if outcome == "accepted":
             self.message.emit(f"PAUSE accepted after layer {self._target + 1}; waiting for printer confirmation")
         elif outcome == "confirmed":
-            # The printer was OBSERVED paused: the entry leaves the list
-            # now, never merely because the layer was crossed.
+            # The printer was OBSERVED paused: the entry STAYS, marked
+            # passed and dimmed (the 2026-09-16 ruling) — the user
+            # may still remove it by hand. The state blocks any
+            # re-fire.
             self.message.emit(f"PAUSE confirmed after layer {self._target + 1}")
-            self._schedule.remove(self._target)
-            self._states.pop(self._target, None)
+            self._states[self._target] = "passed"
             self._target = None
             self.changed.emit()
         elif outcome in {"failed", "timed_out"}:

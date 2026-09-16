@@ -52,6 +52,34 @@ def legacy_reference(data: bytes):
 
 
 class IndexTests(unittest.TestCase):
+    def test_baked_pause_commands_map_to_their_layers(self):
+        # The 2026-09-16 ruling: pauses baked into the gcode surface as
+        # read-only list rows — the index maps each pause command to
+        # the layer whose block contains it.
+        data = (b";LAYER:0\nG1 X1 Y1\nPAUSE\n;LAYER:1\nG1 X2 Y2\nM0\n"
+                b";LAYER:2\nG1 X3 Y3\nM25\n;LAYER:3\nG1 X4 Y4\n")
+        index = build_index_from_bytes(data)
+        self.assertEqual(tuple(index.pauses), (0, 1, 2))
+
+    def test_baked_pauses_before_the_first_layer_marker_are_skipped(self):
+        data = b"G28\nPAUSE\n;LAYER:0\nG1 X1 Y1\n;LAYER:1\nG1 X2 Y2\n"
+        index = build_index_from_bytes(data)
+        self.assertEqual(tuple(index.pauses), ())
+
+    def test_pause_comment_lines_never_count(self):
+        data = b";LAYER:0\nG1 X1 Y1\n; PAUSE here on purpose\nPAUSE\n;LAYER:1\nG1 X2 Y2\n"
+        index = build_index_from_bytes(data)
+        self.assertEqual(tuple(index.pauses), (0,))
+
+    def test_pause_after_the_elapsed_marker_belongs_to_that_layer(self):
+        # PauseAtHeight emits its pause block AFTER the layer's
+        # ;TIME_ELAPSED line, past the block's recorded end — the
+        # mapping must follow the block starts (the live report: the
+        # real job's M0 lines were dropped by the end-based check).
+        data = b";LAYER:0\nG1 X1 Y1\n;TIME_ELAPSED:1\nPAUSE\n;LAYER:1\nG1 X2 Y2\n"
+        index = build_index_from_bytes(data)
+        self.assertEqual(tuple(index.pauses), (0,))
+
     def test_zero_based_current_layer_mapping(self):
         data = b""";LAYER:0\nSET_PRINT_STATS_INFO CURRENT_LAYER=0\nG1 X1 Y1\n;TIME_ELAPSED:1\n;LAYER:1\nSET_PRINT_STATS_INFO CURRENT_LAYER=1\nG1 X2 Y2\n"""
         index = build_index_from_bytes(data)
@@ -243,8 +271,12 @@ G1 X5 Y0 Z0.2
             self.assertEqual([list(a) for a in actual.motion_offsets], expected_moves)
 
     def test_persistent_cache_round_trip(self):
-        data = b";LAYER:0\nSET_PRINT_STATS_INFO CURRENT_LAYER=1\nG1 X1 Y2 Z0.2\nG1 X2 Y3 Z0.2\n"
+        # The baked-pause layers must survive the cache too (the
+        # 2026-09-16 report: every cached index loaded without them
+        # because the old cache format predated the field).
+        data = b";LAYER:0\nSET_PRINT_STATS_INFO CURRENT_LAYER=1\nG1 X1 Y2 Z0.2\nPAUSE\nG1 X2 Y3 Z0.2\n"
         index = build_index_from_bytes(data)
+        self.assertEqual(tuple(index.pauses), (0,))
         identity = RemoteFileIdentity("a.gcode", len(data), 100.0, "uuid-1")
         with tempfile.TemporaryDirectory() as directory:
             cache = PersistentIndexCache(directory, max_bytes=8 * 1024 * 1024, max_entries=4)
@@ -253,6 +285,7 @@ G1 X5 Y0 Z0.2
             self.assertIsNotNone(loaded)
             self.assertEqual(loaded.ranges, index.ranges)
             self.assertEqual(loaded.current_layer_map, index.current_layer_map)
+            self.assertEqual(tuple(loaded.pauses), (0,))
             self.assertEqual([list(v) for v in loaded.motion_offsets], [list(v) for v in index.motion_offsets])
             self.assertEqual([list(v) for v in loaded.motion_x], [list(v) for v in index.motion_x])
 

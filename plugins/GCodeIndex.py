@@ -34,7 +34,7 @@ _COMMAND = re.compile(rb"^\s*(?:N\d+\s*)?([GMT]\d+)(?!\d)", re.IGNORECASE)
 _AXIS = re.compile(rb"([XYZ])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
 
 _CACHE_MAGIC = b"MPFI110\0"
-_CACHE_VERSION = 3
+_CACHE_VERSION = 5
 _LARGE_FILE_COMPACT_THRESHOLD = 128 * 1024 * 1024
 # Hardening bounds for hostile/corrupt gcode (panel security P2-4): a
 # real gcode line is well under 1 KB, real prints stay under ~100k
@@ -63,6 +63,10 @@ class LayerMotionIndex:
     layer_start_units: List[float] = field(default_factory=list)
     current_layer_map: Dict[int, int] = field(default_factory=dict)
     layer_elapsed_times: List[Optional[float]] = field(default_factory=list)
+    # The layers whose gcode carries a baked pause command (PAUSE / M0 /
+    # M25 as the line's command word) — 0-based layer indices, in
+    # ascending order.
+    pauses: Tuple[int, ...] = ()
     compact: bool = False
     hydrated_layers: set[int] = field(default_factory=set, repr=False)
     cache_lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
@@ -406,6 +410,32 @@ def _collect_marker_values(handle: BinaryIO, capture: Optional[re.Pattern[bytes]
 
 _MARKER_SNIFF_BYTES = 262144
 
+# A baked end-of-layer pause: the pause command word standing alone at
+# the line start (comment lines never match). The PauseAtHeight
+# post-processor emits the configured pause command inside its
+# ;TYPE:CUSTOM block at the END of the target layer's moves, so the
+# line's offset resolves to that layer through the block ranges.
+_PAUSE_COMMAND = re.compile(rb"^\s*(?:PAUSE|M0|M25)\b")
+
+
+def _collect_pause_offsets(handle: BinaryIO, cancel_event=None) -> List[int]:
+    offsets: List[int] = []
+    handle.seek(0)
+    line_number = 0
+    while True:
+        if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
+            return []
+        offset = handle.tell()
+        line = handle.readline(_MAX_LINE_BYTES + 1)
+        if not line:
+            break
+        if len(line) > _MAX_LINE_BYTES:
+            line = b""
+        if _PAUSE_COMMAND.match(line.rstrip(b"\r\n")) is not None:
+            offsets.append(offset)
+        line_number += 1
+    return offsets
+
 def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] = None) -> LayerMotionIndex:
     if compact is None:
         try:
@@ -437,6 +467,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         sniffed = None
     ordered = [entry for entry in markers if entry[0] is sniffed] + [entry for entry in markers if entry[0] is not sniffed]
     ranges = motions = xs = ys = zs = starts = start_absolute = start_units = elapsed_times = stats_values = block_stats = None
+    pause_layers: Tuple[int, ...] = ()
     marker_values: List[int] = []
     with open(path, "rb") as handle:
         for marker, capture in ordered:
@@ -449,6 +480,25 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
                 break
             if cancel_event is not None and cancel_event.is_set():
                 break
+
+        # The baked pauses map to layers by block START only. A block's
+        # recorded end is the ;TIME_ELAPSED line, and PauseAtHeight
+        # emits its pause block AFTER that — between the elapsed
+        # marker and the next layer marker (the live report: the real
+        # job's M0 lines sat past the recorded end and were dropped).
+        # The next block's start is the true boundary, so bisect on
+        # starts alone is exact. A pause before the first marker
+        # (start gcode) belongs to no layer and is skipped.
+        if ranges and not (cancel_event is not None and cancel_event.is_set()):
+            baked: List[int] = []
+            starts_offsets = [start for start, _end in ranges]
+            for offset in _collect_pause_offsets(handle, cancel_event):
+                idx = bisect_right(starts_offsets, offset) - 1
+                if idx < 0 or idx >= len(ranges):
+                    continue
+                if not baked or baked[-1] != idx:
+                    baked.append(idx)
+            pause_layers = tuple(baked)
 
     if cancel_event is not None and cancel_event.is_set():
         return LayerMotionIndex()
@@ -500,6 +550,7 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         layer_start_units=start_units,
         current_layer_map=layer_map,
         layer_elapsed_times=elapsed_times,
+        pauses=pause_layers,
         compact=bool(compact),
         hydrated_layers=hydrated,
     )
@@ -690,6 +741,14 @@ class PersistentIndexCache:
                 hydrated = {int(i) for i in hydrated_raw if 0 <= int(i) < len(ranges)}
             else:
                 hydrated = {i for i, values in enumerate(offsets) if len(values) > 0}
+            pauses = []
+            for value in header.get("pauses", []):
+                try:
+                    layer = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= layer < len(ranges) and (not pauses or layer > pauses[-1]):
+                    pauses.append(layer)
             return LayerMotionIndex(
                 ranges=ranges,
                 motion_offsets=offsets,
@@ -701,6 +760,7 @@ class PersistentIndexCache:
                 layer_start_units=start_units,
                 current_layer_map=layer_map,
                 layer_elapsed_times=elapsed_times,
+                pauses=tuple(pauses),
                 compact=compact,
                 hydrated_layers=hydrated,
             )
@@ -740,6 +800,7 @@ class PersistentIndexCache:
                 "start_units": index.layer_start_units,
                 "layer_map": {str(k): int(v) for k, v in index.current_layer_map.items()},
                 "elapsed_times": index.layer_elapsed_times,
+                "pauses": list(index.pauses),
                 "compact": bool(index.compact),
                 "hydrated": sorted(index.hydrated_layers),
                 "counts": [len(v) for v in index.motion_offsets],

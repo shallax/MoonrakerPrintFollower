@@ -1477,7 +1477,13 @@ Component {
 
                     ColumnLayout {
                         id: statusContent
-                        width: statusFlick.width - statusScrollbar.width - UM.Theme.getSize("default_margin").width
+                        // The constant gutter (the whats-new overlay's
+                        // precedent): binding the content width to the
+                        // LIVE scrollbar width fed a layout polish loop
+                        // on the author's Windows run — the scrollbar
+                        // overlays the gutter instead of squeezing the
+                        // content in a feedback cycle.
+                        width: statusFlick.width - 14 - UM.Theme.getSize("default_margin").width
                         // Spacing lives on the children: collapsed sections
                         // must contribute nothing so headers stack flush.
                         spacing: 0
@@ -1524,6 +1530,22 @@ Component {
 
                 // The collapsed strip: the toggle stays at the top and the
                 // pane title reads bottom-to-top directly under it.
+                // The loading prompt (the 2026-09-16 request): an
+                // overlay ABOVE the flick, never a layout child — a
+                // layout child flipping visibility reflowed the
+                // section stack and fed a polish loop (the author's
+                // Windows run).
+                Item {
+                    anchors.fill: statusFlick
+                    visible: !root.statusCollapsed && (root.printer == null || root.printer.monitorLoading)
+                    UM.Label {
+                        anchors.centerIn: parent
+                        text: "Loading printer data…"
+                        color: UM.Theme.getColor("text_inactive")
+                        font: UM.Theme.getFont("default")
+                    }
+                }
+
                 Item {
                     id: statusCollapsedTitleBox
                     visible: root.statusCollapsed

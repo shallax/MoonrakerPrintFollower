@@ -91,5 +91,22 @@ class PauseAtLayerTests(unittest.TestCase):
         self.assertIn("track_command", controller)
         self.assertIn("generation != self._generation", controller)
 
+    def test_pause_items_merge_baked_rows_sorted_by_layer(self):
+        # The 2026-09-16 ruling: the list merges the manual schedule
+        # with the gcode's baked pauses, always sorted by layer, and
+        # the baked rows are read-only.
+        from plugins.PreviewFormatting import pause_items
+        remaining = {3: 120.0, 7: 400.0, 11: 900.0}
+        items = pause_items({7}, {7: "scheduled"}, {3, 11},
+                            lambda layer: remaining.get(layer),
+                            lambda seconds: f"{seconds:.0f}s",
+                            current=6,
+                            clock=lambda seconds: "14:32")
+        self.assertEqual(items, [
+            {"layer": 4, "eta": "in 120s · ~14:32", "state": "baked", "passed": True},
+            {"layer": 8, "eta": "in 400s · ~14:32", "state": "scheduled"},
+            {"layer": 12, "eta": "in 900s · ~14:32", "state": "baked", "passed": False},
+        ])
+
 
 if __name__ == "__main__": unittest.main()

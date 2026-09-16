@@ -39,6 +39,19 @@ Component {
             }
         }
 
+        // The status handler is a NAMED function on the root item: the
+        // old inline connect() closure resolved attachDashboard in the
+        // component TYPE scope and threw ReferenceError on the real
+        // Windows run (the author's log) — named functions resolve
+        // through the instance scope reliably.
+        function onDashboardStatus(status) {
+            if (status === Component.Ready) {
+                attachDashboard();
+            } else if (status === Component.Error) {
+                console.log("Moonraker dashboard failed to compile: " + dashboardComponent.errorString());
+            }
+        }
+
         Component.onCompleted: {
             dashboardComponent = Qt.createComponent("MoonrakerMonitorDashboard.qml", Component.Asynchronous);
             if (dashboardComponent.status === Component.Ready) {
@@ -46,13 +59,7 @@ Component {
             } else if (dashboardComponent.status === Component.Error) {
                 console.log("Moonraker dashboard failed to compile: " + dashboardComponent.errorString());
             } else {
-                dashboardComponent.statusChanged.connect(function (status) {
-                        if (status === Component.Ready) {
-                            attachDashboard();
-                        } else if (status === Component.Error) {
-                            console.log("Moonraker dashboard failed to compile: " + dashboardComponent.errorString());
-                        }
-                    });
+                dashboardComponent.statusChanged.connect(onDashboardStatus);
             }
         }
     }

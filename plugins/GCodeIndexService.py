@@ -24,6 +24,8 @@ class IndexView:
     def elapsed_times(self): return tuple(self._index.layer_elapsed_times)
     @property
     def compact(self): return self._index.compact
+    @property
+    def pause_layers(self): return tuple(self._index.pauses)
 
     def hydrated(self, layer):
         return not self.compact or layer in self._index.hydrated_layers

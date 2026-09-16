@@ -365,8 +365,14 @@ class MonitorData(QObject):
             # upgraded yet. Firing HTTP here was the traffic that read
             # as handover cancellations in the log — the lane's own
             # timer retries once the RPC lane is live, so skip the
-            # wire instead.
+            # wire instead. The discovery lane's retry is 30 s out —
+            # too slow for the boot subscription (the first M117 took
+            # that long; the live report) — so a discovery request
+            # dropped in this window re-fires the chain after 1 s,
+            # when the upgrade has settled on every observed boot.
             if self._client.effective_feed_mode == "websocket":
+                if category == RequestCategory.DISCOVERY:
+                    self.later(1000, self.refresh_discovery)
                 return True
         return self._client.transport.send_json("monitor", channel, method, path, finished,
             body=body, replace=replace, category=category, timeout_ms=timeout_ms)
@@ -443,6 +449,15 @@ class MonitorData(QObject):
         self._client.set_auxiliary_objects(wanted)
 
     def refresh_aux(self):
+        if not self._snapshot.objects:
+            # The boot-time RPC window drops the discovery request and
+            # nothing re-fires it until the 30 s discovery tick — the
+            # first M117 took that long to appear (the live report).
+            # The aux tick is the fastest healthy cadence: re-arm the
+            # discovery here so the subscription heals within one aux
+            # interval. The coalescer bounds the in-flight duplicates.
+            self.refresh_discovery()
+            return
         if self._client.effective_feed_mode == "websocket":
             # The socket is a source, not a clock (A11): the existing
             # auxiliary timer drains the accumulated fragments.

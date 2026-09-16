@@ -138,11 +138,11 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("with self._cura.decorating_scene()", TYPED)
         for qml in (PREVIEW_CONTROLS, EMPTY_PREVIEW):
             self.assertIn("Neon orange outline = the probed mesh bounds; outside = the boundary values, continued as Klipper clamps them", qml)
-            # NO-REFLOW RULE: the legend keeps its space — it fades on
-            # both the mesh availability AND the user's visibility
-            # toggle, never vanishing.
-            self.assertIn("opacity: base.bedMeshAvailable && base.bedMeshVisible ? 1.0 : 0.0", qml)
-            self.assertIn("height: implicitHeight", qml)
+            # The legend collapses when the mesh is hidden (the
+            # 2026-09-16 ruling): the card reflows instead of
+            # keeping a faded gap.
+            self.assertIn("visible: base.bedMeshAvailable && base.bedMeshVisible", qml)
+            self.assertNotIn("opacity: base.bedMeshAvailable && base.bedMeshVisible ? 1.0 : 0.0", qml)
             self.assertIn("selectedLayerEtaText", qml)
             self.assertIn("bedMeshMinimumText", qml)
             self.assertIn("bedMeshMaximumText", qml)

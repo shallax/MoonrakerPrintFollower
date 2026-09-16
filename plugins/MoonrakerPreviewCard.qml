@@ -104,6 +104,60 @@ Item {
 
     onGateVisibleChanged: updateCardGate()
 
+    // The pause rows live in a STABLE ListModel the coordinator never
+    // touches directly: syncPauseRows() diffs the published list into
+    // it in place, so the ListView's model identity never changes and
+    // the scroll stays put across publishes, adds and removals.
+    ListModel {
+        id: pauseListModel
+        objectName: "moonrakerPauseListModel"
+    }
+
+    function syncPauseRows() {
+        var incoming = base.pauseAtLayerItems || [];
+        var keep = {};
+        for (var i = 0; i < incoming.length; i++) {
+            keep[incoming[i].layer] = true;
+        }
+        for (var r = pauseListModel.count - 1; r >= 0; r--) {
+            if (!keep[pauseListModel.get(r).layer]) {
+                pauseListModel.remove(r);
+            }
+        }
+        for (var k = 0; k < incoming.length; k++) {
+            var row = incoming[k];
+            var payload = {
+                "layer": row.layer,
+                "eta": row.eta,
+                "state": row.state,
+                "passed": row.passed === true
+            };
+            var at = -1;
+            for (var f = 0; f < pauseListModel.count; f++) {
+                if (pauseListModel.get(f).layer === row.layer) {
+                    at = f;
+                    break;
+                }
+            }
+            if (at === -1) {
+                // The published list is sorted; a fresh entry lands
+                // at its sorted position among the existing rows.
+                var pos = pauseListModel.count;
+                for (var s = 0; s < pauseListModel.count; s++) {
+                    if (pauseListModel.get(s).layer > row.layer) {
+                        pos = s;
+                        break;
+                    }
+                }
+                pauseListModel.insert(pos, payload);
+            } else if (pauseListModel.get(at).eta !== row.eta || pauseListModel.get(at).state !== row.state || pauseListModel.get(at).passed !== payload.passed) {
+                pauseListModel.set(at, payload);
+            }
+        }
+    }
+
+    onPauseAtLayerItemsChanged: syncPauseRows()
+
     // The strip's state machine (4.3.0): the block's verdicts, the
     // staleness flag and the state word arrive as one setProperty-fed
     // value — the cells are rewritten imperatively on every change,
@@ -203,9 +257,18 @@ Item {
                 font: UM.Theme.getFont("medium_bold")
             }
 
-            // THE STRIP (4.3.0): two fixed rows between the title and
-            // the status row — one full-width Pause/Resume control on
-            // row 1; the temps cell and the middle slot on row 2.
+            Cura.IconWithText {
+                id: followerStatus
+                width: parent.width
+                text: base.activePrinterName + (base.statusText.length > 0 ? " — " + base.statusText : "")
+                source: UM.Theme.getIcon(base.statusIconName)
+                font: UM.Theme.getFont("default")
+            }
+
+            // THE STRIP (4.3.0): two fixed rows after the status
+            // line (the 2026-09-16 ruling) — one full-width
+            // Pause/Resume control on row 1; the temps cell and the
+            // middle slot on row 2.
             // Every cell is explicitly width-bound: an implicit-width
             // row paints past the card edge (the load-indicator
             // precedent). The cells are driven IMPERATIVELY from the
@@ -234,10 +297,11 @@ Item {
                 UM.Label {
                     id: stripTemps
                     objectName: "moonrakerStripTemps"
-                    // The unlabelled pair ("205.2/210.0 °C · 60.0/60.0
-                    // °C" ≈ 149 px at the default font) fits with
-                    // slack; the labelled form never did.
-                    width: 160 * screenScaleFactor
+                    // The unlabelled pair in the arrow form
+                    // ("205.2 → 210.0 °C · 60.0 → 60.0 °C" ≈ 175 px
+                    // at the default font) takes the wider cell; the
+                    // labelled form never fit at all.
+                    width: 200 * screenScaleFactor
                     color: UM.Theme.getColor("text")
                     font: UM.Theme.getFont("default")
                     verticalAlignment: Text.AlignVCenter
@@ -251,15 +315,14 @@ Item {
                     // refusal reason whenever one refuses. The slot
                     // discharges "nothing silently unclickable":
                     // whenever the control is disabled, this cell
-                    // says why in the policy's own words. Sized
-                    // against the vocabulary it carries — the old
-                    // 118 px cell cut "A command is running" mid-word;
-                    // the full sentence rides the tooltip.
+                    // says why in the policy's own words. The full
+                    // sentence rides the tooltip; the ETA renders in
+                    // the full text colour (the 2026-09-16 ruling).
                     id: stripSlot
                     objectName: "moonrakerStripSlot"
-                    width: 130 * screenScaleFactor
+                    width: 90 * screenScaleFactor
                     horizontalAlignment: Text.AlignRight
-                    color: UM.Theme.getColor("text_inactive")
+                    color: UM.Theme.getColor("text")
                     font: UM.Theme.getFont("default")
                     verticalAlignment: Text.AlignVCenter
                     elide: Text.ElideRight
@@ -270,14 +333,6 @@ Item {
                         text: stripPauseTooltip()
                     }
                 }
-            }
-
-            Cura.IconWithText {
-                id: followerStatus
-                width: parent.width
-                text: base.activePrinterName + (base.statusText.length > 0 ? " — " + base.statusText : "")
-                source: UM.Theme.getIcon(base.statusIconName)
-                font: UM.Theme.getFont("default")
             }
 
             Row {
@@ -330,23 +385,11 @@ Item {
                 width: parent.width
             }
 
-            PreviewSecondaryButton {
-                id: bedMeshButton
-                // NO-REFLOW RULE: never hidden — it disables when the
-                // loaded job has no mesh.
-                width: parent.width
-                height: UM.Theme.getSize("action_button").height
-                enabled: base.bedMeshAvailable
-                text: base.bedMeshVisible ? "Hide bed mesh" : "Show bed mesh"
-                tooltip: "Show the active Klipper bed mesh as a coloured 3D surface on Cura's build plate" + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
-                onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
-            }
-
             UM.Label {
                 // The current-layer info slot (the 2026-09-11
                 // ruling): filled while the print is active; when it has
                 // nothing to say the slot collapses instead of leaving a
-                // blank gap between the bed-mesh and pause buttons.
+                // blank gap before the pause button.
                 width: parent.width
                 height: base.selectedLayerEtaText.length > 0 ? 36 * screenScaleFactor : 0
                 text: base.selectedLayerEtaText.length > 0 ? base.selectedLayerEtaText : " "
@@ -399,38 +442,115 @@ Item {
                     font: UM.Theme.getFont("default_bold")
                 }
 
-                Repeater {
-                    model: base.pauseAtLayerItems
-                    delegate: Row {
-                        width: scheduledPauseList.width
-                        height: UM.Theme.getSize("action_button").height
-                        spacing: base.buttonSpacing
-                        property int pauseLayer: Number(modelData.layer)
-                        property string pauseEta: String(modelData.eta || "")
-                        // "scheduled" | "fired" | "failed" | "timed_out" —
-                        // a missed pause STAYS listed, restyled in the
-                        // error colour (the verified-pause-only ruling).
-                        property string pauseState: String(modelData.state || "scheduled")
-                        readonly property bool pauseMissed: pauseState === "failed" || pauseState === "timed_out"
+                Item {
+                    width: parent.width
+                    // Five visible entries at most (the author's
+                    // ruling): a long schedule scrolls instead of
+                    // growing the card past the viewport.
+                    height: Math.min(base.pauseAtLayerItems.length, 5) * (UM.Theme.getSize("action_button").height + scheduledPauseList.spacing) - scheduledPauseList.spacing
 
-                        UM.Label {
-                            width: Math.max(0, parent.width - removePauseButton.width - parent.spacing)
-                            height: parent.height
-                            text: "End of layer " + parent.pauseLayer + (parent.pauseEta.length > 0 ? " · " + parent.pauseEta : "") + (parent.pauseMissed ? " — pause not taken" : "")
-                            color: parent.pauseMissed ? UM.Theme.getColor("error") : UM.Theme.getColor("text")
-                            font: UM.Theme.getFont("default")
-                            verticalAlignment: Text.AlignVCenter
-                            elide: Text.ElideRight
-                        }
+                    ListView {
+                        id: pauseListView
+                        anchors.fill: parent
+                        clip: true
+                        spacing: scheduledPauseList.spacing
+                        interactive: contentHeight > height
+                        boundsBehavior: Flickable.StopAtBounds
+                        // The STABLE model: the coordinator re-publishes
+                        // the list every cycle (~2.5 s) with fresh ETA
+                        // strings — handing that straight to the view
+                        // replaced the model on every poll and the view
+                        // jumped (the live reports). The card syncs the
+                        // rows IN PLACE here, so the model never
+                        // changes identity and the scroll never moves
+                        // on its own.
+                        model: pauseListModel
+                        delegate: Row {
+                            id: pauseRow
+                            width: scheduledPauseList.width
+                            height: UM.Theme.getSize("action_button").height
+                            spacing: base.buttonSpacing
+                            // The ROLES come off the ListModel's row object
+                            // (`model`), never `modelData` — modelData is
+                            // a JS-array-model concept and reads
+                            // undefined against a ListModel (the live
+                            // report: every row read layer 0).
+                            property int pauseLayer: Number(model.layer)
+                            property string pauseEta: String(model.eta || "")
+                            // "scheduled" | "fired" | "failed" | "timed_out" |
+                            // "baked" — a missed pause STAYS listed, restyled
+                            // in the error colour (the verified-pause-only
+                            // ruling); a baked pause is read-only (the
+                            // ruling).
+                            property string pauseState: String(model.state || "scheduled")
+                            readonly property bool pauseMissed: pauseState === "failed" || pauseState === "timed_out"
+                            readonly property bool pauseBaked: pauseState === "baked"
+                            readonly property bool pausePassed: model.passed === true || pauseState === "passed"
 
-                        PreviewSecondaryButton {
-                            id: removePauseButton
-                            width: 88 * screenScaleFactor
-                            height: parent.height
-                            text: "Remove"
-                            tooltip: "Remove the scheduled PAUSE after layer " + parent.pauseLayer + "."
-                            onClicked: base.removePauseAtLayerRequested(parent.pauseLayer)
+                            UM.Label {
+                                width: Math.max(0, parent.width - removePauseButton.width - parent.spacing)
+                                height: parent.height
+                                text: "End of layer " + parent.pauseLayer + (parent.pauseEta.length > 0 ? " · " + parent.pauseEta : "") + (parent.pauseMissed ? " — pause not taken" : "") + (parent.pauseBaked ? (parent.pausePassed ? " — baked · passed" : " — baked") : (pauseState === "passed" ? " — passed" : ""))
+                                color: parent.pauseMissed ? UM.Theme.getColor("error") : (parent.pausePassed ? UM.Theme.getColor("text_inactive") : UM.Theme.getColor("text"))
+                                font: UM.Theme.getFont("default")
+                                verticalAlignment: Text.AlignVCenter
+                                elide: Text.ElideRight
+                            }
+
+                            UM.Label {
+                                id: removePauseButton
+                                // The narrow red ✕ (the 2026-09-16
+                                // ruling): a glyph, not a chrome
+                                // button — it buys the row text the
+                                // room the clock-time ETA needs. It
+                                // NEVER hides (the no-reflow rule): a
+                                // baked pause dims it and the click
+                                // does nothing.
+                                width: parent.height
+                                height: parent.height
+                                text: "✕"
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                                color: parent.pauseBaked ? UM.Theme.getColor("text_inactive") : UM.Theme.getColor("error")
+                                font: UM.Theme.getFont("medium_bold")
+                                MouseArea {
+                                    anchors.fill: parent
+                                    // The row's properties, not the
+                                    // label's — parent here is the
+                                    // glyph, which carries neither
+                                    // (the dead-click report).
+                                    enabled: !pauseRow.pauseBaked
+                                    hoverEnabled: true
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: base.removePauseAtLayerRequested(pauseRow.pauseLayer)
+                                }
+                            }
                         }
+                    }
+
+                    // Scroll affordances, the whats-new idiom: small
+                    // blue chevrons centred over the list — an up
+                    // arrow near the top while more content is above,
+                    // a down arrow near the bottom while more content
+                    // is below (the author's ruling). They are
+                    // SIBLINGS of the ListView, overlaying it.
+                    UM.Label {
+                        text: "↑"
+                        visible: pauseListView.height > 0 && pauseListView.contentY > 2
+                        anchors.top: pauseListView.top
+                        anchors.horizontalCenter: pauseListView.horizontalCenter
+                        anchors.topMargin: 4 * screenScaleFactor
+                        color: UM.Theme.getColor("primary")
+                        font: UM.Theme.getFont("medium_bold")
+                    }
+                    UM.Label {
+                        text: "↓"
+                        visible: pauseListView.height > 0 && pauseListView.contentY < pauseListView.contentHeight - pauseListView.height - 2
+                        anchors.bottom: pauseListView.bottom
+                        anchors.horizontalCenter: pauseListView.horizontalCenter
+                        anchors.bottomMargin: 4 * screenScaleFactor
+                        color: UM.Theme.getColor("primary")
+                        font: UM.Theme.getFont("medium_bold")
                     }
                 }
 
@@ -444,13 +564,11 @@ Item {
             }
 
             Column {
-                // NO-REFLOW RULE: the legend keeps its space — it fades
-                // instead of vanishing when the mesh state flips (the
-                // card used to grow +59 px when the mesh arrived).
-                opacity: base.bedMeshAvailable && base.bedMeshVisible ? 1.0 : 0.0
-                enabled: base.bedMeshAvailable && base.bedMeshVisible
+                // The legend collapses when the mesh is hidden (the
+                // 2026-09-16 ruling): the card reflows instead of
+                // keeping a faded gap.
+                visible: base.bedMeshAvailable && base.bedMeshVisible
                 width: parent.width
-                height: implicitHeight
                 spacing: 2 * screenScaleFactor
 
                 BedMeshRangeSlider {
@@ -467,7 +585,9 @@ Item {
                         id: scaleLabel
                         height: exaggerationSlider.implicitHeight
                         text: "Scale z-max"
-                        color: UM.Theme.getColor("text_inactive")
+                        // The label is primary content (the 2026-09-16
+                        // ruling): full text colour, not inactive grey.
+                        color: UM.Theme.getColor("text")
                         font: UM.Theme.getFont("default")
                         verticalAlignment: Text.AlignVCenter
                     }
@@ -545,14 +665,16 @@ Item {
                     UM.Label {
                         width: parent.width / 2
                         text: "Low " + base.bedMeshMinimumText
-                        color: UM.Theme.getColor("text_inactive")
+                        // Primary content (the 2026-09-16 ruling):
+                        // full text colour, not inactive grey.
+                        color: UM.Theme.getColor("text")
                         font: UM.Theme.getFont("default")
                     }
                     UM.Label {
                         width: parent.width / 2
                         text: "High " + base.bedMeshMaximumText
                         horizontalAlignment: Text.AlignRight
-                        color: UM.Theme.getColor("text_inactive")
+                        color: UM.Theme.getColor("text")
                         font: UM.Theme.getFont("default")
                     }
                 }
@@ -564,6 +686,20 @@ Item {
                     font: UM.Theme.getFont("default_italic")
                     wrapMode: Text.WordWrap
                 }
+            }
+
+            PreviewSecondaryButton {
+                id: bedMeshButton
+                // The bottom of the card, after the scheduling hint
+                // (the 2026-09-16 ruling) — the mesh controls above
+                // it, the toggle last. NO-REFLOW RULE: never hidden —
+                // it disables when the loaded job has no mesh.
+                width: parent.width
+                height: UM.Theme.getSize("action_button").height
+                enabled: base.bedMeshAvailable
+                text: base.bedMeshVisible ? "Hide bed mesh" : "Show bed mesh"
+                tooltip: "Show the active Klipper bed mesh as a coloured 3D surface on Cura's build plate" + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
+                onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
             }
         }
     }

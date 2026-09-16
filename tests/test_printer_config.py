@@ -52,6 +52,18 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertEqual(store.get().power_devices, "printer, lights")
         self.assertFalse(store.get().upload_start_print)
 
+    def test_diagnostics_toggle_mirrors_to_the_legacy_probe_key(self):
+        # The 2026-09-16 report: the leak instrument reads the legacy
+        # per-field preference; a save must mirror the active
+        # machine's toggle there or the probe reads a stale value
+        # forever.
+        prefs = FakePreferences()
+        store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
+        store.set(PrinterConfig(memory_diagnostics_log=True))
+        self.assertTrue(prefs.getValue(PrinterConfigStore.LEGACY_MAP["memory_diagnostics_log"]))
+        store.set(PrinterConfig(memory_diagnostics_log=False))
+        self.assertFalse(prefs.getValue(PrinterConfigStore.LEGACY_MAP["memory_diagnostics_log"]))
+
     def test_legacy_follower_settings_migrate_once_to_active_machine(self):
         prefs = FakePreferences()
         defaults = {
