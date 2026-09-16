@@ -79,6 +79,7 @@ class PreviewMotion(QObject):
         self._displayed = None
         self._velocity = 0.0
         self._min_set = False
+        self._min_view = None
         self._history = deque()
         self._last = 0.0
         # Interpolation ramp state: the two most recent observations and
@@ -207,7 +208,13 @@ class PreviewMotion(QObject):
             set_preview_path(view, fraction * maximum)
             # The minimum is constant while following — writing it on
             # every tick was a second view mutation per frame. Set it
-            # once per view and leave it.
+            # once per view and leave it; the flag keys to the VIEW,
+            # so a replacement view (a new file load) still receives
+            # its minimum (the review repro: the old flag kept the new
+            # view's nonzero minimum).
+            if self._min_view is not view:
+                self._min_view = view
+                self._min_set = False
             if not self._min_set:
                 set_preview_minimum_path(view, 0)
                 self._min_set = True

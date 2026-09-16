@@ -66,6 +66,7 @@ class GCodeIndexService(QObject):
         self._wanted = self._restored = self._save = False
         self._hydrate = set()
         self._hydrating = None
+        self._followed = None
         self._failed_hydrate = set()
         self._closed = False
         self._error = ""
@@ -91,6 +92,7 @@ class GCodeIndexService(QObject):
         self._wanted = self._restored = self._save = False
         self._hydrate.clear()
         self._hydrating = None
+        self._followed = None
         self._failed_hydrate.clear()
         self._error = ""
         # Keep _busy until the submitted worker actually completes. No new task
@@ -106,6 +108,9 @@ class GCodeIndexService(QObject):
         if view is not None and 0 <= layer < len(view.ranges) and not view.hydrated(layer):
             # Only the current and next layer are useful; never grow a work queue.
             self._hydrate = {int(layer), int(layer) + 1}
+            # The eviction window anchors to the FOLLOWED layer, not to
+            # whichever pending pick the worker hydrates next.
+            self._followed = int(layer)
             self._advance()
 
     def _on_files_changed(self):
@@ -147,7 +152,10 @@ class GCodeIndexService(QObject):
             self._hydrate.remove(layer)
             self._hydrating = layer
             index = self._view._index
-            self._submit("hydrate", lambda: hydrate_layer_from_file(index, lease.path, layer), lease)
+            anchor = self._followed
+            self._submit("hydrate",
+                         lambda: hydrate_layer_from_file(index, lease.path, layer, keep_anchor=anchor),
+                         lease)
         elif self._save and strong:
             self._save = False
             index = self._view._index
