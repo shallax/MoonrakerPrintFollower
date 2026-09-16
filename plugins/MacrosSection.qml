@@ -54,7 +54,7 @@ Column {
     }
 
     CollapsibleSectionHeader {
-        Layout.fillWidth: true
+        width: parent.width
         printerModel: root.printerModel
         title: "Macros"
         sectionId: "macros"
@@ -63,6 +63,7 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["macros"] !== false
     }
 
     ColumnLayout {
@@ -155,5 +156,6 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["macros"] !== false
     }
 }

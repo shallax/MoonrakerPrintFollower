@@ -18,6 +18,12 @@ Column {
         sectionId: "save"
         sectionIcon: "Save"
     }
+    Item {
+        width: 1
+        height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["save"] !== false
+    }
+
     ColumnLayout {
         // NO-REFLOW RULE: this whole section used to
         // pop into existence when Klipper flagged a
@@ -99,5 +105,6 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["save"] !== false
     }
 }

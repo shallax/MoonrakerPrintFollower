@@ -27,8 +27,10 @@ import tornado.websocket
 
 # The core subscription set the production client requests
 # (MoonrakerProtocol.CORE_OBJECTS, mirrored here so the simulator is
-# independent of the plugin's code).
-CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh", "display_status")
+# independent of the plugin's code). pause_resume joined the core
+# lane in 4.3.0 (the domain re-review) — the simulator must carry it
+# or every scenario exercises only the fallback arm.
+CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh", "display_status", "pause_resume")
 
 
 def make_gcode(layers: int = 40) -> str:
@@ -84,6 +86,8 @@ KICKOFF_STATE: Dict[str, Any] = {
         "is_active": False,
         "file_size": 0,
     },
+    # The authoritative paused bit (4.3.0): Klipper's own field name.
+    "pause_resume": {"is_paused": False},
     # The motion rows (4.2.0) read these scalars: the sim carries the
     # real object shape (live_velocity, live_extruder_velocity,
     # steppers as NAMES) so tests against the sim are honest.

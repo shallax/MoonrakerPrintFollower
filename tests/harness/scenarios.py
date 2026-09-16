@@ -1418,11 +1418,13 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 150},
          # The strip's three cells render with the card; the block
          # lands on the aux poll — the temps witness proves the block
-         # arrived (and that the strip renders the fixed pair).
+         # arrived (and that the strip renders the WHOLE unlabelled
+         # pair: hotend first, bed second — the elided-labelled-form
+         # pin, the UX re-review).
          {"op": "wait_rect", "objectName": "moonrakerStripPauseButton", "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerStripTemps", "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerStripSlot", "budget": 30},
-         {"op": "wait_rendered", "objectName": "moonrakerStripTemps", "contains": "205.2/210.0", "budget": 30},
+         {"op": "wait_rendered", "objectName": "moonrakerStripTemps", "contains": "205.2/210.0 °C · 60.0/60.0 °C", "budget": 30},
          # The strip's one control dispatches through the Monitor's
          # revalidated lane: while printing the button reads "Pause
          # print" and a real click sends the pause.
@@ -1805,7 +1807,9 @@ SCENARIOS = [
          # submitted nothing).
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
          {"op": "exec_code", "verbs": ["mouseClick"], "code": P_SLIDER_CLICK},
-         {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
+         # One track click commits exactly ONCE (the UX re-review:
+         # a minimum passes a duplicate commit silently).
+         {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "max": 1, "budget": 20},
      ]},
 
     # ─── geometry probes (diagnostics, not release gates) ─────────

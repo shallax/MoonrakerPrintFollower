@@ -107,11 +107,17 @@ Item {
     // The strip's state machine (4.3.0): the block's verdicts, the
     // staleness flag and the state word arrive as one setProperty-fed
     // value — the cells are rewritten imperatively on every change,
-    // never left to bindings.
+    // never left to bindings. The absent case names WHICH absence:
+    // never-arrived, stale, and not-following are three different
+    // facts — one connection claim for all three was a lie.
     function stripSlotText() {
-        if (!stripValid)
-            return "Printer not connected";
         var b = base.previewBlock;
+        if (b === null || b === undefined)
+            return "Waiting for the printer";
+        if (base.previewBlockStale)
+            return "Feed is stale";
+        if (b.inactive === true)
+            return "Not following";
         if (b.state === "paused")
             return b.canResume ? base.previewEtaText : (b.resumeReason.length > 0 ? b.resumeReason : "—");
         if (b.state === "printing")
@@ -120,9 +126,13 @@ Item {
     }
 
     function stripPauseTooltip() {
-        if (!stripValid)
-            return "Printer not connected — the strip reads the last live values as '—'.";
         var b = base.previewBlock;
+        if (b === null || b === undefined)
+            return "Waiting for the printer's first live values.";
+        if (base.previewBlockStale)
+            return "The feed is stale — the strip reads the last live values as '—'.";
+        if (b.inactive === true)
+            return "The monitor is not following this printer — the strip stays quiet.";
         if (stripPaused) {
             if (b.canResume)
                 return "Resume the paused print (Klipper RESUME).";
@@ -136,7 +146,12 @@ Item {
     function updateStrip() {
         stripValid = !base.previewBlockStale && base.previewBlock !== null && base.previewBlock !== undefined && base.previewBlock.inactive !== true;
         stripPaused = stripValid && base.previewBlock.state === "paused";
-        stripTemps.text = stripValid ? "Hotend " + base.previewBlock.hotend + " · Bed " + base.previewBlock.bed : "—";
+        // The pair renders WITHOUT the "Hotend"/"Bed" labels (the UX
+        // re-review's ruling): the labelled form measured 229 px in a
+        // 300 px row and elided the bed's number — the one value the
+        // pair exists to show. Hotend first, bed second: unambiguous
+        // to the machine's owner.
+        stripTemps.text = stripValid ? base.previewBlock.hotend + " · " + base.previewBlock.bed : "—";
         stripSlot.text = stripSlotText();
         stripPauseButton.enabled = stripValid && (stripPaused ? base.previewBlock.canResume : base.previewBlock.canPause);
         stripPauseButton.text = stripPaused ? "Resume print" : "Pause print";
@@ -215,7 +230,10 @@ Item {
                 UM.Label {
                     id: stripTemps
                     objectName: "moonrakerStripTemps"
-                    width: 170 * screenScaleFactor
+                    // The unlabelled pair ("205.2/210.0 °C · 60.0/60.0
+                    // °C" ≈ 149 px at the default font) fits with
+                    // slack; the labelled form never did.
+                    width: 160 * screenScaleFactor
                     height: parent.height
                     color: UM.Theme.getColor("text")
                     font: UM.Theme.getFont("default")
@@ -230,10 +248,13 @@ Item {
                     // refusal reason whenever one refuses. The slot
                     // discharges "nothing silently unclickable":
                     // whenever the control is disabled, this cell
-                    // says why in the policy's own words.
+                    // says why in the policy's own words. Sized
+                    // against the vocabulary it carries — the old
+                    // 118 px cell cut "A command is running" mid-word;
+                    // the full sentence rides the tooltip.
                     id: stripSlot
                     objectName: "moonrakerStripSlot"
-                    width: 118 * screenScaleFactor
+                    width: 130 * screenScaleFactor
                     height: parent.height
                     horizontalAlignment: Text.AlignRight
                     color: UM.Theme.getColor("text_inactive")
@@ -241,6 +262,11 @@ Item {
                     verticalAlignment: Text.AlignVCenter
                     elide: Text.ElideRight
                     clip: true
+                    UM.TooltipArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.NoButton
+                        text: stripPauseTooltip()
+                    }
                 }
             }
 

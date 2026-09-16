@@ -138,6 +138,12 @@ class PrintCoordinator(QObject):
             self._index.bind(job)
             self._files.bind(job)
             self._pauses.bind(job)
+            if job != self._mr_meta_key[1]:
+                # A job change invalidates the in-flight metadata fetch
+                # (the file service's generation guard drops its reply)
+                # — the pending flag must not survive the boundary or
+                # the lane wedges shut for every later print.
+                self._mr_meta_pending = False
             if self._load_requested:
                 if not active:
                     self._load_requested = False
@@ -393,21 +399,17 @@ class PrintCoordinator(QObject):
             self._mr_meta = value
             self._mr_meta_key = asked
             self._mr_meta_checks = 0
-        else:
+        elif error or verdict is None:
             # The cross-check can only REFUSE, never serve a wrong
             # payload — but a check that can never pass is silent and
             # permanent (the ~2x request load of the defect the latch
             # retired, and a dead ETA/filament anchor for the rest of
             # the print). The bounded give-up (4.3.0): after N failed
             # checks for the same key the payload is accepted with
-            # the failure flagged. The cause is named per case.
+            # the failure flagged. Only the unattestable causes may
+            # give up — see the mismatch branch below.
             self._mr_meta_checks += 1
-            if error:
-                cause = "the history request failed"
-            elif verdict is None:
-                cause = "the history reply was unattestable"
-            else:
-                cause = "the job id mismatched"
+            cause = "the history request failed" if error else "the history reply was unattestable"
             if self._mr_meta_checks >= self.MR_META_CHECK_LIMIT:
                 self._mr_meta = value
                 self._mr_meta_key = asked
@@ -415,6 +417,13 @@ class PrintCoordinator(QObject):
                 Logger.log("w", "Moonraker metadata latched after %d failed cross-checks (%s) — the ETA and filament anchors run on an unattested header", self.MR_META_CHECK_LIMIT, cause)
             else:
                 Logger.log("w", "Moonraker metadata cross-check failed: %s", cause)
+        else:
+            # A mismatched job id is PROOF the payload describes a
+            # different job — the give-up must never latch it (the
+            # identity bleed the cross-check exists to prevent). The
+            # anchors stay empty for this print.
+            self._mr_meta_checks = 0
+            Logger.log("w", "Moonraker metadata refused: the job id mismatched — the ETA and filament anchors stay empty for this print")
         self.refresh()
 
     def _mr_metadata_for(self, filename, job):
@@ -632,9 +641,13 @@ class PrintCoordinator(QObject):
             "pauseAtLayerItems": items, "pauseAtLayerUnavailableText": unavailable,
             # The Preview value block rides through to the card as-is
             # — the strip applies the staleness rule against the
-            # block's aux-landing stamp.
+            # block's aux-landing stamp. The connection truth joins
+            # the staleness rule (4.3.0, the domain re-review): a
+            # dead feed publishes no events, so the stamp alone can
+            # never age on the exact path the rule exists for — the
+            # client's tri-state is the freshest signal there is.
             "previewBlock": self._preview_block[0] if self._preview_block is not None else {},
-            "previewBlockStale": self._preview_block is None or
+            "previewBlockStale": not self._client.connected or self._preview_block is None or
                 time.monotonic() - self._preview_block[1] > self.PREVIEW_BLOCK_STALE_S,
             # The strip's middle-slot ETA: the print remaining/finish
             # (the Monitor's own pair, composed) — the selected-layer

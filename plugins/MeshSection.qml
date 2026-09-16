@@ -12,6 +12,12 @@ Column {
     property var printerModel: null
     signal popOverToggleRequested(string name)
 
+    // The host re-renders the mini map on typed-controls changes; the
+    // id stays component-scoped behind this accessor (4.3.0).
+    function refreshMap() {
+        meshMiniMap.refresh();
+    }
+
     CollapsibleSectionHeader {
         width: parent.width
         printerModel: root.printerModel
@@ -19,6 +25,12 @@ Column {
         sectionId: "meshmap"
         sectionIcon: "Buildplate"
     }
+    Item {
+        width: 1
+        height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["meshmap"] !== false
+    }
+
     ColumnLayout {
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["meshmap"] !== false
         width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
@@ -60,5 +72,6 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["meshmap"] !== false
     }
 }

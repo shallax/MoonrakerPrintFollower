@@ -37,7 +37,12 @@ Slider {
         return Math.round(valueAt(position));
     }
     function pressIsOnHandle(mouseX) {
-        var centre = leftPadding + visualPosition * availableWidth;
+        // The same formula the handle paints with: availableWidth
+        // minus the handle's own width. The old availableWidth-only
+        // centre drifted up to ~8 px from the painted handle at the
+        // track ends, so a press on the handle's inner half read as
+        // a track jump (the UX re-review's measurement).
+        var centre = leftPadding + visualPosition * (availableWidth - handle.width);
         return Math.abs(mouseX - centre) <= 10 * screenScaleFactor;
     }
 

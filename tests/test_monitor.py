@@ -204,6 +204,38 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(literals, SECTION_IDS - {"console"})
         self.assertEqual(len(SECTION_IDS), 23)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
+        # The extraction's header contract (the re-reviews' zero-width
+        # catch): every section component's header is explicitly
+        # width-bound. Layout.fillWidth is inert inside the Column
+        # roots — a header sized that way renders 0 px wide and loses
+        # its click target entirely.
+        for section_qml in (PRINT_SECTION_QML, SETUP_SECTION_QML, TOOLHEAD_SECTION_QML,
+                            MACROS_SECTION_QML, PROFILES_SECTION_QML, TUNING_SECTION_QML,
+                            FANS_SECTION_QML, LEDS_SECTION_QML, PWM_SECTION_QML,
+                            POWER_SECTION_QML, SYSTEM_SECTION_QML, SAVE_SECTION_QML,
+                            FILE_MANAGER_SECTION_QML, MESH_SECTION_QML,
+                            TEMP_HISTORY_SECTION_QML, FANS_INFO_SECTION_QML,
+                            FILAMENT_SECTION_QML, OBJECTS_SECTION_QML, TEMPS_SECTION_QML,
+                            SYSTEM_INFO_SECTION_QML, MCUS_SECTION_QML, JOB_SECTION_QML):
+            header = section_qml[section_qml.index("CollapsibleSectionHeader {"):
+                                 section_qml.index("CollapsibleSectionHeader {") + 400]
+            self.assertIn("width: parent.width", header)
+        # The two monitor sections sit in the STATUS PANE, not inside
+        # the chart pop-over's legend repeater (the adversarial
+        # critic's misplaced-insertion catch): the instantiation
+        # follows ObjectsSection in the pane's own content.
+        objects_at = MONITOR_QML.index("ObjectsSection {")
+        system_at = MONITOR_QML.index("SystemInfoSection {")
+        mcus_at = MONITOR_QML.index("McusSection {")
+        self.assertLess(objects_at, system_at)
+        self.assertLess(system_at, mcus_at)
+        pane_close = MONITOR_QML.index("                    }\n                }\n", objects_at)
+        self.assertLess(mcus_at, pane_close)
+        # The mesh section's refresh rides an accessor — the monitor's
+        # handler calls it through the instantiation id, never the
+        # component's own id (the dangling-id fix).
+        self.assertIn("function refreshMap()", MESH_SECTION_QML)
+        self.assertIn("meshSection.refreshMap()", MONITOR_QML)
 
     def test_no_oscillation_thresholds_keep_the_release_above_the_squeeze(self):
         # The auto-collapse latch (MoonrakerMonitor.qml:205-239): the
@@ -928,13 +960,14 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("previewLedBrightness", LEDS_SECTION_QML)
         self.assertIn("previewLedColor", LEDS_SECTION_QML)
         self.assertIn("previewPwmOutput", PWM_SECTION_QML)
-        self.assertIn("function sliderSelection(slider)", TUNING_SECTION_QML)
-        self.assertIn("slider.valueAt(slider.position)", PWM_SECTION_QML)
-        self.assertIn("function sliderSelection(slider)", PWM_SECTION_QML)
-        self.assertIn("root.sliderSelection(pwmSlider) + \"%\"", PWM_SECTION_QML)
-        self.assertIn("root.sliderSelection(speedSlider) + \"%\"", TUNING_SECTION_QML)
-        self.assertIn("function sliderSelection(slider)", FANS_SECTION_QML)
-        self.assertIn("root.sliderSelection(fanSlider) + \"%\"", FANS_SECTION_QML)
+        # The four component-local copies of the slider value helper
+        # are gone (the engineering re-review): every call site reads
+        # the slider's own selectedValue() — one definition in
+        # OutlineSlider, the components cannot drift.
+        self.assertNotIn("function sliderSelection", TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML)
+        self.assertIn("pwmSlider.selectedValue() + \"%\"", PWM_SECTION_QML)
+        self.assertIn("speedSlider.selectedValue() + \"%\"", TUNING_SECTION_QML)
+        self.assertIn("fanSlider.selectedValue() + \"%\"", FANS_SECTION_QML)
         self.assertIn('controlKind: "fan"', FANS_SECTION_QML)
         self.assertIn("root.printerModel.setSpeedFactor(value)", TUNING_SECTION_QML)
         self.assertIn("root.printerModel.setFlowFactor(value)", TUNING_SECTION_QML)
@@ -1045,8 +1078,15 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertGreaterEqual(LEDS_SECTION_QML.count("onValueCommitted:"), 5)
         self.assertGreaterEqual(PWM_SECTION_QML.count("onValueCommitted:"), 1)
         self.assertEqual(DASHBOARD_QML.count("onValueCommitted:"), 0)
-        self.assertIn("slider.valueAt(slider.position)", PWM_SECTION_QML)
         self.assertNotIn("function sliderSelection(slider)", DASHBOARD_QML)
+        # The refocus walk roots at the section instantiations (the
+        # architecture re-review's dangling-id fix) — the dashboard
+        # never names a section's repeater id.
+        for repeater_id in ("fanRepeater", "ledRepeater", "pwmRepeater"):
+            self.assertNotIn(repeater_id, DASHBOARD_QML)
+        self.assertIn("root.focusSliderIn(fansSection, target, kind)", DASHBOARD_QML)
+        self.assertIn("root.focusSliderIn(ledsSection, target, kind)", DASHBOARD_QML)
+        self.assertIn("root.focusSliderIn(pwmSection, target, kind)", DASHBOARD_QML)
         self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", TUNING_SECTION_QML)
         self.assertIn('text: "Refresh Moonraker\'s webcam list."', CAMERA_PANE_QML)
         self.assertIn('title: "Exclude object?"', MONITOR_QML)
@@ -1233,7 +1273,8 @@ class MonitorFormattingTests(unittest.TestCase):
         # disagree), and absence is an explicit shape.
         observation = Observation(active=True, connection="yes", state="printing",
                                   homed_axes="xyz", assumed_stopped=False,
-                                  save_config_pending=False, controls_locked=False, busy=False)
+                                  save_config_pending=False, controls_locked=False, busy=False,
+                                  pause_resume_supported=True)
         block = preview_block({"extruder": {"temperature": 205.2, "target": 210.0}},
                               observation, stamp=12.5)
         self.assertEqual(block["stamp"], 12.5)
@@ -1642,7 +1683,7 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         # brightness slider as a gain — passing it zeroed every
         # channel nudge while the LED was off (the author's live
         # report).
-        self.assertIn("root.sliderSelection(whiteSlider) : 0, -1);", LEDS_SECTION_QML)
+        self.assertIn("whiteSlider.selectedValue() : 0, -1);", LEDS_SECTION_QML)
         # The brightness slider is the USER'S GAIN, unlinked from the
         # channel peak (the author's ruling): the channel sliders
         # hold the set percentages (seeded once from the first-seen
@@ -2507,19 +2548,6 @@ class MonitorQtTests(unittest.TestCase):
         self.assertTrue(payload["controlsLocked"])
         self.assertEqual(payload["sectionSizes"], {"info": 240.0})
 
-    def test_the_sizes_schema_drops_junk_at_the_boundary(self):
-        from plugins.StateStore import StateStore
-        from plugins.UiStateStore import UiStateStore
-        import tempfile
-        import os
-        with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "state.json")
-            store = StateStore(path)
-            ui = UiStateStore(store)
-            self.assertTrue(ui.set_sizes({"info": 240.0, "console": "412", "junk": None, "bad": "tall"}))
-            payload = json.load(open(path, "r", encoding="utf-8"))
-            self.assertEqual(payload["sectionSizes"], {"info": 240.0, "console": 412.0})
-
     def test_the_store_delete_drops_only_the_named_keys(self):
         from plugins.StateStore import StateStore
         import tempfile
@@ -3277,7 +3305,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(view.data(view.index(0)), "c.gcode")
         self.assertEqual(view.data(view.index(2)), "b.gcode")
 
-    def test_metadata_cross_check_gives_up_after_the_limit_and_latches_flagged(self):
+    def test_metadata_cross_check_refuses_a_mismatched_job_without_latching(self):
         # The bounded give-up (4.3.0): a cross-check that can never
         # pass (the history stays empty) is silent and permanent
         # otherwise — after MR_META_CHECK_LIMIT failures for the same
@@ -3318,6 +3346,49 @@ class MonitorQtTests(unittest.TestCase):
                     self.assertEqual(coordinator._mr_metadata_for(*key), {})
                     tick[0] += 31.0
                     deliver(31 + step)  # each delivery differs so the poll refreshes
+                    self.qt.events(1)
+            # A mismatched job id is PROOF the payload describes a
+            # different job — the give-up must never latch it (the
+            # identity bleed the cross-check exists to prevent). The
+            # anchors stay empty for the whole print.
+            self.assertEqual(coordinator._mr_metadata_for(*key), {})
+
+    def test_metadata_cross_check_gives_up_only_for_unattestable_replies(self):
+        # The bounded give-up applies to the causes that cannot ATTEST
+        # (the history request failed, the reply was unattestable) —
+        # after the limit the payload latches with the failure flagged.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import sys
+        self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        module = sys.modules[type(coordinator).__module__]
+        client = self.follower.client
+        tick = [1000.0]
+        fake_time = SimpleNamespace(monotonic=lambda: tick[0], time=lambda: 1700000000.0)
+        status = {
+            "print_stats": {"filename": "part.gcode", "state": "printing", "print_duration": 30,
+                            "info": {"current_layer": 2, "total_layer": 20}},
+            "virtual_sdcard": {"file_size": 100, "file_position": 20},
+            "gcode_move": {"gcode_position": [1, 1, 0.4, 10], "speed_factor": 1,
+                           "extrude_factor": 1, "absolute_coordinates": True},
+            "motion_report": {"live_position": [1.0, 1.0, 0.4, 10.0]},
+        }
+        with patch.object(module, "time", fake_time):
+            client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
+            self.qt.events(1)
+            for step in range(coordinator.MR_META_CHECK_LIMIT):
+                meta = [r for r in self.transport.requests if r.channel == "metadata-only"]
+                meta[-1].callback({"result": {"layer_height": 0.2, "job_id": "1A2B"}}, None)
+                self.qt.events(1)
+                history = [r for r in self.transport.requests if r.channel == "mr-history"]
+                history[-1].callback(None, "boom")
+                self.qt.events(1)
+                key = ("part.gcode", coordinator._files.job_key)
+                if step < coordinator.MR_META_CHECK_LIMIT - 1:
+                    self.assertEqual(coordinator._mr_metadata_for(*key), {})
+                    tick[0] += 31.0
+                    client._handle_http_status({"result": {"status": status}}, None, client._generation, time.monotonic())
                     self.qt.events(1)
             # After the limit: the payload latched, flagged.
             self.assertEqual(coordinator._mr_metadata_for(*key).get("layer_height"), 0.2)

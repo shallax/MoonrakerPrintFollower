@@ -32,6 +32,12 @@ class Observation:
     # when the object has not been observed — the rows fall back to
     # the state word with that caveat stated.
     is_paused: Optional[bool] = None
+    # The capability signal (4.3.0): True once the printer's observed
+    # object list CONTAINS pause_resume, False once the list was
+    # observed WITHOUT it, None while the list itself is unseen. On a
+    # printer without the module the pause endpoint does not exist —
+    # absence must fail closed, never fall through to the state word.
+    pause_resume_supported: Optional[bool] = None
 
 
 # The concise disabled reasons (F10): module-level constants — the
@@ -57,6 +63,12 @@ R_PAUSED_NOTE = "Paused — moves run immediately"
 R_NOTHING_TO_PAUSE = "Nothing is printing"
 R_ALREADY_PAUSED = "Print is already paused"
 R_ALREADY_PRINTING = "Print is not paused"
+# The capability refusals (4.3.0, the domain re-review): a printer
+# without the pause_resume module has no pause endpoint, and a
+# CLEAR_PAUSE leaves the state word "paused" while RESUME can never
+# succeed — each gets its own words instead of reusing a false one.
+R_UNSUPPORTED = "Pause is not supported on this printer"
+R_CLEARED_PAUSE = "Paused — this print can't be resumed"
 
 
 # The long tooltip sentences (the UX adjudication: the short form
@@ -75,6 +87,8 @@ REASON_DETAIL = {
     R_NOTHING_TO_PAUSE: "Pause applies to a running print — nothing is printing right now.",
     R_ALREADY_PAUSED: "The print is already paused — the button reads Resume while paused.",
     R_ALREADY_PRINTING: "Resume applies to a paused print — this print is still running.",
+    R_UNSUPPORTED: "This printer has no pause_resume module — Klipper has no pause command to run.",
+    R_CLEARED_PAUSE: "The pause queue was cleared (CLEAR_PAUSE) — Klipper will refuse RESUME for this print.",
 }
 
 
@@ -246,10 +260,16 @@ def can_pause(obs: Observation) -> Verdict:
     if blocked: return Verdict("disabled", blocked)
     if obs.assumed_stopped: return Verdict("disabled", R_ESTOPPED)
     if obs.busy: return Verdict("disabled", R_BUSY)
+    # The capability gate: on a printer without the pause_resume
+    # module the pause endpoint does not exist — absence fails closed
+    # (R_UNSUPPORTED), and an unobserved object list fails closed too
+    # (R_UNKNOWN) until the capability is known.
+    if obs.pause_resume_supported is False: return Verdict("disabled", R_UNSUPPORTED)
+    if obs.pause_resume_supported is None: return Verdict("disabled", R_UNKNOWN)
     paused = obs.is_paused
     if paused is None:
         paused = obs.state == "paused"
-    if paused: return Verdict("disabled", R_ALREADY_PAUSED)
+    if paused or obs.state == "paused": return Verdict("disabled", R_ALREADY_PAUSED)
     if obs.state != "printing": return Verdict("disabled", R_NOTHING_TO_PAUSE)
     return Verdict("allowed", "")
 
@@ -266,8 +286,18 @@ def can_resume(obs: Observation) -> Verdict:
     if blocked: return Verdict("disabled", blocked)
     if obs.assumed_stopped: return Verdict("disabled", R_ESTOPPED)
     if obs.busy: return Verdict("disabled", R_BUSY)
+    # The capability gate, as in can_pause: no module, no resume —
+    # and an unobserved list refuses until it is known.
+    if obs.pause_resume_supported is False: return Verdict("disabled", R_UNSUPPORTED)
+    if obs.pause_resume_supported is None: return Verdict("disabled", R_UNKNOWN)
     paused = obs.is_paused
     if paused is None:
         paused = obs.state == "paused"
-    if not paused: return Verdict("disabled", R_ALREADY_PRINTING)
+    if not paused:
+        if obs.state == "paused":
+            # CLEAR_PAUSE (or a filament-runout pause mid-window): the
+            # state word says paused while the authoritative bit says
+            # RESUME can never succeed — say that, not "not paused".
+            return Verdict("disabled", R_CLEARED_PAUSE)
+        return Verdict("disabled", R_ALREADY_PRINTING)
     return Verdict("allowed", "")

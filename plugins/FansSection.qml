@@ -15,10 +15,6 @@ Column {
     property var frozenItems: []
     property var interactionSink: null
 
-    function sliderSelection(slider) {
-        return Math.round(slider.valueAt(slider.position));
-    }
-
     CollapsibleSectionHeader {
         width: parent.width
         printerModel: root.printerModel
@@ -29,6 +25,7 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["fans"] !== false
     }
     ColumnLayout {
         width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
@@ -51,7 +48,7 @@ Column {
                     UM.Label {
                         width: 52 * screenScaleFactor
                         horizontalAlignment: Text.AlignRight
-                        text: modelData.writable ? root.sliderSelection(fanSlider) + "%" : modelData.percent + "%"
+                        text: modelData.writable ? fanSlider.selectedValue() + "%" : modelData.percent + "%"
                     }
                 }
                 OutlineSlider {
@@ -96,5 +93,6 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["fans"] !== false
     }
 }

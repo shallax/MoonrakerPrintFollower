@@ -13,12 +13,8 @@ Column {
     property var printerModel: null
     property var interactionSink: null
 
-    function sliderSelection(slider) {
-        return Math.round(slider.valueAt(slider.position));
-    }
-
     CollapsibleSectionHeader {
-        Layout.fillWidth: true
+        width: parent.width
         printerModel: root.printerModel
         title: "Live tuning"
         sectionId: "tuning"
@@ -27,6 +23,7 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["tuning"] !== false
     }
 
     ColumnLayout {
@@ -58,7 +55,7 @@ Column {
                     // (the author's live report).
                     width: 52 * screenScaleFactor
                     horizontalAlignment: Text.AlignRight
-                    text: root.sliderSelection(speedSlider) + "%"
+                    text: speedSlider.selectedValue() + "%"
                 }
             }
             OutlineSlider {
@@ -97,7 +94,7 @@ Column {
                 UM.Label {
                     width: 52 * screenScaleFactor
                     horizontalAlignment: Text.AlignRight
-                    text: root.sliderSelection(flowSlider) + "%"
+                    text: flowSlider.selectedValue() + "%"
                 }
             }
             OutlineSlider {
@@ -203,5 +200,6 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["tuning"] !== false
     }
 }

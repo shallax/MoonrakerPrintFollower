@@ -18,6 +18,12 @@ Column {
         sectionId: "system"
         sectionIcon: "Settings"
     }
+    Item {
+        width: 1
+        height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["system"] !== false
+    }
+
     ColumnLayout {
         width: parent.width - UM.Theme.getSize("narrow_margin").width - UM.Theme.getSize("section_icon").width / 2
         anchors.left: parent.left
@@ -102,5 +108,6 @@ Column {
     Item {
         width: 1
         height: UM.Theme.getSize("default_margin").height
+        visible: root.printerModel == null || root.printerModel.sectionExpandedMap["system"] !== false
     }
 }

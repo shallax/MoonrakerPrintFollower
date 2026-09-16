@@ -275,11 +275,11 @@ Component {
         Connections {
             target: root.printer
             function onTypedControlsChanged() {
-                meshMiniMap.refresh();
+                meshSection.refreshMap();
                 // The detail map refreshes via the Connections inside
                 // meshContent — its id is component-scoped and invisible
-                // here; calling it threw ReferenceError and killed this
-                // handler's auto-close before it ever ran.
+                // here; the section exposes its refresh as an accessor
+                // so this handler's auto-close always runs.
                 if (root.printer == null) {
                     root.openPopOver = "";
                 } else if (!root.printer.bedMeshAvailable && root.openPopOver === "mesh") {
@@ -421,6 +421,7 @@ Component {
                         // must contribute nothing so headers stack flush.
                         spacing: 0
                         MeshSection {
+                            id: meshSection
                             Layout.fillWidth: true
                             printerModel: root.printer
                             onPopOverToggleRequested: function (name) {
@@ -1509,6 +1510,15 @@ Component {
                                 excludeObjectDialog.open();
                             }
                         }
+                        SystemInfoSection {
+                            Layout.fillWidth: true
+                            printerModel: root.printer
+                        }
+                        McusSection {
+                            Layout.fillWidth: true
+                            visible: root.printer != null && root.printer.mcuItems.length > 0
+                            printerModel: root.printer
+                        }
                     }
                 }
 
@@ -1717,15 +1727,6 @@ Component {
                                     return "—";
                                 }
                                 color: UM.Theme.getColor("text_inactive")
-                            }
-                            SystemInfoSection {
-                                Layout.fillWidth: true
-                                printerModel: root.printer
-                            }
-                            McusSection {
-                                Layout.fillWidth: true
-                                visible: root.printer != null && root.printer.mcuItems.length > 0
-                                printerModel: root.printer
                             }
                         }
                     }

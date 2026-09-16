@@ -247,11 +247,14 @@ file, never inline content:
 3. The host instantiation is a SIBLING in the pane's content column:
    `FooSection { Layout.fillWidth: true; printerModel: root.printer }`.
    Never nested inside another section's instantiation (valid QML,
-   wrong layout — the adjacency pin catches it). Content never reads
-   the host's ids: cross-surface requests cross the boundary as
-   signals (pop-over toggles, dialog confirmations) or the shared
-   interaction sink. Capability gates (hide when the data is absent)
-   stay on the host instantiation's `visible`.
+   wrong layout — the adjacency pin catches it). The id boundary runs
+   BOTH directions: content never reads the host's ids, AND the host
+   never names the section's ids — it reaches the section through
+   the instantiation id (an accessor function) or a signal. The
+   capability gates (hide while the data is absent, refuse while the
+   permission is absent) ride the SECTION body; the spacer Items are
+   gated on the section's expansion state so a collapsed section
+   contributes nothing.
 
 Then update the pins in `tests/test_monitor.py` in the same commit:
 the `CollapsibleSectionHeader` counts and the `sectionIcon:` counts
@@ -316,10 +319,9 @@ cycle, and mangles values through configparser.
   "toolhead": {...}, "whatsNewSeen": ...}` — the model's save payload
   rewrites these WHOLE top-level keys per save. `temperatureChart` is
   read-only here (it migrated into the per-printer record; the
-  migration deletes the key once). The UI-state store's keys
-  (`sections` — its writer — and the tenth key `sectionSizes`) live
-  as top-level SIBLINGS of these: anything nested inside them gets
-  erased by the next whole-key save. New fields default via
+  migration deletes the key once). The UI-state store's `sections`
+  key lives as a top-level SIBLING of these: anything nested inside
+  it gets erased by the next whole-key save. New fields default via
   `bool(decoded.get(..., False))` and the column config goes through
   `FileManagerPolicy.normalise_columns` (the file manager owns it; the
   model only merges and saves).
