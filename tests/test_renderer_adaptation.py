@@ -206,6 +206,36 @@ class RenderBatchAdaptationTests(unittest.TestCase):
         self.assertIsNone(draw[4])
         self.assertEqual(OpenGL.getInstance().create_calls, [{}])
 
+    def test_the_native_draw_wrapper_builds_the_offset_pointer(self):
+        # The patched code passes the byte offset as an int; the
+        # ctypes prototype demands a pointer. The wrapper must build
+        # it — a plain int is rejected with 'wrong type' (the live
+        # report's crash).
+        import ctypes as c
+        from plugins.RendererAdaptation import _build_native_draw
+        seen = []
+
+        def fake_factory(result, *arg_types):
+            # Mirror CFUNCTYPE's shape: a callable TYPE whose call at
+            # (address) yields the native callable.
+            seen.append(list(arg_types))
+
+            class _Prototype:
+                def __init__(self, address):
+                    self.address = address
+
+                def __call__(self, *args):
+                    seen.append(list(args))
+            return _Prototype
+
+        draw = _build_native_draw(0xCAFE, factory=fake_factory)
+        self.assertIsNotNone(draw)
+        draw(4, 50, 5125, 400)
+        self.assertEqual(seen[0], [c.c_uint, c.c_int, c.c_uint, c.c_void_p])
+        self.assertEqual(seen[1][:3], [4, 50, 5125])
+        self.assertIsInstance(seen[1][3], c.c_void_p)
+        self.assertEqual(seen[1][3].value, 400)
+
     def test_the_counter_wrap_ignores_cached_hits(self):
         mesh = FakeMesh()
         OpenGL.getInstance().createIndexBuffer(mesh)
