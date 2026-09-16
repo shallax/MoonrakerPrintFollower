@@ -1680,6 +1680,27 @@ manager's column UI (visibility + drag re-order) as the interaction
 precedent, and the UI-state store's merge-write path as the persistence
 home. Unplanned until the 4.5.0 physical-head marker ships.
 
+The author's 2026-09-16 backlog for this release (ruled live, in
+order of their report):
+
+- The duplicate temperature entry: one sensor renders twice in the
+  temperature lists (their "Raspberry pi" on voron.athome) — check
+  the auxiliary projection for duplicated object rows on the real
+  printer's data.
+- The Preview card's temp pair uses the arrow between current and
+  desired (the Monitor's arrow form), not "/".
+- The Preview card's ETA text renders in the default text colour,
+  not grey — likewise the "Scale z-max" label and the bed-mesh
+  low/high labels.
+- The pause list inside the card caps at five visible entries and
+  scrolls beyond that; the scrollbar must not overflow the card's
+  content, and up/down affordances show when more entries exist
+  (the what's-new and file-manager pattern).
+- The multi-start pattern (the 2026-09-16 Windows log): three
+  websocket upgrades and two camera relays fired from one plugin
+  instance at startup — find the duplicate start trigger; three
+  live feeds would triple the polling and any leak.
+
 ## 4.5.0 — Physical head in the Preview (moved from 4.3.0)
 
 What a web dashboard cannot do: show the real machine inside the slice.
