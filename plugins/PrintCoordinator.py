@@ -305,6 +305,14 @@ class PrintCoordinator(QObject):
                     self._load_job = None
                     if lease is not None: self._cura.load(lease)
             if self._client.connected:
+                # The retention window's anchor is the LIVE layer,
+                # updated every poll even when already hydrated — the
+                # hydration tuple below carries REQUESTED layers
+                # (prefetch included), which must never anchor the
+                # window.
+                current = self._snapshot.layer.index
+                if isinstance(current, int):
+                    self._index.set_followed_layer(current)
                 self._detail, hydration = self._preview.observe(self._snapshot, self._status, config, view)
                 for layer in hydration: self._index.request_hydration(layer)
             else:
