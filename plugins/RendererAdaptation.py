@@ -66,16 +66,18 @@ _RANGED_DRAW_FRAGMENT = """\
 
 _RANGED_DRAW_REPLACEMENT = """\
         else:
-            # The render-path adaptation: the byte offset into the
-            # full cached buffer selects the range. The pointer is
-            # sip.voidptr — PyQt6's void* type (a ctypes pointer
-            # fails the conversion: 'a 1-dimensional buffer is
-            # required', the live report's crash).
-            _mpf_offset = _mpf_offset_ptr(self._render_range[0] * 4)
-            if self._render_mode == self.RenderMode.Triangles:
-                self._gl.glDrawRangeElements(self._render_mode, self._render_range[0], self._render_range[1], self._render_range[1] - self._render_range[0], self._gl.GL_UNSIGNED_INT, _mpf_offset)
-            else:
-                self._gl.glDrawElements(self._render_mode, self._render_range[1] - self._render_range[0], self._gl.GL_UNSIGNED_INT, _mpf_offset)"""
+            # The render-path adaptation: PyQt's glDrawElements binding
+            # models `indices` as an array (PYQT_OPENGL_ARRAY) and
+            # cannot express the bound-EBO byte-offset form — call the
+            # native entry point instead, so the full cached index
+            # buffer serves every range (the 5.13.0 Uranium comment
+            # admits the clipped-upload workaround). glDrawElements
+            # covers the triangle range too; glDrawRangeElements was
+            # only a hint.
+            _mpf_draw_elements(self._render_mode,
+                               self._render_range[1] - self._render_range[0],
+                               self._gl.GL_UNSIGNED_INT,
+                               self._render_range[0] * 4)"""
 
 # SimulationPass.render, the per-frame prev_line_types build.
 _PREV_LINE_TYPES_FRAGMENT = """\
@@ -104,17 +106,35 @@ _PREV_LINE_TYPES_REPLACEMENT = """\
                 layer_data._attributes["prev_line_types"] =  {'opengl_type': 'float', 'value': prev_line_types, 'opengl_name': 'a_prev_line_type'}"""
 
 
-def _offset_pointer(offset: int):
-    """A PyQt6.sip.voidptr for the byte offset — PyQt6's void* type
-    (sip is not a top-level module there). The import stays inside the
-    helper so this module still loads on hosts without PyQt6 (the
-    tests import it)."""
-    from PyQt6 import sip
-    # Sized so the binding's converter accepts it: an unsized voidptr
-    # raises IndexError('object has an unknown size') at draw time.
-    # The size is arbitrary — only the stored address (the byte
-    # offset) reaches OpenGL.
-    return sip.voidptr(offset, 1)
+def _resolve_native_draw_elements():
+    """The native glDrawElements for Cura's CURRENT OpenGL context.
+
+    PyQt exposes QOpenGLFunctions.glDrawElements' indices argument as
+    PYQT_OPENGL_ARRAY, so the bound-EBO byte-offset form cannot be
+    expressed through the wrapper (the live-verified binding verdict:
+    ctypes and sip pointer representations were all rejected). The
+    native entry point resolved from Qt's own context sees the exact
+    EBO QOpenGLBuffer.bind() just bound. Returns a ctypes callable, or
+    None when no context is current or the symbol cannot resolve —
+    the patch applies only with a working pointer.
+    """
+    from PyQt6.QtGui import QOpenGLContext
+    context = QOpenGLContext.currentContext()
+    if context is None:
+        return None
+    pointer = context.getProcAddress(b"glDrawElements")
+    try:
+        address = int(pointer)
+    except (TypeError, ValueError):
+        address = 0
+    if not address:
+        return None
+    factory = ctypes.WINFUNCTYPE if sys.platform == "win32" else ctypes.CFUNCTYPE
+    prototype = factory(None, ctypes.c_uint, ctypes.c_int, ctypes.c_uint, ctypes.c_void_p)
+    try:
+        return prototype(address)
+    except (AttributeError, TypeError):
+        return None
 
 
 def patch_method(func, pairs, inject=None):
@@ -174,14 +194,12 @@ def _wrap_index_creation_counter(OpenGL) -> None:
     OpenGL.createIndexBuffer = counted
 
 
-def _patch_render_batch(RenderBatch, OpenGL, offset_ptr=None) -> bool:
-    if offset_ptr is None:
-        offset_ptr = _offset_pointer
+def _patch_render_batch(RenderBatch, OpenGL, draw) -> bool:
     patched = patch_method(
         RenderBatch._renderItem,
         [(_RANGED_BUFFER_FRAGMENT, _RANGED_BUFFER_REPLACEMENT),
          (_RANGED_DRAW_FRAGMENT, _RANGED_DRAW_REPLACEMENT)],
-        inject={"ctypes": ctypes, "_mpf_offset_ptr": offset_ptr},
+        inject={"ctypes": ctypes, "_mpf_draw_elements": draw},
     )
     if patched is None:
         return False
@@ -224,18 +242,43 @@ def _schedule_simulation_pass(retries: int = 20) -> None:
     attempt(retries)
 
 
+def _schedule_render_batch(RenderBatch, OpenGL, retries: int = 30) -> None:
+    """Apply the ranged-buffer patch once the native glDrawElements
+    resolves. The pointer comes from the CURRENT OpenGL context, which
+    does not exist at plugin load — retry until Cura's renderer
+    initialises it. No resolution, no patch: the patched code can
+    never hit an unresolvable draw."""
+    from PyQt6.QtCore import QTimer
+
+    def attempt(remaining: int) -> None:
+        draw = _resolve_native_draw_elements()
+        if draw is None:
+            if remaining:
+                QTimer.singleShot(2000, lambda: attempt(remaining - 1))
+            else:
+                _log("skipped RenderBatch: the native glDrawElements never resolved "
+                     "(no current OpenGL context)")
+            return
+        try:
+            if _patch_render_batch(RenderBatch, OpenGL, draw):
+                _log("applied RenderBatch: ranged draws reuse the full cached index buffer "
+                     "through the native glDrawElements")
+            else:
+                _log("skipped RenderBatch: source mismatch (version gate)")
+        except Exception as exc:
+            _log(f"skipped RenderBatch: patch error {exc!r}")
+
+    attempt(retries)
+
+
 def apply_renderer_adaptations() -> None:
     """The plugin's entry: patch what the installed Cura matches, log
     each outcome, and never fail the plugin."""
-    # The index-buffer reuse patch stays DISABLED (the binding's
-    # verdict): PyQt6 6.6 converts glDrawElements' void* argument
-    # through the buffer protocol, and every representation of a raw
-    # byte offset was rejected in turn (ctypes pointer: '1-dimensional
-    # buffer required'; unsized voidptr: 'unknown size'; sized
-    # voidptr: 'buffer type is not the same as the array type'). The
-    # binding cannot carry a pointer VALUE, so ranged draws cannot
-    # address the full cached buffer by offset. The machinery stays
-    # for a future binding that can.
-    _log("skipped RenderBatch: the PyQt6 6.6 binding cannot pass a byte offset "
-         "through glDrawElements' void* argument (the live-verified verdict)")
+    try:
+        from UM.View.RenderBatch import RenderBatch
+        from UM.View.GL.OpenGL import OpenGL
+    except Exception as exc:
+        _log(f"skipped: UM render imports unavailable: {exc!r}")
+        return
+    _schedule_render_batch(RenderBatch, OpenGL)
     _schedule_simulation_pass()

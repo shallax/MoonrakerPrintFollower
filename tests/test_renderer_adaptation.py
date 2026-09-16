@@ -37,15 +37,13 @@ class FakeRenderMode:
     Lines = 1
 
 
-class FakeVoidPtr:
-    """The test stand-in for sip.voidptr — carries the pointer value."""
-
-    def __init__(self, value):
-        self.value = value
+# The test stand-in for the resolved native glDrawElements: the patched
+# ranged branch calls it instead of the PyQt wrapper.
+native_draw_calls = []
 
 
-def fake_offset_ptr(offset):
-    return FakeVoidPtr(offset)
+def fake_native_draw(mode, count, element_type, byte_offset):
+    native_draw_calls.append((mode, count, element_type, byte_offset))
 
 
 class FakeIndexBuffer:
@@ -171,9 +169,10 @@ class RenderBatchAdaptationTests(unittest.TestCase):
         OpenGL.create_calls = []
         OpenGL.create_count = 0
         COUNTERS["index_buffers_created"][0] = 0
+        native_draw_calls.clear()
         self.original = FakeRenderBatch._renderItem
         self.addCleanup(lambda: setattr(FakeRenderBatch, "_renderItem", self.original))
-        self.assertTrue(_patch_render_batch(FakeRenderBatch, OpenGL, offset_ptr=fake_offset_ptr))
+        self.assertTrue(_patch_render_batch(FakeRenderBatch, OpenGL, draw=fake_native_draw))
 
     def test_ranged_draws_use_the_cached_buffer_and_a_byte_offset(self):
         batch = FakeRenderBatch()
@@ -182,14 +181,10 @@ class RenderBatchAdaptationTests(unittest.TestCase):
         batch._renderItem({"mesh": mesh})
         # No force_recreate: the full cached buffer serves the range.
         self.assertEqual(OpenGL.getInstance().create_calls, [{}])
-        draw = batch._gl.draws[0]
-        self.assertEqual(draw[0], "elements")
-        self.assertEqual(draw[2], 50)
-        self.assertIsInstance(draw[3], int)
-        # The byte offset selects the range: start * 4 for uint32.
-        offset = draw[4]
-        self.assertIsInstance(offset, FakeVoidPtr)
-        self.assertEqual(offset.value, 100 * 4)
+        # The native draw receives the count and the byte offset
+        # (start * 4 for uint32 indices) — the PyQt wrapper never
+        # sees the ranged draw at all.
+        self.assertEqual(native_draw_calls, [(FakeRenderMode.Lines, 50, FakeGL.GL_UNSIGNED_INT, 100 * 4)])
 
     def test_thousands_of_frames_create_one_buffer(self):
         # The acceptance in miniature: repeated ranged renders of a
@@ -200,7 +195,7 @@ class RenderBatchAdaptationTests(unittest.TestCase):
         for _ in range(200):
             batch._renderItem({"mesh": mesh})
         self.assertEqual(OpenGL.getInstance().create_count, 1)
-        self.assertEqual(len(batch._gl.draws), 200)
+        self.assertEqual(len(native_draw_calls), 200)
 
     def test_full_batch_draws_are_untouched(self):
         batch = FakeRenderBatch()

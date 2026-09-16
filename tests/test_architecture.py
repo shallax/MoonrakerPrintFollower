@@ -336,6 +336,7 @@ class SourceContractTests(unittest.TestCase):
             "QFontMetrics": "QtGui",
             "QGuiApplication": "QtGui",
             "QImage": "QtGui",
+            "QOpenGLContext": "QtGui",
             "QPixmap": "QtGui",
             "QPainter": "QtGui",
             "QColorConstants": "QtGui",
