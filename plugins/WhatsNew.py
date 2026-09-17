@@ -57,9 +57,10 @@ WHATS_NEW: Tuple[dict, ...] = (
             "instead of silently discarding the change.",
             "Open Browser after an upload now actually opens the "
             "browser.",
-            "Memory diagnostics (a toggle on the Diagnostics page) log "
-            "the process size and the fastest-growing allocations once "
-            "a minute, so a memory climb can be tracked down.",
+            "Memory diagnostics (toggles on the Diagnostics page) log "
+            "the physical footprint, QML and collection growth, and "
+            "camera gauges every ten seconds, with a separate Python "
+            "allocation trace, so a memory climb can be tracked down.",
         ),
     },
     {

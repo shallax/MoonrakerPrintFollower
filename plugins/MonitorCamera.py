@@ -116,6 +116,7 @@ class MonitorCamera(QObject):
             config.camera_mirror,
             config.url,
             self._data.active,
+            config.camera_disabled,
         )
         if key == self._key:
             return
@@ -148,6 +149,11 @@ class MonitorCamera(QObject):
                 stream = ""
         self._url = urljoin(config.url.rstrip("/") + "/", stream) if stream and self._data.active else ""
         self._url = self._bridge_url(config, self._url)
+        if config.camera_disabled:
+            # The diagnostics kill-switch: no stream URL, so Cura's
+            # loader never fetches — the leak-battery's camera-off
+            # condition, without touching the printer.
+            self._url = ""
         if self._url != self._last_url_logged:
             # The first-load failures were invisible in the logs: the
             # stream decision (direct vs bridged vs none) logs here so

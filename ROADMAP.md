@@ -1476,6 +1476,21 @@ its start; both former smoking-gun allocations release in-run), the
 (the vanished-toolhead regression), and a refused settings save is
 now visible in the dialog and logged with its reason.
 
+The leak hunt closed with the instrument it produced. The probe's
+first axis (macOS resident RSS) hides climbs behind the compressor,
+so it gained the physical footprint (proc_pid_rusage), the live
+print layer, camera-stream gauges, and a self-describing QML census.
+Four complete soaks — including a 53-minute camera-streaming run
+that relayed ~6 GB of MJPEG — end at their baselines: the footprint
+climbs in steps and returns in lumps (single releases of 150-185
+MB), reclaimable high-water physics, not a leak. The early alarming
+slopes were inflated by the minute-ly tracemalloc snapshots
+(trace-on runs drift ~30 MB/min against ~5 MB/min trace-free), so
+the Python trace is now a separate opt-in toggle, and a camera
+kill-switch toggle completes the isolation battery without touching
+the printer. The bridge also gained a bytesWritten re-drain: a
+main-thread stall used to freeze the camera feed permanently.
+
 The 2026-09-14 re-sequencing inserted this release: the presentation
 debt gets a bounded delivery of its own instead of compounding under
 the physical-head feature. The review's F07 plus F06's structural

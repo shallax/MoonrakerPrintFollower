@@ -79,6 +79,7 @@ class PrinterConfigTests(unittest.TestCase):
             "trace_layer": False,
             "trace_http": False,
             "memory_diagnostics_log": False,
+            "memory_diagnostics_trace": False,
         }
         for field, key in PrinterConfigStore.LEGACY_MAP.items():
             prefs.values[key] = defaults[field]
@@ -258,10 +259,14 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertIn('"trace_layer": layerTraceBox.checked', config)
         self.assertIn('"trace_http": httpTraceBox.checked', config)
         self.assertIn('"memory_diagnostics_log": memoryDiagnosticsBox.checked', config)
+        self.assertIn('"memory_diagnostics_trace": memoryDiagnosticsTraceBox.checked', config)
+        self.assertIn('"camera_disabled": cameraDisabledBox.checked', config)
         action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
         self.assertIn('"trace_layer": bool(raw.get("trace_layer", False))', action)
         self.assertIn('"trace_http": bool(raw.get("trace_http", False))', action)
         self.assertIn('"memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False))', action)
+        self.assertIn('"memory_diagnostics_trace": bool(raw.get("memory_diagnostics_trace", False))', action)
+        self.assertIn('"camera_disabled": bool(raw.get("camera_disabled", False))', action)
 
     def test_settings_tab_lists_diagnostic_traces(self):
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()

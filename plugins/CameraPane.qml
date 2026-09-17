@@ -140,6 +140,15 @@ Cura.RoundedRectangle {
                 onSourceChanged: {
                     if (visible && source !== "") {
                         start();
+                    } else {
+                        // An emptied source must stop the consumer too:
+                        // the diagnostics kill-switch publishes a blank
+                        // URL, and without this the loader keeps its
+                        // old connection alive (relays=1 forever) and
+                        // keeps decoding — the camera path is only half
+                        // disabled. The reviewer's precondition for the
+                        // phased battery: relays must reach 0.
+                        stop();
                     }
                 }
 

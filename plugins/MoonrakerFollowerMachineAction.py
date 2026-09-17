@@ -153,6 +153,14 @@ class MoonrakerFollowerMachineAction(MachineAction):
     def settingsMemoryDiagnosticsLog(self) -> bool:
         return self._config().memory_diagnostics_log
 
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsCameraDisabled(self) -> bool:
+        return self._config().camera_disabled
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsMemoryDiagnosticsTrace(self) -> bool:
+        return self._config().memory_diagnostics_trace
+
     @pyqtProperty(str, notify=settingsChanged)
     def settingsAuxInterval(self) -> str:
         return str(self._config().aux_interval_ms)
@@ -398,6 +406,8 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "trace_layer": bool(raw.get("trace_layer", False)),
                 "trace_http": bool(raw.get("trace_http", False)),
                 "memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False)),
+                "memory_diagnostics_trace": bool(raw.get("memory_diagnostics_trace", False)),
+                "camera_disabled": bool(raw.get("camera_disabled", False)),
                 "feed_mode": feed_mode,
                 "follow_mode": mode,
                 "frontend_url": str(raw.get("frontend_url") or "").strip(),

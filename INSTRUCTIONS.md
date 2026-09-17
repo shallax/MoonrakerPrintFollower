@@ -558,6 +558,14 @@ smoothing analysis. It is off by default; set the
 the next plugin start. Used to diagnose path-end stalls and smoothing
 regressions on real printers; not needed in ordinary operation.
 
+The settings' Diagnostics tab drives `LeakProbe`: the main toggle arms a
+10-second sampler to `~/moonraker_leak.log` (physical footprint, resident
+size, stage, layer and camera gauges each tick, plus QML class diffs and
+plugin collection sizes), the Python allocation trace is a separate
+heavier opt-in sampled once a minute, and the camera kill-switch stops
+the stream for isolation tests. Used for leak hunts and field reports;
+not needed in ordinary operation.
+
 ## Release gates
 
 Local (also run by the pre-commit hook):
