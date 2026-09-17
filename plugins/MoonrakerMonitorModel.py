@@ -76,7 +76,7 @@ from .WhatsNew import entries as whats_new_entries, latest_version as whats_new_
 # writes on unregistered keys depending on version, and only persists on
 # Cura's own save cycle, so the state has proven unreliable there. The
 # file name predates the extra fields and stays for continuity.
-SECTIONS_FILE_NAME = "moonraker_print_follower_sections.json"
+SECTIONS_FILE_NAME = "moonrakerprintfollower_sections.json"
 
 # The console pane's user-set height, in screen-scaled pixels; 0 means
 # "never dragged" and renders at the pane's own default size. The model

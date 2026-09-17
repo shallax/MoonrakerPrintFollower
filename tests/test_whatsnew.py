@@ -104,7 +104,7 @@ class WhatsNewSeedTests(unittest.TestCase):
         # this pin keeps the seed on the shipped version.
         seed = json.loads(
             (ROOT / "tests/harness/config/config/cura/5.13"
-             / "moonraker_print_follower_sections.json").read_text(encoding="utf-8"))
+             / "moonrakerprintfollower_sections.json").read_text(encoding="utf-8"))
         self.assertEqual(seed["whatsNewSeen"], latest_version())
         self.assertFalse(should_show(seed["whatsNewSeen"]))
 
