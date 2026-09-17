@@ -121,7 +121,13 @@ class PrinterBinding(QObject):
         # do not reconfigure/restart the Moonraker client just because a dropdown
         # changed.
         self._store.set(config)  # live identity (see config())
-        if camera_changed:
+        if not console_only:
+            # Every settings save flushes Cura's preference file
+            # synchronously: quitting right after saving used to lose
+            # the save, because Cura's own exit flush never got the
+            # chance (the live report: several seconds of lag before
+            # the settings reached the disk). Console transcript
+            # persists stay on their own throttled flush.
             self._flush_preferences()
         if camera_only or console_only:
             if console_only:
