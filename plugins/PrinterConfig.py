@@ -320,31 +320,31 @@ class PrinterConfig:
 class PrinterConfigStore:
     """Persist all Moonraker settings against Cura's machine instance."""
 
-    PREF_KEY = "moonraker_print_follower/printer_configs_v1"
-    MIGRATED_KEY = "moonraker_print_follower/printer_configs_migrated_v1"
+    PREF_KEY = "moonrakerprintfollower/printer_configs_v1"
+    MIGRATED_KEY = "moonrakerprintfollower/printer_configs_migrated_v1"
 
     # The separate Moonraker Connection plugin stores its per-printer settings
     # here. Import those values once so uninstalling the old plugin does not make
     # users re-enter their connection and upload configuration.
     MOONRAKER_CONNECTION_PREF_KEY = "moonraker/instances"
     MOONRAKER_CONNECTION_MIGRATED_KEY = (
-        "moonraker_print_follower/moonraker_connection_migrated_v1"
+        "moonrakerprintfollower/moonraker_connection_migrated_v1"
     )
 
     LEGACY_MAP = {
-        "enabled": "moonraker_print_follower/enabled",
-        "url": "moonraker_print_follower/url",
-        "api_key": "moonraker_print_follower/api_key",
-        "poll_interval_ms": "moonraker_print_follower/poll_interval_ms",
-        "moonraker_layer_is_one_based": "moonraker_print_follower/moonraker_layer_is_one_based",
-        "auto_preview": "moonraker_print_follower/auto_preview",
-        "z_fallback": "moonraker_print_follower/z_fallback",
-        "z_tolerance": "moonraker_print_follower/z_tolerance",
-        "trace_layer": "moonraker_print_follower/trace_layer",
-        "trace_http": "moonraker_print_follower/trace_http",
-        "memory_diagnostics_log": "moonraker_print_follower/memory_diagnostics_log",
-        "memory_diagnostics_trace": "moonraker_print_follower/memory_diagnostics_trace",
-        "path_follow": "moonraker_print_follower/path_follow",
+        "enabled": "moonrakerprintfollower/enabled",
+        "url": "moonrakerprintfollower/url",
+        "api_key": "moonrakerprintfollower/api_key",
+        "poll_interval_ms": "moonrakerprintfollower/poll_interval_ms",
+        "moonraker_layer_is_one_based": "moonrakerprintfollower/moonraker_layer_is_one_based",
+        "auto_preview": "moonrakerprintfollower/auto_preview",
+        "z_fallback": "moonrakerprintfollower/z_fallback",
+        "z_tolerance": "moonrakerprintfollower/z_tolerance",
+        "trace_layer": "moonrakerprintfollower/trace_layer",
+        "trace_http": "moonrakerprintfollower/trace_http",
+        "memory_diagnostics_log": "moonrakerprintfollower/memory_diagnostics_log",
+        "memory_diagnostics_trace": "moonrakerprintfollower/memory_diagnostics_trace",
+        "path_follow": "moonrakerprintfollower/path_follow",
     }
     LEGACY_DEFAULTS = {
         "enabled": False,

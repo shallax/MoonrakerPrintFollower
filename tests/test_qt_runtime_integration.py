@@ -100,7 +100,7 @@ class QtRuntimeTests(unittest.TestCase):
     def test_full_follower_bootstrap_migrates_before_first_connection(self):
         prefs = Preferences({
             "moonraker/instances": json.dumps({"A": {"url": "http://imported", "api_key": "import-key"}}),
-            "moonraker_print_follower/printer_configs_v1": json.dumps({"A": {"feed_mode": "http"}}),
+            "moonrakerprintfollower/printer_configs_v1": json.dumps({"A": {"feed_mode": "http"}}),
         })
         app, follower, transport = self.follower(preferences=prefs)
         self.assertEqual(transport.identity, ("http://imported", "import-key"))
@@ -262,8 +262,8 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(obs.homed_axes, "xyz")
 
     def test_unknown_machine_migration_is_retried_when_stack_appears(self):
-        prefs = Preferences({"moonraker_print_follower/url": "http://legacy",
-                             "moonraker_print_follower/enabled": True})
+        prefs = Preferences({"moonrakerprintfollower/url": "http://legacy",
+                             "moonrakerprintfollower/enabled": True})
         app, follower, transport = self.follower(preferences=prefs, machine=False)
         key = self.qt.load("PrinterConfig").PrinterConfigStore.MIGRATED_KEY
         self.assertFalse(prefs.getValue(key))
@@ -374,7 +374,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(transport.identity[0], "http://printer-b")
 
     def test_same_endpoint_machine_switch_still_invalidates_generation(self):
-        prefs = Preferences({"moonraker_print_follower/printer_configs_v1": json.dumps({
+        prefs = Preferences({"moonrakerprintfollower/printer_configs_v1": json.dumps({
             "A": {"url": "http://same"}, "B": {"url": "http://same"}})})
         app, follower, transport = self.follower(preferences=prefs)
         generation = follower.session.generation

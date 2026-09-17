@@ -9,8 +9,8 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 class BedMeshPresenter(QObject):
     changed = pyqtSignal()
-    PREF_KEY = "moonraker_print_follower/bed_mesh_visible"
-    EXAGGERATION_PREF_KEY = "moonraker_print_follower/bed_mesh_exaggeration"
+    PREF_KEY = "moonrakerprintfollower/bed_mesh_visible"
+    EXAGGERATION_PREF_KEY = "moonrakerprintfollower/bed_mesh_exaggeration"
     DEFAULT_EXAGGERATION = 20.0
     MAX_EXAGGERATION = 1000.0
 
