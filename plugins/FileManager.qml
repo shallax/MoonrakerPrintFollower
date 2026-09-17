@@ -2271,10 +2271,40 @@ Item {
                                 id: columnsPopup
                                 objectName: "columnsPopup"
                                 property bool wasOpenAtPress: false
+                                // The drag state and its proxy commit (the
+                                // shared row emits deltas; this host owns
+                                // the visual proxy and the one commit).
+                                property int dragIndex: -1
+                                property string dragTitle: ""
+                                property real dragOffset: 0
+                                function columnDragDelta(id, delta) {
+                                    if (dragIndex === -1) {
+                                        dragIndex = root.columnOrderList().indexOf(id);
+                                        dragTitle = id;
+                                        dragOffset = 0;
+                                    }
+                                    dragOffset += delta;
+                                    columnDragProxy.y = dragIndex * 32 * screenScaleFactor + dragOffset;
+                                }
+                                function columnDragCommit() {
+                                    if (dragIndex === -1) {
+                                        return;
+                                    }
+                                    var steps = Math.round(dragOffset / (32 * screenScaleFactor));
+                                    var id = root.columnOrderList()[dragIndex];
+                                    dragIndex = -1;
+                                    dragOffset = 0;
+                                    if (steps !== 0) {
+                                        root.moveColumn(id, steps);
+                                    }
+                                }
                                 x: 0
                                 y: parent.height
                                 padding: 0
-                                closePolicy: Popup.CloseOnEscape | Popup.CloseOnReleaseOutside
+                                // Outside-release dismissal would kill a
+                                // mid-gesture drag; Esc keeps the escape
+                                // hatch (the security round's finding).
+                                closePolicy: Popup.CloseOnEscape
                                 // The themed surface, like every other
                                 // popup in the card (the live
                                 // report: the default background was a
@@ -2291,100 +2321,49 @@ Item {
                                     bottomPadding: UM.Theme.getSize("narrow_margin").height
                                     Repeater {
                                         model: root.columnOrderList()
-                                        Item {
+                                        SectionConfigureRow {
                                             width: parent.width
-                                            height: 32 * screenScaleFactor
-                                            // A click anywhere on the
-                                            // row toggles the column;
-                                            // the arrow labels keep
-                                            // their own clicks. The
-                                            // fill MouseArea is a
-                                            // SIBLING of the Row, not
-                                            // a child — an anchored
-                                            // child disables the
-                                            // positioner.
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: {
-                                                    if (root.printerModel != null) {
-                                                        root.printerModel.setFileColumnVisible(modelData, !root.columnVisible(modelData));
-                                                    }
+                                            rowId: modelData
+                                            rowTitle: modelData
+                                            rowVisible: root.columnVisible(modelData)
+                                            rowAtTop: index === 0
+                                            rowAtBottom: index === root.columnOrderList().length - 1
+                                            onToggleRequested: {
+                                                if (root.printerModel != null) {
+                                                    root.printerModel.setFileColumnVisible(modelData, !root.columnVisible(modelData));
                                                 }
                                             }
-                                            Row {
-                                                anchors.fill: parent
-                                                leftPadding: 12 * screenScaleFactor
-                                                rightPadding: 8 * screenScaleFactor
-                                                spacing: 8 * screenScaleFactor
-                                                // The grid: the
-                                                // checkbox owns its
-                                                // column, the name
-                                                // takes the rest, the
-                                                // arrows their slots
-                                                // — padded so nothing
-                                                // can overlap.
-                                                // A REAL checkbox: a
-                                                // bordered square that
-                                                // fills blue with a white
-                                                // tick when checked —
-                                                // the bare tick was too
-                                                // small and blue to read
-                                                // either state.
-                                                Rectangle {
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    width: 20 * screenScaleFactor
-                                                    height: 20 * screenScaleFactor
-                                                    radius: 4 * screenScaleFactor
-                                                    color: root.columnVisible(modelData) ? UM.Theme.getColor("primary") : UM.Theme.getColor("main_background")
-                                                    border.color: root.columnVisible(modelData) ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
-                                                    border.width: UM.Theme.getSize("default_lining").width
-                                                    UM.Label {
-                                                        anchors.centerIn: parent
-                                                        text: root.columnVisible(modelData) ? "✓" : ""
-                                                        color: UM.Theme.getColor("main_background")
-                                                        font: UM.Theme.getFont("medium_bold")
-                                                    }
-                                                }
-                                                UM.Label {
-                                                    width: parent.width - (20 + 28 + 28) * screenScaleFactor - 3 * parent.spacing - parent.leftPadding - parent.rightPadding
-                                                    height: parent.height
-                                                    verticalAlignment: Text.AlignVCenter
-                                                    text: modelData
-                                                    elide: Text.ElideRight
-                                                }
-                                                UM.Label {
-                                                    width: 28 * screenScaleFactor
-                                                    height: parent.height
-                                                    verticalAlignment: Text.AlignVCenter
-                                                    horizontalAlignment: Text.AlignHCenter
-                                                    // The top row has no up
-                                                    // arrow, the bottom row
-                                                    // no down arrow.
-                                                    text: index === 0 ? "" : "▲"
-                                                    color: UM.Theme.getColor("primary")
-                                                    MouseArea {
-                                                        anchors.fill: parent
-                                                        cursorShape: Qt.PointingHandCursor
-                                                        enabled: index > 0
-                                                        onClicked: root.moveColumn(modelData, -1)
-                                                    }
-                                                }
-                                                UM.Label {
-                                                    width: 28 * screenScaleFactor
-                                                    height: parent.height
-                                                    verticalAlignment: Text.AlignVCenter
-                                                    horizontalAlignment: Text.AlignHCenter
-                                                    text: index === root.columnOrderList().length - 1 ? "" : "▼"
-                                                    color: UM.Theme.getColor("primary")
-                                                    MouseArea {
-                                                        anchors.fill: parent
-                                                        cursorShape: Qt.PointingHandCursor
-                                                        enabled: index < root.columnOrderList().length - 1
-                                                        onClicked: root.moveColumn(modelData, 1)
-                                                    }
-                                                }
+                                            onMoveRequested: function (steps) {
+                                                root.moveColumn(modelData, steps);
                                             }
+                                            onDragMoved: function (delta) {
+                                                columnsPopup.columnDragDelta(modelData, delta);
+                                            }
+                                            onDragReleased: columnsPopup.columnDragCommit()
+                                        }
+                                    }
+
+                                    // The drag proxy: the handle gesture
+                                    // moves this visual copy; the list
+                                    // rebuilds once, on release (the
+                                    // documented Repeater trap). Hidden
+                                    // via opacity, never a literal
+                                    // visible: false.
+                                    Rectangle {
+                                        id: columnDragProxy
+                                        opacity: columnsPopup.dragIndex !== -1 ? 1 : 0
+                                        width: parent.width
+                                        height: 32 * screenScaleFactor
+                                        radius: 2
+                                        color: UM.Theme.getColor("setting_category_hover")
+                                        z: 10
+                                        UM.Label {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 12 * screenScaleFactor
+                                            text: columnsPopup.dragTitle
+                                            verticalAlignment: Text.AlignVCenter
+                                            elide: Text.ElideRight
+                                            font: UM.Theme.getFont("default")
                                         }
                                     }
                                 }

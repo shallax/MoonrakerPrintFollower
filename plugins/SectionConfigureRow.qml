@@ -15,6 +15,10 @@ Item {
     property string rowId: ""
     property string rowTitle: ""
     property bool rowVisible: true
+    // The edge rows hide the arrow that would move past the end (the
+    // column popup's own idiom; the pane popups pass false).
+    property bool rowAtTop: false
+    property bool rowAtBottom: false
 
     signal toggleRequested
     signal moveRequested(int steps)
@@ -96,17 +100,25 @@ Item {
             }
         }
 
-        // The drawn checkbox: filled = visible, the column popup's
-        // exact vocabulary (an eye would fork two idioms).
+        // The drawn checkbox: a bordered square that fills with a
+        // tick when visible — the column popup's exact vocabulary,
+        // kept verbatim so the retrofit never restyles a live surface
+        // (an eye would fork two idioms).
         Rectangle {
             id: checkboxBox
-            width: 16 * screenScaleFactor
-            height: width
+            width: 20 * screenScaleFactor
+            height: 20 * screenScaleFactor
             y: (parent.height - height) / 2
-            radius: 2
-            color: rowRoot.rowVisible ? UM.Theme.getColor("primary") : "transparent"
-            border.color: UM.Theme.getColor("lining")
+            radius: 4 * screenScaleFactor
+            color: rowRoot.rowVisible ? UM.Theme.getColor("primary") : UM.Theme.getColor("main_background")
+            border.color: rowRoot.rowVisible ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
             border.width: UM.Theme.getSize("default_lining").width
+            UM.Label {
+                anchors.centerIn: parent
+                text: rowRoot.rowVisible ? "✓" : ""
+                color: UM.Theme.getColor("main_background")
+                font: UM.Theme.getFont("medium_bold")
+            }
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
@@ -125,29 +137,31 @@ Item {
 
         UM.Label {
             id: arrowUp
-            text: "▲"
+            text: rowRoot.rowAtTop ? "" : "▲"
             width: 20 * screenScaleFactor
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             height: parent.height
-            color: UM.Theme.getColor("text")
+            color: UM.Theme.getColor("primary")
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
+                enabled: !rowRoot.rowAtTop
                 onClicked: rowRoot.moveRequested(-1)
             }
         }
         UM.Label {
             id: arrowDown
-            text: "▼"
+            text: rowRoot.rowAtBottom ? "" : "▼"
             width: 20 * screenScaleFactor
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             height: parent.height
-            color: UM.Theme.getColor("text")
+            color: UM.Theme.getColor("primary")
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
+                enabled: !rowRoot.rowAtBottom
                 onClicked: rowRoot.moveRequested(1)
             }
         }
