@@ -1,0 +1,44 @@
+import QtQuick 2.15
+import QtQuick.Layouts 1.3
+import UM 1.5 as UM
+
+// The shared all/none three-state selector (the author's live
+// ruling): the row selector's vocabulary — empty, a dash for
+// mixed, a tick for all. View-only: the host owns the counts and
+// the action; a click emits toggled.
+Row {
+    id: selectorRoot
+    spacing: UM.Theme.getSize("narrow_margin").width
+
+    property int total: 0
+    property int visibleCount: 0
+
+    signal toggled
+
+    Rectangle {
+        width: 16 * screenScaleFactor
+        height: 16 * screenScaleFactor
+        anchors.verticalCenter: parent.verticalCenter
+        radius: 2 * screenScaleFactor
+        border.color: UM.Theme.getColor("lining")
+        border.width: UM.Theme.getSize("default_lining").width
+        color: selectorRoot.visibleCount > 0 && selectorRoot.visibleCount < selectorRoot.total ? UM.Theme.getColor("primary") : "transparent"
+        UM.Label {
+            visible: selectorRoot.visibleCount !== selectorRoot.total
+            anchors.centerIn: parent
+            text: selectorRoot.visibleCount === selectorRoot.total ? "✓" : "–"
+            color: selectorRoot.visibleCount > 0 ? "white" : UM.Theme.getColor("primary")
+            font: UM.Theme.getFont("small")
+        }
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: selectorRoot.toggled()
+        }
+    }
+    UM.Label {
+        anchors.verticalCenter: parent.verticalCenter
+        text: "Show all"
+        font: UM.Theme.getFont("default")
+    }
+}

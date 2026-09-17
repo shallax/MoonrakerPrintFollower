@@ -875,6 +875,27 @@ Item {
         var hidden = root.printerModel != null ? root.printerModel.fileManagerColumnHidden : [];
         return hidden.indexOf(name) < 0;
     }
+    function visibleColumnCount() {
+        var visible = 0;
+        var order = columnOrderList();
+        for (var i = 0; i < order.length; i++) {
+            if (columnVisible(order[i])) {
+                visible += 1;
+            }
+        }
+        return visible;
+    }
+    function toggleAllColumns() {
+        var order = columnOrderList();
+        var target = visibleColumnCount() !== order.length;
+        if (printerModel != null) {
+            for (var i = 0; i < order.length; i++) {
+                if (columnVisible(order[i]) !== target) {
+                    printerModel.setFileColumnVisible(order[i], target);
+                }
+            }
+        }
+    }
     function columnOrderList() {
         // The Columns popup's model: the user's order when the model
         // has one, the defaults before the config loads.
@@ -2275,24 +2296,29 @@ Item {
                                 // shared row emits deltas; this host owns
                                 // the visual proxy and the one commit).
                                 property int dragIndex: -1
+                                property int dragTarget: -1
                                 property string dragTitle: ""
                                 property real dragOffset: 0
                                 function columnDragDelta(id, delta) {
                                     if (dragIndex === -1) {
                                         dragIndex = root.columnOrderList().indexOf(id);
+                                        dragTarget = dragIndex;
                                         dragTitle = id;
                                         dragOffset = 0;
                                     }
                                     dragOffset += delta;
+                                    dragTarget = Math.max(0, Math.min(root.columnOrderList().length - 1, Math.round((dragIndex * 32 * screenScaleFactor + dragOffset) / (32 * screenScaleFactor))));
                                     columnDragProxy.y = dragIndex * 32 * screenScaleFactor + dragOffset;
+                                    columnDropSlot.y = dragTarget * 32 * screenScaleFactor;
                                 }
                                 function columnDragCommit() {
                                     if (dragIndex === -1) {
                                         return;
                                     }
-                                    var steps = Math.round(dragOffset / (32 * screenScaleFactor));
+                                    var steps = dragTarget - dragIndex;
                                     var id = root.columnOrderList()[dragIndex];
                                     dragIndex = -1;
+                                    dragTarget = -1;
                                     dragOffset = 0;
                                     if (steps !== 0) {
                                         root.moveColumn(id, steps);
@@ -2319,6 +2345,17 @@ Item {
                                     width: 240 * screenScaleFactor
                                     topPadding: UM.Theme.getSize("narrow_margin").height
                                     bottomPadding: UM.Theme.getSize("narrow_margin").height
+                                    // The all/none three-state selector
+                                    // (the author's live ruling) — the
+                                    // shared component, counts owned
+                                    // here.
+                                    VisibilitySelector {
+                                        width: parent.width
+                                        height: 32 * screenScaleFactor
+                                        total: root.columnOrderList().length
+                                        visibleCount: root.visibleColumnCount()
+                                        onToggled: root.toggleAllColumns()
+                                    }
                                     Repeater {
                                         model: root.columnOrderList()
                                         SectionConfigureRow {
@@ -2326,8 +2363,6 @@ Item {
                                             rowId: modelData
                                             rowTitle: modelData
                                             rowVisible: root.columnVisible(modelData)
-                                            rowAtTop: index === 0
-                                            rowAtBottom: index === root.columnOrderList().length - 1
                                             onToggleRequested: {
                                                 if (root.printerModel != null) {
                                                     root.printerModel.setFileColumnVisible(modelData, !root.columnVisible(modelData));
@@ -2343,6 +2378,19 @@ Item {
                                         }
                                     }
 
+                                    // The drop slot: a slightly darker
+                                    // blank where a release would land
+                                    // (the author's live ruling) — the
+                                    // rows never shift mid-gesture.
+                                    Rectangle {
+                                        id: columnDropSlot
+                                        opacity: columnsPopup.dragIndex !== -1 ? 1 : 0
+                                        height: columnsPopup.dragIndex !== -1 ? 32 * screenScaleFactor : 0
+                                        width: parent.width
+                                        radius: 2
+                                        color: UM.Theme.getColor("setting_category")
+                                        z: 5
+                                    }
                                     // The drag proxy: the handle gesture
                                     // moves this visual copy; the list
                                     // rebuilds once, on release (the
@@ -2353,7 +2401,7 @@ Item {
                                         id: columnDragProxy
                                         opacity: columnsPopup.dragIndex !== -1 ? 1 : 0
                                         width: parent.width
-                                        height: 32 * screenScaleFactor
+                                        height: columnsPopup.dragIndex !== -1 ? 32 * screenScaleFactor : 0
                                         radius: 2
                                         color: UM.Theme.getColor("setting_category_hover")
                                         z: 10

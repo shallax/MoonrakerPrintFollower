@@ -17,6 +17,7 @@ MonitorPopOver {
     signal layoutCommitted(var order, var hidden)
 
     property int dragIndex: -1
+    property int dragTarget: -1
     property string dragTitle: ""
     property real dragOffset: 0
 
@@ -49,22 +50,37 @@ MonitorPopOver {
         order.splice(to, 0, id);
         layoutCommitted(order, hidden);
     }
+    function toggleAll() {
+        if (hidden.length === 0) {
+            layoutCommitted(orderIds(), rows.map(function (row) {
+                        return row.id;
+                    }));
+        } else {
+            layoutCommitted(orderIds(), []);
+        }
+    }
     function dragDelta(id, title, delta) {
         if (dragIndex === -1) {
             dragIndex = orderIds().indexOf(id);
+            dragTarget = dragIndex;
             dragTitle = title;
             dragOffset = 0;
         }
         dragOffset += delta;
+        // The live snap: the target slot tracks the drag position,
+        // and the drop slot renders where a release would land.
+        dragTarget = Math.max(0, Math.min(rows.length - 1, Math.round((dragIndex * 32 * screenScaleFactor + dragOffset) / (32 * screenScaleFactor))));
         proxy.y = dragIndex * 32 * screenScaleFactor + dragOffset;
+        dropSlot.y = dragTarget * 32 * screenScaleFactor;
     }
     function commitDrag() {
         if (dragIndex === -1) {
             return;
         }
-        var steps = Math.round(dragOffset / (32 * screenScaleFactor));
+        var steps = dragTarget - dragIndex;
         var id = rows[dragIndex].id;
         dragIndex = -1;
+        dragTarget = -1;
         dragOffset = 0;
         if (steps !== 0) {
             commitMove(id, steps);
@@ -78,6 +94,16 @@ MonitorPopOver {
         anchors.top: parent.top
         anchors.topMargin: UM.Theme.getSize("default_margin").height
         spacing: 0
+
+        // The all/none three-state selector (the author's live
+        // ruling) — the shared component, counts owned here.
+        VisibilitySelector {
+            width: parent.width
+            height: 32 * screenScaleFactor
+            total: root.rows.length
+            visibleCount: root.rows.length - root.hidden.length
+            onToggled: root.toggleAll()
+        }
 
         Repeater {
             id: rowRepeater
@@ -97,6 +123,18 @@ MonitorPopOver {
             }
         }
 
+        // The drop slot: a slightly darker blank where a release
+        // would land (the author's live ruling) — the rows never
+        // shift mid-gesture.
+        Rectangle {
+            id: dropSlot
+            opacity: root.dragIndex !== -1 ? 1 : 0
+            height: root.dragIndex !== -1 ? 32 * screenScaleFactor : 0
+            width: parent.width
+            radius: 2
+            color: UM.Theme.getColor("setting_category")
+            z: 5
+        }
         // The drag proxy: the handle gesture moves this visual copy;
         // the list rebuilds once, on release, so the dragged row's
         // delegate never dies mid-gesture (the column popup's
@@ -106,7 +144,7 @@ MonitorPopOver {
             id: proxy
             opacity: root.dragIndex !== -1 ? 1 : 0
             width: parent.width
-            height: 32 * screenScaleFactor
+            height: root.dragIndex !== -1 ? 32 * screenScaleFactor : 0
             radius: 2
             color: UM.Theme.getColor("setting_category_hover")
             z: 10

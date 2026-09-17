@@ -71,6 +71,41 @@ Component {
         property var infoConfigureHidden: []
         property var statusConfigureRows: []
         property var statusConfigureHidden: []
+        // The configure popups' rows (the live headers carry the
+        // titles): root-level so the header triggers can call it.
+        function sectionHeader(item) {
+            if (!item || !item.children) {
+                return null;
+            }
+            var header = item.children[0];
+            return (header && header.sectionId !== undefined) ? header : null;
+        }
+        function buildConfigureRows(paneId) {
+            var layout = root.printer != null ? root.printer.sectionLayoutFor(paneId) : null;
+            var order = layout ? layout.order : [];
+            var container = paneId === "information" ? infoContent : statusContent;
+            var byId = {};
+            for (var i = 0; i < container.children.length; i++) {
+                var header = root.sectionHeader(container.children[i]);
+                if (header) {
+                    byId[header.sectionId] = header.title;
+                }
+            }
+            var rows = [];
+            for (var j = 0; j < order.length; j++) {
+                rows.push({
+                        "id": order[j],
+                        "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
+                    });
+            }
+            if (paneId === "information") {
+                root.infoConfigureRows = rows;
+                root.infoConfigureHidden = layout ? layout.hidden : [];
+            } else {
+                root.statusConfigureRows = rows;
+                root.statusConfigureHidden = layout ? layout.hidden : [];
+            }
+        }
 
         // The mini widget's series: primary sensors (extruders, bed,
         // chamber heater) by default; when EVERY primary is hidden,
@@ -490,12 +525,6 @@ Component {
                 // live order differs (the probe-verified recipe —
                 // detach-all, re-attach in target order, strays
                 // re-attach last).
-                function sectionHeader(item) {
-                    if (!item || !item.children)
-                        return null;
-                    var header = item.children[0];
-                    return (header && header.sectionId !== undefined) ? header : null;
-                }
                 function applySectionOrder(container, paneId) {
                     var layout = root.printer ? root.printer.sectionLayout : null;
                     var entry = layout ? layout[paneId] : null;
@@ -531,32 +560,6 @@ Component {
                             items[p].parent = container;
                     }
                 }
-                function buildConfigureRows(paneId) {
-                    var layout = root.printer != null ? root.printer.sectionLayoutFor(paneId) : null;
-                    var order = layout ? layout.order : [];
-                    var container = paneId === "information" ? infoContent : statusContent;
-                    var byId = {};
-                    for (var i = 0; i < container.children.length; i++) {
-                        var header = sectionHeader(container.children[i]);
-                        if (header) {
-                            byId[header.sectionId] = header.title;
-                        }
-                    }
-                    var rows = [];
-                    for (var j = 0; j < order.length; j++) {
-                        rows.push({
-                                "id": order[j],
-                                "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
-                            });
-                    }
-                    if (paneId === "information") {
-                        root.infoConfigureRows = rows;
-                        root.infoConfigureHidden = layout ? layout.hidden : [];
-                    } else {
-                        root.statusConfigureRows = rows;
-                        root.statusConfigureHidden = layout ? layout.hidden : [];
-                    }
-                }
                 Connections {
                     target: root.printer
                     function onSectionLayoutChanged() {
@@ -572,7 +575,7 @@ Component {
                 // mirror of the controls pane, which reads top-to-bottom).
                 Item {
                     id: infoCollapsedTitleBox
-                    visible: root.infoCollapsed && !root.miniChartHasSeries
+                    visible: root.infoCollapsed
                     anchors.top: infoHeader.bottom
                     anchors.topMargin: UM.Theme.getSize("thin_margin").height
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -589,12 +592,13 @@ Component {
                 }
                 // The collapsed readout (the author's 2026-09-17
                 // ruling): the top two temperatures per the mini
-                // widget's series, stacked along the strip.
+                // widget's series fill the empty space BELOW the
+                // title — regular text, not the title's face.
                 Item {
                     id: infoCollapsedReadoutBox
                     visible: root.infoCollapsed && root.miniChartHasSeries
-                    anchors.top: infoHeader.bottom
-                    anchors.topMargin: UM.Theme.getSize("thin_margin").height
+                    anchors.top: infoCollapsedTitleBox.bottom
+                    anchors.topMargin: UM.Theme.getSize("narrow_margin").height
                     anchors.horizontalCenter: parent.horizontalCenter
                     Column {
                         spacing: UM.Theme.getSize("narrow_margin").height
@@ -606,8 +610,8 @@ Component {
                                 UM.Label {
                                     id: readoutLabel
                                     text: root.infoReadoutText(modelData.name, modelData.label)
-                                    font: UM.Theme.getFont("medium_bold")
-                                    color: UM.Theme.getColor("text_inactive")
+                                    font: UM.Theme.getFont("default")
+                                    color: UM.Theme.getColor("text")
                                     rotation: -90
                                     anchors.centerIn: parent
                                 }
@@ -1723,15 +1727,25 @@ Component {
                 }
 
                 Item {
-                    id: statusCollapsedReadout
+                    id: statusCollapsedTitleBox
                     visible: root.statusCollapsed
                     anchors.top: statusHeader.bottom
                     anchors.topMargin: UM.Theme.getSize("thin_margin").height
                     anchors.horizontalCenter: parent.horizontalCenter
-                    width: 4 * screenScaleFactor
+                    width: statusCollapsedTitle.implicitHeight
+                    height: statusCollapsedTitle.implicitWidth + 24 * screenScaleFactor
+                    UM.Label {
+                        id: statusCollapsedTitle
+                        text: "Printer status"
+                        font: UM.Theme.getFont("medium_bold")
+                        color: UM.Theme.getColor("text_inactive")
+                        rotation: 90
+                        anchors.centerIn: parent
+                        anchors.verticalCenterOffset: 12 * screenScaleFactor
+                    }
                     Rectangle {
                         // The dot stays visible while the pane is
-                        // collapsed too — leading the readout, in its
+                        // collapsed too — leading the title, in its
                         // own band at the top.
                         anchors.top: parent.top
                         anchors.horizontalCenter: parent.horizontalCenter
@@ -1741,16 +1755,24 @@ Component {
                         radius: 5 * screenScaleFactor
                         color: connectionDotColour
                     }
-                    // The dual-stacked progress bars (the author's
-                    // 2026-09-17 ruling): print above layer, thin
-                    // tracks at the pill weight, fills from the
-                    // bottom.
+                }
+                // The collapsed readout (the author's 2026-09-17
+                // ruling): the dual-stacked progress bars fill the
+                // empty space BELOW the title — print above layer,
+                // thin tracks at the pill weight, fills from the
+                // bottom.
+                Item {
+                    id: statusCollapsedBarsBox
+                    visible: root.statusCollapsed
+                    anchors.top: statusCollapsedTitleBox.bottom
+                    anchors.topMargin: UM.Theme.getSize("narrow_margin").height
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: 4 * screenScaleFactor
                     Rectangle {
                         id: printTrack
                         width: 4 * screenScaleFactor
                         height: 60 * screenScaleFactor
                         anchors.top: parent.top
-                        anchors.topMargin: 24 * screenScaleFactor
                         anchors.horizontalCenter: parent.horizontalCenter
                         color: UM.Theme.getColor("lining")
                         Rectangle {

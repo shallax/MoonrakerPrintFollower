@@ -28,6 +28,35 @@ Component {
         property string configurePaneOpen: ""
         property var controlsConfigureRows: []
         property var controlsConfigureHidden: []
+        // The configure popup's rows (the live headers carry the
+        // titles): root-level so the header trigger can call it.
+        function sectionHeader(item) {
+            if (!item || !item.children) {
+                return null;
+            }
+            var header = item.children[0];
+            return (header && header.sectionId !== undefined) ? header : null;
+        }
+        function buildControlsConfigureRows() {
+            var layout = root.printer != null ? root.printer.sectionLayoutFor("controls") : null;
+            var order = layout ? layout.order : [];
+            var byId = {};
+            for (var i = 0; i < controlContent.children.length; i++) {
+                var header = root.sectionHeader(controlContent.children[i]);
+                if (header) {
+                    byId[header.sectionId] = header.title;
+                }
+            }
+            var rows = [];
+            for (var j = 0; j < order.length; j++) {
+                rows.push({
+                        "id": order[j],
+                        "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
+                    });
+            }
+            root.controlsConfigureRows = rows;
+            root.controlsConfigureHidden = layout ? layout.hidden : [];
+        }
         onPrinterChanged: {
             if (root.printer != null) {
                 root.printer.setFileManagerOpen(false);
@@ -651,12 +680,6 @@ Component {
                     // live order differs (the probe-verified recipe —
                     // detach-all, re-attach in target order, strays
                     // re-attach last).
-                    function sectionHeader(item) {
-                        if (!item || !item.children)
-                            return null;
-                        var header = item.children[0];
-                        return (header && header.sectionId !== undefined) ? header : null;
-                    }
                     function applyControlsOrder() {
                         var layout = root.printer ? root.printer.sectionLayout : null;
                         var entry = layout ? layout["controls"] : null;
@@ -692,26 +715,6 @@ Component {
                                 items[p].parent = controlContent;
                         }
                     }
-                    function buildControlsConfigureRows() {
-                        var layout = root.printer != null ? root.printer.sectionLayoutFor("controls") : null;
-                        var order = layout ? layout.order : [];
-                        var byId = {};
-                        for (var i = 0; i < controlContent.children.length; i++) {
-                            var header = sectionHeader(controlContent.children[i]);
-                            if (header) {
-                                byId[header.sectionId] = header.title;
-                            }
-                        }
-                        var rows = [];
-                        for (var j = 0; j < order.length; j++) {
-                            rows.push({
-                                    "id": order[j],
-                                    "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
-                                });
-                        }
-                        root.controlsConfigureRows = rows;
-                        root.controlsConfigureHidden = layout ? layout.hidden : [];
-                    }
                     Connections {
                         target: root.printer
                         function onSectionLayoutChanged() {
@@ -738,12 +741,30 @@ Component {
                     height: collapsedTitle.implicitWidth
                     UM.Label {
                         id: collapsedTitle
-                        // The collapsed readout (the author's
-                        // 2026-09-17 ruling): position • Z offset •
-                        // flow rate on one rotated line.
-                        text: root.printer != null ? root.printer.monitorPositionCompact + " • " + root.printer.zOffsetText + " • " + root.printer.monitorFlowRate : "Printer controls"
+                        text: "Printer controls"
                         font: UM.Theme.getFont("medium_bold")
                         color: UM.Theme.getColor("text_inactive")
+                        rotation: 90
+                        anchors.centerIn: parent
+                    }
+                }
+                // The collapsed readout (the author's 2026-09-17
+                // ruling): position • Z offset • flow rate fills the
+                // empty space BELOW the title — regular text, not the
+                // title's face.
+                Item {
+                    id: controlsCollapsedReadoutBox
+                    visible: root.controlsCollapsed
+                    anchors.top: collapsedTitleBox.bottom
+                    anchors.topMargin: UM.Theme.getSize("narrow_margin").height
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: controlsReadoutLabel.implicitHeight
+                    height: controlsReadoutLabel.implicitWidth
+                    UM.Label {
+                        id: controlsReadoutLabel
+                        text: root.printer != null ? root.printer.monitorPositionCompact + " • " + root.printer.zOffsetText + " • " + root.printer.monitorFlowRate : ""
+                        font: UM.Theme.getFont("default")
+                        color: UM.Theme.getColor("text")
                         rotation: 90
                         anchors.centerIn: parent
                     }

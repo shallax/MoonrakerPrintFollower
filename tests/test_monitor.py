@@ -644,7 +644,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("anchors.top: statusHeader.bottom", MONITOR_QML)
         for token in ('text: "Printer status"', 'title: "Print job"', 'title: "Bed mesh"',
                       "id: infoCollapseButton", "id: statusCollapseButton",
-                      "id: infoCollapsedTitle", "id: statusCollapsedReadout",
+                      "id: infoCollapsedTitle", "id: statusCollapsedTitle",
                       "setInfoCollapsed", "setStatusCollapsed"):
             self.assertIn(token, MONITOR_QML + MONITOR_MODEL + MESH_SECTION_QML + JOB_SECTION_QML)
         self.assertIn("infoCollapsed", MONITOR_MODEL)
@@ -4142,7 +4142,7 @@ Item {
         # the disconnected grey veil over stale frames.
         self.assertIn("connectionDotColour", MONITOR_QML)
         self.assertIn('text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."', MONITOR_QML)
-        self.assertIn("id: statusCollapsedReadout", MONITOR_QML)
+        self.assertIn("id: statusCollapsedTitle", MONITOR_QML)
         self.assertIn('text: "Live"', CAMERA_PANE_QML)
         self.assertIn('color: "#c0202428"', CAMERA_PANE_QML)
         self.assertIn('text: (root.printerModel != null && root.printerModel.cameraRecovering) ? "Camera recovering…" : "Camera offline"', CAMERA_PANE_QML)
