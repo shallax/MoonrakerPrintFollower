@@ -82,7 +82,7 @@ private follower state to either integration.
 | `MonitorCommands.py` | Monitor action acknowledgement and emergency-stop click sequence | Sliders or discovery |
 | `MonitorTuning.py` | Debounce, pending tuning values, revision/confirmation timers | QML or printer discovery |
 | `MonitorControls.py` | Macro, preset, fan/LED/PWM, setup and power/exclusion dispatch (the restart guards included), each through the permission policy's `_allowed` gate | Qt model inheritance |
-| `ToolheadPolicy.py` | Pure jog/home/extrude G-code, the DISPATCH-time jog gate and jog-queue coalescing (the click-time gate is `MonitorPermissions.can_jog`) | Qt, timers or networking |
+| `ToolheadPolicy.py` | Pure jog/home/extrude G-code, the DISPATCH-time jog gate and the stepwise jog queue — every command executes as its own move, never merged or cancelled (the 2026-09-17 ruling; the click-time gate is `MonitorPermissions.can_jog`) | Qt, timers or networking |
 | `MonitorPermissions.py` | Pure permission policy: the frozen observation record and the action rulings table (can_jog, can_power, can_restart, can_start_print, can_pause, can_resume, …) with disabled reasons; `is_paused` (the authoritative paused bit) and `pause_resume_supported` (the capability signal) ride the observation | Qt, networking or mutable state |
 | `StateStore.py` | The Monitor state file's explicit owner: the read-modify-write merge, the atomic replace and the rate-limited failure reporting | Qt, networking or value coercion |
 | `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
@@ -97,6 +97,7 @@ private follower state to either integration.
 | `UploadController.py` | The Preview upload's write operation: discovery, readiness, multipart stream and cancellation | Cura application or QML |
 | `FileManager.py` | File-manager state owner: the resident walk, history window, view state, selection, mutations, the LOCAL-file upload (its own multipart path) and the thumbnail cache with one-shot raw fetches on its own `file-manager` lane | MoonrakerMonitorModel |
 | `FileManagerPolicy.py` | Pure file-listing projections: directory rows, the filter/search/sort/page pipeline, history joins, recents, selection states, filter-option counts | Qt, networking or mutable state |
+| `SectionLayoutPolicy.py` | The static pane→section table (Controls 13, Information 2, Status 7) and the section-layout normaliser — unknown ids drop, missing ids fill, hidden ids dedupe and sort | Qt, the store, any id vocabulary outside the table |
 | `FileDownload.py` | One-shot file streaming from the printer into Cura (the file manager's Download verb) | FollowerRuntime |
 | `MoonrakerOutputDevice.py` | Cura output-device signals/dialog/message adapter (the upload-with-start print gate included) | Upload state machine |
 | `WhatsNew.py` | The what's-new content: the curated per-release entries and the once-per-version marker gate | Qt, I/O or networking |

@@ -19,7 +19,7 @@ from UM.Logger import Logger
 
 
 class UiStateStore:
-    """Owns the sections map's persistence."""
+    """Owns the sections map and section-layout persistence."""
 
     def __init__(self, store):
         # The shared StateStore (the model's own instance) — one
@@ -35,6 +35,16 @@ class UiStateStore:
             Logger.log("w", "Moonraker UI state: the sections map did not survive validation — the save was skipped.")
             return False
         return self._store.write({"sections": payload})
+
+    def set_section_layout(self, layout: dict) -> bool:
+        """Persist the section-layout document under its key (the
+        literal matches SectionLayoutPolicy.SECTION_LAYOUT_KEY — this
+        owner imports nothing). The caller normalises; this owner only
+        enforces the round-trip guard."""
+        if not self._survives(layout):
+            Logger.log("w", "Moonraker UI state: the section layout did not survive validation — the save was skipped.")
+            return False
+        return self._store.write({"sectionLayout": layout})
 
     def _survives(self, payload: dict) -> bool:
         """The boundary guard: a value that cannot round-trip

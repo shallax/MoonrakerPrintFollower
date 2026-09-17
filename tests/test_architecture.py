@@ -138,6 +138,7 @@ class SourceContractTests(unittest.TestCase):
             "FileDownload": {"RemoteFileService"},
             "FileManager": {"FileManagerPolicy", "MoonrakerProtocol"},
             "FileManagerPolicy": set(),
+            "SectionLayoutPolicy": set(),
             "FollowController": set(),
             "FollowerRuntime": {"BedMeshPresenter", "CuraIntegration", "FileDownload", "GCodeIndex", "GCodeIndexService",
                 "MoonrakerClient", "PauseController", "PreviewFollower", "PreviewMotion",
