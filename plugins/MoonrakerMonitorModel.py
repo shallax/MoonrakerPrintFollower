@@ -40,6 +40,7 @@ from .UiStateStore import UiStateStore
 from datetime import datetime
 
 from .FileManager import FileManager
+from .SectionLayoutPolicy import PANE_NAMES, normalise_section_layout
 from .FileManagerPolicy import (
     delete_candidates,
     is_gcode_name,
@@ -135,6 +136,7 @@ def _read_state(store=None) -> dict:
                 sections = {}
         return {
             "sections": {str(key): _state_bool(value) for key, value in sections.items()},
+            "sectionLayout": normalise_section_layout(decoded.get("sectionLayout")),
             "whatsNewSeen": str(decoded.get("whatsNewSeen") or ""),
             "controlsCollapsed": _state_bool(decoded.get("controlsCollapsed", False)),
             "controlsLocked": _state_bool(decoded.get("controlsLocked", False)),
@@ -145,7 +147,8 @@ def _read_state(store=None) -> dict:
             "temperatureChart": _chart_state(decoded.get("temperatureChart")),
             "toolhead": _toolhead_state(decoded.get("toolhead")),
         }
-    return {"sections": {}, "whatsNewSeen": "", "controlsCollapsed": False, "controlsLocked": False,
+    return {"sections": {}, "sectionLayout": normalise_section_layout({}), "whatsNewSeen": "",
+            "controlsCollapsed": False, "controlsLocked": False,
             "infoCollapsed": False, "statusCollapsed": False, "consoleHeight": 0,
             "fileManagerColumns": normalise_columns({}),
             "temperatureChart": _chart_state({}),
@@ -224,6 +227,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     # The policy-fed restart gate and its reason (4.2.0).
     restartChanged = pyqtSignal()
     sectionsChanged = pyqtSignal()
+    sectionLayoutChanged = pyqtSignal()
     controlsLockChanged = pyqtSignal()
     infoPaneChanged = pyqtSignal()
     statusPaneChanged = pyqtSignal()
@@ -270,6 +274,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("statusPaneChanged", ("statusCollapsed",)),
         ("consoleHeightChanged", ("consoleHeight",)),
         ("sectionsChanged", ("sectionExpandedMap",)),
+        ("sectionLayoutChanged", ("sectionLayout", "sectionHiddenMap")),
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
         ("cameraRecoveringChanged", ("cameraRecovering",)),
@@ -354,6 +359,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_columns_state = state["fileManagerColumns"]
         self._camera_refresh_nonce = 0
         self._sections = state["sections"]
+        self._section_layout = state["sectionLayout"]
         # The UI-state store (4.3.0): the sections map's persistence
         # moves to the second consumer — the model's save payload
         # stops rewriting the whole map, so the two writers can no
@@ -899,6 +905,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             cameraRecovering=self._camera_recovering,
             connectionDetail=self._data.connection_detail,
             sectionExpandedMap=dict(self._sections),
+            sectionLayout=self._section_layout,
+            sectionHiddenMap={section: True for entry in self._section_layout.values()
+                              for section in entry["hidden"]},
             temperatureChart=self._chart_value(),
             temperatureChartLegend=self._legend_value(),
             showProbePoints=self._show_probe_points,
@@ -1584,6 +1593,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     cameraRecovering = value_property(bool, "cameraRecovering", cameraRecoveringChanged, False)
     connectionDetail = value_property(str, "connectionDetail", connectionDetailChanged, "")
     sectionExpandedMap = value_property(QVariant, "sectionExpandedMap", sectionsChanged, {})
+    sectionLayout = value_property(QVariant, "sectionLayout", sectionLayoutChanged, {})
+    sectionHiddenMap = value_property(QVariant, "sectionHiddenMap", sectionLayoutChanged, {})
 
     @pyqtSlot()
     def refreshAll(self): self._data.refresh_all()
@@ -1635,6 +1646,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The sections map persists through the UI-state store — the
         # model's save no longer rewrites the whole map (4.3.0).
         self._ui_state.set_sections(self._sections)
+        self._publish()
+
+    @pyqtSlot(str, object, object)
+    def setSectionLayout(self, pane, order, hidden):
+        pane = str(pane)
+        if pane not in PANE_NAMES:
+            return
+        normalised = normalise_section_layout(
+            {**self._section_layout, pane: {"order": order, "hidden": hidden}})
+        if normalised == self._section_layout:
+            return  # idempotent: a re-bound popup must not rewrite the file
+        self._section_layout = normalised
+        self._ui_state.set_section_layout(self._section_layout)
         self._publish()
 
     @pyqtSlot(str, bool)

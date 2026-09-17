@@ -154,7 +154,7 @@ class SourceContractTests(unittest.TestCase):
             "MonitorTuning": set(),
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
             "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
-            "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "FilesViewModel", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PrintStartOwner", "PrinterConfig", "StateStore", "ToolheadController", "ToolheadPolicy", "UiStateStore", "WhatsNew"},
+            "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "FilesViewModel", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PrintStartOwner", "PrinterConfig", "SectionLayoutPolicy", "StateStore", "ToolheadController", "ToolheadPolicy", "UiStateStore", "WhatsNew"},
             "FilesViewModel": set(),
             "PrintStartOwner": set(),
             "UiStateStore": set(),

@@ -254,6 +254,28 @@ EXCLUSIONS = {
         "date": "2026-09-16",
         "recheck": "the baked-pause pause-row scenario lands",
     },
+    # The section-layout surfaces land with the 4.4.0 configure
+    # popup; until the popup round the slot and keys carry no
+    # scenario that addresses them (unit tests drive the normaliser
+    # and the store write).
+    "MoonrakerMonitorModel.setSectionLayout": {
+        "reason": "the configure popup is unbuilt; the slot is unit-tested in test_section_layout",
+        "evidence": "unit tests drive normalise_section_layout and the store write",
+        "date": "2026-09-17",
+        "recheck": "the popup round lands — the popup scenario drives this slot",
+    },
+    "sectionLayout": {
+        "reason": "the configure popup is unbuilt; the key is unit-tested in test_section_layout",
+        "evidence": "unit tests drive normalise_section_layout and the store write",
+        "date": "2026-09-17",
+        "recheck": "the popup round lands — the popup scenario drives this slot",
+    },
+    "sectionHiddenMap": {
+        "reason": "the configure popup is unbuilt; the key is unit-tested in test_section_layout",
+        "evidence": "unit tests drive normalise_section_layout and the store write",
+        "date": "2026-09-17",
+        "recheck": "the popup round lands — the popup scenario drives this slot",
+    },
     # British-spelling formatting is a pure function of the locale —
     # unit-tested in test_monitor, invisible to scenarios.
     "britishSpelling": {
