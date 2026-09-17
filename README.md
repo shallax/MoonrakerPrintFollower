@@ -67,9 +67,10 @@ the Preview card gains a status strip.
 - **Windows fixes** — platform-aware state-store flags, single
   upgrade/sync lines after reconnects, and the diagnostics toggle
   that actually arms the probe.
-- **The leak instrument** — a gated per-minute memory probe
-  behind a Diagnostics-page toggle, cross-platform and silent
-  while disabled.
+- **The leak instrument** — a gated 10-second sampler behind a
+  Diagnostics-page toggle: physical footprint, QML and collection
+  growth, camera-stream gauges, and an opt-in Python allocation
+  trace; cross-platform and silent while disabled.
 - **Preview card polish** — arrow temperature pairs, black ETA and
   mesh labels, the status line above the strip, the bed-mesh
   button at the card's foot, the reflowing mesh legend, "(host)"

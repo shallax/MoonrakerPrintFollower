@@ -216,6 +216,14 @@ class SettingsManager(QObject):
     def settingsMemoryDiagnosticsLog(self):
         return False
 
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsMemoryDiagnosticsTrace(self):
+        return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def settingsCameraDisabled(self):
+        return False
+
     @pyqtProperty(str, notify=settingsChanged)
     def cacheStatus(self):
         return ""

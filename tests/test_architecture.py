@@ -133,7 +133,7 @@ class SourceContractTests(unittest.TestCase):
             "CuraIntegration": {"CuraLifecycleBridge", "NativeNozzleLifecycle"},
             "CuraLifecycleBridge": set(),
             "CuraOutputWriter": set(),
-            "LeakProbe": {"PrinterConfig"},  # the gated overnight-leak instrument — the preference key's owner
+            "LeakProbe": {"MoonrakerOutputDevice", "PrinterConfig"},  # the gated instrument — the preference key's owner and the camera line's device walk
             "DownloadStream": set(),
             "FileDownload": {"RemoteFileService"},
             "FileManager": {"FileManagerPolicy", "MoonrakerProtocol"},

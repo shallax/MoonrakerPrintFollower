@@ -46,6 +46,9 @@ class CameraBridge(QObject):
         # One entry per local connection: (upstream reply, request
         # header buffer, response-head-sent flag).
         self._relays: Dict[QTcpSocket, Tuple[Optional[QNetworkReply], bytearray, bool]] = {}
+        # Cumulative relayed bytes — the leak probe's throughput gauge
+        # (diffed tick-to-tick it shows the stream is actually flowing).
+        self._relayed_bytes = 0
 
     @property
     def port(self) -> int:
@@ -152,6 +155,12 @@ class CameraBridge(QObject):
         self._relays[socket] = (reply, buffer, False)
         reply.readyRead.connect(lambda r=reply, s=socket: self._on_upstream_ready(s, r))
         reply.finished.connect(lambda r=reply, s=socket: self._on_upstream_finished(s, r))
+        # The loader draining the socket re-opens the write gate; drain
+        # the upstream reply then, because readyRead does not fire again
+        # for the bytes that sat in the full buffer while the gate was
+        # closed — without this a main-thread stall froze the relay
+        # permanently (the leak-soak camera freeze).
+        socket.bytesWritten.connect(lambda _b=0, s=socket, r=reply: self._on_socket_written(s, r))
         Logger.log("i", "Moonraker camera bridge relaying %s", str(target.url()).split("?", 1)[0])
         self.upstreamStarted.emit()
 
@@ -185,6 +194,14 @@ class CameraBridge(QObject):
             chunk = bytes(reply.readAll())
             if chunk:
                 socket.write(chunk)
+                self._relayed_bytes += len(chunk)
+
+    def _on_socket_written(self, socket: QTcpSocket, reply: QNetworkReply) -> None:
+        relay = self._relays.get(socket)
+        if relay is None or relay[0] is not reply:
+            return
+        if socket.bytesToWrite() < 1 << 20:
+            self._on_upstream_ready(socket, reply)
 
     def _on_upstream_finished(self, socket: QTcpSocket, reply: QNetworkReply) -> None:
         relay = self._relays.get(socket)

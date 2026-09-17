@@ -105,10 +105,17 @@ class PrinterConfig:
     z_tolerance: float = 0.04
     trace_layer: bool = False
     trace_http: bool = False
-    # The leak-hunt instrument: the per-minute memory census to
-    # moonraker_leak.log. OFF by default — the probe's tracemalloc
-    # axis makes Cura measurably heavier while it runs.
+    # The leak-hunt instrument: the 10-second sampler to
+    # moonraker_leak.log. OFF by default; the Python allocation
+    # trace is a separate heavier opt-in below.
     memory_diagnostics_log: bool = False
+    # The leak-battery's camera-off condition, without touching the
+    # printer: MonitorCamera then publishes no stream URL at all.
+    camera_disabled: bool = False
+    # The trace axis within the memory-diagnostics log: tracemalloc
+    # snapshots stall Cura for seconds each minute, so it is a
+    # separate opt-in on top of memory_diagnostics_log.
+    memory_diagnostics_trace: bool = False
     # The status-feed transport, per printer (mixed fleets mix modes).
     # The product default lives here, never in a client-side code default.
     feed_mode: FeedMode = FeedMode.WEBSOCKET
@@ -272,7 +279,8 @@ class PrinterConfig:
             "enabled", "moonraker_layer_is_one_based", "auto_preview",
             "z_fallback", "path_follow", "path_smoothing", "show_toolhead_indicator",
             "eta_learn",
-            "trace_layer", "trace_http", "memory_diagnostics_log",
+            "trace_layer", "trace_http", "memory_diagnostics_log", "memory_diagnostics_trace",
+            "camera_disabled",
             "upload_dialog", "upload_start_print", "upload_remember_state",
             "upload_autohide_message", "camera_mirror",
         ):
@@ -335,6 +343,7 @@ class PrinterConfigStore:
         "trace_layer": "moonraker_print_follower/trace_layer",
         "trace_http": "moonraker_print_follower/trace_http",
         "memory_diagnostics_log": "moonraker_print_follower/memory_diagnostics_log",
+        "memory_diagnostics_trace": "moonraker_print_follower/memory_diagnostics_trace",
         "path_follow": "moonraker_print_follower/path_follow",
     }
     LEGACY_DEFAULTS = {
@@ -349,6 +358,7 @@ class PrinterConfigStore:
         "trace_layer": False,
         "trace_http": False,
         "memory_diagnostics_log": False,
+        "memory_diagnostics_trace": False,
         "path_follow": True,
     }
 
@@ -398,8 +408,8 @@ class PrinterConfigStore:
             self.PREF_KEY,
             json.dumps(data, sort_keys=True, separators=(",", ":")),
         )
-        # The leak instrument reads the legacy per-field key — mirror
-        # the active machine's toggle so the probe's read tracks the
+        # The leak instrument reads the legacy per-field keys — mirror
+        # the active machine's toggles so the probe's reads track the
         # current config (the 2026-09-16 report: the setting was on
         # in the UI but the probe read the stale legacy key and
         # stayed silent).
@@ -409,6 +419,10 @@ class PrinterConfigStore:
             self._preferences.setValue(
                 self.LEGACY_MAP["memory_diagnostics_log"],
                 bool(entry.get("memory_diagnostics_log", False)),
+            )
+            self._preferences.setValue(
+                self.LEGACY_MAP["memory_diagnostics_trace"],
+                bool(entry.get("memory_diagnostics_trace", False)),
             )
 
     def _legacy_config(self) -> PrinterConfig:

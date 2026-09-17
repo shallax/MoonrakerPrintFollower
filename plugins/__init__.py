@@ -11,8 +11,8 @@ def register(app):
 
     follower = MoonrakerPrintFollower(app)
     # The leak-hunt instrument ships OFF: the settings' diagnostics
-    # toggle ("Log memory diagnostics once a minute") gates every
-    # tick, so an idle timer is the whole cost until it is enabled.
+    # toggle ("Log memory diagnostics") gates every tick, so an idle
+    # timer is the whole cost until it is enabled.
     from .LeakProbe import start_leak_probe
     start_leak_probe(follower._runtime, app)
 

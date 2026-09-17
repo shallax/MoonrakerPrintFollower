@@ -77,10 +77,12 @@ behind it.
   (the multiplied upgrade/sync lines), and the settings'
   diagnostics toggle mirrors into the leak instrument's
   preference key so the probe actually arms.
-- **The leak instrument.** A gated, self-contained per-minute
-  probe (RSS, tracemalloc growth, per-class QML diffs) behind a
-  Diagnostics-page toggle; cross-platform, log path on
-  registration, silent while disabled.
+- **The leak instrument.** A gated 10-second sampler behind a
+  Diagnostics-page toggle: the physical footprint (the axis
+  Activity Monitor shows), the live print layer, camera-stream
+  gauges, per-class QML diffs and plugin collection sizes, with
+  the Python allocation trace as a separate opt-in;
+  cross-platform, silent while disabled.
 - **Preview card polish.** The arrow temperature pair, the black
   ETA and mesh labels, the status line above the strip, the
   bed-mesh button at the card's foot, the collapsing mesh legend

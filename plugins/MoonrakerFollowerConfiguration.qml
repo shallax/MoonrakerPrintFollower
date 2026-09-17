@@ -62,6 +62,8 @@ Cura.MachineAction {
                 "trace_layer": layerTraceBox.checked,
                 "trace_http": httpTraceBox.checked,
                 "memory_diagnostics_log": memoryDiagnosticsBox.checked,
+                "memory_diagnostics_trace": memoryDiagnosticsTraceBox.checked,
+                "camera_disabled": cameraDisabledBox.checked,
                 "frontend_url": frontendUrlField.text,
                 "output_format": outputFormatBox.currentIndex === 1 ? "ufp" : "gcode",
                 "upload_dialog": uploadDialogBox.checked,
@@ -816,12 +818,27 @@ Cura.MachineAction {
                         }
                         UM.CheckBox {
                             id: memoryDiagnosticsBox
-                            text: "Log memory diagnostics once a minute (diagnostics)"
+                            text: "Log memory diagnostics (diagnostics)"
                             checked: manager.settingsMemoryDiagnosticsLog
+                        }
+                        UM.CheckBox {
+                            id: memoryDiagnosticsTraceBox
+                            text: "Log Python allocation traces (diagnostics — heavy, stalls Cura briefly)"
+                            checked: manager.settingsMemoryDiagnosticsTrace
+                            // The trace only runs inside the main
+                            // diagnostics sampler — grey it out while
+                            // the main toggle is off so the two cannot
+                            // be read as independent switches.
+                            enabled: memoryDiagnosticsBox.checked
+                        }
+                        UM.CheckBox {
+                            id: cameraDisabledBox
+                            text: "Disable webcam stream (diagnostics)"
+                            checked: manager.settingsCameraDisabled
                         }
                         UM.Label {
                             width: parent.width
-                            text: "Memory diagnostics write to moonraker_leak.log in your home folder: the process size, growing QML item classes, growing plugin collections, and the fastest-growing Python allocations — the leak-hunt instrument."
+                            text: "Memory diagnostics sample every ten seconds and write to moonraker_leak.log in your home folder: the process size and physical footprint, growing QML item classes, growing plugin collections, and the camera stream's gauges. The separate Python-allocation trace is heavier and stalls Cura briefly each minute."
                             wrapMode: Text.WordWrap
                             color: UM.Theme.getColor("text_inactive")
                         }
