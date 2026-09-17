@@ -2566,7 +2566,8 @@ class MonitorQtTests(unittest.TestCase):
             store.write({"sections": {"setup": False}, "temperatureChart": {"visible": {}},
                          "controlsLocked": True})
             store.write({}, delete=("temperatureChart",))
-            payload = json.load(open(path, "r", encoding="utf-8"))
+            with open(path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
             self.assertNotIn("temperatureChart", payload)
             self.assertEqual(payload["sections"], {"setup": False})
             self.assertTrue(payload["controlsLocked"])

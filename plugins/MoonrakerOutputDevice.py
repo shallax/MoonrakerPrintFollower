@@ -73,6 +73,18 @@ class MoonrakerOutputDevice(PrinterOutputDevice):
             self._application.getController().setActiveStage("PreviewStage" if sliced else "PrepareStage")
         except Exception:
             Logger.log("w", "Moonraker: could not leave the monitor stage")
+        # The console's expanded lifecycle (the reviewer's 2026-09-17
+        # finding): Cura caches the monitor item after the user
+        # leaves, and its Connections keep consoleSyncLines() driving
+        # a hidden document. Collapsing on exit stops the gcode-store
+        # poll through the existing collapse gate; re-entry seeds
+        # from the persisted (collapsed) map.
+        monitor = getattr(self, "activePrinter", None)
+        if monitor is not None:
+            try:
+                monitor.setConsoleExpanded(False)
+            except Exception:
+                Logger.log("w", "Moonraker: could not reset the console expansion on stage exit")
 
     def updateConfig(self, identity):
         """Set the device's display name from its binding identity.

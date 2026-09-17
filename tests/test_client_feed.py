@@ -277,6 +277,23 @@ class ClientFeedTests(unittest.TestCase):
         self.assertFalse(self.client._session.state.assume_print_stopped)
         self.assertEqual(emitted[-1]["print_stats"]["state"], "printing")
 
+    def test_rebind_replaces_the_socket_handlers_not_appends(self):
+        # The Windows log's multiplied "upgraded" lines came from a
+        # fresh closure per cycle that was never disconnected. Drive
+        # the production re-entry — configure(urlA); start();
+        # configure(urlB); start() — and assert the handler set is
+        # replaced: one klippyReady broadcast re-subscribes exactly
+        # once (an accumulated set would fire once per layer).
+        self.client.configure("http://a", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.client.configure("http://b", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.assertEqual([entry[0] for entry in self.client.session.socket.starts],
+                         ["http://a", "http://b"])
+        before = len(self.client.session.socket.subscriptions)
+        self.client.session.socket.klippyReady.emit()
+        self.assertEqual(len(self.client.session.socket.subscriptions), before + 1)
+
     def test_new_print_start_expires_stale_tracked_commands(self):
         self.client.configure("http://p", "k", 750, feed_mode="websocket")
         self.client.start()

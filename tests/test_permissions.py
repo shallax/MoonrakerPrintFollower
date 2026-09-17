@@ -14,6 +14,7 @@ from plugins.MonitorPermissions import (
     R_ALREADY_PAUSED,
     R_ALREADY_PRINTING,
     R_CLEARED_PAUSE,
+    R_NO_PAUSED_PRINT,
     R_ESTOPPED,
     R_NOTHING_TO_PAUSE,
     R_PAUSED_NOTE,
@@ -202,6 +203,20 @@ class PauseResumeRowTests(unittest.TestCase):
         # pausable — the honest reason is the nothing-to-pause form
         # (the resume side carries the trap's words, R_ALREADY_PRINTING).
         self.assertEqual(can_pause(obs(state="paused", is_paused=False)), Verdict("disabled", R_ALREADY_PAUSED))
+
+    def test_stale_paused_bit_denies_resume(self):
+        # SDCARD_RESET_FILE resets print_stats without clearing
+        # pause_resume — a terminal or standby state with the bit
+        # still up is the stale trap: RESUME would restore a saved
+        # toolhead state and MOVE on a print that no longer exists.
+        # The lag carve-out stays: "printing" with the bit up is a
+        # fresh pause mid-transition, still resumable (pinned above).
+        self.assertEqual(can_resume(obs(state="standby", is_paused=True)),
+                         Verdict("disabled", R_NO_PAUSED_PRINT))
+        self.assertEqual(can_resume(obs(state="complete", is_paused=True)),
+                         Verdict("disabled", R_NO_PAUSED_PRINT))
+        self.assertEqual(can_resume(obs(state="cancelled", is_paused=True)),
+                         Verdict("disabled", R_NO_PAUSED_PRINT))
 
     def test_the_fallback_is_the_state_word(self):
         # The bit is None until the pause_resume object has been

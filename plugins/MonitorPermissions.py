@@ -69,6 +69,7 @@ R_ALREADY_PRINTING = "Print is not paused"
 # succeed — each gets its own words instead of reusing a false one.
 R_UNSUPPORTED = "Pause is not supported on this printer"
 R_CLEARED_PAUSE = "Paused — this print can't be resumed"
+R_NO_PAUSED_PRINT = "No paused print to resume"
 
 
 # The long tooltip sentences (the UX adjudication: the short form
@@ -89,6 +90,7 @@ REASON_DETAIL = {
     R_ALREADY_PRINTING: "Resume applies to a paused print — this print is still running.",
     R_UNSUPPORTED: "This printer has no pause_resume module — Klipper has no pause command to run.",
     R_CLEARED_PAUSE: "The pause queue was cleared (CLEAR_PAUSE) — Klipper will refuse RESUME for this print.",
+    R_NO_PAUSED_PRINT: "The paused flag is stale — the print state was reset without clearing it.",
 }
 
 
@@ -300,4 +302,15 @@ def can_resume(obs: Observation) -> Verdict:
             # RESUME can never succeed — say that, not "not paused".
             return Verdict("disabled", R_CLEARED_PAUSE)
         return Verdict("disabled", R_ALREADY_PRINTING)
+    # The two-sided gate (the domain round's finding): a stale
+    # is_paused survives SDCARD_RESET_FILE — print_stats resets to
+    # standby without touching pause_resume — so the bit alone is
+    # not enough. A terminal or standby state with the bit up is the
+    # stale trap: RESUME would restore a saved toolhead state and
+    # MOVE on a print that no longer exists (while the file-manager's
+    # print gate stays locked). The lag carve-out stays: "printing"
+    # with the bit up is a fresh pause mid-transition, still
+    # resumable.
+    if obs.state not in ("paused", "printing"):
+        return Verdict("disabled", R_NO_PAUSED_PRINT)
     return Verdict("allowed", "")
