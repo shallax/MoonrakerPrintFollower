@@ -738,7 +738,10 @@ Component {
                     height: collapsedTitle.implicitWidth
                     UM.Label {
                         id: collapsedTitle
-                        text: "Printer controls"
+                        // The collapsed readout (the author's
+                        // 2026-09-17 ruling): position • Z offset •
+                        // flow rate on one rotated line.
+                        text: root.printer != null ? root.printer.monitorPositionCompact + " • " + root.printer.zOffsetText + " • " + root.printer.monitorFlowRate : "Printer controls"
                         font: UM.Theme.getFont("medium_bold")
                         color: UM.Theme.getColor("text_inactive")
                         rotation: 90

@@ -557,6 +557,10 @@ def core_values(snapshot, physical, connected):
         "monitorSpeed": factor_percent(move.get("speed_factor")),
         "monitorFlow": factor_percent(move.get("extrude_factor")),
         "monitorPosition": f"X {number(position[0]):.1f}   Y {number(position[1]):.1f}   Z {number(position[2]):.2f}" if len(position) >= 3 else "—",
+        # The collapsed strip's single-line form: single-space
+        # separators — the wide form's triple spaces were sized for
+        # the expanded row.
+        "monitorPositionCompact": f"X {number(position[0]):.1f} Y {number(position[1]):.1f} Z {number(position[2]):.2f}" if len(position) >= 3 else "—",
         "monitorVelocity": f"{velocity:.1f} mm/s" if velocity is not None else "—",
         "monitorFlowRate": f"{_flow_text(flow)} mm³/s" if flow is not None else "—",
         "monitorFlowDiameter": f"{diameter:.2f} mm" if diameter else "—",

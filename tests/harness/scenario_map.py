@@ -312,6 +312,12 @@ EXCLUSIONS = {
         "date": "2026-09-17",
         "recheck": "the popup round lands — the scenario presses this trigger",
     },
+    "monitorPositionCompact": {
+        "reason": "the collapsed readouts are presentation-only; the key rides the readout scenario",
+        "evidence": "the compact form is a pure formatter, unit-tested via the payload",
+        "date": "2026-09-17",
+        "recheck": "the readout scenario lands — the collapsed-strip scenario reads this key",
+    },
     # British-spelling formatting is a pure function of the locale —
     # unit-tested in test_monitor, invisible to scenarios.
     "britishSpelling": {

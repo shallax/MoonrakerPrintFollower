@@ -104,6 +104,23 @@ Component {
             return primary.concat(others.slice(0, Math.max(0, 2 - primary.length)));
         }
         property bool miniChartHasSeries: root.miniChartSeries.length > 0
+
+        // The collapsed strip's readout text: the mini legend's own
+        // form (label + live value) — the same rule the pane uses
+        // expanded.
+        function infoReadoutText(name, label) {
+            var payload = root.printer != null ? root.printer.temperatureChart : null;
+            var value = "—";
+            if (payload != null) {
+                var series = payload.series;
+                for (var i = 0; i < series.length; ++i) {
+                    if (series[i].name === name && series[i].points.length > 0) {
+                        value = series[i].points[series[i].points.length - 1][1].toFixed(1) + "°C";
+                    }
+                }
+            }
+            return label + " " + value;
+        }
         property bool allChartSensorsHidden: {
             var legend = root.printer != null ? root.printer.temperatureChartLegend : ({
                     "series": []
@@ -555,7 +572,7 @@ Component {
                 // mirror of the controls pane, which reads top-to-bottom).
                 Item {
                     id: infoCollapsedTitleBox
-                    visible: root.infoCollapsed
+                    visible: root.infoCollapsed && !root.miniChartHasSeries
                     anchors.top: infoHeader.bottom
                     anchors.topMargin: UM.Theme.getSize("thin_margin").height
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -568,6 +585,34 @@ Component {
                         color: UM.Theme.getColor("text_inactive")
                         rotation: -90
                         anchors.centerIn: parent
+                    }
+                }
+                // The collapsed readout (the author's 2026-09-17
+                // ruling): the top two temperatures per the mini
+                // widget's series, stacked along the strip.
+                Item {
+                    id: infoCollapsedReadoutBox
+                    visible: root.infoCollapsed && root.miniChartHasSeries
+                    anchors.top: infoHeader.bottom
+                    anchors.topMargin: UM.Theme.getSize("thin_margin").height
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    Column {
+                        spacing: UM.Theme.getSize("narrow_margin").height
+                        Repeater {
+                            model: root.miniChartSeries
+                            Item {
+                                width: readoutLabel.implicitHeight
+                                height: readoutLabel.implicitWidth
+                                UM.Label {
+                                    id: readoutLabel
+                                    text: root.infoReadoutText(modelData.name, modelData.label)
+                                    font: UM.Theme.getFont("medium_bold")
+                                    color: UM.Theme.getColor("text_inactive")
+                                    rotation: -90
+                                    anchors.centerIn: parent
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1678,32 +1723,16 @@ Component {
                 }
 
                 Item {
-                    id: statusCollapsedTitleBox
+                    id: statusCollapsedReadout
                     visible: root.statusCollapsed
                     anchors.top: statusHeader.bottom
                     anchors.topMargin: UM.Theme.getSize("thin_margin").height
                     anchors.horizontalCenter: parent.horizontalCenter
-                    width: statusCollapsedTitle.implicitHeight
-                    // Extra room at the top so the connection dot leads
-                    // the rotated title with a little air between them
-                    // (the rulings: the dot comes before the
-                    // word, matching the expanded header's dot-before-
-                    // title order, and the gap reads as a space).
-                    height: statusCollapsedTitle.implicitWidth + 24 * screenScaleFactor
-                    UM.Label {
-                        id: statusCollapsedTitle
-                        text: "Printer status"
-                        font: UM.Theme.getFont("medium_bold")
-                        color: UM.Theme.getColor("text_inactive")
-                        rotation: 90
-                        anchors.centerIn: parent
-                        // Shifted down: the dot owns the top band.
-                        anchors.verticalCenterOffset: 12 * screenScaleFactor
-                    }
+                    width: 4 * screenScaleFactor
                     Rectangle {
                         // The dot stays visible while the pane is
-                        // collapsed too — leading the title, in its own
-                        // band at the top.
+                        // collapsed too — leading the readout, in its
+                        // own band at the top.
                         anchors.top: parent.top
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.topMargin: 3 * screenScaleFactor
@@ -1711,6 +1740,42 @@ Component {
                         height: 10 * screenScaleFactor
                         radius: 5 * screenScaleFactor
                         color: connectionDotColour
+                    }
+                    // The dual-stacked progress bars (the author's
+                    // 2026-09-17 ruling): print above layer, thin
+                    // tracks at the pill weight, fills from the
+                    // bottom.
+                    Rectangle {
+                        id: printTrack
+                        width: 4 * screenScaleFactor
+                        height: 60 * screenScaleFactor
+                        anchors.top: parent.top
+                        anchors.topMargin: 24 * screenScaleFactor
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        color: UM.Theme.getColor("lining")
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            height: parent.height * Math.max(0, Math.min(1, root.printer != null ? root.printer.monitorProgress : 0))
+                            color: UM.Theme.getColor("primary")
+                        }
+                    }
+                    Rectangle {
+                        id: layerTrack
+                        width: 4 * screenScaleFactor
+                        height: 60 * screenScaleFactor
+                        anchors.top: printTrack.bottom
+                        anchors.topMargin: UM.Theme.getSize("thin_margin").height
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        color: UM.Theme.getColor("lining")
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            height: parent.height * Math.max(0, Math.min(1, root.printer != null ? root.printer.monitorLayerProgress : 0))
+                            color: UM.Theme.getColor("primary")
+                        }
                     }
                 }
             }

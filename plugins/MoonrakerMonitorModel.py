@@ -246,7 +246,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("monitorChanged", ("monitorState", "monitorConnected", "monitorFilename", "monitorProgress", "monitorLayer", "monitorLayerProgress",
                             "improvingEta", "improveEtaProgress", "improveEtaPhase", "monitorElapsed",
                             "monitorEta", "monitorEtaBasis", "monitorFinish", "monitorSpeed", "monitorFlow",
-                            "monitorPosition", "monitorVelocity", "monitorFlowRate", "monitorFlowDiameter",
+                            "monitorPosition", "monitorPositionCompact", "monitorVelocity", "monitorFlowRate", "monitorFlowDiameter",
                             "monitorAccelLimit", "monitorMessage", "monitorLayerSource", "filamentUsed", "filamentRemaining",
                             "sectionReason", "sectionReasonDetail")),
         ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
@@ -960,6 +960,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     monitorSpeed = value_property(str, "monitorSpeed", monitorChanged, "100%")
     monitorFlow = value_property(str, "monitorFlow", monitorChanged, "100%")
     monitorPosition = value_property(str, "monitorPosition", monitorChanged, "—")
+    monitorPositionCompact = value_property(str, "monitorPositionCompact", monitorChanged, "—")
     # The motion rows (4.2.0): the defaults read "—" until the first
     # snapshot lands — an idle CONNECTED printer reads 0 (Klipper
     # always reports the motion fields once the object exists).
