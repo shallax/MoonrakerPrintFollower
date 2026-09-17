@@ -1735,6 +1735,11 @@ order of their report):
   and its kin in the tests (test_monitor.py:2566 and neighbours) —
   hoover the unclosed handles with context managers so the gates run
   warning-clean.
+- The console's expanded lifecycle (the reviewer's fix-regardless,
+  2026-09-17): MoonrakerMonitor.qml sets console-expanded on attach
+  with no stage-exit reset, and Cura's cached monitor item keeps
+  consoleSyncLines() updating a hidden rich-text document after the
+  user leaves Monitor. Reset the expanded state when the stage exits.
 - The duplicate temperature entry: one sensor renders twice in the
   temperature lists (their "Raspberry pi" on voron.athome) — check
   the auxiliary projection for duplicated object rows on the real
