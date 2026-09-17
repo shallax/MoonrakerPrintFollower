@@ -3983,6 +3983,10 @@ Item {
             # readout); it sits below the jog pad.
             "visible: root.printerModel == null || root.printerModel.endstopItems.length === 0",
             "visible: root.miniHasSeries",
+            # The controls configure pop-up's own switch and its scrim
+            # (the one-pane dashboard has no openPopOver family).
+            "visible: root.configurePaneOpen !== \"\"",
+            "visible: root.configurePaneOpen === \"controls\"",
             "visible: root.printerModel != null && !root.miniHasSeries",
             # The console error bell (the author's live request) is a
             # presence signal, not a session gate: it shows only

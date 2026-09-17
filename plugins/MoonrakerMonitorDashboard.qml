@@ -23,6 +23,11 @@ Component {
         // A printer switch closes it — a stale popup must never carry
         // actions from one machine to the next (round-2 A15).
         property bool fileManagerOpen: root.printer != null && root.printer.fileManagerOpen
+        // The controls configure pop-up's open state and its rows —
+        // the pane pop-over pattern, not the file-manager popup.
+        property string configurePaneOpen: ""
+        property var controlsConfigureRows: []
+        property var controlsConfigureHidden: []
         onPrinterChanged: {
             if (root.printer != null) {
                 root.printer.setFileManagerOpen(false);
@@ -74,6 +79,33 @@ Component {
                 }
             }
         }
+        // The configure pop-up overlays the pane, not the layout (the
+        // pop-over precedent: layout children cannot overlap). The
+        // scrim sits below the card and closes it on any outside
+        // click.
+        MouseArea {
+            visible: root.configurePaneOpen !== ""
+            anchors.fill: parent
+            onClicked: root.configurePaneOpen = ""
+        }
+        SectionConfigurePopOver {
+            id: controlsConfigurePopOver
+            visible: root.configurePaneOpen === "controls"
+            title: "Printer-control sections"
+            paneId: "controls"
+            rows: root.controlsConfigureRows
+            hidden: root.controlsConfigureHidden
+            width: 320 * screenScaleFactor
+            anchors.top: collapseButton.bottom
+            anchors.topMargin: UM.Theme.getSize("thin_margin").height
+            anchors.right: collapseButton.right
+            onLayoutCommitted: function (order, hidden) {
+                if (root.printer != null) {
+                    root.printer.setSectionLayout("controls", order, hidden);
+                }
+            }
+        }
+
         property bool tuningSliderPressed: false
         // The freeze lists (the author's live report): while a tuning
         // slider is mid-gesture — a drag or a pending keyboard nudge —
@@ -433,6 +465,25 @@ Component {
                             acceptedButtons: Qt.NoButton
                         }
                     }
+                    // The configure trigger: the same glyph as the
+                    // column configurer, one pane per header (the
+                    // author's ruling).
+                    Cura.SecondaryButton {
+                        id: configureSectionsButton
+                        objectName: "configureControlsSectionsButton"
+                        visible: !root.controlsCollapsed
+                        Layout.alignment: Qt.AlignVCenter
+                        fixedWidthMode: true
+                        width: 28 * screenScaleFactor
+                        height: width
+                        implicitHeight: width
+                        text: "⇄"
+                        tooltip: "Configure the printer-control sections."
+                        onClicked: {
+                            root.buildControlsConfigureRows();
+                            root.configurePaneOpen = "controls";
+                        }
+                    }
                     Cura.SecondaryButton {
                         id: collapseButton
                         Layout.alignment: Qt.AlignVCenter
@@ -641,10 +692,31 @@ Component {
                                 items[p].parent = controlContent;
                         }
                     }
+                    function buildControlsConfigureRows() {
+                        var layout = root.printer != null ? root.printer.sectionLayoutFor("controls") : null;
+                        var order = layout ? layout.order : [];
+                        var byId = {};
+                        for (var i = 0; i < controlContent.children.length; i++) {
+                            var header = sectionHeader(controlContent.children[i]);
+                            if (header) {
+                                byId[header.sectionId] = header.title;
+                            }
+                        }
+                        var rows = [];
+                        for (var j = 0; j < order.length; j++) {
+                            rows.push({
+                                    "id": order[j],
+                                    "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
+                                });
+                        }
+                        root.controlsConfigureRows = rows;
+                        root.controlsConfigureHidden = layout ? layout.hidden : [];
+                    }
                     Connections {
                         target: root.printer
                         function onSectionLayoutChanged() {
                             applyControlsOrder();
+                            root.buildControlsConfigureRows();
                         }
                     }
                 }

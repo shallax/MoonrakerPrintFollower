@@ -294,6 +294,24 @@ EXCLUSIONS = {
         "date": "2026-09-17",
         "recheck": "the popup round lands — the scenario opens and drives this popover",
     },
+    "configureControlsSectionsButton": {
+        "reason": "the popup round is unbuilt; the trigger is named from birth for the scenario",
+        "evidence": "the dashboard trigger ships with the objectName from birth",
+        "date": "2026-09-17",
+        "recheck": "the popup round lands — the scenario presses this trigger",
+    },
+    "configureInfoSectionsButton": {
+        "reason": "the popup round is unbuilt; the trigger is named from birth for the scenario",
+        "evidence": "the information trigger ships with the objectName from birth",
+        "date": "2026-09-17",
+        "recheck": "the popup round lands — the scenario presses this trigger",
+    },
+    "configureStatusSectionsButton": {
+        "reason": "the popup round is unbuilt; the trigger is named from birth for the scenario",
+        "evidence": "the status trigger ships with the objectName from birth",
+        "date": "2026-09-17",
+        "recheck": "the popup round lands — the scenario presses this trigger",
+    },
     # British-spelling formatting is a pure function of the locale —
     # unit-tested in test_monitor, invisible to scenarios.
     "britishSpelling": {

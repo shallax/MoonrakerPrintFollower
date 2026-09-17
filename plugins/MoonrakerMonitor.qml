@@ -65,6 +65,12 @@ Component {
         // overlap or trap a close button under another card.
         property string openPopOver: ""
         property string selectedChartSensor: ""
+        // The configure pop-overs' rows (the pop-ups ride the
+        // openPopOver switch like the chart and mesh cards).
+        property var infoConfigureRows: []
+        property var infoConfigureHidden: []
+        property var statusConfigureRows: []
+        property var statusConfigureHidden: []
 
         // The mini widget's series: primary sensors (extruders, bed,
         // chamber heater) by default; when EVERY primary is hidden,
@@ -386,6 +392,25 @@ Component {
                             }
                         }
                     }
+                    // The configure trigger: the column configurer's
+                    // glyph, adjacent to the collapse toggle (the
+                    // adjudicated placement).
+                    Cura.SecondaryButton {
+                        id: infoConfigureButton
+                        objectName: "configureInfoSectionsButton"
+                        visible: !root.infoCollapsed
+                        Layout.alignment: Qt.AlignVCenter
+                        fixedWidthMode: true
+                        width: 28 * screenScaleFactor
+                        height: width
+                        implicitHeight: width
+                        text: "⇄"
+                        tooltip: "Configure the information sections."
+                        onClicked: {
+                            root.buildConfigureRows("information");
+                            root.openPopOver = "sections-info";
+                        }
+                    }
                     UM.Label {
                         Layout.fillWidth: true
                         visible: !root.infoCollapsed
@@ -489,11 +514,39 @@ Component {
                             items[p].parent = container;
                     }
                 }
+                function buildConfigureRows(paneId) {
+                    var layout = root.printer != null ? root.printer.sectionLayoutFor(paneId) : null;
+                    var order = layout ? layout.order : [];
+                    var container = paneId === "information" ? infoContent : statusContent;
+                    var byId = {};
+                    for (var i = 0; i < container.children.length; i++) {
+                        var header = sectionHeader(container.children[i]);
+                        if (header) {
+                            byId[header.sectionId] = header.title;
+                        }
+                    }
+                    var rows = [];
+                    for (var j = 0; j < order.length; j++) {
+                        rows.push({
+                                "id": order[j],
+                                "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
+                            });
+                    }
+                    if (paneId === "information") {
+                        root.infoConfigureRows = rows;
+                        root.infoConfigureHidden = layout ? layout.hidden : [];
+                    } else {
+                        root.statusConfigureRows = rows;
+                        root.statusConfigureHidden = layout ? layout.hidden : [];
+                    }
+                }
                 Connections {
                     target: root.printer
                     function onSectionLayoutChanged() {
                         applySectionOrder(infoContent, "information");
                         applySectionOrder(statusContent, "status");
+                        root.buildConfigureRows("information");
+                        root.buildConfigureRows("status");
                     }
                 }
 
@@ -1484,6 +1537,24 @@ Component {
                             acceptedButtons: Qt.NoButton
                         }
                     }
+                    // The configure trigger, beside its collapse
+                    // toggle (the adjudicated placement).
+                    Cura.SecondaryButton {
+                        id: statusConfigureButton
+                        objectName: "configureStatusSectionsButton"
+                        visible: !root.statusCollapsed
+                        Layout.alignment: Qt.AlignVCenter
+                        fixedWidthMode: true
+                        width: 28 * screenScaleFactor
+                        height: width
+                        implicitHeight: width
+                        text: "⇄"
+                        tooltip: "Configure the printer-status sections."
+                        onClicked: {
+                            root.buildConfigureRows("status");
+                            root.openPopOver = "sections-status";
+                        }
+                    }
                     // The toggle hugs the right edge: the pane is on the
                     // right of the screen and collapses into that edge.
                     // Left when collapsed (expand left), right when open.
@@ -1659,6 +1730,43 @@ Component {
             onClicked: {
                 root.openPopOver = "";
                 root.selectedChartSensor = "";
+            }
+        }
+
+        SectionConfigurePopOver {
+            id: infoConfigurePopOver
+            visible: root.openPopOver === "sections-info"
+            title: "Information sections"
+            paneId: "information"
+            rows: root.infoConfigureRows
+            hidden: root.infoConfigureHidden
+            width: 320 * screenScaleFactor
+            anchors.top: infoHeader.bottom
+            anchors.topMargin: UM.Theme.getSize("thin_margin").height
+            anchors.left: infoHeader.left
+            onClosed: root.openPopOver = ""
+            onLayoutCommitted: function (order, hidden) {
+                if (root.printer != null) {
+                    root.printer.setSectionLayout("information", order, hidden);
+                }
+            }
+        }
+        SectionConfigurePopOver {
+            id: statusConfigurePopOver
+            visible: root.openPopOver === "sections-status"
+            title: "Printer-status sections"
+            paneId: "status"
+            rows: root.statusConfigureRows
+            hidden: root.statusConfigureHidden
+            width: 320 * screenScaleFactor
+            anchors.top: statusHeader.bottom
+            anchors.topMargin: UM.Theme.getSize("thin_margin").height
+            anchors.right: statusHeader.right
+            onClosed: root.openPopOver = ""
+            onLayoutCommitted: function (order, hidden) {
+                if (root.printer != null) {
+                    root.printer.setSectionLayout("status", order, hidden);
+                }
             }
         }
 
