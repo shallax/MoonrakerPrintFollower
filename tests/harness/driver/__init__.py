@@ -1397,8 +1397,8 @@ Row {
             if not url:
                 return {"id": request_id, "ok": False, "error": "no url"}
             try:
-                from Moonraker_Print_Follower.MoonrakerSession import MoonrakerSession
-                from Moonraker_Print_Follower.MoonrakerClient import MoonrakerClient
+                from MoonrakerPrintFollower.MoonrakerSession import MoonrakerSession
+                from MoonrakerPrintFollower.MoonrakerClient import MoonrakerClient
                 app = Application.getInstance()
                 session = MoonrakerSession(app)
                 client = MoonrakerClient(app, session=session)
@@ -1412,7 +1412,7 @@ Row {
                 # subscription (the objects list -> wanted set -> aux
                 # feed). Proving IT consumes the simulator's push is
                 # the real proof the 30s-temps class of bug is dead.
-                from Moonraker_Print_Follower.MonitorData import MonitorData
+                from MoonrakerPrintFollower.MonitorData import MonitorData
                 data = MonitorData(client, None)
                 client.start()
                 data.set_active(True)

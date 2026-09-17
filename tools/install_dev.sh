@@ -3,7 +3,7 @@
 # into Cura's user plugin folder, so edits here show up on the next
 # Cura restart — no package download, unzip, drag or reinstall.
 #
-# Undo:  rm ~/.local/share/cura/<version>/plugins/Moonraker_Print_Follower
+# Undo:  rm ~/.local/share/cura/<version>/plugins/MoonrakerPrintFollower
 set -eu
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
@@ -12,7 +12,7 @@ if [ -z "$cura_dir" ]; then
     echo "No Cura version directory under ~/.local/share/cura — start Cura once first." >&2
     exit 1
 fi
-target="$cura_dir/plugins/Moonraker_Print_Follower"
+target="$cura_dir/plugins/MoonrakerPrintFollower"
 mkdir -p "$(dirname "$target")"
 rm -rf "$target"
 ln -s "$root/plugins" "$target"

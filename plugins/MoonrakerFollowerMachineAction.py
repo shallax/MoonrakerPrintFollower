@@ -527,7 +527,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
         # persistent index cache and the diagnostics traces live under
         # it. The session's downloaded FILE is a temp directory and
         # disappears when Cura exits.
-        return os.path.join(Resources.getCacheStoragePath(), "Moonraker_Print_Follower")
+        return os.path.join(Resources.getCacheStoragePath(), "MoonrakerPrintFollower")
 
     @pyqtSlot()
     def clearCache(self) -> None:

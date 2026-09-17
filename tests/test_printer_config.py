@@ -287,7 +287,7 @@ class PrinterConfigTests(unittest.TestCase):
         action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
         self.assertIn("def clearCache(self)", action)
         self.assertIn('shutil.rmtree(self._cache_root(), ignore_errors=True)', action)
-        self.assertIn('"Moonraker_Print_Follower"', action)
+        self.assertIn('"MoonrakerPrintFollower"', action)
 
     def test_normalise_url_is_the_single_url_rule(self):
         self.assertEqual(normalise_url(""), "http://")

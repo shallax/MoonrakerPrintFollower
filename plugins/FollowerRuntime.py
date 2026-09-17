@@ -33,7 +33,7 @@ class FollowerRuntime:
         # download — the unconditional entry point the bind/close
         # transitions cannot provide while idle-browsing.
         self.client.sessionInvalidated.connect(self.files.cancel_one_shots)
-        cache_dir = os.path.join(Resources.getCacheStoragePath(), "Moonraker_Print_Follower")
+        cache_dir = os.path.join(Resources.getCacheStoragePath(), "MoonrakerPrintFollower")
         cache = PersistentIndexCache(os.path.join(cache_dir, "indexes"))
         self.index = GCodeIndexService(self.files, cache, parent)
         self.preview = PreviewFollower(self.cura)

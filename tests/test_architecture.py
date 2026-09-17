@@ -109,7 +109,7 @@ class SourceContractTests(unittest.TestCase):
         # workflow; here the two metadata files must stay in sync.
         self.assertEqual(package["package_version"], plugin["version"])
         self.assertNotEqual(package["package_version"], "")
-        self.assertEqual(package["package_id"], "Moonraker_Print_Follower")
+        self.assertEqual(package["package_id"], "MoonrakerPrintFollower")
         self.assertIn("GNU GENERAL PUBLIC LICENSE", (ROOT / "LICENSE").read_text())
 
     def test_retired_runtime_is_removed_not_hidden_behind_shims(self):

@@ -59,7 +59,7 @@ container_path() {
 # on the success path and after a failed runner alike; only the
 # plugin's own lines count, so Cura's own boot noise stays invisible.
 scan_cura_log() {
-    scan="$(grep -nE 'Moonraker_Print_Follower|/Moonraker[A-Za-z]+\.qml' "$WORK_DIR"/cura_run.log 2>/dev/null \
+    scan="$(grep -nE 'MoonrakerPrintFollower|/Moonraker[A-Za-z]+\.qml' "$WORK_DIR"/cura_run.log 2>/dev/null \
         | grep -E 'WARNING|ERROR|polish loop' || true)"
     if [ -n "$scan" ]; then
         echo "ui_test: CURA LOG NOISE (the log-scan ruling) - fix the code, never the filter:" >&2
@@ -223,7 +223,7 @@ export HARNESS_MODE="$MODE"
 # the plugin built from a known-broken revision — the runner and the
 # driver stay current (the scenario itself must be the same).
 PLUGIN_DIR="$WORK_DIR/xdg/cura/$SEED_VER/plugins"
-rm -rf "$PLUGIN_DIR/Moonraker_Print_Follower" "$PLUGIN_DIR/HarnessDriver"
+rm -rf "$PLUGIN_DIR/MoonrakerPrintFollower" "$PLUGIN_DIR/HarnessDriver"
 mkdir -p "$PLUGIN_DIR"
 PACKAGE_ROOT="$root/dist"
 if [ -n "${RED_REV:-}" ]; then
@@ -237,7 +237,7 @@ fi
 (cd "$WORK_DIR" && rm -rf pkg_stage && mkdir pkg_stage && \
  unzip -q -o "$PACKAGE_ROOT/MoonrakerPrintFollower-v$PLUGIN_VERSION.curapackage" \
    -d pkg_stage 'files/plugins/*')
-cp -r "$WORK_DIR"/pkg_stage/files/plugins/Moonraker_Print_Follower "$PLUGIN_DIR/"
+cp -r "$WORK_DIR"/pkg_stage/files/plugins/MoonrakerPrintFollower "$PLUGIN_DIR/"
 cp -r "$root/tests/harness/driver" "$PLUGIN_DIR/HarnessDriver"
 # The container's root re-opens the seeded tree as the last staging
 # act: whatever uid skew survives between the host-side chmod and the
