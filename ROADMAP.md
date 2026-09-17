@@ -1430,7 +1430,7 @@ carries its reason (F10).
   klippy/webhooks.py, klippy/kinematics/extruder.py,
   klippy/chelper/kin_extruder.c — not klippy/extras/*).
 
-## 4.3.0 — Monitor & file-manager presentation refactor
+## 4.3.0 — Monitor & file-manager presentation refactor — SHIPPED (2026-09-17)
 
 SHIPPED 2026-09-16 (branch release/v4.3.0, awaiting the author's
 snapshot nod): the strip, the pause/resume policy rows, the
@@ -1716,37 +1716,89 @@ the decisions ledger.
 ## 4.4.0 — Configurable sections
 
 A candidate from the author (2026-09-15): show/hide and re-order the
-Monitor's collapsible sections — possibly whole panes — the way the
-file manager's columns already work. The machinery it builds on is
-mostly shipped or landing now: the 23 pinned section ids (4.3.0's
-exact-set pin — any rename, re-order or visibility rule must respect
-it), the collapse map as the persistence precedent, the file
-manager's column UI (visibility + drag re-order) as the interaction
-precedent, and the UI-state store's merge-write path as the persistence
-home. Planned FIRST (the author's 2026-09-16 ruling): the configurable
-sections land ahead of the 4.5.0 physical-head pack, which builds on
-the machinery here.
+Monitor's sections the way the file manager's columns work. The
+machinery it builds on shipped in 4.3.0: the 23 pinned section ids
+(the exact-set pin — any rename, re-order or visibility rule must
+respect it), the collapse map as the persistence precedent, the file
+manager's column UI as the interaction precedent, and the UI-state
+store's merge-write path as the persistence home. Planned FIRST (the
+author's 2026-09-16 ruling): the configurable sections land ahead of
+the 4.5.0 physical-head pack.
 
-The author's 2026-09-16 backlog for this release (ruled live, in
-order of their report):
+Scope settled in the 2026-09-16/17 Phase 0 walk (author rulings):
 
-- The duplicate temperature entry: one sensor renders twice in the
-  temperature lists (their "Raspberry pi" on voron.athome) — check
-  the auxiliary projection for duplicated object rows on the real
-  printer's data.
-- The Preview card's temp pair uses the arrow between current and
-  desired (the Monitor's arrow form), not "/".
-- The Preview card's ETA text renders in the default text colour,
-  not grey — likewise the "Scale z-max" label and the bed-mesh
-  low/high labels.
-- The pause list inside the card caps at five visible entries and
-  scrolls beyond that; the scrollbar must not overflow the card's
-  content, and up/down affordances show when more entries exist
-  (the what's-new and file-manager pattern).
-- The multi-start pattern (the 2026-09-16 Windows log): three
-  websocket upgrades and two camera relays fired from one plugin
-  instance at startup — find the duplicate start trigger; three
-  live feeds would triple the polling and any leak.
+- Per-pane configuration: each pane title carries the column-manager
+  icon; its popup shows/hides and drag-re-orders that pane's
+  sections, the drag riding a visible handle on the left of each
+  row. One reusable row+popup component serves every pane's popup
+  and is retrofitted as the file-manager column popup — the popup's
+  rows only, never the live columns (the author's 2026-09-17
+  ruling).
+- Pane-level visibility stays out: collapse already hides whole
+  panes, and the settings pane is too far away to host the config.
+- No safety rails on hiding: the user's choice applies whenever they
+  make it — every section hideable, the load-bearing trio included
+  (the author's 2026-09-17 ruling over the panel's exemption
+  recommendation). One hard exemption: the emergency stop is never
+  hideable (structural — it lives outside every pane).
+- Persistence: the strict explicit shape — per pane, the full id
+  order plus a hidden set, under one new top-level key, normalised
+  against a static per-pane table (the normalise_columns recipe);
+  id membership never stored in the schema; commit once per
+  interaction, no-op guarded.
+- Collapsed-pane readouts (information-only): Information = the top
+  two temperatures per the mini widget's series (the same rule the
+  pane uses expanded); Status = print + layer progress as a
+  dual-stacked bar; Controls = position • Z offset • flow rate on
+  one rotated line (the author's 2026-09-17 rulings).
+- The toolhead move queue stops coalescing: every command executes
+  as its own step — no adjacent same-speed merging, no
+  equal-and-opposite cancelling (the retract crash: two -100 taps
+  merged into an out-of-range -200); no opt-in toggle (the author's
+  2026-09-17 rulings).
+- The file manager gains a Last-print-duration column: Moonraker's
+  recorded actual duration of the file's last finished print (not
+  the slicer's estimate), emdash when never printed, visible by
+  default for everyone (the author's 2026-09-17 rulings).
+
+The reorder mechanism: runtime reparenting (detach-all, re-attach in
+target order), engine-verified in the dev container; the factory path
+is priced out by the per-instance wiring and the host-never-names-ids
+boundary.
+
+The backlog for this release (verified against the 4.3.0 tree):
+
+- The resume button's grey-out: both surfaces already grey out; the
+  real gap is the two-clock projection/timing mismatch (the strip's
+  stale imperative enablement on host re-parent).
+- The Monitor's first-paint lazy loading, decoupled from the reorder
+  mechanism (a Loader body drops the pinned margins — its own item).
+- The pause-row interaction scenario and the baked-pause harness
+  fixture (the scenario_map EXCLUSIONS entry defers it here).
+- The can_resume one-sided gate: a stale pause flag enables a
+  toolhead-moving RESUME and locks out new prints — add the missing
+  state check (the author's 2026-09-17 ruling).
+- The multi-start pin backfill: drive the rebind path
+  (configure→start→configure→start) and assert the handler set is
+  replaced, not appended.
+- The test-suite ResourceWarnings hoover (the author's 2026-09-17 CI
+  note): unclosed json.load handles and kin, context-managed.
+- The console's expanded lifecycle (the reviewer's 2026-09-17):
+  reset the expanded state on stage exit — consoleSyncLines() keeps
+  updating a hidden document after leaving Monitor.
+- The 4.3.0 reviewer debt: drain the relay's unread bytes before
+  closing downstream (finite/snapshot camera responses), a
+  regression test for the backpressure wake-up, and the diagnostics
+  double-start guard plus trace sub-option clearing.
+- The pane-sizes docs correction: remove the promise from README,
+  CHANGELOG, WhatsNew and the UiStateStore docstring (the author
+  never ruled resizable panes; console resize stays).
+
+The 2026-09-16 backlog items that shipped inside 4.3.0 (dropped from
+this release after verification): the duplicate temperature label,
+the Preview card's arrow temp pair, the card's black label ruling
+(superseding the grey note), the pause list's five-row cap and
+chevrons, and the Windows multi-start disconnect.
 
 ## 4.5.0 — Physical head in the Preview (moved from 4.3.0)
 
