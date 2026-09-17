@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill-rule="evenodd">
+  <!-- Flow: three bars stepping down, the flow-meter reading. No
+       fills: UM.ColorImage injects the theme colour into the root
+       element. -->
+  <path d="M4 5h16v2.6H4zM4 10.7h11v2.6H4zM4 16.4h6v2.6H4z"/>
+</svg>

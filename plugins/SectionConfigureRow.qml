@@ -15,10 +15,19 @@ Item {
     property string rowId: ""
     property string rowTitle: ""
     property bool rowVisible: true
+    // Slot rows render the row invisibly beneath their blank and
+    // must not answer clicks (opacity blocks nothing).
+    property bool interactive: true
 
     signal toggleRequested
     signal moveRequested(int steps)
-    signal dragMoved(real delta)
+    // The press starts the drag; the host's overlay carries the
+    // rest, so the delegate can leave the list mid-gesture.
+    signal dragRequested
+    // The release commits: it lands on EITHER the handle (a quick
+    // press-release, before the rebuild kills the delegate) or the
+    // overlay (a moved drag) — the host's commit is idempotent, so
+    // both paths are safe.
     signal dragReleased
 
     // The fill MouseArea is a SIBLING of the Row and declared FIRST,
@@ -29,6 +38,7 @@ Item {
     MouseArea {
         anchors.fill: parent
         cursorShape: Qt.PointingHandCursor
+        enabled: rowRoot.interactive
         onClicked: rowRoot.toggleRequested()
     }
 
@@ -71,27 +81,17 @@ Item {
                 hoverEnabled: true
                 preventStealing: true
                 cursorShape: Qt.SizeVerCursor
-                property real pressY: 0
+                enabled: rowRoot.interactive
                 onPressed: {
                     handle.pressed = true;
-                    handleMouse.pressY = mouseY;
-                }
-                onPositionChanged: {
-                    if (!handle.pressed) {
-                        return;
-                    }
-                    rowRoot.dragMoved(mouseY - handleMouse.pressY);
-                    handleMouse.pressY = mouseY;
+                    rowRoot.dragRequested();
                 }
                 onReleased: {
-                    if (handle.pressed) {
-                        rowRoot.dragReleased();
-                    }
                     handle.pressed = false;
+                    rowRoot.dragReleased();
                 }
                 onCanceled: {
                     handle.pressed = false;
-                    rowRoot.dragReleased();
                 }
             }
         }
@@ -118,11 +118,13 @@ Item {
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
+                enabled: rowRoot.interactive
                 onClicked: rowRoot.toggleRequested()
             }
         }
 
         UM.Label {
+            objectName: "sectionConfigureRowTitle"
             text: rowRoot.rowTitle
             width: parent.width - handle.width - checkboxBox.width - 2 * parent.spacing
             elide: Text.ElideRight

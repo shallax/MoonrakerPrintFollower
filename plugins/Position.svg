@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill-rule="evenodd">
+  <!-- Position: a ring with the four crosshair ticks. No fills:
+       UM.ColorImage injects the theme colour into the root element. -->
+  <path d="M12 4.6a1 1 0 0 1 1 1v3.4a1 1 0 0 1-2 0V5.6a1 1 0 0 1 1-1zM12 16a1 1 0 0 1 1 1v1.4a1 1 0 0 1-2 0V17a1 1 0 0 1 1-1zM5.6 12a1 1 0 0 1 1-1h3.4a1 1 0 0 1 0 2H6.6a1 1 0 0 1-1-1zM15 12a1 1 0 0 1 1-1h1.4a1 1 0 0 1 0 2H16a1 1 0 0 1-1-1z"/>
+  <path d="M12 8.6a3.4 3.4 0 1 0 .001 6.8A3.4 3.4 0 0 0 12 8.6zm0 1.6a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6z"/>
+</svg>

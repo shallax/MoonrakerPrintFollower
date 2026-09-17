@@ -158,8 +158,16 @@ def preview_eta_text(snapshot, physical):
         remaining = estimate_remaining(stats.get("print_duration"), sd.get("progress"), physical.estimated_time, physical.metadata_complete)
     if remaining is None:
         return "—"
-    finish = (datetime.now().astimezone() + timedelta(seconds=remaining)).strftime("%H:%M")
-    return f"{duration(remaining)} · ~{finish}"
+    finish_dt = datetime.now().astimezone() + timedelta(seconds=remaining)
+    finish = finish_dt.strftime("%H:%M")
+    return f"{duration(remaining)} · ~{finish}{day_offset_suffix(finish_dt)}"
+
+
+def day_offset_suffix(finish_dt: datetime) -> str:
+    """'+n' when the finish lands on a later day — the print crosses
+    midnight (the live request: ~10:18 +1)."""
+    offset = (finish_dt.date() - datetime.now().astimezone().date()).days
+    return f" +{offset}" if offset > 0 else ""
 
 
 def duration(seconds):
@@ -484,7 +492,8 @@ def core_values(snapshot, physical, connected):
             basis = "blend"
         if remaining is not None:
             eta = duration(remaining)
-            finish = (datetime.now().astimezone() + timedelta(seconds=remaining)).strftime("%a %H:%M" if remaining >= 72000 else "%H:%M")
+            finish_dt = datetime.now().astimezone() + timedelta(seconds=remaining)
+            finish = finish_dt.strftime("%a %H:%M" if remaining >= 72000 else "%H:%M") + day_offset_suffix(finish_dt)
     # How far through the CURRENT layer the file position is, from the
     # index's byte ranges (the nozzle's Z never moves within a layer,
     # so Z cannot express this). -1 without an index: the bar hides.

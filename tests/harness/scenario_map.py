@@ -88,6 +88,8 @@ SCENARIO_MAP = {
     "MoonrakerMonitorModel.setPowerDevice": "g9",
     "MoonrakerMonitorModel.setPwmOutput": "c3",
     "MoonrakerMonitorModel.setSectionExpanded": "d5",
+    "MoonrakerMonitorModel.setSectionLayout": "x3",
+    "MoonrakerMonitorModel.sectionLayoutFor": "x1",
     "MoonrakerMonitorModel.setShowProbePoints": "h6b",
     "MoonrakerMonitorModel.setShowTemperaturePower": "c3",
     "MoonrakerMonitorModel.setShowTemperatureTargets": "c3",
@@ -108,6 +110,21 @@ SCENARIO_MAP = {
     "MoonrakerPrintFollower.toggleFollowingPause": "h3",
     # The interactive items by objectName.
     "moonrakerTemperatureDetail": "v6",
+    "sectionConfigurePopOver": "x1",
+    "sectionConfigureRowTitle": "x1",
+    "configureControlsSectionsButton": "x1",
+    "configureStatusSectionsButton": "x2",
+    "configureInfoSectionsButton": "x4",
+    "infoCollapsedReadoutText": "x4",
+    "statusCollapsedReadoutLabel": "x4",
+    "controlsCollapsedReadoutText": "x4",
+    "visibilitySelectorGlyph": "x2",
+    "visibilitySelectorBox": "x2",
+    "columnsPopupBackground": "x5",
+    "sectionConfigureHandle": "x6",
+    "moonrakerStripBed": "v19",
+    "moonrakerStripFinish": "v19",
+    "resetToDefaultsLabel": "x2",
     "moonrakerControlsPane": "v9",
     "moonrakerStatusStateText": "v9", "moonrakerConsoleOutput": "v9",
     "moonrakerFileRowName": "v10", "moonrakerFileSearch": "v11",
@@ -193,6 +210,9 @@ PREFIX_RULES = [
     ("key", "infoCollapsed", "d5"),
     ("key", "statusCollapsed", "d5"),
     ("key", "sectionExpandedMap", "d5"),
+    ("key", "sectionLayout", "x3"),
+    ("key", "sectionHiddenMap", "x2"),
+    ("key", "monitorPositionCompact", "x4"),
     ("key", "improvingEta", "h8"),
     ("key", "improveEta", "h8"),
     ("key", "showProbePoints", "h6b"),
@@ -254,70 +274,11 @@ EXCLUSIONS = {
         "date": "2026-09-16",
         "recheck": "the baked-pause pause-row scenario lands",
     },
-    # The section-layout surfaces land with the 4.4.0 configure
-    # popup; until the popup round the slot and keys carry no
-    # scenario that addresses them (unit tests drive the normaliser
-    # and the store write).
-    "MoonrakerMonitorModel.setSectionLayout": {
-        "reason": "the configure popup is unbuilt; the slot is unit-tested in test_section_layout",
-        "evidence": "unit tests drive normalise_section_layout and the store write",
-        "date": "2026-09-17",
-        "recheck": "the popup round lands — the popup scenario drives this slot",
-    },
-    "MoonrakerMonitorModel.sectionLayoutFor": {
-        "reason": "the configure popup is unbuilt; the slot is unit-tested in test_section_layout",
-        "evidence": "unit tests drive layout_for and the store write",
-        "date": "2026-09-17",
-        "recheck": "the popup round lands — the popup scenario drives this slot",
-    },
-    "sectionLayout": {
-        "reason": "the configure popup is unbuilt; the key is unit-tested in test_section_layout",
-        "evidence": "unit tests drive normalise_section_layout and the store write",
-        "date": "2026-09-17",
-        "recheck": "the popup round lands — the popup scenario drives this slot",
-    },
-    "sectionHiddenMap": {
-        "reason": "the configure popup is unbuilt; the key is unit-tested in test_section_layout",
-        "evidence": "unit tests drive normalise_section_layout and the store write",
-        "date": "2026-09-17",
-        "recheck": "the popup round lands — the popup scenario drives this slot",
-    },
-    "sectionConfigureHandle": {
-        "reason": "the popup round is unbuilt; the handle is geometry-addressed once the scenario lands",
-        "evidence": "the shared row component ships with the objectName from birth",
-        "date": "2026-09-17",
-        "recheck": "the popup round lands — the drag scenario addresses the handle",
-    },
-    "sectionConfigurePopOver": {
-        "reason": "the popup round is unbuilt; the popover is named from birth for the scenario",
-        "evidence": "the shared popover ships with the objectName from birth",
-        "date": "2026-09-17",
-        "recheck": "the popup round lands — the scenario opens and drives this popover",
-    },
-    "configureControlsSectionsButton": {
-        "reason": "the popup round is unbuilt; the trigger is named from birth for the scenario",
-        "evidence": "the dashboard trigger ships with the objectName from birth",
-        "date": "2026-09-17",
-        "recheck": "the popup round lands — the scenario presses this trigger",
-    },
-    "configureInfoSectionsButton": {
-        "reason": "the popup round is unbuilt; the trigger is named from birth for the scenario",
-        "evidence": "the information trigger ships with the objectName from birth",
-        "date": "2026-09-17",
-        "recheck": "the popup round lands — the scenario presses this trigger",
-    },
-    "configureStatusSectionsButton": {
-        "reason": "the popup round is unbuilt; the trigger is named from birth for the scenario",
-        "evidence": "the status trigger ships with the objectName from birth",
-        "date": "2026-09-17",
-        "recheck": "the popup round lands — the scenario presses this trigger",
-    },
-    "monitorPositionCompact": {
-        "reason": "the collapsed readouts are presentation-only; the key rides the readout scenario",
-        "evidence": "the compact form is a pure formatter, unit-tested via the payload",
-        "date": "2026-09-17",
-        "recheck": "the readout scenario lands — the collapsed-strip scenario reads this key",
-    },
+    # The drag GESTURE stays excluded: the synthetic drag cannot drive
+    # a QML MouseArea grab under Xvfb (the console-resize precedent).
+    # Retired: x6 drives a real press/move/release on the handle via
+    # QTest (the s8 track-click precedent) and gates the rendered
+    # reorder the plain release commits.
     # British-spelling formatting is a pure function of the locale —
     # unit-tested in test_monitor, invisible to scenarios.
     "britishSpelling": {

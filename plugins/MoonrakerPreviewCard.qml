@@ -200,13 +200,16 @@ Item {
     function updateStrip() {
         stripValid = !base.previewBlockStale && base.previewBlock !== null && base.previewBlock !== undefined && base.previewBlock.inactive !== true;
         stripPaused = stripValid && base.previewBlock.state === "paused";
-        // The pair renders WITHOUT the "Hotend"/"Bed" labels (the UX
-        // re-review's ruling): the labelled form measured 229 px in a
-        // 300 px row and elided the bed's number — the one value the
-        // pair exists to show. Hotend first, bed second: unambiguous
-        // to the machine's owner.
-        stripTemps.text = stripValid ? base.previewBlock.hotend + " · " + base.previewBlock.bed : "—";
-        stripSlot.text = stripSlotText();
+        // The two wrapped lines (the live request): the hotend and
+        // the bed each get their own labelled line, and the slot
+        // splits into the countdown and the finish time. A refusal
+        // reason (no separator) occupies the countdown line alone.
+        stripTemps.text = stripValid ? base.previewBlock.hotend : "—";
+        stripBed.text = stripValid ? base.previewBlock.bed : "—";
+        var slotText = stripSlotText();
+        var parts = slotText.indexOf(" · ") >= 0 ? slotText.split(" · ") : [slotText, ""];
+        stripSlot.text = stripValid ? parts[0] : "—";
+        stripFinish.text = stripValid ? parts[1] : "";
         stripPauseButton.enabled = stripValid && (stripPaused ? base.previewBlock.canResume : base.previewBlock.canPause);
         stripPauseButton.text = stripPaused ? "Resume print" : "Pause print";
         stripPauseButton.tooltip = stripPauseTooltip();
@@ -287,50 +290,121 @@ Item {
 
             Row {
                 width: parent.width
-                // The row sizes from its labels' natural line height:
-                // the theme's default font is point-sized (pixelSize
-                // reads -1), so a pixelSize-bound row collapsed to the
-                // clipped line box and chopped the glyphs (the gate's
-                // census measured a 10 px row with 7 px ink).
+                // Two ALWAYS-WRAPPED columns (the live request): the
+                // left box is two lines — the hotend temperature then
+                // the bed, left-aligned; the right box is two lines
+                // — the countdown then the finish time, right-aligned.
+                // Each line carries its icon (thermometer, bed,
+                // hourglass, clock). The boxes are layout only — no
+                // outlines.
                 spacing: base.buttonSpacing
 
-                UM.Label {
-                    id: stripTemps
-                    objectName: "moonrakerStripTemps"
-                    // The unlabelled pair in the arrow form
-                    // ("205.2 → 210.0 °C · 60.0 → 60.0 °C" ≈ 175 px
-                    // at the default font) takes the wider cell; the
-                    // labelled form never fit at all.
+                Column {
+                    id: stripTempsColumn
                     width: 200 * screenScaleFactor
-                    color: UM.Theme.getColor("text")
-                    font: UM.Theme.getFont("default")
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
-                    clip: true
+                    spacing: 2 * screenScaleFactor
+                    Row {
+                        visible: stripValid
+                        spacing: 2 * screenScaleFactor
+                        UM.ColorImage {
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Thermometer.svg")
+                        }
+                        UM.Label {
+                            id: stripTemps
+                            objectName: "moonrakerStripTemps"
+                            width: 182 * screenScaleFactor
+                            color: UM.Theme.getColor("text")
+                            font: UM.Theme.getFont("default")
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                            clip: true
+                        }
+                    }
+                    Row {
+                        visible: stripValid
+                        spacing: 2 * screenScaleFactor
+                        UM.ColorImage {
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Bed.svg")
+                        }
+                        UM.Label {
+                            id: stripBed
+                            objectName: "moonrakerStripBed"
+                            width: 182 * screenScaleFactor
+                            color: UM.Theme.getColor("text")
+                            font: UM.Theme.getFont("default")
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                            clip: true
+                        }
+                    }
                 }
 
-                UM.Label {
-                    // The permanent middle slot: its TEXT changes —
-                    // the print ETA while a gate passes, the policy's
-                    // refusal reason whenever one refuses. The slot
-                    // discharges "nothing silently unclickable":
-                    // whenever the control is disabled, this cell
-                    // says why in the policy's own words. The full
-                    // sentence rides the tooltip; the ETA renders in
-                    // the full text colour (the 2026-09-16 ruling).
-                    id: stripSlot
-                    objectName: "moonrakerStripSlot"
+                Column {
+                    id: stripSlotColumn
+                    // 200 + 90 + spacing = the card's 300 px content
+                    // width: any wider and the column rides past the
+                    // pane's edge (the live report).
                     width: 90 * screenScaleFactor
-                    horizontalAlignment: Text.AlignRight
-                    color: UM.Theme.getColor("text")
-                    font: UM.Theme.getFont("default")
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
-                    clip: true
-                    UM.TooltipArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.NoButton
-                        text: stripPauseTooltip()
+                    spacing: 2 * screenScaleFactor
+                    Row {
+                        visible: stripValid
+                        spacing: 2 * screenScaleFactor
+                        UM.ColorImage {
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Hourglass.svg")
+                        }
+                        UM.Label {
+                            // The permanent middle slot: its TEXT
+                            // changes — the print countdown while a
+                            // gate passes, the policy's refusal reason
+                            // whenever one refuses. The slot discharges
+                            // "nothing silently unclickable": whenever
+                            // the control is disabled, this cell says
+                            // why in the policy's own words. The full
+                            // sentence rides the tooltip; the ETA
+                            // renders in the full text colour (the
+                            // 2026-09-16 ruling).
+                            id: stripSlot
+                            objectName: "moonrakerStripSlot"
+                            // Left-aligned: the text flows from its
+                            // icon instead of squeezing against the
+                            // pane's right edge (the live report).
+                            width: 72 * screenScaleFactor
+                            color: UM.Theme.getColor("text")
+                            font: UM.Theme.getFont("default")
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                            clip: true
+                            UM.TooltipArea {
+                                anchors.fill: parent
+                                acceptedButtons: Qt.NoButton
+                                text: stripPauseTooltip()
+                            }
+                        }
+                    }
+                    Row {
+                        visible: stripValid
+                        spacing: 2 * screenScaleFactor
+                        UM.ColorImage {
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Clock.svg")
+                        }
+                        UM.Label {
+                            id: stripFinish
+                            objectName: "moonrakerStripFinish"
+                            width: 72 * screenScaleFactor
+                            color: UM.Theme.getColor("text")
+                            font: UM.Theme.getFont("default")
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                            clip: true
+                        }
                     }
                 }
             }
@@ -500,7 +574,7 @@ Item {
                             UM.Label {
                                 width: Math.max(0, parent.width - removePauseButton.width - parent.spacing)
                                 height: parent.height
-                                text: "End of layer " + parent.pauseLayer + (parent.pauseEta.length > 0 ? " · " + parent.pauseEta : "") + (parent.pauseMissed ? " — pause not taken" : "") + (parent.pauseBaked ? (parent.pausePassed ? " — baked · passed" : " — baked") : (pauseState === "passed" ? " — passed" : ""))
+                                text: "End of layer " + parent.pauseLayer + (!parent.pausePassed && parent.pauseEta.length > 0 ? " · " + parent.pauseEta : "") + (parent.pauseMissed ? " — pause not taken" : "") + (parent.pauseBaked ? (parent.pausePassed ? " — baked · passed" : " — baked") : (pauseState === "passed" ? " — passed" : ""))
                                 color: parent.pauseMissed ? UM.Theme.getColor("error") : (parent.pausePassed ? UM.Theme.getColor("text_inactive") : UM.Theme.getColor("text"))
                                 font: UM.Theme.getFont("default")
                                 verticalAlignment: Text.AlignVCenter

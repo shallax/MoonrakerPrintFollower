@@ -106,6 +106,54 @@ Component {
                 root.statusConfigureHidden = layout ? layout.hidden : [];
             }
         }
+        // The section-order application: the configure popup and the
+        // state hydration both flow through sectionLayout; each pane
+        // re-parents only when the live order differs (the
+        // probe-verified recipe — detach-all, re-attach in target
+        // order, strays re-attach last). A ROOT-level named function,
+        // the shell's attachDashboard lesson: nested functions called
+        // from signal handlers resolve through the type scope and
+        // throw on some engines (the probe's finding — the handler
+        // logged its entry, the call never ran its first line).
+        function applySectionOrder(container, paneId) {
+            // The EFFECTIVE layout, never the raw property: a restore
+            // to the pane's default order drops the entry entirely
+            // (the normaliser keeps only touched panes), and the raw
+            // {} would leave the sections stranded in the previous
+            // order (the probe's finding).
+            var effective = root.printer ? root.printer.sectionLayoutFor(paneId) : null;
+            var target = effective ? effective.order : null;
+            if (!target)
+                return;
+            var current = [];
+            for (var i = 0; i < container.children.length; i++) {
+                var header = root.sectionHeader(container.children[i]);
+                if (header)
+                    current.push(header.sectionId);
+            }
+            if (JSON.stringify(current) === JSON.stringify(target))
+                return;
+            var items = [];
+            for (var j = 0; j < container.children.length; j++)
+                items.push(container.children[j]);
+            for (var k = 0; k < items.length; k++)
+                items[k].parent = null;
+            var attached = [];
+            for (var m = 0; m < target.length; m++) {
+                for (var n = 0; n < items.length; n++) {
+                    var header2 = root.sectionHeader(items[n]);
+                    if (header2 && header2.sectionId === target[m]) {
+                        items[n].parent = container;
+                        attached.push(items[n]);
+                        break;
+                    }
+                }
+            }
+            for (var p = 0; p < items.length; p++) {
+                if (attached.indexOf(items[p]) === -1)
+                    items[p].parent = container;
+            }
+        }
 
         // The mini widget's series: primary sensors (extruders, bed,
         // chamber heater) by default; when EVERY primary is hidden,
@@ -219,43 +267,14 @@ Component {
             updateCameraImage();
         }
         focus: true
-        // Esc on the Monitor page (a live request): the
-        // popover and chart close first, then the page itself —
-        // Preview when anything is sliced, Prepare otherwise. A
-        // WINDOW-LEVEL Shortcut, never a Keys handler: Cura's
-        // buttons do not take focus, so the moment the user clicks
-        // anything the handler never sees Esc (the file-manager
-        // popup's own history — the live report: Esc on
-        // the Monitor page did nothing). While the file-manager
-        // popup is open THIS shortcut owns the key: an open
-        // confirmation cancels (its content's own handler having
-        // accepted the key first), otherwise the popup closes.
-        Shortcut {
-            sequence: "Esc"
-            // THE one window-level shortcut: the whole Esc ladder in
-            // one place, so the key can never have two claimants
-            // (the live report: the popup's own shortcut
-            // and this one fought, and the popup lost). The popup's
-            // open state lives in the MODEL now — no parent chains,
-            // no focus.
-            onActivated: {
-                if (root.printer != null && root.printer.fileManagerOpen) {
-                    if (root.printer.filePrintConfirm !== "") {
-                        // The print confirmation is the TOP layer: Esc
-                        // cancels it, not the popup (the
-                        // ruling).
-                        root.printer.fileCancelPrint();
-                    } else {
-                        root.printer.setFileManagerOpen(false);
-                    }
-                } else if (openPopOver !== "" || selectedChartSensor !== "") {
-                    openPopOver = "";
-                    selectedChartSensor = "";
-                } else if (OutputDevice != null) {
-                    OutputDevice.leaveMonitorStage();
-                }
-            }
-        }
+        // The Esc ladder lives in the DASHBOARD document now: that
+        // document hosts every layer (this document's pop-overs, the
+        // controls pane's pop-up, the file manager), so one
+        // window-level shortcut there can close them all in order —
+        // a ladder here could not see the controls pop-up and fired
+        // the stage-exit branch from under it (the harness probe's
+        // finding). This document only answers openPopOver, which
+        // the dashboard's ladder writes through baseMonitorLoader.
         // The author's ruling (2026-09-10): when the stage is too
         // narrow for the Webcam pane at its minimum, the Information
         // pane auto-collapses to make room. The trigger is computed
@@ -460,6 +479,15 @@ Component {
                         tooltip: "Configure the information sections."
                         onClicked: {
                             root.buildConfigureRows("information");
+                            // Positioned imperatively at open time,
+                            // the dashboard popup's lesson: mapToItem
+                            // bindings evaluate once and latch the
+                            // pre-layout position (the live report:
+                            // the status card opened inside the
+                            // controls pane).
+                            var infoEdge = infoHeader.mapToItem(root, infoHeader.x, 0);
+                            infoConfigurePopOver.x = infoEdge.x;
+                            infoConfigurePopOver.y = infoEdge.y + infoHeader.height + UM.Theme.getSize("thin_margin").height;
                             root.openPopOver = "sections-info";
                         }
                     }
@@ -519,52 +547,11 @@ Component {
                     }
                 }
 
-                // The section-order application: the configure popup
-                // and the state hydration both flow through
-                // sectionLayout; each pane re-parents only when the
-                // live order differs (the probe-verified recipe —
-                // detach-all, re-attach in target order, strays
-                // re-attach last).
-                function applySectionOrder(container, paneId) {
-                    var layout = root.printer ? root.printer.sectionLayout : null;
-                    var entry = layout ? layout[paneId] : null;
-                    var target = entry ? entry.order : null;
-                    if (!target)
-                        return;
-                    var current = [];
-                    for (var i = 0; i < container.children.length; i++) {
-                        var header = sectionHeader(container.children[i]);
-                        if (header)
-                            current.push(header.sectionId);
-                    }
-                    if (JSON.stringify(current) === JSON.stringify(target))
-                        return;
-                    var items = [];
-                    for (var j = 0; j < container.children.length; j++)
-                        items.push(container.children[j]);
-                    for (var k = 0; k < items.length; k++)
-                        items[k].parent = null;
-                    var attached = [];
-                    for (var m = 0; m < target.length; m++) {
-                        for (var n = 0; n < items.length; n++) {
-                            var header2 = sectionHeader(items[n]);
-                            if (header2 && header2.sectionId === target[m]) {
-                                items[n].parent = container;
-                                attached.push(items[n]);
-                                break;
-                            }
-                        }
-                    }
-                    for (var p = 0; p < items.length; p++) {
-                        if (attached.indexOf(items[p]) === -1)
-                            items[p].parent = container;
-                    }
-                }
                 Connections {
                     target: root.printer
                     function onSectionLayoutChanged() {
-                        applySectionOrder(infoContent, "information");
-                        applySectionOrder(statusContent, "status");
+                        root.applySectionOrder(infoContent, "information");
+                        root.applySectionOrder(statusContent, "status");
                         root.buildConfigureRows("information");
                         root.buildConfigureRows("status");
                     }
@@ -597,23 +584,72 @@ Component {
                 Item {
                     id: infoCollapsedReadoutBox
                     visible: root.infoCollapsed && root.miniChartHasSeries
+                    // A short window must never see the readout
+                    // spill past the pane: the box clips, and each
+                    // line hides when it cannot fit whole (the live
+                    // report).
+                    clip: true
                     anchors.top: infoCollapsedTitleBox.bottom
-                    anchors.topMargin: UM.Theme.getSize("narrow_margin").height
-                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.topMargin: 2 * UM.Theme.getSize("default_margin").height
+                    anchors.horizontalCenter: infoCollapsedTitleBox.horizontalCenter
+                    // An EXPLICIT width: everything below carries
+                    // explicit sizes (implicit zero), so the box
+                    // would read 0 wide and the strips would render
+                    // right of the centred position (the live
+                    // report: the text sat right of the title).
+                    width: 16 * screenScaleFactor
                     Column {
+                        // An EXPLICIT width: the strips carry
+                        // explicit widths (implicit zero), so the
+                        // column would otherwise read 0 wide and the
+                        // strips render right of the centred box (the
+                        // live report: the text sat right of the
+                        // title).
+                        width: 16 * screenScaleFactor
                         spacing: UM.Theme.getSize("narrow_margin").height
                         Repeater {
                             model: root.miniChartSeries
                             Item {
-                                width: readoutLabel.implicitHeight
-                                height: readoutLabel.implicitWidth
-                                UM.Label {
-                                    id: readoutLabel
-                                    text: root.infoReadoutText(modelData.name, modelData.label)
-                                    font: UM.Theme.getFont("default")
-                                    color: UM.Theme.getColor("text")
-                                    rotation: -90
+                                // The thermometer LEADS the label (the
+                                // live request): the row's -90
+                                // rotation turns the upright glyph 90
+                                // degrees counter-clockwise, so the
+                                // bulb trails the stem. The strip
+                                // swaps the row's extents and the
+                                // outer box centres it on the title
+                                // box.
+                                // A COMPUTED position, never a
+                                // self-y read: the row's own y
+                                // resolves through the layout and
+                                // read false on some engines (the
+                                // live report: the readouts vanished
+                                // entirely).
+                                visible: infoCollapsedReadoutBox.y + index * (readoutRow.implicitWidth + UM.Theme.getSize("narrow_margin").height) + readoutRow.implicitWidth <= infoPanel.height
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: readoutRow.implicitHeight
+                                height: readoutRow.implicitWidth
+                                Row {
+                                    id: readoutRow
                                     anchors.centerIn: parent
+                                    spacing: 2 * screenScaleFactor
+                                    rotation: -90
+                                    UM.ColorImage {
+                                        width: 16 * screenScaleFactor
+                                        height: 16 * screenScaleFactor
+                                        // The bed's line wears the bed
+                                        // icon; every other sensor
+                                        // wears the thermometer the
+                                        // temperature-history section
+                                        // uses (the live request).
+                                        source: modelData.name.toLowerCase().indexOf("bed") >= 0 ? Qt.resolvedUrl("Bed.svg") : Qt.resolvedUrl("Thermometer.svg")
+                                    }
+                                    UM.Label {
+                                        id: readoutLabel
+                                        objectName: "infoCollapsedReadoutText"
+                                        text: root.infoReadoutText(modelData.name, modelData.label)
+                                        font: UM.Theme.getFont("default")
+                                        color: UM.Theme.getColor("text")
+                                    }
                                 }
                             }
                         }
@@ -1601,6 +1637,11 @@ Component {
                         tooltip: "Configure the printer-status sections."
                         onClicked: {
                             root.buildConfigureRows("status");
+                            // Imperative positioning, the same reason
+                            // as the information card.
+                            var statusEdge = statusHeader.mapToItem(root, statusHeader.x + statusHeader.width, 0);
+                            statusConfigurePopOver.x = statusEdge.x - statusConfigurePopOver.width;
+                            statusConfigurePopOver.y = statusEdge.y + statusHeader.height + UM.Theme.getSize("thin_margin").height;
                             root.openPopOver = "sections-status";
                         }
                     }
@@ -1759,44 +1800,128 @@ Component {
                 // The collapsed readout (the author's 2026-09-17
                 // ruling): the dual-stacked progress bars fill the
                 // empty space BELOW the title — print above layer,
-                // thin tracks at the pill weight, fills from the
-                // bottom.
+                // thin tracks at the pill weight, each labelled and
+                // shown only while it means something. The fills run
+                // top-to-bottom, the strip's reading direction.
                 Item {
                     id: statusCollapsedBarsBox
                     visible: root.statusCollapsed
+                    // The same short-window discipline as the
+                    // information readout: clip the box, and each
+                    // wrap hides when it cannot fit whole.
+                    clip: true
                     anchors.top: statusCollapsedTitleBox.bottom
-                    anchors.topMargin: UM.Theme.getSize("narrow_margin").height
-                    anchors.horizontalCenter: parent.horizontalCenter
+                    // The standard margin: the readout's text must
+                    // sit LEVEL with the controls pane's readout (the
+                    // live report).
+                    anchors.topMargin: 2 * UM.Theme.getSize("default_margin").height
+                    anchors.horizontalCenter: statusCollapsedTitleBox.horizontalCenter
                     width: 4 * screenScaleFactor
-                    Rectangle {
-                        id: printTrack
+                    Item {
+                        id: printWrap
+                        visible: root.printer != null && root.printer.printActive && statusCollapsedBarsBox.y + printWrap.height <= statusPanel.height
                         width: 4 * screenScaleFactor
-                        height: 60 * screenScaleFactor
+                        // An EXPLICIT height: anchored children add
+                        // nothing to the implicit height, and the next
+                        // wrap anchors to this one's bottom — without
+                        // it the two tracks render on top of each
+                        // other (the live report).
+                        height: printRow.implicitWidth + UM.Theme.getSize("thin_margin").height + 60 * screenScaleFactor
                         anchors.top: parent.top
                         anchors.horizontalCenter: parent.horizontalCenter
-                        color: UM.Theme.getColor("lining")
+                        // The label LEADS the bar, the strip's reading
+                        // direction (the live report). The progress
+                        // glyph is the plugin's Progress.svg — a real
+                        // image, not a unicode glyph (the live
+                        // request).
+                        Item {
+                            width: printRow.implicitHeight
+                            height: printRow.implicitWidth
+                            anchors.top: parent.top
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            Row {
+                                id: printRow
+                                anchors.centerIn: parent
+                                spacing: 2 * screenScaleFactor
+                                rotation: 90
+                                UM.ColorImage {
+                                    width: 16 * screenScaleFactor
+                                    height: 16 * screenScaleFactor
+                                    source: Qt.resolvedUrl("Progress.svg")
+                                }
+                                UM.Label {
+                                    id: printLabel
+                                    objectName: "statusCollapsedReadoutLabel"
+                                    text: "Print"
+                                    font: UM.Theme.getFont("default")
+                                    color: UM.Theme.getColor("text")
+                                }
+                            }
+                        }
                         Rectangle {
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            height: parent.height * Math.max(0, Math.min(1, root.printer != null ? root.printer.monitorProgress : 0))
-                            color: UM.Theme.getColor("primary")
+                            id: printTrack
+                            width: 4 * screenScaleFactor
+                            height: 60 * screenScaleFactor
+                            anchors.top: parent.top
+                            anchors.topMargin: printRow.implicitWidth + UM.Theme.getSize("thin_margin").height
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            color: UM.Theme.getColor("lining")
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                height: parent.height * Math.max(0, Math.min(1, root.printer != null ? root.printer.monitorProgress : 0))
+                                color: UM.Theme.getColor("primary")
+                            }
                         }
                     }
-                    Rectangle {
-                        id: layerTrack
+                    Item {
+                        id: layerWrap
+                        visible: root.printer != null && root.printer.monitorLayerProgress >= 0 && statusCollapsedBarsBox.y + (printWrap.visible ? printWrap.height + UM.Theme.getSize("thin_margin").height : 0) + layerWrap.height <= statusPanel.height
                         width: 4 * screenScaleFactor
-                        height: 60 * screenScaleFactor
-                        anchors.top: printTrack.bottom
+                        height: layerRow.implicitWidth + UM.Theme.getSize("thin_margin").height + 60 * screenScaleFactor
+                        anchors.top: printWrap.visible ? printWrap.bottom : parent.top
                         anchors.topMargin: UM.Theme.getSize("thin_margin").height
                         anchors.horizontalCenter: parent.horizontalCenter
-                        color: UM.Theme.getColor("lining")
+                        Item {
+                            width: layerRow.implicitHeight
+                            height: layerRow.implicitWidth
+                            anchors.top: parent.top
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            Row {
+                                id: layerRow
+                                anchors.centerIn: parent
+                                spacing: 2 * screenScaleFactor
+                                rotation: 90
+                                UM.ColorImage {
+                                    width: 16 * screenScaleFactor
+                                    height: 16 * screenScaleFactor
+                                    source: Qt.resolvedUrl("Progress.svg")
+                                }
+                                UM.Label {
+                                    id: layerLabel
+                                    objectName: "statusCollapsedReadoutLabel"
+                                    text: "Layer"
+                                    font: UM.Theme.getFont("default")
+                                    color: UM.Theme.getColor("text")
+                                }
+                            }
+                        }
                         Rectangle {
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            height: parent.height * Math.max(0, Math.min(1, root.printer != null ? root.printer.monitorLayerProgress : 0))
-                            color: UM.Theme.getColor("primary")
+                            id: layerTrack
+                            width: 4 * screenScaleFactor
+                            height: 60 * screenScaleFactor
+                            anchors.top: parent.top
+                            anchors.topMargin: layerRow.implicitWidth + UM.Theme.getSize("thin_margin").height
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            color: UM.Theme.getColor("lining")
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                height: parent.height * Math.max(0, Math.min(1, root.printer != null ? root.printer.monitorLayerProgress : 0))
+                                color: UM.Theme.getColor("primary")
+                            }
                         }
                     }
                 }
@@ -1828,9 +1953,16 @@ Component {
             rows: root.infoConfigureRows
             hidden: root.infoConfigureHidden
             width: 320 * screenScaleFactor
-            anchors.top: infoHeader.bottom
-            anchors.topMargin: UM.Theme.getSize("thin_margin").height
-            anchors.left: infoHeader.left
+            // Positioned by mapToItem, never anchors to a header
+            // row's inner items (an illegal anchor drops silently
+            // and the card lands at the window's top-left — the live
+            // report). The header's own x/y are read into the
+            // bindings, so the placement re-evaluates once the layout
+            // positions the header (the dashboard card's -292
+            // lesson).
+            // The x/y land from the trigger's onClicked (the
+            // imperative positioning above) — bindings here latched
+            // the pre-layout position (the live report).
             onClosed: root.openPopOver = ""
             onLayoutCommitted: function (order, hidden) {
                 if (root.printer != null) {
@@ -1846,9 +1978,9 @@ Component {
             rows: root.statusConfigureRows
             hidden: root.statusConfigureHidden
             width: 320 * screenScaleFactor
-            anchors.top: statusHeader.bottom
-            anchors.topMargin: UM.Theme.getSize("thin_margin").height
-            anchors.right: statusHeader.right
+            // The x/y land from the trigger's onClicked (the
+            // imperative positioning above) — bindings here latched
+            // the pre-layout position (the live report).
             onClosed: root.openPopOver = ""
             onLayoutCommitted: function (order, hidden) {
                 if (root.printer != null) {

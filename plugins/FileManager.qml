@@ -16,6 +16,14 @@ Item {
     id: root
 
     property bool open: false
+    // The columns popup's state, exposed for the dashboard's Esc
+    // ladder through FUNCTIONS, never an alias: an alias to the
+    // popup's id resolves at binding time, before the popup exists
+    // (the forward-reference latch), while function bodies resolve
+    // at call time.
+    function columnsPopupOpen() {
+        return columnsPopup.opened;
+    }
     // The model behind the face (Snapshot 1): the published page
     // slice, recents, breadcrumb, disk and view metadata. Null in
     // the engine gate and captures — the mock rows below then serve
@@ -44,6 +52,15 @@ Item {
         if (open && root.printerModel != null) {
             root.printerModel.openFileManager();
         }
+        if (!open) {
+            // The columns popup lives in the window's overlay, so
+            // hiding the card would leave it floating over the stage
+            // (the probe's finding).
+            columnsPopup.close();
+        }
+    }
+    function closeColumnsPopup() {
+        columnsPopup.close();
     }
     Connections {
         // The confirmation arrives through the model's publish, not
@@ -2298,18 +2315,54 @@ Item {
                                 property int dragIndex: -1
                                 property int dragTarget: -1
                                 property string dragTitle: ""
-                                property real dragOffset: 0
-                                function columnDragDelta(id, delta) {
+                                function displayColumns() {
+                                    var order = root.columnOrderList();
                                     if (dragIndex === -1) {
-                                        dragIndex = root.columnOrderList().indexOf(id);
-                                        dragTarget = dragIndex;
-                                        dragTitle = id;
-                                        dragOffset = 0;
+                                        return order;
                                     }
-                                    dragOffset += delta;
-                                    dragTarget = Math.max(0, Math.min(root.columnOrderList().length - 1, Math.round((dragIndex * 32 * screenScaleFactor + dragOffset) / (32 * screenScaleFactor))));
-                                    columnDragProxy.y = dragIndex * 32 * screenScaleFactor + dragOffset;
-                                    columnDropSlot.y = dragTarget * 32 * screenScaleFactor;
+                                    var list = [];
+                                    // The same leading-by-one rule as
+                                    // the pane popup: the dragged
+                                    // row's removal shifts every later
+                                    // entry up one, so the slot only
+                                    // renders at the drop point when
+                                    // pushed one past the target.
+                                    var slotAt = dragTarget > dragIndex ? dragTarget + 1 : dragTarget;
+                                    for (var i = 0; i < order.length; i++) {
+                                        if (i === dragIndex) {
+                                            if (i === slotAt) {
+                                                list.push({
+                                                        "slot": true
+                                                    });
+                                            }
+                                            continue;
+                                        }
+                                        if (i === slotAt) {
+                                            list.push({
+                                                    "slot": true
+                                                });
+                                        }
+                                        list.push(order[i]);
+                                    }
+                                    if (dragTarget === order.length - 1) {
+                                        list.push({
+                                                "slot": true
+                                            });
+                                    }
+                                    return list;
+                                }
+                                function startColumnDrag(id) {
+                                    dragIndex = root.columnOrderList().indexOf(id);
+                                    dragTarget = dragIndex;
+                                    dragTitle = id;
+                                    columnDragProxy.y = dragIndex * 32 * screenScaleFactor;
+                                }
+                                function columnDragDelta(mouseY) {
+                                    if (dragIndex === -1) {
+                                        return;
+                                    }
+                                    dragTarget = Math.max(0, Math.min(root.columnOrderList().length - 1, Math.round((mouseY - 16 * screenScaleFactor) / (32 * screenScaleFactor))));
+                                    columnDragProxy.y = mouseY - 16 * screenScaleFactor;
                                 }
                                 function columnDragCommit() {
                                     if (dragIndex === -1) {
@@ -2319,7 +2372,6 @@ Item {
                                     var id = root.columnOrderList()[dragIndex];
                                     dragIndex = -1;
                                     dragTarget = -1;
-                                    dragOffset = 0;
                                     if (steps !== 0) {
                                         root.moveColumn(id, steps);
                                     }
@@ -2327,91 +2379,241 @@ Item {
                                 x: 0
                                 y: parent.height
                                 padding: 0
-                                // Outside-release dismissal would kill a
-                                // mid-gesture drag; Esc keeps the escape
-                                // hatch (the security round's finding).
-                                closePolicy: Popup.CloseOnEscape
+                                // EXPLICIT sizes: the shared row's
+                                // root carries no implicit width and
+                                // the rows carry explicit heights
+                                // (implicit zero), so the popup sized
+                                // to a sliver and a 0-tall background
+                                // — the rows rendered OUTSIDE it and
+                                // every click landed on the card (the
+                                // live report: no background, any
+                                // interaction dismissed it).
+                                width: (240 + 2 * UM.Theme.getSize("narrow_margin").width) * screenScaleFactor
+                                height: 32 * screenScaleFactor + root.columnOrderList().length * 32 * screenScaleFactor + 2 * UM.Theme.getSize("narrow_margin").height + 24 * screenScaleFactor + UM.Theme.getSize("narrow_margin").height
+                                // Outside PRESSES dismiss. Esc is NOT
+                                // claimed here: the popup's own
+                                // escape handling consumed the key
+                                // without closing and starved the
+                                // window's ladder (the probe's
+                                // finding) — the dashboard's ladder
+                                // owns Esc and closes this popup
+                                // first, per the one-claimant
+                                // doctrine. The outside-press form is
+                                // safe for the drag: the gesture's own
+                                // press was inside, so only a fresh
+                                // press outside closes — an outside
+                                // RELEASE dismissal was what killed a
+                                // mid-gesture drag (the security
+                                // round's finding).
+                                closePolicy: Popup.CloseOnPressOutside
                                 // The themed surface, like every other
                                 // popup in the card (the live
                                 // report: the default background was a
                                 // black slab).
                                 background: Rectangle {
+                                    objectName: "columnsPopupBackground"
                                     color: UM.Theme.getColor("main_background")
                                     border.color: UM.Theme.getColor("lining")
                                     border.width: UM.Theme.getSize("default_lining").width
                                     radius: UM.Theme.getSize("default_radius").width
                                 }
                                 contentItem: Column {
-                                    width: 240 * screenScaleFactor
+                                    width: parent.width
                                     topPadding: UM.Theme.getSize("narrow_margin").height
                                     bottomPadding: UM.Theme.getSize("narrow_margin").height
-                                    // The all/none three-state selector
-                                    // (the author's live ruling) — the
-                                    // shared component, counts owned
-                                    // here.
-                                    VisibilitySelector {
-                                        width: parent.width
-                                        height: 32 * screenScaleFactor
-                                        total: root.columnOrderList().length
-                                        visibleCount: root.visibleColumnCount()
-                                        onToggled: root.toggleAllColumns()
+                                    // The same inset the pane popups
+                                    // carry (the live report: the
+                                    // content hugged the left edge).
+                                    leftPadding: UM.Theme.getSize("narrow_margin").width
+                                    rightPadding: UM.Theme.getSize("narrow_margin").width
+                                    // The selector row with the same
+                                    // blue ✕ the pane popups wear (the
+                                    // live report: no close affordance).
+                                    Row {
+                                        width: parent.width - parent.leftPadding - parent.rightPadding
+                                        spacing: UM.Theme.getSize("narrow_margin").width
+                                        VisibilitySelector {
+                                            id: columnsSelector
+                                            height: 32 * screenScaleFactor
+                                            total: root.columnOrderList().length
+                                            visibleCount: root.visibleColumnCount()
+                                            onToggled: root.toggleAllColumns()
+                                        }
+                                        Item {
+                                            // One thin margin of inset, so
+                                            // the ✕ never rides the
+                                            // popup's edge (the live
+                                            // report: it sat outside).
+                                            width: Math.max(0, parent.width - columnsSelector.implicitWidth - columnsCloseX.implicitWidth - UM.Theme.getSize("thin_margin").width)
+                                            height: 32 * screenScaleFactor
+                                        }
+                                        UM.Label {
+                                            id: columnsCloseX
+                                            text: "✕"
+                                            color: UM.Theme.getColor("primary")
+                                            // Large enough to read as a
+                                            // control (the live report:
+                                            // too small).
+                                            font: UM.Theme.getFont("large_bold")
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: columnsPopup.close()
+                                            }
+                                        }
                                     }
-                                    Repeater {
-                                        model: root.columnOrderList()
-                                        SectionConfigureRow {
-                                            width: parent.width
-                                            rowId: modelData
-                                            rowTitle: modelData
-                                            rowVisible: root.columnVisible(modelData)
-                                            onToggleRequested: {
-                                                if (root.printerModel != null) {
-                                                    root.printerModel.setFileColumnVisible(modelData, !root.columnVisible(modelData));
+                                    // A plain host item holds the rows
+                                    // and the drag chrome: an anchored
+                                    // child inside a Column is
+                                    // undefined behaviour (the card's
+                                    // own note), and the overlay was
+                                    // exactly that — the container's
+                                    // engine then refused to lay the
+                                    // column out at all, stacking
+                                    // every row at one y (the probe's
+                                    // finding).
+                                    Item {
+                                        id: columnsHost
+                                        width: parent.width - parent.leftPadding - parent.rightPadding
+                                        height: root.columnOrderList().length * 32 * screenScaleFactor
+                                        Column {
+                                            anchors.fill: parent
+                                            Repeater {
+                                                model: columnsPopup.displayColumns()
+                                                delegate: Item {
+                                                    width: parent.width
+                                                    height: 32 * screenScaleFactor
+                                                    // The insertion slot renders
+                                                    // as a darker blank
+                                                    // (colour-driven, never a
+                                                    // visibility binding); the
+                                                    // row hides beneath it via
+                                                    // opacity and stops
+                                                    // answering clicks.
+                                                    Rectangle {
+                                                        anchors.fill: parent
+                                                        radius: 2 * screenScaleFactor
+                                                        color: modelData.slot === true ? UM.Theme.getColor("setting_category") : "transparent"
+                                                    }
+                                                    SectionConfigureRow {
+                                                        anchors.fill: parent
+                                                        opacity: modelData.slot === true ? 0 : 1
+                                                        interactive: modelData.slot !== true
+                                                        rowId: modelData
+                                                        rowTitle: modelData
+                                                        rowVisible: root.columnVisible(modelData)
+                                                        onToggleRequested: {
+                                                            if (root.printerModel != null) {
+                                                                root.printerModel.setFileColumnVisible(modelData, !root.columnVisible(modelData));
+                                                            }
+                                                        }
+                                                        onMoveRequested: function (steps) {
+                                                            root.moveColumn(modelData, steps);
+                                                        }
+                                                        onDragRequested: columnsPopup.startColumnDrag(modelData)
+                                                    }
                                                 }
                                             }
-                                            onMoveRequested: function (steps) {
-                                                root.moveColumn(modelData, steps);
+                                        }
+
+                                        // The drag proxy: the floating copy
+                                        // of the dragged card. Hidden via
+                                        // opacity — a visibility binding
+                                        // would trip the no-reflow scan.
+                                        Rectangle {
+                                            id: columnDragProxy
+                                            opacity: columnsPopup.dragIndex !== -1 ? 1 : 0
+                                            width: parent.width
+                                            height: columnsPopup.dragIndex !== -1 ? 32 * screenScaleFactor : 0
+                                            radius: 2
+                                            color: UM.Theme.getColor("setting_category_hover")
+                                            z: 20
+                                            UM.Label {
+                                                anchors.fill: parent
+                                                anchors.leftMargin: 12 * screenScaleFactor
+                                                text: columnsPopup.dragTitle
+                                                verticalAlignment: Text.AlignVCenter
+                                                elide: Text.ElideRight
+                                                font: UM.Theme.getFont("default")
                                             }
-                                            onDragMoved: function (delta) {
-                                                columnsPopup.columnDragDelta(modelData, delta);
+                                        }
+
+                                        // The gesture overlay: ALWAYS
+                                        // enabled, the owner of every
+                                        // press over the rows. A press
+                                        // on a handle band starts the
+                                        // drag and grabs the whole
+                                        // gesture — the release always
+                                        // lands here, never on a
+                                        // delegate the rebuild has
+                                        // removed (the live report: the
+                                        // release needed a follow-up
+                                        // click). Anywhere else the
+                                        // press is refused and falls
+                                        // through to the row's own
+                                        // controls.
+                                        MouseArea {
+                                            id: columnDragOverlay
+                                            anchors.fill: parent
+                                            z: 30
+                                            onPressed: function (mouse) {
+                                                if (mouse.x > 10 * screenScaleFactor) {
+                                                    mouse.accepted = false;
+                                                    return;
+                                                }
+                                                var band = Math.floor(mouse.y / (32 * screenScaleFactor));
+                                                var order = root.columnOrderList();
+                                                if (band < 0 || band >= order.length) {
+                                                    mouse.accepted = false;
+                                                    return;
+                                                }
+                                                // Unticked columns drag
+                                                // too — the visibility
+                                                // never gates the
+                                                // handle (the live
+                                                // report).
+                                                columnsPopup.startColumnDrag(order[band]);
                                             }
-                                            onDragReleased: columnsPopup.columnDragCommit()
+                                            onPositionChanged: {
+                                                if (columnsPopup.dragIndex !== -1) {
+                                                    columnsPopup.columnDragDelta(mouseY);
+                                                }
+                                            }
+                                            onReleased: {
+                                                columnsPopup.columnDragCommit();
+                                            }
+                                            onCanceled: {
+                                                columnsPopup.columnDragCommit();
+                                            }
                                         }
                                     }
 
-                                    // The drop slot: a slightly darker
-                                    // blank where a release would land
-                                    // (the author's live ruling) — the
-                                    // rows never shift mid-gesture.
-                                    Rectangle {
-                                        id: columnDropSlot
-                                        opacity: columnsPopup.dragIndex !== -1 ? 1 : 0
-                                        height: columnsPopup.dragIndex !== -1 ? 32 * screenScaleFactor : 0
-                                        width: parent.width
-                                        radius: 2
-                                        color: UM.Theme.getColor("setting_category")
-                                        z: 5
-                                    }
-                                    // The drag proxy: the handle gesture
-                                    // moves this visual copy; the list
-                                    // rebuilds once, on release (the
-                                    // documented Repeater trap). Hidden
-                                    // via opacity, never a literal
-                                    // visible: false.
-                                    Rectangle {
-                                        id: columnDragProxy
-                                        opacity: columnsPopup.dragIndex !== -1 ? 1 : 0
-                                        width: parent.width
-                                        height: columnsPopup.dragIndex !== -1 ? 32 * screenScaleFactor : 0
-                                        radius: 2
-                                        color: UM.Theme.getColor("setting_category_hover")
-                                        z: 10
-                                        UM.Label {
+                                    // Reset to defaults (the live
+                                    // request): the blue text label at
+                                    // the popup's bottom restores the
+                                    // default order and shows every
+                                    // column again.
+                                    UM.Label {
+                                        objectName: "resetToDefaultsLabel"
+                                        width: parent.width - parent.leftPadding - parent.rightPadding
+                                        height: 24 * screenScaleFactor
+                                        text: "Reset to defaults"
+                                        color: UM.Theme.getColor("primary")
+                                        font: UM.Theme.getFont("default")
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                        MouseArea {
                                             anchors.fill: parent
-                                            anchors.leftMargin: 12 * screenScaleFactor
-                                            text: columnsPopup.dragTitle
-                                            verticalAlignment: Text.AlignVCenter
-                                            elide: Text.ElideRight
-                                            font: UM.Theme.getFont("default")
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                if (root.printerModel != null) {
+                                                    root.printerModel.setFileColumnOrder([]);
+                                                    for (var i = 0; i < root.defaultColumnOrder.length; i++) {
+                                                        root.printerModel.setFileColumnVisible(root.defaultColumnOrder[i], true);
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }

@@ -289,7 +289,7 @@ class ClientFeedTests(unittest.TestCase):
         self.client.configure("http://b", "k", 750, feed_mode="websocket")
         self.client.start()
         self.assertEqual([entry[0] for entry in self.client.session.socket.starts],
-                         ["http://a", "http://b"])
+                         ["ws://a/websocket", "ws://b/websocket"])
         before = len(self.client.session.socket.subscriptions)
         self.client.session.socket.klippyReady.emit()
         self.assertEqual(len(self.client.session.socket.subscriptions), before + 1)

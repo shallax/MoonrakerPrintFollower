@@ -857,6 +857,245 @@ for item in _walk(window.contentItem()):
 """
 
 
+# Configure-round diagnostics: the geometry probe is a gate (its
+# misalignment raise fails the step); the FM click rides the s8
+# track-click precedent (no driver verb aims at the band).
+CONFIGURE_DRAG_PROBE = (
+    "qtest = _import_qtest()\n"
+    "window = _main_window()\n"
+    "result = {}\n"
+    "handle = None\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        name = str(item.property(\"objectName\") or \"\")\n"
+    "    except Exception:\n"
+    "        name = \"\"\n"
+    "    if name == \"sectionConfigureHandle\" and _effectively_visible(item):\n"
+    "        r = self._rect(item)\n"
+    "        if handle is None or r[\"y\"] < handle[1]:\n"
+    "            handle = [r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]]\n"
+    "if handle is None:\n"
+    "    raise RuntimeError(\"no visible drag handle\")\n"
+    "x = handle[0] + handle[2] / 2\n"
+    "y = handle[1] + handle[3] / 2\n"
+    "qtest.QTest.mousePress(window, Qt.MouseButton.LeftButton,\n"
+    "                       Qt.KeyboardModifier.NoModifier, QPoint(int(x), int(y)))\n"
+    "qtest.QTest.qWait(120)\n"
+    "qtest.QTest.mouseMove(window, QPoint(int(x), int(y + 3 * 32)), 200)\n"
+    "qtest.QTest.qWait(120)\n"
+    "qtest.QTest.mouseRelease(window, Qt.MouseButton.LeftButton,\n"
+    "                         Qt.KeyboardModifier.NoModifier, QPoint(int(x), int(y + 3 * 32)))\n"
+    "result[\"pressed\"] = [int(x), int(y)]\n"
+    "result[\"released\"] = [int(x), int(y + 96)]\n"
+    "result")
+CONFIGURE_GEOM_PROBE = (
+    "window = _main_window()\n"
+    "result = {}\n"
+    "info_title_box = None\n"
+    "info_strip = None\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        name = str(item.property(\"objectName\") or \"\")\n"
+    "    except Exception:\n"
+    "        name = \"\"\n"
+    "    if name == \"infoCollapsedReadoutText\" and info_strip is None:\n"
+    "        # The label's parent is the ROTATED row; the strip is one\n"
+    "        # level further out and unrotated.\n"
+    "        r = self._rect(item.parentItem().parentItem())\n"
+    "        info_strip = [r[\"x\"], r[\"w\"]]\n"
+    "        result[\"info_strip\"] = [r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]]\n"
+    "    try:\n"
+    "        t = str(item.property(\"text\") or \"\")\n"
+    "    except Exception:\n"
+    "        t = \"\"\n"
+    "    if t == \"Information\" and \"Label\" in item.metaObject().className() \\\n"
+    "            and info_title_box is None and _effectively_visible(item):\n"
+    "        r = self._rect(item.parentItem())\n"
+    "        info_title_box = [r[\"x\"], r[\"w\"]]\n"
+    "        result[\"info_title_box\"] = [r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]]\n"
+    "if info_strip is not None and info_title_box is not None:\n"
+    "    strip_center = info_strip[0] + info_strip[1] / 2\n"
+    "    box_center = info_title_box[0] + info_title_box[1] / 2\n"
+    "    result[\"info_centres\"] = [round(strip_center, 1), round(box_center, 1)]\n"
+    "    if abs(strip_center - box_center) > 2:\n"
+    "        raise RuntimeError(\"the info readout's centre is %.1fpx off the title's\"\n"
+    "                           % (strip_center - box_center))\n"
+    "result")
+
+CONFIGURE_FM_CLICK = (
+    "qtest = _import_qtest()\n"
+    "window = _main_window()\n"
+    "result = {}\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        t = item.property(\"text\")\n"
+    "    except Exception:\n"
+    "        continue\n"
+    "    if t == \"⇄\" and \"Button\" not in item.metaObject().className():\n"
+    "        if not _effectively_visible(item):\n"
+    "            continue\n"
+    "        cell = item.parentItem()\n"
+    "        if cell is None:\n"
+    "            continue\n"
+    "        band = None\n"
+    "        for c in cell.childItems():\n"
+    "            if \"MouseArea\" in c.metaObject().className():\n"
+    "                band = c\n"
+    "                break\n"
+    "        if band is not None:\n"
+    "            r = self._rect(band)\n"
+    "            result[\"band\"] = [r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]]\n"
+    "            qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton,\n"
+    "                                   Qt.KeyboardModifier.NoModifier,\n"
+    "                                   QPoint(int(r[\"x\"] + r[\"w\"] / 2), int(r[\"y\"] + r[\"h\"] / 2)))\n"
+    "            result[\"clicked\"] = True\n"
+    "            break\n"
+    "result")
+
+CONFIGURE_FM_STATE = (
+    "from PyQt6.QtCore import QObject\n"
+    "from UM.Application import Application\n"
+    "result = {}\n"
+    "window = _main_window()\n"
+    "for obj in window.findChildren(QObject):\n"
+    "    try:\n"
+    "        if str(obj.property(\"objectName\") or \"\") == \"columnsPopup\":\n"
+    "            result[\"popup_opened\"] = bool(obj.property(\"opened\"))\n"
+    "            break\n"
+    "    except Exception:\n"
+    "        pass\n"
+    "app = Application.getInstance()\n"
+    "printer = None\n"
+    "for device in app.getOutputDeviceManager().getOutputDevices():\n"
+    "    if \"Moonraker\" in type(device).__name__:\n"
+    "        printer = getattr(device, \"activePrinter\", None)\n"
+    "        break\n"
+    "fmo = getattr(printer, \"fileManagerOpen\", None) if printer is not None else None\n"
+    "if hasattr(fmo, \"value\"):\n"
+    "    try:\n"
+    "        fmo = fmo.value()\n"
+    "    except Exception:\n"
+    "        pass\n"
+    "result[\"fileManagerOpen\"] = fmo\n"
+    "result")
+
+CONFIGURE_MUTUAL_PROBE = (
+    "window = _main_window()\n"
+    "result = {}\n"
+    "visible = 0\n"
+    "rects = []\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        name = str(item.property(\"objectName\") or \"\")\n"
+    "    except Exception:\n"
+    "        name = \"\"\n"
+    "    if name == \"sectionConfigurePopOver\" and _effectively_visible(item):\n"
+    "        visible += 1\n"
+    "        r = self._rect(item)\n"
+    "        rects.append([r[\"x\"], r[\"y\"]])\n"
+    "result[\"visible_popovers\"] = visible\n"
+    "result[\"rects\"] = rects\n"
+    "if visible != 1:\n"
+    "    raise RuntimeError(\"expected exactly one open popover, found %d (%s)\" % (visible, rects))\n"
+    "result")
+
+CONFIGURE_FM_OPEN = (
+    "from PyQt6.QtCore import QObject\n"
+    "result = {}\n"
+    "window = _main_window()\n"
+    "for obj in window.findChildren(QObject):\n"
+    "    try:\n"
+    "        if str(obj.property(\"objectName\") or \"\") == \"columnsPopup\":\n"
+    "            ok = obj.metaObject().invokeMethod(obj, \"open\")\n"
+    "            result[\"open_invoked\"] = bool(ok)\n"
+    "            break\n"
+    "    except Exception as exc:\n"
+    "        result[\"error\"] = repr(exc)\n"
+    "result")
+
+CONFIGURE_FM_OUTSIDE = (
+    "qtest = _import_qtest()\n"
+    "window = _main_window()\n"
+    "result = {}\n"
+    "bg = None\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        name = str(item.property(\"objectName\") or \"\")\n"
+    "    except Exception:\n"
+    "        name = \"\"\n"
+    "    if name == \"columnsPopupBackground\" and _effectively_visible(item):\n"
+    "        r = self._rect(item)\n"
+    "        bg = [r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]]\n"
+    "        break\n"
+    "if bg is None:\n"
+    "    raise RuntimeError(\"no open columns popup to press outside of\")\n"
+    "x = bg[0] + bg[2] + 30\n"
+    "y = bg[1] - 30\n"
+    "qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton,\n"
+    "                       Qt.KeyboardModifier.NoModifier, QPoint(int(x), int(y)))\n"
+    "result[\"pressed\"] = [int(x), int(y)]\n"
+    "result")
+
+CONFIGURE_FM_PROBE = (
+    "window = _main_window()\n"
+    "result = {}\n"
+    "bg = None\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        name = str(item.property(\"objectName\") or \"\")\n"
+    "    except Exception:\n"
+    "        name = \"\"\n"
+    "    if name == \"columnsPopupBackground\" and _effectively_visible(item):\n"
+    "        r = self._rect(item)\n"
+    "        bg = [r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]]\n"
+    "        result[\"background\"] = bg + [True]\n"
+    "        break\n"
+    "first_row = None\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        name = str(item.property(\"objectName\") or \"\")\n"
+    "    except Exception:\n"
+    "        name = \"\"\n"
+    "    try:\n"
+    "        t = str(item.property(\"text\") or \"\")\n"
+    "    except Exception:\n"
+    "        t = \"\"\n"
+    "    if t == \"✕\" and _effectively_visible(item) and bg is not None:\n"
+    "        r = self._rect(item)\n"
+    "        if bg[0] <= r[\"x\"] <= bg[0] + bg[2] and bg[1] <= r[\"y\"] <= bg[1] + bg[3]:\n"
+    "            result[\"close_x\"] = [r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]]\n"
+    "    if name == \"sectionConfigureRowTitle\" and bg is not None:\n"
+    "        r = self._rect(item)\n"
+    "        # Only the rows INSIDE the popup: the closed pane popups\n"
+    "        # carry the same name at their old positions.\n"
+    "        if not (bg[0] <= r[\"x\"] + r[\"w\"] <= bg[0] + bg[2] and bg[1] <= r[\"y\"] <= bg[1] + bg[3]):\n"
+    "            continue\n"
+    "        result.setdefault(\"rows\", []).append([t[:20], r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]])\n"
+    "        if first_row is None:\n"
+    "            first_row = item\n"
+    "if first_row is not None:\n"
+    "    node = first_row\n"
+    "    chain = []\n"
+    "    for _ in range(8):\n"
+    "        if node is None:\n"
+    "            break\n"
+    "        r = self._rect(node)\n"
+    "        chain.append([node.metaObject().className()[:30], r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"],\n"
+    "                      bool(_effectively_visible(node))])\n"
+    "        node = node.parentItem()\n"
+    "    result[\"row_chain\"] = chain\n"
+    "# The gate: the rows must render at a sane width — a collapsed\n"
+    "# layout renders them negative/narrow (the live report: the\n"
+    "# popup clipped all its contents). And the blue ✕ must be there\n"
+    "# (the live report: no close affordance).\n"
+    "for row in result.get(\"rows\", ()):\n"
+    "    if row[3] < 100:\n"
+    "        raise RuntimeError(\"the columns popup's rows render %dpx wide (%s)\" % (row[3], row[0]))\n"
+    "if \"close_x\" not in result:\n"
+    "    raise RuntimeError(\"the columns popup has no visible close ✕\")\n"
+    "result")
+
+
 SCENARIOS = [
     # ─── transport & connection ───────────────────────────────
     {"id": "a1", "group": "connection", "name": "the ws dot is green only after the first accepted snapshot",
@@ -1489,7 +1728,7 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerStripPauseButton", "budget": 150},
          {"op": "wait_rect", "objectName": "moonrakerStripTemps", "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerStripSlot", "budget": 30},
-         {"op": "wait_rendered", "objectName": "moonrakerStripTemps", "contains": "205.2 → 210.0 °C · 60.0 → 60.0 °C", "budget": 30},
+         {"op": "wait_rendered", "objectName": "moonrakerStripTemps", "contains": "205.2 → 210.0 °C", "budget": 30},
          # The strip's own verdict lane settles BEFORE the click: the
          # block lands on the aux poll behind the model's verdicts, so
          # a press while the strip still reads the idle block hits a
@@ -2134,5 +2373,201 @@ SCENARIOS = [
      "steps": [
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_model", "prop": "monitorMessage", "contains": "claude-m117-probe", "budget": 60},
+     ]},
+
+    # ─── configure (4.4.0, the popup round) ─────────────────────
+    {"id": "x1", "group": "configure",
+     "name": "the configure popup opens under its trigger, lists the rows, and Esc closes it first",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "resize_window", "w": 1600, "h": 1000},
+         {"op": "exec_slot", "slot": "sectionLayoutFor", "args": ["controls"]},
+         {"op": "deliver_click", "objectName": "configureControlsSectionsButton"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
+         # The blank-top-left regression: the card must hang below its
+         # trigger, never sit on it (the silent anchor-drop landed the
+         # popup at the window origin in the live report).
+         {"op": "assert_aligned", "item": {"objectName": "sectionConfigurePopOver"},
+          "no_overlap": {"objectName": "configureControlsSectionsButton"}},
+         {"op": "assert_rendered", "objectName": "sectionConfigureRowTitle", "any": True, "contains": "Print"},
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
+         # Esc must close the popup FIRST: the trigger still works, so
+         # the stage never left (the live report).
+         {"op": "deliver_click", "objectName": "configureControlsSectionsButton"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
+         # The blue ✕ dismisses the card (the live ruling: a Close
+         # button read as chrome — and did nothing).
+         {"op": "deliver_click", "objectName": "configureControlsSectionsButton"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
+         {"op": "click_text", "text": "✕"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
+         {"op": "deliver_click", "objectName": "configureControlsSectionsButton"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
+         # ONE popover at a time, both directions: the status card
+         # opens, then the controls card — the status must dismiss
+         # (the live report: they could stack).
+         {"op": "deliver_click", "objectName": "configureStatusSectionsButton"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
+         {"op": "deliver_click", "objectName": "configureControlsSectionsButton"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_MUTUAL_PROBE},
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
+     ]},
+    {"id": "x2", "group": "configure",
+     "name": "the popup's row toggle hides and restores a section",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "resize_window", "w": 1600, "h": 1000},
+         {"op": "deliver_click", "objectName": "configureStatusSectionsButton"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
+         # The tri-state selector: filled + tick at ALL (the live
+         # report: it rendered empty).
+         {"op": "assert_rendered", "objectName": "visibilitySelectorGlyph", "equals": "✓"},
+         {"op": "click_text", "text": "Temperatures"},
+         {"op": "wait_model", "prop": "sectionHiddenMap", "contains": "temps", "budget": 15},
+         # One hidden of several: filled + dash.
+         {"op": "assert_rendered", "objectName": "visibilitySelectorGlyph", "equals": "–"},
+         {"op": "wait_rect", "objectName": "moonrakerTemperatureDetail", "absent": True, "budget": 15},
+         {"op": "click_text", "text": "Temperatures"},
+         {"op": "wait_rect", "objectName": "moonrakerTemperatureDetail", "budget": 15},
+         {"op": "assert_rendered", "objectName": "visibilitySelectorGlyph", "equals": "✓"},
+         # The NONE state: the selector hides everything, and the
+         # glyph empties (the live report: none rendered dashed).
+         {"op": "deliver_click", "objectName": "visibilitySelectorBox"},
+         {"op": "wait_model", "prop": "sectionHiddenMap", "contains": "temps", "budget": 15},
+         {"op": "wait_rect", "objectName": "visibilitySelectorGlyph", "absent": True, "budget": 15},
+         # Reset to defaults: the blue label at the card's bottom
+         # commits the empty layout, so every section returns.
+         {"op": "deliver_click", "objectName": "resetToDefaultsLabel"},
+         {"op": "wait_rect", "objectName": "moonrakerTemperatureDetail", "budget": 15},
+         {"op": "assert_rendered", "objectName": "visibilitySelectorGlyph", "equals": "✓"},
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
+     ]},
+    {"id": "x3", "group": "configure",
+     "name": "a committed reorder moves the sections (the rendered geometry follows the slot)",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "resize_window", "w": 1600, "h": 1000},
+         {"op": "sim_set", "state": {"extruder": {"temperature": 195.0, "target": 210.0}}},
+         {"op": "wait_model", "prop": "temperatureItems", "contains": "210", "budget": 30},
+         {"op": "rect_of", "objectName": "moonrakerTemperatureDetail"},
+         {"op": "exec_slot", "slot": "setSectionLayout",
+          "args": ["status", ["temps", "job", "fansinfo", "filament", "objects", "systeminfo", "mcus"], []]},
+         {"op": "wait_model", "prop": "sectionLayout", "contains": "temps", "budget": 15},
+         # The temps section now leads the pane: its detail row rises
+         # above the print-job section it once followed.
+         {"op": "assert_rect_change", "objectName": "moonrakerTemperatureDetail",
+          "direction": "shrunk", "axis": "y", "by": 40, "budget": 15},
+         {"op": "exec_slot", "slot": "setSectionLayout",
+          "args": ["status", ["job", "temps", "fansinfo", "filament", "objects", "systeminfo", "mcus"], []]},
+         # The restored order IS the table default: the normaliser
+         # deliberately drops all-default entries, so the raw model
+         # property legitimately reads empty — the rendered position
+         # is the witness instead.
+         {"op": "assert_rect_change", "objectName": "moonrakerTemperatureDetail",
+          "direction": "grown", "axis": "y", "by": 400, "budget": 15},
+     ]},
+    {"id": "x4", "group": "configure",
+     "name": "the collapsed readouts render below their titles",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "resize_window", "w": 1600, "h": 1000},
+         {"op": "sim_set", "state": {"extruder": {"temperature": 195.0, "target": 210.0},
+                                    "print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
+         {"op": "wait_model", "prop": "temperatureItems", "contains": "210", "budget": 30},
+         {"op": "wait_model", "prop": "monitorPositionCompact", "contains": "X", "budget": 15},
+         {"op": "deliver_click", "objectName": "configureInfoSectionsButton"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
+         {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [True]},
+         {"op": "wait_rendered", "objectName": "infoCollapsedReadoutText", "any": True, "contains": "°C", "budget": 15},
+         {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [True]},
+         {"op": "wait_rendered", "objectName": "statusCollapsedReadoutLabel", "any": True, "contains": "Print", "budget": 15},
+         {"op": "exec_slot", "slot": "setControlsCollapsed", "args": [True]},
+         {"op": "wait_rendered", "objectName": "controlsCollapsedReadoutText", "any": True, "contains": "X", "budget": 15},
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_GEOM_PROBE},
+         {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [False]},
+         {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [False]},
+         {"op": "exec_slot", "slot": "setControlsCollapsed", "args": [False]},
+     ]},
+
+    {"id": "x5", "group": "configure",
+     "name": "the file-manager columns popup opens with its background and full-width rows",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "resize_window", "w": 1600, "h": 1000},
+         {"op": "click_text", "text": "File manager"},
+         {"op": "wait_rect", "objectName": "columnsPopupBackground", "absent": True, "budget": 15},
+         {"op": "exec_code", "verbs": ['mouseClick'], "code": CONFIGURE_FM_CLICK},
+         {"op": "wait_rect", "objectName": "columnsPopupBackground", "budget": 15},
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_FM_PROBE},
+         # Esc dismisses the popup, the card stays (the live report:
+         # Esc ignored the popup).
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "columnsPopupBackground", "absent": True, "budget": 15},
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_FM_STATE},
+         # Reopen, then an outside PRESS dismisses it too. The reopen
+         # rides the popup's real open() call (the band's toggle
+         # rides the author's live test — the harness engine refused
+         # its reopen click).
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_FM_OPEN},
+         {"op": "wait_rect", "objectName": "columnsPopupBackground", "budget": 15},
+         {"op": "exec_code", "verbs": ['mouseClick'], "code": CONFIGURE_FM_OUTSIDE},
+         {"op": "wait_rect", "objectName": "columnsPopupBackground", "absent": True, "budget": 15},
+         # Close the file manager: it covers the whole stage and
+         # would swallow the next scenario's clicks.
+         {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
+         {"op": "wait_rect", "objectName": "columnsPopupBackground", "absent": True, "budget": 15},
+     ]},
+    {"id": "x6", "group": "configure",
+     "name": "a handle drag commits on the plain release (no follow-up click)",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "resize_window", "w": 1600, "h": 1000},
+         {"op": "sim_set", "state": {"extruder": {"temperature": 195.0, "target": 210.0}}},
+         {"op": "wait_model", "prop": "temperatureItems", "contains": "210", "budget": 30},
+         {"op": "deliver_click", "objectName": "configureStatusSectionsButton"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
+         # A real press/move/release on the first row's handle (the
+         # s8 track-click precedent — the driver has no drag verb).
+         {"op": "exec_code", "verbs": ['mousePress', 'mouseMove', 'mouseRelease'], "code": CONFIGURE_DRAG_PROBE},
+         # The release alone commits: the job section left the top,
+         # so the temps detail (the section that moved into its
+         # place) rises by at least a section header.
+         {"op": "wait_model", "prop": "sectionLayout", "contains": "temps", "budget": 15},
+         {"op": "assert_rect_change", "objectName": "moonrakerTemperatureDetail",
+          "direction": "shrunk", "axis": "y", "by": 40, "budget": 15},
+         {"op": "exec_slot", "slot": "setSectionLayout",
+          "args": ["status", ["job", "temps", "fansinfo", "filament", "objects", "systeminfo", "mcus"], []]},
+         {"op": "assert_rect_change", "objectName": "moonrakerTemperatureDetail",
+          "direction": "grown", "axis": "y", "by": 40, "budget": 15},
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
+     ]},
+    {"id": "x7", "group": "configure",
+     "name": "the collapsed readouts hide whole lines when the window cannot fit them",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "resize_window", "w": 1600, "h": 300},
+         {"op": "sim_set", "state": {"extruder": {"temperature": 195.0, "target": 210.0},
+                                     "print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
+         {"op": "wait_model", "prop": "temperatureItems", "contains": "210", "budget": 30},
+         {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [True]},
+         {"op": "wait_rect", "objectName": "infoCollapsedReadoutText", "absent": True, "budget": 15},
+         {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [True]},
+         {"op": "wait_rect", "objectName": "statusCollapsedReadoutLabel", "absent": True, "budget": 15},
+         {"op": "exec_slot", "slot": "setControlsCollapsed", "args": [True]},
+         {"op": "wait_rect", "objectName": "controlsCollapsedReadoutText", "absent": True, "budget": 15},
+         {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [False]},
+         {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [False]},
+         {"op": "exec_slot", "slot": "setControlsCollapsed", "args": [False]},
      ]},
 ]

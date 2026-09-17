@@ -2096,15 +2096,19 @@ class ToolheadControllerTests(unittest.TestCase):
         self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
         self.assertIn("resumed", self.controller.values["jogStatus"])
 
-    def test_taps_coalesce_while_a_move_is_in_flight(self):
+    def test_taps_queue_separately_while_a_move_is_in_flight(self):
         self.data.set_state("paused")
         self.controller.set_distance(1)
         self.controller.jog("x", 1)
         self.controller.jog("x", 1)
         self.controller.jog("x", 1)
         self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90"])
+        # Each queued move drains on its own completion cycle (the
+        # no-coalescing ruling: the queue holds separate ops).
         self.commands.complete()
-        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90", "G91\nG1 X2 F3000\nG90"])
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90", "G91\nG1 X1 F3000\nG90"])
+        self.commands.complete()
+        self.assertEqual(self.scripts(), ["G91\nG1 X1 F3000\nG90", "G91\nG1 X1 F3000\nG90", "G91\nG1 X1 F3000\nG90"])
         self.assertEqual(self.controller.values["jogStatus"], "")
 
 

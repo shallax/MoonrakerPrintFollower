@@ -57,6 +57,51 @@ Component {
             root.controlsConfigureRows = rows;
             root.controlsConfigureHidden = layout ? layout.hidden : [];
         }
+        // The section-order application: the configure popup and the
+        // state hydration both flow through sectionLayout; the pane
+        // re-parents only when the live order differs (the
+        // probe-verified recipe — detach-all, re-attach in target
+        // order, strays re-attach last). Root-level, like the
+        // monitor's — a nested function called from the signal
+        // handler threw on the container's engine.
+        function applyControlsOrder() {
+            // The EFFECTIVE layout, never the raw property: a
+            // restore to the pane's default order drops the entry
+            // entirely, and the raw {} would strand the sections in
+            // the previous order.
+            var effective = root.printer ? root.printer.sectionLayoutFor("controls") : null;
+            var target = effective ? effective.order : null;
+            if (!target)
+                return;
+            var current = [];
+            for (var i = 0; i < controlContent.children.length; i++) {
+                var header = root.sectionHeader(controlContent.children[i]);
+                if (header)
+                    current.push(header.sectionId);
+            }
+            if (JSON.stringify(current) === JSON.stringify(target))
+                return;
+            var items = [];
+            for (var j = 0; j < controlContent.children.length; j++)
+                items.push(controlContent.children[j]);
+            for (var k = 0; k < items.length; k++)
+                items[k].parent = null;
+            var attached = [];
+            for (var m = 0; m < target.length; m++) {
+                for (var n = 0; n < items.length; n++) {
+                    var header2 = root.sectionHeader(items[n]);
+                    if (header2 && header2.sectionId === target[m]) {
+                        items[n].parent = controlContent;
+                        attached.push(items[n]);
+                        break;
+                    }
+                }
+            }
+            for (var p = 0; p < items.length; p++) {
+                if (attached.indexOf(items[p]) === -1)
+                    items[p].parent = controlContent;
+            }
+        }
         onPrinterChanged: {
             if (root.printer != null) {
                 root.printer.setFileManagerOpen(false);
@@ -68,17 +113,62 @@ Component {
             tuningSliderObject = "";
             tuningSliderKind = "";
         }
-        // The document root sits in the bubbling chain of EVERY
-        // focused item in the stage, so Esc closes the popup no
-        // matter where focus actually landed (the Snapshot
-        // 0 report: Esc only worked while the search field was
-        // focused).
-        Keys.onEscapePressed: {
-            if (fileManagerOpen) {
-                if (root.printer != null) {
-                    root.printer.setFileManagerOpen(false);
+        // Esc on the Monitor page (a live request): the pop-overs
+        // close first, then the page itself — Preview when anything
+        // is sliced, Prepare otherwise. THE one window-level
+        // shortcut: the whole Esc ladder in one place, so the key
+        // can never have two claimants (the live report: the popup's
+        // own shortcut and this one fought, and the popup lost).
+        // This document hosts every layer — the monitor's pop-ups
+        // ride openPopOver on the loaded monitor root, this pane's
+        // pop-up is configurePaneOpen, and the file manager is
+        // fileManagerOpen — so the ladder lives here, not in the
+        // monitor document (its own shortcut fired the stage-exit
+        // branch for this pane's pop-up, which it cannot see — the
+        // harness probe's finding).
+        Shortcut {
+            sequence: "Esc"
+            onActivated: {
+                var monitor = baseMonitorLoader.item;
+                if (root.printer != null && root.printer.fileManagerOpen) {
+                    if (fileManagerCard.columnsPopupOpen()) {
+                        // The columns popup is the TOP layer inside
+                        // the card: Esc closes it first (the live
+                        // report: Esc ignored the popup).
+                        fileManagerCard.closeColumnsPopup();
+                    } else if (root.printer.filePrintConfirm !== "") {
+                        // The print confirmation is the TOP layer: Esc
+                        // cancels it, not the popup (the ruling).
+                        root.printer.fileCancelPrint();
+                    } else {
+                        root.printer.setFileManagerOpen(false);
+                    }
+                } else if (monitor !== null && (monitor.openPopOver === "sections-info" || monitor.openPopOver === "sections-status")) {
+                    // The configure pop-ups close FIRST — Esc must
+                    // never leave the page from under an open popup
+                    // (the live report).
+                    monitor.openPopOver = "";
+                } else if (configurePaneOpen !== "") {
+                    configurePaneOpen = "";
+                } else if (monitor !== null && (monitor.openPopOver !== "" || monitor.selectedChartSensor !== "")) {
+                    monitor.openPopOver = "";
+                    monitor.selectedChartSensor = "";
+                } else if (OutputDevice != null) {
+                    OutputDevice.leaveMonitorStage();
                 }
-                event.accepted = true;
+            }
+        }
+
+        // ONE popover at a time, the other direction: when the
+        // monitor's cards open, this pane's popup closes (the live
+        // report: the information card could stack under the
+        // controls card).
+        Connections {
+            target: baseMonitorLoader.item
+            function onOpenPopOverChanged() {
+                if (baseMonitorLoader.item !== null && baseMonitorLoader.item.openPopOver !== "") {
+                    configurePaneOpen = "";
+                }
             }
         }
 
@@ -111,28 +201,14 @@ Component {
         // The configure pop-up overlays the pane, not the layout (the
         // pop-over precedent: layout children cannot overlap). The
         // scrim sits below the card and closes it on any outside
-        // click.
+        // click. Its z sits above the pane content but below the
+        // card's own 999, mirroring the monitor's outside-click
+        // layer.
         MouseArea {
             visible: root.configurePaneOpen !== ""
             anchors.fill: parent
+            z: 995
             onClicked: root.configurePaneOpen = ""
-        }
-        SectionConfigurePopOver {
-            id: controlsConfigurePopOver
-            visible: root.configurePaneOpen === "controls"
-            title: "Printer-control sections"
-            paneId: "controls"
-            rows: root.controlsConfigureRows
-            hidden: root.controlsConfigureHidden
-            width: 320 * screenScaleFactor
-            anchors.top: collapseButton.bottom
-            anchors.topMargin: UM.Theme.getSize("thin_margin").height
-            anchors.right: collapseButton.right
-            onLayoutCommitted: function (order, hidden) {
-                if (root.printer != null) {
-                    root.printer.setSectionLayout("controls", order, hidden);
-                }
-            }
         }
 
         property bool tuningSliderPressed: false
@@ -411,15 +487,25 @@ Component {
             spacing: 0
 
             Loader {
+                id: baseMonitorLoader
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.minimumWidth: 640 * screenScaleFactor
                 sourceComponent: baseMonitorComponent
+                // The monitor's pop-ups must float above THIS pane:
+                // the pane is declared after the loader, so its z-0
+                // content paints over the whole monitor subtree — a
+                // popup's own z stays inside the subtree and loses
+                // the cross-sibling fight (the probe's finding: the
+                // pane's header grabbed clicks aimed at the popup's
+                // rows).
+                z: baseMonitorLoader.item !== null && baseMonitorLoader.item.openPopOver !== "" ? 10 : 0
             }
 
             Cura.RoundedRectangle {
                 // Inert; the harness's margin-symmetry pin reads this
                 // pane's outer edge.
+                id: controlsPane
                 objectName: "moonrakerControlsPane"
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
@@ -510,6 +596,24 @@ Component {
                         tooltip: "Configure the printer-control sections."
                         onClicked: {
                             root.buildControlsConfigureRows();
+                            // ONE popover at a time: the monitor's
+                            // cards close when this one opens (the
+                            // live report: the status card could
+                            // stack under the controls card).
+                            if (baseMonitorLoader.item !== null) {
+                                baseMonitorLoader.item.openPopOver = "";
+                            }
+                            // Positioned imperatively at open time: a
+                            // mapToItem binding evaluates once, before
+                            // the pane's layout has settled, and no
+                            // dependency re-runs it (the trigger's
+                            // own x never changes when the layout
+                            // moves the pane — the probe's finding:
+                            // the card 292px left of the window, then
+                            // 163px right of it).
+                            var edge = configureSectionsButton.mapToItem(root, configureSectionsButton.width, 0);
+                            controlsConfigurePopOver.x = edge.x - controlsConfigurePopOver.width;
+                            controlsConfigurePopOver.y = edge.y + configureSectionsButton.height + UM.Theme.getSize("thin_margin").height;
                             root.configurePaneOpen = "controls";
                         }
                     }
@@ -674,51 +778,10 @@ Component {
                         }
                     }
 
-                    // The section-order application: the configure popup
-                    // and the state hydration both flow through
-                    // sectionLayout; the pane re-parents only when the
-                    // live order differs (the probe-verified recipe —
-                    // detach-all, re-attach in target order, strays
-                    // re-attach last).
-                    function applyControlsOrder() {
-                        var layout = root.printer ? root.printer.sectionLayout : null;
-                        var entry = layout ? layout["controls"] : null;
-                        var target = entry ? entry.order : null;
-                        if (!target)
-                            return;
-                        var current = [];
-                        for (var i = 0; i < controlContent.children.length; i++) {
-                            var header = sectionHeader(controlContent.children[i]);
-                            if (header)
-                                current.push(header.sectionId);
-                        }
-                        if (JSON.stringify(current) === JSON.stringify(target))
-                            return;
-                        var items = [];
-                        for (var j = 0; j < controlContent.children.length; j++)
-                            items.push(controlContent.children[j]);
-                        for (var k = 0; k < items.length; k++)
-                            items[k].parent = null;
-                        var attached = [];
-                        for (var m = 0; m < target.length; m++) {
-                            for (var n = 0; n < items.length; n++) {
-                                var header2 = sectionHeader(items[n]);
-                                if (header2 && header2.sectionId === target[m]) {
-                                    items[n].parent = controlContent;
-                                    attached.push(items[n]);
-                                    break;
-                                }
-                            }
-                        }
-                        for (var p = 0; p < items.length; p++) {
-                            if (attached.indexOf(items[p]) === -1)
-                                items[p].parent = controlContent;
-                        }
-                    }
                     Connections {
                         target: root.printer
                         function onSectionLayoutChanged() {
-                            applyControlsOrder();
+                            root.applyControlsOrder();
                             root.buildControlsConfigureRows();
                         }
                     }
@@ -749,24 +812,76 @@ Component {
                     }
                 }
                 // The collapsed readout (the author's 2026-09-17
-                // ruling): position • Z offset • flow rate fills the
+                // ruling): position, Z offset and flow rate fill the
                 // empty space BELOW the title — regular text, not the
-                // title's face.
+                // title's face. ONE line of FIXED-WIDTH fields, each
+                // its own label with an icon glyph, no separators:
+                // the values changing never reflows the strip and
+                // the fields can never overlap (the live request).
                 Item {
                     id: controlsCollapsedReadoutBox
                     visible: root.controlsCollapsed
+                    // The same short-window discipline as the
+                    // monitor's readouts: the box clips, and the
+                    // line hides when it cannot fit whole.
+                    clip: true
                     anchors.top: collapsedTitleBox.bottom
-                    anchors.topMargin: UM.Theme.getSize("narrow_margin").height
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: controlsReadoutLabel.implicitHeight
-                    height: controlsReadoutLabel.implicitWidth
-                    UM.Label {
-                        id: controlsReadoutLabel
-                        text: root.printer != null ? root.printer.monitorPositionCompact + " • " + root.printer.zOffsetText + " • " + root.printer.monitorFlowRate : ""
-                        font: UM.Theme.getFont("default")
-                        color: UM.Theme.getColor("text")
-                        rotation: 90
+                    anchors.topMargin: 2 * UM.Theme.getSize("default_margin").height
+                    anchors.horizontalCenter: collapsedTitleBox.horizontalCenter
+                    width: controlsReadoutRow.implicitHeight
+                    height: controlsReadoutRow.implicitWidth
+                    Row {
+                        id: controlsReadoutRow
+                        // The PANE's height, never the root's: the
+                        // dashboard root spans the full stage, so a
+                        // short window would still read as fitting.
+                        // The BOX's own geometry, never a self-y
+                        // read (the live report: the readouts
+                        // vanished or overflowed on the self-y
+                        // form).
+                        visible: controlsCollapsedReadoutBox.y + controlsCollapsedReadoutBox.height <= controlsPane.height
                         anchors.centerIn: parent
+                        spacing: 2 * screenScaleFactor
+                        rotation: 90
+                        UM.ColorImage {
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Position.svg")
+                        }
+                        UM.Label {
+                            objectName: "controlsCollapsedReadoutText"
+                            text: root.printer != null ? root.printer.monitorPositionCompact : ""
+                            width: 170 * screenScaleFactor
+                            font: UM.Theme.getFont("default")
+                            color: UM.Theme.getColor("text")
+                            elide: Text.ElideRight
+                        }
+                        UM.ColorImage {
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("ZOffset.svg")
+                        }
+                        UM.Label {
+                            objectName: "controlsCollapsedReadoutText"
+                            text: root.printer != null ? root.printer.zOffsetText : ""
+                            width: 70 * screenScaleFactor
+                            font: UM.Theme.getFont("default")
+                            color: UM.Theme.getColor("text")
+                            elide: Text.ElideRight
+                        }
+                        UM.ColorImage {
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Flow.svg")
+                        }
+                        UM.Label {
+                            objectName: "controlsCollapsedReadoutText"
+                            text: root.printer != null ? root.printer.monitorFlowRate : ""
+                            width: 60 * screenScaleFactor
+                            font: UM.Theme.getFont("default")
+                            color: UM.Theme.getColor("text")
+                            elide: Text.ElideRight
+                        }
                     }
                 }
             }
@@ -786,6 +901,32 @@ Component {
             onCloseRequested: {
                 if (root.printer != null) {
                     root.printer.setFileManagerOpen(false);
+                }
+            }
+        }
+
+        // The configure pop-up, declared LAST so its anchor ids exist
+        // when the x/y bindings evaluate: an early declaration falls
+        // through to an outer-scope id and latches the card to the
+        // wrong button (the harness probe's finding: x=-198, 198px
+        // off the window's left edge).
+        SectionConfigurePopOver {
+            id: controlsConfigurePopOver
+            visible: root.configurePaneOpen === "controls"
+            title: "Printer-control sections"
+            paneId: "controls"
+            rows: root.controlsConfigureRows
+            hidden: root.controlsConfigureHidden
+            width: 320 * screenScaleFactor
+            // The x/y land from the trigger's onClicked (the
+            // imperative positioning above) — never anchors, never
+            // bindings: an anchor to a header row's inner items
+            // drops silently and the card lands at the top-left (the
+            // live report).
+            onClosed: root.configurePaneOpen = ""
+            onLayoutCommitted: function (order, hidden) {
+                if (root.printer != null) {
+                    root.printer.setSectionLayout("controls", order, hidden);
                 }
             }
         }

@@ -1649,8 +1649,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._ui_state.set_sections(self._sections)
         self._publish()
 
-    @pyqtSlot(str, object, object)
+    @pyqtSlot(str, "QVariantList", "QVariantList")
     def setSectionLayout(self, pane, order, hidden):
+        # Typed QVariantList params, never bare `object`: the QML
+        # bridge silently refuses the untyped signature — the
+        # harness's hook showed zero signal emissions from the
+        # popup's commit path while the Python-side call worked.
         pane = str(pane)
         if pane not in PANE_NAMES:
             return

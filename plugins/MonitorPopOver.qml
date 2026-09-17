@@ -51,9 +51,18 @@ Cura.RoundedRectangle {
                 font: UM.Theme.getFont("medium_bold")
                 elide: Text.ElideRight
             }
-            Cura.SecondaryButton {
-                text: "Close"
-                onClicked: root.closed()
+            // A clickable blue ✕, the card's dismissal (the live
+            // ruling: a Close button read as chrome).
+            UM.Label {
+                Layout.alignment: Qt.AlignVCenter
+                text: "✕"
+                color: UM.Theme.getColor("primary")
+                font: UM.Theme.getFont("medium_bold")
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.closed()
+                }
             }
         }
 

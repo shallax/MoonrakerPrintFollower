@@ -987,12 +987,20 @@ class HarnessServer(QObject):
         if cmd == "key_press":
             # A synthesized key on the main window (the Esc ladder's
             # scenarios). The key names map Qt.Key.Key_<name>.
+            # The window is ACTIVATED first: under the WM-less Xvfb no
+            # window ever has focus, and Qt refuses to fire a
+            # WindowShortcut for an inactive window (the configure
+            # round's finding: the monitor's Esc ladder was dead
+            # until requestActivate). A real keypress always arrives
+            # on an active window, so this is the honest simulation.
             try:
                 qtest = _import_qtest()
                 if not qtest:
                     return {"id": request_id, "ok": False, "error": "QtTest injection unavailable"}
                 key = getattr(Qt.Key, "Key_" + str(request.get("key") or ""))
                 window = _main_window()
+                window.requestActivate()
+                qtest.QTest.qWait(120)
                 qtest.QTest.keyClick(window, key)
                 qtest.QTest.qWait(150)
                 return {"id": request_id, "ok": True, "key": str(request.get("key")), "sent": True}
@@ -1733,17 +1741,36 @@ def _nearest_control(item):
     # the clickable region, so a text match resolves to the label —
     # and a press at the label's centre grabs the background, never
     # the handler. Aim at the nearest Button/MenuItem-class ANCESTOR,
-    # whose region owns the click.
+    # whose region owns the click; then the nearest MouseArea
+    # ancestor. An inert label whose row owns clicks in a SIBLING
+    # surface behind it (the configure row's fill) resolves by a hit
+    # test at the label's centre. That last tier never runs for the
+    # overlay-fails-the-step proofs: their targets have interactive
+    # ancestors and promote before the hit test.
+    area = None
     node = item
     while node is not None:
         klass = node.metaObject().className()
         if "Button" in klass or "MenuItem" in klass:
             return node
+        if area is None and "MouseArea" in klass:
+            area = node
         try:
             node = node.parentItem()
         except Exception:
-            return None
-    return None
+            break
+    if area is not None:
+        return area
+    try:
+        window = item.window()
+        if window is not None:
+            scene = item.mapToScene(QPointF(item.width() / 2, item.height() / 2))
+            hit = window.contentItem().childAt(scene.x(), scene.y())
+            if hit is not None and "MouseArea" in hit.metaObject().className():
+                return hit
+    except Exception:
+        pass
+    return item
 
 
 def _accepted_by(grabber, target):
@@ -1761,6 +1788,32 @@ def _accepted_by(grabber, target):
             node = node.parentItem()
         except Exception:
             return False
+    # An inert label's owner can be a covering SIBLING surface — the
+    # configure row's fill sits BEHIND its title label, and a press
+    # on the label grabs the fill. Accept when the grabber is a
+    # MouseArea covering the target, and only when the target is
+    # truly inert (no interactive ancestor — the overlay-fails-the
+    # -step proofs promote to a Button before this runs, so a scrim
+    # over a control still refuses).
+    try:
+        if "MouseArea" in grabber.metaObject().className():
+            probe = target
+            while probe is not None:
+                klass = probe.metaObject().className()
+                if "Button" in klass or "MenuItem" in klass or "MouseArea" in klass:
+                    return False
+                try:
+                    probe = probe.parentItem()
+                except Exception:
+                    break
+            grab = grabber.mapToScene(QPointF(0, 0))
+            aim = target.mapToScene(QPointF(0, 0))
+            if (grab.x() <= aim.x() and grab.y() <= aim.y()
+                    and grab.x() + grabber.width() >= aim.x() + target.width()
+                    and grab.y() + grabber.height() >= aim.y() + target.height()):
+                return True
+    except Exception:
+        pass
     return False
 
 

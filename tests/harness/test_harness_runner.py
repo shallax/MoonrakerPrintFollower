@@ -104,7 +104,24 @@ class ClassificationRatchetTests(unittest.TestCase):
         direct = len(re.findall(
             r'"op": "(exec_slot|exec_file_slot|emit_click|confirm_box|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))
-        self.assertLessEqual(direct, 105)
+        # A deliberate raise (4.4.0, DECISIONS): the configure group's
+        # nine slots — the reorder witness must dispatch through the
+        # real slot (the g6 precedent's reasoning), the accessor gets
+        # one exercising call, and the readout collapse/restore rides
+        # the chrome slots exactly as v7 does. The drag GESTURE stays
+        # out of the gate (no button-state primitive yet).
+        # One more deliberate raise (4.4.0, DECISIONS): the configure
+        # group's three inline probes — the info-readout centring gate
+        # (a geometry proof no verb expresses), and the file-manager
+        # popup's band click + row-width gate (the band has no
+        # objectName and the ⇄ text collides with the configure
+        # triggers, so the click rides the s8 track-click precedent).
+        # And the drag gate (x6): a real press/move/release on the
+        # handle via QTest — the driver has no drag verb, and the
+        # probe proves the plain release commits (the live report's
+        # last open item). Its restore slot, x5's file-manager close
+        # and outside-press probe ride the same paths with it.
+        self.assertLessEqual(direct, 130)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —

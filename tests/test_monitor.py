@@ -593,8 +593,11 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("visible: !consolePanel.tooNarrow", MONITOR_QML)
         # Esc on the Monitor page leaves the stage (the author's
         # live request): Preview when sliced, Prepare otherwise. The
-        # popover and chart close on the same key first.
-        self.assertIn("leaveMonitorStage", MONITOR_QML)
+        # popover and chart close on the same key first. The ONE
+        # ladder lives in the DASHBOARD document now — it hosts every
+        # layer, so no other claimant can fire the stage-exit branch
+        # from under a popup it cannot see.
+        self.assertIn("leaveMonitorStage", DASHBOARD_QML)
         # The console error bell (the author's live request): a red
         # bell beside the Console header while collapsed until
         # expanded.
@@ -670,9 +673,11 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("id: outsideClickLayer", MONITOR_QML)
         # Esc closes the popovers through the same window-level
         # Shortcut that leaves the stage (the Keys handler died with
-        # focus — the author's live report).
-        self.assertIn('sequence: "Esc"', MONITOR_QML)
-        self.assertIn("leaveMonitorStage", MONITOR_QML)
+        # focus — the author's live report). The shortcut and the
+        # ladder live in the dashboard document — one claimant for
+        # the key across every layer.
+        self.assertIn('sequence: "Esc"', DASHBOARD_QML)
+        self.assertIn("leaveMonitorStage", DASHBOARD_QML)
         # The legend binds to the legend property (notifies only on real
         # changes, so delegates are never rebuilt at the 1 Hz sample
         # cadence) and toggles on user intent only — re-bound checkboxes
@@ -1992,7 +1997,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertFalse(model.jogEnabled)  # moves need an explicit pause first
         model.setJogDistance(1)
         model.jog("x", 1)
-        model.jog("x", 1)  # merges into the queued move
+        model.jog("x", 1)  # queues as its own move (no coalescing)
         pauses = [r for r in self.transport.requests if r.path == "printer/print/pause"]
         self.assertEqual(len(pauses), 1)
         self.assertEqual(self.scripts(), [])
@@ -2004,7 +2009,14 @@ class MonitorQtTests(unittest.TestCase):
         self.qt.events(20)
         scripts = self.scripts()
         self.assertEqual(len(scripts), 1)
-        self.assertEqual(scripts[0].options["body"], {"script": "G91\nG1 X2 F3000\nG90"})
+        self.assertEqual(scripts[0].options["body"], {"script": "G91\nG1 X1 F3000\nG90"})
+        # Each queued move drains on its own completion cycle (the
+        # no-coalescing ruling: the queue holds separate ops).
+        scripts[0].callback({}, None)
+        self.qt.events(20)
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 2)
+        self.assertEqual(scripts[1].options["body"], {"script": "G91\nG1 X1 F3000\nG90"})
         self.assertEqual(model.jogStatus, "")
 
     def test_pause_timeout_drops_queued_jogs(self):
@@ -3987,10 +3999,17 @@ Item {
             # readout); it sits below the jog pad.
             "visible: root.printerModel == null || root.printerModel.endstopItems.length === 0",
             "visible: root.miniHasSeries",
+            # The collapsed status readout's relevance gates (the bars
+            # show only while they mean something).
+            "visible: root.printer != null && root.printer.printActive",
+            "visible: root.printer != null && root.printer.monitorLayerProgress >= 0",
             # The controls configure pop-up's own switch and its scrim
             # (the one-pane dashboard has no openPopOver family).
             "visible: root.configurePaneOpen !== \"\"",
             "visible: root.configurePaneOpen === \"controls\"",
+            # The shared selector's tick/dash label (the row selector's
+            # own idiom, in the new component).
+            "visible: selectorRoot.visibleCount !== selectorRoot.total",
             "visible: root.printerModel != null && !root.miniHasSeries",
             # The console error bell (the author's live request) is a
             # presence signal, not a session gate: it shows only
@@ -4333,7 +4352,7 @@ Item {
         self.assertEqual(bodies, [{"script": "G28"}, {"script": "QUAD_GANTRY_LEVEL"}, {"script": "BED_MESH_CALIBRATE"}])
         self.assertEqual(model._commands._queue, [])
 
-    def test_rapid_jogs_while_paused_coalesce(self):
+    def test_rapid_jogs_while_paused_queue_separately(self):
         model = self.monitor()
         self.deliver_state("paused")
         model.setJogDistance(1)
@@ -4341,13 +4360,19 @@ Item {
         scripts = self.scripts()
         self.assertEqual(len(scripts), 1)
         model.jog("x", 1)  # queued behind the in-flight send
-        model.jog("x", 1)  # merges into the queued move
+        model.jog("x", 1)  # queues as its own move (no coalescing)
         self.assertEqual(self.scripts(), scripts)  # nothing new in flight
         scripts[0].callback({}, None)
         self.qt.events(20)
         scripts = self.scripts()
         self.assertEqual(len(scripts), 2)
-        self.assertEqual(scripts[1].options["body"], {"script": "G91\nG1 X2 F3000\nG90"})
+        self.assertEqual(scripts[1].options["body"], {"script": "G91\nG1 X1 F3000\nG90"})
+        # Each queued move drains on its own completion cycle.
+        scripts[1].callback({}, None)
+        self.qt.events(20)
+        scripts = self.scripts()
+        self.assertEqual(len(scripts), 3)
+        self.assertEqual(scripts[2].options["body"], {"script": "G91\nG1 X1 F3000\nG90"})
 
     def test_monitor_device_is_registered_with_output_manager(self):
         # The Monitor stage shows Cura's "connect the printer" placeholder when

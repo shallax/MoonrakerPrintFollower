@@ -16,18 +16,25 @@ Row {
     signal toggled
 
     Rectangle {
+        objectName: "visibilitySelectorBox"
         width: 16 * screenScaleFactor
         height: 16 * screenScaleFactor
         anchors.verticalCenter: parent.verticalCenter
         radius: 2 * screenScaleFactor
         border.color: UM.Theme.getColor("lining")
         border.width: UM.Theme.getSize("default_lining").width
-        color: selectorRoot.visibleCount > 0 && selectorRoot.visibleCount < selectorRoot.total ? UM.Theme.getColor("primary") : "transparent"
+        // The three states: filled + tick at ALL, filled + dash at
+        // SOME, empty at NONE — the fill and the glyph both follow
+        // visibleCount (the live report: all rendered empty and none
+        // rendered dashed — the conditions were inverted).
+        color: selectorRoot.visibleCount > 0 ? UM.Theme.getColor("primary") : "transparent"
         UM.Label {
-            visible: selectorRoot.visibleCount !== selectorRoot.total
+            id: glyph
+            objectName: "visibilitySelectorGlyph"
+            visible: selectorRoot.visibleCount > 0
             anchors.centerIn: parent
             text: selectorRoot.visibleCount === selectorRoot.total ? "✓" : "–"
-            color: selectorRoot.visibleCount > 0 ? "white" : UM.Theme.getColor("primary")
+            color: "white"
             font: UM.Theme.getFont("small")
         }
         MouseArea {

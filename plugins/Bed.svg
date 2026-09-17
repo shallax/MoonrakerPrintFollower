@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill-rule="evenodd">
+  <!-- Print bed: a flat plate on three legs. No fills: UM.ColorImage
+       injects the theme colour into the root element. -->
+  <path d="M4 9h16a1 1 0 0 1 1 1v1.2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z"/>
+  <path d="M7 12.2h1.2v4.8H7zM11.4 12.2h1.2v4.8h-1.2zM15.8 12.2h1.2v4.8h-1.2z"/>
+</svg>
