@@ -42,8 +42,6 @@ the Preview card gains a status strip.
 - **The UI-state store** — section expansion persists through the
   state file's second consumer with atomic merge writes; the
   chart's flat-map migration merges and deletes only what it owns.
-  (Pane sizes land with the configurable sections, not this
-  release.)
 - **The slider track-click fix** — clicking the slider track moves
   the handle AND commits the value; a track click no longer
   silently discards the request.

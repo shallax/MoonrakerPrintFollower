@@ -127,7 +127,10 @@ release, shaped by the new pro-user persona (a 3D-printer enthusiast
 lens on feature value joins the review panel from this release).
 Constraints (2026-09-10): no ridiculously large sizes — the drag
 range is capped — and dragging small enough snaps the console into
-its collapsed state.
+its collapsed state. (Shipped reality, 4.3.0: the size is a persisted
+continuous range — 28% is only the default — capped in pixels, min
+140 and max = camera area − 150 px, with a snap below 140, not a
+percentage.)
 
 **Layer numbering from the file's own comments:** DEFERRED at the
 round-2 walk — the flip as ruled is a
@@ -280,7 +283,8 @@ accepted adjustments:**
   only — "stream offline" badge + manual revert; the saved camera
   preference is never rewritten.
 - Console drag: 15–50% of the column; below 15% snaps to the collapsed
-  state.
+  state. (Shipped 4.3.0 as a pixel-capped range — min 140, max = camera
+  area − 150 px, snapping below 140 — not a percentage of the column.)
 - `;LAYER:n`: comments are authoritative only when consistent with the
   file's observed layer structure; Z-rise fallback otherwise.
 - Pagination stays complete — page size, prev/next AND the direct

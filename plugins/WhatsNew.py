@@ -45,8 +45,8 @@ WHATS_NEW: Tuple[dict, ...] = (
             "discarding the request.",
             "The print-job caption names Disconnected, Printer state "
             "unknown and Locked — never a lying Idle.",
-            "Section expansion and pane sizes persist through the same "
-            "state file the rest of the plugin uses.",
+            "Section expansion persists through the same state file "
+            "the rest of the plugin uses.",
             "The test harness records what each step looked at and where "
             "it was, and draws the highlight onto the captured screenshots.",
             "Cura 5.11 or newer (SDK 8.11+) is now the floor — older "

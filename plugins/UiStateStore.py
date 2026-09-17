@@ -1,14 +1,15 @@
 """The UI-state store (4.3.0): the state file's second consumer.
 
-The Monitor's save payload rewrites nine whole top-level keys per
-save, so the UI state lives as a top-level SIBLING of those nine —
+The Monitor's save payload rewrites eight whole top-level keys per
+save, so the UI state lives as a top-level SIBLING of those eight —
 the sections map — never nested, or a merge would erase it. The
 shared StateStore's merge semantics do the heavy lifting; this owner
 adds the schema validation and the boundary guard: a value that
 cannot survive the JSON round-trip fails HERE, with these words —
 never inside the Monitor's save with the Monitor's failure text.
 (The pane-size schema was removed in the re-review: no producer, no
-consumer — it lands with the 4.5.0 configurable sections.)
+consumer. The pane-sizes promise was corrected out of the docs in
+4.4.0 — the console stays the only resizable pane.)
 """
 from __future__ import annotations
 

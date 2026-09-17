@@ -41,8 +41,7 @@ behind it.
 - **The UI-state store.** Section expansion persists through the
   state file's second consumer with atomic merge writes (O_NOFOLLOW,
   0600, no NaN); the chart's flat-map migration merges and deletes
-  only what it owns. (Pane sizes land with the configurable
-  sections, not this release.)
+  only what it owns.
 - **The slider track-click fix.** Clicking the slider track moves
   the handle AND commits the value — a track click used to move
   the handle while silently discarding the request.
