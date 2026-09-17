@@ -6,9 +6,11 @@ import unittest
 from plugins.ToolheadPolicy import (
     CENTER_Z_MM,
     EXTRUDE_DISTANCES,
+    EXTRUDE_DISTANCE_MAX,
     EXTRUDE_SPEED_DEFAULT,
     JOG_DISTANCE_DEFAULT,
     JOG_DISTANCES,
+    JOG_DISTANCE_MAX,
     MAX_PENDING_OPS,
     STATUS_QUEUE_FULL,
     center_script,
@@ -142,16 +144,17 @@ class ToolheadGateTests(unittest.TestCase):
 
 
 class ToolheadQueueTests(unittest.TestCase):
-    def test_adjacent_same_axis_jogs_merge(self):
+    def test_adjacent_same_axis_jogs_do_not_merge(self):
         pending = ()
         for _ in range(5):
             pending, status = push_op(pending, make_jog_op("x", 1.0, True))
             self.assertIsNone(status)
-        self.assertEqual(len(pending), 1)
-        self.assertEqual(pending[0].script, "G91\nG1 X5 F3000\nG90")
-        self.assertEqual(pending[0].distance, 5.0)
+        self.assertEqual(len(pending), 5)
+        for op in pending:
+            self.assertEqual(op.script, "G91\nG1 X1 F3000\nG90")
+            self.assertEqual(op.distance, 1.0)
 
-    def test_no_merge_across_axes_or_home(self):
+    def test_each_op_queues_separately_across_axes_and_home(self):
         pending = ()
         for op in (make_jog_op("x", 1.0, True), make_jog_op("y", 2.0, True),
                    make_jog_op("x", 3.0, True), make_home_op("z")):
@@ -160,24 +163,39 @@ class ToolheadQueueTests(unittest.TestCase):
             ["G91\nG1 X1 F3000\nG90", "G91\nG1 Y2 F3000\nG90",
              "G91\nG1 X3 F3000\nG90", "G28 Z"])
 
-    def test_extrude_ops_merge_at_the_same_speed_only(self):
+    def test_extrude_ops_do_not_merge(self):
         pending = ()
         pending, _ = push_op(pending, make_extrude_op(5.0, 300.0, True))
         pending, _ = push_op(pending, make_extrude_op(-2.0, 300.0, True))
-        self.assertEqual(len(pending), 1)
-        self.assertEqual(pending[0].script, "G91\nG1 E3 F300\nG90")
-        # A different feedrate must not merge with the queued move.
-        pending, _ = push_op(pending, make_extrude_op(2.0, 120.0, True))
         self.assertEqual(len(pending), 2)
-        self.assertEqual(pending[1].script, "G91\nG1 E2 F120\nG90")
-        pending, _ = push_op(pending, make_jog_op("x", 1.0, True))
+        self.assertEqual(pending[0].script, "G91\nG1 E5 F300\nG90")
+        self.assertEqual(pending[1].script, "G91\nG1 E-2 F300\nG90")
+        pending, _ = push_op(pending, make_extrude_op(2.0, 120.0, True))
         self.assertEqual(len(pending), 3)
+        pending, _ = push_op(pending, make_jog_op("x", 1.0, True))
+        self.assertEqual(len(pending), 4)
 
-    def test_merging_respects_relative_mode(self):
+    def test_relative_mode_ops_queue_separately(self):
         pending = ()
-        pending, _ = push_op(pending, make_jog_op("x", 1.0, False), absolute_coordinates=False)
-        pending, _ = push_op(pending, make_jog_op("x", 1.0, False), absolute_coordinates=False)
-        self.assertEqual(pending[0].script, "G91\nG1 X2 F3000")
+        pending, _ = push_op(pending, make_jog_op("x", 1.0, False))
+        pending, _ = push_op(pending, make_jog_op("x", 1.0, False))
+        self.assertEqual(len(pending), 2)
+        self.assertEqual(pending[0].script, "G91\nG1 X1 F3000")
+
+    def test_max_distance_taps_never_merge_past_the_range(self):
+        # Two max retracts must stay two valid ops: the coalesced form
+        # (-200) exceeds the per-op range and crashed the slot (the
+        # author's live report).
+        pending = ()
+        for _ in range(2):
+            pending, status = push_op(pending, make_extrude_op(-EXTRUDE_DISTANCE_MAX, 300.0, True))
+            self.assertIsNone(status)
+        self.assertEqual(len(pending), 2)
+        pending = ()
+        for _ in range(2):
+            pending, status = push_op(pending, make_jog_op("x", JOG_DISTANCE_MAX, True))
+            self.assertIsNone(status)
+        self.assertEqual(len(pending), 2)
 
     def test_cap_rejects_newest_and_reports(self):
         pending = (make_home_op(),)
@@ -199,16 +217,18 @@ class ToolheadQueueTests(unittest.TestCase):
         pending, _ = push_op(pending, make_motors_off_op())
         self.assertEqual(len(pending), 2)
 
-    def test_equal_and_opposite_taps_cancel(self):
-        # A queued +25 jog followed by a -25 tap must cancel the pair,
-        # never raise out of the Qt slot or leave the +25 to execute.
+    def test_equal_and_opposite_taps_do_not_cancel(self):
+        # A queued +25 jog followed by a -25 tap must stay two moves:
+        # the wiggle executes in full (the author's 2026-09-17 ruling).
         pending, status = push_op((), make_jog_op("x", 25.0, True))
         pending, status = push_op(pending, make_jog_op("x", -25.0, True))
-        self.assertEqual(pending, ())
+        self.assertEqual(len(pending), 2)
+        self.assertEqual(pending[0].script, "G91\nG1 X25 F3000\nG90")
+        self.assertEqual(pending[1].script, "G91\nG1 X-25 F3000\nG90")
         self.assertIsNone(status)
         pending, status = push_op((), make_extrude_op(5.0, 300.0, True))
         pending, status = push_op(pending, make_extrude_op(-5.0, 300.0, True))
-        self.assertEqual(pending, ())
+        self.assertEqual(len(pending), 2)
         self.assertIsNone(status)
 
     def test_non_finite_free_text_is_rejected(self):

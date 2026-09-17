@@ -251,35 +251,17 @@ def make_extrude_op(distance: float, speed_mm_per_min: float, absolute_coordinat
                               absolute_coordinates=absolute_coordinates))
 
 
-def _regenerate(op: JogOp, distance: float, absolute_coordinates: bool) -> JogOp:
-    if op.kind == "jog":
-        return make_jog_op(op.axis, distance, absolute_coordinates)
-    return make_extrude_op(distance, op.speed, absolute_coordinates)
+def push_op(pending: Sequence[JogOp], op: JogOp) -> Tuple[Tuple[JogOp, ...], Optional[str]]:
+    """Append an operation without coalescing.
 
-
-def push_op(pending: Sequence[JogOp], op: JogOp,
-            *, absolute_coordinates: bool = True) -> Tuple[Tuple[JogOp, ...], Optional[str]]:
-    """Append an operation with adjacent same-axis coalescing.
-
-    Consecutive relative moves on one axis are additive, so five X+1 taps
-    merge into one ``G1 X5``; merging across a home or another axis would
-    not be equivalent, so only the tail op may merge. Extrusion moves merge
-    only at the same feedrate. The depth cap rejects the newest tap
-    (already-queued intent is kept) and reports why.
+    Every command executes as its own move: adjacent same-axis taps
+    are never merged and equal-and-opposite moves never cancel (the
+    author's 2026-09-17 ruling — coalescing once collapsed two
+    in-range retracts into one out-of-range extrude). The depth cap
+    rejects the newest tap (already-queued intent is kept) and
+    reports why.
     """
     pending = tuple(pending)
-    if not pending:
-        return (op,), None
-    tail = pending[-1]
-    if (tail.kind == op.kind in {"jog", "extrude"} and tail.axis == op.axis
-            and (tail.kind != "extrude" or tail.speed == op.speed)):
-        merged_distance = tail.distance + op.distance
-        if merged_distance == 0.0:
-            # Equal-and-opposite moves cancel: the user's tap undoes the
-            # queued tail (regenerating a zero-length move would raise).
-            return pending[:-1], None
-        merged = _regenerate(tail, merged_distance, absolute_coordinates)
-        return pending[:-1] + (merged,), None
     if len(pending) >= MAX_PENDING_OPS:
         return pending, STATUS_QUEUE_FULL
     return pending + (op,), None

@@ -314,10 +314,10 @@ class ToolheadController(QObject):
         self._push(op)
 
     def _push(self, op):
-        self._pending, status = push_op(self._pending, op, absolute_coordinates=self._absolute_coordinates)
+        self._pending, status = push_op(self._pending, op)
         if status:
             self._set_status(status)
-        # The merged tail re-clamps BEFORE the estimate advances, so
+        # The tail re-clamps BEFORE the estimate advances, so
         # the re-clamp sees the pre-tap position.
         self._pending = self._clamp_tail(self._pending)
         # The Z projection advances the moment the move is ACCEPTED
