@@ -40,7 +40,7 @@ from .UiStateStore import UiStateStore
 from datetime import datetime
 
 from .FileManager import FileManager
-from .SectionLayoutPolicy import PANE_NAMES, normalise_section_layout
+from .SectionLayoutPolicy import PANE_NAMES, layout_for, normalise_section_layout
 from .FileManagerPolicy import (
     delete_candidates,
     is_gcode_name,
@@ -1660,6 +1660,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._section_layout = normalised
         self._ui_state.set_section_layout(self._section_layout)
         self._publish()
+
+    @pyqtSlot(str, result="QVariant")
+    def sectionLayoutFor(self, pane):
+        """The effective (order, hidden) for one pane — the popup's
+        rows always enumerate the full table, never the visible set."""
+        pane = str(pane)
+        if pane not in PANE_NAMES:
+            return {}
+        order, hidden = layout_for(self._section_layout, pane)
+        return {"order": order, "hidden": hidden}
 
     @pyqtSlot(str, bool)
     def setTemperatureSensorVisible(self, name, visible):

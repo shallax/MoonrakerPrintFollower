@@ -264,6 +264,12 @@ EXCLUSIONS = {
         "date": "2026-09-17",
         "recheck": "the popup round lands — the popup scenario drives this slot",
     },
+    "MoonrakerMonitorModel.sectionLayoutFor": {
+        "reason": "the configure popup is unbuilt; the slot is unit-tested in test_section_layout",
+        "evidence": "unit tests drive layout_for and the store write",
+        "date": "2026-09-17",
+        "recheck": "the popup round lands — the popup scenario drives this slot",
+    },
     "sectionLayout": {
         "reason": "the configure popup is unbuilt; the key is unit-tested in test_section_layout",
         "evidence": "unit tests drive normalise_section_layout and the store write",
@@ -275,6 +281,18 @@ EXCLUSIONS = {
         "evidence": "unit tests drive normalise_section_layout and the store write",
         "date": "2026-09-17",
         "recheck": "the popup round lands — the popup scenario drives this slot",
+    },
+    "sectionConfigureHandle": {
+        "reason": "the popup round is unbuilt; the handle is geometry-addressed once the scenario lands",
+        "evidence": "the shared row component ships with the objectName from birth",
+        "date": "2026-09-17",
+        "recheck": "the popup round lands — the drag scenario addresses the handle",
+    },
+    "sectionConfigurePopOver": {
+        "reason": "the popup round is unbuilt; the popover is named from birth for the scenario",
+        "evidence": "the shared popover ships with the objectName from birth",
+        "date": "2026-09-17",
+        "recheck": "the popup round lands — the scenario opens and drives this popover",
     },
     # British-spelling formatting is a pure function of the locale —
     # unit-tested in test_monitor, invisible to scenarios.
