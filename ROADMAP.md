@@ -1430,7 +1430,7 @@ carries its reason (F10).
   klippy/webhooks.py, klippy/kinematics/extruder.py,
   klippy/chelper/kin_extruder.c — not klippy/extras/*).
 
-## 4.3.0 — Monitor & file-manager presentation refactor
+## 4.3.0 — Monitor & file-manager presentation refactor — SHIPPED (2026-09-17)
 
 SHIPPED 2026-09-16 (branch release/v4.3.0, awaiting the author's
 snapshot nod): the strip, the pause/resume policy rows, the
@@ -1730,6 +1730,11 @@ the machinery here.
 The author's 2026-09-16 backlog for this release (ruled live, in
 order of their report):
 
+- The test-suite ResourceWarnings (the author's 2026-09-17 CI note):
+  `ResourceWarning: unclosed file` from `json.load(open(path, ...))`
+  and its kin in the tests (test_monitor.py:2566 and neighbours) —
+  hoover the unclosed handles with context managers so the gates run
+  warning-clean.
 - The duplicate temperature entry: one sensor renders twice in the
   temperature lists (their "Raspberry pi" on voron.athome) — check
   the auxiliary projection for duplicated object rows on the real
