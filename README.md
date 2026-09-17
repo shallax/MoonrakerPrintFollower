@@ -604,7 +604,7 @@ Persistent indexes are validated against remote file identity before reuse. Laye
 
 ### Cura package
 
-Release builds use the canonical Cura/Marketplace package id `Moonraker_Print_Follower`. CI compiles and tests the plugin, builds the `.curapackage`, verifies its Marketplace layout and uploads the installable package as a workflow artifact.
+Release builds use the canonical Cura/Marketplace package id `MoonrakerPrintFollower`. CI compiles and tests the plugin, builds the `.curapackage`, verifies its Marketplace layout and uploads the installable package as a workflow artifact.
 
 ### Manual installation from source
 
@@ -612,7 +612,7 @@ For development/testing:
 
 1. Open **Help → Show Configuration Folder** in Cura.
 2. Open that configuration folder's `plugins` directory.
-3. Create a `Moonraker_Print_Follower` directory there if necessary.
+3. Create a `MoonrakerPrintFollower` directory there if necessary.
 4. Copy the contents of this repository's `plugins` directory into it.
 5. Restart Cura completely.
 6. Open **Settings → Printer → Manage Printers** and select **Configure Moonraker**.

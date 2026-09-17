@@ -608,7 +608,7 @@ look identical to the real artifact by eye.
 
 `make dev_install` (tools/install_dev.sh) symlinks this checkout's
 `plugins/` into Cura's user plugin directory
-(`~/.local/share/cura/<version>/plugins/Moonraker_Print_Follower`), so
+(`~/.local/share/cura/<version>/plugins/MoonrakerPrintFollower`), so
 edits appear on the next Cura restart — no package download, unzip or
 drag. The symlink shadows the packaged copy; `rm` it to go back to the
 installed package. QML/plugin changes still need a Cura restart (Python
