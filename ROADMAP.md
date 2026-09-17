@@ -1056,7 +1056,8 @@ ordered by dependency:
   feeds 4.2.0 planning only.
 - **The phase-2 rulings (2026-09-14, the author):** the architecture
   review's re-sequencing adopted fully (the presentation refactor
-  becomes 4.3.0, the physical head moves to 4.5.0); the TESTING.md
+  becomes 4.3.0, the physical head moves to 4.5.0, then to 5.0.0 in
+  the 2026-09-17 re-sequencing); the TESTING.md
   reconciliation moves into 4.1.0 (re-ruling the round-6 deferral);
   draft PR #19 closes as superseded with nothing of the review lost
   and every finding dispositioned; 1920x1080 everywhere.
@@ -1500,7 +1501,7 @@ debt gets a bounded delivery of its own instead of compounding under
 the physical-head feature. The review's F07 plus F06's structural
 completion, with fixed component scope and measurable exit criteria —
 not a repository-wide redesign. The 2026-09-15 scoping ruling keeps
-4.5.0 separate and folds every 4.2.0 deferral plus the round-2
+4.5.0 separate (now 5.0.0 — the 2026-09-17 re-sequencing) and folds every 4.2.0 deferral plus the round-2
 pro-user planning input (2026-09-15) into this release. The round-1
 critic (2026-09-15) corrected three false premises; the seven-persona
 panel (2026-09-15) settled the strip's shape, lane and budget, and
@@ -1523,13 +1524,13 @@ the decisions ledger.
   (the load-indicator precedent). Status-only (the 2026-09-15
   ruling): the factor sliders, the z-offset nudges and the
   extrude/retract controls stay in the Monitor — the Preview
-  control dock is a 4.5.0 planning item with the jog pad. On the
+  control dock is a 5.0.0 planning item with the jog pad. On the
   card, the strip rides its dual-host placement for free — no
   third host surface (re-ruled 2026-09-15 from a separate strip).
   If the control dock lands, the strip breaks out to its own
   surface then — the card rows are the simple form (the
   2026-09-15 ruling), built as a property-driven component with
-  no card-internal state so the 4.5.0 host change is a re-home,
+  no card-internal state so the 5.0.0 host change is a re-home,
   not a rewrite. Snapshot-0 mock before wiring.
 
   The panel's rulings (2026-09-15, dispositions in the ledger):
@@ -1563,7 +1564,7 @@ the decisions ledger.
     sentinel — the sticky publish dict never removes a key, and a
     re-stamped block never goes stale. The block is generic (a
     "Preview value block per poll with a stated staleness rule")
-    so the 4.5.0 camera thumbnail and marker readouts reuse it.
+    so the 5.0.0 camera thumbnail and marker readouts reuse it.
   - The temps. Reuse `chart_temperature_objects` — never a fresh
     classification (hotend and bed are "system" objects; a
     temperature-filter misses them). target 0.0 means no
@@ -1595,7 +1596,7 @@ the decisions ledger.
     there are 750 px of verified vertical headroom. The real
     constraint is the bottom-anchored card's overflow over Cura's
     viewport — the budget states its headroom rule (what happens
-    when the 4.5.0 dock is added), not just a maximum.
+    when the 5.0.0 dock is added), not just a maximum.
 - **Operation extraction — two slices, separately revertible
   (split after the round-1 critic).** Slice one: the print-start
   owner extraction completes — the queued outcome, the
@@ -1727,7 +1728,7 @@ respect it), the collapse map as the persistence precedent, the file
 manager's column UI as the interaction precedent, and the UI-state
 store's merge-write path as the persistence home. Planned FIRST (the
 author's 2026-09-16 ruling): the configurable sections land ahead of
-the 4.5.0 physical-head pack.
+the 5.0.0 physical-head pack.
 
 Scope settled in the 2026-09-16/17 Phase 0 walk (author rulings):
 
@@ -1804,12 +1805,51 @@ the Preview card's arrow temp pair, the card's black label ruling
 (superseding the grey note), the pause list's five-row cap and
 chevrons, and the Windows multi-start disconnect.
 
-## 4.5.0 — Physical head in the Preview (moved from 4.3.0)
+## 4.5.0 — Persistence refactor (the 2026-09-17 re-sequencing)
+
+The author's 2026-09-17 ruling: the physical head moves to 5.0.0 and
+4.5.0 becomes the persistence refactor. The plugin's persistence was
+never designed — it grew split between cura.cfg (Uranium Preferences
+wrapping one JSON blob per printer under printer_configs_v1) and the
+state file, with flush/debounce machinery holding the two together.
+The reviewer's architecture, adopted as the direction (the author ran
+it by the reviewer and ruled it here, not earlier):
+
+- Two plugin-owned files, not one: moonrakerprintfollower_settings.json
+  (durable user configuration) and moonrakerprintfollower_state.json
+  (UI/runtime state worth restoring), keyed by Cura's machine id; the
+  cache stays in Cura's cache area as today.
+- The split is write behaviour, not taste: settings change rarely and
+  explicitly (connection, following, upload, camera, diagnostics);
+  state changes incidentally while operating the UI and may be
+  written frequently (sections, pane collapse/size, file-manager
+  columns, whats-new — and per-printer chart, console and probe-point
+  state). The console transcript is the clearest case: today it
+  forces a whole Uranium preference-file flush through PrinterBinding's
+  debounce; the state file ends that.
+- One owner pair: a PluginPersistence facade over SettingsStore and
+  StateStore, each with typed operations, an in-memory document,
+  validation and atomic replacement. Components never see filenames
+  or JSON layouts (settings.set_printer_config(...),
+  state.set_console_state(...)); the StateStore's merge-write
+  semantics are the starting point.
+- Migration lands here (the author's ruling): the cura.cfg blob, the
+  legacy flat-map and the preference keys migrate into the new files
+  in 4.5.0. The teardown of the old machinery (printer_configs_v1,
+  LEGACY_MAP, the flush/debounce apparatus, most of
+  migrate_legacy_to_current_machine) rides 5.0.0 once the migration
+  has shipped. The Moonraker Connection import stays — that migrates
+  another plugin's settings and remains useful.
+- Credentials stay plaintext, file mode 0600 as today; stronger
+  secret handling is a separate keychain project, out of scope.
+
+## 5.0.0 — Physical head in the Preview (moved from 4.3.0 to 4.5.0, then to 5.0.0 by the 2026-09-17 re-sequencing)
 
 What a web dashboard cannot do: show the real machine inside the slice.
 The 4.3.0 presentation refactor lands first (the 2026-09-14
-re-sequencing), and 4.4.0's configurable sections precede the head
-work (the author's 2026-09-16 swap ruling): the marker's interactive
+re-sequencing), and 4.4.0's configurable sections plus 4.5.0's
+persistence refactor precede the head work (the author's 2026-09-16
+swap ruling, re-sequenced 2026-09-17): the marker's interactive
 controls depend on the common action policy and session ownership
 from 4.2.0, and its lifecycle boundaries are proven by the 4.0.2
 repairs and the 4.1.0 scenarios. The layer-hardening/foreign-heights pack becomes an
@@ -1823,7 +1863,7 @@ refactor finishes.
 - The nozzle repair's remaining private-state writes (the author's
   2026-09-16 ruling, backlog): the 4.2.0 NativeNozzleLifecycle
   synchronises Cura's layer-switch suppression through two
-  SimulationPass private fields. 4.5.0 replaces them with the
+  SimulationPass private fields. 5.0.0 replaces them with the
   all-public form — nozzle parenting, setEnabled, setActivity and
   the view's public getCompatibilityMode() — and accepts the
   one-frame nozzle flicker at layer transitions. Until then the
@@ -1849,7 +1889,7 @@ refactor finishes.
   looking at the actual toolpath. The Preview control dock lands with
   it: the factor sliders ruled out of the 4.3.0 strip (2026-09-15)
   find their Preview home here; z-offset and extrude/retract stay
-  Monitor-side unless 4.5.0's planning re-rules them. When the dock
+  Monitor-side unless 5.0.0's planning re-rules them. When the dock
   lands, the status strip breaks out of the card to its own surface
   (the 2026-09-15 ruling).
 - A shared coordinate-transform module — corrected by the pro-user
@@ -1884,7 +1924,7 @@ height + one-click pause-at-next-layer + the layer-to-mm readout
 waypoints (M600, `; filament change`) on the layer timeline with
 time-to-go; (5) a camera thumbnail in the Preview (investigate, don't
 assume); (6) active-tool label + per-extruder path colouring.
-The ranking is stale and is re-derived at 4.5.0's planning round
+The ranking is stale and is re-derived at 5.0.0's planning round
 (PUF4, 2026-09-15): pause-at-layer and the layer-to-mm readout
 already ship, item (1) moved to 4.3.0 and item (2) was dropped
 there — only pause-at-Z-height of the original three remains open.
@@ -2044,7 +2084,7 @@ contrast; pairwise hue separation is the residual debt).
   (travels, Z-hops and parks exceed the window by design), the
   anomaly cases are not visible through the commanded position,
   and the surviving value did not repay a five-owner plumbing
-  change. A deviation callout beside the 4.5.0 physical-head
+  change. A deviation callout beside the 5.0.0 physical-head
   marker is the one shape that might earn it back — with an actual
   head rendered, the number points at something on screen (the
   author, 2026-09-15).
