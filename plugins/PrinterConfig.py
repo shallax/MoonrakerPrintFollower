@@ -94,8 +94,10 @@ class FeedMode(str, Enum):
 
 @dataclass
 class PrinterConfig:
-    # Live Preview follower settings.
-    enabled: bool = False
+    # Live Preview follower settings. Enabled by default (the author's
+    # 2026-09-17 ruling): a fresh machine should follow without an
+    # extra checkbox trip.
+    enabled: bool = True
     url: str = "http://"
     api_key: str = ""
     poll_interval_ms: int = 750
@@ -347,7 +349,10 @@ class PrinterConfigStore:
         "path_follow": "moonrakerprintfollower/path_follow",
     }
     LEGACY_DEFAULTS = {
-        "enabled": False,
+        # The product default (the 2026-09-17 ruling): following is
+        # enabled by default, so a fresh install's written settings
+        # section starts ticked.
+        "enabled": True,
         "url": "http://",
         "api_key": "",
         "poll_interval_ms": 750,
@@ -374,6 +379,30 @@ class PrinterConfigStore:
         # runtime split and stored values remain readable during upgrade.
         for field_name, pref_key in self.LEGACY_MAP.items():
             preferences.addPreference(pref_key, self.LEGACY_DEFAULTS[field_name])
+        # The 4.3.0 identity rename: carry settings saved under the
+        # pre-rename underscore keys across once, so installs of the
+        # morning's first 4.3.0 build keep their configuration. New
+        # keys win if both exist.
+        old_prefix = "moonraker_print_follower/"
+        for pref_key in self.LEGACY_MAP.values():
+            old_key = old_prefix + pref_key.rsplit("/", 1)[-1]
+            try:
+                old_value = preferences.getValue(old_key, None)
+                if old_value is not None:
+                    preferences.setValue(pref_key, old_value)
+            except Exception:
+                pass
+        for old_key, new_key in (
+            (old_prefix + "printer_configs_v1", self.PREF_KEY),
+            (old_prefix + "bed_mesh_visible", "moonrakerprintfollower/bed_mesh_visible"),
+            (old_prefix + "bed_mesh_exaggeration", "moonrakerprintfollower/bed_mesh_exaggeration"),
+        ):
+            try:
+                old_value = preferences.getValue(old_key, None)
+                if old_value:
+                    preferences.setValue(new_key, old_value)
+            except Exception:
+                pass
 
     @staticmethod
     def _truthy(value: Any) -> bool:
@@ -416,6 +445,10 @@ class PrinterConfigStore:
         machine_id, _ = self.identity()
         entry = data.get(machine_id)
         if isinstance(entry, dict):
+            self._preferences.setValue(
+                self.LEGACY_MAP["enabled"],
+                bool(entry.get("enabled", True)),
+            )
             self._preferences.setValue(
                 self.LEGACY_MAP["memory_diagnostics_log"],
                 bool(entry.get("memory_diagnostics_log", False)),

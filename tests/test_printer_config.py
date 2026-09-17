@@ -35,7 +35,9 @@ class PrinterConfigTests(unittest.TestCase):
         ))
 
         active[:] = ["machine-b", "Printer B"]
-        self.assertFalse(store.get().enabled)
+        # Following is enabled by default (the 2026-09-17 ruling):
+        # an unconfigured machine starts enabled, not off.
+        self.assertTrue(store.get().enabled)
         self.assertEqual(store.get().url, "http://")
         self.assertEqual(store.get().upload_path, "")
         store.set(PrinterConfig(
@@ -63,6 +65,9 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertTrue(prefs.getValue(PrinterConfigStore.LEGACY_MAP["memory_diagnostics_log"]))
         store.set(PrinterConfig(memory_diagnostics_log=False))
         self.assertFalse(prefs.getValue(PrinterConfigStore.LEGACY_MAP["memory_diagnostics_log"]))
+        # The enabled state mirrors too (the 2026-09-17 ruling): the
+        # written settings section must show following enabled.
+        self.assertTrue(prefs.getValue(PrinterConfigStore.LEGACY_MAP["enabled"]))
 
     def test_legacy_follower_settings_migrate_once_to_active_machine(self):
         prefs = FakePreferences()

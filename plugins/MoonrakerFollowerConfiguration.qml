@@ -194,7 +194,12 @@ Cura.MachineAction {
                             onTextChanged: base.validUrl = manager.validUrl(text)
                         }
                         UM.Label {
-                            visible: base.connectionRequested && !base.validUrl
+                            // Only once a URL is actually typed: an
+                            // untouched placeholder must not moan on a
+                            // fresh dialog (following is on by
+                            // default, so connectionRequested is
+                            // already true on first open).
+                            visible: base.connectionRequested && !base.validUrl && urlField.text.trim() !== ""
                             text: "Enter a valid HTTP or HTTPS Moonraker URL."
                             color: UM.Theme.getColor("error")
                             font: UM.Theme.getFont("default_italic")
@@ -580,13 +585,21 @@ Cura.MachineAction {
                             enabled: pathFollowBox.checked
                             checked: manager.settingsPathSmoothing
                         }
-                        UM.TooltipArea {
-                            text: "Rescale the remaining-time estimate by the drift between the slicer's per-layer times and what the printer actually took. Downloads nothing."
-                            UM.CheckBox {
-                                id: etaLearnBox
-                                text: "Learn ETA drift from observed progress"
-                                checked: manager.settingsEtaLearn
-                            }
+                        UM.CheckBox {
+                            id: etaLearnBox
+                            text: "Learn ETA drift from observed progress"
+                            checked: manager.settingsEtaLearn
+                        }
+                        UM.Label {
+                            // A plain caption, not UM.TooltipArea: the
+                            // tooltip wrapper's sizing in the settings
+                            // column collapsed this row onto the first
+                            // checkbox (the live report's overlap).
+                            text: "Rescales the remaining time by the drift between the slicer's per-layer times and what the printer actually took. Downloads nothing."
+                            font: UM.Theme.getFont("default")
+                            color: UM.Theme.getColor("text_inactive")
+                            wrapMode: Text.WordWrap
+                            width: parent.width
                         }
                         UM.CheckBox {
                             id: oneBasedBox
