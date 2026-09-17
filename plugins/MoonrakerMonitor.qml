@@ -422,6 +422,7 @@ Component {
                         spacing: 0
                         MeshSection {
                             id: meshSection
+                            visible: root.printer == null || root.printer.sectionHiddenMap["meshmap"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                             onPopOverToggleRequested: function (name) {
@@ -429,6 +430,7 @@ Component {
                             }
                         }
                         TempHistorySection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["temphistory"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                             miniSeries: root.miniChartSeries
@@ -437,6 +439,61 @@ Component {
                                 root.openPopOver = root.openPopOver === name ? "" : name;
                             }
                         }
+                    }
+                }
+
+                // The section-order application: the configure popup
+                // and the state hydration both flow through
+                // sectionLayout; each pane re-parents only when the
+                // live order differs (the probe-verified recipe —
+                // detach-all, re-attach in target order, strays
+                // re-attach last).
+                function sectionHeader(item) {
+                    if (!item || !item.children)
+                        return null;
+                    var header = item.children[0];
+                    return (header && header.sectionId !== undefined) ? header : null;
+                }
+                function applySectionOrder(container, paneId) {
+                    var layout = root.printer ? root.printer.sectionLayout : null;
+                    var entry = layout ? layout[paneId] : null;
+                    var target = entry ? entry.order : null;
+                    if (!target)
+                        return;
+                    var current = [];
+                    for (var i = 0; i < container.children.length; i++) {
+                        var header = sectionHeader(container.children[i]);
+                        if (header)
+                            current.push(header.sectionId);
+                    }
+                    if (JSON.stringify(current) === JSON.stringify(target))
+                        return;
+                    var items = [];
+                    for (var j = 0; j < container.children.length; j++)
+                        items.push(container.children[j]);
+                    for (var k = 0; k < items.length; k++)
+                        items[k].parent = null;
+                    var attached = [];
+                    for (var m = 0; m < target.length; m++) {
+                        for (var n = 0; n < items.length; n++) {
+                            var header2 = sectionHeader(items[n]);
+                            if (header2 && header2.sectionId === target[m]) {
+                                items[n].parent = container;
+                                attached.push(items[n]);
+                                break;
+                            }
+                        }
+                    }
+                    for (var p = 0; p < items.length; p++) {
+                        if (attached.indexOf(items[p]) === -1)
+                            items[p].parent = container;
+                    }
+                }
+                Connections {
+                    target: root.printer
+                    function onSectionLayoutChanged() {
+                        applySectionOrder(infoContent, "information");
+                        applySectionOrder(statusContent, "status");
                     }
                 }
 
@@ -1488,27 +1545,29 @@ Component {
                         // must contribute nothing so headers stack flush.
                         spacing: 0
                         JobSection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["job"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
 
                         TempsSection {
                             Layout.fillWidth: true
-                            visible: root.printer != null && root.printer.temperatureItems.length > 0
+                            visible: root.printer != null && root.printer.temperatureItems.length > 0 && root.printer.sectionHiddenMap["temps"] !== true
                             printerModel: root.printer
                         }
 
                         FansInfoSection {
                             Layout.fillWidth: true
-                            visible: root.printer != null && root.printer.fanItems.length > 0
+                            visible: root.printer != null && root.printer.fanItems.length > 0 && root.printer.sectionHiddenMap["fansinfo"] !== true
                             printerModel: root.printer
                         }
                         FilamentSection {
                             Layout.fillWidth: true
-                            visible: root.printer != null && root.printer.filamentSensorItems.length > 0
+                            visible: root.printer != null && root.printer.filamentSensorItems.length > 0 && root.printer.sectionHiddenMap["filament"] !== true
                             printerModel: root.printer
                         }
                         ObjectsSection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["objects"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                             onExcludeRequested: function (name) {
@@ -1517,12 +1576,13 @@ Component {
                             }
                         }
                         SystemInfoSection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["systeminfo"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
                         McusSection {
                             Layout.fillWidth: true
-                            visible: root.printer != null && root.printer.mcuItems.length > 0
+                            visible: root.printer != null && root.printer.mcuItems.length > 0 && root.printer.sectionHiddenMap["mcus"] !== true
                             printerModel: root.printer
                         }
                     }

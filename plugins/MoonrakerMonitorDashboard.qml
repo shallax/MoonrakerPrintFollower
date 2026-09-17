@@ -498,35 +498,42 @@ Component {
                         spacing: 0
                         FileManagerSection {
                             id: fileManagerSection
+                            visible: root.printer == null || root.printer.sectionHiddenMap["fileManager"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
 
                         PrintSection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["print"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                             onCancelRequested: cancelPrintDialog.open()
                         }
 
                         SetupSection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["setup"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
                         ToolheadSection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["toolhead"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
 
                         MacrosSection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["macros"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
                         ProfilesSection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["profiles"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
                         TuningSection {
                             id: tuningSection
+                            visible: root.printer == null || root.printer.sectionHiddenMap["tuning"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                             interactionSink: root.receiveSliderInteraction
@@ -534,6 +541,7 @@ Component {
 
                         FansSection {
                             id: fansSection
+                            visible: root.printer == null || root.printer.sectionHiddenMap["fans"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                             freezeRepeaters: root.tuningSliderPressed
@@ -543,6 +551,7 @@ Component {
 
                         LedsSection {
                             id: ledsSection
+                            visible: root.printer == null || root.printer.sectionHiddenMap["leds"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                             freezeRepeaters: root.tuningSliderPressed
@@ -552,6 +561,7 @@ Component {
 
                         PwmSection {
                             id: pwmSection
+                            visible: root.printer == null || root.printer.sectionHiddenMap["pwm"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                             freezeRepeaters: root.tuningSliderPressed
@@ -561,6 +571,7 @@ Component {
 
                         PowerSection {
                             id: powerSection
+                            visible: root.printer == null || root.printer.sectionHiddenMap["power"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                             onPowerOffConfirmRequested: function (deviceName) {
@@ -571,13 +582,69 @@ Component {
 
                         SystemSection {
                             id: systemSection
+                            visible: root.printer == null || root.printer.sectionHiddenMap["system"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
                         SaveSection {
                             id: saveSection
+                            visible: root.printer == null || root.printer.sectionHiddenMap["save"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
+                        }
+                    }
+
+                    // The section-order application: the configure popup
+                    // and the state hydration both flow through
+                    // sectionLayout; the pane re-parents only when the
+                    // live order differs (the probe-verified recipe —
+                    // detach-all, re-attach in target order, strays
+                    // re-attach last).
+                    function sectionHeader(item) {
+                        if (!item || !item.children)
+                            return null;
+                        var header = item.children[0];
+                        return (header && header.sectionId !== undefined) ? header : null;
+                    }
+                    function applyControlsOrder() {
+                        var layout = root.printer ? root.printer.sectionLayout : null;
+                        var entry = layout ? layout["controls"] : null;
+                        var target = entry ? entry.order : null;
+                        if (!target)
+                            return;
+                        var current = [];
+                        for (var i = 0; i < controlContent.children.length; i++) {
+                            var header = sectionHeader(controlContent.children[i]);
+                            if (header)
+                                current.push(header.sectionId);
+                        }
+                        if (JSON.stringify(current) === JSON.stringify(target))
+                            return;
+                        var items = [];
+                        for (var j = 0; j < controlContent.children.length; j++)
+                            items.push(controlContent.children[j]);
+                        for (var k = 0; k < items.length; k++)
+                            items[k].parent = null;
+                        var attached = [];
+                        for (var m = 0; m < target.length; m++) {
+                            for (var n = 0; n < items.length; n++) {
+                                var header2 = sectionHeader(items[n]);
+                                if (header2 && header2.sectionId === target[m]) {
+                                    items[n].parent = controlContent;
+                                    attached.push(items[n]);
+                                    break;
+                                }
+                            }
+                        }
+                        for (var p = 0; p < items.length; p++) {
+                            if (attached.indexOf(items[p]) === -1)
+                                items[p].parent = controlContent;
+                        }
+                    }
+                    Connections {
+                        target: root.printer
+                        function onSectionLayoutChanged() {
+                            applyControlsOrder();
                         }
                     }
                 }

@@ -3925,7 +3925,8 @@ Item {
     def test_no_controls_disappear_controls_disable(self):
         # NO-REFLOW RULE (the author's ruling, 2026-09-10): no control
         # ever disappears — it disables. Nothing reflows unless the
-        # user asked for it (section collapse, resize). The jog-reflow
+        # user asked for it (section collapse, resize, and the 4.4.0
+        # section hide/reorder rulings). The jog-reflow
         # hazard came from pause/cancel (and other state-gated controls)
         # vanishing and returning, shifting the pane under the pointer.
         #
@@ -3948,13 +3949,23 @@ Item {
         # follows the code, so the pane's veil and Live badge stay
         # reviewed under this rule.
         whitelist = (
-            "openPopOver", "sectionExpandedMap", "Collapsed", "platformActivity",
+            "openPopOver", "sectionExpandedMap", "sectionHiddenMap", "Collapsed", "platformActivity",
             "previewStageActive", "configuredForFollowing", "modelData.type", "hasWhite",
             "root.configured", "tooltipText", "sectionIcon", "macroParameters",
             "webcamNames", "root.busy", "root.progress", "improveEtaProgress",
             "temperatureChart.series", "allChartSensorsHidden", "selectedChartSensor",
             "hoverClockProxy",
         )
+        # The whitelist is itself frozen (round-2 security F13: the
+        # set must not grow silently) — an addition is a visible diff.
+        self.assertEqual(whitelist, (
+            "openPopOver", "sectionExpandedMap", "sectionHiddenMap", "Collapsed", "platformActivity",
+            "previewStageActive", "configuredForFollowing", "modelData.type", "hasWhite",
+            "root.configured", "tooltipText", "sectionIcon", "macroParameters",
+            "webcamNames", "root.busy", "root.progress", "improveEtaProgress",
+            "temperatureChart.series", "allChartSensorsHidden", "selectedChartSensor",
+            "hoverClockProxy",
+        ))
         allowed = {
             # Capability-static gates (the UX panel's ruling): these
             # only change on a printer switch, which is user-initiated.
@@ -3973,10 +3984,6 @@ Item {
             "visible: root.printerModel == null || root.printerModel.endstopItems.length === 0",
             "visible: root.miniHasSeries",
             "visible: root.printerModel != null && !root.miniHasSeries",
-            "visible: root.printer != null && root.printer.temperatureItems.length > 0",
-            "visible: root.printer != null && root.printer.fanItems.length > 0",
-            "visible: root.printer != null && root.printer.filamentSensorItems.length > 0",
-            "visible: root.printer != null && root.printer.mcuItems.length > 0",
             # The console error bell (the author's live request) is a
             # presence signal, not a session gate: it shows only
             # while an unseen error waits and the console is
@@ -4077,6 +4084,15 @@ Item {
                     continue
                 self.assertIn(expression, allowed,
                               f"{path.name}:{number}: state-gated visible: {expression}")
+        # The hide masks: one sectionHiddenMap occurrence per section
+        # (Dashboard 13 controls, Monitor 2 information + 7 status).
+        # A new adopter trips the count — the whitelist's substring
+        # blessing must not cover an unbounded family.
+        for monitor_file, expected in (("MoonrakerMonitorDashboard.qml", 13),
+                                       ("MoonrakerMonitor.qml", 9)):
+            self.assertEqual(
+                (PLUGINS / monitor_file).read_text(encoding="utf-8").count("sectionHiddenMap["),
+                expected, monitor_file)
         # The replacement: every SESSION state lives in `enabled`.
         for enabled in (
             "enabled: root.printerModel != null && root.printerModel.canPausePrint",
