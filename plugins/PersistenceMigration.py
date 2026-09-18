@@ -180,6 +180,7 @@ def run_migration(
         return outcome
 
     _clean_preferences(set_pref)
+    _remove_old_state_file(old_state_path)
     outcome.status = "ok"
     settings_record_write({"migration": _record(outcome, timestamp)})
     return outcome
@@ -189,7 +190,9 @@ def _write_empty_documents(
     settings_write, state_global_write, old_state_path, outcome, timestamp,
 ) -> None:
     """The empty-but-healthy path: new files, configVersion 2, the
-    old chrome carried across where the old state file exists (L4)."""
+    old chrome carried across where the old state file exists — and
+    the old file removed once the new document is written (the
+    author's live find: no old-config trace remains)."""
     state_global_write({**_read_old_chrome(old_state_path), "configVersion": 2})
     settings_write({
         "configVersion": 2,
@@ -199,6 +202,7 @@ def _write_empty_documents(
         },
         "machines": {},
     })
+    _remove_old_state_file(old_state_path)
 
 
 def _read_old_chrome(old_state_path: Optional[str]) -> Dict[str, Any]:
@@ -265,6 +269,18 @@ def _verify_new_files(records, settings_path, state_dir) -> bool:
         return False
 
 
+def _remove_old_state_file(old_state_path: Optional[str]) -> None:
+    """The pre-4.5.0 sections file leaves no trace once the new state
+    document holds its content (the author's live find) — removed
+    only AFTER the new document's write landed."""
+    if not old_state_path:
+        return
+    try:
+        os.remove(old_state_path)
+    except OSError:
+        pass  # already gone, or not ours to remove — the new document is authoritative either way
+
+
 def _clean_preferences(set_pref: Callable[[str, Any], None]) -> None:
     """The in-memory return-to-default (C4): Uranium's writer omits
     values equal to their registered defaults, so this is the only
@@ -276,6 +292,12 @@ def _clean_preferences(set_pref: Callable[[str, Any], None]) -> None:
     set_pref(PrinterConfigStore.PREF_KEY, "{}")
     for field_name, pref_key in PrinterConfigStore.LEGACY_MAP.items():
         set_pref(pref_key, PrinterConfigStore.LEGACY_DEFAULTS[field_name])
+    # The migrated flags reset to their registered defaults too: the
+    # [moonrakerprintfollower] section leaves cura.cfg entirely (the
+    # author's live find). The legacy chain guards on the migration
+    # record, so nothing re-runs and resurrects the blob.
+    set_pref(PrinterConfigStore.MIGRATED_KEY, False)
+    set_pref(PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY, False)
 
 
 def _record(outcome: MigrationOutcome, timestamp: str) -> Dict[str, Any]:

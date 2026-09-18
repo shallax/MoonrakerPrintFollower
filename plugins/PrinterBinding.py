@@ -89,11 +89,18 @@ class PrinterBinding(QObject):
         return parsed.isValid() and parsed.scheme() in {"http", "https"} and bool(parsed.host())
 
     def _migrate(self):
-        for migrate in (self._store.migrate_legacy_to_current_machine, self._store.migrate_moonraker_connection):
-            try:
-                migrate()
-            except Exception as error:
-                Logger.log("w", "Moonraker settings migration failed: %s", error)
+        record = self._persistence.migration_record() if self._persistence is not None else None
+        if record is None:
+            # The pre-migration window only: the legacy chain runs
+            # while the blob is still the source. Once the one-shot's
+            # record exists the legacy migrations must NOT re-run —
+            # the clean reset their flags, and a re-run would
+            # resurrect the blob into cura.cfg.
+            for migrate in (self._store.migrate_legacy_to_current_machine, self._store.migrate_moonraker_connection):
+                try:
+                    migrate()
+                except Exception as error:
+                    Logger.log("w", "Moonraker settings migration failed: %s", error)
         self.run_persistence_migration()
 
     def run_persistence_migration(self):

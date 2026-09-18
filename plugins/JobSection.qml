@@ -424,6 +424,10 @@ ColumnLayout {
                         cornerSide: Cura.RoundedRectangle.Direction.All
                     }
                     Cura.RoundedRectangle {
+                        // The permanent-slot rule (the polish-loop
+                        // class): the bar's state rides its WIDTH —
+                        // the visibility gate it replaced flipped per
+                        // poll and reflowed the row.
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         anchors.left: parent.left
@@ -432,7 +436,6 @@ ColumnLayout {
                         color: UM.Theme.getColor("primary")
                         radius: Math.min(UM.Theme.getSize("progressbar_radius").width, height / 2)
                         cornerSide: Cura.RoundedRectangle.Direction.All
-                        visible: root.printerModel != null && root.printerModel.improveEtaProgress >= 0
                     }
                     Cura.RoundedRectangle {
                         anchors.top: parent.top
@@ -442,7 +445,10 @@ ColumnLayout {
                         color: UM.Theme.getColor("primary")
                         radius: Math.min(UM.Theme.getSize("progressbar_radius").width, height / 2)
                         cornerSide: Cura.RoundedRectangle.Direction.All
-                        visible: root.printerModel != null && root.printerModel.improvingEta && root.printerModel.improveEtaProgress < 0
+                        // The permanent-slot rule: the sweep's state
+                        // rides its OPACITY — never a visibility flip
+                        // (the polish-loop class).
+                        opacity: root.printerModel != null && root.printerModel.improvingEta && root.printerModel.improveEtaProgress < 0 ? 1 : 0
                         // Qualified through the bar's id:
                         // unqualified names do NOT resolve
                         // through the visual parent (the

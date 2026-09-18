@@ -123,6 +123,10 @@ class MigrationTests(unittest.TestCase):
             self.prefs[PrinterConfigStore.LEGACY_MAP["enabled"]],
             PrinterConfigStore.LEGACY_DEFAULTS["enabled"],
         )
+        # The migrated flags reset too: the [moonrakerprintfollower]
+        # section leaves cura.cfg entirely.
+        self.assertIs(self.prefs[PrinterConfigStore.MIGRATED_KEY], False)
+        self.assertIs(self.prefs[PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY], False)
         document = self._settings_document()
         self.assertEqual(document["global"]["migration"]["status"], "failed")
 
@@ -164,10 +168,13 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(shard["consoleHistory"], ["G28"])
         self.assertEqual(shard["consoleTranscript"][0]["text"], "ok")
         self.assertEqual(shard["consoleStoreTime"], 1234.5)
-        # The old chrome moved to the new global document (L4).
+        # The old chrome moved to the new global document, and the
+        # pre-4.5.0 sections file left no trace (the author's live
+        # find).
         with open(os.path.join(self.state_dir, "global.json"), encoding="utf-8") as handle:
             chrome = json.load(handle)
         self.assertEqual(chrome["sections"], {"toolhead": False})
+        self.assertFalse(os.path.exists(self.old_state))
         # The backup exists and the clean ran.
         self.assertTrue(os.path.exists(os.path.join(self.dir.name, outcome.backup_name)))
         from plugins.PrinterConfig import PrinterConfigStore

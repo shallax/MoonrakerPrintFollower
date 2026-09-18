@@ -53,6 +53,18 @@ Component {
 
         Component.onCompleted: {
             updateCameraImage();
+            // The section-order apply (the 4.5.0 live find): the
+            // stored layout must reorder the panes at attach time —
+            // the model's hydration publish can fire
+            // sectionLayoutChanged before this document's Connections
+            // exist, and the panes would keep the default order until
+            // an interaction re-emits (the popover was right, the
+            // panes were not). The apply is idempotent (it skips when
+            // the live order already matches).
+            if (root.printer != null) {
+                root.applySectionOrder(infoContent, "information");
+                root.applySectionOrder(statusContent, "status");
+            }
         }
 
         Connections {
@@ -1864,6 +1876,30 @@ Component {
 
                     ColumnLayout {
                         id: statusContent
+                        // The reflow probe (the 4.5.0 polish-loop
+                        // hunt): Cura's own warning names only the
+                        // layout — this logs WHICH child's visibility
+                        // or height changes, every 2 s, so the flipper
+                        // is named in the session log.
+                        Timer {
+                            id: reflowProbe
+                            interval: 2000
+                            repeat: true
+                            running: true
+                            property string last: ""
+                            onTriggered: {
+                                var now = [];
+                                for (var i = 0; i < statusContent.children.length; i++) {
+                                    var child = statusContent.children[i];
+                                    now.push(child.visible + ":" + Math.round(child.implicitHeight));
+                                }
+                                var text = JSON.stringify(now);
+                                if (reflowProbe.last !== text) {
+                                    console.log("MPF-REFLOW status column state: " + reflowProbe.last + " -> " + text);
+                                    reflowProbe.last = text;
+                                }
+                            }
+                        }
                         // The constant gutter (the whats-new overlay's
                         // precedent): binding the content width to the
                         // LIVE scrollbar width fed a layout polish loop

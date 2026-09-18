@@ -169,6 +169,17 @@ class RemovalHookTests(unittest.TestCase):
         self.assertEqual(self.client.stops, 1)
         self.assertEqual(self.persistence.writes[0][0], "B")
 
+    def test_the_legacy_chain_skips_once_the_migration_record_exists(self):
+        # The clean reset the migrated flags: a re-run of the legacy
+        # chain would resurrect the blob into cura.cfg. The record
+        # guards it.
+        self.persistence.migration_record = lambda: {"status": "ok"}
+        with patch.object(type(self.binding._store), "migrate_legacy_to_current_machine",
+                          side_effect=AssertionError("the legacy chain must not run post-migration")), \
+             patch.object(type(self.binding._store), "migrate_moonraker_connection",
+                          side_effect=AssertionError("the legacy chain must not run post-migration")):
+            self.binding._migrate()
+
     def test_apply_mirrors_the_legacy_toggles_for_the_leak_probe(self):
         # E6: the leak instrument reads the legacy flat keys; the new
         # settings write preserves the mirror.
