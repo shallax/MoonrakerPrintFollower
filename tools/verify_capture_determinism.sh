@@ -10,44 +10,60 @@
 # Unlike refresh_screenshots.sh this never touches screenshots/ or
 # dist/screenshots: the runs land in .determinism-check/, which is
 # removed on success and kept for diagnosis on failure.
+#
+# The four legs (two light, two dark) run side by side (the 2026-09-18
+# parallelism ruling) but share no mutable state: each owns its output
+# directory, its materialised theme tree (CAPTURE_THEME_TREE), its QML
+# disk cache and its log. The theme overlay used to be the single
+# dist/.capture-theme for all four — a leg rewriting it mid-render is
+# what made this check fail intermittently. They run inside ONE
+# container entry for the same reason run_tests.sh does: four parallel
+# docker_dev.sh calls race on the image build.
 set -eu
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 tmp=".determinism-check"
 rm -rf "$tmp"
-mkdir -p "$tmp/run1" "$tmp/run2"
+mkdir -p "$tmp"
 # Pull fresh, and fail loudly: a silently stale image would render
 # drifted bytes that the pinned CI image never reproduces.
 docker build --pull -q -t moonraker-print-follower-dev . >/dev/null 2>&1 || {
     echo "determinism check: the capture image failed to build — aborting rather than comparing a stale image" >&2
     exit 1
 }
-# The four legs (two light, two dark) are independent and write their
-# own directories: they run side by side (the 2026-09-18 parallelism
-# ruling), each with its own log, and any leg's failure fails the gate.
+# The leg script is generated (not inlined in a sh -c string) so the
+# quoting stays readable; the bind mount makes it visible in the
+# container at the same path. $tmp is expanded here, the leg internals
+# are not.
+cat >"$tmp/legs.sh" <<LEGS
+set -eu
 capture_leg() {
-    leg="$1"
-    theme="$2"
-    mkdir -p "$tmp/$leg"
-    tools/docker_dev.sh sh -c "CAPTURE_THEME=$theme python3 tools/capture_monitor.py '$tmp/$leg' \
-        && CAPTURE_THEME=$theme python3 tools/capture_preview.py '$tmp/$leg' \
-        && CAPTURE_THEME=$theme python3 tools/capture_settings.py '$tmp/$leg' \
-        && CAPTURE_THEME=$theme python3 tools/capture_upload.py '$tmp/$leg' \
-        && CAPTURE_THEME=$theme python3 tools/capture_whatsnew.py '$tmp/$leg'"
+    leg="\$1"
+    # Explicit theme names: an EMPTY CAPTURE_THEME reaches
+    # os.environ.get as a value, not as the default, and the dark legs
+    # must not fall back to the light assets.
+    CAPTURE_THEME="\$2"
+    CAPTURE_THEME_TREE="$tmp/\$leg/.theme"
+    QML_DISK_CACHE_PATH="$tmp/\$leg/.qmlcache"
+    export CAPTURE_THEME CAPTURE_THEME_TREE QML_DISK_CACHE_PATH
+    mkdir -p "$tmp/\$leg"
+    python3 tools/capture_monitor.py "$tmp/\$leg"
+    python3 tools/capture_preview.py "$tmp/\$leg"
+    python3 tools/capture_settings.py "$tmp/\$leg"
+    python3 tools/capture_upload.py "$tmp/\$leg"
+    python3 tools/capture_whatsnew.py "$tmp/\$leg"
 }
-capture_leg run1 "" >"$tmp/run1.log" 2>&1 & leg_p1=$!
-capture_leg run2 "" >"$tmp/run2.log" 2>&1 & leg_p2=$!
-# The dark-theme leg (the 4.5.0 ruling): the same scenes under the
-# dark asset set — a wrong-coloured glyph (hardcoded black on dark
-# grey, the live 4.4.0 find) must fail the e-stop contrast gate in
-# capture_monitor instead of a live session.
-capture_leg run1-dark cura-dark >"$tmp/run1-dark.log" 2>&1 & leg_p3=$!
-capture_leg run2-dark cura-dark >"$tmp/run2-dark.log" 2>&1 & leg_p4=$!
-leg_failed=0
-for pid in $leg_p1 $leg_p2 $leg_p3 $leg_p4; do
-    wait "$pid" || leg_failed=1
+capture_leg run1 cura-light >"$tmp/run1.log" 2>&1 & p1=\$!
+capture_leg run2 cura-light >"$tmp/run2.log" 2>&1 & p2=\$!
+capture_leg run1-dark cura-dark >"$tmp/run1-dark.log" 2>&1 & p3=\$!
+capture_leg run2-dark cura-dark >"$tmp/run2-dark.log" 2>&1 & p4=\$!
+failed=0
+for pid in "\$p1" "\$p2" "\$p3" "\$p4"; do
+    wait "\$pid" || failed=1
 done
-if [ "$leg_failed" -ne 0 ]; then
+exit "\$failed"
+LEGS
+if ! tools/docker_dev.sh sh "$tmp/legs.sh"; then
     echo "capture determinism: a capture leg failed — its log is in $tmp/*.log" >&2
     exit 1
 fi

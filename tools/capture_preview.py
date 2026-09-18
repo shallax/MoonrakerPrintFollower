@@ -39,6 +39,8 @@ from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlComponent, QQmlEngine
 from PyQt6.QtQuick import QQuickWindow
 
+import capture_contrast
+
 def qml_errors(component) -> str:
     lines = []
     for error in component.errors():
@@ -120,8 +122,13 @@ def render(output_dir: str) -> None:
     install_capture_warning_filter()
 
     from theme_support import ThemeBackend, materialise_theme_assets as _shared_materialise, verify_capture_tree
-    theme_backend = ThemeBackend(os.path.join(ROOT, "tests", "theme_assets", os.environ.get("CAPTURE_THEME", "cura-light")))
-    theme_import = _shared_materialise(os.path.join(ROOT, "dist", ".capture-theme"), theme_backend)
+    # `or`, not a get() default: an empty CAPTURE_THEME is a value, and
+    # it used to select the whole theme-assets parent as the theme.
+    theme = os.environ.get("CAPTURE_THEME") or "cura-light"
+    theme_backend = ThemeBackend(os.path.join(ROOT, "tests", "theme_assets", theme))
+    # CAPTURE_THEME_TREE: parallel capture legs need their own overlay.
+    theme_import = _shared_materialise(
+        os.environ.get("CAPTURE_THEME_TREE") or os.path.join(ROOT, "dist", ".capture-theme"), theme_backend)
     try:
         engine = QQmlEngine()
         # Qt 6.11 searches import paths newest-first and resolves a
@@ -146,6 +153,11 @@ def render(output_dir: str) -> None:
             raise RuntimeError(qml_errors(component))
 
         window = QQuickWindow()
+        # The card is transparent by design and sits on Cura's page ground in
+        # production, so the harness paints the theme's instead of leaving
+        # Qt's white default showing around it (invisible in the light
+        # theme, wrong in the dark one).
+        window.setColor(theme_backend.getColor("main_background"))
         window.resize(600, 500)
         window.setTitle("moonraker preview card capture")
         item = component.create()
@@ -205,6 +217,10 @@ def render(output_dir: str) -> None:
         colors = {image.pixelColor(x, y).name() for x in range(image.width()) for y in range(image.height())}
         if len(colors) < 8:
             raise RuntimeError("capture looks blank: only %d distinct colours" % len(colors))
+        # Contrast census: the pinned screenshots catch drift, not
+        # unreadability, so every text element in this frame is read
+        # against the ground its pixels actually show. Read-only.
+        capture_contrast.audit(window.contentItem(), image, "04-preview-panel.png")
         print("captured", path, "(%dx%d, %d distinct colours)" % (image.width(), image.height(), len(colors)))
 
         # Tear the scene down in dependency order while the context-property

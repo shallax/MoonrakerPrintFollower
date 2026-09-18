@@ -20,6 +20,13 @@
 # each worker measures its own file (COVERAGE_FILE per worker), the
 # results combine, and the plugins/ report prints with the 95%
 # per-project bar enforced.
+#
+# Discovery is POSIX-find only and never empty: the old GNU-only
+# -printf made BSD find (the macOS leg) fail, which left the list
+# empty, and an empty list runs zero workers and reports a green leg
+# having run nothing. An empty discovery is now fatal, and no leg may
+# pass having run zero tests. TESTS_DIR (default tests) points
+# discovery elsewhere — it exists so the empty case can be exercised.
 set -eu
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
@@ -33,6 +40,13 @@ run_once() {
     shift
     echo "== $name =="
     if "$@" >"$log" 2>&1; then
+        # A green exit that ran nothing is a false pass: an empty worker
+        # list or a -p pattern matching no file both exit 0 before
+        # 3.12 (which added the "NO TESTS RAN" failure). Demand a count.
+        if ! grep -qE "^Ran [1-9][0-9]* tests? in " "$log"; then
+            echo "FAILED — the leg exited 0 but ran no tests; the output is at $log"
+            return 1
+        fi
         grep -E "^(Ran|OK)" "$log" || true
         rm -f "$log"
         return 0
@@ -43,13 +57,22 @@ run_once() {
     return 1
 }
 
-files="$(find tests -maxdepth 1 -name 'test_*.py' -printf '%f\n' | sort | tr '\n' ' ')"
+tests_dir="${TESTS_DIR:-tests}"
+# sed rather than find -printf: -printf is GNU-only, and BSD find
+# (macOS) rejects it outright — the failure the sort|tr pipeline hid.
+files="$(find "$tests_dir" -maxdepth 1 -name 'test_*.py' | sed 's|^.*/||' | sort | tr '\n' ' ')"
+if [ -z "${files% }" ]; then
+    echo "discovery found no test files under $tests_dir/ — refusing to report a green leg for an empty suite" >&2
+    exit 1
+fi
+# shellcheck disable=SC2086  # $files is a deliberate word-split list
+echo "discovered $(printf '%s\n' $files | wc -l | tr -d '[:space:]') test file(s) under $tests_dir/"
 
 run_files() {
     # One worker per test file; any worker's failure fails the leg
     # (xargs exits 123, and the tracebacks land in the shared log).
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
-    printf '%s\n' $files | xargs -P "$jobs" -n1 "$PYTHON" -m unittest discover -s tests -p
+    printf '%s\n' $files | xargs -P "$jobs" -n1 "$PYTHON" -m unittest discover -s $tests_dir -p
 }
 
 run_files_container() {
@@ -57,14 +80,14 @@ run_files_container() {
     # invocations would race on the image build) with the fan-out
     # inside: each worker runs its own file's discovery.
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
-    tools/docker_dev.sh sh -c "cd /work && printf '%s\n' $files | xargs -P $jobs -n1 $PYTHON -m unittest discover -s tests -p"
+    tools/docker_dev.sh sh -c "cd /work && printf '%s\n' $files | xargs -P $jobs -n1 $PYTHON -m unittest discover -s $tests_dir -p"
 }
 
 run_coverage_container() {
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
     tools/docker_dev.sh sh -c "cd /work && \
         rm -f /tmp/mpf/cov.*.coverage && \
-        printf '%s\n' $files | xargs -P $jobs -n1 sh -c 'f=\"\$1\"; COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage $PYTHON -m coverage run -m unittest discover -s tests -p \"\$f\"' _ && \
+        printf '%s\n' $files | xargs -P $jobs -n1 sh -c 'f=\"\$1\"; COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage $PYTHON -m coverage run -m unittest discover -s $tests_dir -p \"\$f\"' _ && \
         $PYTHON -m coverage combine /tmp/mpf/cov.*.coverage && \
         $PYTHON -m coverage report --include='plugins/*' --fail-under=95"
 }

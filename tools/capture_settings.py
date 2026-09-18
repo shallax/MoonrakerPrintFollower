@@ -54,6 +54,8 @@ from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlComponent, QQmlEngine
 from PyQt6.QtQuick import QQuickItem, QQuickWindow
 
+import capture_contrast
+
 
 # ---------------------------------------------------------------------------
 # Fake context objects (the QML surface of MoonrakerFollowerMachineAction)
@@ -451,14 +453,22 @@ def main():
     output_dir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "dist", "screenshots")
     os.makedirs(output_dir, exist_ok=True)
     app = QGuiApplication([])
+    # Collected across the tabs, re-raised once they are all captured:
+    # one offending tab must not cost the other four their screenshots.
+    census = capture_contrast.Report()
 
     from theme_support import install_capture_warning_filter
 
     install_capture_warning_filter()
 
     from theme_support import ThemeBackend, materialise_theme_assets as _shared_materialise, verify_capture_tree
-    theme_backend = ThemeBackend(os.path.join(ROOT, "tests", "theme_assets", os.environ.get("CAPTURE_THEME", "cura-light")))
-    theme_import = _shared_materialise(os.path.join(ROOT, "dist", ".capture-theme"), theme_backend)
+    # `or`, not a get() default: an empty CAPTURE_THEME is a value, and
+    # it used to select the whole theme-assets parent as the theme.
+    theme = os.environ.get("CAPTURE_THEME") or "cura-light"
+    theme_backend = ThemeBackend(os.path.join(ROOT, "tests", "theme_assets", theme))
+    # CAPTURE_THEME_TREE: parallel capture legs need their own overlay.
+    theme_import = _shared_materialise(
+        os.environ.get("CAPTURE_THEME_TREE") or os.path.join(ROOT, "dist", ".capture-theme"), theme_backend)
     try:
         engine = QQmlEngine()
         # Qt 6.11 searches import paths newest-first and resolves a module
@@ -490,6 +500,11 @@ def main():
             raise RuntimeError(qml_errors(component))
 
         window = QQuickWindow()
+        # The page paints main_background over the tab view only; the
+        # window shows through around it, and Qt's default is white — in
+        # the dark theme that put the page title (text_default, white)
+        # on an unpainted white strip. Paint Cura's page ground instead.
+        window.setColor(theme_backend.getColor("main_background"))
         window.resize(700, 600)
         window.setTitle("moonraker settings capture")
         item = component.create()
@@ -630,6 +645,11 @@ def main():
             print("captured %s (%dx%d, %d sampled colors)" % (path, image.width(), image.height(), diversity))
             if diversity < 30:
                 raise RuntimeError("capture looks blank (%d sampled colors)" % diversity)
+            # Contrast census: the pinned screenshots catch drift, not
+            # unreadability, so every text element in this frame is read
+            # against the ground its pixels actually show. Read-only; the
+            # report holds the verdict until every tab is captured.
+            census.audit(window.contentItem(), image, "05-settings-%s.png" % name)
 
         # Tear the scene down in dependency order while the context-property
         # wrappers (manager/actionDialog/catalog) are still referenced.
@@ -649,6 +669,7 @@ def main():
             app.processEvents()
     finally:
         shutil.rmtree(theme_import, ignore_errors=True)
+    census.require_clean()
 
 
 if __name__ == "__main__":

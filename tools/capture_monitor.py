@@ -32,6 +32,8 @@ from PyQt6.QtQml import QQmlComponent, QQmlEngine
 
 from qt_runtime_support import ScriptedSocket, ScriptedTransport, runtime
 
+import capture_contrast
+
 
 def fake_status(state="printing"):
     return {
@@ -81,6 +83,8 @@ def main():
 
     context = runtime()
     qt = context.__enter__()
+    # Collected across the scenes, re-raised once they are all captured.
+    census = capture_contrast.Report()
     try:
         # DETERMINISM: every live input the scene renders must be mocked.
         # The model's time module is patched during seeding below, but
@@ -188,10 +192,29 @@ def main():
                 tick[0] += 1.0
         model.sendConsoleCommand("M220 S90")
         model.sendConsoleCommand("M104 S210")
+        # DETERMINISM: the console's 2 s settle timer flips those two
+        # lines from the pending blue to the saved grey, so which colour
+        # a grab caught depended on how long the setup happened to take
+        # — the same leg rendered both states on different runs (and the
+        # pinned gallery shows the pending blue). Freeze it the way the
+        # plugin clocks above are frozen: stop the timer, clear the
+        # settle's worklist, and pin the entries pending.
+        console = model._console
+        console._saved_timer.stop()
+        console._persisted = []
+        for entry in console._transcript:
+            if entry["kind"] == "command":
+                entry["saved"] = False
+        console.changed.emit()
 
         from theme_support import ThemeBackend, materialise_theme_assets, verify_capture_tree
-        theme_backend = ThemeBackend(os.path.join(ROOT, "tests", "theme_assets", os.environ.get("CAPTURE_THEME", "cura-light")))
-        theme_tree = materialise_theme_assets(os.path.join(ROOT, "dist", ".capture-theme"), theme_backend)
+        # `or`, not a get() default: an empty CAPTURE_THEME is a value,
+        # and it used to select the whole theme-assets parent as the theme.
+        theme = os.environ.get("CAPTURE_THEME") or "cura-light"
+        theme_backend = ThemeBackend(os.path.join(ROOT, "tests", "theme_assets", theme))
+        # CAPTURE_THEME_TREE: parallel capture legs need their own overlay.
+        theme_tree = materialise_theme_assets(
+            os.environ.get("CAPTURE_THEME_TREE") or os.path.join(ROOT, "dist", ".capture-theme"), theme_backend)
 
         engine = QQmlEngine()
         # Module resolution is last-path-wins for the Cura/UM modules, so
@@ -212,6 +235,11 @@ def main():
 
         from PyQt6.QtQuick import QQuickItem, QQuickWindow
         window = QQuickWindow()
+        # The harness stands in for Cura's monitor stage, which paints the
+        # page ground: this view is transparent by design, so an unpainted
+        # window shows Qt's white default and the dark leg's contrast gate
+        # would measure a ground the product never has.
+        window.setColor(theme_backend.getColor("main_background"))
         window.resize(1600, 900)
         window.setTitle("capture")
         item = component.create()
@@ -289,6 +317,13 @@ def main():
             path = os.path.join(output_dir, name)
             image.save(path)
             print("captured", path)
+            # Contrast census: the pinned screenshots catch drift, not
+            # unreadability, so every text element in this frame is read
+            # against the ground its pixels actually show. It reads the
+            # image only, and runs AFTER the save so a census failure is a
+            # verdict on the scene, never a missing screenshot. The report
+            # holds the verdict until the last scene is captured.
+            census.audit(window.contentItem(), image, name)
 
         grab("01-dashboard-default.png")
         # The stacked progress track (the 4.4.0 bars replaced the
@@ -414,6 +449,7 @@ def main():
             app.processEvents()
     finally:
         context.__exit__(None, None, None)
+    census.require_clean()
 
 
 if __name__ == "__main__":

@@ -998,8 +998,15 @@ class FollowerRuntimeTests(unittest.TestCase):
                 self.actions.append(args)
 
         message_module = sys.modules["UM.Message"]
+        # Patch the module object, never the dotted string: the Qt harness
+        # restores a sys.modules snapshot on exit, which evicts a module first
+        # imported inside it — the string target can then resolve to that
+        # evicted PyQt6.QtGui through the PyQt6 package attribute while the
+        # plugin's own import gets a freshly loaded module, so the mock misses
+        # the real call. Importing here pins the module the plugin resolves.
+        import PyQt6.QtGui as qt_gui_module
         with patch.object(message_module, "Message", RecordingMessage), \
-                patch("PyQt6.QtGui.QDesktopServices") as desktop_services:
+                patch.object(qt_gui_module, "QDesktopServices") as desktop_services:
             root._raise_migration_toast({"backupWritten": True, "backupName": "cura.cfg.2026-09-18-14-30-12"})
             root._raise_migration_toast({"backupWritten": False})
             root._raise_migration_toast({"backupWritten": True, "backupName": ""})  # a flag without a file is bare
