@@ -4307,6 +4307,12 @@ Item {
                 # whitelist entries.
                 if re.match(r"visible: (root\.printerModel == null \|\| root\.printerModel\.(extrudeDistance|extrudeSpeed) !== \d+|root\.printerModel != null && root\.printerModel\.(extrudeDistance|extrudeSpeed) === \d+)$", expression):
                     continue
+                # The tooltip-popup family (the tooltip rule): the
+                # popup's hover-driven visibility is not a control
+                # disappearing — one pattern covers every unique
+                # HoverHandler id.
+                if re.match(r"visible: (parent\.hovered|tooltipHover\d+\.hovered( && root\.tooltipText\.length > 0)?)$", expression):
+                    continue
                 self.assertIn(expression, allowed,
                               f"{path.name}:{number}: state-gated visible: {expression}")
         # The hide masks: one sectionHiddenMap occurrence per section

@@ -2000,6 +2000,25 @@ FIRST_INSTALL_MARKER = "harness-firstinstall"
 BOOT1_DOCUMENT = os.environ.get("HARNESS_BOOT1_DOC", "/tmp/mpf/boot1-document.json")
 
 
+
+
+def _recursive_diff(before, after, path=""):
+    """The added/removed/changed paths between two documents."""
+    diff = []
+    keys = set((before or {}).keys()) | set((after or {}).keys())
+    for key in sorted(keys):
+        p = f"{path}.{key}" if path else key
+        if key not in (before or {}):
+            diff.append({"path": p, "change": "added", "value": after.get(key)})
+        elif key not in (after or {}):
+            diff.append({"path": p, "change": "removed"})
+        elif isinstance(before[key], dict) and isinstance(after[key], dict):
+            diff.extend(_recursive_diff(before[key], after[key], p))
+        elif before[key] != after[key]:
+            diff.append({"path": p, "change": "changed",
+                         "before": before[key], "after": after[key]})
+    return diff
+
 def plugin_document():
     """The settings document as the driver reads it OFF DISK (Cura's
     own storage rule). None when there is no readable document — the
@@ -2183,6 +2202,11 @@ def first_install2():
         # defaults could never carry boot 1's values field for field —
         # so an equal document proves neither happened.
         untouched = bool(before) and document is not None and document == before
+        if not untouched:
+            # The diagnostic dump (the reviewer's demand): the exact
+            # recursive diff that names the second-boot writer.
+            diff = _recursive_diff(before, document)
+            print("FIRSTINSTALL-DIFF " + json.dumps(diff, sort_keys=True)[:4000])
         steps.append(("03-untouched", "the second boot leaves the settings document alone",
                       "the document is identical to the one the first boot left",
                       untouched, shot("03-untouched")))
