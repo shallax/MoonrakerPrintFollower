@@ -1544,6 +1544,13 @@ Component {
                                             id: consoleOutputHost
                                             Layout.fillWidth: true
                                             Layout.fillHeight: true
+                                            // 5.11's TextArea metrics inflate the flick's content
+                                            // implicit height, which FLOORS this fillHeight slot
+                                            // and pushes the input row out of the well — the
+                                            // transcript then grabs the Send/Clear presses (the
+                                            // sweep's d1-07/d3-01 find). The explicit floor
+                                            // keeps the slot shrinkable on every version.
+                                            Layout.minimumHeight: 0
 
                                             Flickable {
                                                 id: consoleFlick
