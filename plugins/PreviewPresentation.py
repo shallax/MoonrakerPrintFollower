@@ -28,6 +28,8 @@ class PreviewPresentation(QObject):
         self._overlay_card = None
         self._values = {}
         self._closed = False
+        self._booted = False
+        self._verdicts = None
         cura.changed.connect(self.refresh)
         # Cura's action panel is visible exactly while the platform is
         # active — its own property, its own signal. Recompute the
@@ -36,6 +38,23 @@ class PreviewPresentation(QObject):
         signal = getattr(application, "activityChanged", None)
         if signal is not None:
             signal.connect(self._publish_all)
+        # The cards are never created during plugin load: Cura's QML
+        # modules are not registered until the boot completes, and a
+        # card created in the storm is the session's first QML import —
+        # when it loses that race on Windows the failed type
+        # registrations cascade into Cura's own dialogs (the
+        # alternating Loading-UI stall). Build the hosts on the
+        # boot-complete edge instead; hosts that cannot signal one
+        # (the test doubles) keep the immediate refresh.
+        finished = getattr(application, "initializationFinished", None)
+        if finished is None:
+            self._booted = True
+            self.refresh()
+        else:
+            finished.connect(self._on_boot_finished)
+
+    def _on_boot_finished(self):
+        self._booted = True
         self.refresh()
 
     @property
@@ -51,6 +70,10 @@ class PreviewPresentation(QObject):
         pack's two-clock unification): the monitor model's verdicts,
         pushed to every card — the strip's enable and reasons read
         these instead of the preview block's own copies."""
+        # Kept for the boot-deferred cards: verdicts that arrive before
+        # the hosts exist replay once they are created.
+        self._verdicts = (can_pause, can_resume, pause_reason, resume_reason,
+                          pause_detail, resume_detail)
         for control in self.controls:
             try:
                 control.setProperty("stripCanPause", bool(can_pause))
@@ -121,7 +144,7 @@ class PreviewPresentation(QObject):
             window = self._application.getMainWindow()
             content = window.contentItem() if window is not None else None
             created = False
-            if self._panel_shell is None:
+            if self._booted and self._panel_shell is None:
                 shell = self._application.createQmlComponent(os.path.join(
                     os.path.dirname(__file__), "MoonrakerPreviewCardPanelHost.qml"))
                 if shell is not None:
@@ -133,7 +156,7 @@ class PreviewPresentation(QObject):
                     self._application.addAdditionalComponent("saveButton", shell)
                     shell.destroyed.connect(lambda: self._shell_destroyed("panel"))
                     created = True
-            if self._overlay_shell is None and content is not None:
+            if self._booted and self._overlay_shell is None and content is not None:
                 shell = self._application.createQmlComponent(os.path.join(
                     os.path.dirname(__file__), "MoonrakerPreviewCardOverlayHost.qml"))
                 if shell is not None:
@@ -155,7 +178,10 @@ class PreviewPresentation(QObject):
                     shell.setParent(content)
                     shell.destroyed.connect(lambda: self._shell_destroyed("overlay"))
                     created = True
-            if created: self.controlsChanged.emit()
+            if created:
+                if self._verdicts is not None:
+                    self.publish_pause_verdicts(*self._verdicts)
+                self.controlsChanged.emit()
         except Exception as error:
             Logger.log("w", "Moonraker Preview controls unavailable: %s", error)
         self.publish({"previewStageActive": self._cura.preview_active})
@@ -184,6 +210,10 @@ class PreviewPresentation(QObject):
 
     def close(self):
         self._closed = True
+        finished = getattr(self._application, "initializationFinished", None)
+        if finished is not None:
+            try: finished.disconnect(self._on_boot_finished)
+            except Exception: pass
         try: self._cura.changed.disconnect(self.refresh)
         except Exception: pass
         signal = getattr(self._application, "activityChanged", None)

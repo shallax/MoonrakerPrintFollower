@@ -176,6 +176,11 @@ if QT_AVAILABLE:
         def platformActivity(self):
             raise RuntimeError("no platform")
 
+    class DeferredApplication(HostApplication):
+        """Cura whose boot-complete edge drives the first host build."""
+
+        initializationFinished = pyqtSignal()
+
     class CuraDouble(QObject):
         """CuraIntegration's surface here: the changed edge and the stage flag."""
 
@@ -200,6 +205,7 @@ else:
     SilentApplication = None
     RefusingRemover = None
     BlindPlatform = None
+    DeferredApplication = None
     CuraDouble = None
 
 def mount(host, item, name=CARD_NAME):
@@ -362,6 +368,49 @@ class PreviewPresentationTests(unittest.TestCase):
         self.assertEqual(app.requested, [PANEL_HOST])  # the overlay is not attempted after the raise
         # The live stage still reached the presenter, so a later build gates right.
         self.assertTrue(presentation._values["previewStageActive"])
+
+    def test_with_a_boot_edge_the_hosts_wait_for_it(self):
+        # The card components are never created during plugin load:
+        # Cura's QML modules are not registered until the boot
+        # completes, and a card created in the storm is the session's
+        # first QML import — the Windows Loading-UI stall's trigger.
+        scene = self.build(application=DeferredApplication(window=Window(QQuickItem())))
+        self.assertEqual(scene.app.requested, [])
+        self.assertEqual(scene.app.joined, [])
+        self.assertEqual(scene.presentation.controls, ())
+        # The model's early fires cannot build shells in the storm either.
+        scene.cura.changed.emit()
+        self.assertEqual(scene.app.requested, [])
+        seen = []
+        scene.presentation.controlsChanged.connect(lambda: seen.append(1))
+        scene.app.initializationFinished.emit()
+        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST])
+        self.assertEqual(scene.app.joined, [("saveButton", scene.panel_host)])
+        self.assertEqual(scene.presentation.controls, (scene.panel_card, scene.overlay_card))
+        self.assertEqual(seen, [1])
+        # The values that accumulated pre-boot flushed onto the cards.
+        self.assertTrue(scene.panel_card.property("previewStageActive"))
+
+    def test_verdicts_published_before_the_boot_replay_onto_the_created_cards(self):
+        # The monitor's first action edge can land while the cards are
+        # still boot-deferred; the verdicts must not fall on the floor.
+        scene = self.build(application=DeferredApplication(window=Window(QQuickItem())))
+        scene.presentation.publish_pause_verdicts(
+            True, False, "busy", "not paused", "the lane is busy", "nothing to resume")
+        scene.app.initializationFinished.emit()
+        for card in (scene.panel_card, scene.overlay_card):
+            self.assertTrue(card.property("stripCanPause"))
+            self.assertFalse(card.property("stripCanResume"))
+            self.assertEqual(card.property("stripPauseReason"), "busy")
+            self.assertEqual(card.property("stripResumeReasonDetail"), "nothing to resume")
+
+    def test_a_presentation_closed_before_the_boot_stays_closed(self):
+        app = DeferredApplication(window=Window(QQuickItem()))
+        presentation = self.presentation(app)
+        presentation.close()
+        app.initializationFinished.emit()
+        self.assertEqual(app.requested, [])
+        self.assertEqual(presentation.controls, ())
 
         self.host(app, PANEL_HOST)
         self.host(app, OVERLAY_HOST)
