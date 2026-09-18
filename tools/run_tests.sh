@@ -47,6 +47,7 @@ files="$(find tests -maxdepth 1 -name 'test_*.py' -printf '%f\n' | sort | tr '\n
 run_files() {
     # One worker per test file; any worker's failure fails the leg
     # (xargs exits 123, and the tracebacks land in the shared log).
+    # shellcheck disable=SC2086  # $files is a deliberate word-split list
     printf '%s\n' $files | xargs -P "$jobs" -n1 python3 -m unittest discover -s tests -p
 }
 
@@ -54,10 +55,12 @@ run_files_container() {
     # ONE container entry (a warm-container reuse; parallel docker_dev
     # invocations would race on the image build) with the fan-out
     # inside: each worker runs its own file's discovery.
+    # shellcheck disable=SC2086  # $files is a deliberate word-split list
     tools/docker_dev.sh sh -c "cd /work && printf '%s\n' $files | xargs -P $jobs -n1 python3 -m unittest discover -s tests -p"
 }
 
 run_coverage_container() {
+    # shellcheck disable=SC2086  # $files is a deliberate word-split list
     tools/docker_dev.sh sh -c "cd /work && \
         rm -f /tmp/mpf/cov.*.coverage && \
         printf '%s\n' $files | xargs -P $jobs -n1 sh -c 'f=\"\$1\"; COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage python3 -m coverage run -m unittest discover -s tests -p \"\$f\"' _ && \
@@ -69,6 +72,16 @@ if [ "${COVERAGE:-0}" = "1" ]; then
     # The report IS the deliverable here — it passes through whole.
     echo "== parallel coverage (dev container, $jobs workers) =="
     run_coverage_container
+    exit 0
+fi
+
+if [ "${LEGS:-all}" = "host" ]; then
+    # The pre-commit hook's slice: the host suite fanned out, no
+    # container legs (CI owns the container run).
+    run_once "stdlib suite" run_files
+    run_once "harness specs" python3 tests/harness/test_harness_specs.py
+    run_once "harness runner" python3 tests/harness/test_harness_runner.py
+    echo "host legs passed"
     exit 0
 fi
 

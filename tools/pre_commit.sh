@@ -71,7 +71,7 @@ if [ -n "$changed" ]; then
         echo "pre-commit: qmlformat not found — skipping (see INSTRUCTIONS.md)"
     fi
 fi
-check unit-tests python3 -m unittest discover -s tests -p "test_*.py" &
+check unit-tests env LEGS=host tools/run_tests.sh &
 
 wait
 
