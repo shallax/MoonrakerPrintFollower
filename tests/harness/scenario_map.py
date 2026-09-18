@@ -145,6 +145,7 @@ SCENARIO_MAP = {
     # The Clear button gained its own address (the hit-region fix): d3
     # presses it by name instead of by its rendered text.
     "moonrakerConsoleClear": "d3",
+    "moonrakerTuningSpeedReset": "c2", "moonrakerTuningFlowReset": "c2",
     "moonrakerM117Slot": "s6",
     "moonrakerPreviewCard": "v1",
     "moonrakerStripPauseButton": "v19",
@@ -372,18 +373,6 @@ EXCLUSIONS = {
         "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
         "date": "2026-09-18",
         "recheck": "a scenario asserts the Status pane's axis colours",
-    },
-    "moonrakerTuningSpeedReset": {
-        "reason": "the speed-factor reset button; the command path is the slider's own setSpeedFactor, exercised by the real-engine test",
-        "evidence": "test_qml_real_engine's TuningResetTests invoke both buttons and assert the 100-percent commands",
-        "date": "2026-09-18",
-        "recheck": "a scenario clicks the reset",
-    },
-    "moonrakerTuningFlowReset": {
-        "reason": "the extrusion-multiplier reset button; the command path is the slider's own setFlowFactor, exercised by the real-engine test",
-        "evidence": "test_qml_real_engine's TuningResetTests invoke both buttons and assert the 100-percent commands",
-        "date": "2026-09-18",
-        "recheck": "a scenario clicks the reset",
     },
     "moonrakerInfoContent": {
         "reason": "the information pane's container, addressed by the real-engine tests; the section ORDER is asserted by the configure scenarios through the headers, not by this name",

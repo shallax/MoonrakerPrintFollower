@@ -787,6 +787,21 @@ class StatusHandler(tornado.web.RequestHandler):
             else:
                 self.write(json.dumps({"result": "ok"}))
                 upper = script.strip().upper()
+                if upper.startswith("M220 S"):
+                    # The factor commands apply to the state machine
+                    # like the real Klipper: the slider/release and
+                    # the reset both converge on the next poll.
+                    try:
+                        self._printer.scenario(gcode_move={**self._printer.state["gcode_move"],
+                                                           "speed_factor": float(upper.split("S", 1)[1]) / 100.0})
+                    except ValueError:
+                        pass
+                elif upper.startswith("M221 S"):
+                    try:
+                        self._printer.scenario(gcode_move={**self._printer.state["gcode_move"],
+                                                           "extrude_factor": float(upper.split("S", 1)[1]) / 100.0})
+                    except ValueError:
+                        pass
                 if upper == "PAUSE" and \
                         self._printer.state["print_stats"].get("state") == "printing" and \
                         not self._printer.accept_pause_without_state:

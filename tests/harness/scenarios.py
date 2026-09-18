@@ -1328,6 +1328,16 @@ SCENARIOS = [
          {"op": "sim_set", "state": {"fan": {"speed": 0.4}}},
          {"op": "wait_sim", "path": "fan.speed", "value": 0.4, "budget": 15},
          {"op": "assert_model", "prop": "speedFactorPercent", "value": 100},
+         # The reset buttons' convergence: the factors move off 100,
+         # the clicks command them back, and the PUBLISHED percents
+         # follow (the commands actually applied, not just queued).
+         {"op": "sim_set", "state": {"gcode_move": {"speed_factor": 1.37, "extrude_factor": 1.28}}},
+         {"op": "assert_model", "prop": "speedFactorPercent", "value": 137, "budget": 15},
+         {"op": "assert_model", "prop": "flowFactorPercent", "value": 128, "budget": 15},
+         {"op": "deliver_click", "objectName": "moonrakerTuningSpeedReset"},
+         {"op": "deliver_click", "objectName": "moonrakerTuningFlowReset"},
+         {"op": "assert_model", "prop": "speedFactorPercent", "value": 100, "budget": 15},
+         {"op": "assert_model", "prop": "flowFactorPercent", "value": 100, "budget": 15},
      ]},
     {"id": "c3", "group": "temperatures", "name": "the sensor visibility toggles persist",
      "steps": [
