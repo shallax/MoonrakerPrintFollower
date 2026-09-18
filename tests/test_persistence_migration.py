@@ -91,17 +91,15 @@ class MigrationTests(unittest.TestCase):
 
     # -- The healthy-empty path (C5) ---------------------------------
 
-    def test_empty_blob_reaches_the_ok_path_and_activates_the_schema(self):
+    def test_empty_blob_is_a_side_effect_free_no_op(self):
+        # Schema activation is the BINDING's job (the reviewer's
+        # first-install invariant): the transformer writes nothing for
+        # absent source — no document, no record, no state files.
         outcome = self._run("{}")
-        self.assertEqual(outcome.status, "ok")
-        self.assertEqual(outcome.reason, "nothing-to-do")
+        self.assertEqual((outcome.status, outcome.reason), ("ok", "nothing-to-do"))
         self.assertFalse(outcome.backup_written)
-        document = self._settings_document()
-        self.assertEqual(document["configVersion"], 2)
-        self.assertEqual(document["machines"], {})
-        self.assertEqual(document["global"]["migration"]["status"], "ok")
-        with open(os.path.join(self.state_dir, "global.json"), encoding="utf-8") as handle:
-            self.assertEqual(json.load(handle)["configVersion"], 2)
+        self.assertFalse(os.path.exists(self.settings_path))
+        self.assertFalse(os.path.exists(os.path.join(self.state_dir, "global.json")))
 
     def test_absent_blob_is_nothing_to_do(self):
         outcome = self._run(None)
@@ -372,20 +370,25 @@ class MigrationTests(unittest.TestCase):
         with open(self.settings_path, encoding="utf-8") as handle:
             self.assertNotIn("migration", json.load(handle).get("global", {}))
 
-    def test_the_empty_path_reports_a_failed_activation(self):
-        # The activation's own writes are checked too: a half-written
-        # skeleton is a failure the next boot replays, never an ok
-        # outcome with a record nobody can read.
+    def test_the_empty_path_is_side_effect_free(self):
+        # Schema activation is the BINDING's job: absent/empty source
+        # returns the no-op outcome WITHOUT touching the writers — a
+        # fresh install must never manufacture a record, a backup or
+        # a failure (the reviewer's first-install invariant).
+        calls = []
         writers = self._writers()
-        writers["state_global"] = lambda document: False
-        outcome = self._run("{}", writers=writers)
-        self.assertEqual((outcome.status, outcome.reason), ("failed", "write-failed"))
-        self.assertFalse(os.path.exists(self.settings_path))
+        for name in ("settings", "state_global", "state_machine"):
+            original = writers[name]
 
-        writers = self._writers()
-        writers["settings"] = lambda document: False
+            def spy(document, _original=original, _name=name):
+                calls.append(_name)
+                return _original(document)
+
+            writers[name] = spy
         outcome = self._run("{}", writers=writers)
-        self.assertEqual((outcome.status, outcome.reason), ("failed", "write-failed"))
+        self.assertEqual((outcome.status, outcome.reason), ("ok", "nothing-to-do"))
+        self.assertEqual(calls, [])
+        self.assertFalse(os.path.exists(self.settings_path))
 
     # -- The backup's content check (C6) ------------------------------
 

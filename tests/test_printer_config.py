@@ -105,6 +105,22 @@ class PrinterConfigTests(unittest.TestCase):
         active[:] = ["machine-a", "Machine A"]
         self.assertEqual(store.get().url, "http://legacy.example.invalid:7125")
 
+    def test_a_clean_install_writes_no_legacy_blob(self):
+        # The first-install ruling's second-boot arm: a fabricated
+        # default blob here became the NEXT boot's migration source —
+        # a "settings carried over" notice on an install that never
+        # had legacy data. A clean install marks the one-shot done
+        # and writes nothing.
+        prefs = FakePreferences()
+        active = ["machine-a", "Machine A"]
+        store = PrinterConfigStore(prefs, lambda: tuple(active))
+        # The no-source path is a pure no-op: no record, no flag —
+        # a fresh install must not persist a fake migration marker.
+        self.assertFalse(store.migrate_legacy_to_current_machine())
+        self.assertFalse(store._truthy(prefs.values.get(PrinterConfigStore.MIGRATED_KEY)))
+        # The blob stays the seeded empty "{}" — no fabricated record.
+        self.assertEqual(prefs.values.get(PrinterConfigStore.PREF_KEY), "{}")
+
     def test_legacy_migration_defers_when_cura_machine_is_unknown(self):
         prefs = FakePreferences()
         prefs.values[PrinterConfigStore.LEGACY_MAP["url"]] = "http://legacy.example.invalid:7125"

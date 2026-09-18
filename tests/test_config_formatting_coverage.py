@@ -1518,12 +1518,15 @@ class PersistenceMigrationCoverageTests(unittest.TestCase):
             json.dump({"machines": {"B": {}}}, handle)
         self.assertFalse(_verify_new_files({"A": {}}, self.settings_path, self.state_dir))
 
-    def test_an_absent_blob_activates_the_new_schema_without_a_backup(self):
+    def test_an_absent_blob_is_a_side_effect_free_no_op(self):
+        # Schema activation is the BINDING's job (the reviewer's
+        # first-install invariant): absent source writes nothing at
+        # all — no document, no record, no chrome carry.
         calls, outcome = self._run(None)
         self.assertEqual((outcome.status, outcome.reason), ("ok", "nothing-to-do"))
         self.assertFalse(outcome.backup_written)
-        self.assertEqual(calls["global"][0]["configVersion"], 2)
-        self.assertEqual(calls["settings"][0]["global"]["migration"]["status"], "ok")
+        self.assertEqual(calls["global"], [])
+        self.assertEqual(calls["settings"], [])
         self.assertEqual(calls["record"], [])
         self.assertEqual(os.listdir(self.dir.name).count("cura.cfg.2026-09-18-10-00-00"), 0)
 
@@ -1612,10 +1615,13 @@ class PersistenceMigrationCoverageTests(unittest.TestCase):
             handle.write("[1]")
         self.assertFalse(_verify_new_files({"A": {}}, self.settings_path, self.state_dir))
 
-    def test_the_empty_documents_carry_the_old_chrome_across(self):
+    def test_the_corrupt_recovery_carries_the_old_chrome_across(self):
+        # The chrome carry now belongs to CORRUPT-blob recovery only:
+        # the empty/absent path never touches the state files.
         with open(self.old_state_path, "w", encoding="utf-8") as handle:
             json.dump({"sections": {"toolhead": False}}, handle)
-        calls, _outcome = self._run(None)
+        calls, outcome = self._run("{not json")
+        self.assertEqual(outcome.reason, "corrupt-blob")
         self.assertEqual(calls["global"][0]["sections"], {"toolhead": False})
         self.assertEqual(calls["global"][0]["configVersion"], 2)
         self.assertFalse(os.path.exists(self.old_state_path))

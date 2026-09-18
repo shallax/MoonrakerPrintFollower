@@ -143,22 +143,13 @@ def run_migration(
     source_state, records = read_source(blob_value)
 
     if source_state in ("absent", "empty"):
+        # Side-effect free by design: schema activation is the
+        # BINDING's job, not the transformer's. No source means no
+        # record, no backup, no clean — the absence of a record is
+        # exactly "nothing was ever migrated", and a fresh install
+        # must never manufacture evidence of one.
         outcome.status = "ok"
         outcome.reason = "nothing-to-do"
-        # Nothing to migrate. The schema activation only happens when
-        # no document exists yet; an existing v2 document is the
-        # source of truth and must never be replaced on this path
-        # (the first-install lost-config report). The ok record rides
-        # inside that one atomic activation write — there is no
-        # separate commit to make, and a failed activation is a
-        # failure (the next boot retries rather than reading a
-        # success that never landed).
-        if not _read_settings_document(settings_path):
-            if not _write_empty_documents(
-                settings_write, state_global_write, old_state_path, outcome, timestamp,
-            ):
-                outcome.status = "failed"
-                outcome.reason = "write-failed"
         return outcome
 
     if source_state == "corrupt":
@@ -176,7 +167,7 @@ def run_migration(
             outcome.backup_name = backup_name
             outcome.backup_written = True
             _clean_preferences(set_pref)
-            if not _write_empty_documents(
+            if not _recover_empty_documents(
                 settings_write, state_global_write, old_state_path, outcome, timestamp,
                 existing=_read_settings_document(settings_path),
             ):
@@ -227,10 +218,11 @@ def run_migration(
     return outcome
 
 
-def _write_empty_documents(
+def _recover_empty_documents(
     settings_write, state_global_write, old_state_path, outcome, timestamp, existing=None,
 ) -> bool:
-    """The empty-but-healthy path: new files, configVersion 2, the
+    """The CORRUPT-blob recovery path (never first-install
+    activation): new files, configVersion 2, the
     old chrome carried across where the old state file exists — and
     the old file removed once the new document is written (found
     live: no old-config trace remains). Reports whether both writes
