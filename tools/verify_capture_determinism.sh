@@ -22,24 +22,35 @@ docker build --pull -q -t moonraker-print-follower-dev . >/dev/null 2>&1 || {
     echo "determinism check: the capture image failed to build — aborting rather than comparing a stale image" >&2
     exit 1
 }
-for run in run1 run2; do
-    tools/docker_dev.sh sh -c "python3 tools/capture_monitor.py '$tmp/$run' \
-        && python3 tools/capture_preview.py '$tmp/$run' \
-        && python3 tools/capture_settings.py '$tmp/$run' \
-        && python3 tools/capture_upload.py '$tmp/$run' \
-        && python3 tools/capture_whatsnew.py '$tmp/$run'"
-done
+# The four legs (two light, two dark) are independent and write their
+# own directories: they run side by side (the 2026-09-18 parallelism
+# ruling), each with its own log, and any leg's failure fails the gate.
+capture_leg() {
+    leg="$1"
+    theme="$2"
+    mkdir -p "$tmp/$leg"
+    tools/docker_dev.sh sh -c "CAPTURE_THEME=$theme python3 tools/capture_monitor.py '$tmp/$leg' \
+        && CAPTURE_THEME=$theme python3 tools/capture_preview.py '$tmp/$leg' \
+        && CAPTURE_THEME=$theme python3 tools/capture_settings.py '$tmp/$leg' \
+        && CAPTURE_THEME=$theme python3 tools/capture_upload.py '$tmp/$leg' \
+        && CAPTURE_THEME=$theme python3 tools/capture_whatsnew.py '$tmp/$leg'"
+}
+capture_leg run1 "" >"$tmp/run1.log" 2>&1 & leg_p1=$!
+capture_leg run2 "" >"$tmp/run2.log" 2>&1 & leg_p2=$!
 # The dark-theme leg (the 4.5.0 ruling): the same scenes under the
 # dark asset set — a wrong-coloured glyph (hardcoded black on dark
 # grey, the live 4.4.0 find) must fail the e-stop contrast gate in
 # capture_monitor instead of a live session.
-for run in run1-dark run2-dark; do
-    tools/docker_dev.sh sh -c "CAPTURE_THEME=cura-dark python3 tools/capture_monitor.py '$tmp/$run' \
-        && CAPTURE_THEME=cura-dark python3 tools/capture_preview.py '$tmp/$run' \
-        && CAPTURE_THEME=cura-dark python3 tools/capture_settings.py '$tmp/$run' \
-        && CAPTURE_THEME=cura-dark python3 tools/capture_upload.py '$tmp/$run' \
-        && CAPTURE_THEME=cura-dark python3 tools/capture_whatsnew.py '$tmp/$run'"
+capture_leg run1-dark cura-dark >"$tmp/run1-dark.log" 2>&1 & leg_p3=$!
+capture_leg run2-dark cura-dark >"$tmp/run2-dark.log" 2>&1 & leg_p4=$!
+leg_failed=0
+for pid in $leg_p1 $leg_p2 $leg_p3 $leg_p4; do
+    wait "$pid" || leg_failed=1
 done
+if [ "$leg_failed" -ne 0 ]; then
+    echo "capture determinism: a capture leg failed — its log is in $tmp/*.log" >&2
+    exit 1
+fi
 stale=0
 count=0
 # ANY asymmetry between the runs fails the gate, not just a changed
