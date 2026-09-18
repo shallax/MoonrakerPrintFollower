@@ -1891,6 +1891,10 @@ The 2026-09-18 Phase 0 walk (the author's rulings):
   upgrader still lands. After it runs, no trace of the old config
   remains in cura.cfg and the new files carry a configVersion: 2
   marker.
+- The migration is best-effort, not bulletproof: a backup of the old
+  config is taken first (the user can pick it apart or roll back to
+  an older plugin version), and a migration that looks wrong flags
+  the failure to the user and starts from a clean, blank config.
 - The build order: the persistence refactor, then the theme step
   (the Position row and the dark-theme capture leg), then the
   snapshot for the live migration test, then the 5.7+ pack.
@@ -1910,6 +1914,10 @@ The 2026-09-18 scope additions:
   no-reflow rule its neighbouring block carries — the prime suspect.
   The fix rides the Position-row change; the author's live log is
   the acceptance proof.
+- The emergency-stop label's idle copy is hardcoded black
+  (MoonrakerMonitorDashboard.qml) — unreadable on dark mode's grey
+  button ground. The remainder copy follows the theme's text colour
+  so the progressive white-over-red sweep mechanism is untouched.
 - The debt pack (the author's 2026-09-18 pick — every sweep
   candidate bar the index rework and the big structural items): the
   4.3.0 reviewer debt trio (the relay drain, the backpressure
