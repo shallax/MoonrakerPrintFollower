@@ -130,10 +130,13 @@ ColumnLayout {
                         if (root.printerModel != null)
                             root.printerModel.setSpeedFactor(100);
                     }
-                    UM.TooltipArea {
-                        anchors.fill: parent
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
                         text: "Reset the speed factor to 100%."
-                        acceptedButtons: Qt.NoButton
                     }
                 }
             }
@@ -210,10 +213,13 @@ ColumnLayout {
                         if (root.printerModel != null)
                             root.printerModel.setFlowFactor(100);
                     }
-                    UM.TooltipArea {
-                        anchors.fill: parent
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
                         text: "Reset the extrusion multiplier to 100%."
-                        acceptedButtons: Qt.NoButton
                     }
                 }
             }
@@ -263,9 +269,16 @@ ColumnLayout {
                             Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4
                             height: UM.Theme.getSize("action_button").height
                             text: "↑ " + modelData.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
-                            tooltip: "Moves the nozzle up, away from the bed."
                             enabled: root.printerModel != null && !root.printerModel.actionBusy && root.printerModel.sectionReason === ""
                             onClicked: root.printerModel.adjustZOffset(modelData)
+                            UM.ToolTip {
+                                visible: parent.hovered
+                                targetPoint: Qt.point(parent.width / 2, 0)
+                                x: 0
+                                y: parent.height + UM.Theme.getSize("default_margin").height
+                                width: UM.Theme.getSize("tooltip").width
+                                text: "Moves the nozzle up, away from the bed."
+                            }
                         }
                     }
                 }
@@ -279,9 +292,16 @@ ColumnLayout {
                             Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4
                             height: UM.Theme.getSize("action_button").height
                             text: "↓ " + Math.abs(modelData).toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
-                            tooltip: "Moves the nozzle down, closer to the bed."
                             enabled: root.printerModel != null && !root.printerModel.actionBusy && root.printerModel.sectionReason === ""
                             onClicked: root.printerModel.adjustZOffset(modelData)
+                            UM.ToolTip {
+                                visible: parent.hovered
+                                targetPoint: Qt.point(parent.width / 2, 0)
+                                x: 0
+                                y: parent.height + UM.Theme.getSize("default_margin").height
+                                width: UM.Theme.getSize("tooltip").width
+                                text: "Moves the nozzle down, closer to the bed."
+                            }
                         }
                     }
                 }

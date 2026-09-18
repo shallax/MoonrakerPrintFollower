@@ -609,7 +609,6 @@ Component {
                         // pane collapse buttons uniform). This pane is
                         // leftmost and collapses left.
                         iconSource: root.infoCollapsed ? UM.Theme.getIcon("ChevronSingleRight") : UM.Theme.getIcon("ChevronSingleLeft")
-                        tooltip: root.infoAutoCollapsed ? "The window is too narrow — widen it to show the information." : (root.infoCollapsed ? "Show the information." : "Hide the information.")
                         onClicked: {
                             // Auto-collapsed-by-width is not a
                             // clickable toggle: only a wider window
@@ -633,6 +632,14 @@ Component {
                                 root.openPopOver = "";
                             }
                         }
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: root.infoAutoCollapsed ? "The window is too narrow — widen it to show the information." : (root.infoCollapsed ? "Show the information." : "Hide the information.")
+                        }
                     }
                     // The configure trigger: the column configurer's
                     // glyph, adjacent to the collapse toggle (the
@@ -647,7 +654,6 @@ Component {
                         height: width
                         implicitHeight: width
                         text: "⇄"
-                        tooltip: "Configure the information sections."
                         onClicked: {
                             root.buildConfigureRows("information");
                             // Positioned imperatively at open time,
@@ -660,6 +666,14 @@ Component {
                             infoConfigurePopOver.x = infoEdge.x;
                             infoConfigurePopOver.y = infoEdge.y + infoHeader.height + UM.Theme.getSize("thin_margin").height;
                             root.openPopOver = "sections-info";
+                        }
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: "Configure the information sections."
                         }
                     }
                     UM.Label {
@@ -1118,10 +1132,16 @@ Component {
                                     color: consoleResizeArea.containsMouse ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
                                 }
 
-                                UM.TooltipArea {
-                                    anchors.fill: parent
+                                HoverHandler {
+                                    id: tooltipHover1
+                                }
+                                UM.ToolTip {
+                                    visible: tooltipHover1.hovered
+                                    targetPoint: Qt.point(parent.width / 2, 0)
+                                    x: 0
+                                    y: parent.height + UM.Theme.getSize("default_margin").height
+                                    width: UM.Theme.getSize("tooltip").width
                                     text: "Drag to resize the console."
-                                    acceptedButtons: Qt.NoButton
                                 }
                             }
 
@@ -1167,7 +1187,6 @@ Component {
                                     // (the ruling — the first direction read
                                     // inverted).
                                     iconSource: root.printer != null && root.printer.sectionExpandedMap["console"] !== false && !consolePanel.tooNarrow ? UM.Theme.getIcon("ChevronSingleDown") : UM.Theme.getIcon("ChevronSingleUp")
-                                    tooltip: consolePanel.tooNarrow ? "The window is too narrow — widen it to expand the console." : (root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? "Collapse the console." : "Expand the console.")
                                     onClicked: {
                                         if (root.printer != null && !consolePanel.tooNarrow) {
                                             // The poll follows the pane:
@@ -1180,6 +1199,14 @@ Component {
                                             root.printer.setSectionExpanded("console", expanding);
                                             root.printer.setConsoleExpanded(expanding);
                                         }
+                                    }
+                                    UM.ToolTip {
+                                        visible: parent.hovered
+                                        targetPoint: Qt.point(parent.width / 2, 0)
+                                        x: 0
+                                        y: parent.height + UM.Theme.getSize("default_margin").height
+                                        width: UM.Theme.getSize("tooltip").width
+                                        text: consolePanel.tooNarrow ? "The window is too narrow — widen it to expand the console." : (root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? "Collapse the console." : "Expand the console.")
                                     }
                                 }
 
@@ -1818,14 +1845,20 @@ Component {
                         height: 10 * screenScaleFactor
                         radius: 5 * screenScaleFactor
                         color: connectionDotColour
-                        UM.TooltipArea {
-                            anchors.fill: parent
+                        HoverHandler {
+                            id: tooltipHover2
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover2.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             // The transport detail rides the dot's
                             // tooltip: "connected over websocket" or
                             // "connected over HTTP polling" (the
                             // chosen spot for it).
                             text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."
-                            acceptedButtons: Qt.NoButton
                         }
                     }
                     // Open the Moonraker UI in a browser, icon-style in the
@@ -1845,10 +1878,16 @@ Component {
                             }
                         }
 
-                        UM.TooltipArea {
-                            anchors.fill: parent
+                        HoverHandler {
+                            id: tooltipHover3
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover3.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "Open the Moonraker frontend."
-                            acceptedButtons: Qt.NoButton
                         }
                     }
                     // The configure trigger, beside its collapse
@@ -1863,7 +1902,6 @@ Component {
                         height: width
                         implicitHeight: width
                         text: "⇄"
-                        tooltip: "Configure the printer-status sections."
                         onClicked: {
                             root.buildConfigureRows("status");
                             // Imperative positioning, the same reason
@@ -1872,6 +1910,14 @@ Component {
                             statusConfigurePopOver.x = statusEdge.x - statusConfigurePopOver.width;
                             statusConfigurePopOver.y = statusEdge.y + statusHeader.height + UM.Theme.getSize("thin_margin").height;
                             root.openPopOver = "sections-status";
+                        }
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: "Configure the printer-status sections."
                         }
                     }
                     // The toggle hugs the right edge: the pane is on the
@@ -1894,11 +1940,18 @@ Component {
                         // and info toggles; this pane is rightmost and
                         // collapses right.
                         iconSource: root.statusCollapsed ? UM.Theme.getIcon("ChevronSingleLeft") : UM.Theme.getIcon("ChevronSingleRight")
-                        tooltip: root.statusCollapsed ? "Show the printer status." : "Hide the printer status."
                         onClicked: {
                             if (root.printer != null) {
                                 root.printer.setStatusCollapsed(!root.statusCollapsed);
                             }
+                        }
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: root.statusCollapsed ? "Show the printer status." : "Hide the printer status."
                         }
                     }
                 }
@@ -2089,13 +2142,19 @@ Component {
                             width: 16 * screenScaleFactor
                             height: 16 * screenScaleFactor
                             source: Qt.resolvedUrl("Hourglass.svg")
-                            UM.TooltipArea {
-                                anchors.fill: parent
+                            HoverHandler {
+                                id: tooltipHover4
+                            }
+                            UM.ToolTip {
+                                visible: tooltipHover4.hovered
+                                targetPoint: Qt.point(parent.width / 2, 0)
+                                x: 0
+                                y: parent.height + UM.Theme.getSize("default_margin").height
+                                width: UM.Theme.getSize("tooltip").width
                                 // The improve-Eta mirror names the
                                 // action (the panel's catch): the
                                 // strip's glyph is not the button.
                                 text: "Improve the estimate — download and index this print's G-code without loading it into the preview."
-                                acceptedButtons: Qt.NoButton
                             }
                         }
                         UM.Label {
@@ -2108,10 +2167,16 @@ Component {
                             font: UM.Theme.getFont("default")
                             color: UM.Theme.getColor("text")
                             elide: Text.ElideRight
-                            UM.TooltipArea {
-                                anchors.fill: parent
+                            HoverHandler {
+                                id: tooltipHover5
+                            }
+                            UM.ToolTip {
+                                visible: tooltipHover5.hovered
+                                targetPoint: Qt.point(parent.width / 2, 0)
+                                x: 0
+                                y: parent.height + UM.Theme.getSize("default_margin").height
+                                width: UM.Theme.getSize("tooltip").width
                                 text: "Improve the estimate — download and index this print's G-code without loading it into the preview."
-                                acceptedButtons: Qt.NoButton
                             }
                         }
                         UM.ColorImage {
@@ -2521,8 +2586,15 @@ Component {
                     }
                     Cura.SecondaryButton {
                         text: "Custom…"
-                        tooltip: "Pick any " + (root.printer != null && root.printer.britishSpelling ? "colour" : "color") + " for " + root.selectedChartSensorLabel + "."
                         onClicked: chartColorDialog.open()
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: "Pick any " + (root.printer != null && root.printer.britishSpelling ? "colour" : "color") + " for " + root.selectedChartSensorLabel + "."
+                        }
                     }
                 }
 

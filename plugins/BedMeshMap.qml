@@ -258,11 +258,16 @@ Item {
 
     // The tooltip sits under the mouse area so it can never steal the
     // click; it only shows when the call site supplies text.
-    UM.TooltipArea {
-        anchors.fill: parent
-        visible: root.tooltipText.length > 0
+    HoverHandler {
+        id: tooltipHover1
+    }
+    UM.ToolTip {
+        visible: tooltipHover1.hovered
+        targetPoint: Qt.point(parent.width / 2, 0)
+        x: 0
+        y: parent.height + UM.Theme.getSize("default_margin").height
+        width: UM.Theme.getSize("tooltip").width
         text: root.tooltipText
-        acceptedButtons: Qt.NoButton
     }
 
     Canvas {

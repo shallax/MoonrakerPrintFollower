@@ -322,10 +322,16 @@ Cura.RoundedRectangle {
                                 }
                             }
 
-                            UM.TooltipArea {
-                                anchors.fill: parent
+                            HoverHandler {
+                                id: tooltipHover1
+                            }
+                            UM.ToolTip {
+                                visible: tooltipHover1.hovered
+                                targetPoint: Qt.point(parent.width / 2, 0)
+                                x: 0
+                                y: parent.height + UM.Theme.getSize("default_margin").height
+                                width: UM.Theme.getSize("tooltip").width
                                 text: "Refresh Moonraker's webcam list."
-                                acceptedButtons: Qt.NoButton
                             }
                         }
                     }

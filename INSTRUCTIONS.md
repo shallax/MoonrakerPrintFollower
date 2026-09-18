@@ -524,6 +524,20 @@ they cannot recur silently.
   fans/LEDs/macros/power sections on machines without them, the
   scheduled-pause list, the temp-chart first-data swap) are listed in
   the test and in `review/DECISIONS.md` round 6 for review.
+- **The tooltip rule (the 2026-09-18 ruling):** EVERY tooltip follows
+  Cura's placement pattern — a `UM.ToolTip` child of the annotated
+  control, positioned BELOW it with the arrow at the control's
+  top-centre (`targetPoint: Qt.point(parent.width / 2, 0)`, `x: 0`,
+  `y: parent.height + <margin>`), shown on the control's own hover
+  (`visible: parent.hovered` for Button-family controls; a
+  `HoverHandler` for surfaces without `hovered`, one unique id per
+  tooltip per scope). Never the native `tooltip:` property, never a
+  `UM.TooltipArea` over a control — a popup that can cover its
+  control swallows the click when the pointer crosses it (the live
+  find: a reset button's tooltip ate presses, and the native-property
+  popups pointed at the wrong control entirely). `test_monitor`'s
+  tooltip-discipline pin fails the leg if either form returns.
+  Passive readouts get the same pattern, not an exemption.
 
 ### Verifying QML geometry
 

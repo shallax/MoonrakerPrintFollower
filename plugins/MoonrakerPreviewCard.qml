@@ -381,9 +381,15 @@ Item {
                                 clip: true
                             }
                         }
-                        UM.TooltipArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.NoButton
+                        HoverHandler {
+                            id: tooltipHover1
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover1.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "The current hotend temperature and its setpoint."
                         }
                     }
@@ -412,9 +418,15 @@ Item {
                                 clip: true
                             }
                         }
-                        UM.TooltipArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.NoButton
+                        HoverHandler {
+                            id: tooltipHover2
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover2.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "The current heated-bed temperature and its setpoint."
                         }
                     }
@@ -449,9 +461,15 @@ Item {
                                 clip: true
                             }
                         }
-                        UM.TooltipArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.NoButton
+                        HoverHandler {
+                            id: tooltipHover3
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover3.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "The printer's current layer."
                         }
                     }
@@ -519,9 +537,15 @@ Item {
                                 clip: true
                             }
                         }
-                        UM.TooltipArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.NoButton
+                        HoverHandler {
+                            id: tooltipHover4
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover4.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "The print's remaining time and its expected finish time."
                         }
                     }
@@ -550,9 +574,15 @@ Item {
                                 clip: true
                             }
                         }
-                        UM.TooltipArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.NoButton
+                        HoverHandler {
+                            id: tooltipHover5
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover5.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "The print's expected finish clock time."
                         }
                     }
@@ -585,9 +615,15 @@ Item {
                                 clip: true
                             }
                         }
-                        UM.TooltipArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.NoButton
+                        HoverHandler {
+                            id: tooltipHover6
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover6.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "The printer's current Z height."
                         }
                     }
@@ -611,9 +647,16 @@ Item {
                     width: Math.round((buttons.width - base.buttonSpacing) * 0.32)
                     height: UM.Theme.getSize("action_button").height
                     text: base.followingPaused ? "Attach" : "Detach"
-                    tooltip: base.followingPaused ? "Attach Cura Preview to the live Moonraker print and resume automatic synchronisation." : "Detach Cura Preview from automatic synchronisation while Moonraker status polling continues. This does not pause the printer."
                     enabled: base.followingEnabled || base.followingPaused
                     onClicked: base.pauseClicked()
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: base.followingPaused ? "Attach Cura Preview to the live Moonraker print and resume automatic synchronisation." : "Detach Cura Preview from automatic synchronisation while Moonraker status polling continues. This does not pause the printer."
+                    }
                 }
 
                 PreviewSecondaryButton {
@@ -621,10 +664,17 @@ Item {
                     width: base.hasToolpath ? buttons.width - base.buttonSpacing - followButton.width : buttons.width
                     height: UM.Theme.getSize("action_button").height
                     text: "Load current print"
-                    tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
                     // Non-clickable until the load reaches a terminal state.
                     enabled: !base.loadBusy
                     onClicked: base.loadClicked()
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
+                    }
                 }
             }
 
@@ -673,8 +723,15 @@ Item {
                 height: UM.Theme.getSize("action_button").height
                 enabled: (base.pauseAtLayerScheduled || base.pauseAtLayerCanToggle) && base.followingEnabled && base.pauseAtLayerActive
                 text: base.pauseAtLayerCandidate <= 0 ? "⏸  Pause at end of selected layer" : (base.pauseAtLayerScheduled ? "Remove pause after layer " + base.pauseAtLayerCandidate : "⏸  Enable pause at end of layer " + base.pauseAtLayerCandidate)
-                tooltip: base.pauseAtLayerScheduled ? "Remove the scheduled end-of-layer PAUSE." : (base.pauseAtLayerCanToggle ? "Call the Klipper PAUSE macro once this layer has finished and Moonraker advances to the following layer." : "Scroll Cura Preview to the current or a future non-final layer to schedule an end-of-layer PAUSE.")
                 onClicked: base.pauseAtLayerRequested(base.pauseAtLayerCandidate)
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: base.pauseAtLayerScheduled ? "Remove the scheduled end-of-layer PAUSE." : (base.pauseAtLayerCanToggle ? "Call the Klipper PAUSE macro once this layer has finished and Moonraker advances to the following layer." : "Scroll Cura Preview to the current or a future non-final layer to schedule an end-of-layer PAUSE.")
+                }
             }
 
             UM.Label {
@@ -840,8 +897,15 @@ Item {
                     width: parent.width
                     height: UM.Theme.getSize("action_button").height
                     text: "Clear all pauses"
-                    tooltip: "Remove every scheduled end-of-layer PAUSE for the current print."
                     onClicked: base.clearPauseAtLayersRequested()
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Remove every scheduled end-of-layer PAUSE for the current print."
+                    }
                 }
             }
 
@@ -980,8 +1044,15 @@ Item {
                 height: UM.Theme.getSize("action_button").height
                 enabled: base.bedMeshAvailable
                 text: base.bedMeshVisible ? "Hide bed mesh" : "Show bed mesh"
-                tooltip: "Show the active Klipper bed mesh as a coloured 3D surface on Cura's build plate" + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
                 onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Show the active Klipper bed mesh as a coloured 3D surface on Cura's build plate" + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
+                }
             }
         }
     }

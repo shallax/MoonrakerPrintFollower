@@ -1779,6 +1779,13 @@ boundary.
 The backlog for this release (verified against the 4.3.0 tree; the
 2026-09-18 debt-pack audit reconciles each entry against the tree):
 
+- The clickable monitor empty state (2026-09-18 idea): Cura's own
+  "In order to monitor your print from Cura, please connect the
+  printer." line cannot be reworded or clicked from a plugin — the
+  realistic slice is OUR disconnected view showing a clickable
+  "Open printer settings" line (the middle case); overlaying Cura's
+  empty-state item is the fragile tail, version-gated.
+
 - The resume button's grey-out: both surfaces already grey out; the
   real gap is the two-clock projection/timing mismatch (the strip's
   stale imperative enablement on host re-parent). OPEN — the strip's

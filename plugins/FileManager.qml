@@ -1472,9 +1472,15 @@ Item {
                                 border.width: UM.Theme.getSize("default_lining").width
                                 radius: UM.Theme.getSize("default_radius").width
                                 color: UM.Theme.getColor("main_background")
-                                UM.TooltipArea {
-                                    anchors.fill: parent
-                                    acceptedButtons: Qt.NoButton
+                                HoverHandler {
+                                    id: tooltipHover1
+                                }
+                                UM.ToolTip {
+                                    visible: tooltipHover1.hovered
+                                    targetPoint: Qt.point(parent.width / 2, 0)
+                                    x: 0
+                                    y: parent.height + UM.Theme.getSize("default_margin").height
+                                    width: UM.Theme.getSize("tooltip").width
                                     text: modelData.name
                                 }
                                 Rectangle {
@@ -1699,9 +1705,15 @@ Item {
                             root.printerModel.refreshFileManager();
                         }
                     }
-                    UM.TooltipArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.NoButton
+                    HoverHandler {
+                        id: tooltipHover2
+                    }
+                    UM.ToolTip {
+                        visible: tooltipHover2.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
                         text: "Refresh"
                     }
                 }
@@ -2279,9 +2291,15 @@ Item {
                                 font: UM.Theme.getFont("medium_bold")
                                 color: UM.Theme.getColor("primary")
                             }
-                            UM.TooltipArea {
-                                anchors.fill: parent
-                                acceptedButtons: Qt.NoButton
+                            HoverHandler {
+                                id: tooltipHover3
+                            }
+                            UM.ToolTip {
+                                visible: tooltipHover3.hovered
+                                targetPoint: Qt.point(parent.width / 2, 0)
+                                x: 0
+                                y: parent.height + UM.Theme.getSize("default_margin").height
+                                width: UM.Theme.getSize("tooltip").width
                                 text: "Columns: reorder and resize"
                             }
                             // The Columns menu (Snapshot 3): the cell
@@ -2953,9 +2971,15 @@ Item {
                                 Item {
                                     Layout.preferredWidth: root.nameWidth
                                     Layout.fillHeight: true
-                                    UM.TooltipArea {
-                                        anchors.fill: parent
-                                        acceptedButtons: Qt.NoButton
+                                    HoverHandler {
+                                        id: tooltipHover4
+                                    }
+                                    UM.ToolTip {
+                                        visible: tooltipHover4.hovered
+                                        targetPoint: Qt.point(parent.width / 2, 0)
+                                        x: 0
+                                        y: parent.height + UM.Theme.getSize("default_margin").height
+                                        width: UM.Theme.getSize("tooltip").width
                                         text: modelData.name
                                     }
                                     Column {

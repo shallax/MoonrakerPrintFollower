@@ -680,10 +680,16 @@ Component {
                             }
                         }
 
-                        UM.TooltipArea {
-                            anchors.fill: parent
+                        HoverHandler {
+                            id: tooltipHover1
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover1.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: root.printer != null && root.printer.controlsLocked ? "Unlock all controls." : "Lock all controls."
-                            acceptedButtons: Qt.NoButton
                         }
                     }
                     // The configure trigger: the same glyph as the
@@ -699,7 +705,6 @@ Component {
                         height: width
                         implicitHeight: width
                         text: "⇄"
-                        tooltip: "Configure the printer-control sections."
                         onClicked: {
                             root.buildControlsConfigureRows();
                             // ONE popover at a time: the monitor's
@@ -722,6 +727,14 @@ Component {
                             controlsConfigurePopOver.y = edge.y + configureSectionsButton.height + UM.Theme.getSize("thin_margin").height;
                             root.configurePaneOpen = "controls";
                         }
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: "Configure the printer-control sections."
+                        }
                     }
                     Cura.SecondaryButton {
                         id: collapseButton
@@ -739,11 +752,18 @@ Component {
                         // pane toggles (the ruling: all pane
                         // collapse buttons uniform).
                         iconSource: root.controlsCollapsed ? UM.Theme.getIcon("ChevronSingleLeft") : UM.Theme.getIcon("ChevronSingleRight")
-                        tooltip: root.controlsCollapsed ? "Show the printer controls." : "Hide the printer controls."
                         onClicked: {
                             if (root.printer != null) {
                                 root.printer.setControlsCollapsed(!root.controlsCollapsed);
                             }
+                        }
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: root.controlsCollapsed ? "Show the printer controls." : "Hide the printer controls."
                         }
                     }
                 }

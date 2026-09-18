@@ -107,9 +107,15 @@ ColumnLayout {
             // three fills stacked the original 10 px was too tiny to
             // read the sections.
             Layout.preferredHeight: 20 * screenScaleFactor
-            UM.TooltipArea {
-                anchors.fill: parent
-                acceptedButtons: Qt.NoButton
+            HoverHandler {
+                id: tooltipHover1
+            }
+            UM.ToolTip {
+                visible: tooltipHover1.hovered
+                targetPoint: Qt.point(parent.width / 2, 0)
+                x: 0
+                y: parent.height + UM.Theme.getSize("default_margin").height
+                width: UM.Theme.getSize("tooltip").width
                 // Lists only the fills that actually render (the live
                 // ruling), top to bottom. A position qualifier only
                 // makes sense beside other fills — the print fill is
@@ -128,44 +134,38 @@ ColumnLayout {
                         body += (shown.length > 2 ? "," : "") + " and ";
                     return "The stacked progress: " + body + shown[shown.length - 1] + ".";
                 }
+            }
+            Rectangle {
+                anchors.fill: parent
+                color: "transparent"
+                border.width: 1 * screenScaleFactor
+                border.color: UM.Theme.getColor("lining")
                 Rectangle {
-                    anchors.fill: parent
-                    color: "transparent"
-                    border.width: 1 * screenScaleFactor
-                    border.color: UM.Theme.getColor("lining")
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.bottom: parent.bottom
-                        // Thirds with a scheduled pause, halves without,
-                        // the whole height without layer info (the live
-                        // ruling).
-                        height: parent.height * (root.printerModel != null && root.printerModel.monitorLayerProgress >= 0 ? (root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5) : 1.0)
-                        // monitorProgress is a PERCENTAGE (0..100); the
-                        // layer value is already 0..1.
-                        width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.monitorProgress / 100 : 0))
-                        color: UM.Theme.getColor("primary")
-                    }
-                    Rectangle {
-                        // The next scheduled pause's fill (the live
-                        // ruling): the MIDDLE of the stack, the mesh's
-                        // neon orange. The gate is the WIDTH — the
-                        // visibility flip it replaced flapped per
-                        // poll and landed its invalidation inside the
-                        // column's polish (the 4.5.0 live find).
-                        objectName: "nextPauseFill"
-                        anchors.left: parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        height: parent.height / 3
-                        width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.nextPauseFraction : 0))
-                        color: MoonrakerTheme.neonOrange
-                    }
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.top: parent.top
-                        height: parent.height * (root.printerModel != null && root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5)
-                        width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.monitorLayerProgress : 0))
-                        color: UM.Theme.getColor("primary")
-                    }
+                    // Thirds with a scheduled pause, halves without,
+                    // the whole height without layer info (the live
+                    // ruling).
+                    height: parent.height * (root.printerModel != null && root.printerModel.monitorLayerProgress >= 0 ? (root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5) : 1.0)
+                    // monitorProgress is a PERCENTAGE (0..100); the
+                    // layer value is already 0..1.
+                    width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.monitorProgress / 100 : 0))
+                    color: UM.Theme.getColor("primary")
+                }
+                Rectangle {
+                    // The next scheduled pause's fill (the live
+                    // ruling): the MIDDLE of the stack, the mesh's
+                    // neon orange. The gate is the WIDTH — the
+                    // visibility flip it replaced flapped per
+                    // poll and landed its invalidation inside the
+                    // column's polish (the 4.5.0 live find).
+                    objectName: "nextPauseFill"
+                    height: parent.height / 3
+                    width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.nextPauseFraction : 0))
+                    color: MoonrakerTheme.neonOrange
+                }
+                Rectangle {
+                    height: parent.height * (root.printerModel != null && root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5)
+                    width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.monitorLayerProgress : 0))
+                    color: UM.Theme.getColor("primary")
                 }
             }
         }
@@ -191,10 +191,16 @@ ColumnLayout {
                 font: UM.Theme.getFont("default")
                 height: 24 * screenScaleFactor
                 verticalAlignment: Text.AlignVCenter
-                UM.TooltipArea {
-                    anchors.fill: parent
+                HoverHandler {
+                    id: tooltipHover2
+                }
+                UM.ToolTip {
+                    visible: tooltipHover2.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
                     text: "Layer progress — how far through the current layer."
-                    acceptedButtons: Qt.NoButton
                 }
             }
         }
@@ -245,10 +251,16 @@ ColumnLayout {
                         // Which source produced the layer —
                         // Klipper's stats, the file index, or
                         // the extrusion-guarded Z estimate.
-                        UM.TooltipArea {
-                            anchors.fill: parent
+                        HoverHandler {
+                            id: tooltipHover3
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover3.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: root.printerModel != null && root.printerModel.monitorLayerSource !== undefined && root.printerModel.monitorLayerSource.length > 0 ? "Layer source: " + root.printerModel.monitorLayerSource : ""
-                            acceptedButtons: Qt.NoButton
                         }
                     }
                 }
@@ -283,13 +295,19 @@ ColumnLayout {
                     // phase label appears, or the
                     // whole bar spills off the pane.
                     elide: Text.ElideRight
-                    UM.TooltipArea {
-                        anchors.fill: parent
+                    HoverHandler {
+                        id: tooltipHover4
+                    }
+                    UM.ToolTip {
+                        visible: tooltipHover4.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
                         // No basis claim while the value itself is
                         // paused or absent — "Moonraker's estimate"
                         // under a dash would lie (panel UX P2).
                         text: root.printerModel == null || root.printerModel.monitorEta === "—" || root.printerModel.monitorEta === "Paused" ? "" : root.printerModel.monitorEtaBasis === "index" ? "Estimated from the G-code's layer timings × the observed speed." : "Moonraker's estimate — download the G-code for the accurate layer-timed estimate."
-                        acceptedButtons: Qt.NoButton
                     }
                 }
                 // The Improve-ETA affordance: a small
@@ -304,10 +322,16 @@ ColumnLayout {
                     width: 16 * screenScaleFactor
                     height: 16 * screenScaleFactor
                     opacity: root.printerModel != null && root.printerModel.printActive && (root.printerModel.monitorEtaBasis === "blend" || root.printerModel.improvingEta) ? 1 : 0
-                    UM.TooltipArea {
-                        anchors.fill: parent
+                    HoverHandler {
+                        id: tooltipHover5
+                    }
+                    UM.ToolTip {
+                        visible: tooltipHover5.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
                         text: root.printerModel != null && root.printerModel.improvingEta ? "Downloading and indexing the print…" : "Improve the estimate — download and index this print's G-code without loading it into the preview."
-                        acceptedButtons: Qt.NoButton
                     }
                     UM.ColorImage {
                         id: etaGlyph
@@ -604,9 +628,15 @@ ColumnLayout {
                 color: UM.Theme.getColor("text")
                 Layout.fillWidth: true
                 elide: Text.ElideRight
-                UM.TooltipArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.NoButton
+                HoverHandler {
+                    id: tooltipHover6
+                }
+                UM.ToolTip {
+                    visible: tooltipHover6.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
                     // No claim under a dash (the
                     // panel UX ruling).
                     text: root.printerModel != null && root.printerModel.monitorVelocity !== "—" ? "Klipper's live toolhead speed — a magnitude, with no direction." : ""
@@ -622,9 +652,15 @@ ColumnLayout {
                 color: UM.Theme.getColor("text")
                 Layout.fillWidth: true
                 elide: Text.ElideRight
-                UM.TooltipArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.NoButton
+                HoverHandler {
+                    id: tooltipHover7
+                }
+                UM.ToolTip {
+                    visible: tooltipHover7.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
                     text: root.printerModel != null && root.printerModel.monitorFlowRate !== "—" ? "The commanded volumetric flow — Klipper's live extruder velocity × the filament cross-section. Uses printer.cfg's filament_diameter for the active tool (" + root.printerModel.monitorFlowDiameter + "). Pressure advance is excluded, the value can lag for up to 30 seconds after the last extrusion, and a negative reading while retracting is correct." : ""
                 }
             }
@@ -638,9 +674,15 @@ ColumnLayout {
                 color: UM.Theme.getColor("text")
                 Layout.fillWidth: true
                 elide: Text.ElideRight
-                UM.TooltipArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.NoButton
+                HoverHandler {
+                    id: tooltipHover8
+                }
+                UM.ToolTip {
+                    visible: tooltipHover8.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
                     text: root.printerModel != null && root.printerModel.monitorFlowDiameter !== "—" ? "The active tool's filament_diameter from printer.cfg — the Flow rate row multiplies by this cross-section. There is deliberately no override: a wrong value is a printer.cfg error." : ""
                 }
             }
@@ -654,9 +696,15 @@ ColumnLayout {
                 color: UM.Theme.getColor("text")
                 Layout.fillWidth: true
                 elide: Text.ElideRight
-                UM.TooltipArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.NoButton
+                HoverHandler {
+                    id: tooltipHover9
+                }
+                UM.ToolTip {
+                    visible: tooltipHover9.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
                     text: root.printerModel != null && root.printerModel.monitorAccelLimit !== "—" ? "The acceleration ceiling Klipper has configured — SET_VELOCITY_LIMIT or M204 can change it mid-print. Not the acceleration currently in use." : ""
                 }
             }

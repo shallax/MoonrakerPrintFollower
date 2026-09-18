@@ -321,6 +321,25 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertIn(f"MoonrakerTheme.axis{axis}", JOB_SECTION_QML)
         self.assertEqual(JOB_SECTION_QML.count("wrapMode: Text.WordWrap"), 0)
         self.assertIn('text: "Open the Moonraker frontend."', MONITOR_QML)
+        # The tooltip discipline (the live ruling): every tooltip is a
+        # UM.ToolTip child in the Cura placement pattern (below the
+        # control, arrow at its top-centre, hover-driven) — never the
+        # native tooltip property or a TooltipArea over a control,
+        # either of which can swallow a click when the pointer crosses
+        # the popup.
+        for path in PLUGINS.glob("*.qml"):
+            source = path.read_text(encoding="utf-8")
+            for line in source.splitlines():
+                if line.lstrip().startswith("tooltip:"):
+                    self.fail("%s carries a native tooltip property: %s"
+                              % (path.name, line.strip()[:60]))
+        for path in PLUGINS.glob("*.qml"):
+            source = path.read_text(encoding="utf-8")
+            self.assertNotRegex(
+                source,
+                r"onClicked[\s\S]{0,600}?UM\.TooltipArea",
+                "%s holds a TooltipArea inside a clickable control" % path.name,
+            )
         self.assertNotIn('text: "Open Moonraker frontend"', MONITOR_QML)
         # The section machinery (4.3.0): per-file counts PLUS the
         # totals — a moved section decrements one file and increments

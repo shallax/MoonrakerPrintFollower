@@ -47,17 +47,31 @@ ColumnLayout {
                 Layout.fillWidth: true
                 visible: root.printerModel != null && root.printerModel.hasQuadGantryLevel
                 text: "QGL"
-                tooltip: "Level the quad gantry."
                 enabled: root.printerModel != null && root.printerModel.canRunSetup
                 onClicked: root.printerModel.runQuadGantryLevel()
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Level the quad gantry."
+                }
             }
             Cura.SecondaryButton {
                 Layout.fillWidth: true
                 visible: root.printerModel != null && root.printerModel.hasBedMesh
                 text: "Calibrate mesh"
-                tooltip: "Probe the bed now and replace the active mesh with a newly calibrated one."
                 enabled: root.printerModel != null && root.printerModel.canRunSetup
                 onClicked: root.printerModel.calibrateBedMesh()
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Probe the bed now and replace the active mesh with a newly calibrated one."
+                }
             }
         }
 
@@ -84,16 +98,30 @@ ColumnLayout {
                 Layout.fillWidth: true
                 text: "Load saved mesh"
                 enabled: root.printerModel != null && root.printerModel.canRunSetup && bedMeshProfileSelector.currentText.length > 0
-                tooltip: "Load the selected saved Klipper bed mesh without probing the bed again."
                 onClicked: root.printerModel.loadBedMeshProfile(bedMeshProfileSelector.currentText)
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Load the selected saved Klipper bed mesh without probing the bed again."
+                }
             }
 
             Cura.SecondaryButton {
                 Layout.fillWidth: true
                 text: "Clear mesh"
                 enabled: root.printerModel != null && root.printerModel.canRunSetup && root.printerModel.bedMeshAvailable
-                tooltip: "Clear the active Klipper bed mesh and remove its Z adjustment."
                 onClicked: root.printerModel.clearBedMesh()
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Clear the active Klipper bed mesh and remove its Z adjustment."
+                }
             }
         }
 
@@ -122,10 +150,16 @@ ColumnLayout {
                 Layout.fillWidth: true
                 elide: Text.ElideRight
                 wrapMode: Text.NoWrap
-                UM.TooltipArea {
-                    anchors.fill: parent
+                HoverHandler {
+                    id: tooltipHover1
+                }
+                UM.ToolTip {
+                    visible: tooltipHover1.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
                     text: root.printerModel != null ? (root.printerModel.sectionReasonDetail !== "" ? root.printerModel.sectionReasonDetail : (root.printerModel.printActive ? "Homing and bed-mesh setup controls are disabled during a print." : (root.printerModel.hasBedMesh && root.printerModel.bedMeshProfileNames.length === 0 ? "No saved bed mesh profiles reported by Klipper." : ""))) : ""
-                    acceptedButtons: Qt.NoButton
                 }
             }
         }
