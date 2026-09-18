@@ -20,7 +20,20 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         self._follower = follower
         self._devices: Dict[str, MoonrakerOutputDevice] = {}
         self._current: Optional[MoonrakerOutputDevice] = None
+        # The routed monitor (the 4.5.0 ownership fix): the monitor
+        # OUT-signals that feed the shared Preview presentation attach
+        # ONLY to the current machine's monitor — a cached, deposed
+        # monitor never publishes into the live presentation.
+        self._routed_monitor: Optional[Any] = None
+        self._routed_action = None
+        self._routed_preview = None
         follower.client.sessionInvalidated.connect(self._invalidate_devices)
+        # The presentation IN-signals connect once and dispatch to
+        # the current monitor only — broadcasting to every cached
+        # monitor and letting stale ones refuse was the ownership
+        # violation (the 4.5.0 review).
+        follower.presentation.bedMeshThresholdsRequested.connect(self._route_bed_mesh_thresholds)
+        follower.presentation.printPauseRequested.connect(self._route_pause_request)
 
         changed = getattr(application, "globalContainerStackChanged", None)
         if changed is not None:
@@ -29,13 +42,75 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
     def start(self) -> None:
         self.refresh()
 
+    def _current_monitor(self) -> Optional[Any]:
+        device = self._current
+        return getattr(device, "activePrinter", None) if device is not None else None
+
+    def _route_bed_mesh_thresholds(self, low: float, high: float) -> None:
+        monitor = self._current_monitor()
+        if monitor is not None:
+            monitor.setBedMeshThresholds(low, high)
+
+    def _route_pause_request(self) -> None:
+        monitor = self._current_monitor()
+        if monitor is not None:
+            monitor.stripPausePrint()
+
+    def _grant_monitor_routing(self, monitor: Any) -> None:
+        """The current monitor's sole Preview routing: the verdicts
+        and the preview block publish only from the selected machine's
+        monitor, re-granted on every switch and revoked on every
+        deactivation."""
+        if self._routed_monitor is monitor:
+            return
+        self._revoke_monitor_routing()
+        self._routed_monitor = monitor
+        self._routed_action = monitor.actionChanged.connect(lambda: self._follower.presentation.publish_pause_verdicts(
+            monitor.canPausePrint, monitor.canResumePrint,
+            monitor.pauseReason, monitor.resumeReason,
+            monitor.pauseReasonDetail, monitor.resumeReasonDetail))
+        self._routed_preview = monitor.previewBlockChanged.connect(self._follower.receive_preview_block)
+        # The migration notice's overlay owner (the UX ruling): the
+        # toast waits for the CURRENT model's What's-New dismissal —
+        # a cached monitor that lost the selection must not hold it.
+        if getattr(self._follower, "notice", None) is not None:
+            self._follower.notice().attach_model(monitor)
+
+    def _revoke_monitor_routing(self) -> None:
+        monitor = self._routed_monitor
+        if monitor is None:
+            return
+        if self._routed_action is not None:
+            try:
+                monitor.actionChanged.disconnect(self._routed_action)
+            except Exception:
+                pass
+        if self._routed_preview is not None:
+            try:
+                monitor.previewBlockChanged.disconnect(self._routed_preview)
+            except Exception:
+                pass
+        self._routed_monitor = None
+        self._routed_action = None
+        self._routed_preview = None
+
     def _invalidate_devices(self) -> None:
-        """Runs before the shared transport changes credentials or session."""
+        """Runs before the shared transport changes credentials or
+        session. The monitors suspend their OWN runtime lanes on the
+        session signal — ownership is untouched here, so the selected
+        machine's monitor re-arms on the reconnect. Only the upload
+        sides need the explicit teardown."""
         for device in self._devices.values():
-            self._deactivate_device(device)
+            deactivate = getattr(device, "deactivate", None)
+            if callable(deactivate):
+                try:
+                    deactivate()
+                except Exception as error:
+                    Logger.logException("e", "Moonraker output deactivation failed: %s", error)
 
     def stop(self) -> None:
-        self._invalidate_devices()
+        for device in self._devices.values():
+            self._deactivate_device(device)
         if self._current is not None:
             try:
                 self.getOutputDeviceManager().removeOutputDevice(self._current.getId())
@@ -55,6 +130,8 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
 
     def _deactivate_device(self, device: MoonrakerOutputDevice) -> None:
         """Invalidate Monitor and upload work before an output device loses ownership."""
+        if getattr(device, "activePrinter", None) is self._routed_monitor:
+            self._revoke_monitor_routing()
         self._set_monitor_active(device, False)
         deactivate = getattr(device, "deactivate", None)
         if callable(deactivate):
@@ -89,31 +166,11 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 persistence=self._follower.persistence,
                 identity=self._follower.current_printer_identity,
             )
-            # The heightmap range filter (a request): the
-            # card's slider intents land on the model's shared window;
-            # the presenter then mirrors it to the Preview surfaces.
-            self._follower.presentation.bedMeshThresholdsRequested.connect(monitor.setBedMeshThresholds)
-            # The pause/resume grey-out's single authority (the debt
-            # pack's two-clock unification): the model's verdicts push
-            # to every card on every change — the strip's enable and
-            # reasons read them instead of the preview block's copies.
-            monitor.actionChanged.connect(lambda: self._follower.presentation.publish_pause_verdicts(
-                monitor.canPausePrint, monitor.canResumePrint,
-                monitor.pauseReason, monitor.resumeReason,
-                monitor.pauseReasonDetail, monitor.resumeReasonDetail))
-            # The migration notice's overlay owner (the UX ruling):
-            # the toast waits for this model's What's-New dismissal.
-            if getattr(self._follower, "notice", None) is not None:
-                self._follower.notice().attach_model(monitor)
-            # The strip's one control routes through the Monitor's
-            # lane — the revalidated pause/resume slots, never a raw
-            # command path.
-            self._follower.presentation.printPauseRequested.connect(monitor.stripPausePrint)
-            # The Preview value block (4.3.0): the read-only edge at
-            # the output-device boundary — the only place both halves
-            # exist. The monitor's per-poll block lands on the
-            # coordinator through the thin facade.
-            monitor.previewBlockChanged.connect(self._follower.receive_preview_block)
+            # The Preview wirings are NOT made here: the grant below
+            # attaches them to the current monitor only, and a machine
+            # switch revokes them from the deposed one (the 4.5.0
+            # ownership fix — cached monitors used to stay wired to
+            # the shared presentation for their whole lives).
             device._printers = [monitor]
 
         # Refresh the display identity on every install: a cached monitor
@@ -134,6 +191,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             pass
 
         self._set_monitor_active(device, True)
+        self._grant_monitor_routing(monitor)
         # The stage's Loader reads the CONSTANT monitorItem property
         # once — the shell document this device serves compiles in
         # milliseconds, so that read cannot land mid-compile; the

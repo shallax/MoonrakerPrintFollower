@@ -59,7 +59,17 @@ class QtRuntimeTests(unittest.TestCase):
         app = self.qt.Application()
         config = self.qt.load("PrinterConfig").PrinterConfig(
             url="http://printer-a", api_key="test-key", upload_dialog=True)
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class _Presentation(QObject):
+            bedMeshThresholdsRequested = pyqtSignal(float, float)
+            printPauseRequested = pyqtSignal()
+
+            def publish_pause_verdicts(self, *args):
+                pass
+
         follower = SimpleNamespace(client=client, transport=transport, session=client.session,
+            presentation=_Presentation(),
             current_printer_config=lambda: config,
             current_printer_identity=lambda: (app.stack.getId(), app.stack.getName()),
             apply_printer_config=lambda updated: None)

@@ -53,6 +53,11 @@ class MonitorData(QObject):
         super().__init__(parent)
         self._client = client
         self._active = False
+        # The ownership split (the 4.5.0 multi-printer fix): ownership
+        # is the plugin's grant for the SELECTED machine; _active is
+        # only the runtime session state. A shared-client reconnect
+        # re-arms an OWNED monitor and never a deposed one.
+        self._owner_active = False
         self._generation = 0
         self._connection_detail = ""
         # The observation record (4.2.0): assembled here, with the
@@ -102,7 +107,10 @@ class MonitorData(QObject):
         client.connectionChanged.connect(self._connection_changed)
 
     def _session_invalidated(self):
-        self.set_active(False)
+        # Suspends the RUNTIME only: ownership stays with the selected
+        # machine, so the reconnect re-arms it — a revoked ownership
+        # here would die forever on the next transport handover.
+        self._deactivate_runtime()
 
     def _connection_changed(self, *args):
         connected = bool(args[0]) if args else self.connected
@@ -119,10 +127,14 @@ class MonitorData(QObject):
         # reconnect) left the model alive but discovery-dead forever
         # (webcams empty, temperatures gone; the harness's suite
         # handover scenario caught it). The re-arm is a no-op when
-        # already active.
-        if connected and not self._active:
-            self.set_active(True)
-        elif connected:
+        # already active — and it is gated on OWNERSHIP: every cached
+        # monitor shares this client, so a reconnect after a machine
+        # switch must never revive a deposed monitor (the 4.5.0
+        # multi-printer fix — the shared reconnect re-activated the
+        # old machine's monitor alongside the new one's).
+        if connected and self._owner_active and not self._active:
+            self._activate_runtime()
+        elif connected and self._active:
             # The first data must not wait for the lane timers' next
             # ticks (a live report — aux stayed unpopulated
             # long after the connect): the connection transition
@@ -303,37 +315,52 @@ class MonitorData(QObject):
         self._rebuild_observation()
 
     def set_active(self, active):
-        if bool(active) == self._active: return
-        self._active = bool(active)
+        """The plugin's ownership grant: this monitor belongs to the
+        selected machine. The runtime arm follows immediately — the
+        arm also builds the initial observation the model's first
+        publish reads, so it must not depend on the transport state.
+        A reconnect re-arms an OWNED monitor through
+        _connection_changed (and a deposed one never)."""
+        self._owner_active = bool(active)
         if not active:
-            self._generation += 1
-            # A fresh session generation has never observed a
-            # connection: the tri-state reads 'unknown' again.
-            self._connection_observed = False
-            for timer in self._timers.values(): timer.stop()
-            self._console_watch.stop()
-            self._client.transport.cancel_owner("monitor")
-            # The console poll state dies with the session so a re-attach
-            # is a REAL expand: the backfill seed must re-apply from the
-            # persisted stamp (the domain panel's re-seed point — the
-            # unchanged-flag early-return once left a rebound session
-            # polling without a fresh seed).
-            self._console_expanded = False
-            self._console_seed = None
-            self._console_entries = []
-            self._clear()
-            # The rebuild runs AFTER the latch reset so the record
-            # never holds a stale 'no' while the tri-state already
-            # reads 'unknown' (the adversarial round's L7).
-            self._rebuild_observation()
-            self.invalidated.emit()
-            self.changed.emit()
+            self._deactivate_runtime()
         else:
-            self._intervals()
-            for timer in self._timers.values(): timer.start()
-            self.observe(self._client.status)
-            self.refresh_all()
-            self._rebuild_observation()
+            self._activate_runtime()
+
+    def _deactivate_runtime(self):
+        if not self._active: return
+        self._active = False
+        self._generation += 1
+        # A fresh session generation has never observed a
+        # connection: the tri-state reads 'unknown' again.
+        self._connection_observed = False
+        for timer in self._timers.values(): timer.stop()
+        self._console_watch.stop()
+        self._client.transport.cancel_owner("monitor")
+        # The console poll state dies with the session so a re-attach
+        # is a REAL expand: the backfill seed must re-apply from the
+        # persisted stamp (the domain panel's re-seed point — the
+        # unchanged-flag early-return once left a rebound session
+        # polling without a fresh seed).
+        self._console_expanded = False
+        self._console_seed = None
+        self._console_entries = []
+        self._clear()
+        # The rebuild runs AFTER the latch reset so the record
+        # never holds a stale 'no' while the tri-state already
+        # reads 'unknown' (the adversarial round's L7).
+        self._rebuild_observation()
+        self.invalidated.emit()
+        self.changed.emit()
+
+    def _activate_runtime(self):
+        if self._active: return
+        self._active = True
+        self._intervals()
+        for timer in self._timers.values(): timer.start()
+        self.observe(self._client.status)
+        self.refresh_all()
+        self._rebuild_observation()
 
     def _intervals(self):
         configured = {

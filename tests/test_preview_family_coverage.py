@@ -1787,17 +1787,31 @@ class MonitorDataTests(unittest.TestCase):
 
 
 class MonitorConnectionTests(MonitorDataTests):
-    def test_a_connect_arms_the_monitor_and_rearms_a_live_one(self):
-        self.client.connected = True
-        self.client.connectionChanged.emit(True, "handshake ok")
-        self.assertTrue(self.data.active)
-        self.assertEqual(("yes", "handshake ok"), (self.data.connection_state,
-                                                   self.data.connection_detail))
+    def test_a_connect_reams_an_invalidated_owned_monitor_and_rearms_a_live_one(self):
+        self.activate()
         self.assertEqual(1, self.client.refreshes)
         before = len(self.client.transport.sent)
+        # The invalidation suspends the RUNTIME; ownership survives it
+        # (the 4.5.0 ownership split), so the reconnect re-arms.
+        self.client.connected = False
+        self.data._session_invalidated()
+        self.assertFalse(self.data.active)
+        self.assertTrue(self.data._owner_active)
+        self.client.connected = True
         self.client.connectionChanged.emit(True, "reconnected")
-        self.assertEqual(2, self.client.refreshes, "a live reconnect re-fires the lanes")
+        self.assertTrue(self.data.active)
+        self.assertEqual(2, self.client.refreshes, "the reconnect re-arms the owned monitor")
         self.assertGreater(len(self.client.transport.sent), before)
+        self.client.connectionChanged.emit(True, "reconnected")
+        self.assertEqual(3, self.client.refreshes, "a live reconnect re-fires the lanes")
+
+    def test_a_connect_never_arms_a_monitor_without_ownership(self):
+        self.client.connected = True
+        self.client.connectionChanged.emit(True, "handshake ok")
+        self.assertFalse(self.data.active)
+        self.assertEqual(("yes", "handshake ok"), (self.data.connection_state,
+                                                   self.data.connection_detail))
+        self.assertEqual(0, self.client.refreshes)
 
     def test_a_disconnect_reads_no_once_a_connection_has_been_seen(self):
         self.client.connectionChanged.emit(True, "")
@@ -1814,6 +1828,7 @@ class MonitorConnectionTests(MonitorDataTests):
 
     def test_a_bare_connection_event_falls_back_to_the_client_flag(self):
         self.client.connected = True
+        self.data.set_active(True)  # owned (the re-arm gate)
         self.data._connection_changed()
         self.assertTrue(self.data.active)
         self.assertEqual("", self.data.connection_detail)

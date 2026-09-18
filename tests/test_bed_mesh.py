@@ -164,7 +164,11 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("setBedMeshThresholds", TYPED_CONTROLS)
         self.assertIn('root.printer.setBedMeshThresholds(low, high)', MONITOR_QML)
         self.assertIn("bedMeshThresholdsRequested", PRESENTATION)
-        self.assertIn("bedMeshThresholdsRequested.connect(monitor.setBedMeshThresholds)", PLUGIN)
+        # The intent routes through the plugin to the CURRENT monitor
+        # only (the 4.5.0 ownership fix) — never a broadcast to every
+        # cached monitor.
+        self.assertIn("bedMeshThresholdsRequested.connect(self._route_bed_mesh_thresholds)", PLUGIN)
+        self.assertIn("monitor.setBedMeshThresholds(low, high)", PLUGIN)
         # The window moves whole (the centre drag) and the bar
         # desaturates outside it (the wash, not a cover).
         for token in ("windowAdjusted", "mode = 3", "outOfWindowAlpha", "moonrakerBedMeshRangeSlider"):
