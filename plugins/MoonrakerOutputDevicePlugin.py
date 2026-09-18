@@ -93,6 +93,14 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             # card's slider intents land on the model's shared window;
             # the presenter then mirrors it to the Preview surfaces.
             self._follower.presentation.bedMeshThresholdsRequested.connect(monitor.setBedMeshThresholds)
+            # The pause/resume grey-out's single authority (the debt
+            # pack's two-clock unification): the model's verdicts push
+            # to every card on every change — the strip's enable and
+            # reasons read them instead of the preview block's copies.
+            monitor.actionChanged.connect(lambda: self._follower.presentation.publish_pause_verdicts(
+                monitor.canPausePrint, monitor.canResumePrint,
+                monitor.pauseReason, monitor.resumeReason,
+                monitor.pauseReasonDetail, monitor.resumeReasonDetail))
             # The migration notice's overlay owner (the UX ruling):
             # the toast waits for this model's What's-New dismissal.
             if getattr(self._follower, "notice", None) is not None:

@@ -112,6 +112,15 @@ if QT_AVAILABLE:
         bedMeshThresholdsRequested = pyqtSignal(float, float)
         printPauseRequested = pyqtSignal()
 
+        def __init__(self):
+            super().__init__()
+            self.verdict_pushes = []
+
+        def publish_pause_verdicts(self, *args):
+            # The real PreviewPresentation's surface (the debt pack's
+            # single-authority push); the double records it.
+            self.verdict_pushes.append(args)
+
     class BedMesh(QObject):
         """The Monitor's mesh capability, including the threshold sink."""
 
@@ -300,6 +309,24 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
 
         monitor.previewBlockChanged.emit({"remainder": 12})
         self.assertEqual(follower.blocks, [{"remainder": 12}])
+
+    def test_the_pause_verdicts_are_wired_to_the_presentation(self):
+        # The single authority (the debt pack's two-clock
+        # unification): the model's verdict change pushes the strip's
+        # six properties through the presentation to every card.
+        app = self.qt.Application()
+        follower = self.follower(self.client(), self.printer_config())
+        plugin = self.plugin(app, follower)
+        plugin.refresh()
+        monitor = plugin._current.activePrinter
+        pushes = []
+        with patch.object(follower.presentation, "publish_pause_verdicts",
+                          side_effect=lambda *args: pushes.append(args)):
+            monitor.actionChanged.emit()
+        self.assertEqual(len(pushes), 1)
+        self.assertEqual(pushes[0][:2], (monitor.canPausePrint, monitor.canResumePrint))
+        self.assertEqual(pushes[0][2:4], (monitor.pauseReason, monitor.resumeReason))
+        self.assertEqual(pushes[0][4:], (monitor.pauseReasonDetail, monitor.resumeReasonDetail))
 
     def test_session_invalidation_deactivates_every_installed_device(self):
         app = self.qt.Application()

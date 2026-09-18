@@ -35,6 +35,16 @@ Item {
     // or inactive block reads absent everywhere.
     property bool stripValid: false
     property bool stripPaused: false
+    // The pause/resume grey-out's single authority (the debt pack's
+    // two-clock unification): the monitor model's verdicts, pushed by
+    // the presentation — the strip's enable and reasons read these,
+    // never the preview block's own copies.
+    property bool stripCanPause: false
+    property bool stripCanResume: false
+    property string stripPauseReason: ""
+    property string stripResumeReason: ""
+    property string stripPauseReasonDetail: ""
+    property string stripResumeReasonDetail: ""
     property string bedMeshRangeText: ""
     property string bedMeshMinimumText: ""
     property string bedMeshMaximumText: ""
@@ -196,10 +206,10 @@ Item {
         if (b.inactive === true)
             return "Not following";
         if (b.state === "paused")
-            return b.canResume ? base.previewEtaText : (b.resumeReason.length > 0 ? b.resumeReason : "—");
+            return base.stripCanResume ? base.previewEtaText : (base.stripResumeReason.length > 0 ? base.stripResumeReason : "—");
         if (b.state === "printing")
-            return b.canPause ? base.previewEtaText : (b.pauseReason.length > 0 ? b.pauseReason : "—");
-        return b.pauseReason.length > 0 ? b.pauseReason : "—";
+            return base.stripCanPause ? base.previewEtaText : (base.stripPauseReason.length > 0 ? base.stripPauseReason : "—");
+        return base.stripPauseReason.length > 0 ? base.stripPauseReason : "—";
     }
 
     function stripPauseTooltip() {
@@ -211,13 +221,13 @@ Item {
         if (b.inactive === true)
             return "The monitor is not following this printer — the strip stays quiet.";
         if (stripPaused) {
-            if (b.canResume)
+            if (base.stripCanResume)
                 return "Resume the paused print (Klipper RESUME).";
-            return b.resumeReasonDetail.length > 0 ? b.resumeReasonDetail : b.resumeReason;
+            return base.stripResumeReasonDetail.length > 0 ? base.stripResumeReasonDetail : base.stripResumeReason;
         }
-        if (b.canPause)
+        if (base.stripCanPause)
             return "Pause the current print immediately (Klipper PAUSE).";
-        return b.pauseReasonDetail.length > 0 ? b.pauseReasonDetail : b.pauseReason;
+        return base.stripPauseReasonDetail.length > 0 ? base.stripPauseReasonDetail : base.stripPauseReason;
     }
 
     function updateStrip() {
@@ -233,7 +243,7 @@ Item {
         var parts = slotText.indexOf(" · ") >= 0 ? slotText.split(" · ") : [slotText, ""];
         stripSlot.text = stripValid ? parts[0] : "—";
         stripFinish.text = stripValid ? parts[1] : "";
-        stripPauseButton.enabled = stripValid && (stripPaused ? base.previewBlock.canResume : base.previewBlock.canPause);
+        stripPauseButton.enabled = stripValid && (stripPaused ? base.stripCanResume : base.stripCanPause);
         stripPauseButton.text = stripPaused ? "Resume print" : "Pause print";
         stripPauseButton.tooltip = stripPauseTooltip();
     }

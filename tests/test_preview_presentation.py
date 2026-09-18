@@ -271,6 +271,30 @@ class PreviewPresentationTests(unittest.TestCase):
                                panel_host=panel_host, panel_card=panel_item,
                                overlay_host=overlay_host, overlay_card=overlay_item)
 
+    def test_the_pause_verdicts_push_to_every_card(self):
+        # The single authority (the debt pack's two-clock
+        # unification): the monitor model's verdicts land on BOTH
+        # cards as the strip's six properties.
+        scene = self.build()
+        scene.presentation.publish_pause_verdicts(
+            True, False, "busy", "not paused", "the lane is busy", "nothing to resume")
+        for card in (scene.panel_card, scene.overlay_card):
+            self.assertTrue(card.property("stripCanPause"))
+            self.assertFalse(card.property("stripCanResume"))
+            self.assertEqual(card.property("stripPauseReason"), "busy")
+            self.assertEqual(card.property("stripResumeReason"), "not paused")
+            self.assertEqual(card.property("stripPauseReasonDetail"), "the lane is busy")
+            self.assertEqual(card.property("stripResumeReasonDetail"), "nothing to resume")
+
+    def test_the_pause_verdicts_default_truthy_values_never_crash_the_push(self):
+        # None and missing details coerce to the property defaults.
+        scene = self.build()
+        scene.presentation.publish_pause_verdicts(None, None, None, None)
+        for card in (scene.panel_card, scene.overlay_card):
+            self.assertFalse(card.property("stripCanPause"))
+            self.assertFalse(card.property("stripCanResume"))
+            self.assertEqual(card.property("stripPauseReason"), "")
+
     def test_the_panel_host_joins_cura_and_the_overlay_joins_the_window(self):
         scene = self.build()
         # The panel host is Cura's own action-panel row; the overlay host

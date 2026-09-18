@@ -45,6 +45,23 @@ class PreviewPresentation(QObject):
         self._values.update(values)
         self._publish_all()
 
+    def publish_pause_verdicts(self, can_pause, can_resume, pause_reason, resume_reason,
+                               pause_detail="", resume_detail=""):
+        """The pause/resume grey-out's single authority (the debt
+        pack's two-clock unification): the monitor model's verdicts,
+        pushed to every card — the strip's enable and reasons read
+        these instead of the preview block's own copies."""
+        for control in self.controls:
+            try:
+                control.setProperty("stripCanPause", bool(can_pause))
+                control.setProperty("stripCanResume", bool(can_resume))
+                control.setProperty("stripPauseReason", str(pause_reason or ""))
+                control.setProperty("stripResumeReason", str(resume_reason or ""))
+                control.setProperty("stripPauseReasonDetail", str(pause_detail or ""))
+                control.setProperty("stripResumeReasonDetail", str(resume_detail or ""))
+            except RuntimeError:
+                pass
+
     def _publish_all(self):
         # The gate per instance: the panel host lives inside Cura's own
         # action panel (Cura hides that whole panel when the platform
