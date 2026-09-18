@@ -193,6 +193,46 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertTrue(record["backupWritten"])
         self.assertTrue(os.path.exists(os.path.join(self.dir.name, record["backupName"])))
 
+    def test_the_ui_state_stores_boundary_guard_and_the_facade_branch(self):
+        from plugins.UiStateStore import UiStateStore
+
+        # NaN cannot survive the JSON round-trip (allow_nan=False) —
+        # the boundary guard skips the save with the owner's wording.
+        store = UiStateStore(store=None)
+        self.assertFalse(store.set_section_layout({"row": float("nan")}))
+
+        class FakeFacade:
+            def __init__(self):
+                self.updates = []
+
+            def merge_state_global(self, update, delete=()):
+                self.updates.append((dict(update), delete))
+                return True
+
+        facade = FakeFacade()
+        store = UiStateStore(store=facade)
+        self.assertTrue(store.set_sections({"toolhead": False}))
+        self.assertTrue(store.set_section_layout({"ids": ["toolhead"]}))
+        self.assertEqual(facade.updates[0][0], {"sections": {"toolhead": False}})
+        self.assertEqual(facade.updates[1][0], {"sectionLayout": {"ids": ["toolhead"]}})
+
+    def test_the_banner_copy_has_two_flavours_and_the_diagnostics_row_demotes(self):
+        from plugins.MoonrakerMonitorModel import (
+            _migration_banner_text,
+            _migration_diagnostics_text,
+        )
+        backed = {"backupWritten": True, "backupName": "cura.cfg.2026-09-18-14-30-12"}
+        banner = _migration_banner_text(backed)
+        self.assertIn("cura.cfg.2026-09-18-14-30-12", banner)
+        self.assertIn("Help > Show Configuration Folder", banner)
+        self.assertIn("reinstall the previous version", banner)
+        bare = _migration_banner_text({"backupWritten": False})
+        self.assertIn("Nothing was removed", bare)
+        self.assertNotIn("cura.cfg", bare)
+        row = _migration_diagnostics_text(backed)
+        self.assertIn("cura.cfg.2026-09-18-14-30-12", row)
+        self.assertIn("Nothing was removed", _migration_diagnostics_text({"backupWritten": False}))
+
     def test_the_toast_has_two_flavours(self):
         calls = []
 
