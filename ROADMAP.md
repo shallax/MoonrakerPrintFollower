@@ -1848,6 +1848,27 @@ it by the reviewer and ruled it here, not earlier):
 - Credentials stay plaintext, file mode 0600 as today; stronger
   secret handling is a separate keychain project, out of scope.
 
+**The 5.7+ compatibility pack (from the 2026-09-18 version sweep).**
+The sweep's verdicts: 5.7-5.10 and 5.12-5.13 pass everything except
+the stress premise below; 5.11 fails its console and preview groups;
+the floor then drops from 5.11+ to 5.7+ once these land:
+
+- The console's input row: the input TextArea's hit region overlays
+  the Send/Clear buttons on 5.11's and 5.12's theme metrics (the
+  press lands on the TextArea) — a geometry/z-order fix in the
+  console pane, one change for both versions.
+- The 5.11 preview LayerSlider: the p-scenarios' probe finds Cura's
+  own slider by class name, and 5.11's preview hides or renames it —
+  one walk-dump session, then the probe adapts.
+- The stress group's j4-01: the sim's print races past the scenario's
+  9% expectation on most versions' pacing — a determinism pin (the
+  p6 pattern), and the group then becomes a release-gate candidate.
+- The floor declaration: README/CHANGELOG/WhatsNew move from 5.11+ to
+  5.7+, after the 5.11/5.12 full suites re-verify green.
+- Out of scope, recorded: 5.6's float→int modal (one coercion fix,
+  deliberately not pursued — the floor is 5.7+) and the 5.0-5.5
+  display wall (a real-GL virtual display, harness-side).
+
 ## 5.0.0 — Physical head in the Preview (moved from 4.3.0 to 4.5.0, then to 5.0.0 by the 2026-09-17 re-sequencing)
 
 What a web dashboard cannot do: show the real machine inside the slice.
