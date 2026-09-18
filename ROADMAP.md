@@ -1820,17 +1820,18 @@ state file, with flush/debounce machinery holding the two together.
 The reviewer's architecture, adopted as the direction (the author ran
 it by the reviewer and ruled it here, not earlier):
 
-- Two plugin-owned stores, not one: moonrakerprintfollower_settings.json
-  (durable user configuration — a global section plus a machines map
-  keyed by machine id) and a state directory sharded per machine
-  (state/global.json for the pane chrome and
-  state/machines/<id>.json per printer) — the author's 2026-09-18
-  ruling after the panel: the machine id is the natural shard key
-  and one instance drives one printer, so each machine's file has a
+- One plugin-owned persistence folder, not two files:
+  MoonrakerPrintFollower/ holds settings.json (durable user
+  configuration — a global section plus a machines map keyed by
+  machine id), state.json (the pane chrome) and machines/<id>.json
+  per printer (the id quoted, Cura's own convention) — the author's
+  2026-09-18 rulings: the machine id is the natural shard key and
+  one instance drives one printer, so each machine's file has a
   single writer by construction; the hot path needs no cross-process
-  lock on any platform. The flock (Cura's SaveFile) covers the
-  settings file and the global chrome. The cache stays in Cura's
-  cache area as today.
+  lock on any platform, and the one folder keeps everything
+  self-contained (one entry to browse, one folder to remove). The
+  flock (Cura's SaveFile) covers the settings document and the
+  global chrome. The cache stays in Cura's cache area as today.
 - The split is write behaviour, not taste: settings change rarely and
   explicitly (connection, following, upload, camera, diagnostics);
   state changes incidentally while operating the UI and may be

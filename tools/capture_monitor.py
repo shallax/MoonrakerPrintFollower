@@ -190,7 +190,7 @@ def main():
         model.sendConsoleCommand("M104 S210")
 
         from theme_support import ThemeBackend, materialise_theme_assets, verify_capture_tree
-        theme_backend = ThemeBackend(os.path.join(ROOT, "tests", "theme_assets", "cura-light"))
+        theme_backend = ThemeBackend(os.path.join(ROOT, "tests", "theme_assets", os.environ.get("CAPTURE_THEME", "cura-light")))
         theme_tree = materialise_theme_assets(os.path.join(ROOT, "dist", ".capture-theme"), theme_backend)
 
         engine = QQmlEngine()
@@ -244,6 +244,35 @@ def main():
             time.sleep(0.05)
         else:
             raise RuntimeError("the dashboard never rendered inside the capture shell")
+
+        # The e-stop label's contrast gate (the 4.5.0 dark-mode
+        # ruling): the idle copy must contrast with the button's
+        # ground in BOTH themes — hardcoded black on dark grey is
+        # exactly the class the dark capture leg exists to catch.
+        # Sampled as a lightness spread over the label's interior:
+        # correct text sits far from its ground in either theme.
+        emergency = [child for child in item.findChildren(QQuickItem)
+                     if child.property("objectName") == "moonrakerEmergencyButton"]
+        if emergency:
+            button = emergency[0]
+            if button.isVisible() and button.width() > 20 and button.height() > 10:
+                corner = button.mapToScene(QPointF(0, 0))
+                inset_x = max(4, int(button.width() * 0.08))
+                inset_y = max(4, int(button.height() * 0.15))
+                scene_shot = window.grabWindow()
+                lightness = set()
+                for y in range(inset_y, int(button.height()) - inset_y, 3):
+                    for x in range(inset_x, int(button.width()) - inset_x, 3):
+                        lightness.add(scene_shot.pixelColor(
+                            int(corner.x() + x), int(corner.y() + y)).lightness())
+                spread = (max(lightness) - min(lightness)) if lightness else 0
+                if spread < 76:
+                    raise RuntimeError(
+                        "the e-stop label lacks contrast with its ground (lightness spread %d) — "
+                        "a wrong-coloured glyph slipped past the capture theme" % spread)
+                print("e-stop label lightness spread:", spread)
+        else:
+            print("e-stop label contrast: the emergency button was not visible — skipped")
 
         def grab(name):
             image = window.grabWindow()

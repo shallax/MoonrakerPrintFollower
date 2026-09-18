@@ -20,6 +20,7 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Tuple
+from urllib.parse import quote_plus
 
 from .PrinterConfig import PrinterConfig
 
@@ -255,7 +256,7 @@ def _verify_new_files(records, settings_path, state_dir) -> bool:
         for machine_id in records:
             if machine_id not in machines:
                 return False
-            with open(os.path.join(state_dir, f"{machine_id}.json"), "r", encoding="utf-8") as handle:
+            with open(os.path.join(state_dir, f"{quote_plus(machine_id)}.json"), "r", encoding="utf-8") as handle:
                 shard = json.load(handle)
             if not isinstance(shard, dict):
                 return False

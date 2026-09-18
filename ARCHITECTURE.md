@@ -379,8 +379,9 @@ capabilities, not the model or follower. Tuning owns its revisions and debounce
 lifetimes. Macro argument parsing is cached until static configuration changes.
 Camera selection is persisted through the public configuration operation.
 
-The Monitor's state lives in the plugin's own persistence (4.5.0): a
-settings document beside cura.cfg and a state directory sharded per machine.
+The Monitor's state lives in the plugin's own persistence (4.5.0): one
+plugin-owned folder beside cura.cfg holding the settings document, the
+state document and the per-machine shards.
 The global chrome — the sections map, the section layout, the pane
 collapses, the console height, the file-manager columns, the what's-new
 marker and the toolhead jog selection — is one shared document; the

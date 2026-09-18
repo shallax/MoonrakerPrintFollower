@@ -29,6 +29,17 @@ for run in run1 run2; do
         && python3 tools/capture_upload.py '$tmp/$run' \
         && python3 tools/capture_whatsnew.py '$tmp/$run'"
 done
+# The dark-theme leg (the 4.5.0 ruling): the same scenes under the
+# dark asset set — a wrong-coloured glyph (hardcoded black on dark
+# grey, the live 4.4.0 find) must fail the e-stop contrast gate in
+# capture_monitor instead of a live session.
+for run in run1-dark run2-dark; do
+    tools/docker_dev.sh sh -c "CAPTURE_THEME=cura-dark python3 tools/capture_monitor.py '$tmp/$run' \
+        && CAPTURE_THEME=cura-dark python3 tools/capture_preview.py '$tmp/$run' \
+        && CAPTURE_THEME=cura-dark python3 tools/capture_settings.py '$tmp/$run' \
+        && CAPTURE_THEME=cura-dark python3 tools/capture_upload.py '$tmp/$run' \
+        && CAPTURE_THEME=cura-dark python3 tools/capture_whatsnew.py '$tmp/$run'"
+done
 stale=0
 count=0
 # ANY asymmetry between the runs fails the gate, not just a changed
@@ -55,6 +66,29 @@ for generated in "$tmp/run2"/*.png; do
     name="$(basename "$generated")"
     if [ ! -e "$tmp/run1/$name" ]; then
         echo "NON-DETERMINISTIC: $name was produced by run2 but not by run1" >&2
+        stale=1
+    fi
+done
+# The dark pair, compared the same way: the scene lists must agree in
+# both directions and every common file must match byte for byte.
+for generated in "$tmp/run1-dark"/*.png; do
+    [ -e "$generated" ] || break
+    name="$(basename "$generated")"
+    if [ -e "$tmp/run2-dark/$name" ]; then
+        if ! cmp -s "$generated" "$tmp/run2-dark/$name"; then
+            echo "NON-DETERMINISTIC (dark): $name differs between two runs in the same container" >&2
+            stale=1
+        fi
+    else
+        echo "NON-DETERMINISTIC (dark): $name was produced by run1-dark but not by run2-dark" >&2
+        stale=1
+    fi
+done
+for generated in "$tmp/run2-dark"/*.png; do
+    [ -e "$generated" ] || break
+    name="$(basename "$generated")"
+    if [ ! -e "$tmp/run1-dark/$name" ]; then
+        echo "NON-DETERMINISTIC (dark): $name was produced by run2-dark but not by run1-dark" >&2
         stale=1
     fi
 done

@@ -120,7 +120,7 @@ def render(output_dir: str) -> None:
     install_capture_warning_filter()
 
     from theme_support import ThemeBackend, materialise_theme_assets as _shared_materialise, verify_capture_tree
-    theme_backend = ThemeBackend(os.path.join(ROOT, "tests", "theme_assets", "cura-light"))
+    theme_backend = ThemeBackend(os.path.join(ROOT, "tests", "theme_assets", os.environ.get("CAPTURE_THEME", "cura-light")))
     theme_import = _shared_materialise(os.path.join(ROOT, "dist", ".capture-theme"), theme_backend)
     try:
         engine = QQmlEngine()

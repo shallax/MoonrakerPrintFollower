@@ -99,14 +99,18 @@ def _state_lock(state_root):
 class FollowerRuntime:
     def __init__(self, application, parent):
         self.client = MoonrakerClient(parent)
-        state_root = Resources.getStoragePath(Resources.Preferences, "moonrakerprintfollower_state")
-        os.makedirs(os.path.join(state_root, "machines"), exist_ok=True)
+        # One plugin-owned folder for everything (the 2026-09-18
+        # ruling): the settings document, the global state document
+        # and the per-machine shards all live under it — one entry
+        # in the config dir to browse, one folder to remove.
+        persistence_root = Resources.getStoragePath(Resources.Preferences, "MoonrakerPrintFollower")
+        os.makedirs(os.path.join(persistence_root, "machines"), exist_ok=True)
         self.persistence = PluginPersistence(
-            settings_path=Resources.getStoragePath(Resources.Preferences, "moonrakerprintfollower_settings.json"),
-            state_global_path=os.path.join(state_root, "global.json"),
-            state_machine_dir=os.path.join(state_root, "machines"),
+            settings_path=os.path.join(persistence_root, "settings.json"),
+            state_global_path=os.path.join(persistence_root, "state.json"),
+            state_machine_dir=os.path.join(persistence_root, "machines"),
             save=_savefile_write,
-            lock=lambda: _state_lock(state_root),
+            lock=lambda: _state_lock(persistence_root),
         )
         self.binding = PrinterBinding(
             application, self.client, self.persistence,

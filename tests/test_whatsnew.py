@@ -102,9 +102,12 @@ class WhatsNewSeedTests(unittest.TestCase):
         # The suite's seeded profile carries the marker so its runs
         # never see the popup unless a scenario (z16) clears it —
         # this pin keeps the seed on the shipped version.
+        # The 4.5.0 fixture: the marker lives in the state document
+        # under the plugin's one persistence folder now, not the
+        # pre-4.5.0 sections file.
         seed = json.loads(
             (ROOT / "tests/harness/config/config/cura/5.13"
-             / "moonrakerprintfollower_sections.json").read_text(encoding="utf-8"))
+             / "MoonrakerPrintFollower" / "state.json").read_text(encoding="utf-8"))
         self.assertEqual(seed["whatsNewSeen"], latest_version())
         self.assertFalse(should_show(seed["whatsNewSeen"]))
 

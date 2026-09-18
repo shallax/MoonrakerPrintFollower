@@ -14,7 +14,7 @@ import json
 import re
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from plugins.MonitorFormatting import (
     core_values,
@@ -4645,13 +4645,12 @@ Item {
         self.assertEqual(len(webcam_changes), 1)
         self.assertEqual(control_changes, [])
 
-    def test_selected_camera_is_flushed_immediately_and_restored_after_webcams_are_populated(self):
+    def test_selected_camera_persists_through_the_settings_document_and_restores_after_webcams(self):
         model = self.monitor()
         cameras = [
             {"uid": "front-uid", "name": "Front", "stream_url": "/front"},
             {"uid": "rear-uid", "name": "Rear", "stream_url": "/rear"},
         ]
-        self.app.savePreferences = Mock()
 
         # The first camera publication deliberately populates the ComboBox model
         # without trying to restore a currentIndex into an empty model.
@@ -4666,12 +4665,13 @@ Item {
         self.assertEqual(self.follower.current_printer_config().camera_selected, "rear-uid")
         self.assertEqual(model.activeWebcamIndex, 1)
         self.assertEqual(model.cameraName, "Rear")
-        self.app.savePreferences.assert_called_once_with()
-
-        config_module = self.qt.load("PrinterConfig")
-        stored = json.loads(self.app.preferences.values[config_module.PrinterConfigStore.PREF_KEY])
+        # The 4.5.0 world: the camera selection persists through the
+        # facade's settings document (SaveFile's fsync makes the save
+        # durable) — the preference-flush pin retired with the
+        # transcript.
+        document = self.follower.persistence.settings_document()
         machine_id = self.follower.current_printer_identity()[0]
-        self.assertEqual(stored[machine_id]["camera_selected"], "rear-uid")
+        self.assertEqual(document["machines"][machine_id]["camera_selected"], "rear-uid")
 
         # Recreate the complete follower against the same Cura preference store,
         # rather than merely constructing another camera helper around the same

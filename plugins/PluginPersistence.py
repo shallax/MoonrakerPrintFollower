@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 from dataclasses import asdict
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import quote_plus
 
 from .PrinterConfig import PrinterConfig
 from .StateStore import StateStore
@@ -138,8 +139,12 @@ class PluginPersistence:
     def _shard(self, machine_id: str) -> StateStore:
         store = self._shards.get(machine_id)
         if store is None:
+            # The shard filename is the quoted id — Cura's own
+            # convention for id-derived files (machine_instances/
+            # <quote_plus(id)>.global.cfg, the domain panel's L2):
+            # ids are name-derived and may carry spaces.
             store = StateStore(
-                os.path.join(self._state_dir, f"{machine_id}.json"),
+                os.path.join(self._state_dir, f"{quote_plus(machine_id)}.json"),
                 save=self._save, lock=self._lock, note=self._note,
             )
             self._shards[machine_id] = store

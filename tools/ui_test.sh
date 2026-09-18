@@ -204,13 +204,18 @@ if [ "${MODE:-scenario}" = "real" ]; then
     python3 - "$REAL_URL" "${REAL_API_KEY:-}" << 'PY'
 import os, sys
 url, key = sys.argv[1], sys.argv[2]
-path = os.environ.get("MPF_WORK_DIR", "/tmp/mpf") + "/xdg/config/cura/5.13/cura.cfg"
+# The 4.5.0 re-teach: the seeded machine record lives in the plugin's
+# settings document now (the pretty two-space form), not the cura.cfg
+# blob — the same literal guard holds: the substitution must land or
+# the run must die rather than point the "real" gallery at the
+# simulator.
+path = os.environ.get("MPF_WORK_DIR", "/tmp/mpf") + "/xdg/config/cura/5.13/MoonrakerPrintFollower/settings.json"
 before = open(path).read()
 text = before
-text = text.replace('"url":"http://127.0.0.1:7125"',
-                    '"url":"%s"' % url.replace('\\', '\\\\').replace('"', '\\"'))
-text = text.replace('"api_key":""',
-                    '"api_key":"%s"' % key.replace('\\', '\\\\').replace('"', '\\"'))
+text = text.replace('"url": "http://127.0.0.1:7125"',
+                    '"url": "%s"' % url.replace('\\', '\\\\').replace('"', '\\"'))
+text = text.replace('"api_key": ""',
+                    '"api_key": "%s"' % key.replace('\\', '\\\\').replace('"', '\\"'))
 if text == before:
     # A silent no-op would run the "real" gallery against the
     # simulator — the substitution must land or the run must die.

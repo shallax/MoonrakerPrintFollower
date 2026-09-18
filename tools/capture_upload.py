@@ -145,7 +145,7 @@ def main():
     install_capture_warning_filter()
 
     from theme_support import ThemeBackend
-    backend = ThemeBackend(os.path.join(THEME_ASSETS, "cura-light"))
+    backend = ThemeBackend(os.path.join(THEME_ASSETS, os.environ.get("CAPTURE_THEME", "cura-light")))
     from theme_support import materialise_theme_assets as _shared_materialise, verify_capture_tree
     overlay = _shared_materialise(os.path.join(ROOT, "dist", ".capture-theme"), backend)
     # The shared materialiser already wrote the full Theme.qml (palette,
