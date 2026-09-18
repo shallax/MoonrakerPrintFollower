@@ -192,7 +192,7 @@ class QtRuntimeTests(unittest.TestCase):
         # MonitorData contract); the M117 slot reads the message from
         # whatever mapping shape they take. The isinstance(dict)
         # check never matched the live shape and the message never
-        # reached the slot (the author's live report; the harness's
+        # reached the slot (the live report; the harness's
         # scenario 3 caught it).
         model, _client, _transport = self.monitor()
         model._data._update(auxiliary={"display_status": {"message": "probe-m117-x", "progress": 0.6}})
@@ -285,7 +285,7 @@ class QtRuntimeTests(unittest.TestCase):
             self.assertFalse(binding.usable(self.qt.load("PrinterConfig").normalise_url(placeholder)))
 
     def test_override_detach_stays_detached_until_the_user_reattaches(self):
-        # The author's ruling: ANY layer intervention detaches, and the
+        # The ruling: ANY layer intervention detaches, and the
         # detach persists — no watchdog, no snap-back. The view-swap
         # re-attach (leaving the stage while attached) is the only
         # automatic one.
@@ -482,7 +482,7 @@ class QtRuntimeTests(unittest.TestCase):
         client.start()
         # A PROVEN endpoint: the ladder protects its outages. (The
         # never-connected cap — the eager first connection, the
-        # author's ruling — is pinned in the client feed tests.)
+        # ruling — is pinned in the client feed tests.)
         transport.requests[-1].callback({"result": {"status": {"print_stats": {"state": "idle"}}}}, None)
         self.qt.events()
         client.force_refresh()
@@ -824,7 +824,7 @@ class QtRuntimeTests(unittest.TestCase):
     def test_real_http_delete_files_surfaces_the_refusal_words(self):
         # Snapshot 3: deleting the printing file draws Moonraker's
         # 403 — the service must keep the row and put the server's
-        # own words in the note (the author's ruling: refusals
+        # own words in the note (the ruling: refusals
         # surface, never vanish).
         class Handler(PipeSafeHandler):
             def do_DELETE(self):
@@ -913,7 +913,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertIn(b'name="path"', body)
         self.assertIn(b"prints", body)
         # The popup's feed: progress reached 100 and the verdict is
-        # the success (the author's live request).
+        # the success (the live request).
         self.assertEqual(finished_events, [(True, "bench.gcode")])
         self.assertEqual(max(progress_events), 100)
         self.assertEqual(notes, ["Uploaded bench.gcode."])
@@ -987,12 +987,12 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(foreign[1])
 
     def test_real_http_moonraker_400_surfaces_the_tracebacks_words(self):
-        # The author's live report: a cold extrude surfaced a bare
+        # A live report: a cold extrude surfaced a bare
         # 400 while Moonraker's real words sat in the traceback tail
         # ({'code', 'message': 'Unknown', 'traceback'}). The error
         # must read "Extrude below minimum temp", not a status code
         # or the whole dict — and the script endpoint answers HTTP
-        # 200 with the error DICT inside "error" (the author's
+        # 200 with the error DICT inside "error" (the
         # second report: "Extrude refused: {'code': 400, ...}").
         def body_with(shape):
             inner = {
@@ -1085,7 +1085,7 @@ class QtRuntimeTests(unittest.TestCase):
             self.assertEqual(handle.read(), body)
 
     def test_moonraker_error_text_covers_every_known_shape(self):
-        # The author's live request: ALL 400-class errors must read
+        # A live request: ALL 400-class errors must read
         # like the cold-extrude one — the server's words, one line,
         # never a dict, a code or a whole exception. Pure shapes.
         from plugins.MoonrakerTransport import _moonraker_error_text
@@ -1159,7 +1159,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(preview.state.expected_layer, 0)
 
         # Cura's late restoration moves the view: with the echo window
-        # gone (the author's ruling — ANY layer intervention detaches),
+        # gone (the ruling — ANY layer intervention detaches),
         # a late restore detaches like a user action. That spurious
         # detach is the accepted cost; the swap itself keeps the
         # attachment.
@@ -1217,7 +1217,7 @@ class MonitorDataAuxTests(unittest.TestCase):
     def test_aux_accepts_objects_that_appeared_after_the_first_list(self):
         # A device switched on mid-print never appears in the first
         # objects/list — its data must still render and join the
-        # subscription instead of being dropped (the author's rule).
+        # subscription instead of being dropped (the rule).
         self.deliver("objects", {"result": {"objects": ["fan"]}})
         self.deliver("aux", {"result": {"status": {"fan": {"speed": 0.5},
                                                     "temperature_sensor mcu": {"temperature": 32.0}}}})
@@ -1997,7 +1997,7 @@ class ToolheadControllerTests(unittest.TestCase):
         self.controller.jog("z", -1)
         self.assertEqual(self.controller._pending, ())
         # On the maximum side the FIRST tap clamps to the boundary,
-        # and the client-side Z estimate (the author's live report:
+        # and the client-side Z estimate (the live report:
         # stale-poll clamping let rapid taps overshoot) makes the
         # second tap a no-op.
         self.data.snapshot.core["motion_report"]["live_position"][2] = 195.0
@@ -2015,7 +2015,7 @@ class ToolheadControllerTests(unittest.TestCase):
         self.assertEqual(self.controller._pending, ())
 
     def test_z_floor_is_zero_even_with_a_negative_configured_minimum(self):
-        # The author's live ruling: the jog pad must never send the
+        # The live ruling: the jog pad must never send the
         # head below 0.00 Z — whatever position_min says (many
         # printers configure a negative Z minimum for probe travel).
         self.data.set_state("paused")
@@ -2028,7 +2028,7 @@ class ToolheadControllerTests(unittest.TestCase):
         self.assertEqual(self.controller._pending, ())
 
     def test_rejected_z_nudge_reports_and_notes_once_per_burst(self):
-        # The author's live request: a rejected nudge must explain
+        # A live request: a rejected nudge must explain
         # itself in the jog status AND the console — the note once
         # per burst, so a flurry of taps cannot flood the feed.
         self.data.set_state("paused")

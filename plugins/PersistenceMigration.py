@@ -13,7 +13,7 @@ and the outcome persisted in the new settings document so no later
 run can recompute it away. Everything before the clean is
 idempotently replayable, so a crash anywhere replays from the same
 source. The document writers are the facade's stores, which write
-pretty-printed JSON (indent + sorted keys, the author's ruling)."""
+pretty-printed JSON (indent + sorted keys, the ruling)."""
 from __future__ import annotations
 
 import json
@@ -124,7 +124,7 @@ def run_migration(
     clean is idempotently replayable and the outcome record lands
     last, so a later run can never erase a failure (C2). `timestamp`
     is the caller's filesystem-safe sortable form (digits and dashes,
-    the author's ruling)."""
+    the ruling)."""
     outcome = MigrationOutcome()
     source_state, records = read_source(blob_value)
 
@@ -142,7 +142,7 @@ def run_migration(
         return outcome
 
     if source_state == "corrupt":
-        # The author's ruling over the critic's C1 gate: a corrupt
+        # The ruling over the critic's C1 gate: a corrupt
         # blob is a migration gone wrong — flag it and start clean,
         # provided the backup landed. Nothing is silent: the record
         # and the notice both carry the failure, and the backup holds
@@ -201,8 +201,8 @@ def _write_empty_documents(
 ) -> None:
     """The empty-but-healthy path: new files, configVersion 2, the
     old chrome carried across where the old state file exists — and
-    the old file removed once the new document is written (the
-    author's live find: no old-config trace remains)."""
+    the old file removed once the new document is written (found
+    live: no old-config trace remains)."""
     state_global_write({**_read_old_chrome(old_state_path), "configVersion": 2})
     settings_write({
         "configVersion": 2,
@@ -300,7 +300,7 @@ def _verify_new_files(records, settings_path, state_dir) -> bool:
 
 def _remove_old_state_file(old_state_path: Optional[str]) -> None:
     """The pre-4.5.0 sections file leaves no trace once the new state
-    document holds its content (the author's live find) — removed
+    document holds its content (found live) — removed
     only AFTER the new document's write landed."""
     if not old_state_path:
         return
@@ -322,8 +322,8 @@ def _clean_preferences(set_pref: Callable[[str, Any], None]) -> None:
     for field_name, pref_key in PrinterConfigStore.LEGACY_MAP.items():
         set_pref(pref_key, PrinterConfigStore.LEGACY_DEFAULTS[field_name])
     # The migrated flags reset to their registered defaults too: the
-    # [moonrakerprintfollower] section leaves cura.cfg entirely (the
-    # author's live find). The legacy chain guards on the migration
+    # [moonrakerprintfollower] section leaves cura.cfg entirely (found
+    # live). The legacy chain guards on the migration
     # record, so nothing re-runs and resurrects the blob. The bed-mesh
     # keys reset the same way — their home is the settings document's
     # global section now (the no-trace ruling).

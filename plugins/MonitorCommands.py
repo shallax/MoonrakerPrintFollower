@@ -153,8 +153,8 @@ class MonitorCommands(QObject):
                 if payload is not None:
                     # The server ANSWERED with an error body: the
                     # command was refused, not lost (the transport's
-                    # refusal-vs-failure distinction). The author's
-                    # live report: a cold extrude showed a bare 400 —
+                    # refusal-vs-failure distinction). A live
+                    # report: a cold extrude showed a bare 400 —
                     # now it reads the server's own words ("Extrude
                     # below minimum temp").
                     self._status = f"{label} refused: {error}"
@@ -323,7 +323,7 @@ class MonitorCommands(QObject):
         self._data.assume_print_stopped()
         self.emergencyStopped.emit()
         self.reset()
-        # The author's ruling (2026-09-10, live-proven on their
+        # The ruling (2026-09-10, live-proven on a
         # printer): commands stay refused after the stop until the
         # connection is cycled — the plugin disconnects and
         # reconnects ONCE, automatically, instead of leaving the

@@ -110,7 +110,7 @@ ColumnLayout {
             }
             UM.Label {
                 // One labelled row instead of two always-present blank
-                // slots (the author's "white space at the bottom of
+                // slots (the "white space at the bottom of
                 // Setup" report). The emdash is the honest empty
                 // value.
                 height: 36 * screenScaleFactor

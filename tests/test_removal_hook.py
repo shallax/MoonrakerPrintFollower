@@ -186,7 +186,7 @@ class RemovalHookTests(unittest.TestCase):
             self.binding._migrate()
 
     def test_apply_no_longer_writes_the_legacy_mirror(self):
-        # The legacy preference mirror is retired (the author's
+        # The legacy preference mirror is retired (the
         # ruling): the leak probe reads the facade, and apply must
         # not touch the legacy keys.
         for key in ("memory_diagnostics_log", "memory_diagnostics_trace", "enabled"):

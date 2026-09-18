@@ -94,7 +94,7 @@ class FeedMode(str, Enum):
 
 @dataclass
 class PrinterConfig:
-    # Live Preview follower settings. Enabled by default (the author's
+    # Live Preview follower settings. Enabled by default (the
     # 2026-09-17 ruling): a fresh machine should follow without an
     # extra checkbox trip.
     enabled: bool = True

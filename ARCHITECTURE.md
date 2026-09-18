@@ -536,7 +536,7 @@ streams back over HTTP from Moonraker's gcode store, polled only while
 the console is expanded (an idle floor slows the cadence when no print
 runs), so the pane is a terminal feed: typed lines as sent, output as
 it arrives. `ConsolePolicy` owns the history bounds and input guards
-(deliberately no command-safety table: the author ruled the console
+(deliberately no command-safety table: the console is
 unrestricted); `ConsoleController` owns the bounded per-printer
 history, the send lane and the verdict pairing — each send closes over
 its own entry, and no line claims an attribution the store cannot
@@ -544,7 +544,7 @@ support (it pairs by recency only). `CollapsibleSectionHeader` is
 the single header implementation shared by every pane; pane chrome
 (toggles, collapsed strips, plugin-drawn glyphs) is UI-only state in
 the QML files and never mutates printer state directly. **The no-reflow
-invariant (the author's rule):** a control never disappears — every
+invariant (a ruling):** a control never disappears — every
 state lives in `enabled`, never `visible`; state-dependent status lines
 occupy permanent single-line slots whose text changes; the layout
 reflows only for user-initiated actions (section collapse, resize).

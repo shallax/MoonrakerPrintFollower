@@ -2,7 +2,7 @@ import QtQuick 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 
-// The shared all/none three-state selector (the author's live
+// The shared all/none three-state selector (a live
 // ruling): the row selector's vocabulary — empty, a dash for
 // mixed, a tick for all. View-only: the host owns the counts and
 // the action; a click emits toggled.

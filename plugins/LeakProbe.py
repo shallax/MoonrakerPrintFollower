@@ -399,7 +399,7 @@ class LeakProbe:
         # NOTHING heavy here: the probe must not touch tracemalloc or
         # the QML engine during plugin load — the allocator tax and
         # the engine walk mid-initialization stalled Cura's startup
-        # after "Loading plugins" (the author's report). Everything
+        # after "Loading plugins" (a report). Everything
         # defers to the first enabled tick, a minute into the session.
         self._enabled = False
         self._usage_failure_logged = False
@@ -511,7 +511,7 @@ class LeakProbe:
                 # off ruling).
                 self._log_path = self._pick_log_path()
             # The pid and the install path name the instance: the
-            # author's log showed three starts — multiple installed
+            # log showed three starts — multiple installed
             # copies each register their own probe.
             self._log("start pid=%s path=%s platform=%s" % (
                 os.getpid(), os.path.dirname(os.path.dirname(os.path.abspath(__file__))), sys.platform))
@@ -564,8 +564,8 @@ class LeakProbe:
                     self._log(line)
         elif self._trace_snapshot is not None:
             # The trace toggle went off: drop the allocator tax and the
-            # window so re-enabling starts a fresh one. (The author's
-            # live find: the old elif wiped the window on EVERY
+            # window so re-enabling starts a fresh one. (Found live:
+            # the old elif wiped the window on EVERY
             # ordinary tick, so every slow tick re-armed from scratch
             # and the compare branch never ran.)
             try:

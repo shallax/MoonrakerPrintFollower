@@ -239,7 +239,7 @@ def _emit_progress(handle: BinaryIO, progress) -> None:
         pass
 
 def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] = None, progress=None, stage=None) -> LayerMotionIndex:
-    # ONE pass (the author's ruling): a single read collects the
+    # ONE pass (the ruling): a single read collects the
     # layer ranges, the marker values, the block stats, the motions
     # AND the pause offsets. The old four-pass build re-read the
     # file per concern, which restarted the progress bar per pass

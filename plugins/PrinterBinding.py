@@ -25,7 +25,7 @@ from .CuraAdapter import active_machine_identity
 from .PersistenceMigration import read_source, run_migration
 from .PrinterConfig import PrinterConfig, PrinterConfigStore, normalise_url
 
-# The host-identifying fields the removal wipe clears (the author's
+# The host-identifying fields the removal wipe clears (the
 # ruling): the harmless rest survives for a same-named re-add.
 _REMOVAL_WIPE_FIELDS = ("url", "api_key", "camera_url", "frontend_url", "upload_path")
 # The one-shot re-runs while the failure is retryable: a failed
@@ -131,7 +131,7 @@ class PrinterBinding(QObject):
         Cura's initializationFinished (wired by the runtime) and from
         the machine-switch path. A clean install activates the v2
         document directly — no migration record, because nothing was
-        migrated (the author's ruling). The one-shot runs only while
+        migrated (the ruling). The one-shot runs only while
         the legacy blob still holds records; an absent or empty blob
         is nothing to do, and the existing document is never replaced
         on that path."""

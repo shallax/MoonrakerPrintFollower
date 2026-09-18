@@ -37,7 +37,7 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   `make generate_screenshots`, `make package`, `make format`
   (qmlformat in the container), `make coverage` (plugins/ report,
   the gcov gate), `make snapshot_package` (build + verify + copy to
-  /tmp/mpf.curapackage for the author to SCP), `make snapshot_quick`
+  /tmp/mpf.curapackage, ready to SCP), `make snapshot_quick`
   (the fast iteration path: lint + tests + package, no captures),
   `make install_hooks`, `make docker_exec ARGS="…"`, `make clean`.
   The targets are thin
@@ -118,7 +118,7 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
 
 ## Repo hygiene — the standing rule on addresses
 
-No real machine addresses go into the git repo (the author's rule,
+No real machine addresses go into the git repo (the rule,
 2026-09-11). Fictional placeholders (``voron-0.2.local`` in the capture
 fixtures) and unreachable LAN-internal names are tolerable; public
 hostnames, proxy endpoints and any host an outsider could reach are
@@ -126,7 +126,7 @@ not. API keys never enter any tracked file (the gitleaks gate and the
 literal-key pin enforce it). Real deployment details belong in the
 git-ignored ``review/`` log, not in the roadmap, docs or code. If an
 address slips in despite the rule, it is written OUT OF HISTORY, not
-merely fixed forward (the author's amendment, 2026-09-11).
+merely fixed forward (the 2026-09-11 amendment).
 
 ## Release workflow
 
@@ -138,9 +138,9 @@ Klipper/Moonraker/Cura domain expert, read-only, findings funnel back
 through the maintainer; a 3D-printer enthusiast/pro-user persona joins
 from 3.6.0 on, feeding next-release feature planning rather than
 gate-calls) → decisions logged in `review/DECISIONS.md` (git-ignored) →
-round-3 verification → the snapshot loop (the author live-tests
-`/tmp/mpf.curapackage`; commits and pushes hold until they're happy) →
-ship via PR.
+round-3 verification → the snapshot loop (live testing of
+`/tmp/mpf.curapackage`; commits and pushes hold until it is
+confirmed good) → ship via PR.
 
 ## Version bump checklist
 
@@ -209,7 +209,7 @@ pins in the same commit as any change to a control.
   with `opacity`, never `visible`. Capability-static gates (a feature
   the machine simply lacks, changing only on a printer switch) keep
   `visible:` — they are whitelisted in the structural test.
-- **Disconnected disables everything** (the author's ruling): while
+- **Disconnected disables everything** (the ruling): while
   the printer is disconnected every Monitor control disables — the
   emergency stop included — via section-level
   `enabled: root.printer == null || (!root.printer.controlsLocked &&
@@ -436,7 +436,7 @@ they cannot recur silently.
 - **Pop-over anchoring is a single consistent offset.** Both pop-overs
   open at `x: cameraArea.x + margin, y: margin` — clear of the
   Information-pane openers, so a second click dismisses without moving
-  the mouse (the author's chosen position).
+  the mouse (the chosen position).
 - **Cursor-following tooltips live OUTSIDE the clipped card.** The
   chart's hover values are a floating, root-scoped `Item` (z above the
   pop-overs) positioned from the chart's cursor point mapped with
@@ -506,14 +506,14 @@ they cannot recur silently.
   capture harness seeds `virtual_sdcard.progress` so the bars show a
   fill, and asserts accent-blue pixels inside every visible bar and
   slider — a fill that stops rendering fails the screenshot job.
-- **The no-reflow rule (the author's ruling, 2026-09-10):** a control
+- **The no-reflow rule (the 2026-09-10 ruling):** a control
   never disappears — every state lives in `enabled`, never `visible`
   ("no controls disappear, ever. It's only disablement/enablement").
   Nothing reflows unless the user asked for it (section collapse,
   resize): state-dependent status lines occupy permanent single-line
   slots whose TEXT changes, and reserved space uses opacity, never
-  visibility. **Reasoning:** the jog-reflow hazard (the author's live
-  report, 2026-09-09) — while hammering a toolhead move, the
+  visibility. **Reasoning:** the jog-reflow hazard (the live report,
+  2026-09-09) — while hammering a toolhead move, the
   pause/cancel buttons (and other state-gated controls and labels)
   vanished and reappeared as printer state changed, so the nudge
   button UNDER THE POINTER could move mid-click. Incredibly dangerous
@@ -523,8 +523,7 @@ they cannot recur silently.
   bindings; the explicit carve-outs (data-driven section gates —
   fans/LEDs/macros/power sections on machines without them, the
   scheduled-pause list, the temp-chart first-data swap) are listed in
-  the test and in `review/DECISIONS.md` round 6 for the author's
-  review.
+  the test and in `review/DECISIONS.md` round 6 for review.
 
 ### Verifying QML geometry
 
@@ -547,7 +546,7 @@ Comments state WHY, briefly:
   the explanation belongs in `ARCHITECTURE.md` (the design) or here
   (the lesson), not inline.
 - No play-by-play of what the code plainly does, no restating the
-  design doc, no quoting people (the author's ruling: comments speak
+  design doc, no quoting people (the ruling: comments speak
   in their own voice).
 - The design notes live in `ARCHITECTURE.md` and `ROADMAP.md`; inline
   comments carry only the local why. New code matches its file's

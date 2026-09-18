@@ -222,7 +222,7 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertEqual(document["machines"]["A"]["api_key"], "k")
 
     def test_a_clean_install_activates_the_document_without_a_record(self):
-        # The author's ruling: a first boot has nothing to migrate —
+        # The ruling: a first boot has nothing to migrate —
         # the v2 document activates directly, no migration record.
         self.prefs.setValue(PrinterConfigStore.PREF_KEY, "{}")
         self.prefs.setValue(PrinterConfigStore.MIGRATED_KEY, False)

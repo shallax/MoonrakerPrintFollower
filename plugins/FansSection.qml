@@ -76,8 +76,8 @@ ColumnLayout {
                     }
                 }
                 // Firmware-regulated fans render their
-                // value without a slider (the author's
-                // live report — the command never
+                // value without a slider (a live
+                // report — the command never
                 // sticks).
                 UM.Label {
                     visible: !modelData.writable

@@ -174,7 +174,7 @@ behind it.
   Cura's own nozzle visible, so the live indicator stays reliable.
 - **The memory work, closed out.** The camera bridge's socket and
   reply objects are deleted on completion, the G-code hydration
-  cache evicts beyond its bound, and the author's soak of the
+  cache evicts beyond its bound, and a soak of the
   native follow path shows a bounded, oscillating current-RSS band
   that ends below its start. The experimental follow render pass
   (an alternative to Cura's own SimulationPass) was removed after
@@ -286,7 +286,7 @@ comes from one policy table that says why.
   hourglass's rotation resets through the idle state, so the
   download glyph never inherits the frozen angle.
 - **Bumped.** The gcode deformation (vertex-style) defers to 4.3.0
-  with a Snapshot-0 mock first, per the author's ruling.
+  with a Snapshot-0 mock first, per the ruling.
 
 ## 4.1.0
 
@@ -454,7 +454,7 @@ subscription, with HTTP kept as a selectable, automatic-fallback mode.
   and devices switched on mid-print now appear without a reconnect.
 - **Settings polish**: a wrong API key on Test connection reads "the
   API key was rejected (HTTP 401)".
-- **The 4.0.1 scope folded in (the author's ruling, 2026-09-11)**:
+- **The 4.0.1 scope folded in (the 2026-09-11 ruling)**:
   scroll-to-prompt (a successful console send returns the view to the
   prompt), the verified-pause-only list (an entry leaves only when
   the printer is observed paused; missed pauses stay listed in the
@@ -608,7 +608,7 @@ readouts and a better remaining-time estimate.
   was never loaded, and the layer-height readout uses the same source.
   The ETA readout shows the active basis (colour and tooltip), and a
   small download glyph beside the estimate runs the download-and-index
-  flow WITHOUT loading the preview (the author's optimisation: the
+  flow WITHOUT loading the preview (an optimisation: the
   render is only paid when the print is loaded in the Preview, which
   then reuses the already-downloaded file).
 - One shared pop-over shell for the Information pane's glanceable

@@ -50,11 +50,11 @@ Item {
     property string bedMeshMaximumText: ""
     property real bedMeshMinimum: 0
     property real bedMeshMaximum: 0
-    // The heightmap range filter (the author's request): the window
+    // The heightmap range filter (a request): the window
     // the Monitor model owns; both surfaces show the same handles.
     property real bedMeshThresholdLow: 0
     property real bedMeshThresholdHigh: 0
-    // The "scale z-max" exaggeration (the author's request): 0
+    // The "scale z-max" exaggeration (a request): 0
     // flattens the Preview surface, 1000 is the ceiling.
     property real bedMeshExaggeration: 20
     property string selectedLayerEtaText: ""
@@ -588,7 +588,7 @@ Item {
 
                 PreviewSecondaryButton {
                     id: followButton
-                    // The attach/detach control (the author's
+                    // The attach/detach control (the
                     // 2026-09-17 ruling): without a toolpath the
                     // follower has nothing to drive, so the button
                     // hides entirely and the load button takes the
@@ -698,7 +698,7 @@ Item {
 
                 Item {
                     width: parent.width
-                    // Five visible entries at most (the author's
+                    // Five visible entries at most (the
                     // ruling): a long schedule scrolls instead of
                     // growing the card past the viewport.
                     height: Math.min(base.pauseAtLayerItems.length, 5) * (UM.Theme.getSize("action_button").height + scheduledPauseList.spacing) - scheduledPauseList.spacing
@@ -796,7 +796,7 @@ Item {
                     // blue chevrons centred over the list — an up
                     // arrow near the top while more content is above,
                     // a down arrow near the bottom while more content
-                    // is below (the author's ruling). They are
+                    // is below (the ruling). They are
                     // SIBLINGS of the ListView, overlaying it.
                     UM.Label {
                         text: "↑"
@@ -865,7 +865,7 @@ Item {
                         from: 0
                         to: 1000
                         stepSize: 1
-                        // The locked slider behaviours (the author's
+                        // The locked slider behaviours (the
                         // ruling): a press within the handle's extent
                         // of the current value is a no-op, and a click
                         // focuses the slider so the arrow keys nudge.

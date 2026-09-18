@@ -87,8 +87,7 @@ ColumnLayout {
                 UM.TooltipArea {
                     anchors.fill: parent
                     // Short value in the row, full
-                    // sentence in the tooltip (the
-                    // author's ruling).
+                    // sentence in the tooltip (the ruling).
                     text: root.printerModel != null && root.printerModel.sectionReasonDetail !== "" ? root.printerModel.sectionReasonDetail : (root.anyPowerLocked ? "Power control is locked by Moonraker while this print is active." : "")
                     acceptedButtons: Qt.NoButton
                 }

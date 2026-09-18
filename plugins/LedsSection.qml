@@ -52,7 +52,7 @@ ColumnLayout {
                     // its own lane scales the colour, and
                     // passing it here as the gain zeroed
                     // every channel nudge while the LED
-                    // was off (the author's live report).
+                    // was off (a live report).
                     root.printerModel.setLedColor(modelData.object, redSlider.selectedValue(), greenSlider.selectedValue(), blueSlider.selectedValue(), modelData.hasWhite ? whiteSlider.selectedValue() : 0, -1);
                 }
 

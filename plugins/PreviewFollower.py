@@ -165,7 +165,7 @@ class PreviewFollower:
             expected_path=state.expected_path, current_path=preview_current_path(view),
             expected_minimum_path=state.expected_minimum_path, current_minimum_path=preview_minimum_path(view))
         if kind:
-            # The author's ruling: ANY user intervention to the layer
+            # The ruling: ANY user intervention to the layer
             # selection detaches the follower — no absorption window,
             # no auto re-attach. A spurious detach from Cura's own
             # restoration is the accepted cost; a missed detach is not.

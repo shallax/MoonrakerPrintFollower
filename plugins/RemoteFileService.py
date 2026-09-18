@@ -19,7 +19,7 @@ def _declared_length(reply) -> int:
     header PAIRS with a case-insensitive scan — the typed lookup
     would pull the network-request class into this module against
     the architecture rule, and the raw bytes-key lookup returns
-    empty on the Cura PyQt6 (probed against the author's server).
+    empty on the Cura PyQt6 (probed against the server).
     The raw lookup stays as the fallback for replies whose pairs
     are unavailable (the late-header test's fake)."""
     try:
@@ -452,7 +452,7 @@ class RemoteFileService(QObject):
             # server answer gzip + CHUNKED, which carries no
             # Content-Length — the transfer's declared size stayed 0
             # and the bar swept for the whole download (the live
-            # report, the author's nginx probed). Identity also keeps
+            # report, nginx probed). Identity also keeps
             # the bytes on disk identical to the printer's file, which
             # the size-mismatch guard wants.
             request.setRawHeader(b"Accept-Encoding", b"identity")

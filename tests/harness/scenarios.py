@@ -2285,7 +2285,7 @@ SCENARIOS = [
          {"op": "deliver_click", "objectName": "deleteConfirmDeleteButton"},
          {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
      ]},
-    # The what's-new overlay's lifecycle (the author's ruling: it must
+    # The what's-new overlay's lifecycle (the ruling: it must
     # show once per version and dismiss by Esc, an outside press, and
     # the Close button). The seeded profile carries the marker, so the
     # suite never sees the popup unless a scenario asks — this one
@@ -2604,7 +2604,7 @@ SCENARIOS = [
          {"op": "exec_code", "verbs": [], "code": CONFIGURE_FM_STATE},
          # Reopen, then an outside PRESS dismisses it too. The reopen
          # rides the popup's real open() call (the band's toggle
-         # rides the author's live test — the harness engine refused
+         # rides the live test — the harness engine refused
          # its reopen click).
          {"op": "exec_code", "verbs": [], "code": CONFIGURE_FM_OPEN},
          {"op": "wait_rect", "objectName": "columnsPopupBackground", "budget": 15},
@@ -2664,7 +2664,7 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "resize_window", "w": 1600, "h": 1000},
          # A STANDBY session whose values are UNAVAILABLE (the
-         # author's ruling: neither the value nor its glyph may
+         # ruling: neither the value nor its glyph may
          # render; the X/Y/Z tuple hides whole when any one axis is
          # missing). The sim's kickoff state always carries heaters
          # and positions, so the scenario overwrites those values

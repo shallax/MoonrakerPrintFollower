@@ -76,7 +76,7 @@ def clamp_relative_move(signed_distance: float, current: float,
     if minimum is None and target < 0.0:
         # Unknown configured floor: never below zero on ANY axis —
         # the head must not be allowed into negative territory (the
-        # author's live report: microstepping below 0.00 Z).
+        # live report: microstepping below 0.00 Z).
         return 0.0
     if maximum is not None and target > maximum:
         result = maximum - current
@@ -256,8 +256,8 @@ def push_op(pending: Sequence[JogOp], op: JogOp) -> Tuple[Tuple[JogOp, ...], Opt
 
     Every command executes as its own move: adjacent same-axis taps
     are never merged and equal-and-opposite moves never cancel (the
-    author's 2026-09-17 ruling — coalescing once collapsed two
-    in-range retracts into one out-of-range extrude). The depth cap
+    2026-09-17 ruling — coalescing once collapsed two in-range
+    retracts into one out-of-range extrude). The depth cap
     rejects the newest tap (already-queued intent is kept) and
     reports why.
     """

@@ -89,7 +89,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 persistence=self._follower.persistence,
                 identity=self._follower.current_printer_identity,
             )
-            # The heightmap range filter (the author's request): the
+            # The heightmap range filter (a request): the
             # card's slider intents land on the model's shared window;
             # the presenter then mirrors it to the Preview surfaces.
             self._follower.presentation.bedMeshThresholdsRequested.connect(monitor.setBedMeshThresholds)
@@ -123,8 +123,8 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             monitor.updateName(stack.getName())
             monitor.updateUniqueName(stack.getId())
             monitor.updateBuildplate(stack.getProperty("machine_buildplate_type", "value"))
-            # The bed-mesh map's bed-space geometry (4.2.0, the
-            # author's request): the physical dimensions the expanded
+            # The bed-mesh map's bed-space geometry (4.2.0, a
+            # request): the physical dimensions the expanded
             # map draws the probed bounds within.
             monitor.setMachineGeometry(
                 stack.getProperty("machine_width", "value"),

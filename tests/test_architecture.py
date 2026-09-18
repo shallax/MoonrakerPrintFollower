@@ -280,7 +280,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(sorted(owners), ["CameraBridge.py", "MoonrakerTransport.py"])
 
     def test_network_replies_connect_into_bound_handlers_not_bare_closures(self):
-        # The author's live crash report: a SIGSEGV in PyQtSlot::call
+        # A live crash report: a SIGSEGV in PyQtSlot::call
         # on the main thread, delivered from a QtNetwork signal right
         # after the file-manager popup opened. A bare closure connected
         # to QNetworkReply.finished is a use-after-free trap in PyQt —
@@ -293,7 +293,7 @@ class SourceContractTests(unittest.TestCase):
             self.assertIsNone(re.search(r"\.finished\.connect\(finished\)", source), path.name)
             # PyQt6 enums never equal plain ints: ``error() != 0`` is
             # ALWAYS true and failed every successful thumbnail fetch
-            # (the author's live report). Compare against the enum.
+            # (a live report). Compare against the enum.
             self.assertIsNone(re.search(r"\.error\(\)\s*[!=]=\s*0\b", source), path.name)
         manager = (PLUGINS / "FileManager.py").read_text()
         self.assertIn("self._thumb_replies[relpath] = reply", manager)

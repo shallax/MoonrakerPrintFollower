@@ -144,7 +144,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(document["global"]["migration"]["status"], "ok")
         self.assertNotIn("migration", document["global"]["migration"])
 
-    # -- The corrupt path (the author's ruling over C1's gate) --------
+    # -- The corrupt path (the ruling over C1's gate) --------
 
     def test_corrupt_blob_flags_and_cleans_with_a_verified_backup(self):
         self._cfg("not json {{{")
@@ -209,8 +209,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(shard["consoleTranscript"][0]["text"], "ok")
         self.assertEqual(shard["consoleStoreTime"], 1234.5)
         # The old chrome moved to the new global document, and the
-        # pre-4.5.0 sections file left no trace (the author's live
-        # find).
+        # pre-4.5.0 sections file left no trace (found in live testing).
         with open(os.path.join(self.state_dir, "global.json"), encoding="utf-8") as handle:
             chrome = json.load(handle)
         self.assertEqual(chrome["sections"], {"toolhead": False})

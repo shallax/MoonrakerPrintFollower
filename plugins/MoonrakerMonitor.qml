@@ -299,7 +299,7 @@ Component {
         // bounds come from its last child's two main-axis endpoints
         // mapped into the pane — the rotated row's main axis maps
         // onto the pane's y, and a single corner read wrong on the
-        // author's engine (the live report). Hysteresis: hiding
+        // engine (the live report). Hysteresis: hiding
         // needs the bottom past the pane's edge, re-showing needs
         // comfortable slack — an intermediate resize geometry must
         // never flicker the group at the threshold (the live
@@ -336,7 +336,7 @@ Component {
             var visibleHeight = Math.min(pane.height, windowHeight - paneTop);
             var hidden = children[first].fitHidden;
             // No top guard: the -90-rotated info row's mapping read
-            // the guard false on the author's engine and its groups
+            // the guard false on the engine and its groups
             // never hid (the live report) while the +90 rows worked.
             // Bottom-only is safe even on zero geometry — the
             // constant then reads the group's length, which hides
@@ -456,7 +456,7 @@ Component {
         // the stage-exit branch from under it (the harness probe's
         // finding). This document only answers openPopOver, which
         // the dashboard's ladder writes through baseMonitorLoader.
-        // The author's ruling (2026-09-10): when the stage is too
+        // The ruling (2026-09-10): when the stage is too
         // narrow for the Webcam pane at its minimum, the Information
         // pane auto-collapses to make room. The trigger is computed
         // from FIXED constants — the expanded Info width, the webcam
@@ -468,7 +468,7 @@ Component {
         // jitter either.
         property real infoComfortWidth: (240 + 220 + 410) * screenScaleFactor + 4 * UM.Theme.getSize("default_margin").width
         property bool infoPersistedCollapsed: root.printer != null ? root.printer.infoCollapsed : false
-        // The author's ruling: fold the Information pane before the
+        // The ruling: fold the Information pane before the
         // WEBCAM pane starts being crushed. Empirically probed in the
         // harness (probe3): the camera column squeezes below its
         // 220 px comfort width at a stage width of ~900 px — the old
@@ -613,7 +613,7 @@ Component {
                         // Square at the OLD button width: the theme
                         // adds its padding around the 32px content, so
                         // the height tracks the rendered width (the
-                        // author's ruling).
+                        // ruling).
                         width: 28 * screenScaleFactor
                         iconSize: 12 * screenScaleFactor
                         height: width
@@ -777,14 +777,14 @@ Component {
                         anchors.centerIn: parent
                     }
                 }
-                // The collapsed readout (the author's 2026-09-17
+                // The collapsed readout (the 2026-09-17
                 // ruling): the hotend and bed temperatures from the
                 // PRINTER's peripherals fill the empty space BELOW
                 // the title — regular text, not the title's face.
-                // The collapsed readout (the author's 2026-09-17
+                // The collapsed readout (the 2026-09-17
                 // ruling): the hotend and bed temperatures from the
                 // PRINTER's peripherals in ONE rotated flat row of
-                // explicit children — the structure the author's
+                // explicit children — the structure the
                 // engine actually lays out (the wrapper/implicit
                 // strips stayed zero-sized there, the live report).
                 Item {
@@ -798,7 +798,7 @@ Component {
                     // the row's implicit width, so the centred row
                     // fills it and the strip starts at the margin
                     // under the title (direct row positioning hid
-                    // the content on the author's engine, the live
+                    // the content on the engine, the live
                     // report). 18 is the label line height.
                     width: 18 * screenScaleFactor
                     height: infoReadoutRow.implicitWidth
@@ -914,8 +914,8 @@ Component {
                         }
                         // NO fillHeight: the card hugs the webcam card
                         // directly (a fill slot plus a maximum clamp
-                        // left a huge gap between the cards — the
-                        // author's live report). Its height is the
+                        // left a huge gap between the cards — a
+                        // live report). Its height is the
                         // user's, bounded by the clamp window below.
                         // UNTIL they drag the handle, the card keeps the
                         // pane default: the live test found even
@@ -930,8 +930,8 @@ Component {
                         // EXPLICIT height, never the inner column's
                         // implicit: the real Cura engine computed the
                         // implicit from a collapsed chain and the card
-                        // rendered two lines tall with a white gap (the
-                        // author's report; the harness engine disagreed).
+                        // rendered two lines tall with a white gap (a
+                        // report; the harness engine disagreed).
                         // The pane bounds are the clamp window: the
                         // console's floor keeps the header row and the
                         // input row usable, and its ceiling leaves the
@@ -1166,7 +1166,7 @@ Component {
                                     // the theme adds its padding around
                                     // the 32px content, so the height
                                     // tracks the rendered width (the
-                                    // author's ruling).
+                                    // ruling).
                                     width: 28 * screenScaleFactor
                                     iconSize: 12 * screenScaleFactor
                                     height: width
@@ -1187,7 +1187,7 @@ Component {
                                             // The poll follows the pane:
                                             // collapsing stops the
                                             // gcode-store fetch (the
-                                            // author's expanded-only
+                                            // expanded-only
                                             // ruling), expanding starts
                                             // it with a backfill seed.
                                             var expanding = root.printer.sectionExpandedMap["console"] === false;
@@ -1229,7 +1229,7 @@ Component {
                                 // spilled past the card, and the fade
                                 // keeps the closing pane clean.
                                 opacity: consolePanel.consoleBodyOpacity
-                                // The author's cheat: if the app started
+                                // The cheat: if the app started
                                 // with the console collapsed, the FIRST
                                 // expand scrolls to the tail once (the
                                 // restore ran collapsed and its metrics
@@ -1420,7 +1420,7 @@ Component {
                                             // metrics to settle, or for the
                                             // first expand of a start-
                                             // collapsed console — the
-                                            // author's cheat). Recolour
+                                            // cheat). Recolour
                                             // rebuilds never follow.
                                             consoleFlick.restoreScrollPending = true;
                                         } else {
@@ -1531,8 +1531,8 @@ Component {
                                     // the pane is dragged shorter than
                                     // they need they are cut at the well's
                                     // own edge instead of floating
-                                    // outside the black border (the
-                                    // author's live report).
+                                    // outside the black border (a
+                                    // live report).
                                     clip: true
 
                                     ColumnLayout {
@@ -1638,8 +1638,8 @@ Component {
                                                     // overlays the well's right
                                                     // edge: the text must stop
                                                     // short of it or wrapped
-                                                    // lines run underneath (the
-                                                    // author's live report). A
+                                                    // lines run underneath (a
+                                                    // live report). A
                                                     // CONSTANT reserve (the
                                                     // status gutter's
                                                     // precedent): the
@@ -1674,8 +1674,8 @@ Component {
                                                         // Long Klipper lines wrap
                                                         // instead of overflowing the
                                                         // well; wrapping breaks on
-                                                        // word boundaries (the
-                                                        // author's live report).
+                                                        // word boundaries (a
+                                                        // live report).
                                                         wrapMode: TextEdit.Wrap
                                                         font.family: consoleSection.monoFamily()
                                                         color: MoonrakerTheme.consoleText
@@ -1819,7 +1819,7 @@ Component {
                             // The transport detail rides the dot's
                             // tooltip: "connected over websocket" or
                             // "connected over HTTP polling" (the
-                            // author's chosen spot for it).
+                            // chosen spot for it).
                             text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."
                             acceptedButtons: Qt.NoButton
                         }
@@ -1880,7 +1880,7 @@ Component {
                         // Square at the OLD button width: the theme
                         // adds its padding around the 32px content, so
                         // the height tracks the rendered width (the
-                        // author's ruling).
+                        // ruling).
                         width: 28 * screenScaleFactor
                         iconSize: 12 * screenScaleFactor
                         height: width
@@ -1928,7 +1928,7 @@ Component {
                         // The constant gutter (the whats-new overlay's
                         // precedent): binding the content width to the
                         // LIVE scrollbar width fed a layout polish loop
-                        // on the author's Windows run — the scrollbar
+                        // on the Windows run — the scrollbar
                         // overlays the gutter instead of squeezing the
                         // content in a feedback cycle.
                         Layout.fillWidth: true
@@ -1985,7 +1985,7 @@ Component {
                 // The loading prompt (the 2026-09-16 request): an
                 // overlay ABOVE the flick, never a layout child — a
                 // layout child flipping visibility reflowed the
-                // section stack and fed a polish loop (the author's
+                // section stack and fed a polish loop (the
                 // Windows run).
                 Item {
                     anchors.fill: statusFlick
@@ -2028,7 +2028,7 @@ Component {
                         color: connectionDotColour
                     }
                 }
-                // The collapsed readout (the author's 2026-09-17
+                // The collapsed readout (the 2026-09-17
                 // ruling): the dual-stacked progress bars fill the
                 // empty space BELOW the title — print above layer,
                 // thin tracks at the pill weight, each labelled and
@@ -2052,7 +2052,7 @@ Component {
                     width: 18 * screenScaleFactor
                     height: statusReadoutRow.implicitWidth
                     // ONE rotated flat row of explicit children —
-                    // the structure the author's engine lays out.
+                    // the structure the engine lays out.
                     // Each bar is its own pair: glyph, label, then
                     // the TRACK — whose 60 px span lies ALONG the
                     // row's main axis, so the rotation makes it run
@@ -2577,7 +2577,7 @@ Component {
                     showProbePoints: root.printer != null ? root.printer.showProbePoints : false
                 }
 
-                // The dual-ended range filter (the author's request):
+                // The dual-ended range filter (a request):
                 // the SAME five-stop blue-to-red scale the Preview's
                 // bed-mesh overlay uses, shared by both surfaces. The
                 // window lives in the model, so the Preview card's
@@ -2615,7 +2615,7 @@ Component {
                 }
 
                 UM.Label {
-                    // The Klipper-clamped disclaimer (the author's
+                    // The Klipper-clamped disclaimer (a
                     // request): the same honest claim the Preview's
                     // legend makes.
                     Layout.fillWidth: true

@@ -26,7 +26,7 @@ class MoonrakerClient(QObject):
     RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)
     # The never-connected retry ceiling: a session that has never
     # received a status retries at this cadence instead of walking
-    # the failure ladder (the author's ruling — the first connection
+    # the failure ladder (the ruling — the first connection
     # is eager). A LAN endpoint answers in one attempt; a down
     # endpoint takes four attempts a second, which is harmless.
     FIRST_CONNECT_RETRY_MS = 250
@@ -179,7 +179,7 @@ class MoonrakerClient(QObject):
         self._socket_started_at = time.monotonic()
         # One connection per handler, however many starts a session
         # sees: the old code connected a FRESH closure every cycle and
-        # never disconnected — the author's Windows log showed three
+        # never disconnected — a Windows log showed three
         # "upgraded" lines per single upgrade at boot and five after
         # the file load, one per accumulated layer. Disconnect the
         # previous cycle's handlers before connecting this one's.
@@ -549,7 +549,7 @@ class MoonrakerClient(QObject):
         self.statusReceived.emit(merged)
         if connected_now:
             # The connect transition re-broadcasts the accumulated
-            # snapshot to every listener (the author's ruling): the
+            # snapshot to every listener (the ruling): the
             # sync may have landed while a listener was not yet
             # attached, and the fresh broadcast guarantees the UI
             # populates instantly with everything known. It emits the
@@ -571,7 +571,7 @@ class MoonrakerClient(QObject):
             urgent=self._session.pause_guard or self._session.toolhead_guard,
         )
         # The idle floor must not gate the FIRST connection (the
-        # author's live report — five seconds of dead UI before the
+        # live report — five seconds of dead UI before the
         # printer showed as connected): until a status has ever
         # landed, the tick runs at the configured cadence so a failed
         # first attempt retries promptly. The floors and the failure
@@ -610,7 +610,7 @@ class MoonrakerClient(QObject):
             urgent=self._session.pause_guard or self._session.toolhead_guard,
         )
         retry_interval = max(adaptive, delay)
-        # The first connection is eager (the author's live report —
+        # The first connection is eager (a live report —
         # five seconds of dead UI before the printer showed as
         # connected, then 2-3 s): each fast startup failure walked the
         # ladder and the 5 s rung then gated a session that had never

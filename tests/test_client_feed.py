@@ -91,7 +91,7 @@ class ClientFeedTests(unittest.TestCase):
         })
 
     def test_idle_floor_does_not_gate_the_first_connection(self):
-        # The author's live report: ~5 s of dead UI before the printer
+        # A live report: ~5 s of dead UI before the printer
         # showed as connected — the idle floor (5000 ms) governed the
         # tick from startup, so a failed first attempt retried five
         # seconds later. Until the first status has ever landed, the
@@ -105,7 +105,7 @@ class ClientFeedTests(unittest.TestCase):
         self.assertEqual(self.client._poll_timer.interval(), 5000)
 
     def test_failure_ladder_does_not_gate_a_never_connected_session(self):
-        # The author's live report: ~5 s of dead UI before the first
+        # A live report: ~5 s of dead UI before the first
         # data — each fast startup failure walks the ladder (1 s, 2 s,
         # 5 s) and the 5 s rung then gates a session that has never
         # connected. Until the printer has ever answered, the retry
@@ -122,7 +122,7 @@ class ClientFeedTests(unittest.TestCase):
         self.assertGreater(self.client._retry_delay_ms, 750)
 
     def test_connect_transition_republishes_the_accumulated_snapshot(self):
-        # The author's ruling: the connect transition re-broadcasts
+        # The ruling: the connect transition re-broadcasts
         # the accumulated snapshot so every listener populates
         # instantly — even one that attached after the sync landed.
         self.client.configure("http://p", "k", 750, feed_mode="websocket")

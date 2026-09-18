@@ -485,7 +485,7 @@ def exec_rpc(code, timeout=60.0, raise_on_error=False):
     if reply.get("truncated"):
         # A truncated probe result reads as "{}" after parsing — the
         # silent-data-loss trap the z-group calibration hit twice. Fail
-        # loudly so the probe author sees it, never a false absence.
+        # loudly so the failure is visible, never a false absence.
         if raise_on_error:
             raise RuntimeError("driver exec result truncated at 4000 chars")
         return {"_truncated": True}
@@ -2065,7 +2065,7 @@ def first_install1():
         steps.append(("01-gate", "boot gate: the machine is restored, no welcome overlay",
                       "welcome absent, window at the pinned geometry (no printer configured yet)",
                       gate, shot("01-gate")))
-        # The activation (the author's ruling): nothing was migrated,
+        # The activation (the ruling): nothing was migrated,
         # so the document activates directly — the version, no machine
         # records, and NO migration record for the second boot to
         # re-run against live config.
@@ -2265,7 +2265,7 @@ def suite_run(group_id):
         wait_stage("PrepareStage", timeout_ms=60000)
         for spec in specs:
             if spec.get("container_skip"):
-                # The engine-divergent scenarios (the author's Cura
+                # The engine-divergent scenarios (real Cura
                 # proves them live; the container's engine cannot —
                 # TECH_DEBT's two-engine item). The skip is a
                 # RECORDED marker, never a silent pass: the reason
@@ -3124,7 +3124,7 @@ def suite_step(step):
         # edge to below's top edge, within [min, max]. With
         # edges=bottoms: above's bottom edge to below's bottom edge
         # (the </> button must sit ON the card's bottom line — the
-        # author's live report).
+        # live report).
         def resolve(ref):
             keys = ("objectName", "text", "className", "window")
             payload = {k: ref[k] for k in keys if k in ref}

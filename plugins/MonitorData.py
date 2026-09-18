@@ -124,7 +124,7 @@ class MonitorData(QObject):
             self.set_active(True)
         elif connected:
             # The first data must not wait for the lane timers' next
-            # ticks (the author's live report — aux stayed unpopulated
+            # ticks (a live report — aux stayed unpopulated
             # long after the connect): the connection transition
             # itself fires every lane immediately.
             self.refresh_all()
@@ -224,11 +224,11 @@ class MonitorData(QObject):
         self.set_active(True)
 
     def reconnect_after_emergency(self) -> None:
-        """The author's ruling (2026-09-10, live-proven on their
+        """The ruling (2026-09-10, live-proven on a
         printer): after an emergency stop the host refuses commands
         until the connection is cycled. The plugin cycles the client
-        once and re-arms the monitor — the same sequence as the
-        author's manual disconnect/reconnect that recovered it."""
+        once and re-arms the monitor — the same sequence as a
+        manual disconnect/reconnect that recovered it."""
         if not self._active or not self._client.connected:
             return
         self._client.stop()

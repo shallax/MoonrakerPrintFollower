@@ -316,7 +316,7 @@ Cura.MachineAction {
                                 from: 0
                                 to: 13
                                 stepSize: 1
-                                // The click behaviours (the author's live
+                                // The click behaviours (a live
                                 // report): a press that lands within the
                                 // handle's extent of the current value is a
                                 // no-op — a click on the grab handle must

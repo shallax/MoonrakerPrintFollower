@@ -127,7 +127,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # geometry proof no verb expresses (the live report: the
         # fields must never overlap).
         # And the availability gate (x8): the collapse and restore
-        # slots — the author's live-untestable ruling rides the
+        # slots — the live-untestable ruling rides the
         # slots exactly as the other readout scenarios do.
         # And the cross-talk gate (x9): the info drag rides the x6
         # probe again, and the crosstalk probe runs twice — after

@@ -584,8 +584,8 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtSlot()
     def clearCache(self) -> None:
         """The Diagnostics tab's cache-clear: drop the persistent index
-        cache so the next Improve-ETA re-downloads and re-indexes (the
-        author asked for a re-testable download flow)."""
+        cache so the next Improve-ETA re-downloads and re-indexes (a
+        request for a re-testable download flow)."""
         try:
             shutil.rmtree(self._cache_root(), ignore_errors=True)
             self._cache_status = "Cache cleared. Restart Cura to also drop the session's downloaded file."

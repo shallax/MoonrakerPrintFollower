@@ -7,7 +7,7 @@ coercion (its tests pin the fallback document); the store owns what
 happens to the file.
 
 4.5.0: the documents are pretty-printed (indent + sorted keys, the
-author's ruling) and fsynced; the atomic-write primitive is injected
+ruling) and fsynced; the atomic-write primitive is injected
 (production passes Cura's SaveFile for its fsync+flock commit — M8)
 and an optional lock guards the whole read-modify-write cycle
 (E9/H2)."""
@@ -88,7 +88,7 @@ class StateStore:
                 # not be written through (truncating whatever it points
                 # at, as this user). The flag is POSIX-only — Windows has
                 # no such risk at .tmp and its os lacks the constant, so
-                # the open must degrade there (the author's Windows run:
+                # the open must degrade there (a Windows run:
                 # every state write failed and the what's-new marker never
                 # persisted); 0o600: the file now carries two features'
                 # state.

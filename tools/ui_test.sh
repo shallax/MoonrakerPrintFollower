@@ -129,7 +129,7 @@ fi
 # Per-unit evidence dir: the release gate gives every unit its own name
 # so a later unit never overwrites an earlier one's proof (the panel's
 # evidence-survival finding). The local default timestamps too (the
-# author's ruling — a reused fixed name left a stale gallery
+# ruling — a reused fixed name left a stale gallery
 # masquerading as the current run's evidence). Both sides resolve
 # through the one shared rule (tools/ui_test_paths.sh carries the
 # tests) so the host report and the container writes can never drift

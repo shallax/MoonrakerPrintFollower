@@ -308,7 +308,7 @@ Component {
         }
 
         property bool tuningSliderPressed: false
-        // The freeze lists (the author's live report): while a tuning
+        // The freeze lists (a live report): while a tuning
         // slider is mid-gesture — a drag or a pending keyboard nudge —
         // the fan/LED/PWM repeaters must not rebuild, or the rebuild
         // replaces the focused delegate and the interaction dies.
@@ -318,7 +318,7 @@ Component {
         // The slider that was being tuned when the freeze lifted: the
         // live lists rebuild the repeaters then, so the delegate's
         // focus dies with the rebuild — the dashboard re-grants it
-        // once the new delegate exists (the author's live report).
+        // once the new delegate exists (a live report).
         property string tuningSliderObject: ""
         property string tuningSliderKind: ""
         // Slider sections report interaction through this sink — the
@@ -369,7 +369,7 @@ Component {
         // The refocus RETRIES until the walk lands: the repeater
         // rebuild that follows the submit is asynchronous against the
         // unfreeze edge, and a one-shot walk could focus a delegate
-        // that dies a moment later (the author's live report — fan
+        // that dies a moment later (a live report — fan
         // and LED sliders lost focus on the apply, the singletons
         // never rebuild).
         Timer {
@@ -455,7 +455,7 @@ Component {
                 id: emergencyButton
                 objectName: "moonrakerEmergencyButton"
                 property int clicks: root.printer != null ? root.printer.emergencyStopClicks : 0
-                // The author's ruling (2026-09-10): while DISCONNECTED
+                // The ruling (2026-09-10): while DISCONNECTED
                 // no Monitor-page control is enabled — the emergency
                 // stop included. It dims and refuses input instead of
                 // pretending it could fire. The INHERITED Item
@@ -688,7 +688,7 @@ Component {
                     }
                     // The configure trigger: the same glyph as the
                     // column configurer, one pane per header (the
-                    // author's ruling).
+                    // ruling).
                     Cura.SecondaryButton {
                         id: configureSectionsButton
                         objectName: "configureControlsSectionsButton"
@@ -730,7 +730,7 @@ Component {
                         // Square at the OLD button width: the theme adds
                         // its padding around the 32px content, so the
                         // height tracks the rendered width (the
-                        // author's ruling).
+                        // ruling).
                         width: 28 * screenScaleFactor
                         iconSize: 12 * screenScaleFactor
                         height: width
@@ -783,7 +783,7 @@ Component {
                         // harness's margin-symmetry pin). While the bar
                         // IS visible, the column yields its width so the
                         // rows' right edges stay clear of it (the
-                        // author's clipping report). Narrower content
+                        // clipping report). Narrower content
                         // only grows taller, so the visibility never
                         // oscillates.
                         width: controlScrollbar.visible ? controlFlick.width - controlScrollbar.width - UM.Theme.getSize("default_margin").width : controlFlick.width
@@ -922,7 +922,7 @@ Component {
                         anchors.centerIn: parent
                     }
                 }
-                // The collapsed readout (the author's 2026-09-17
+                // The collapsed readout (the 2026-09-17
                 // ruling): position, Z offset and flow rate fill the
                 // empty space BELOW the title — regular text, not the
                 // title's face. ONE line of FIXED-WIDTH fields, each

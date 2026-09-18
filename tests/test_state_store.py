@@ -67,7 +67,7 @@ class StateStoreTests(unittest.TestCase):
         # Windows: os has no O_NOFOLLOW, and the old unconditional
         # flag turned EVERY state write into a failure — the
         # what's-new marker never persisted and the overlay offered
-        # itself on every launch (the author's Windows run). The
+        # itself on every launch (a Windows run). The
         # open must degrade to the plain flags there.
         saved = getattr(os, "O_NOFOLLOW", None)
         try:

@@ -72,8 +72,7 @@ ColumnLayout {
                 UM.TooltipArea {
                     anchors.fill: parent
                     // Short value in the row, full
-                    // sentence in the tooltip (the
-                    // author's ruling).
+                    // sentence in the tooltip (the ruling).
                     text: root.printerModel != null ? (root.printerModel.sectionReasonDetail !== "" ? root.printerModel.sectionReasonDetail : (root.printerModel.printActive ? "Temperature profiles are disabled during a print, matching Mainsail." : "")) : ""
                     acceptedButtons: Qt.NoButton
                 }

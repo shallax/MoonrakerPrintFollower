@@ -115,7 +115,7 @@ allowlist pin over `plugins/` contents guarantee it never ships.
   after the fact against Cura's own state (the stage changed, the
   layer moved by the expected delta). The resolved address (parent
   chain, class, geometry, text) lands in the step's delivery record.
-- **Input (the author's ruling 2026-09-11; the split validated in
+- **Input (the 2026-09-11 ruling; the split validated in
   Phase A) — AMENDED (2026-09-15):** the claim that XTEST is the
   REAL-behaviour path was struck — Phase A found the environment's
   limit: under the WM-less Xvfb, XTEST hover and motion work but
@@ -127,7 +127,7 @@ allowlist pin over `plugins/` contents guarantee it never ships.
   directly into Cura's window with exact button/timestamp control,
   for race windows, precise drag paths and delegate rows that shift
   coordinates. Phase A validated QTest end-to-end on Cura's OWN
-  stage-header buttons (the injection the author challenged):
+  stage-header buttons (the injection that was challenged):
   synthesized press/release → DeliveryAgent → Button → clicked →
   handler, all three stages switching for real, on video. XTEST
   remains as the per-phase human-clickability realism control
@@ -207,7 +207,7 @@ REAL protocols over real TCP, in both transports:
   the aggregate stats, and the route-delay lane simulates a loaded
   peer per endpoint. Scenarios assert a request-rate budget over a
   steady window and the runner records the profile — the honest
-  proxy for the author's printer-side dwell, which itself is only
+  proxy for the printer-side dwell, which itself is only
   verifiable in real-printer mode (§2.5).
 - **Fault injection**: dropped push frames, a stalled stream, refused
   subscriptions (both the unauthorized and the structured-refusal
@@ -393,8 +393,8 @@ vocabulary the gates established.
    a slow drag spanning several deliveries. Assertions run over the
    recorded `preview.state.attached` and `expected_layer` series:
    detach, stays detached until Attach. Variant: view-swap away and
-   back re-attaches — THE ONLY automatic re-attach (the author's
-   ruling, 2026-09-11: "view-swap re-attach is the ONLY automatic
+   back re-attaches — THE ONLY automatic re-attach (the
+   2026-09-11 ruling: "view-swap re-attach is the ONLY automatic
    re-attach; any layer-selection change detaches and stays
    detached").
 7. **Transport handover** — reopen the Monitor repeatedly in
@@ -511,7 +511,7 @@ centre-line, containment, non-overlap; `assert_rect_change` for the
 pane shrink/grow; `wait_rect` for rendered presence), rendered
 follows-model checks (`wait_rendered`/`assert_rendered` read the
 label's actual text after a push — the model being right is not
-enough), and the UI exercise the author's ruling demands: pane
+enough), and the UI exercise the ruling demands: pane
 collapse/expand (info panel width, the temperatures section, the
 status panel) and window resize to narrow/wide — the console's
 width-driven auto-collapse and re-expand, with the panel layout
@@ -521,7 +521,7 @@ cube inserts through Cura's reader chain, the engine slices it — the
 scenario pins the slice count at 39 — and the panel renders), and
 the button appears once a
 post-processing script is active — v1 activates PauseAtHeight
-through the plugin's manager. The author's alignment question is
+through the plugin's manager. The alignment question is
 settled by a stock-Cura control boot: the button sits top-aligned
 in Cura's native 60px action-panel row identically without the
 plugin, so the apparent offset to our card's bottom line is Cura's
@@ -537,7 +537,7 @@ stays covered by the model-level flows instead. The
 margin-symmetry pin caught and closed a real asymmetry: the controls
 pane reserved the scrollbar's width inside itself even when the
 scrollbar was hidden, so the right gap read three margins wide
-against the left pane's one (the author's doubled-edge class, the
+against the left pane's one (the doubled-edge class, the
 right side this time). The reservation is gone (the scrollbar
 overlays), and the pin now measures the panes' true outer edges:
 11px vs 11px, green.
@@ -570,7 +570,7 @@ existed and every later read saw `None`.
 ## 3b. The test model and the engine
 
 `tests/harness/models/voron_cube.stl` is the suite's test model (the
-author's ruling, 2026-09-13): the Voron Design Cube v7, fetched from
+2026-09-13 ruling): the Voron Design Cube v7, fetched from
 a public mirror of the official STL and re-headed to a standard
 binary STL header (the official export carries UltiMaker's "ATF"
 header variant, which the reader chain silently rejects). The full
@@ -634,8 +634,7 @@ SimulationView is the ACTIVE view (the Preview stage click).
   verdict recorded as the expected red) and the z10/z11/z15 proof
   trio (the refused press and the overlay refusal).
 
-## 5. Phasing (each phase ends with screenshots AND video shown to the
-   author)
+## 5. Phasing (each phase ends with screenshots AND video for review)
 
 - **Phase A — the skeleton proof (COMPLETE, 2026-09-12):** boot
   real Cura under Xvfb in the harness image, click PREPARE →

@@ -467,7 +467,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._camera_recovering = False
         self._camera.streamFailed.connect(self._on_stream_failed)
         self._camera.streamRecovered.connect(self._on_stream_recovered)
-        # The wake recovery (the author's live report): a stream that
+        # The wake recovery (a live report): a stream that
         # survives a suspend shows a FROZEN frame — the image's size
         # is already set, so the render watchdog cannot see it. A
         # wake transition reloads the camera source once, the same
@@ -513,7 +513,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_manager = FileManager(client, self)
         self._file_manager.set_column_state(self._file_columns_state)
         # Metascan outcomes land in the console as local notes (the
-        # author's live report: the option appeared to do nothing).
+        # live report: the option appeared to do nothing).
         self._file_manager_note = ""
         # The print-start operation's owner (4.3.0): the armed state,
         # the watchdog and the failure verdict moved out of the model
@@ -558,7 +558,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # restored transcript lands the moment the config is readable
         # (the "commands never rehydrate" report).
         self._data.changed.connect(self._console.reload_if_empty)
-        # The author's ruling (2026-09-10): after a reconnect the
+        # The ruling (2026-09-10): after a reconnect the
         # camera stream restarts — the nonce bump reloads the stream
         # on every connection transition into connected (the
         # e-stop's automatic cycle included).
@@ -597,7 +597,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def setMachineGeometry(self, width, depth, center_is_zero) -> None:
         """The physical bed dimensions from the machine stack (4.2.0,
-        the author's request): the expanded bed-mesh map draws the
+        a request): the expanded bed-mesh map draws the
         probed bounds within the real bed, extends the boundary
         values to the bed edges and outlines the exact Klipper mesh
         bounds — the Preview overlay's honest visualisation."""
@@ -623,7 +623,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     @pyqtSlot()
     def cameraRenderStalled(self) -> None:
-        # The render watchdog (the author's live report): a stream
+        # The render watchdog (a live report): a stream
         # that CONNECTED but never painted a frame raises no error
         # signal — the QML pane watches the image's frame size and
         # reports a stall here. The recovery is the same as a stream
@@ -653,7 +653,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # The console constructed before the active machine existed
             # and read an empty record; by attach time the identity is
             # real, so re-load the transcript if it never did (the
-            # author's "completely empty at app start" report).
+            # "completely empty at app start" report).
             self._console.reload_if_empty()
         self._data.set_console_expanded(expanded, stored)
 
@@ -692,7 +692,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # The popup is closed: the grid's bindings are inert, and
             # rebuilding the ROW payloads per poll is pure waste —
             # closing a 400-file listing stalled for seconds (the
-            # author's live report). The cheap view state still
+            # live report). The cheap view state still
             # publishes (the view-mutation contract), only the heavy
             # rows/recents/thumbs/option-scan is skipped. Reopening
             # refills everything below.
@@ -926,7 +926,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # tooltips.
         pause_verdict = can_pause(observation)
         resume_verdict = can_resume(observation)
-        # The heightmap range filter (the author's request): ONE
+        # The heightmap range filter (a request): ONE
         # window drives both surfaces — the Monitor pop-over reads the
         # published keys, the Preview card and scene node follow
         # through the presenter. The window follows the mesh range
@@ -1655,7 +1655,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     bedMeshMachineWidth = value_property(float, "bedMeshMachineWidth", typedControlsChanged, 0.0)
     bedMeshMachineDepth = value_property(float, "bedMeshMachineDepth", typedControlsChanged, 0.0)
     bedMeshCenterIsZero = value_property(bool, "bedMeshCenterIsZero", typedControlsChanged, False)
-    # The heightmap range filter (the author's request): values
+    # The heightmap range filter (a request): values
     # outside this window render grey.
     bedMeshThresholdLow = value_property(float, "bedMeshThresholdLow", typedControlsChanged, 0.0)
     bedMeshThresholdHigh = value_property(float, "bedMeshThresholdHigh", typedControlsChanged, 0.0)
@@ -2032,7 +2032,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot(bool)
     @pyqtSlot(float, float)
     def setBedMeshThresholds(self, low, high):
-        # The heightmap range filter (the author's request): ONE
+        # The heightmap range filter (a request): ONE
         # shared window drives both surfaces — the Monitor pop-over
         # re-reads the published keys, the Preview card and scene node
         # follow through the presenter — so the two sliders stay

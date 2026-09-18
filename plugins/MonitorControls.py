@@ -21,13 +21,13 @@ class MonitorControls(QObject):
         self._mesh, self._config = bed_mesh, config
         self._remembered_colors = {}
         # The brightness slider holds the USER'S GAIN, unlinked from
-        # the channel peak (the author's ruling): a channel nudge
+        # the channel peak (the ruling): a channel nudge
         # must not move the brightness value, or the extra field
         # change triggers a second publish and rebuild that kills the
         # slider's focus.
         self._remembered_gain = {}
         # The channel sliders hold the USER'S set percentages (the
-        # author's gain ruling): seeded once from the first-seen
+        # gain ruling): seeded once from the first-seen
         # colour, then only the user's own nudges change them — the
         # gain acts on the SEND, never on the displayed values.
         self._remembered_channels = {}
@@ -97,7 +97,7 @@ class MonitorControls(QObject):
                 if name not in self._remembered_gain and brightness > 0.001:
                     self._remembered_gain[name] = brightness
                 gain = self._remembered_gain.get(name, 0.0)
-                # ABSOLUTE channels (the author's live report): the
+                # ABSOLUTE channels (a live report): the
                 # chroma normalisation made every nudge re-scale all
                 # four sliders — a +1 nudge of a zeroed channel jumped
                 # it to 100 and dragged the others with it. The
@@ -278,7 +278,7 @@ class MonitorControls(QObject):
         suffix = name.split(" ", 1)[-1]
         if kind == "fan":
             # Fail closed for the firmware-regulated fans (the
-            # author's live report): no path may issue SET_FAN_SPEED
+            # live report): no path may issue SET_FAN_SPEED
             # at a controller_fan/temperature_fan.
             if not fan_writable(name):
                 return
@@ -334,7 +334,7 @@ class MonitorControls(QObject):
         # Every device the printer reports renders — the configured
         # auto-power-on list only drives the print-start power sequence
         # (UploadController), it never narrows the Monitor display (the
-        # author's ruling: a configured 24v,Bed pair silently hid DFU).
+        # ruling: a configured 24v,Bed pair silently hid DFU).
         raw = self._data.snapshot.power
         # The per-device ruling (4.2.0, A3/F4): can_toggle is the
         # policy's per-device verdict — the shipped row field, now

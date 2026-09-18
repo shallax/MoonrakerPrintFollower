@@ -17,8 +17,8 @@ class BedMeshPresenter(QObject):
     def __init__(self, application, cura, presentation, parent=None, persistence=None):
         super().__init__(parent)
         # The 4.5.0 re-point: the visibility and exaggeration live in
-        # the settings document's global section now (the author's
-        # no-trace ruling) — the preferences are the pre-migration
+        # the settings document's global section now (the no-trace
+        # ruling) — the preferences are the pre-migration
         # fallback only.
         self._persistence = persistence
         self._application, self._cura, self._presentation = application, cura, presentation
@@ -33,7 +33,7 @@ class BedMeshPresenter(QObject):
             global_section = self._persistence.settings_document().get("global") or {}
             if "bedMeshVisible" in global_section:
                 self._visible = bool(global_section["bedMeshVisible"])
-        # The "scale z-max" slider (the author's request): the Z
+        # The "scale z-max" slider (a request): the Z
         # exaggeration of the Preview surface, 0 (flat) to 100.
         self._preferences.addPreference(self.EXAGGERATION_PREF_KEY, self.DEFAULT_EXAGGERATION)
         try:
@@ -96,7 +96,7 @@ class BedMeshPresenter(QObject):
         self.changed.emit()
 
     def set_thresholds(self, low, high):
-        # The heightmap range filter (the author's request): the
+        # The heightmap range filter (a request): the
         # window the MONITOR model owns, mirrored here for the Preview
         # card and the scene node. A new mesh re-clamps a touched
         # window into the new range (see _clamp_thresholds).
@@ -113,7 +113,7 @@ class BedMeshPresenter(QObject):
         self.changed.emit()
 
     def set_exaggeration(self, scale):
-        # The "scale z-max" slider (the author's request): 0 flattens
+        # The "scale z-max" slider (a request): 0 flattens
         # the surface, 1000 is the ceiling; the default 20 is the
         # historical fixed value.
         value = max(0.0, min(self.MAX_EXAGGERATION, float(scale)))

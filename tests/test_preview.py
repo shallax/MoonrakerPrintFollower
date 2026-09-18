@@ -161,7 +161,7 @@ class PreviewFollowerServiceTests(unittest.TestCase):
         self.assertEqual(self.service.state.observed_layer, 4)
 
     def test_any_deviation_detaches_even_right_after_attach(self):
-        # The author's ruling: ANY user intervention to the layer
+        # The ruling: ANY user intervention to the layer
         # selection detaches the follower — no absorption window, no
         # auto re-attach. A deviation immediately after an attach
         # detaches like any other.

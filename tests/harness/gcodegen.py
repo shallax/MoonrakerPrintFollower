@@ -8,7 +8,7 @@ def make_gcode(layers: int = 40) -> str:
     layer with extrusion moves and M73 progress. Real parse/render
     targets for the load pipeline (A25). ONE baked pause (the PAUSE
     command at layer 20) so the index scenarios exercise the baked
-    pause path too (the author's request) — no scenario asserts the
+    pause path too (by request) — no scenario asserts the
     pause list's exact contents, so the extra row is free coverage."""
     lines = [";FLAVOR:Marlin", ";LAYER_COUNT:%d" % layers, "M73 P0", "G90", "M82"]
     size = 50.0

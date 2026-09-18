@@ -319,7 +319,7 @@ ColumnLayout {
                         color: UM.Theme.getColor("text")
                         // The download glyph must never
                         // carry the angle the hourglass
-                        // froze at (the author's live
+                        // froze at (a live
                         // report): an assignment from
                         // inside the animation cannot
                         // win against the animation
@@ -500,7 +500,7 @@ ColumnLayout {
 
             // Filament rows sit after Finish, beside
             // the progress block they belong to (the
-            // author's placement). NO-REFLOW RULE:
+            // placement). NO-REFLOW RULE:
             // the rows are permanent — the values
             // read "—" until Klipper reports them, so
             // the grid never shifts when a job

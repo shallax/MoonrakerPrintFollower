@@ -52,8 +52,8 @@ Cura.RoundedRectangle {
         UM.Label {
             // The pane title, in the other panes'
             // style — the same large bold face as
-            // Information and Printer status (the
-            // author's live report).
+            // Information and Printer status (a
+            // live report).
             text: "Webcam"
             font: UM.Theme.getFont("large_bold")
             color: UM.Theme.getColor("text")
@@ -161,8 +161,8 @@ Cura.RoundedRectangle {
             }
 
             Timer {
-                // The render watchdog (the author's
-                // live report): a stream that
+                // The render watchdog (a live
+                // report): a stream that
                 // CONNECTED but never painted a
                 // frame raises no error signal.
                 // While configured and visible, a
@@ -189,8 +189,8 @@ Cura.RoundedRectangle {
                 // A stale frame must not read as
                 // live: while disconnected a heavy
                 // neutral-grey wash and an explicit
-                // caption cover the camera (the
-                // author's live ruling; true
+                // caption cover the camera (a
+                // live ruling; true
                 // per-pixel desaturation needs a
                 // shader Cura's Qt 5.15 line cannot
                 // guarantee — roadmap note). The
@@ -264,7 +264,7 @@ Cura.RoundedRectangle {
                 Layout.fillWidth: true
                 height: cameraControls.height + 2 * UM.Theme.getSize("narrow_margin").height
 
-                // The author's final ruling: the
+                // The final ruling: the
                 // label sits PERMANENTLY above the
                 // dropdown, centred, no colon — no
                 // conditional layouts, nothing to
@@ -287,8 +287,8 @@ Cura.RoundedRectangle {
                         Layout.alignment: Qt.AlignHCenter
                         // The inset keeps the combo
                         // from ever touching the pane
-                        // edge at the crush (the
-                        // author's live report).
+                        // edge at the crush (a
+                        // live report).
                         width: Math.min(implicitWidth, parent.width - 2 * UM.Theme.getSize("narrow_margin").width)
                         spacing: UM.Theme.getSize("narrow_margin").width
 

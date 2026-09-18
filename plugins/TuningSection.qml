@@ -48,7 +48,7 @@ ColumnLayout {
                 UM.Label {
                     // The fixed width keeps the row from
                     // reflowing as the percentage changes
-                    // (the author's live report).
+                    // (a live report).
                     width: 52 * screenScaleFactor
                     horizontalAlignment: Text.AlignRight
                     text: speedSlider.selectedValue() + "%"
@@ -146,8 +146,8 @@ ColumnLayout {
                 // implicit width as a base, and the
                 // layout shares the leftover in
                 // proportion — "↑ 0.005" and "↑ 0.05"
-                // came out different widths (the
-                // author's report). A bound preferred
+                // came out different widths (a
+                // report). A bound preferred
                 // width — (row - 3 gaps) / 4 — makes
                 // every button the same width without
                 // depending on layout distribution.

@@ -159,8 +159,7 @@ ColumnLayout {
                         // The click itself must obey the
                         // SAME gate as the styling: while
                         // the controls are locked the word
-                        // reads, it must not act (the
-                        // author's catch).
+                        // reads, it must not act (a catch).
                         if (root.printerModel != null && root.printerModel.jogEnabled) {
                             root.printerModel.setPositionMode(root.printerModel.positionMode !== "Absolute");
                         }
@@ -374,9 +373,9 @@ ColumnLayout {
             spacing: UM.Theme.getSize("thin_margin").width
             // The selected distance keeps its
             // highlight: the primary face shows
-            // while it IS the selection (the
-            // author's live report — the boxes
-            // never stayed highlighted).
+            // while it IS the selection (a live
+            // report — the boxes never stayed
+            // highlighted).
             Item {
                 Layout.fillWidth: true
                 implicitHeight: extrudeDistance5Primary.implicitHeight
@@ -400,9 +399,9 @@ ColumnLayout {
             }
             // The selected distance keeps its
             // highlight: the primary face shows
-            // while it IS the selection (the
-            // author's live report — the boxes
-            // never stayed highlighted).
+            // while it IS the selection (a live
+            // report — the boxes never stayed
+            // highlighted).
             Item {
                 Layout.fillWidth: true
                 implicitHeight: extrudeDistance10Primary.implicitHeight
@@ -426,9 +425,9 @@ ColumnLayout {
             }
             // The selected distance keeps its
             // highlight: the primary face shows
-            // while it IS the selection (the
-            // author's live report — the boxes
-            // never stayed highlighted).
+            // while it IS the selection (a live
+            // report — the boxes never stayed
+            // highlighted).
             Item {
                 Layout.fillWidth: true
                 implicitHeight: extrudeDistance25Primary.implicitHeight
@@ -452,9 +451,9 @@ ColumnLayout {
             }
             // The selected distance keeps its
             // highlight: the primary face shows
-            // while it IS the selection (the
-            // author's live report — the boxes
-            // never stayed highlighted).
+            // while it IS the selection (a live
+            // report — the boxes never stayed
+            // highlighted).
             Item {
                 Layout.fillWidth: true
                 implicitHeight: extrudeDistance75Primary.implicitHeight
@@ -478,9 +477,9 @@ ColumnLayout {
             }
             // The selected distance keeps its
             // highlight: the primary face shows
-            // while it IS the selection (the
-            // author's live report — the boxes
-            // never stayed highlighted).
+            // while it IS the selection (a live
+            // report — the boxes never stayed
+            // highlighted).
             Item {
                 Layout.fillWidth: true
                 implicitHeight: extrudeDistance100Primary.implicitHeight
@@ -723,8 +722,7 @@ ColumnLayout {
                 UM.TooltipArea {
                     anchors.fill: parent
                     // Short value in the row, full
-                    // sentence in the tooltip (the
-                    // author's ruling).
+                    // sentence in the tooltip (the ruling).
                     text: root.printerModel != null ? root.printerModel.jogReasonDetail : ""
                     acceptedButtons: Qt.NoButton
                 }
@@ -735,10 +733,9 @@ ColumnLayout {
                 // space at all times and fades in
                 // only when it has something to say
                 // — an idle "Jog —" is noise (the
-                // author's live report), but hiding
-                // the row would be a reflow (the
-                // author's rule), so opacity, never
-                // visibility.
+                // live report), but hiding the row
+                // would be a reflow (a rule), so
+                // opacity, never visibility.
                 opacity: root.printerModel != null && root.printerModel.jogStatus.length > 0 ? 1 : 0
                 text: "Jog"
                 color: UM.Theme.getColor("text_inactive")

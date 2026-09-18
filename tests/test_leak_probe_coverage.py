@@ -579,7 +579,7 @@ class FrameTagTests(unittest.TestCase):
     """One tracemalloc frame in ~80 chars, the location always kept."""
 
     def test_a_multi_line_frame_keeps_its_source_and_location(self):
-        frame = ('File "/home/author/src/plugin/PreviewFollower.py", line 412, in _tick\n'
+        frame = ('File "/home/dev/src/plugin/PreviewFollower.py", line 412, in _tick\n'
                  '    return self._state.path_layer')
         self.assertEqual(
             _frame_tag(frame),

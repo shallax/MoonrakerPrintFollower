@@ -22,7 +22,7 @@ class WhatsNewContentTests(unittest.TestCase):
     def test_shipped_release_notes_are_frozen(self):
         # Once a release's notes are written, they are FROZEN — a
         # later release adds its own entry, never edits the older
-        # ones (the author's ruling). The pin covers every entry
+        # ones (the ruling). The pin covers every entry
         # except the head (the release in development); shipping a
         # new release moves the old head into the frozen set and
         # recomputes this pin in the same pass (the version bump
@@ -44,7 +44,7 @@ class WhatsNewContentTests(unittest.TestCase):
             "this pin recomputed for the release")
 
     def test_the_content_reads_like_release_notes(self):
-        # The author's ruling: the popup's content is hand-curated and
+        # The ruling: the popup's content is hand-curated and
         # user-facing — the maintainer-level detail stays in
         # CHANGELOG.md. No markdown survives into the rendered text.
         for entry in WHATS_NEW:

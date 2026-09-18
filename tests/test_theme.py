@@ -1,6 +1,6 @@
 """The theme ruling as a gate: no magic colour hexes outside the theme.
 
-The author's 4.4.0 ruling — either Cura's theme colours or the
+The 4.4.0 ruling — either Cura's theme colours or the
 plugin's own theme document; a hex literal in any other QML file is
 a regression this test refuses to let through.
 """

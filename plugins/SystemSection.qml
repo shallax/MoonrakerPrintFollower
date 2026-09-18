@@ -57,8 +57,8 @@ ColumnLayout {
             Cura.SecondaryButton {
                 // On its own row: three long labels
                 // in one row crushed each other and
-                // the text left its bounds (the
-                // author's live report).
+                // the text left its bounds (a live
+                // report).
                 Layout.fillWidth: true
                 text: "Klipper restart"
                 objectName: "moonrakerKlipperRestart"
@@ -92,8 +92,7 @@ ColumnLayout {
                 UM.TooltipArea {
                     anchors.fill: parent
                     // Short value in the row, full
-                    // sentence in the tooltip (the
-                    // author's ruling).
+                    // sentence in the tooltip (the ruling).
                     text: root.printerModel != null ? root.printerModel.restartReasonDetail : ""
                     acceptedButtons: Qt.NoButton
                 }

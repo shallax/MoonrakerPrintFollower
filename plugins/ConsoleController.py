@@ -76,7 +76,7 @@ class ConsoleController(QObject):
             # stores MAX_TRANSCRIPT entries plus up to
             # MAX_PERSIST_COMMANDS newest commands at the FRONT, and a
             # plain MAX_TRANSCRIPT trim here cut exactly those (the
-            # author's "my requests are missing from the restore").
+            # "my requests are missing from the restore" report).
         else:
             # Legacy migration: the typed-only history becomes the
             # transcript; everything in it predates this session.
@@ -240,7 +240,7 @@ class ConsoleController(QObject):
         """Klipper's gcode-store output, newest last. Entries are already
         formatted ({text, error}) and deduplicated by MonitorData (its
         seen-set and the expand seed own the backfill skip — the
-        author's "stale responses without requests" report); the
+        "stale responses without requests" report); the
         transcript keeps the last MAX_TRANSCRIPT lines of the combined
         feed."""
         if not entries:
@@ -386,7 +386,7 @@ class ConsoleController(QObject):
             self._in_flight.clear()
             self._note("Pending console commands dropped by the emergency stop.")
 
-    # The author's ruling: persist the last ~50 lines per printer —
+    # The ruling: persist the last ~50 lines per printer —
     # BOTH our requests and its responses. A chatty Klipper fills the
     # 50-line window with responses and the typed requests age out of
     # it entirely, so the newest commands are pulled back in (bounded).

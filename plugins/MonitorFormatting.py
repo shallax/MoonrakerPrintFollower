@@ -43,7 +43,7 @@ def chart_label(name):
     objects so a temperature_fan's reading cannot be mistaken for a
     heater of the same suffix — and the host's own temperature marked
     "(host)", because a temperature_host and a temperature_sensor with
-    the same suffix (the author's raspberry_pi pair) otherwise render
+    the same suffix (a raspberry_pi pair) otherwise render
     as the SAME name twice in the temperature lists."""
     label = friendly(name)
     if object_kind(name) == "fan":
@@ -63,7 +63,7 @@ def fan_writable(name: str) -> bool:
     """Whether SET_FAN_SPEED actually controls this fan object. Klipper's
     controller_fan, temperature_fan and heater_fan are
     temperature-regulated — the command either never sticks or is not
-    registered at all (the author's live reports, controller_fan1 and
+    registered at all (live reports: controller_fan1 and
     hotend_fan) — so their rows render read-only."""
     lower = str(name).lower()
     if lower == "fan":
@@ -243,7 +243,7 @@ def preview_temperature_pair(auxiliary):
         if temperature is None or temperature <= 0 and not (target or 0) > 0:
             return "—"
         if (target or 0) > 0:
-            # The arrow form (the author's 2026-09-16 ruling): the
+            # The arrow form (the 2026-09-16 ruling): the
             # preview pair reads current → desired, like the Monitor.
             return f"{temperature:.1f} → {target:.1f} °C"
         return f"{temperature:.1f} °C"

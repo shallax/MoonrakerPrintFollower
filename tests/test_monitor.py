@@ -436,7 +436,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # nothing fetched, and the grid sat on "Loading files…").
         self.assertIn("onOpenChanged", FILE_MANAGER_QML)
         self.assertIn("openFileManager()", FILE_MANAGER_QML)
-        # The author's live-test rulings: the 250 ms search settle,
+        # The live-test rulings: the 250 ms search settle,
         # the refresh button, the circled search clear, folders as a
         # strip (never in the metadata list).
         self.assertIn("interval: 250", FILE_MANAGER_QML)
@@ -451,9 +451,9 @@ class MonitorModelContractTests(unittest.TestCase):
         # children keeps only the last as its delegate, and
         # Component ids must never be reached through an object
         # reference (a Loader's sourceComponent silently loads
-        # nothing) — both were the author's live reports.
+        # nothing) — both were live reports.
         self.assertIn('text: " / "', FILE_MANAGER_QML)
-        # The filter dropdowns (the author's live rulings): radios
+        # The filter dropdowns (the live rulings): radios
         # for Modified/Print time (single-value model semantics —
         # the engine's exclusive group only unchecks visually), no
         # auto-dismiss on selection (Qt menus close on item
@@ -481,7 +481,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('id: printConfirmDialog', FILE_MANAGER_QML)
         self.assertIn('background: Rectangle', FILE_MANAGER_QML)
         # The confirmation's large thumbnail and the metadata-scan
-        # gate (the author's live reports: the dialog's thumbnail
+        # gate (the live reports: the dialog's thumbnail
         # request, and a scan entry offered where it cannot work).
         self.assertIn('id: confirmThumb', FILE_MANAGER_QML)
         # The dialog reads the LARGE variant (the list cells use the
@@ -523,14 +523,14 @@ class MonitorModelContractTests(unittest.TestCase):
         function onOpenChanged() {
             if (!root.open) {
                 printConfirmDialog.close();''', FILE_MANAGER_QML)
-        # The walk-error banner's dismiss (the author's live ruling:
+        # The walk-error banner's dismiss (the live ruling:
         # it overlays the first row, so it must be closable).
         self.assertIn('text: "✕"', FILE_MANAGER_QML)
         self.assertIn("root.printerModel.fileClearWalkError()", FILE_MANAGER_QML)
-        # The New-folder dialog (the author's live request).
+        # The New-folder dialog (the live request).
         self.assertIn("id: createFolderDialog", FILE_MANAGER_QML)
         self.assertIn('text: "New folder…"', FILE_MANAGER_QML)
-        # The left columns are FROZEN (the author's live ruling);
+        # The left columns are FROZEN (the live ruling);
         # the trailing half slides inside a clip wrapper at the
         # frozen edge, and the header mirrors it: sticky frozen,
         # the flick following the strip's contentX. A horizontal
@@ -548,7 +548,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("orientation: Qt.Horizontal", FILE_MANAGER_QML)
         self.assertIn("wheel.angleDelta.x", FILE_MANAGER_QML)
         # Search shows the folder breadcrumb under the name (the
-        # author's live request — same-named files in different
+        # live request — same-named files in different
         # folders must be tellable).
         self.assertIn('visible: root.printerModel != null && root.printerModel.fileManagerSearch.length > 0 && modelData.folder !== ""', FILE_MANAGER_QML)
         # The title floors hold from the first frame (static seed) —
@@ -566,21 +566,21 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("fileRequestDeleteFile(modelData.relpath)", FILE_MANAGER_QML)
         self.assertIn("fileRequestRename(modelData.relpath)", FILE_MANAGER_QML)
         # The dialogs are modal over the manager and the rename field
-        # pre-selects the stem (the author's live reports).
+        # pre-selects the stem (the live reports).
         self.assertEqual(FILE_MANAGER_QML.count("modal: true"), 6)
         self.assertIn("renameField.select(0, root.renameStemLength(target.name))", FILE_MANAGER_QML)
         # The helper the open handler calls must be DEFINED — a
         # ReferenceError inside onOpened only fires on open, which
         # the engine gate (closed popovers) cannot see; the missing
-        # helper was the author's live "no pre-populated name" report.
+        # helper was the live "no pre-populated name" report.
         self.assertIn("function renameTarget()", FILE_MANAGER_QML)
         self.assertIn('palette.highlight: UM.Theme.getColor("primary")', FILE_MANAGER_QML)
         # The field takes focus on open and Return confirms (the
-        # author's live requests).
+        # live requests).
         self.assertIn("renameField.forceActiveFocus()", FILE_MANAGER_QML)
         self.assertIn("Keys.onReturnPressed: root.confirmRename()", FILE_MANAGER_QML)
         # Tab-focus cues: the field's outline flips blue on focus and
-        # the six popup buttons take tab focus (the author's live
+        # the six popup buttons take tab focus (the live
         # report — no cue while tabbing).
         self.assertIn('border.color: renameField.activeFocus ? UM.Theme.getColor("primary")', FILE_MANAGER_QML)
         self.assertEqual(FILE_MANAGER_QML.count("focusPolicy: Qt.StrongFocus"), 9)
@@ -594,36 +594,36 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('id: uploadProgressDialog', FILE_MANAGER_QML)
         self.assertIn("root.uploadProgressState() === \"uploading\"", FILE_MANAGER_QML)
         # The recents strip: a scrolling 50, no dismissal glyph, and
-        # the strip's own thumbnails (the author's live requests).
+        # the strip's own thumbnails (the live requests).
         self.assertIn('id: recentsScroller', FILE_MANAGER_QML)
         self.assertIn('id: recentsThumb', FILE_MANAGER_QML)
         self.assertNotIn('fileHideRecent', FILE_MANAGER_QML)
         self.assertNotIn('text: "×"', FILE_MANAGER_QML)
         # The console grab bar hides under the auto-collapse width
-        # (the author's live request).
+        # (the live request).
         self.assertIn("visible: !consolePanel.tooNarrow", MONITOR_QML)
-        # Esc on the Monitor page leaves the stage (the author's
+        # Esc on the Monitor page leaves the stage (the
         # live request): Preview when sliced, Prepare otherwise. The
         # popover and chart close on the same key first. The ONE
         # ladder lives in the DASHBOARD document now — it hosts every
         # layer, so no other claimant can fire the stage-exit branch
         # from under a popup it cannot see.
         self.assertIn("leaveMonitorStage", DASHBOARD_QML)
-        # The console error bell (the author's live request): a red
+        # The console error bell (the live request): a red
         # bell beside the Console header while collapsed until
         # expanded.
         self.assertIn("consoleErrorBell", MONITOR_QML)
         self.assertIn('Qt.resolvedUrl("Bell.svg")', MONITOR_QML)
         self.assertIn("consoleErrorBell", MONITOR_MODEL)
         # The extrude distance/speed rows keep their selection
-        # highlighted (the author's live report).
+        # highlighted (the live report).
         self.assertIn("extrudeDistance === 5", TOOLHEAD_SECTION_QML)
         self.assertIn("extrudeSpeed === 1500", TOOLHEAD_SECTION_QML)
-        # The abs/rel toggle (the author's live request) and the
+        # The abs/rel toggle (the live request) and the
         # dropped 15 mm distance button.
         self.assertIn("setPositionMode", TOOLHEAD_SECTION_QML)
         self.assertNotIn('"15"', DASHBOARD_QML)
-        # The mode text is the toggle control (the author's live
+        # The mode text is the toggle control (the live
         # ruling), now on its own "Moves" row under the Position
         # readout (the 2026-09-17 ruling), and the Move distance
         # combo restores the persisted selection.
@@ -685,7 +685,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("id: outsideClickLayer", MONITOR_QML)
         # Esc closes the popovers through the same window-level
         # Shortcut that leaves the stage (the Keys handler died with
-        # focus — the author's live report). The shortcut and the
+        # focus — the live report). The shortcut and the
         # ladder live in the dashboard document — one claimant for
         # the key across every layer.
         self.assertIn('sequence: "Esc"', DASHBOARD_QML)
@@ -697,7 +697,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("temperatureChartLegend.series", MONITOR_QML)
         self.assertIn("onToggled: root.printer.setTemperatureSensorVisible", MONITOR_QML)
         self.assertNotIn("onCheckedChanged: root.printer.setTemperatureSensorVisible", MONITOR_QML)
-        # Target bands, not dashed lines (the author's ruling), and the
+        # Target bands, not dashed lines (the ruling), and the
         # hover readout carries the clock.
         self.assertIn("Target bands", TEMP_CHART_QML)
         self.assertIn("hoverClock", TEMP_CHART_QML)
@@ -741,7 +741,7 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertIn(token, MONITOR_QML)
         # Both pop-overs open at the same offset over the camera column
         # so a second click on the opener dismisses without moving the
-        # mouse (the author's chosen position, mesh-style).
+        # mouse (the chosen position, mesh-style).
         self.assertEqual(MONITOR_QML.count("x: cameraArea.x + UM.Theme.getSize(\"default_margin\").width"), 2)
         # meshDetail is component-scoped: exactly one in-scope refresh
         # (inside meshContent) may reference it, or the outer handler
@@ -831,12 +831,12 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('"monitorLayerProgress"', MONITOR_MODEL)
         self.assertIn("function monoFamily()", MONITOR_QML)
         self.assertIn("Qt.fontFamilies()", MONITOR_QML)
-        # The tooltip sizes to its content (no width cap: the author
-        # ruled it may overflow any boundary) and flips above only when
+        # The tooltip sizes to its content (no width cap: the ruling
+        # lets it overflow any boundary) and flips above only when
         # there is no room below the cursor.
         self.assertIn("width: tooltipColumn.implicitWidth + 2", MONITOR_QML)
         self.assertIn("y: chartPanel.hoverCursor.y + height + 16 > root.height", MONITOR_QML)
-        # Send and Clear share one row beside the input (the author's
+        # Send and Clear share one row beside the input (the
         # side-by-side request) — no RowLayout may open between them.
         send_clear = MONITOR_QML[MONITOR_QML.index('text: "Send"'):MONITOR_QML.index('text: "Clear"')]
         self.assertNotIn("RowLayout {", send_clear)
@@ -856,7 +856,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("All sensors hidden — click to re-enable one in the chart.", TEMP_HISTORY_SECTION_QML)
 
     def test_system_section_has_the_manual_reconnect(self):
-        # The author's live request: a Reconnect in the System
+        # A live request: a Reconnect in the System
         # section for a UI stuck after a printer error.
         self.assertIn('text: "Reconnect"', SYSTEM_INFO_SECTION_QML)
         self.assertIn("root.printerModel.reconnect()", SYSTEM_INFO_SECTION_QML)
@@ -1058,7 +1058,7 @@ class MonitorModelContractTests(unittest.TestCase):
 
     def test_monitor_uses_plugin_outline_bars_and_sliders(self):
         # The themed ProgressBar/Slider render a black slab in the
-        # inactive-window palette (author's screenshot) — the monitor's
+        # inactive-window palette (a screenshot) — the monitor's
         # bars and sliders are all plugin-owned outline components now,
         # so a bare themed control may not creep back in.
         for file_text in (MONITOR_QML, DASHBOARD_QML, TUNING_SECTION_QML, FANS_SECTION_QML, LEDS_SECTION_QML, PWM_SECTION_QML, JOB_SECTION_QML):
@@ -1114,7 +1114,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("Collapsing the pane hides the pop-over's", MONITOR_QML)
         self.assertIn('monitorEta === "Paused" ? ""', JOB_SECTION_QML)
         # The "Collecting temperature history…" placeholder stays ABSENT:
-        # the author ruled the waiting state annoying and dropped it
+        # the waiting state read as annoying and was dropped
         # before; the changelog quote was struck instead (the filling
         # flag remains plumbed, unused by the UI).
         self.assertNotIn("Collecting temperature history", MONITOR_QML + CHANGELOG)
@@ -1184,7 +1184,7 @@ class MonitorModelContractTests(unittest.TestCase):
     def test_camera_identity_and_selection_are_typed_and_sized(self):
         self.assertIn("def identity(camera", TYPED)
         self.assertIn("camera_selected", TYPED)
-        # The camera bar's final shape (the author's ruling): the
+        # The camera bar's final shape (the ruling): the
         # label sits permanently ABOVE the dropdown, centred, no
         # colon — one label, no conditional layouts, nothing to
         # overlap the pane at any width. The bar lives in CameraPane.
@@ -1198,7 +1198,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn("selectWebcam(cameraSelector.currentIndex)", CAMERA_PANE_QML)
 
     def test_camera_render_watchdogs_are_wired(self):
-        # The author's live reports: a stream that CONNECTED but never
+        # The live reports: a stream that CONNECTED but never
         # painted a frame raises no error signal — the pane's stall
         # watchdog watches the frame size; and a suspend/wake leaves a
         # frozen frame whose size is already set — the model's wake
@@ -1209,7 +1209,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("applicationStateChanged.connect(self._on_app_state_changed)", MONITOR_MODEL)
 
     def test_slider_click_behaviours_are_wired(self):
-        # The author's live report: a click on a slider's grab handle
+        # A live report: a click on a slider's grab handle
         # must not move it, and a click focuses the slider so the
         # arrow keys nudge one step.
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
@@ -1233,7 +1233,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # value submits, and the fan/LED/PWM repeaters freeze while a
         # tuning slider is mid-gesture — without the hold, the
         # commit's publish rebuilt the repeaters mid-nudge and killed
-        # the focused delegate (the author's live report).
+        # the focused delegate (a live report).
         for token in ("root.frozenFanItems = root.printer.fanControlItems",):
             self.assertIn(token, DASHBOARD_QML)
         self.assertIn("root.freezeRepeaters ? root.frozenItems", FANS_SECTION_QML)
@@ -1245,7 +1245,7 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertIn(token, range_slider)
 
     def test_mesh_rainbow_bar_matches_the_preview_scale(self):
-        # The author's live request: the expanded bed-mesh view shows
+        # A live request: the expanded bed-mesh view shows
         # the SAME blue-to-red min/max bar as the Preview's overlay —
         # the shared dual-ended range-filter component (4.2.0) owns
         # the stops now, so the two surfaces cannot drift.
@@ -1257,7 +1257,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('text: root.printer != null ? "Low " + root.printer.bedMeshMinimum.toFixed(3)', MONITOR_QML)
 
     def test_mesh_map_bed_space_visualisation_is_klipper_faithful(self):
-        # The author's accuracy ruling: the expanded map draws the
+        # The accuracy ruling: the expanded map draws the
         # probed cells within the real bed, extends the BOUNDARY
         # values to the bed edges (Klipper clamps its lookup to the
         # boundary cells — _get_linear_index constrains index and t),
@@ -1270,7 +1270,7 @@ class MonitorModelContractTests(unittest.TestCase):
                       'root.hoverClamped ? MoonrakerTheme.neonOrange'):
             self.assertIn(token, BED_MESH_MAP_QML + MONITOR_MODEL)
         # The popover carries the same clamped disclaimer the Preview's
-        # legend makes (the author's request).
+        # legend makes (the request).
         self.assertIn("Neon orange outline = the probed mesh bounds; outside = the boundary values, continued as Klipper clamps them", MONITOR_QML)
 
 
@@ -1560,7 +1560,7 @@ class MonitorFormattingTests(unittest.TestCase):
         self.assertIsNone(estimate_remaining(120, 0.50, None, False))
 
     def test_eta_appears_as_soon_as_moonraker_reports_a_little_progress(self):
-        # The author's connect-time expectation: the unoptimised blend
+        # The connect-time expectation: the unoptimised blend
         # shows up with only a small progress signal, not a minute into
         # the print (the old 60 s / 2% floor left the readout empty).
         self.assertAlmostEqual(estimate_remaining(15, 0.01, None, True), 1485, delta=1)
@@ -1598,7 +1598,7 @@ class MonitorFormattingTests(unittest.TestCase):
         self.assertEqual(layer.source, "extrusion-guarded Z height")
 
     def test_layer_resolver_seeds_a_mid_print_connect_and_heals_a_wipe_seed(self):
-        # The author's trace: a mid-print connect at z=9.75 and 65%
+        # The trace: a mid-print connect at z=9.75 and 65%
         # progress reported no current_layer. At significant progress
         # the position IS the real print height — seed freely — and a
         # wipe above the print self-heals when the nozzle descends
@@ -1652,8 +1652,8 @@ class MonitorFormattingTests(unittest.TestCase):
 
     def test_layer_resolver_shows_layer_1_at_print_start(self):
         # An ACTIVE print at current_layer=0 (before the first
-        # SET_PRINT_STATS_INFO) reads as layer 1 — the author expects
-        # values as soon as Moonraker reports them, not "—" until the
+        # SET_PRINT_STATS_INFO) reads as layer 1 — values must show
+        # as soon as Moonraker reports them, not "—" until the
         # print advances a layer.
         config = SimpleNamespace(moonraker_layer_is_one_based=True, z_fallback=False, z_tolerance=0.05)
         active = LayerResolver().resolve(
@@ -1672,7 +1672,7 @@ class MonitorFormattingTests(unittest.TestCase):
 
     def test_file_row_payload_carries_the_folder_breadcrumb(self):
         # The search face shows the folder under the name (the
-        # author's live request: same-named files in different
+        # live request: same-named files in different
         # folders must be tellable); root-level files carry "".
         row = SimpleNamespace(filename="a.gcode", relpath="prints/sub/a.gcode", modified=None,
                               size=None, attempts=None, last_status=None, print_start_time=None,
@@ -1698,7 +1698,7 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         click_window = int(_re.search(r"_reset_timer\.setInterval\((\d+)\)", commands).group(1))
         self.assertEqual(click_window, 1000)
         # The helper prose that restated the arm-reset window was
-        # removed at the author's request; the constant lives in the
+        # removed by request; the constant lives in the
         # code alone now.
 
         follow = (PLUGINS / "FollowController.py").read_text()
@@ -1725,7 +1725,7 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         self.assertFalse(wanted_object("unknown object"))
 
     def test_fan_writability_follows_the_klipper_fan_types(self):
-        # The author's live reports (controller_fan1, hotend_fan):
+        # The live reports (controller_fan1, hotend_fan):
         # Klipper's controller_fan, temperature_fan and heater_fan are
         # temperature-regulated — SET_FAN_SPEED never sticks — so
         # their rows render read-only. The other fan types register
@@ -1745,7 +1745,7 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         self.assertIn("Firmware-controlled — speed is read-only", FANS_SECTION_QML)
 
     def test_led_channels_are_absolute_and_the_labels_hold_their_width(self):
-        # The author's live report: the chroma normalisation made
+        # A live report: the chroma normalisation made
         # every nudge re-scale all four channel sliders (a +1 nudge
         # of a zeroed channel jumped it to 100 and dragged the rest).
         # The sliders now read absolute channel values, and the
@@ -1759,11 +1759,11 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         self.assertIn("round(c * 100) for c in channels", controls)
         # The channel commit sends the absolutes WITHOUT the
         # brightness slider as a gain — passing it zeroed every
-        # channel nudge while the LED was off (the author's live
+        # channel nudge while the LED was off (a live
         # report).
         self.assertIn("whiteSlider.selectedValue() : 0, -1);", LEDS_SECTION_QML)
         # The brightness slider is the USER'S GAIN, unlinked from the
-        # channel peak (the author's ruling): the channel sliders
+        # channel peak (the ruling): the channel sliders
         # hold the set percentages (seeded once from the first-seen
         # colour), the gain composes into the SEND only, and neither
         # slider's value moves the other.
@@ -1779,19 +1779,19 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         self.assertGreaterEqual(PWM_SECTION_QML.count("width: 52 * screenScaleFactor"), 1)
         self.assertIn("width: 150 * screenScaleFactor", LEDS_SECTION_QML)
         # The submit's rebuild must not kill the tuned slider's focus
-        # (the author's live report): the dashboard remembers the
+        # (a live report): the dashboard remembers the
         # slider's object and re-grants focus on the new delegate.
         outline = (PLUGINS / "OutlineSlider.qml").read_text()
         self.assertIn("property string controlObject", outline)
         # One LED row holds five sliders: the refocus must land on the
         # RIGHT one — the kind discriminates, and the walk recurses
-        # into the channel grid (the author's live report: the nudge
+        # into the channel grid (a live report: the nudge
         # went to the brightness slider instead of the channel).
         self.assertIn("property string controlKind", outline)
         self.assertIn("function focusSliderIn", DASHBOARD_QML)
         self.assertIn("function focusTuningSliderOnce()", DASHBOARD_QML)
         # The refocus retries until it lands and holds across the
-        # confirm-time rebuild (the author's live report: fan/LED
+        # confirm-time rebuild (a live report: fan/LED
         # sliders lost focus on the apply, the singletons never).
         self.assertIn("refocusTimer.attempts = 0", DASHBOARD_QML)
         self.assertIn("focusHoldTimer.start()", DASHBOARD_QML)
@@ -1968,7 +1968,7 @@ class MonitorQtTests(unittest.TestCase):
             return scripts[-1].options["body"]
         self.assertEqual(next_script(model.jog, "x", 1), {"script": "G91\nG1 X10 F3000\nG90"})
         # The Z jog from 0.4 by -10 crosses zero with no configured
-        # minimum: forbidden outright (the author's live report —
+        # minimum: forbidden outright (a live report —
         # the head must never microstep below 0.00 Z).
         before = len(self.scripts())
         model.jog("z", -1)
@@ -2151,7 +2151,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(sum(r.channel == "emergency-stop" for r in self.transport.requests), 1)
 
     def test_emergency_stop_during_a_print_releases_the_print_guards(self):
-        # The author's live report: an e-stop mid-print left the
+        # A live report: an e-stop mid-print left the
         # "disabled during print" guards up and the printer
         # unrecoverable. The stop ASSUMES the print was cancelled:
         # the snapshot-derived guards release immediately, and the
@@ -2208,7 +2208,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertIn("Print start refused", model.actionStatus)
 
     def test_emergency_stop_reconnects_once_automatically(self):
-        # The author's ruling (2026-09-10, live-proven on their
+        # The ruling (2026-09-10, live-proven on a real
         # printer): after the stop the host refuses commands until
         # the connection is cycled — the plugin cycles the client
         # once (stop + start = two generation bumps) and the monitor
@@ -2230,7 +2230,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertTrue(model.jogEnabled)
 
     def test_emergency_stop_ignores_the_pre_stop_command_reply(self):
-        # The author's live request: after the stop the plugin
+        # A live request: after the stop the plugin
         # assumes the print was cancelled — the in-flight command's
         # terminal reply must not overwrite "Emergency stop issued".
         model = self.monitor()
@@ -2255,7 +2255,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertNotIn("TEST_MACRO", model.actionStatus)
 
     def test_rapid_z_nudges_cannot_walk_the_head_below_zero(self):
-        # The author's live report: nudge taps outran the poll, each
+        # A live report: nudge taps outran the poll, each
         # clamped against the STALE position, and the queue walked
         # the head below 0.00 Z. The client-side estimate advances
         # per accepted move: four 0.1 nudges from 0.4 land at zero;
@@ -2301,7 +2301,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertIn("outcome unknown", model.actionStatus)
 
     def test_extrude_refusal_reads_the_servers_words_in_the_status(self):
-        # The author's live report: a cold extrude showed a bare 400
+        # A live report: a cold extrude showed a bare 400
         # in the Printer status field. The REAL toolhead path — the
         # extrude rides the shared commands lane — must surface the
         # server's words, not a status code.
@@ -2320,7 +2320,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertNotIn("400", model.actionStatus)
 
     def test_extrude_and_jog_selection_persists(self):
-        # The author's live report: the chosen extrude options were
+        # A live report: the chosen extrude options were
         # not saved between sessions.
         from plugins.MoonrakerMonitorModel import _read_state
         model = self.monitor()
@@ -2334,7 +2334,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(stored["jogDistance"], 10.0)
 
     def test_collapsed_console_keeps_a_slow_error_poll(self):
-        # The error bell's feed (the author's live request): the
+        # The error bell's feed (the live request): the
         # store fetch stops while expanded-only, so a SLOW watch
         # keeps the bell able to ring while collapsed.
         model = self.monitor()
@@ -2352,7 +2352,7 @@ class MonitorQtTests(unittest.TestCase):
 
     def test_command_reply_with_error_body_is_reported_as_refused(self):
         # A server ANSWER with an error body is a refusal, not an
-        # unknown: the command did not run (the author's live
+        # unknown: the command did not run (a live
         # report — a cold extrude showed a bare 400).
         model = self.monitor()
         self.deliver_state("standby")
@@ -2366,7 +2366,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertNotIn("outcome unknown", model.actionStatus)
 
     def test_console_error_bell_rings_while_collapsed_and_clears_on_expand(self):
-        # The author's live request: an error line landing while the
+        # A live request: an error line landing while the
         # console is collapsed rings a red bell next to its header
         # until the console expands. Restored lines never ring.
         model = self.monitor()
@@ -2392,7 +2392,7 @@ class MonitorQtTests(unittest.TestCase):
     def test_action_status_receipt_overlays_then_reverts_to_durable(self):
         # The lane's completion receipts are transient: "X sent"
         # overlays for RECEIPT_MS, then the row reverts to the durable
-        # value beneath — never to nothing (the author's ruling: age
+        # value beneath — never to nothing (the ruling: age
         # out to the previous durable value).
         model = self.monitor()
         self.deliver_state("standby")
@@ -2431,7 +2431,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(model.actionStatus, "Pause: paused")
 
     def test_console_error_lines_speak_in_the_feed(self):
-        # The author's live ruling: no status banners or labels outside
+        # The live ruling: no status banners or labels outside
         # the feed — a live "!!" line is its own red signal, and
         # nothing asserts "Klipper reported an error" anywhere.
         model = self.monitor()
@@ -2446,7 +2446,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertTrue(model.sendConsoleCommand("G28"))
 
     def test_last_action_rows_are_labelled_and_always_visible(self):
-        # The permanent caption row (the author's ruling): a label so
+        # The permanent caption row (the ruling): a label so
         # the row explains itself before first use, "—" until the first
         # event, and no visibility gate to make it pop in and out. It
         # lives ONLY in the Monitor's Print job grid (first row, so its
@@ -2489,7 +2489,7 @@ class MonitorQtTests(unittest.TestCase):
         reboot[0].callback({}, None)
         self.qt.events(10)
         # A full Klipper restart hits Moonraker's RESTART endpoint (the
-        # author's request — heavier than FIRMWARE_RESTART).
+        # request — heavier than FIRMWARE_RESTART).
         model.klipperRestart()
         self.qt.events(10)
         self.assertEqual(len([r for r in self.transport.requests if r.path == "printer/restart"]), 1)
@@ -2538,7 +2538,7 @@ class MonitorQtTests(unittest.TestCase):
                     "hidden": [],
                 },
                 # The jog/extrude selection persists too (the
-                # author's live report: the chosen options were not
+                # live report: the chosen options were not
                 # saved between sessions).
                 "toolhead": {"jogDistance": 25.0, "extrudeDistance": 5.0, "extrudeSpeed": 300.0},
             })
@@ -2810,7 +2810,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(chart["colors"], {})
 
     def test_chart_config_set_before_history_arrives_still_persists(self):
-        # The author's suspicion: changing colours before the first aux
+        # The suspicion: changing colours before the first aux
         # reply must survive — the history loads AFTER the config.
         model = self.monitor()
         model.setTemperatureSensorVisible("extruder", False)
@@ -2891,14 +2891,14 @@ class MonitorQtTests(unittest.TestCase):
         # stamped flag (everything persisted predates this session).
         self.assertEqual(second.consoleLines.value(), [{"kind": "command", "text": "M104 S200",
                                                         "error": False, "success": False, "restored": True}])
-        # No "sent to Klipper" caption (the author's ruling): the typed
+        # No "sent to Klipper" caption (the ruling): the typed
         # line's verdict colouring carries the feedback, and nothing
         # else speaks on a successful send.
 
     def test_console_persist_keeps_commands_against_chatty_responses(self):
         # A chatty Klipper fills the 50-entry persist window with
         # responses; the newest commands must be retained in the
-        # persisted record (the author's "none of my requests are
+        # persisted record (the "none of my requests are
         # restored" report — the window had trimmed them away).
         model = self.monitor()
         model._console._transcript = [
@@ -2914,7 +2914,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertIn("C2", commands)
         # The retained commands must survive the ROUND TRIP: the load
         # once trimmed the record back to MAX_TRANSCRIPT and cut the
-        # commands at the front (the author's "my requests are missing
+        # commands at the front (the "my requests are missing
         # from the restore").
         second = self.monitor()
         restored = [entry["text"] for entry in second.consoleLines.value() if entry["kind"] == "command"]
@@ -2924,7 +2924,7 @@ class MonitorQtTests(unittest.TestCase):
     def test_console_persist_keeps_the_success_flag(self):
         # The restored "ok" renders green only if the success flag
         # survives the config cleaning (it was dropped once, greying
-        # every restored response — the author's "never seen a
+        # every restored response — the "never seen a
         # coloured line" report).
         model = self.monitor()
         model._console._transcript = [
@@ -2942,7 +2942,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertFalse(model.sendConsoleCommand("   "))
         self.assertEqual(model.consoleHistory, [])
         # An empty Enter is simply nothing — no note, no banner (the
-        # author's ruling: nothing sent carries no information).
+        # ruling: nothing sent carries no information).
         self.assertEqual(model.consoleLines.value(), [])
         self.assertTrue(model.sendConsoleCommand("G28"))
         self.assertEqual(model.consoleHistory, ["G28"])
@@ -2964,7 +2964,7 @@ class MonitorQtTests(unittest.TestCase):
         # The plugin constructs the console before the active machine
         # exists, so the early load reads an empty record; by the time
         # the pane attaches the identity is real and the console must
-        # re-load the per-printer transcript (the author's "completely
+        # re-load the per-printer transcript (the "completely
         # empty at app start" report).
         model = self.monitor()
         self.assertTrue(model.sendConsoleCommand("M104 S200"))
@@ -2974,11 +2974,11 @@ class MonitorQtTests(unittest.TestCase):
         self.assertTrue(any(entry["kind"] == "command" and entry["text"] == "M104 S200"
                             for entry in lines))
 
-    def test_console_replay_of_the_authors_record_keeps_commands(self):
-        # The author's real record: 53 entries, 8 commands scattered,
+    def test_console_replay_of_the_record_keeps_commands(self):
+        # The real record: 53 entries, 8 commands scattered,
         # 3 pinned at the head (the retention's shape). A session that
         # loads it, backfills responses and persists must NOT drop the
-        # commands (the author's "it's just a bunch of responses").
+        # commands (the "it's just a bunch of responses").
         kinds = (["command"] * 3
                  + ["response"] * 12
                  + ["command", "response"] * 3
@@ -3186,7 +3186,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(method.typeName(), "bool")
 
     def test_improve_eta_downloads_for_the_monitor_without_a_preview_load(self):
-        # The author's optimisation: the Monitor's Improve-ETA action
+        # The optimisation: the Monitor's Improve-ETA action
         # downloads and indexes the print WITHOUT loading it into the
         # preview; the index service pulls the file itself.
         model = self.monitor()
@@ -3598,7 +3598,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(model.webcamNames, ["Front"])
 
     def test_gcode_store_feed_appends_klippers_output_without_duplicates(self):
-        # The console echo (the author's ruling): the store is polled
+        # The console echo (the ruling): the store is polled
         # ONLY while the console is expanded, Klipper's response entries
         # land in the transcript feed, "!!" lines carry the error flag,
         # commands from the store are ignored (ours are already in the
@@ -3670,7 +3670,7 @@ class MonitorQtTests(unittest.TestCase):
         # The expand seed is one-shot by design — but the entries it
         # skips must stay skipped for the whole session. The regression:
         # the second poll re-delivered Moonraker's entire stale buffer
-        # (the author's live report of the console re-fetching the
+        # (a live report of the console re-fetching the
         # printer's history on load).
         model = self.monitor()
         self.deliver_state("printing")
@@ -3750,8 +3750,8 @@ Item {
         self.assertNotEqual(after, before)  # the phase advances
 
     def test_bed_mesh_visibility_signal_chain_toggles_and_publishes(self):
-        # The author's "Hide bed mesh does nothing in the empty
-        # preview": the overlay's signal was never connected to the
+        # The "Hide bed mesh does nothing in the empty
+        # preview" report: the overlay's signal was never connected to the
         # presentation (pre-3.4.0 regression). Pin the presenter side
         # of the chain — the signal must flip the flag and republish.
         mesh = self.follower._runtime.bed_mesh
@@ -3765,7 +3765,7 @@ Item {
 
     def test_preview_load_lights_the_monitor_improving_state(self):
         # The shared load state: a load kicked off from the PREVIEW
-        # must show the Monitor's hourglass too (the author's sync
+        # must show the Monitor's hourglass too (the sync
         # report), and both clear when the index lands.
         model = self.monitor()
         self.deliver_state("printing")
@@ -3880,7 +3880,7 @@ Item {
                       'sectionExpandedMap["console"]',
                       # The toggle keeps the other panes' button
                       # style with the theme's up/down chevrons inside
-                      # it (the author's rulings).
+                      # it (the rulings).
                       "ChevronSingleUp",
                       "ChevronSingleDown",
                       "fixedWidthMode: true",
@@ -3904,7 +3904,7 @@ Item {
         self.assertIn("onStatusCollapsedChanged: {", MONITOR_QML)
         self.assertIn("Qt.callLater(root.updateStatusReadoutFits)", MONITOR_QML)
         self.assertIn("fitStatusRetry.restart()", MONITOR_QML)
-        # The feed's three voices (the author's live rulings):
+        # The feed's three voices (the live rulings):
         # commands carry ">", Moonraker's responses carry "<", and the
         # plugin's notes carry "#" in amber. Responses render bright
         # red/green; saved commands keep their text light grey and put
@@ -3931,7 +3931,7 @@ Item {
             self.assertIn(token, MONITOR_MODEL)
         self.assertNotIn("consoleStatus", MONITOR_MODEL)
         # The filament rows are caption/value grid rows placed AFTER
-        # the Finish row (the author's placement). They outlive the
+        # the Finish row (the chosen placement). They outlive the
         # print through complete/cancelled until the next job starts
         # (the UX panel): the gate is the model's readout flag, not
         # printActive.
@@ -3945,12 +3945,12 @@ Item {
         self.assertNotIn("filamentReadoutVisible", MONITOR_MODEL)
         # The z-offset nudge buttons take an exact quarter of the row
         # (a bound preferred width, not layout distribution): fillWidth
-        # alone left "↑ 0.005" wider than "↑ 0.05" (the author's report).
+        # alone left "↑ 0.005" wider than "↑ 0.05" (the report).
         self.assertIn("Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4", TUNING_SECTION_QML)
         # The expanded chart's power axis carries its 0-100% legend,
         # pinned (never scaled), drawn OUTSIDE the plot in a reserved
         # right gutter — chips painted over the data looked janky (the
-        # author's report), so the plot domain shrinks to fit instead.
+        # report), so the plot domain shrinks to fit instead.
         self.assertIn("function _rightGutter()", TEMP_CHART_QML)
         self.assertIn('ctx.fillText("100%", labelX, 4 + ascent)', TEMP_CHART_QML)
         self.assertIn('ctx.fillText("0%", labelX, root._plotBottom() - descent - 1)', TEMP_CHART_QML)
@@ -3960,7 +3960,7 @@ Item {
         # 3.6.0: the console card's TOP edge is a drag handle. The
         # load-bearing semantics are pinned here — the pane-bounds clamp
         # window, the pane-frame drag measurement, the single commit on
-        # release, and the collapse behaviour (the author's request: pull
+        # release, and the collapse behaviour (the request: pull
         # the pane down to the collapse position and it collapses; drag
         # back out and it expands).
         for token in ("id: consoleResizeHandle",
@@ -3998,7 +3998,7 @@ Item {
                       "consoleFlick.restoreScrollPending = true",
                       "Drag to resize the console.",
                       # The grip reads as a grab bar at a glance (the
-                      # author's live ruling: the first one was too
+                      # live ruling: the first one was too
                       # subtle), and the closing pane fades its body out
                       # instead of crushing it through the transition.
                       "width: 72 * screenScaleFactor",
@@ -4008,7 +4008,7 @@ Item {
                       # The fade starts where the body stops fitting, not
                       # at the collapse position: a gradual fade left the
                       # crushed input row fully opaque for most of the
-                      # travel (the author's second live report).
+                      # travel (a second live report).
                       "readonly property real consoleBodyFadeSpan: 24 * screenScaleFactor",
                       "(height - (consoleMinHeight - consoleBodyFadeSpan)) / consoleBodyFadeSpan"):
             self.assertIn(token, MONITOR_QML)
@@ -4025,7 +4025,7 @@ Item {
         # minimum, and its content must never paint over the webcam card.
         card_start = MONITOR_QML.index("id: consolePanel")
         self.assertIn("clip: true", MONITOR_QML[card_start:handle_start])
-        # The well clips too, and that is the author's live report: the
+        # The well clips too, and that is a live report: the
         # prompt, the input and its buttons live INSIDE the black border,
         # so a squeezed column must cut them at the well's own edge
         # rather than letting them float outside the terminal's
@@ -4066,7 +4066,7 @@ Item {
         self.assertIn("cursorVisible: false", MONITOR_QML)
 
     def test_no_controls_disappear_controls_disable(self):
-        # NO-REFLOW RULE (the author's ruling, 2026-09-10): no control
+        # NO-REFLOW RULE (the ruling, 2026-09-10): no control
         # ever disappears — it disables. Nothing reflows unless the
         # user asked for it (section collapse, resize, and the 4.4.0
         # section hide/reorder rulings). The jog-reflow
@@ -4077,7 +4077,7 @@ Item {
         # every plugin QML whose expression is not whitelisted must be
         # on the explicit allow-list — so a new state-gated visibility
         # cannot slip through a reformat or a new file.
-        # The file-manager popup joins the carve-out by the author's
+        # The file-manager popup joins the carve-out by the
         # round-2 ruling ("Reflowing the file manager is fine, there's
         # nothing critical on that") — but ONLY its own file: the
         # Monitor files must never be exempt, and the set must not
@@ -4115,11 +4115,11 @@ Item {
             "visible: root.printerModel != null && root.printerModel.hasQuadGantryLevel",
             "visible: root.printerModel != null && root.printerModel.hasBedMesh",
             # Firmware-regulated fans swap the slider for a read-only
-            # row (the author's live report): the model's writable
+            # row (a live report): the model's writable
             # flag picks the face.
             "visible: modelData.writable",
             "visible: !modelData.writable",
-            # Carve-outs awaiting the author's ruling (DECISIONS round 6):
+            # Carve-outs awaiting the ruling (DECISIONS round 6):
             "visible: base.followingEnabled && base.pauseAtLayerActive && base.pauseAtLayerItems.length > 0 && (base.hasToolpath || base.pauseAtLayerHasBaked)",
             # The toolpath-gated faces (the 2026-09-17 rulings): the
             # attach control, the pause button and its selection line
@@ -4163,7 +4163,7 @@ Item {
             # updateStrip, not a model value).
             "visible: stripValid",
             # The Endstops summary row yields to the chips once they
-            # exist (the author's live ruling — the chips ARE the
+            # exist (the live ruling — the chips ARE the
             # readout); it sits below the jog pad.
             "visible: root.printerModel == null || root.printerModel.endstopItems.length === 0",
             "visible: root.miniHasSeries",
@@ -4181,20 +4181,20 @@ Item {
             "visible: selectorRoot.visibleCount !== selectorRoot.total",
             "visible: selectorRoot.visibleCount > 0",
             "visible: root.printerModel != null && !root.miniHasSeries",
-            # The console error bell (the author's live request) is a
+            # The console error bell (the live request) is a
             # presence signal, not a session gate: it shows only
             # while an unseen error waits and the console is
             # collapsed.
             "visible: root.printer != null && root.printer.consoleErrorBell",
-            # The Objects section's empty-state line (the author's
+            # The Objects section's empty-state line (the
             # live request): the list arrives mid-print, an empty one
             # says so.
             "visible: root.printerModel != null && root.printerModel.excludeObjectItems.length === 0",
             # The console grab bar hides under the auto-collapse
-            # width (the author's live ruling — a resize handle for
+            # width (the live ruling — a resize handle for
             # an expansion that cannot happen is a lie).
             "visible: !consolePanel.tooNarrow",
-            # The file manager's popup: reflow is fine there, nothing critical on it (the author's ruling, ROADMAP 3.6.0) — each state-gated entry lands here by name.
+            # The file manager's popup: reflow is fine there, nothing critical on it (the ruling, ROADMAP 3.6.0) — each state-gated entry lands here by name.
             "visible: open",
             # The what's-new overlay: the pre-collapsed sections ARE
             # the feature (the latest entry open, previous versions
@@ -4212,7 +4212,7 @@ Item {
             "visible: pauseListView.height > 0 && pauseListView.contentY > 2",
             "visible: pauseListView.height > 0 && pauseListView.contentY < pauseListView.contentHeight - pauseListView.height - 2",
             # The bed-mesh legend collapses when the mesh is hidden —
-            # the author granted the reflow (the card reflows instead
+            # the reflow was granted (the card reflows instead
             # of keeping a faded gap).
             "visible: base.bedMeshAvailable && base.bedMeshVisible",
             # The monitor's loading prompt: the printer binding not
@@ -4273,7 +4273,7 @@ Item {
                 if any(token in expression for token in whitelist):
                     continue
                 # The extrude distance/speed rows highlight their
-                # SELECTION by swapping button faces (the author's
+                # SELECTION by swapping button faces (the
                 # live report: the boxes never stayed highlighted) —
                 # one family, one carve-out, not ten near-identical
                 # whitelist entries.
@@ -4307,7 +4307,7 @@ Item {
         self.assertIn("width: base.hasToolpath ? buttons.width - base.buttonSpacing - followButton.width : buttons.width", PREVIEW_CONTROLS_QML)
 
     def test_disconnected_disables_every_monitor_control(self):
-        # The author's ruling (2026-09-10): while DISCONNECTED no
+        # The ruling (2026-09-10): while DISCONNECTED no
         # Monitor-page control is enabled — the emergency stop included.
         # The model publishes the connection state; the section gates,
         # the console, the camera refresh and the emergency stop all
@@ -4316,12 +4316,12 @@ Item {
         self.assertIn("enabled: root.printerModel != null && root.printerModel.monitorConnected", FILE_MANAGER_SECTION_QML)
         self.assertIn("enabled: root.printerModel == null || (!root.printerModel.controlsLocked && root.printerModel.monitorConnected)", FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + TUNING_SECTION_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + FILE_MANAGER_SECTION_QML)
         # The abs/rel word's CLICK obeys the same gate as its styling —
-        # a locked control must not act (the author's catch).
+        # a locked control must not act (caught in testing).
         self.assertIn("root.printerModel != null && root.printerModel.jogEnabled", TOOLHEAD_SECTION_QML)
         self.assertIn("enabled: root.printer != null && root.printer.monitorConnected", MONITOR_QML)
         # The console is special: the SECTION stays enabled while
         # disconnected (scrolling, selecting and copying the restored
-        # history keep working — the author's ruling); only the input,
+        # history keep working — the ruling); only the input,
         # Send and Clear disable. The well itself turns grey so the
         # disconnected state is obvious.
         self.assertIn("enabled: root.printer != null\n                                property int consoleRecallIndex", MONITOR_QML)
@@ -4329,7 +4329,7 @@ Item {
         self.assertIn("anchors.bottom: parent.bottom", MONITOR_QML)
         # The connection DOT rides the Printer status pane's title in
         # BOTH pane states (expanded header and the collapsed strip) —
-        # the author's chosen spot. Plus the camera's Live badge and
+        # the chosen spot. Plus the camera's Live badge and
         # the disconnected grey veil over stale frames.
         self.assertIn("connectionDotColour", MONITOR_QML)
         self.assertIn('text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."', MONITOR_QML)
@@ -4373,7 +4373,7 @@ Item {
         self.assertEqual(model._history.revision, revision)
 
     def test_connect_transition_fires_every_lane_immediately(self):
-        # The author's live report: after the connect the aux lanes
+        # A live report: after the connect the aux lanes
         # stayed unpopulated until their timers' next ticks. The
         # connection transition itself must fire every lane — the
         # request traffic grows the moment the connection lands.
@@ -4403,7 +4403,7 @@ Item {
         # metadata parses the slicer header SERVER-SIDE (a tiny JSON
         # query, not a gcode download), so the layer-height readout and
         # the slicer estimate populate even for prints the user never
-        # loaded — the author's "no proactive downloads" ruling is
+        # loaded — the "no proactive downloads" ruling is
         # untouched.
         model = self.monitor()
         self.deliver_state("printing")
@@ -4442,7 +4442,7 @@ Item {
     def test_endstop_poll_waits_for_klippy_ready(self):
         # During a Klippy restart every endstop poll landed in the
         # gcode store as "!! Internal Error on WebRequest" (the
-        # author's live report) — the poll must hold until server/info
+        # live report) — the poll must hold until server/info
         # reports ready, and resume on the next readiness.
         model = self.monitor()
         model._data._update(server={"klippy_state": "startup"})
@@ -4487,7 +4487,7 @@ Item {
         self.assertFalse(model.cameraRecovering)
 
     def test_camera_render_stall_rides_the_same_recovery(self):
-        # The render watchdog (the author's live report): a stream
+        # The render watchdog (the live report): a stream
         # that connected but never painted a frame reports the stall
         # through the same nonce-bump recovery as a stream failure,
         # with the same 10 s throttle.

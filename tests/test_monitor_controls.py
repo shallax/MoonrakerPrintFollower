@@ -300,7 +300,7 @@ class OutputRowTests(ControlsCase):
         self.assertEqual(item["percent"], 100)
         self.assertEqual((item["redPercent"], item["greenPercent"], item["bluePercent"], item["whitePercent"]),
                          (100, 50, 0, 0))
-        # The author's rulings: a dimmer poll and a colour change must not
+        # The rulings: a dimmer poll and a colour change must not
         # move the sliders the user holds — the gain acts on the SEND.
         self.data.rebuild(auxiliary={"neopixel strip": {"color_data": [[0.2, 0.1, 0, 0]]}})
         item = self.controls.values["ledItems"][0]

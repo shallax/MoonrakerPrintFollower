@@ -24,7 +24,7 @@ help:
 	@echo "verify_captures        two capture runs in the pinned container must be"
 	@echo "                       byte-identical (catches leaked live inputs)"
 	@echo "snapshot_package       build + verify, then copy the curapackage to"
-	@echo "                       /tmp/mpf.curapackage for the author to SCP"
+	@echo "                       /tmp/mpf.curapackage, ready to SCP"
 	@echo "snapshot_quick         the FAST iteration path: lint + run_tests + a"
 	@echo "                       verified package, no captures or determinism"
 	@echo "package                build and verify the Cura package and Marketplace ZIP"
@@ -75,15 +75,15 @@ package:
 	python3 tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])').curapackage"
 	python3 tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')-source.zip"
 
-# The author SCPs the built package to the Cura machine after every
-# push: a verified curapackage at a fixed path, rebuilt from the
-# current checkout (make package above builds and verifies both
-# artifacts first).
+# The built package is SCP'd to the Cura machine after every push: a
+# verified curapackage at a fixed path, rebuilt from the current
+# checkout (make package above builds and verifies both artifacts
+# first).
 snapshot_package: package
 	cp dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
 
-# The FAST iteration path for the snapshot loop (the author's ruling,
-# 2026-09-10, amended the same day): lint + the full test suite + a
+# The FAST iteration path for the snapshot loop (the 2026-09-10
+# ruling, amended the same day): lint + the full test suite + a
 # verified package, WITHOUT captures and capture determinism — the
 # snapshot iterations carry logic, so the suites run, and only the
 # screenshot machinery is skipped. make all remains mandatory before

@@ -149,7 +149,7 @@ class BedMeshTests(unittest.TestCase):
             self.assertIn("BedMeshRangeSlider {", qml)
 
     def test_range_filter_slider_is_shared_and_synchronised(self):
-        # The author's request: the dual-ended range filter lives on
+        # By request: the dual-ended range filter lives on
         # BOTH the Information pop-over and the Preview legend, and
         # one shared model window drives both. The rainbow stops live
         # in the shared component so the two surfaces cannot drift.
@@ -173,7 +173,7 @@ class BedMeshTests(unittest.TestCase):
         # scene node mirrors the same grey for its out-of-window
         # vertices.
         self.assertIn("outOfWindowGrey", BED_MESH_MAP_QML)
-        # The grid-effect fix (the author's report): the cells paint
+        # The grid-effect fix (a report): the cells paint
         # at full opacity with the fainter look pre-mixed toward the
         # background — partial-alpha fills that overlap double-paint
         # their shared edges into a visible grid.
@@ -186,7 +186,7 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("def _clamp_thresholds", PRESENTER)
 
     def test_scale_z_max_exaggeration_is_owned_by_the_presenter(self):
-        # The author's request: a Preview-side slider scales the Z
+        # By request: a Preview-side slider scales the Z
         # distortion (Mainsail's "scale z-max"), 0 flattens the
         # surface, the ceiling is 1000, and the default stays the
         # historical fixed 20.
@@ -203,7 +203,7 @@ class BedMeshTests(unittest.TestCase):
         self.assertIn("bedMeshExaggerationRequested.connect(self.set_exaggeration)", PRESENTER)
 
     def test_hourglass_rotation_never_carries_onto_the_download_glyph(self):
-        # The author's live report: when the hourglass hands back to
+        # A live report: when the hourglass hands back to
         # the download icon, the glyph kept the angle the hourglass
         # froze at — an assignment from inside the animation cannot
         # win against the animation binding, so the idle STATE forces
