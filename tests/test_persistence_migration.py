@@ -466,6 +466,28 @@ class MigrationTests(unittest.TestCase):
         backup = os.path.join(self.dir.name, "cura.cfg.2026-09-18-14-30-12")
         self.assertTrue(write_backup(self.cura_cfg, backup))
 
+    def test_the_source_evidence_tolerates_percent_values(self):
+        # Legacy values with percent sequences are DATA, not format
+        # strings: a %20 URL is genuine evidence and must read as a
+        # normal verdict, never a parser crash (the review's
+        # robustness hole).
+        from plugins.PersistenceMigration import _raw_source_evidence
+        self.assertTrue(_raw_source_evidence(
+            b"[general]\nversion = 1\n[moonrakerprintfollower]\nurl = http://host/path%20with%20spaces\n"))
+        self.assertTrue(_raw_source_evidence(
+            b'[general]\nversion = 1\n[moonraker]\ninstances = {"Old": {"url": "http://host/foo%20bar"}}\n'))
+        self.assertTrue(_raw_source_evidence(
+            b"[moonrakerprintfollower]\nurl = http://host/%zzzz\n"))
+
+    def test_the_source_evidence_fails_closed_on_malformed_content(self):
+        from plugins.PersistenceMigration import _raw_source_evidence
+        for content in (
+            b"[moonraker]\ninstances = {not json\n",
+            b"[unclosed\nurl = x\n",
+            b"\x00\x01garbage",
+        ):
+            self.assertFalse(_raw_source_evidence(content), content)
+
     def test_the_backup_rejects_defaults_and_unrelated_content(self):
         # Registered defaults are NOT source evidence (the first-install
         # invariant), an empty Connection source is not, and neither is

@@ -53,12 +53,21 @@ def _savefile_write(path, text):
         return False
 
 
+def _open_migration_backup_folder(_message, _action):
+    """The toast's backup-folder action: a MODULE-LEVEL handler, never
+    a local closure — Uranium's Signal holds plain functions weakly,
+    and a local handler dies with the frame that raised the toast,
+    leaving the action silently dead (the MoonrakerOutputDevice
+    precedent)."""
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtGui import QDesktopServices
+    from UM.Resources import Resources
+    QDesktopServices.openUrl(QUrl.fromLocalFile(Resources.getConfigStoragePath()))
+
+
 def _raise_migration_toast(record):
     """The UM.Message toast (the UX spec): flavour A carries the
-    backup-folder action, flavour B has no backup to open. The action
-    handler is a bound function, never a lambda — Uranium's Signal
-    holds plain functions weakly (the MoonrakerOutputDevice
-    precedent)."""
+    backup-folder action, flavour B has no backup to open."""
     try:
         from UM.Message import Message
     except Exception:
@@ -72,14 +81,7 @@ def _raise_migration_toast(record):
             0, False,
         )
         message.addAction("show_backup_folder", "Show backup folder", "", "Open Cura's configuration folder")
-
-        def open_folder(_message, _action):
-            from PyQt6.QtCore import QUrl
-            from PyQt6.QtGui import QDesktopServices
-            from UM.Resources import Resources
-            QDesktopServices.openUrl(QUrl.fromLocalFile(Resources.getConfigStoragePath()))
-
-        message.actionTriggered.connect(open_folder)
+        message.actionTriggered.connect(_open_migration_backup_folder)
     else:
         message = Message(
             ("Moonraker Print Follower could not move your settings into its new files, so it started with them empty. "

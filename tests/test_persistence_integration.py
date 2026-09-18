@@ -532,6 +532,55 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertEqual(calls[1]["actions"], [])  # flavour B: no backup to open
         self.assertIn("cura.cfg.2026-09-18-14-30-12", calls[0]["args"][0])
 
+    def test_the_toast_action_survives_garbage_collection(self):
+        # UM.Signal holds plain functions WEAKLY: the action handler
+        # must be rooted by the module, not by the frame that raised
+        # the toast — a local closure dies with it and the
+        # Show-backup-folder action silently stops working (the
+        # 4.5.0 review's finding). The double replicates the weak
+        # storage, so the forced collection genuinely discriminates.
+        import gc
+        import inspect
+        import weakref
+        from PyQt6.QtGui import QDesktopServices
+        from UM.Resources import Resources
+
+        class WeakSignal:
+            def __init__(self):
+                self.slots = []
+
+            def connect(self, slot):
+                if inspect.ismethod(slot):
+                    self.slots.append(weakref.WeakMethod(slot))
+                else:
+                    self.slots.append(weakref.ref(slot))
+
+            def emit(self, *args):
+                for ref in list(self.slots):
+                    slot = ref()
+                    if slot is not None:
+                        slot(*args)
+
+        raised = []
+
+        class RecordingMessage(sys.modules["UM.Message"].Message):
+            def __init__(self, *args):
+                super().__init__(*args)
+                self.actionTriggered = WeakSignal()
+                raised.append(self)
+
+        sys.modules["UM.Message"].Message = RecordingMessage
+        try:
+            from plugins.FollowerRuntime import _raise_migration_toast
+            with patch.object(Resources, "getConfigStoragePath", return_value="/tmp/config"), \
+                 patch.object(QDesktopServices, "openUrl") as open_mock:
+                _raise_migration_toast({"backupWritten": True, "backupName": "cura.cfg.2026-09-18-14-30-12"})
+                gc.collect()
+                raised[0].actionTriggered.emit("show_backup_folder", None)
+                self.assertTrue(open_mock.called)
+        finally:
+            sys.modules["UM.Message"].Message = RecordingMessage.__mro__[1]
+
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
 class BindingReadinessTests(unittest.TestCase):

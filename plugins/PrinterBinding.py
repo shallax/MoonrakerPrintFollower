@@ -354,14 +354,21 @@ class PrinterBinding(QObject):
         # The check re-runs at EXECUTION time: the timer defers the
         # wipe, and a same-id machine re-added in that window is a live
         # printer whose credentials must survive (B2's re-check).
+        if self._closed:
+            # The teardown gate (the 4.5.0 review): a removal already
+            # deferred past close() must never interpret a shutdown or
+            # plugin-disable as a user machine deletion.
+            return
         if self._registry is not None and self._registry.findContainerStacksMetadata(id=machine_id):
             return
         if machine_id == self._machine_id:
             self._client.stop()
         patch = {field: ("http://" if field == "url" else "") for field in _REMOVAL_WIPE_FIELDS}
         patch["removed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        self._persistence.set_machine(machine_id, patch)
-        Logger.log("i", "Moonraker machine %s removed — its credentials were wiped.", machine_id)
+        if self._persistence.set_machine(machine_id, patch):
+            Logger.log("i", "Moonraker machine %s removed — its credentials were wiped.", machine_id)
+        else:
+            Logger.log("w", "Moonraker machine %s removed but its credential wipe could not be saved — the credentials remain on disk.", machine_id)
 
     def _apply(self):
         config = self.config
@@ -387,6 +394,15 @@ class PrinterBinding(QObject):
         if self._machine_signal is not None:
             try:
                 self._machine_signal.disconnect(self._machine_changed)
+            except Exception:
+                pass
+        # The destructive removal hook disconnects too (the 4.5.0
+        # review): after close, a containerRemoved emission is ignored
+        # here, and an already-deferred wipe checks _closed and is
+        # ignored there.
+        if self._registry is not None and hasattr(self._registry, "containerRemoved"):
+            try:
+                self._registry.containerRemoved.disconnect(self._container_removed)
             except Exception:
                 pass
         self._client.stop()

@@ -16,6 +16,7 @@ try:
         _started = runtime()
         _started.__enter__()
         try:
+            from UM.Logger import Logger
             from plugins.PrinterBinding import PrinterBinding, _REMOVAL_WIPE_FIELDS
             from plugins.PrinterConfig import PrinterConfig, PrinterConfigStore
         finally:
@@ -31,6 +32,10 @@ class _FakeSignal:
 
     def connect(self, handler):
         self._handlers.append(handler)
+
+    def disconnect(self, handler):
+        if handler in self._handlers:
+            self._handlers.remove(handler)
 
     def emit(self, *args):
         for handler in list(self._handlers):
@@ -199,6 +204,42 @@ class RemovalHookTests(unittest.TestCase):
             callback()
         self.assertEqual(len(self.persistence.writes), 1)
         self.assertEqual(self.persistence.writes[0][1]["url"], "http://")
+
+    def test_a_failed_wipe_write_claims_no_success(self):
+        # The persistence verdict is respected (the 4.5.0 review): a
+        # refused write must warn explicitly, never claim the
+        # credentials were wiped.
+        self._seed("A", "http://a:7125")
+        self.persistence.set_machine = lambda machine_id, patch: False
+        logs = []
+        with patch.object(Logger, "log",
+                          side_effect=lambda level, msg, *args: logs.append((level, msg))):
+            self.registry.containerRemoved.emit(_FakeContainer("A", "machine"))
+        self.assertFalse(any("credentials were wiped" in msg for _, msg in logs))
+        self.assertTrue(any("could not be saved" in msg for _, msg in logs))
+
+    def test_a_removal_after_close_writes_nothing(self):
+        # Shutdown is never a user deletion: after close the
+        # containerRemoved hook is disconnected, so a late emission
+        # reaches no destructive path.
+        self._seed("A", "http://a:7125")
+        self.binding.close()
+        self.registry.containerRemoved.emit(_FakeContainer("A", "machine"))
+        self.assertEqual(self.persistence.writes, [])
+
+    def test_a_deferred_wipe_queued_before_close_writes_nothing(self):
+        # A removal already deferred past close() must also be inert:
+        # the wipe itself checks _closed before touching the store.
+        self._seed("A", "http://a:7125")
+        deferred = []
+        with patch.object(QTimer, "singleShot",
+                          lambda _ms, callback: deferred.append(callback)):
+            self.registry.containerRemoved.emit(_FakeContainer("A", "machine"))
+        self.binding.close()
+        for callback in deferred:
+            callback()
+        self.assertEqual(self.persistence.writes, [])
+        self.assertEqual(self.persistence.records["A"]["api_key"], "secret")
 
     def test_the_legacy_chain_skips_once_the_migration_record_exists(self):
         # The clean reset the migrated flags: a re-run of the legacy

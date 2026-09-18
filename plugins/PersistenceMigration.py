@@ -105,36 +105,37 @@ def _raw_source_evidence(raw: bytes) -> bool:
     runs the SAME normalised comparison the legacy chain uses
     (registered defaults are never evidence), and the Connection
     check requires a real non-empty instances mapping — an arbitrary
-    unrelated cura.cfg still fails closed."""
+    unrelated cura.cfg still fails closed. A TOTAL predicate:
+    arbitrary cura.cfg bytes yield True or False, never a raise —
+    interpolation is disabled (a legacy `%20` value is data, not a
+    format string) and every structured read sits inside the same
+    defensive boundary."""
     if b"printer_configs_v1" in raw:
         return True
     try:
-        parsed = configparser.ConfigParser()
+        parsed = configparser.ConfigParser(interpolation=None)
         parsed.read_string(raw.decode("utf-8", errors="replace"))
+        if parsed.has_section("moonrakerprintfollower"):
+            raw_legacy = {}
+            for field, pref_key in PrinterConfigStore.LEGACY_MAP.items():
+                option = pref_key.rsplit("/", 1)[-1]
+                if not parsed.has_option("moonrakerprintfollower", option):
+                    continue
+                raw_legacy[field] = parsed.get("moonrakerprintfollower", option)
+            if raw_legacy:
+                legacy = asdict(PrinterConfig.from_dict(raw_legacy))
+                defaults = asdict(PrinterConfig())
+                if any(
+                    legacy.get(field) != defaults.get(field)
+                    for field in raw_legacy
+                ):
+                    return True
+        if parsed.has_section("moonraker"):
+            instances = json.loads(parsed.get("moonraker", "instances", fallback="{}"))
+            if isinstance(instances, dict) and instances:
+                return True
     except Exception:
         return False
-    if parsed.has_section("moonrakerprintfollower"):
-        raw_legacy = {}
-        for field, pref_key in PrinterConfigStore.LEGACY_MAP.items():
-            option = pref_key.rsplit("/", 1)[-1]
-            if not parsed.has_option("moonrakerprintfollower", option):
-                continue
-            raw_legacy[field] = parsed.get("moonrakerprintfollower", option)
-        if raw_legacy:
-            legacy = asdict(PrinterConfig.from_dict(raw_legacy))
-            defaults = asdict(PrinterConfig())
-            if any(
-                legacy.get(field) != defaults.get(field)
-                for field in raw_legacy
-            ):
-                return True
-    if parsed.has_section("moonraker"):
-        try:
-            instances = json.loads(parsed.get("moonraker", "instances", fallback="{}"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            instances = {}
-        if isinstance(instances, dict) and instances:
-            return True
     return False
 
 
