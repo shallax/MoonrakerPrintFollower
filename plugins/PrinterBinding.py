@@ -88,6 +88,26 @@ class PrinterBinding(QObject):
         parsed = QUrl(url)
         return parsed.isValid() and parsed.scheme() in {"http", "https"} and bool(parsed.host())
 
+    def _carry_bed_mesh_preferences(self, preferences) -> None:
+        """The bed-mesh keys' move (the no-trace ruling): the values
+        carry into the settings document's global section once, then
+        the clean resets the preferences. Idempotent — the keys'
+        presence in the global section is the guard, so a later run
+        can never overwrite the user's live values with defaults."""
+        global_section = self._persistence.settings_document().get("global") or {}
+        if "bedMeshVisible" in global_section and "bedMeshExaggeration" in global_section:
+            return
+        patch = {}
+        if "bedMeshVisible" not in global_section:
+            patch["bedMeshVisible"] = bool(preferences.getValue("moonrakerprintfollower/bed_mesh_visible"))
+        if "bedMeshExaggeration" not in global_section:
+            try:
+                patch["bedMeshExaggeration"] = float(preferences.getValue("moonrakerprintfollower/bed_mesh_exaggeration"))
+            except (TypeError, ValueError):
+                patch["bedMeshExaggeration"] = 20.0
+        if patch:
+            self._persistence.set_global(patch)
+
     def _migrate(self):
         record = self._persistence.migration_record() if self._persistence is not None else None
         if record is None:
@@ -122,6 +142,7 @@ class PrinterBinding(QObject):
                 # file and the cura.cfg flags (the legacy chain is
                 # record-guarded, so nothing resurrects the blob).
                 from .PersistenceMigration import _clean_preferences, _remove_old_state_file
+                self._carry_bed_mesh_preferences(preferences)
                 _remove_old_state_file(self._old_state_path)
                 _clean_preferences(preferences.setValue)
                 return
@@ -131,6 +152,7 @@ class PrinterBinding(QObject):
             ):
                 return
         blob = preferences.getValue(PrinterConfigStore.PREF_KEY)
+        self._carry_bed_mesh_preferences(preferences)
         outcome = run_migration(
             blob,
             self._cura_cfg_path,

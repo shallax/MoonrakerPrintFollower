@@ -295,9 +295,13 @@ def _clean_preferences(set_pref: Callable[[str, Any], None]) -> None:
     # The migrated flags reset to their registered defaults too: the
     # [moonrakerprintfollower] section leaves cura.cfg entirely (the
     # author's live find). The legacy chain guards on the migration
-    # record, so nothing re-runs and resurrects the blob.
+    # record, so nothing re-runs and resurrects the blob. The bed-mesh
+    # keys reset the same way — their home is the settings document's
+    # global section now (the no-trace ruling).
     set_pref(PrinterConfigStore.MIGRATED_KEY, False)
     set_pref(PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY, False)
+    set_pref("moonrakerprintfollower/bed_mesh_visible", True)
+    set_pref("moonrakerprintfollower/bed_mesh_exaggeration", 20.0)
 
 
 def _record(outcome: MigrationOutcome, timestamp: str) -> Dict[str, Any]:

@@ -139,7 +139,8 @@ class FollowerRuntime:
         self.preview.bind_motion(self.motion)
         self.pauses = PauseController(self.client, parent)
         self.presentation = PreviewPresentation(application, self.cura, parent)
-        self.bed_mesh = BedMeshPresenter(application, self.cura, self.presentation, parent)
+        self.bed_mesh = BedMeshPresenter(application, self.cura, self.presentation, parent,
+                                         persistence=self.persistence)
         self.coordinator = PrintCoordinator(client=self.client, binding=self.binding,
             files=self.files, index=self.index, cura=self.cura, preview=self.preview,
             pauses=self.pauses, presentation=self.presentation, bed_mesh=self.bed_mesh, parent=parent)

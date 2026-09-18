@@ -53,17 +53,31 @@ Component {
 
         Component.onCompleted: {
             updateCameraImage();
-            // The section-order apply (the 4.5.0 live find): the
-            // stored layout must reorder the panes at attach time —
-            // the model's hydration publish can fire
-            // sectionLayoutChanged before this document's Connections
-            // exist, and the panes would keep the default order until
-            // an interaction re-emits (the popover was right, the
-            // panes were not). The apply is idempotent (it skips when
-            // the live order already matches).
-            if (root.printer != null) {
-                root.applySectionOrder(infoContent, "information");
-                root.applySectionOrder(statusContent, "status");
+        }
+
+        // The section-order apply (the 4.5.0 live find): the shell
+        // constructs BEFORE the printer model arrives, and the
+        // model's hydration publish can fire sectionLayoutChanged
+        // before the Connections below attach — the panes kept the
+        // default order until an interaction re-emitted. This retry
+        // waits for the printer, then applies once; the Connections
+        // handler carries the live changes afterwards.
+        Timer {
+            id: sectionOrderApply
+            interval: 200
+            repeat: true
+            running: true
+            property int attempts: 0
+            onTriggered: {
+                if (root.printer != null) {
+                    root.applySectionOrder(infoContent, "information");
+                    root.applySectionOrder(statusContent, "status");
+                    sectionOrderApply.running = false;
+                } else if (++sectionOrderApply.attempts > 50) {
+                    // The printer never arrived: the Connections path
+                    // still covers a late-arriving model.
+                    sectionOrderApply.running = false;
+                }
             }
         }
 
@@ -1876,30 +1890,12 @@ Component {
 
                     ColumnLayout {
                         id: statusContent
-                        // The reflow probe (the 4.5.0 polish-loop
+                        // The reflow loggers (the 4.5.0 polish-loop
                         // hunt): Cura's own warning names only the
-                        // layout — this logs WHICH child's visibility
-                        // or height changes, every 2 s, so the flipper
-                        // is named in the session log.
-                        Timer {
-                            id: reflowProbe
-                            interval: 2000
-                            repeat: true
-                            running: true
-                            property string last: ""
-                            onTriggered: {
-                                var now = [];
-                                for (var i = 0; i < statusContent.children.length; i++) {
-                                    var child = statusContent.children[i];
-                                    now.push(child.visible + ":" + Math.round(child.implicitHeight));
-                                }
-                                var text = JSON.stringify(now);
-                                if (reflowProbe.last !== text) {
-                                    console.log("MPF-REFLOW status column state: " + reflowProbe.last + " -> " + text);
-                                    reflowProbe.last = text;
-                                }
-                            }
-                        }
+                        // layout — each child logs ITS height change
+                        // the moment it happens, so the flipper is
+                        // named in the session log.
+                        onImplicitHeightChanged: console.log("MPF-REFLOW status column height:", implicitHeight)
                         // The constant gutter (the whats-new overlay's
                         // precedent): binding the content width to the
                         // LIVE scrollbar width fed a layout polish loop
@@ -1911,28 +1907,33 @@ Component {
                         // must contribute nothing so headers stack flush.
                         spacing: 0
                         JobSection {
+                            onImplicitHeightChanged: console.log("MPF-REFLOW jobsection height:", implicitHeight, "vis=", visible)
                             visible: root.printer == null || root.printer.sectionHiddenMap["job"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
 
                         TempsSection {
+                            onImplicitHeightChanged: console.log("MPF-REFLOW tempssection height:", implicitHeight, "vis=", visible)
                             Layout.fillWidth: true
                             visible: root.printer != null && root.printer.temperatureItems.length > 0 && root.printer.sectionHiddenMap["temps"] !== true
                             printerModel: root.printer
                         }
 
                         FansInfoSection {
+                            onImplicitHeightChanged: console.log("MPF-REFLOW fansinfosection height:", implicitHeight, "vis=", visible)
                             Layout.fillWidth: true
                             visible: root.printer != null && root.printer.fanItems.length > 0 && root.printer.sectionHiddenMap["fansinfo"] !== true
                             printerModel: root.printer
                         }
                         FilamentSection {
+                            onImplicitHeightChanged: console.log("MPF-REFLOW filamentsection height:", implicitHeight, "vis=", visible)
                             Layout.fillWidth: true
                             visible: root.printer != null && root.printer.filamentSensorItems.length > 0 && root.printer.sectionHiddenMap["filament"] !== true
                             printerModel: root.printer
                         }
                         ObjectsSection {
+                            onImplicitHeightChanged: console.log("MPF-REFLOW objectssection height:", implicitHeight, "vis=", visible)
                             visible: root.printer == null || root.printer.sectionHiddenMap["objects"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
@@ -1942,11 +1943,13 @@ Component {
                             }
                         }
                         SystemInfoSection {
+                            onImplicitHeightChanged: console.log("MPF-REFLOW systeminfosection height:", implicitHeight, "vis=", visible)
                             visible: root.printer == null || root.printer.sectionHiddenMap["systeminfo"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
                         McusSection {
+                            onImplicitHeightChanged: console.log("MPF-REFLOW mcussection height:", implicitHeight, "vis=", visible)
                             Layout.fillWidth: true
                             visible: root.printer != null && root.printer.mcuItems.length > 0 && root.printer.sectionHiddenMap["mcus"] !== true
                             printerModel: root.printer
