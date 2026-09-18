@@ -26,6 +26,23 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "4.5.0",
+        "headline": "Version 4.5.0 moves the plugin's settings into its own "
+            "folder, so your configuration and console history carry over "
+            "cleanly and Cura's configuration file stays its own.",
+        "items": (
+            "All of the plugin's saved data now lives in one "
+            "MoonrakerPrintFollower folder beside Cura's settings — "
+            "your printers, cameras and panel layout move across "
+            "automatically on the first start, with a backup taken "
+            "first.",
+            "The Status pane's Position row reads in the axis colours, "
+            "matching the collapsed readout and the Toolhead.",
+            "Dark mode: the emergency-stop label is readable on the "
+            "button's dark ground.",
+        ),
+    },
+    {
         "version": "4.4.0",
         "headline": "Version 4.4.0 is the configurable-sections release: every "
             "Monitor pane orders and hides its own sections, the collapsed "

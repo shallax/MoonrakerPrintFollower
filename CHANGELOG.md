@@ -2,6 +2,31 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.5.0
+
+Version 4.5.0 is the persistence release: the plugin's settings leave
+Cura's preference file for one MoonrakerPrintFollower folder beside
+it, migrated automatically on the first start after the upgrade.
+
+- **The persistence folder.** `MoonrakerPrintFollower/` holds
+  `settings.json` (the connection, following, upload, camera and
+  diagnostics configuration per printer), `state.json` (the pane
+  layout and UI chrome) and one small `machines/` file per printer
+  (the console transcript and history). Everything is pretty-printed
+  and sorted, pleasant to read in an editor, and a failed migration
+  flags itself: the dialog carries a notice with a rollback recipe
+  and Cura's configuration is backed up to `cura.cfg.<timestamp>`
+  before anything is removed.
+- **The Status pane's Position row** reads in the axis colours,
+  matching the collapsed readout and the Toolhead section.
+- **Dark mode:** the emergency-stop label's idle text follows the
+  theme, readable on the button's dark ground.
+- **Fixes:** the console's notes no longer persist across restarts
+  (they are session-transient by design), the status column's live
+  values never wrap (the per-second polish-loop warning), an empty
+  Moonraker history no longer permanently refuses a file's metadata,
+  and the emergency label's colour answers the theme gate.
+
 ## 4.4.0
 
 Version 4.4.0 is the configurable-sections release: every pane's

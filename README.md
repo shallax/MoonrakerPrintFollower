@@ -8,8 +8,17 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.4.0
+- **Release:** 4.5.0
 - **Target:** Cura 5.11–5.13 / SDK 8.11–8.12
+
+## What changed in 4.5.0
+
+Version 4.5.0 is the persistence release: the plugin's settings move
+into one MoonrakerPrintFollower folder beside Cura's configuration,
+migrated automatically on the first start with a backup taken first.
+Nothing else changes for a healthy upgrade — the Status pane's
+Position row now reads in the axis colours and the emergency-stop
+label is readable in dark mode.
 
 ## What changed in 4.4.0
 

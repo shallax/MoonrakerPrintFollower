@@ -2,7 +2,7 @@
   "package_id": "MoonrakerPrintFollower",
   "package_type": "plugin",
   "display_name": "Moonraker Print Follower",
-  "package_version": "4.4.0",
+  "package_version": "4.5.0",
   "sdk_version": "8.11.0",
   "sdk_version_semver": "8.11.0",
   "website": "https://github.com/shallax/MoonrakerPrintFollower",
