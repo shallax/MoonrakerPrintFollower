@@ -1820,10 +1820,17 @@ state file, with flush/debounce machinery holding the two together.
 The reviewer's architecture, adopted as the direction (the author ran
 it by the reviewer and ruled it here, not earlier):
 
-- Two plugin-owned files, not one: moonrakerprintfollower_settings.json
-  (durable user configuration) and moonrakerprintfollower_state.json
-  (UI/runtime state worth restoring), keyed by Cura's machine id; the
-  cache stays in Cura's cache area as today.
+- Two plugin-owned stores, not one: moonrakerprintfollower_settings.json
+  (durable user configuration — a global section plus a machines map
+  keyed by machine id) and a state directory sharded per machine
+  (state/global.json for the pane chrome and
+  state/machines/<id>.json per printer) — the author's 2026-09-18
+  ruling after the panel: the machine id is the natural shard key
+  and one instance drives one printer, so each machine's file has a
+  single writer by construction; the hot path needs no cross-process
+  lock on any platform. The flock (Cura's SaveFile) covers the
+  settings file and the global chrome. The cache stays in Cura's
+  cache area as today.
 - The split is write behaviour, not taste: settings change rarely and
   explicitly (connection, following, upload, camera, diagnostics);
   state changes incidentally while operating the UI and may be
@@ -1909,13 +1916,20 @@ The 2026-09-18 Phase 0 walk (the author's rulings):
   2026-09-18 ruling): it never ran on any supported Cura — the
   getValue arity trap — so no upgrader is affected; the rest of the
   legacy chain stays until 5.0.0's teardown.
-- On machine removal, the record's URL and API key are wiped and the
-  rest kept (the author's 2026-09-18 ruling): Uranium's
+- On machine removal, the record's connection credentials and
+  host-identifying fields (url, api_key, camera_url, frontend_url,
+  upload_path) are wiped, the machine's live session is stopped, and
+  the rest kept (the author's 2026-09-18 rulings): Uranium's
   ContainerRegistry emits containerRemoved with the removed
   container, and removeMachine removes the machine stack last, so
   the hook filters on the machine id. The surviving record lets a
   same-named re-add re-associate without inheriting the old host's
   credentials; the driver gains a remove_machine verb to prove it.
+- No sqlite in 4.5.0 (the author's 2026-09-18 ruling after the
+  panel's measured verdict): JSON for both files, and an flock
+  around the read-modify-write closes the cross-process gap. The
+  revisit triggers — unbounded retained history, cross-machine
+  queries — are recorded, not built.
 - The build order: the persistence refactor, then the theme step
   (the Position row and the dark-theme capture leg), then the
   snapshot for the live migration test, then the 5.7+ pack.
@@ -1951,6 +1965,44 @@ The 2026-09-18 scope additions:
 - The review rounds gain a UX persona (the author's call): the
   settings pages may be redesigned while the settings machinery is
   open — the persona's verdict stays advisory, the author rules.
+
+The panel walk's settled mechanics (2026-09-18, the four reports in
+review/round-2-*.md):
+
+- The state side shards per machine from the start (the author's
+  ruling): state/global.json carries the ten global keys (the nine
+  chrome keys plus toolhead); state/machines/<id>.json carries the
+  per-machine console state. Chart config and show_probe_points stay
+  settings-side, per-machine; the console transcript/history/
+  store-time move state-side.
+- The facade is key-scoped (set_machine(id, patch), set_global,
+  remove_machine), typed, one instance per file per process at the
+  composition root; the field-ownership table is pinned by a union
+  test. The layout is an implementation detail — the settings side
+  can shard later without touching a caller.
+- The migration runs from initializationFinished, never construction
+  (Cura re-reads preferences after plugins load — a construction-time
+  clean is resurrected), with the stack-change path as the
+  deferred-until-identity case; a stale cura/active_machine must
+  still migrate. The control flow: strict source read (absent vs
+  corrupt), the backup written, fsynced and verified by content
+  first, the new files written and verified by re-read, then the
+  clean as the last step — gated on "the source was understood",
+  never "records extracted" (an empty-but-present blob is healthy).
+  The clean is an in-memory return-to-default (setValue), never file
+  surgery, never removePreference. The outcome persists as a
+  tri-state (pending/ok/failed); the v1 import is idempotent (a Cura
+  backup restore can re-introduce the blob).
+- The removal hook filters on the metadata type machine, the id
+  being in the machines map, and registry absence; it is idempotent,
+  callLater-deferred, wipes the credentials and host-identifying
+  fields, stops the live session, evicts the device cache and
+  records removed_at — Cura itself can remove machines without the
+  user (the quality-changes name collision), and the tests cover it.
+- The migration failure surfaces twice (the UX ruling): a
+  once-per-failure Cura toast after the What's-New sequence, and a
+  persistent dismissible banner above the settings tab row with the
+  recipe demoted to a permanent Diagnostics row on dismissal.
 
 ## 5.0.0 — Physical head in the Preview (moved from 4.3.0 to 4.5.0, then to 5.0.0 by the 2026-09-17 re-sequencing)
 
