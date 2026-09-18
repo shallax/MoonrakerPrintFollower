@@ -125,6 +125,17 @@ if [ ! -d "$CURA_ROOT" ]; then
     echo "ui_test: Cura $CURA_VERSION is not prepared — fetching it now"
     tools/fetch_cura.py "$CURA_VERSION" || exit 1
 fi
+# The launch form is the prepare-time probe's verdict (the manifest's
+# launch field): the 5.3-era binaries are PyInstaller one-file bundles
+# whose old bootloader reads the launcher path as its own archive —
+# the explicit ld.so launch breaks them (the sweep's 5.3.0 boot
+# error). Probed versions record "direct"; every other rides the
+# loader (the probe never fires on the modern builds).
+if grep -q '"launch": "direct"' "$WORK_DIR/cura_versions/$CURA_VERSION/manifest.json" 2>/dev/null; then
+    MPF_LAUNCH="./UltiMaker-Cura"
+else
+    MPF_LAUNCH="/lib64/ld-linux-x86-64.so.2 ./UltiMaker-Cura"
+fi
 
 # Nothing outlives a run: Cura, its video ffmpeg and the simulator die
 # with the run (the container runs docker-init, which reaps the
@@ -325,13 +336,14 @@ chmod -R 777 "$RUN_DIR"
 case "$MODE" in
     discover)
         docker exec -e CURA_ROOT="$(container_path "$CURA_ROOT")" -e CURA_WHEELS="$(container_path "$CURA_WHEELS")" \
+            -e MPF_LAUNCH="$MPF_LAUNCH" \
             "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
             DISPLAY=:99 APPDIR=\$CURA_ROOT \
             LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
             PYTHONPATH=\$CURA_WHEELS:\$CURA_ROOT \
             XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
             LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb timeout 1800 \
-            /lib64/ld-linux-x86-64.so.2 ./UltiMaker-Cura" >/tmp/mpf/cura_run.log 2>&1 &'
+            \$MPF_LAUNCH" >/tmp/mpf/cura_run.log 2>&1 &'
         # wait for the driver's port, then run the discovery
         for _ in $(seq 1 120); do [ -s "$WORK_DIR"/harness_port.txt ] && break; sleep 1; done
         docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
@@ -339,13 +351,14 @@ case "$MODE" in
         ;;
     scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite|real)
         docker exec -e CURA_ROOT="$(container_path "$CURA_ROOT")" -e CURA_WHEELS="$(container_path "$CURA_WHEELS")" \
+            -e MPF_LAUNCH="$MPF_LAUNCH" \
             "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
             DISPLAY=:99 APPDIR=\$CURA_ROOT \
             LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
             PYTHONPATH=\$CURA_WHEELS:\$CURA_ROOT \
             XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
             LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb timeout 1800 \
-            /lib64/ld-linux-x86-64.so.2 ./UltiMaker-Cura" >/tmp/mpf/cura_run.log 2>&1 &'
+            \$MPF_LAUNCH" >/tmp/mpf/cura_run.log 2>&1 &'
         # The port must appear before the scenario can start; the CI
         # runners are 2-vCPU VMs and boot Cura far more slowly than a
         # dev box, so the deadline is generous. The failure report

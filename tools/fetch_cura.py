@@ -119,10 +119,38 @@ def main() -> int:
         if not new.exists() and old.exists():
             new.symlink_to(old.name)
 
+    def probe_launch(root):
+        # The 5.3-era binaries are PyInstaller one-file bundles whose
+        # old bootloader reads the launcher path as its own archive:
+        # under the explicit ld.so launch they die immediately with
+        # the archive error. Probe once at prepare time — the error
+        # appears within seconds, a healthy boot is killed by the
+        # timeout and reads as the normal loader form.
+        binary = root / "UltiMaker-Cura"
+        if not binary.exists():
+            return "loader"
+        probe = subprocess.run(
+            ["timeout", "15", "/lib64/ld-linux-x86-64.so.2", str(binary), "--help"],
+            capture_output=True, text=True,
+            env={"LD_LIBRARY_PATH": str(root), "DISPLAY": ":99"},
+        )
+        return "direct" if "PyInstaller archive" in (probe.stderr or "") else "loader"
+
     # Idempotent and cheap: a tree prepared before this fix still
     # gets the link (the version sweep fetched ahead of it).
     normalise_binary(vdir / "root")
-    if (vdir / "manifest.json").exists() and not args.force:
+    launch = probe_launch(vdir / "root")
+    manifest_path = vdir / "manifest.json"
+    if manifest_path.exists():
+        # The probe's verdict updates in place on prepared trees —
+        # the launch form must match what this tree actually boots as.
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("launch") != launch:
+            manifest["launch"] = launch
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n",
+                                     encoding="utf-8")
+            print(f"{version}: updated the launch verdict to {launch}")
+    if manifest_path.exists() and not args.force:
         print(f"{version}: already prepared at {vdir}")
         return 0
     vdir.mkdir(parents=True, exist_ok=True)
@@ -130,20 +158,29 @@ def main() -> int:
     appimage = vdir / "UltiMaker-Cura.AppImage"
     if not appimage.exists() or args.force:
         # The asset naming changed mid-series: 5.0.0 ships
-        # -linux.AppImage, the later releases -linux-X64.AppImage
-        # (the version sweep's assessment needs both forms).
+        # -linux.AppImage, the later releases -linux-X64.AppImage,
+        # and the 5.2 era wrapped the AppImage inside a zip (the
+        # version sweep's assessment needs all three forms).
         for asset in (f"UltiMaker-Cura-{version}-linux-X64.AppImage",
-                      f"UltiMaker-Cura-{version}-linux.AppImage"):
+                      f"UltiMaker-Cura-{version}-linux.AppImage",
+                      f"UltiMaker-Cura-{version}-linux-modern.zip",
+                      f"UltiMaker-Cura-{version}-linux.zip"):
             url = (f"https://github.com/Ultimaker/Cura/releases/download/"
                    f"{version}/{asset}")
+            target = appimage if asset.endswith(".AppImage") else vdir / asset
             print(f"downloading {url}")
             try:
-                download(url, appimage)
+                download(url, target)
+                if target != appimage:
+                    sh("unzip", "-o", "-q", str(target), "-d", str(vdir))
+                    inner = next(p for p in vdir.glob("*.AppImage") if p != appimage)
+                    shutil.move(str(inner), str(appimage))
+                    target.unlink()
                 break
             except Exception:
-                if appimage.exists():
-                    appimage.unlink()
-                print(f"{asset}: not there, trying the other form")
+                if target.exists():
+                    target.unlink()
+                print(f"{asset}: not there, trying the next form")
         else:
             raise RuntimeError(f"no AppImage asset found for Cura {version}")
     sha256 = hashlib.sha256(appimage.read_bytes()).hexdigest()
@@ -190,6 +227,7 @@ def main() -> int:
         "appimage_url": f"https://github.com/Ultimaker/Cura/releases/download/"
                        f"{version}/UltiMaker-Cura-{version}-linux-X64.AppImage",
         "appimage_sha256": sha256,
+        "launch": launch,
         "bundled_python": pyv,
         "bundled_pyqt6": qt6,
         "wheels": [
