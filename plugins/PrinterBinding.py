@@ -110,12 +110,14 @@ class PrinterBinding(QObject):
 
     def _migrate(self):
         record = self._persistence.migration_record() if self._persistence is not None else None
-        if record is None:
+        if record is None and not self._persistence.settings_document():
             # The pre-migration window only: the legacy chain runs
-            # while the blob is still the source. Once the one-shot's
-            # record exists the legacy migrations must NOT re-run —
-            # the clean reset their flags, and a re-run would
-            # resurrect the blob into cura.cfg.
+            # while the blob is still the source and the v2 document
+            # does not exist yet. Once the document exists the chain
+            # must NOT run — its mirror keys fabricate a migration
+            # record on installs that never had legacy data (the
+            # first-install report), and the one-shot's own checks
+            # cover whatever the chain used to.
             for migrate in (self._store.migrate_legacy_to_current_machine, self._store.migrate_moonraker_connection):
                 try:
                     migrate()
@@ -138,7 +140,7 @@ class PrinterBinding(QObject):
             # The clean-install activation: the v2 skeleton, no record.
             self._persistence.write_settings_document({
                 "configVersion": 2,
-                "global": {"activeMachineId": None},
+                "global": {},
                 "machines": {},
             })
             return
@@ -213,13 +215,6 @@ class PrinterBinding(QObject):
         # synchronous preference flush retires with the transcript).
         machine_id, _ = self.identity
         self._persistence.set_machine_config(machine_id, config)
-        # The leak instrument reads the legacy per-field keys (the
-        # 2026-09-16 report): the new store preserves the mirror so
-        # the probe's toggles keep tracking the config (E6).
-        preferences = self._application.getPreferences()
-        preferences.setValue(self._store.LEGACY_MAP["enabled"], bool(config.enabled))
-        preferences.setValue(self._store.LEGACY_MAP["memory_diagnostics_log"], bool(config.memory_diagnostics_log))
-        preferences.setValue(self._store.LEGACY_MAP["memory_diagnostics_trace"], bool(config.memory_diagnostics_trace))
 
         # Camera selection is UI state, not connection state: persisted
         # above, but never a reconfigure/restart of the client.

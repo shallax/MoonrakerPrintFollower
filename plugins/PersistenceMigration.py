@@ -207,7 +207,6 @@ def _write_empty_documents(
     settings_write({
         "configVersion": 2,
         "global": {
-            "activeMachineId": None,
             "migration": _record(outcome, timestamp),
         },
         "machines": {},
@@ -253,7 +252,6 @@ def _write_new_files(
         machines = {**machines, **existing_machines}
     global_section = existing.get("global") if isinstance(existing.get("global"), dict) else {}
     global_section = dict(global_section)
-    global_section["activeMachineId"] = global_section.get("activeMachineId") or None
     global_section["migration"] = _record(outcome, timestamp)
     return settings_write({
         "configVersion": 2,

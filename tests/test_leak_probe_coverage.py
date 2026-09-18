@@ -89,6 +89,18 @@ class _Preferences:
         self.values[key] = value
 
 
+class _Binding:
+    """The runtime's binding seam: the probe reads the facade's live
+    config through it (the legacy preference mirror is retired)."""
+
+    def __init__(self, log=False, trace=False):
+        self.config = SimpleNamespace(memory_diagnostics_log=log, memory_diagnostics_trace=trace)
+
+
+def _runtime(log=False, trace=False, binding=None):
+    return SimpleNamespace(binding=binding if binding is not None else _Binding(log=log, trace=trace))
+
+
 class _Stage:
     def __init__(self, plugin_id="PreviewStage"):
         self._plugin_id = plugin_id
@@ -687,7 +699,7 @@ class _ProbeCase(unittest.TestCase):
     def _probe(self, surface=None, *, enabled=False):
         """A probe built with the toggle off, then driven by the test."""
         with _home(self.home), _host(_Preferences(log=False)):
-            probe = LeakProbe(surface if surface is not None else SimpleNamespace())
+            probe = LeakProbe(surface if surface is not None else _runtime(log=enabled))
         self.addCleanup(probe._timer.stop)
         probe._log_path = str(self.log_path)
         probe._enabled = enabled
@@ -703,7 +715,7 @@ class ConstructorTests(_ProbeCase):
 
     def test_the_toggle_off_writes_no_file_at_all(self):
         with _home(self.home), _host(_Preferences(log=False)):
-            probe = LeakProbe(SimpleNamespace())
+            probe = LeakProbe(_runtime(log=False))
         self.addCleanup(probe._timer.stop)
         self.assertTrue(probe._timer.isActive())
         self.assertFalse(probe._enabled)
@@ -714,7 +726,7 @@ class ConstructorTests(_ProbeCase):
 
     def test_the_toggle_on_registers_the_instance_once(self):
         with _home(self.home), _host(_Preferences(log=True)):
-            probe = LeakProbe(SimpleNamespace())
+            probe = LeakProbe(_runtime(log=True))
         self.addCleanup(probe._timer.stop)
         lines = (self.home / "moonraker_leak.log").read_text().splitlines()
         self.assertEqual(len(lines), 1)
@@ -724,44 +736,47 @@ class ConstructorTests(_ProbeCase):
         self.assertIn("platform=%s" % sys.platform, message)
 
     def test_an_unreadable_store_keeps_the_probe_off(self):
-        class _Angry:
-            def getValue(self, key):
-                raise RuntimeError("no store")
+        class _AngryBinding:
+            @property
+            def config(self):
+                raise RuntimeError("no config")
 
-        with _home(self.home), _host(_Angry()):
-            probe = LeakProbe(SimpleNamespace())
+        with _home(self.home), _host(_Preferences(log=False)):
+            probe = LeakProbe(_runtime(binding=_AngryBinding()))
         self.addCleanup(probe._timer.stop)
         self.assertFalse(probe._enabled)
         self.assertFalse(probe._trace_snapshot)
         self.assertFalse((self.home / "moonraker_leak.log").exists())
 
     def test_an_unreadable_store_reads_as_off(self):
-        class _Angry:
-            def getValue(self, key):
-                raise RuntimeError("no store")
+        class _AngryBinding:
+            @property
+            def config(self):
+                raise RuntimeError("no config")
 
-        probe = self._probe()
-        with _host(_Angry()):
-            self.assertFalse(probe._enabled_now())
-            self.assertFalse(LeakProbe._trace_enabled_now())
+        probe = LeakProbe(_runtime(binding=_AngryBinding()))
+        self.addCleanup(probe._timer.stop)
+        self.assertFalse(probe._enabled_now())
+        self.assertFalse(probe._trace_enabled_now())
 
-    def test_a_failed_preference_read_is_named_in_the_registration(self):
-        class _Flaky:
+    def test_a_failed_config_read_is_named_in_the_registration(self):
+        class _FlakyBinding:
             def __init__(self):
                 self.reads = 0
 
-            def getValue(self, key):
+            @property
+            def config(self):
                 self.reads += 1
                 if self.reads > 1:
-                    raise RuntimeError("store gone")
-                return True
+                    raise RuntimeError("config gone")
+                return SimpleNamespace(memory_diagnostics_log=True, memory_diagnostics_trace=False)
 
-        with _home(self.home), _host(_Flaky()):
-            probe = LeakProbe(SimpleNamespace())
+        with _home(self.home), _host(_Preferences(log=False)):
+            probe = LeakProbe(_runtime(binding=_FlakyBinding()))
         self.addCleanup(probe._timer.stop)
         message = (self.home / "moonraker_leak.log").read_text().splitlines()[0]
         self.assertIn("read-err", message)
-        self.assertIn("store gone", message)
+        self.assertIn("config gone", message)
 
 
 class LogPathTests(unittest.TestCase):

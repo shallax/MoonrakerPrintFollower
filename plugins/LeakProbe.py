@@ -418,13 +418,10 @@ class LeakProbe:
         self._log_path = self._pick_log_path()
         # One registration line per launch with the toggle ON: the pid
         # and install path name the instance, and the raw toggle value
-        # proves what the preference read saw — the Windows run logged
+        # proves what the config read saw — the Windows run logged
         # nothing at all and the silence could not say why.
         try:
-            from UM.Application import Application
-            from .PrinterConfig import PrinterConfigStore
-            raw = Application.getInstance().getPreferences().getValue(
-                PrinterConfigStore.LEGACY_MAP["memory_diagnostics_log"])
+            raw = bool(getattr(self.runtime.binding.config, "memory_diagnostics_log", False))
         except Exception as exc:
             raw = f"read-err {exc!r}"
         self._log(f"registered toggle={raw!r} pid={os.getpid()} "
@@ -451,28 +448,20 @@ class LeakProbe:
                 return str(candidate)
 
     def _enabled_now(self) -> bool:
-        # The settings' diagnostics toggle — read live each minute,
-        # so the instrument turns on and off without a restart. The
-        # key comes from PrinterConfig's map, the preference store's
-        # single owner.
+        # The settings' diagnostics toggle — read live each minute
+        # from the facade's config, the same source the settings page
+        # saves (the legacy preference mirror is retired).
         try:
-            from UM.Application import Application
-            from .PrinterConfig import PrinterConfigStore
-            return bool(Application.getInstance().getPreferences().getValue(
-                PrinterConfigStore.LEGACY_MAP["memory_diagnostics_log"]))
+            return bool(getattr(self.runtime.binding.config, "memory_diagnostics_log", False))
         except Exception:
             return False
 
-    @staticmethod
-    def _trace_enabled_now() -> bool:
+    def _trace_enabled_now(self) -> bool:
         # The separate trace toggle: the snapshot stall is real, so the
         # Python-allocation axis is opt-in on top of the main
         # diagnostics toggle, read live like the main toggle.
         try:
-            from UM.Application import Application
-            from .PrinterConfig import PrinterConfigStore
-            return bool(Application.getInstance().getPreferences().getValue(
-                PrinterConfigStore.LEGACY_MAP["memory_diagnostics_trace"]))
+            return bool(getattr(self.runtime.binding.config, "memory_diagnostics_trace", False))
         except Exception:
             return False
 
