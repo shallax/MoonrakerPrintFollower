@@ -186,7 +186,7 @@ jobs:
       - name: Run all discovered tests with the real Qt runtime
         run: |
           python -c "from PyQt6.QtCore import QCoreApplication"
-          python -m unittest discover -s tests -p "test_*.py"
+          env JOBS=2 LEGS=host tools/run_tests.sh
 
   release:
     name: Release
@@ -204,7 +204,7 @@ jobs:
         run: python tools/check_qml.py plugins
 
       - name: Run all discovered tests
-        run: python -m unittest discover -s tests -p "test_*.py"
+        run: env JOBS=2 LEGS=host tools/run_tests.sh
 
       - name: Read package and CI metadata
         id: build_meta

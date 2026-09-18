@@ -69,8 +69,9 @@ verify_captures:
 	./tools/verify_capture_determinism.sh
 
 package:
-	python3 tools/build_curapackage.py
-	python3 tools/build_marketplace_source.py
+	# The two artifacts are independent: build them side by side
+	# (the 2026-09-18 parallelism ruling), then verify both.
+	python3 tools/build_curapackage.py & python3 tools/build_marketplace_source.py & wait
 	python3 tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])').curapackage"
 	python3 tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')-source.zip"
 
@@ -88,6 +89,7 @@ snapshot_package: package
 # screenshot machinery is skipped. make all remains mandatory before
 # any commit or push.
 snapshot_quick: lint run_tests
+	$(MAKE) -j2 lint run_tests
 	$(MAKE) package
 	cp dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
 	@echo "wrote /tmp/mpf.curapackage"
