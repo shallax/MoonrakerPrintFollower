@@ -1895,6 +1895,12 @@ The 2026-09-18 Phase 0 walk (the author's rulings):
   config is taken first (the user can pick it apart or roll back to
   an older plugin version), and a migration that looks wrong flags
   the failure to the user and starts from a clean, blank config.
+- Multi-printer support is test-proven, not live-tested (the author
+  has one printer): the device-switching scenarios — many machine
+  records migrating at once, a mid-session switch, a restart with a
+  different active printer, machine-rename drift, and no
+  cross-printer leakage of transcripts or settings — must be covered
+  by automated tests before the release is called done.
 - The build order: the persistence refactor, then the theme step
   (the Position row and the dark-theme capture leg), then the
   snapshot for the live migration test, then the 5.7+ pack.
