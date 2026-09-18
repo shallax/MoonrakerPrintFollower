@@ -109,8 +109,8 @@ class PrinterConfigTests(unittest.TestCase):
         # The first-install ruling's second-boot arm: a fabricated
         # default blob here became the NEXT boot's migration source —
         # a "settings carried over" notice on an install that never
-        # had legacy data. A clean install marks the one-shot done
-        # and writes nothing.
+        # had legacy data. A clean install does not complete a
+        # migration; it discovers there is no migration to perform.
         prefs = FakePreferences()
         active = ["machine-a", "Machine A"]
         store = PrinterConfigStore(prefs, lambda: tuple(active))
@@ -120,6 +120,44 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertFalse(store._truthy(prefs.values.get(PrinterConfigStore.MIGRATED_KEY)))
         # The blob stays the seeded empty "{}" — no fabricated record.
         self.assertEqual(prefs.values.get(PrinterConfigStore.PREF_KEY), "{}")
+
+    def test_an_empty_moonraker_connection_source_sets_no_marker(self):
+        # Checking is not importing: a fresh install has no old
+        # Moonraker Connection data, and the check must not persist a
+        # fake migration marker (the reviewer's first-install
+        # invariant).
+        prefs = FakePreferences()
+        store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
+        self.assertEqual(store.migrate_moonraker_connection(), 0)
+        self.assertFalse(store._truthy(
+            prefs.values.get(PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY)))
+
+    def test_a_real_moonraker_connection_import_sets_its_marker(self):
+        prefs = FakePreferences()
+        prefs.values[PrinterConfigStore.MOONRAKER_CONNECTION_PREF_KEY] = json.dumps({
+            "machine-a": {"url": "http://old-a.example.invalid:7125/"},
+        })
+        store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
+        self.assertEqual(store.migrate_moonraker_connection(), 1)
+        self.assertTrue(store._truthy(
+            prefs.values[PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY]))
+
+    def test_the_legacy_comparison_is_semantic_not_raw(self):
+        # The reviewer's boundary cases: raw representation
+        # differences must not resurrect the false-positive path —
+        # semantically-equal stored forms read as no migration.
+        prefs = FakePreferences()
+        store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
+        # A numeric stored as its string form, a boolean as its
+        # string form — both semantically equal to the defaults.
+        prefs.values[PrinterConfigStore.LEGACY_MAP["poll_interval_ms"]] = "750"
+        prefs.values[PrinterConfigStore.LEGACY_MAP["enabled"]] = "True"
+        self.assertFalse(store.migrate_legacy_to_current_machine())
+        self.assertEqual(prefs.values.get(PrinterConfigStore.PREF_KEY), "{}")
+        # A genuinely different boolean DOES migrate.
+        prefs.values[PrinterConfigStore.LEGACY_MAP["path_follow"]] = False
+        self.assertTrue(store.migrate_legacy_to_current_machine())
+        self.assertFalse(store.get().path_follow)
 
     def test_legacy_migration_defers_when_cura_machine_is_unknown(self):
         prefs = FakePreferences()

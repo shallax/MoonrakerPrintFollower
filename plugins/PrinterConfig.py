@@ -518,7 +518,10 @@ class PrinterConfigStore:
             self._preferences.getValue(self.MOONRAKER_CONNECTION_PREF_KEY)
         )
         if not legacy_all:
-            self._preferences.setValue(self.MOONRAKER_CONNECTION_MIGRATED_KEY, True)
+            # Checking is not importing: an empty source must not
+            # persist a fake migration marker (the reviewer's
+            # first-install invariant — a marker means an import
+            # HAPPENED).
             return 0
 
         data = self._load_all()

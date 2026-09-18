@@ -180,6 +180,44 @@ class MigrationTriggerTests(unittest.TestCase):
         self.binding = PrinterBinding(self.app, self.client, self.persistence,
                                       cura_cfg_path=self.cura_cfg, old_state_path=None)
 
+    def test_a_clean_install_boots_twice_without_any_migration_artefacts(self):
+        # The reviewer's first-install invariant, ASSEMBLED: the legacy
+        # chain, the activation, a real save and the second boot — the
+        # interaction that fabricated the phantom migration.
+        self.prefs.setValue(PrinterConfigStore.PREF_KEY, "{}")
+        # Boot 1: the chain runs over nothing meaningful, the v2
+        # document activates directly, no record, no markers.
+        self.binding.run_persistence_migration()
+        document = self.persistence.settings_document()
+        self.assertEqual(document["configVersion"], 2)
+        self.assertEqual(document.get("machines"), {})
+        self.assertNotIn("migration", document.get("global", {}))
+        self.assertIsNone(self.persistence.migration_record())
+        self.assertEqual(self.prefs.getValue(PrinterConfigStore.PREF_KEY), "{}")
+        self.assertFalse(self.binding._store._truthy(
+            self.prefs.getValue(PrinterConfigStore.MIGRATED_KEY)))
+        self.assertFalse(self.binding._store._truthy(
+            self.prefs.getValue(PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY)))
+        self.assertEqual([n for n in os.listdir(self.dir.name)
+                          if n.startswith("cura.cfg.")], [])
+        # The production save path.
+        config = PrinterConfig()
+        config.url = "http://a:7125"
+        config.api_key = "k"
+        self.persistence.set_machine_config("A", config)
+        with open(self.settings_path, encoding="utf-8") as handle:
+            before = json.load(handle)
+
+        # Boot 2: a fresh binding over the same state — the document
+        # must be EQUIVALENT and the machinery completely silent.
+        second = PrinterBinding(self.app, self.client, self.persistence,
+                                cura_cfg_path=self.cura_cfg, old_state_path=None)
+        second.run_persistence_migration()
+        with open(self.settings_path, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), before)
+        self.assertIsNone(self.persistence.migration_record())
+        self.assertEqual(self.prefs.getValue(PrinterConfigStore.PREF_KEY), "{}")
+
     def test_the_one_shot_migrates_after_the_legacy_chain(self):
         key = PrinterConfigStore.PREF_KEY
         self.prefs.addPreference(key, "{}")

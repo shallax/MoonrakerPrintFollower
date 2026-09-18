@@ -896,10 +896,13 @@ class PrinterConfigCoverageTests(unittest.TestCase):
         self.assertEqual(store.migrate_moonraker_connection(), 0)
 
     def test_store_connection_import_is_a_no_op_without_the_old_plugin(self):
+        # Checking is not importing: the empty source returns 0 and
+        # leaves NO migration marker (the reviewer's first-install
+        # invariant — a marker means an import happened).
         prefs = Preferences({})
         store = PrinterConfigStore(prefs, lambda: ("A", "A"))
         self.assertEqual(store.migrate_moonraker_connection(), 0)
-        self.assertTrue(prefs.getValue(PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY))
+        self.assertFalse(prefs.getValue(PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY))
 
     def test_store_set_preserves_foreign_keys_and_update_round_trips(self):
         prefs = Preferences({})
