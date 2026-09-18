@@ -1833,6 +1833,13 @@ chevrons, and the Windows multi-start disconnect.
 
 ## 4.5.0 — Persistence refactor (the 2026-09-17 re-sequencing)
 
+Testing posture (2026-09-18, the author's ruling): no self-hosted
+Windows runners — the Windows live-test pass stays with the author
+for risky startup changes, and 4.5.0 closes out that release class
+on the roadmap (the session/socket/persistence machinery is done).
+A plain windows-latest CI job for the pure suites remains a
+display-free option if the Windows Python defects ever bite again.
+
 Live state (2026-09-18): the functional build is confirmed by the
 author and pinned at the tag v4.5.0-snapshot (the revert point for
 the remaining work); the coverage wave lifted plugins/ to 99% line
