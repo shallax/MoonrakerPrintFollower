@@ -183,6 +183,15 @@ Component {
                 if (attached.indexOf(items[p]) === -1)
                     items[p].parent = container;
             }
+            // The reparent reorders the children, but a reparent that
+            // lands inside the pane's own layout pass leaves the
+            // layout's item list stale — the live panes kept the old
+            // order until a visibility toggle forced the rebuild (the
+            // 4.5.0 live find). A zero-size child added and removed
+            // in the same block schedules that rebuild invisibly.
+            var nudge = Qt.createQmlObject("import QtQuick 2.15; Item {}", container, "orderNudge");
+            nudge.parent = null;
+            nudge.destroy();
         }
 
         // The mini widget's series: primary sensors (extruders, bed,
@@ -557,11 +566,11 @@ Component {
                 onHeightChanged: root.updateInfoReadoutFits()
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
-                Layout.preferredWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 240 * screenScaleFactor)
-                Layout.minimumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 170 * screenScaleFactor)
+                Layout.preferredWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 270 * screenScaleFactor)
+                Layout.minimumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 200 * screenScaleFactor)
                 // Shrink-only: max == preferred keeps the wide layout
                 // unchanged, but narrow stages may compress the pane.
-                Layout.maximumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 240 * screenScaleFactor)
+                Layout.maximumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 270 * screenScaleFactor)
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 // No Layout.leftMargin here: the host RowLayout's
@@ -686,7 +695,9 @@ Component {
                     anchors.bottom: parent.bottom
                     anchors.topMargin: UM.Theme.getSize("default_margin").height
                     anchors.leftMargin: UM.Theme.getSize("default_margin").width
-                    anchors.rightMargin: UM.Theme.getSize("default_margin").width
+                    // No right inset: the content's own 14px gutter is
+                    // the only dead band right of the sections (the
+                    // 4.5.0 live ruling — a margin's width, no more).
                     anchors.bottomMargin: UM.Theme.getSize("default_margin").height
                     clip: true
                     contentWidth: width
@@ -706,7 +717,11 @@ Component {
                         // LIVE scrollbar width feeds the polish loop —
                         // the scrollbar overlays the gutter instead of
                         // squeezing the content in a feedback cycle.
-                        width: infoFlick.width - 14 - UM.Theme.getSize("default_margin").width
+                        // Layout.fillWidth is inert here (the Flickable
+                        // is not a layout) — the 4.5.0 live find's
+                        // 1px crush; the explicit width stays, trimmed
+                        // to the 14px gutter alone.
+                        width: infoFlick.width - 14
                         // Spacing lives on the children: collapsed sections
                         // must contribute nothing so headers stack flush.
                         spacing: 0
@@ -1903,51 +1918,40 @@ Component {
                         // BEFORE the first frame paints (the 4.5.0 live
                         // find: any later apply is a visible jump).
                         Component.onCompleted: root.applySectionOrder(statusContent, "status")
-                        // The reflow loggers (the 4.5.0 polish-loop
-                        // hunt): Cura's own warning names only the
-                        // layout — each child logs ITS height change
-                        // the moment it happens, so the flipper is
-                        // named in the session log.
-                        onImplicitHeightChanged: console.warn("MPF-REFLOW status column height:", implicitHeight)
-                        onWidthChanged: console.warn("MPF-REFLOW status column width:", width)
                         // The constant gutter (the whats-new overlay's
                         // precedent): binding the content width to the
                         // LIVE scrollbar width fed a layout polish loop
                         // on the author's Windows run — the scrollbar
                         // overlays the gutter instead of squeezing the
                         // content in a feedback cycle.
-                        width: statusFlick.width - 14 - UM.Theme.getSize("default_margin").width
+                        Layout.fillWidth: true
+                        Layout.rightMargin: 14
                         // Spacing lives on the children: collapsed sections
                         // must contribute nothing so headers stack flush.
                         spacing: 0
                         JobSection {
-                            onImplicitHeightChanged: console.warn("MPF-REFLOW jobsection height:", implicitHeight, "vis=", visible)
                             visible: root.printer == null || root.printer.sectionHiddenMap["job"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
 
                         TempsSection {
-                            onImplicitHeightChanged: console.warn("MPF-REFLOW tempssection height:", implicitHeight, "vis=", visible)
                             Layout.fillWidth: true
                             visible: root.printer != null && root.printer.temperatureItems.length > 0 && root.printer.sectionHiddenMap["temps"] !== true
                             printerModel: root.printer
                         }
 
                         FansInfoSection {
-                            onImplicitHeightChanged: console.warn("MPF-REFLOW fansinfosection height:", implicitHeight, "vis=", visible)
                             Layout.fillWidth: true
                             visible: root.printer != null && root.printer.fanItems.length > 0 && root.printer.sectionHiddenMap["fansinfo"] !== true
                             printerModel: root.printer
                         }
                         FilamentSection {
-                            onImplicitHeightChanged: console.warn("MPF-REFLOW filamentsection height:", implicitHeight, "vis=", visible)
                             Layout.fillWidth: true
                             visible: root.printer != null && root.printer.filamentSensorItems.length > 0 && root.printer.sectionHiddenMap["filament"] !== true
                             printerModel: root.printer
                         }
                         ObjectsSection {
-                            onImplicitHeightChanged: console.warn("MPF-REFLOW objectssection height:", implicitHeight, "vis=", visible)
                             visible: root.printer == null || root.printer.sectionHiddenMap["objects"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
@@ -1957,13 +1961,11 @@ Component {
                             }
                         }
                         SystemInfoSection {
-                            onImplicitHeightChanged: console.warn("MPF-REFLOW systeminfosection height:", implicitHeight, "vis=", visible)
                             visible: root.printer == null || root.printer.sectionHiddenMap["systeminfo"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                         }
                         McusSection {
-                            onImplicitHeightChanged: console.warn("MPF-REFLOW mcussection height:", implicitHeight, "vis=", visible)
                             Layout.fillWidth: true
                             visible: root.printer != null && root.printer.mcuItems.length > 0 && root.printer.sectionHiddenMap["mcus"] !== true
                             printerModel: root.printer

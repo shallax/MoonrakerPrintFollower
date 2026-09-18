@@ -85,7 +85,9 @@ ColumnLayout {
                 objectName: "moonrakerM117Slot"
                 width: Math.max(0, parent.width - parent.spacing - 64 * screenScaleFactor)
                 height: 36 * screenScaleFactor
-                text: root.printerModel != null ? root.printerModel.monitorMessage : ""
+                // An emdash stands in while no message exists (the
+                // 4.5.0 live ruling) — the empty row read as broken.
+                text: root.printerModel != null && root.printerModel.monitorMessage.length > 0 ? root.printerModel.monitorMessage : "—"
                 // The message is primary content: full
                 // text colour, not the inactive grey
                 // (the ruling).
@@ -146,10 +148,11 @@ ColumnLayout {
                     Rectangle {
                         // The next scheduled pause's fill (the live
                         // ruling): the MIDDLE of the stack, the mesh's
-                        // neon orange — NOT RENDERED while no pause
-                        // lies ahead (the gate, not a zero width).
+                        // neon orange. The gate is the WIDTH — the
+                        // visibility flip it replaced flapped per
+                        // poll and landed its invalidation inside the
+                        // column's polish (the 4.5.0 live find).
                         objectName: "nextPauseFill"
-                        visible: root.printerModel != null && root.printerModel.nextPauseFraction >= 0
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
                         height: parent.height / 3

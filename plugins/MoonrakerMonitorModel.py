@@ -676,7 +676,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._improving_eta = False
         self._publish()
 
-    def setMonitoringActive(self, active): self._data.set_active(active)
+    def setMonitoringActive(self, active):
+        self._data.set_active(active)
+        if active:
+            # The stage-entry hook (the 4.5.0 live find): the Monitor
+            # shell exists by the time Cura activates the stage, and
+            # the pane order's apply must land before the first frame
+            # — the signal path the toggle uses, fired here.
+            self.sectionLayoutChanged.emit()
 
     def _file_manager_values(self):
         fm = self._file_manager

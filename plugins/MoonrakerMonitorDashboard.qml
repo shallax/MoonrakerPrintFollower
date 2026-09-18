@@ -183,12 +183,24 @@ Component {
                 if (attached.indexOf(items[p]) === -1)
                     items[p].parent = controlContent;
             }
+            // The monitor's recipe (the 4.5.0 live find): the reparent
+            // alone leaves the layout stale until an interaction — a
+            // zero-size child added and removed in the same block
+            // schedules the rebuild invisibly.
+            var nudge = Qt.createQmlObject("import QtQuick 2.15; Item {}", controlContent, "orderNudge");
+            nudge.parent = null;
+            nudge.destroy();
         }
 
         onPrinterChanged: {
             refreshAvailabilityGates();
             if (root.printer != null) {
                 root.printer.setFileManagerOpen(false);
+                // The hydration publish can fire before the dashboard
+                // (an async Loader) attaches — the arrival hook is the
+                // boot-time apply the signal path can miss (the 4.5.0
+                // live find: the controls pane snapped on interaction).
+                root.applyControlsOrder();
             }
             // A machine switch must not carry the old printer's
             // frozen lists or focus target into the new session —
@@ -758,6 +770,11 @@ Component {
 
                     ColumnLayout {
                         id: controlContent
+                        // The stored order applies HERE — before the
+                        // first frame paints (the monitor's 4.5.0 find;
+                        // without it the controls pane waited for an
+                        // interaction and snapped visibly).
+                        Component.onCompleted: root.applyControlsOrder()
                         // The attached scrollbar overlays the content, so
                         // the column spans the full width while the bar is
                         // hidden (a constant reservation left a dead band
