@@ -22,9 +22,17 @@ class UiStateStore:
     """Owns the sections map and section-layout persistence."""
 
     def __init__(self, store):
-        # The shared StateStore (the model's own instance) — one
-        # store, one file, two consumers' features.
+        # The shared persistence owner (the facade in production, the
+        # StateStore in the harness double) — one owner, one document,
+        # two consumers' features.
         self._store = store
+
+    def _write(self, update: dict) -> bool:
+        # The 4.5.0 re-point: the facade's global-document merge in
+        # production, the store's merge in the double.
+        if hasattr(self._store, "merge_state_global"):
+            return self._store.merge_state_global(update)
+        return self._store.write(update)
 
     def set_sections(self, sections: dict) -> bool:
         """Persist the collapse map under its existing key (booleans
@@ -34,7 +42,7 @@ class UiStateStore:
         if not self._survives(payload):
             Logger.log("w", "Moonraker UI state: the sections map did not survive validation — the save was skipped.")
             return False
-        return self._store.write({"sections": payload})
+        return self._write({"sections": payload})
 
     def set_section_layout(self, layout: dict) -> bool:
         """Persist the section-layout document under its key (the
@@ -44,7 +52,7 @@ class UiStateStore:
         if not self._survives(layout):
             Logger.log("w", "Moonraker UI state: the section layout did not survive validation — the save was skipped.")
             return False
-        return self._store.write({"sectionLayout": layout})
+        return self._write({"sectionLayout": layout})
 
     def _survives(self, payload: dict) -> bool:
         """The boundary guard: a value that cannot round-trip

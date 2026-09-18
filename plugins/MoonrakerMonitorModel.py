@@ -122,7 +122,7 @@ def _read_state(store=None) -> dict:
     current shape on read. The FILE semantics live in the StateStore
     (4.2.0, F11); the coercion below is the model's own (its tests pin
     the fallback document)."""
-    decoded = (store or StateStore(_sections_path())).read()
+    decoded = _store_read(store or StateStore(_sections_path()))
     if isinstance(decoded, dict):
         sections = decoded.get("sections")
         if not isinstance(sections, dict):
@@ -171,6 +171,24 @@ def _toolhead_state(stored) -> dict:
         "extrudeDistance": number("extrudeDistance", EXTRUDE_DISTANCE_DEFAULT),
         "extrudeSpeed": number("extrudeSpeed", EXTRUDE_SPEED_DEFAULT),
     }
+
+
+def _store_read(store):
+    """The store slot's read: the persistence facade owns the global
+    document in production (4.5.0); the StateStore double serves the
+    harness's config-only path."""
+    if hasattr(store, "state_global_document"):
+        return store.state_global_document()
+    return store.read()
+
+
+def _store_write(store, update: dict, merge: bool = True, delete: tuple = ()) -> None:
+    """The store slot's write: the facade's global-document merge in
+    production, the StateStore's merge in the double."""
+    if hasattr(store, "merge_state_global") and merge:
+        store.merge_state_global(update, delete=delete)
+    else:
+        store.write(update, merge=merge, delete=delete)
 
 
 def _write_state(state: dict) -> None:
@@ -311,7 +329,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
                  request_load=None, request_monitor_download=None, request_file_download=None,
-                 download_failed=None, preferences_flushed=None, identity=None, state_store=None):
+                 download_failed=None, identity=None, state_store=None, persistence=None):
         super().__init__(output_controller, number_of_extruders)
         self._client, self._print_state, self._config, self._apply_config, self._mesh = \
             client, print_state, config, apply_config, bed_mesh
@@ -319,7 +337,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The state file's owner (4.2.0, F11/A6): passed in as a
         # capability — 4.3.0's UI-state store consumes the same
         # instance; the default builds the production path.
-        self._store = state_store or StateStore(_sections_path(), note=self._on_store_note)
+        # The store slot: the persistence facade owns the global chrome
+        # in production (4.5.0); the StateStore double serves the
+        # harness's config-only path.
+        self._store = persistence or state_store or StateStore(_sections_path(), note=self._on_store_note)
         # Failure notes that fired before the console existed (the
         # hydration read runs first) queue here and flush once the
         # console lands.
@@ -396,7 +417,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # full-document rewrite would erase the UI-state store's
             # sibling keys (4.3.0, the sibling rule's single
             # exception removed).
-            self._store.write({"sections": dict(self._sections)}, delete=("temperatureChart",))
+            _store_write(self._store, {"sections": dict(self._sections)}, delete=("temperatureChart",))
         else:
             self._chart_config = {}
         self._history = TemperatureHistory()
@@ -451,7 +472,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._toolhead.set_distance(self._toolhead_state["jogDistance"])
         self._toolhead.set_extrude_distance(self._toolhead_state["extrudeDistance"])
         self._toolhead.set_extrude_speed(self._toolhead_state["extrudeSpeed"])
-        self._console = ConsoleController(self._data, self._commands, config, apply_config, identity, self)
+        self._console = ConsoleController(self._data, self._commands, config, apply_config, identity, self,
+                                          persistence=self._store if hasattr(self._store, "set_machine_state") else None)
         # The hydration-time store notes flush now that the console
         # exists (a read failure before this point would otherwise
         # stay silent — the exact class F11 exists to kill).
@@ -486,10 +508,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._thumbs_dirty = False
         self._file_manager.thumbsChanged.connect(self._publish_thumbs)
         self._file_manager_open = False
-        if preferences_flushed is not None:
-            # The console marks its sent lines SAVED when the preference
-            # file actually flushes (the colour ruling).
-            preferences_flushed.connect(self._console.mark_saved)
+        # The console's saved-state colouring now rides its own 2 s
+        # settle after each shard write (ConsoleController); the
+        # preference-flush channel retired with the transcript (4.5.0).
         for signal in (self._data.changed, self._commands.changed, self._controls.changed, self._camera.changed,
                        self._toolhead.changed, self._console.changed, self._file_manager.changed, bed_mesh.changed):
             signal.connect(self._publish)
@@ -1814,7 +1835,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._store_notes.append(text)
 
     def _save_state(self):
-        self._store.write({
+        _store_write(self._store, {
             "whatsNewSeen": self._whats_new_seen,
             "controlsCollapsed": self._controls_collapsed,
             "controlsLocked": self._controls_locked,

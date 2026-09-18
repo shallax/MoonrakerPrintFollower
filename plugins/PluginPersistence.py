@@ -32,6 +32,10 @@ SETTINGS_FIELDS = tuple(
     key for key in asdict(PrinterConfig()) if key not in STATE_FIELDS
 )
 
+# The pre-4.5.0 chrome file (L4): the migration reads it when the new
+# global document is absent; the old file stays on disk.
+OLD_STATE_FILE_NAME = "moonrakerprintfollower_sections.json"
+
 
 class PluginPersistence:
     """The typed, key-scoped operations over the two stores."""
@@ -54,6 +58,21 @@ class PluginPersistence:
         self._shards: Dict[str, StateStore] = {}
 
     # -- The settings document ----------------------------------------
+
+    @property
+    def settings_path(self) -> str:
+        return self._settings._path
+
+    @property
+    def state_dir(self) -> str:
+        return self._state_dir
+
+    def set_machine_config(self, machine_id: str, config: PrinterConfig) -> bool:
+        """The typed settings write: the record's settings fields,
+        serialised for JSON (the enum as its persisted value)."""
+        patch = {key: getattr(config, key) for key in SETTINGS_FIELDS}
+        patch["feed_mode"] = config.feed_mode.value
+        return self.set_machine(machine_id, patch)
 
     def settings_document(self) -> Dict[str, Any]:
         document = self._settings.read()
@@ -132,6 +151,23 @@ class PluginPersistence:
 
     def write_state_global_document(self, document: Dict[str, Any]) -> bool:
         return self._state_global.write(document, merge=False)
+
+    def merge_state_global(self, update: Dict[str, Any], delete: tuple = ()) -> bool:
+        """The chrome's top-level merge (the StateStore semantics on the
+        global document): foreign keys survive, `delete` drops the named
+        keys deliberately (the chart block's removal precedent)."""
+        document = self.state_global_document()
+        document.update(update)
+        for key in delete:
+            document.pop(key, None)
+        return self._state_global.write(document, merge=False)
+
+    def reset_failures(self) -> None:
+        """The per-session latch boundary, forwarded to every store."""
+        self._settings.reset_failures()
+        self._state_global.reset_failures()
+        for store in self._shards.values():
+            store.reset_failures()
 
     def get_machine_state(self, machine_id: str) -> Optional[Dict[str, Any]]:
         document = self._shard(machine_id).read()

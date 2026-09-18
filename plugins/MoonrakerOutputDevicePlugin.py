@@ -86,7 +86,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 request_file_download=self._follower.request_file_download,
                 download_failed=self._follower.download_failed,
                 request_monitor_download=self._follower.confirmDownloadForMonitor,
-                preferences_flushed=self._follower.preferencesFlushed,
+                persistence=self._follower.persistence,
                 identity=self._follower.current_printer_identity,
             )
             # The heightmap range filter (the author's request): the

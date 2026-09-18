@@ -27,6 +27,7 @@ RUNTIME_COMPONENTS = (
     "PrinterBinding.py", "CuraIntegration.py", "PreviewFollower.py",
     "PreviewPresentation.py", "PrintCoordinator.py", "RemoteFileService.py",
     "GCodeIndexService.py", "PauseController.py", "BedMeshPresenter.py",
+    "PluginPersistence.py",
 )
 
 
@@ -142,7 +143,7 @@ class SourceContractTests(unittest.TestCase):
             "SectionLayoutPolicy": set(),
             "FollowController": set(),
             "FollowerRuntime": {"BedMeshPresenter", "CuraIntegration", "FileDownload", "GCodeIndex", "GCodeIndexService",
-                "MoonrakerClient", "PauseController", "PreviewFollower", "PreviewMotion",
+                "MoonrakerClient", "PauseController", "PluginPersistence", "PreviewFollower", "PreviewMotion",
                 "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService"},
             "GCodeIndex": {"MoonrakerProtocol"},
             "GCodeIndexService": {"GCodeIndex"},
@@ -185,7 +186,7 @@ class SourceContractTests(unittest.TestCase):
             "PreviewSmoothing": set(),
             "PrintCoordinator": {"CuraAdapter", "MonitorFormatting", "PreviewFormatting", "PrintIdentity", "PrintState", "RemoteJobService"},
             "PrintIdentity": set(),
-            "PrinterBinding": {"CuraAdapter", "PrinterConfig"},
+            "PrinterBinding": {"CuraAdapter", "PersistenceMigration", "PrinterConfig"},
             "PrinterConfig": set(),
             "PrintState": {"RemoteJobService"},
             "RemoteFileService": {"DownloadStream", "MoonrakerProtocol"},

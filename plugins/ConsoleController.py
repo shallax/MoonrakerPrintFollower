@@ -15,12 +15,21 @@ an attribution the store cannot support.
 The transcript persists per printer (sensor/command vocabulary differs
 between machines), bounded by ConsolePolicy; lines restored from a
 previous session render greyed in the pane.
+
+4.5.0: the transcript lives in the persistence facade's per-machine
+state shard — every persist is an immediate durable write to that
+printer's small file, and the old preference-flush debounce retires
+(the shard write is ~0.5 ms, the whole cura.cfg flush was not). The
+2 s settle timer keeps the saved-state colouring's UX (the verdict
+flips too fast to read otherwise — the ruling); durability no longer
+rides it. The config record remains only as the pre-migration
+fallback on load.
 """
 from __future__ import annotations
 
 from dataclasses import replace
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from .ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, MAX_TRANSCRIPT, normalise_line
 from collections.abc import Mapping
@@ -39,11 +48,19 @@ def _trim_transcript(entries: list) -> list:
 class ConsoleController(QObject):
     changed = pyqtSignal()
 
-    def __init__(self, data, commands, config, apply_config, identity=None, parent=None):
+    def __init__(self, data, commands, config, apply_config, identity=None, parent=None, persistence=None):
         super().__init__(parent)
         self._data, self._commands = data, commands
         self._config, self._apply_config = config, apply_config
         self._identity = identity
+        # The state-shard owner (the facade); None in the harness's
+        # config-only double, where the config fallback carries the
+        # transcript as before.
+        self._persistence = persistence
+        self._saved_timer = QTimer(self)
+        self._saved_timer.setSingleShot(True)
+        self._saved_timer.setInterval(2000)
+        self._saved_timer.timeout.connect(self.mark_saved)
         stored = getattr(self._config(), "console_transcript", None)
         if isinstance(stored, (list, tuple)):
             # EVERY loaded line predates this session: restored stays
@@ -254,11 +271,15 @@ class ConsoleController(QObject):
             return
         self._transcript = []
         # Clear must clear the PERSISTED record too — both the new
-        # transcript and the legacy typed history, so nothing survives
+        # transcript and the typed history, so nothing survives
         # a restart (the ruling). The store stamp stays: the
         # cleared pane must not refill from the server's buffer.
-        config = self._config()
-        self._apply_config(replace(config, console_transcript=[], console_history=[]))
+        machine_id = self._resolved_identity()
+        if machine_id is not None and self._persistence is not None:
+            self._persistence.set_machine_state(machine_id, {
+                "consoleTranscript": [],
+                "consoleHistory": [],
+            })
         self.changed.emit()
 
     def reload_if_empty(self) -> None:
@@ -287,8 +308,40 @@ class ConsoleController(QObject):
             return  # live session, same machine, or identity untracked (harness)
         self._load_transcript(identity)
 
+    def _resolved_identity(self):
+        """The machine id the transcript belongs to, or None while
+        Cura's machine is unresolved — persists skip until then (an
+        "unknown" shard would orphan the lines, the old blob's
+        unknown-record report)."""
+        if self._identity is not None:
+            identity = self._identity()
+            if identity and str(identity[0] or "") not in ("", "unknown"):
+                return str(identity[0])
+        return self._transcript_identity
+
+    def _shard_transcript(self, identity):
+        """The shard's transcript list when the shard exists (an empty
+        list is a genuine Clear and is authoritative), or None when the
+        shard is absent — the pre-migration session, where the config
+        record still carries the transcript."""
+        if self._persistence is None or not identity:
+            return None
+        shard = self._persistence.get_machine_state(identity)
+        if not isinstance(shard, dict):
+            return None
+        stored = shard.get("consoleTranscript")
+        return list(stored) if isinstance(stored, list) else []
+
     def _load_transcript(self, identity) -> None:
-        stored = getattr(self._config(), "console_transcript", None)
+        stored = self._shard_transcript(identity) if self._persistence is not None else None
+        store_time = 0.0
+        if stored is not None:
+            shard = self._persistence.get_machine_state(identity) or {}
+            store_time = float(shard.get("consoleStoreTime") or 0.0)
+        else:
+            # The pre-migration fallback: the 4.4.0-era config record.
+            stored = getattr(self._config(), "console_transcript", None)
+            store_time = float(getattr(self._config(), "console_store_time", 0.0) or 0.0)
         if isinstance(stored, (list, tuple)) and stored:
             transcript = [dict(entry) for entry in [{
                 "kind": str(entry.get("kind") or "command"),
@@ -306,17 +359,17 @@ class ConsoleController(QObject):
         self._transcript = transcript
         self._transcript_identity = identity
         self._dropped = 0
-        self._store_time = float(getattr(self._config(), "console_store_time", 0.0) or 0.0)
+        self._store_time = store_time
         self._revisions += 1
         self.changed.emit()
 
     def mark_saved(self) -> None:
-        """The preference file flushed: the sent lines are on disk, so
-        their blue pending colour can settle (the ruling — the
-        API verdict flips too fast to read). Only entries inside the
-        persisted window may claim "on disk": lines beyond it were never
-        written and die with the session (the engineering panel's
-        over-promise)."""
+        """The shard write landed (the 2 s settle after each persist):
+        the sent lines are on disk, so their blue pending colour can
+        settle (the ruling — the API verdict flips too fast to read).
+        Only entries inside the persisted window may claim "on disk":
+        lines beyond it were never written and die with the session
+        (the engineering panel's over-promise)."""
         window = {id(entry) for entry in self._persist_window()}
         changed_any = False
         for entry in self._transcript:
@@ -363,7 +416,15 @@ class ConsoleController(QObject):
         return transcript
 
     def _persist(self) -> None:
-        config = self._config()
+        machine_id = self._resolved_identity()
+        if machine_id is None or self._persistence is None:
+            # The identity is unresolved or the harness runs the
+            # config-only double: keep the legacy config path in the
+            # latter case, skip in the former (the reload re-loads from
+            # the shard once the identity arrives).
+            if self._persistence is None:
+                self._persist_legacy()
+            return
         # The stored record is the canonical schema (kind/text/error/
         # success): session-transient keys (restored, saved) must not
         # enter it — they made the equality guard compare unequal
@@ -376,6 +437,24 @@ class ConsoleController(QObject):
         # session keeps up to MAX_HISTORY in the pane. The store stamp
         # persists with them so the next session's expand skip is
         # seeded with everything already seen.
+        ok = self._persistence.set_machine_state(machine_id, {
+            "consoleTranscript": transcript,
+            "consoleStoreTime": self._store_time,
+        })
+        if ok:
+            # Durability is the write itself; the settle only gives the
+            # verdict colour a beat before the blue settles.
+            self._saved_timer.start()
+        else:
+            self._note("The console transcript could not be saved — recent lines may not survive a restart.")
+
+    def _persist_legacy(self) -> None:
+        # The harness's config-only double path (no facade): the
+        # 4.4.0-era config write.
+        config = self._config()
+        transcript = [{"kind": entry["kind"], "text": entry["text"],
+                       "error": entry["error"], "success": entry["success"]}
+                      for entry in self._persist_window()]
         if getattr(config, "console_transcript", None) != transcript \
                 or getattr(config, "console_store_time", 0.0) != self._store_time:
             self._apply_config(replace(config, console_transcript=transcript,
