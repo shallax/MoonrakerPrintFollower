@@ -163,10 +163,23 @@ class MoonrakerSocket(QObject):
         self._socket = None
         if socket is not None:
             try:
-                if socket.state() != QAbstractSocket.SocketState.UnconnectedState:
+                if socket.state() == QAbstractSocket.SocketState.ConnectedState:
+                    # The graceful close is only valid on a fully
+                    # connected channel.
                     socket.write(encode_close_frame(1000))
                     socket.flush()
                     socket.disconnectFromHost()
+                else:
+                    # Mid-connect or mid-TLS-handshake: a plaintext
+                    # write plus a graceful disconnect drives the
+                    # native stack through a teardown it is not in —
+                    # the Windows boot crash (the machine-changed stop
+                    # landed inside the handshake and the corrupted
+                    # heap faulted an unrelated thread). abort() is
+                    # the state-safe hard teardown; the generation
+                    # guard already makes the old socket's events
+                    # harmless.
+                    socket.abort()
             except Exception:
                 pass
             try:

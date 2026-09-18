@@ -185,15 +185,19 @@ class _DeadSocket:
     """A socket surface for the states Qt will not stage on demand."""
 
     def __init__(self, *, fail: bool = False, unconnected: bool = False,
-                 delete_raises: bool = False) -> None:
+                 connecting: bool = False, delete_raises: bool = False) -> None:
         self._fail = fail
         self._unconnected = unconnected
+        self._connecting = connecting
         self._delete_raises = delete_raises
         self.written = []
+        self.aborted = 0
 
     def state(self):
         if self._unconnected:
             return QAbstractSocket.SocketState.UnconnectedState
+        if self._connecting:
+            return QAbstractSocket.SocketState.ConnectingState
         return QAbstractSocket.SocketState.ConnectedState
 
     def write(self, payload) -> int:
@@ -207,6 +211,9 @@ class _DeadSocket:
 
     def disconnectFromHost(self) -> None:
         pass
+
+    def abort(self) -> None:
+        self.aborted += 1
 
     def deleteLater(self) -> None:
         if self._delete_raises:
@@ -823,6 +830,19 @@ class SocketWriteTests(SocketCase):
         instance._socket = stub
         instance.stop()
         self.assertEqual(stub.written, [])
+        self.assertIsNone(instance._socket)
+
+    def test_stop_aborts_a_mid_handshake_socket_instead_of_writing(self):
+        # The Windows boot crash: a plaintext close frame written into
+        # a channel whose TLS handshake is still in flight drives the
+        # native stack through a teardown it is not in. The connecting
+        # socket gets the hard abort instead, never a write.
+        instance = self.owner()
+        stub = _DeadSocket(connecting=True)
+        instance._socket = stub
+        instance.stop()
+        self.assertEqual(stub.written, [])
+        self.assertEqual(stub.aborted, 1)
         self.assertIsNone(instance._socket)
 
     def test_stop_before_start_is_harmless(self):
