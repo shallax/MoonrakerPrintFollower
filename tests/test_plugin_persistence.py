@@ -96,10 +96,23 @@ class PluginPersistenceTests(unittest.TestCase):
         self.assertEqual(record["toastShown"], True)
 
     def test_machine_state_shard_merges_top_level(self):
-        self.assertTrue(self.facade.set_machine_state("A", {"consoleHistory": ["G28"]}))
+        self.assertTrue(self.facade.set_machine_state("A", {"consoleTranscript": [{"kind": "command", "text": "G28"}]}))
         self.assertTrue(self.facade.set_machine_state("A", {"consoleStoreTime": 1.5}))
         state = self.facade.get_machine_state("A")
-        self.assertEqual(state["consoleHistory"], ["G28"])
+        self.assertEqual(state["consoleTranscript"][0]["text"], "G28")
+        self.assertEqual(state["consoleStoreTime"], 1.5)
+
+    def test_the_retired_console_history_key_is_shed(self):
+        # The dead key cannot enter a shard: the facade drops it after
+        # the merge, and a shard that already carries it loses it on
+        # its next write (the 4.5.0 cleanup).
+        self.assertTrue(self.facade.set_machine_state("A", {"consoleHistory": ["G28"]}))
+        state = self.facade.get_machine_state("A")
+        self.assertNotIn("consoleHistory", state)
+        self.assertTrue(self.facade.write_machine_state_document("A", {"consoleHistory": ["G28"], "consoleStoreTime": 1.5}))
+        self.assertTrue(self.facade.set_machine_state("A", {"consoleTranscript": []}))
+        state = self.facade.get_machine_state("A")
+        self.assertNotIn("consoleHistory", state)
         self.assertEqual(state["consoleStoreTime"], 1.5)
 
     def test_the_documents_are_pretty_printed(self):

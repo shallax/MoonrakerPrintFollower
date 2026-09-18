@@ -270,15 +270,13 @@ class ConsoleController(QObject):
         if not self._transcript:
             return
         self._transcript = []
-        # Clear must clear the PERSISTED record too — both the new
-        # transcript and the typed history, so nothing survives
-        # a restart (the ruling). The store stamp stays: the
-        # cleared pane must not refill from the server's buffer.
+        # Clear must clear the PERSISTED record too, so nothing
+        # survives a restart (the ruling). The store stamp stays:
+        # the cleared pane must not refill from the server's buffer.
         machine_id = self._resolved_identity()
         if machine_id is not None and self._persistence is not None:
             self._persistence.set_machine_state(machine_id, {
                 "consoleTranscript": [],
-                "consoleHistory": [],
             })
         self.changed.emit()
 

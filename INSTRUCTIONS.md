@@ -574,7 +574,7 @@ Local (also run by the pre-commit hook):
     python tools/check_qml.py plugins
     ruff check plugins tools tests
     sh tools/check_qml_format.sh plugins/*.qml   # qt6-declarative-dev-tools; 6.4 has no --check
-    python -m unittest discover -s tests -p "test_*.py"
+    make run_tests   # every suite once, verdict + failures extracted from that single pass
 
 CI runs the same checks (the `lint` job) plus the full suite including the
 real-Qt tests (PyQt6 6.11.0). The release workflow on tag push additionally

@@ -59,8 +59,11 @@ def read_source(value: Any) -> Tuple[str, Dict[str, Any]]:
 
 def split_record(record: Dict[str, Any]) -> tuple:
     """One v1 record into its two homes (the panel's E3 table): the
-    console transcript/history/store-time move to the per-machine
-    state shard; everything else is settings."""
+    console transcript/store-time move to the per-machine state
+    shard; everything else is settings. The legacy typed-history key
+    folds into the transcript as command entries when no transcript
+    exists (the 4.5.0 cleanup) — the dead consoleHistory shard key
+    is never written."""
     config = PrinterConfig.from_dict(record)
     settings = {
         key: value
@@ -68,9 +71,14 @@ def split_record(record: Dict[str, Any]) -> tuple:
         if key not in ("console_history", "console_transcript", "console_store_time")
     }
     settings["feed_mode"] = settings["feed_mode"].value
+    transcript = config.console_transcript
+    if not isinstance(transcript, (list, tuple)) or not transcript:
+        transcript = [
+            {"kind": "command", "text": str(line), "error": False, "success": False}
+            for line in (config.console_history or [])
+        ]
     state = {
-        "consoleHistory": config.console_history,
-        "consoleTranscript": config.console_transcript,
+        "consoleTranscript": transcript,
         "consoleStoreTime": config.console_store_time,
     }
     return settings, state

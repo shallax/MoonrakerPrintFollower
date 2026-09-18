@@ -165,7 +165,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(document["machines"]["A"]["feed_mode"], "websocket")
         with open(os.path.join(self.state_dir, "A.json"), encoding="utf-8") as handle:
             shard = json.load(handle)
-        self.assertEqual(shard["consoleHistory"], ["G28"])
+        self.assertNotIn("consoleHistory", shard)
         self.assertEqual(shard["consoleTranscript"][0]["text"], "ok")
         self.assertEqual(shard["consoleStoreTime"], 1234.5)
         # The old chrome moved to the new global document, and the
@@ -180,6 +180,22 @@ class MigrationTests(unittest.TestCase):
         from plugins.PrinterConfig import PrinterConfigStore
         self.assertEqual(self.prefs[PrinterConfigStore.PREF_KEY], "{}")
         self.assertEqual(document["global"]["migration"]["backupName"], outcome.backup_name)
+
+    def test_legacy_typed_history_folds_into_the_transcript(self):
+        # A record with only the legacy typed-history key (no
+        # transcript) migrates its lines as command entries — the
+        # history survives the move and the dead consoleHistory shard
+        # key is never written (the 4.5.0 cleanup).
+        record = {"url": "http://192.168.1.50:7125", "console_history": ["G28", "M117 hi"]}
+        self._cfg(json.dumps({"A": record}))
+        outcome = self._run(json.dumps({"A": record}))
+        self.assertEqual(outcome.status, "ok")
+        with open(os.path.join(self.state_dir, "A.json"), encoding="utf-8") as handle:
+            shard = json.load(handle)
+        self.assertNotIn("consoleHistory", shard)
+        self.assertEqual([entry["text"] for entry in shard["consoleTranscript"]], ["G28", "M117 hi"])
+        self.assertTrue(all(entry["kind"] == "command" and entry["error"] is False
+                            and entry["success"] is False for entry in shard["consoleTranscript"]))
 
     def test_backup_failed_stops_before_anything_moves(self):
         with open(self.cura_cfg, "w", encoding="utf-8") as handle:

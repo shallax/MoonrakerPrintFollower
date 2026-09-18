@@ -97,7 +97,7 @@ class ConsoleShardTests(unittest.TestCase):
         self.console.clear()
         shard = self._shard()
         self.assertEqual(shard["consoleTranscript"], [])
-        self.assertEqual(shard["consoleHistory"], [])
+        self.assertNotIn("consoleHistory", shard)
 
     def test_the_shard_wins_over_the_config_fallback(self):
         # Pre-migration fallback: the config record's transcript only

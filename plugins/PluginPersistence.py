@@ -184,9 +184,16 @@ class PluginPersistence:
 
     def set_machine_state(self, machine_id: str, patch: Dict[str, Any]) -> bool:
         """The per-machine shard's top-level merge — the shard owns
-        only its machine's keys, so StateStore's native merge is the
-        key-scoped write here."""
-        return self._shard(machine_id).write(patch, merge=True)
+        only its machine's keys. consoleHistory is RETIRED (the
+        pre-cleanup migration wrote it, nothing ever read it): it is
+        dropped after the merge, so no writer can resurrect it, and
+        shards that already carry it shed it on their first write."""
+        document = self._shard(machine_id).read()
+        if not isinstance(document, dict):
+            document = {}
+        document.update(patch)
+        document.pop("consoleHistory", None)
+        return self._shard(machine_id).write(document, merge=False)
 
     def write_machine_state_document(self, machine_id: str, document: Dict[str, Any]) -> bool:
         return self._shard(machine_id).write(document, merge=False)
