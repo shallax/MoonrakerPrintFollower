@@ -131,13 +131,14 @@ def run_migration(
     if source_state in ("absent", "empty"):
         outcome.status = "ok"
         outcome.reason = "nothing-to-do"
-        # The new schema still activates: the empty documents carry
-        # configVersion 2 and the record, so the no-trace acceptance
-        # passes on a healthy install that never configured a printer
-        # (C5) — and an empty blob is not a failure.
-        _write_empty_documents(
-            settings_write, state_global_write, old_state_path, outcome, timestamp,
-        )
+        # Nothing to migrate. The schema activation only happens when
+        # no document exists yet; an existing v2 document is the
+        # source of truth and must never be replaced on this path
+        # (the first-install lost-config report).
+        if not _read_settings_document(settings_path):
+            _write_empty_documents(
+                settings_write, state_global_write, old_state_path, outcome, timestamp,
+            )
         return outcome
 
     if source_state == "corrupt":
@@ -177,6 +178,7 @@ def run_migration(
     if not _write_new_files(
         records, settings_write, state_global_write, state_machine_write,
         old_state_path, outcome, timestamp,
+        existing=_read_settings_document(settings_path),
     ):
         outcome.status = "failed"
         outcome.reason = "write-failed"
@@ -190,7 +192,7 @@ def run_migration(
     _clean_preferences(set_pref)
     _remove_old_state_file(old_state_path)
     outcome.status = "ok"
-    settings_record_write({"migration": _record(outcome, timestamp)})
+    settings_record_write(_record(outcome, timestamp))
     return outcome
 
 
@@ -229,7 +231,7 @@ def _read_old_chrome(old_state_path: Optional[str]) -> Dict[str, Any]:
 
 def _write_new_files(
     records, settings_write, state_global_write, state_machine_write,
-    old_state_path, outcome, timestamp,
+    old_state_path, outcome, timestamp, existing=None,
 ) -> bool:
     chrome = _read_old_chrome(old_state_path)
     if not state_global_write({**chrome, "configVersion": 2}):
@@ -243,14 +245,33 @@ def _write_new_files(
         machines[key] = settings
         if not state_machine_write(key, state):
             return False
+    existing = existing or {}
+    existing_machines = existing.get("machines")
+    if isinstance(existing_machines, dict):
+        # A re-run must not clobber the live config: the existing
+        # records win, the migrated records only fill gaps.
+        machines = {**machines, **existing_machines}
+    global_section = existing.get("global") if isinstance(existing.get("global"), dict) else {}
+    global_section = dict(global_section)
+    global_section["activeMachineId"] = global_section.get("activeMachineId") or None
+    global_section["migration"] = _record(outcome, timestamp)
     return settings_write({
         "configVersion": 2,
-        "global": {
-            "activeMachineId": None,
-            "migration": _record(outcome, timestamp),
-        },
+        "global": global_section,
         "machines": machines,
     })
+
+
+def _read_settings_document(settings_path: str) -> Dict[str, Any]:
+    """The current settings document, or {} — the re-run guard's
+    eyes: a document that already exists is live config and must
+    never be replaced by a nothing-to-do migration."""
+    try:
+        with open(settings_path, "r", encoding="utf-8") as handle:
+            decoded = json.load(handle)
+        return decoded if isinstance(decoded, dict) else {}
+    except Exception:
+        return {}
 
 
 def _verify_new_files(records, settings_path, state_dir) -> bool:
@@ -263,7 +284,9 @@ def _verify_new_files(records, settings_path, state_dir) -> bool:
         if not isinstance(decoded, dict):
             return False
         machines = decoded.get("machines")
-        if not isinstance(machines, dict) or len(machines) != len(records):
+        # At least the migrated records — a re-run may also carry
+        # live machines the merge preserved (the lost-config guard).
+        if not isinstance(machines, dict) or len(machines) < len(records):
             return False
         for machine_id in records:
             if machine_id not in machines:

@@ -1555,7 +1555,7 @@ class PersistenceMigrationCoverageTests(unittest.TestCase):
         self.assertEqual(calls["machine"][0][0], "A")
         # The clean is last, and the record lands after it.
         self.assertTrue(calls["prefs"])
-        self.assertEqual(calls["record"][0]["migration"]["status"], "ok")
+        self.assertEqual(calls["record"][0]["status"], "ok")
         self.assertTrue(os.path.exists(os.path.join(self.state_dir, "A.json")))
 
     def test_a_failed_backup_stops_before_anything_moves(self):

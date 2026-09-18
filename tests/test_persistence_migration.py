@@ -51,14 +51,15 @@ class MigrationTests(unittest.TestCase):
         }
 
     def _record_write(self, update):
-        # The facade's merge-write of global.migration (slice 2); this
-        # pure double merges into the settings document's global.
+        # The facade's merge-write of global.migration (slice 2); the
+        # fields merge INTO the record, never replacing it.
         try:
             with open(self.settings_path, encoding="utf-8") as handle:
                 document = json.load(handle)
         except (OSError, ValueError):
             document = {"configVersion": 2, "global": {}, "machines": {}}
-        document.setdefault("global", {}).update(update)
+        record = document.setdefault("global", {}).setdefault("migration", {})
+        record.update(update)
         _pretty_write(self.settings_path, document)
         return True
 
@@ -103,6 +104,45 @@ class MigrationTests(unittest.TestCase):
     def test_absent_blob_is_nothing_to_do(self):
         outcome = self._run(None)
         self.assertEqual((outcome.status, outcome.reason), ("ok", "nothing-to-do"))
+
+    def test_the_empty_path_leaves_an_existing_document_untouched(self):
+        # The first-install lost-config guard: a v2 document holding
+        # live config is the source of truth — a nothing-to-do
+        # migration must never replace it.
+        _pretty_write(self.settings_path, {
+            "configVersion": 2,
+            "global": {"bedMeshVisible": True},
+            "machines": {"Voron2 250": {"url": "https://voron", "api_key": "k"}},
+        })
+        outcome = self._run("{}")
+        self.assertEqual((outcome.status, outcome.reason), ("ok", "nothing-to-do"))
+        document = self._settings_document()
+        self.assertEqual(document["machines"]["Voron2 250"]["api_key"], "k")
+        self.assertEqual(document["global"]["bedMeshVisible"], True)
+        self.assertNotIn("migration", document["global"])
+
+    def test_a_records_rerun_keeps_the_live_machines(self):
+        # A re-run against a populated document: the live records win,
+        # the migrated records only fill the gaps.
+        _pretty_write(self.settings_path, {
+            "configVersion": 2,
+            "global": {},
+            "machines": {"Voron250": {"url": "https://live", "api_key": "k"}},
+        })
+        blob = json.dumps({
+            "Voron250": {"url": "http://legacy:7125", "api_key": "old"},
+            "Other": {"url": "http://o:7125", "api_key": ""},
+        })
+        self._cfg(blob)
+        outcome = self._run(blob)
+        self.assertEqual(outcome.status, "ok")
+        document = self._settings_document()
+        self.assertEqual(document["machines"]["Voron250"]["url"], "https://live")
+        self.assertEqual(document["machines"]["Voron250"]["api_key"], "k")
+        self.assertIn("Other", document["machines"])
+        # The record merges flat, never nested.
+        self.assertEqual(document["global"]["migration"]["status"], "ok")
+        self.assertNotIn("migration", document["global"]["migration"])
 
     # -- The corrupt path (the author's ruling over C1's gate) --------
 

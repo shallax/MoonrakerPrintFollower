@@ -22,7 +22,7 @@ from PyQt6.QtCore import QObject, QUrl, pyqtSignal
 from UM.Logger import Logger
 
 from .CuraAdapter import active_machine_identity
-from .PersistenceMigration import run_migration
+from .PersistenceMigration import read_source, run_migration
 from .PrinterConfig import PrinterConfig, PrinterConfigStore, normalise_url
 
 # The host-identifying fields the removal wipe clears (the author's
@@ -124,14 +124,23 @@ class PrinterBinding(QObject):
         self.run_persistence_migration()
 
     def run_persistence_migration(self):
-        """The one-shot into the facade's files (B1): called from
+        """The v2 activation and the one-shot (B1): called from
         Cura's initializationFinished (wired by the runtime) and from
-        the machine-switch path. Deferred while the legacy chain is
-        incomplete — the identity is unknown at construction, and the
-        one-shot must not run before the legacy records reached the
-        blob (they would re-write it after the clean)."""
+        the machine-switch path. A clean install activates the v2
+        document directly — no migration record, because nothing was
+        migrated (the author's ruling). The one-shot runs only while
+        the legacy blob still holds records; an absent or empty blob
+        is nothing to do, and the existing document is never replaced
+        on that path."""
         preferences = self._application.getPreferences()
-        if not self._store._truthy(preferences.getValue(PrinterConfigStore.MIGRATED_KEY)):
+        document = self._persistence.settings_document()
+        if not document:
+            # The clean-install activation: the v2 skeleton, no record.
+            self._persistence.write_settings_document({
+                "configVersion": 2,
+                "global": {"activeMachineId": None},
+                "machines": {},
+            })
             return
         record = self._persistence.migration_record()
         if record is not None:
@@ -152,6 +161,17 @@ class PrinterBinding(QObject):
             ):
                 return
         blob = preferences.getValue(PrinterConfigStore.PREF_KEY)
+        source_state, _ = read_source(blob)
+        if source_state in ("absent", "empty"):
+            # Nothing to migrate: the existing v2 document is the
+            # source of truth. The record's absence must never re-arm
+            # a rewrite (the first-install lost-config report).
+            return
+        if not self._store._truthy(preferences.getValue(PrinterConfigStore.MIGRATED_KEY)):
+            # The legacy chain has not finished pushing the records;
+            # the one-shot must wait (they would re-write the blob
+            # after the clean).
+            return
         self._carry_bed_mesh_preferences(preferences)
         outcome = run_migration(
             blob,
