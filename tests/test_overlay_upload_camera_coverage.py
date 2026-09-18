@@ -170,6 +170,12 @@ class Source:
             pass
 
 
+def _enter(test, context):
+    """TestCase.enterContext is 3.11+; the 3.10 leg needs the hand-rolled form."""
+    test.addCleanup(context.__exit__, None, None, None)
+    return context.__enter__()
+
+
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
 class WhatsNewOverlayTests(unittest.TestCase):
     def setUp(self):
@@ -182,19 +188,19 @@ class WhatsNewOverlayTests(unittest.TestCase):
     def _overlay(self):
         """An overlay whose offer timer is recorded, never armed."""
         timers = RecordingTimer()
-        self.enterContext(patch.object(self.module, "QTimer", timers))
+        _enter(self, patch.object(self.module, "QTimer", timers))
         overlay = self.module.WhatsNewOverlay()
         overlay.timers = timers
         return overlay
 
     def _install_windows(self, windows):
-        self.enterContext(patch.object(
+        _enter(self, patch.object(
             self.module, "QGuiApplication", SimpleNamespace(allWindows=lambda: list(windows))))
 
     def _install_devices(self, devices):
         application = SimpleNamespace(
             getOutputDeviceManager=lambda: SimpleNamespace(getOutputDevices=lambda: list(devices)))
-        self.enterContext(patch.object(
+        _enter(self, patch.object(
             sys.modules["UM.Application"], "Application",
             SimpleNamespace(getInstance=lambda: application)))
 
@@ -246,7 +252,7 @@ class WhatsNewOverlayTests(unittest.TestCase):
             def errors(self):
                 return []
 
-        self.enterContext(patch.object(self.module, "QQmlComponent", ComponentDouble))
+        _enter(self, patch.object(self.module, "QQmlComponent", ComponentDouble))
         return instances
 
     def _qml_engine_stub(self, engine):
@@ -254,7 +260,7 @@ class WhatsNewOverlayTests(unittest.TestCase):
         package.__path__ = []
         module = ModuleType("UM.Qt.QtApplication")
         module.QtApplication = SimpleNamespace(getInstance=lambda: SimpleNamespace(_qml_engine=engine))
-        self.enterContext(patch.dict(sys.modules, {"UM.Qt": package, "UM.Qt.QtApplication": module}))
+        _enter(self, patch.dict(sys.modules, {"UM.Qt": package, "UM.Qt.QtApplication": module}))
 
     def _quiet_qt_messages(self):
         from PyQt6.QtCore import qInstallMessageHandler
@@ -366,7 +372,7 @@ class WhatsNewOverlayTests(unittest.TestCase):
         model = MonitorStub()
         self._install_devices([self._device("MoonrakerOutputDevicePlugin", model)])
         meta = RecordingMetaObject()
-        self.enterContext(patch.object(self.module, "QMetaObject", meta))
+        _enter(self, patch.object(self.module, "QMetaObject", meta))
         instances = self._component_double(width=520, height=400)
         overlay = self._overlay()
 
@@ -394,11 +400,11 @@ class WhatsNewOverlayTests(unittest.TestCase):
         # The qmlEngine() lookup returns null for Cura's main window on
         # some hosts, so the content item's engine is the fallback.
         engine = self._engine(stubs=True)
-        self.enterContext(patch.object(self.module, "qmlEngine", lambda _item: engine))
+        _enter(self, patch.object(self.module, "qmlEngine", lambda _item: engine))
         window = FakeWindow(900, 700)
         self._install_windows([window])
         self._install_devices([self._device("MoonrakerOutputDevicePlugin", MonitorStub())])
-        self.enterContext(patch.object(self.module, "QMetaObject", RecordingMetaObject()))
+        _enter(self, patch.object(self.module, "QMetaObject", RecordingMetaObject()))
         instances = self._component_double()
         overlay = self._overlay()
 
@@ -428,7 +434,7 @@ class WhatsNewOverlayTests(unittest.TestCase):
         self._qml_engine_stub(engine)
         self._install_windows([FakeWindow(900, 700)])
         self._install_devices([self._device("MoonrakerOutputDevicePlugin", MonitorStub())])
-        self.enterContext(patch.object(self.module, "QMetaObject", RecordingMetaObject()))
+        _enter(self, patch.object(self.module, "QMetaObject", RecordingMetaObject()))
         instances = self._component_double()
         overlay = self._overlay()
         overlay._show()
@@ -443,7 +449,7 @@ class WhatsNewOverlayTests(unittest.TestCase):
 
     def test_the_overlay_refuses_to_mount_without_an_engine(self):
         self._quiet_qt_messages()
-        self.enterContext(patch.object(self.module, "qmlEngine", lambda _item: None))
+        _enter(self, patch.object(self.module, "qmlEngine", lambda _item: None))
         self._install_windows([FakeWindow(900, 700)])
         self._install_devices([self._device("MoonrakerOutputDevicePlugin", MonitorStub())])
         overlay = self._overlay()
@@ -460,7 +466,7 @@ class WhatsNewOverlayTests(unittest.TestCase):
         # imports; the failure must surface the component's own errors.
         self._quiet_qt_messages()
         engine = self._engine(stubs=False)
-        self.enterContext(patch.object(self.module, "qmlEngine", lambda _item: engine))
+        _enter(self, patch.object(self.module, "qmlEngine", lambda _item: engine))
         self._install_windows([FakeWindow(900, 700)])
         self._install_devices([self._device("MoonrakerOutputDevicePlugin", MonitorStub())])
         overlay = self._overlay()
@@ -477,13 +483,13 @@ class WhatsNewOverlayTests(unittest.TestCase):
         # must survive it.
         self._quiet_qt_messages()
         engine = self._engine(stubs=True)
-        self.enterContext(patch.object(self.module, "qmlEngine", lambda _item: engine))
+        _enter(self, patch.object(self.module, "qmlEngine", lambda _item: engine))
 
         class Raising:
             def __init__(self, *_args):
                 raise RuntimeError("import storm")
 
-        self.enterContext(patch.object(self.module, "QQmlComponent", Raising))
+        _enter(self, patch.object(self.module, "QQmlComponent", Raising))
         self._install_windows([FakeWindow(900, 700)])
         self._install_devices([self._device("MoonrakerOutputDevicePlugin", MonitorStub())])
         overlay = self._overlay()

@@ -71,7 +71,8 @@ class StateStoreTests(unittest.TestCase):
         # open must degrade to the plain flags there.
         saved = getattr(os, "O_NOFOLLOW", None)
         try:
-            del os.O_NOFOLLOW
+            if saved is not None:
+                del os.O_NOFOLLOW  # Windows never had the flag: the degraded path is its real one
             self.assertTrue(self.store.write({"whatsNewSeen": "4.3.0"}))
             with open(self.path, encoding="utf-8") as handle:
                 self.assertEqual(json.load(handle)["whatsNewSeen"], "4.3.0")

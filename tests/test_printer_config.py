@@ -259,14 +259,14 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertEqual(store.get().camera_selected, "")
 
     def test_diagnostics_settings_save_and_list_in_a_tab(self):
-        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Diagnostics"', config)
         self.assertIn('"trace_layer": layerTraceBox.checked', config)
         self.assertIn('"trace_http": httpTraceBox.checked', config)
         self.assertIn('"memory_diagnostics_log": memoryDiagnosticsBox.checked', config)
         self.assertIn('"memory_diagnostics_trace": memoryDiagnosticsTraceBox.checked', config)
         self.assertIn('"camera_disabled": cameraDisabledBox.checked', config)
-        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
         self.assertIn('"trace_layer": bool(raw.get("trace_layer", False))', action)
         self.assertIn('"trace_http": bool(raw.get("trace_http", False))', action)
         self.assertIn('"memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False))', action)
@@ -274,22 +274,22 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertIn('"camera_disabled": bool(raw.get("camera_disabled", False))', action)
 
     def test_settings_tab_lists_diagnostic_traces(self):
-        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Log layer resolution (diagnostics)"', config)
         self.assertIn('text: "Log HTTP requests (diagnostics)"', config)
 
     def test_settings_tab_lists_upload(self):
-        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Upload"', config)
         self.assertIn('text: "Upload format"', config)
 
     def test_diagnostics_tab_carries_the_cache_clear(self):
-        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Clear cached downloads and indexes"', config)
         self.assertIn("manager.clearCache()", config)
         self.assertIn("manager.cacheStatus", config)
         self.assertIn('text: "Log layer resolution (diagnostics)"', config)
-        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
         self.assertIn("def clearCache(self)", action)
         self.assertIn('shutil.rmtree(self._cache_root(), ignore_errors=True)', action)
         self.assertIn('"MoonrakerPrintFollower"', action)
@@ -382,7 +382,7 @@ class PrinterConfigTests(unittest.TestCase):
         # a str — "unable to convert a Python 'str' object to a C++
         # 'bool' instance" on opening the settings dialogue. Each QML
         # getter must own its decorator with the right type.
-        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
         self.assertIn("@pyqtProperty(str, notify=settingsChanged)\n    def settingsTransportMode", action)
         self.assertIn("@pyqtProperty(str, notify=settingsChanged)\n    def transportStatus", action)
         self.assertIn("@pyqtProperty(bool, notify=settingsChanged)\n    def settingsTraceHttp", action)

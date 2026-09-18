@@ -19,15 +19,15 @@ class UploadContractTests(unittest.TestCase):
     """Source-level contracts for the upload dialog and its controller."""
 
     def test_upload_dialog_teardown_is_queued_out_of_qml_callbacks(self):
-        controller = (PLUGINS / "UploadController.py").read_text()
-        adapter = (PLUGINS / "MoonrakerOutputDevice.py").read_text()
+        controller = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")
+        adapter = (PLUGINS / "MoonrakerOutputDevice.py").read_text(encoding="utf-8")
         self.assertIn("self._later(0, finish)", controller)
         self.assertIn('self._later_owned(0, lambda: self._finish(False, ""))', controller)
         self.assertIn("dialog.deleteLater()", adapter)
 
     def test_upload_folders_are_discovered_and_hidden_paths_excluded(self):
-        controller = (PLUGINS / "UploadController.py").read_text()
-        qml = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
+        controller = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")
+        qml = (PLUGINS / "MoonrakerUploadDialog.qml").read_text(encoding="utf-8")
         self.assertIn("server/files/directory?", controller)
         self.assertIn('part.startswith(".")', controller)
         self.assertIn("MAX_DIRECTORIES", controller)
@@ -35,31 +35,31 @@ class UploadContractTests(unittest.TestCase):
         self.assertIn("UM.I18nCatalog", qml)
 
     def test_cancel_is_deferred_and_not_an_error(self):
-        controller = (PLUGINS / "UploadController.py").read_text()
-        adapter = (PLUGINS / "MoonrakerOutputDevice.py").read_text()
+        controller = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")
+        adapter = (PLUGINS / "MoonrakerOutputDevice.py").read_text(encoding="utf-8")
         self.assertIn('self._later_owned(0, lambda: self._finish(False, ""))', controller)
         self.assertIn("elif error:", adapter)
         self.assertIn("self.writeFinished.emit(self)", adapter)
         self.assertIn("self._upload.terminal_delivered()", adapter)
 
     def test_accept_and_folder_discovery_remain_nonblocking(self):
-        source = (PLUGINS / "UploadController.py").read_text()
+        source = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")
         self.assertIn("self._later(0, finish)", source)
         self.assertIn("server/files/directory?", source)
         self.assertIn("MAX_DIRECTORIES", source)
         self.assertNotIn("time.sleep", source)
 
     def test_upload_root_has_a_human_readable_label(self):
-        controller = (PLUGINS / "UploadController.py").read_text()
-        adapter = (PLUGINS / "MoonrakerOutputDevice.py").read_text()
-        qml = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
+        controller = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")
+        adapter = (PLUGINS / "MoonrakerOutputDevice.py").read_text(encoding="utf-8")
+        qml = (PLUGINS / "MoonrakerUploadDialog.qml").read_text(encoding="utf-8")
         self.assertIn('if path == "<root>"', controller + adapter)
         self.assertIn('self._upload.path or "<root>"', controller + adapter)
         self.assertIn('if (path === "<root>")', qml)
         self.assertIn("<root> is Moonraker's gcodes directory", qml)
 
     def test_upload_dialog_contract(self):
-        qml = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
+        qml = (PLUGINS / "MoonrakerUploadDialog.qml").read_text(encoding="utf-8")
         self.assertIn('property variant catalog: UM.I18nCatalog {', qml)
         self.assertIn("manager.uploadPathOptions", qml)
         self.assertIn("id: form", qml)

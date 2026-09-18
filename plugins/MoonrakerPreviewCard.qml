@@ -162,7 +162,7 @@ Item {
             var payload = {
                 "layerNo": row.layer,
                 "eta": row.eta,
-                "pauseWord": row.state,
+                "pauseWord": row.state || "scheduled",
                 "passed": row.passed === true
             };
             var at = -1;

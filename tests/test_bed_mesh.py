@@ -6,21 +6,21 @@ from plugins.MonitorFormatting import mesh_profiles, parse_bed_mesh
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
 
-TYPED_CONTROLS = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
-TYPED = "\n".join((PLUGINS / name).read_text() for name in ("MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py", "CuraIntegration.py", "MoonrakerMonitorModel.py"))
-PRESENTER = (PLUGINS / "BedMeshPresenter.py").read_text()
-SCENE_NODE = (PLUGINS / "BedMeshSceneNode.py").read_text()
-MONITOR_CONTROLS = (PLUGINS / "MonitorControls.py").read_text()
-DASHBOARD = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
-BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
-RANGE_SLIDER_QML = (PLUGINS / "BedMeshRangeSlider.qml").read_text()
-PRESENTATION = (PLUGINS / "PreviewPresentation.py").read_text()
-PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
-MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
-MAIN_DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
-SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text()
-PREVIEW_CONTROLS = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
-EMPTY_PREVIEW = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
+TYPED_CONTROLS = (PLUGINS / "MoonrakerMonitorModel.py").read_text(encoding="utf-8")
+TYPED = "\n".join((PLUGINS / name).read_text(encoding="utf-8") for name in ("MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py", "CuraIntegration.py", "MoonrakerMonitorModel.py"))
+PRESENTER = (PLUGINS / "BedMeshPresenter.py").read_text(encoding="utf-8")
+SCENE_NODE = (PLUGINS / "BedMeshSceneNode.py").read_text(encoding="utf-8")
+MONITOR_CONTROLS = (PLUGINS / "MonitorControls.py").read_text(encoding="utf-8")
+DASHBOARD = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text(encoding="utf-8")
+BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text(encoding="utf-8")
+RANGE_SLIDER_QML = (PLUGINS / "BedMeshRangeSlider.qml").read_text(encoding="utf-8")
+PRESENTATION = (PLUGINS / "PreviewPresentation.py").read_text(encoding="utf-8")
+PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text(encoding="utf-8")
+MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text(encoding="utf-8")
+MAIN_DASHBOARD = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text(encoding="utf-8")
+SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text(encoding="utf-8")
+PREVIEW_CONTROLS = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+EMPTY_PREVIEW = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
 
 
 class BedMeshTests(unittest.TestCase):
@@ -208,7 +208,7 @@ class BedMeshTests(unittest.TestCase):
         # froze at — an assignment from inside the animation cannot
         # win against the animation binding, so the idle STATE forces
         # the reset instead. The glyph rides the job section (4.3.0).
-        job = (PLUGINS / "JobSection.qml").read_text()
+        job = (PLUGINS / "JobSection.qml").read_text(encoding="utf-8")
         self.assertIn('name: "idle"', job)
         self.assertIn("target: etaGlyph", job)
 

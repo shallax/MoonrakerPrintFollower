@@ -274,7 +274,7 @@ class ComposedComponentTests(unittest.TestCase):
         writer = module.CuraOutputWriter(self.app)
         prepared = writer.prepare(config, "part.gcode")
         self.addCleanup(prepared.close)
-        self.assertEqual(pathlib.Path(prepared.path).read_text(), "G1 X0\n")
+        self.assertEqual(pathlib.Path(prepared.path).read_text(encoding="utf-8"), "G1 X0\n")
         upload = self.qt.load("UploadController").UploadController(self.follower.client, "A", self.follower.current_printer_identity)
         self.addCleanup(upload.abort)
         upload.begin(config, "part.gcode")

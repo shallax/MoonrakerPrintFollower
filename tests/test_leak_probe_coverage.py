@@ -713,7 +713,7 @@ class _ProbeCase(unittest.TestCase):
 
     def _lines(self):
         """The log's messages, timestamps stripped."""
-        return [line.split(" ", 1)[1] for line in self.log_path.read_text().splitlines()]
+        return [line.split(" ", 1)[1] for line in self.log_path.read_text(encoding="utf-8").splitlines()]
 
 
 class ConstructorTests(_ProbeCase):
@@ -734,7 +734,7 @@ class ConstructorTests(_ProbeCase):
         with _home(self.home), _host(_Preferences(log=True)):
             probe = LeakProbe(_runtime(log=True))
         self.addCleanup(probe._timer.stop)
-        lines = (self.home / "moonraker_leak.log").read_text().splitlines()
+        lines = (self.home / "moonraker_leak.log").read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), 1)
         message = lines[0].split(" ", 1)[1]
         self.assertIn("registered toggle=True", message)
@@ -780,7 +780,7 @@ class ConstructorTests(_ProbeCase):
         with _home(self.home), _host(_Preferences(log=False)):
             probe = LeakProbe(_runtime(binding=_FlakyBinding()))
         self.addCleanup(probe._timer.stop)
-        message = (self.home / "moonraker_leak.log").read_text().splitlines()[0]
+        message = (self.home / "moonraker_leak.log").read_text(encoding="utf-8").splitlines()[0]
         self.assertIn("read-err", message)
         self.assertIn("config gone", message)
 

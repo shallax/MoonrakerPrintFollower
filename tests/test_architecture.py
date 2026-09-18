@@ -105,20 +105,20 @@ class ArchitectureDocumentTests(unittest.TestCase):
 
 class SourceContractTests(unittest.TestCase):
     def test_release_metadata_and_license_remain_canonical(self):
-        package = json.loads((ROOT / "package.json").read_text())
-        plugin = json.loads((PLUGINS / "plugin.json").read_text())
+        package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        plugin = json.loads((PLUGINS / "plugin.json").read_text(encoding="utf-8"))
         # The absolute version is validated against the git tag by the release
         # workflow; here the two metadata files must stay in sync.
         self.assertEqual(package["package_version"], plugin["version"])
         self.assertNotEqual(package["package_version"], "")
         self.assertEqual(package["package_id"], "MoonrakerPrintFollower")
-        self.assertIn("GNU GENERAL PUBLIC LICENSE", (ROOT / "LICENSE").read_text())
+        self.assertIn("GNU GENERAL PUBLIC LICENSE", (ROOT / "LICENSE").read_text(encoding="utf-8"))
 
     def test_retired_runtime_is_removed_not_hidden_behind_shims(self):
         for name in RETIRED:
             self.assertFalse((PLUGINS / (name + ".py")).exists(), name)
         for path in PLUGINS.glob("*.py"):
-            for node in ast.walk(ast.parse(path.read_text())):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 if isinstance(node, ast.ClassDef):
                     self.assertFalse(node.name.endswith("Mixin"), path.name)
                 if isinstance(node, ast.FunctionDef):
@@ -210,7 +210,7 @@ class SourceContractTests(unittest.TestCase):
         discovered = {path.stem for path in PLUGINS.glob("*.py")} - {"__init__"}
         self.assertEqual(set(allowed), discovered)
         for module, dependencies in allowed.items():
-            source = (PLUGINS / (module + ".py")).read_text()
+            source = (PLUGINS / (module + ".py")).read_text(encoding="utf-8")
             imported = {node.module for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ImportFrom) and node.level}
             self.assertLessEqual(imported, dependencies, module)
             if module not in follower_exceptions:
@@ -228,7 +228,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertFalse((PLUGINS / "RendererAdaptation.py").is_file())
         self.assertTrue((PLUGINS / "NativeNozzleLifecycle.py").is_file())
         for path in PLUGINS.glob("*.py"):
-            tree = ast.parse(path.read_text(), filename=path.name)
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
             foreign = set()
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom) and node.module and (
@@ -248,7 +248,7 @@ class SourceContractTests(unittest.TestCase):
                     self.fail(f"{path.name}: setattr on the Cura/Uranium class {node.args[0].id}")
 
     def test_local_import_graph_is_acyclic(self):
-        graph = {path.stem: {n.module for n in ast.walk(ast.parse(path.read_text()))
+        graph = {path.stem: {n.module for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
             if isinstance(n, ast.ImportFrom) and n.level and n.module}
             for path in PLUGINS.glob("*.py") if path.stem != "__init__"}
         done = set()
@@ -262,7 +262,7 @@ class SourceContractTests(unittest.TestCase):
     def test_external_integrations_never_access_private_follower_members(self):
         for path in PLUGINS.glob("*.py"):
             if path.name in {"MoonrakerPrintFollower.py", "FollowerRuntime.py"}: continue
-            source = path.read_text()
+            source = path.read_text(encoding="utf-8")
             self.assertIsNone(re.search(r"(?:self\.)?_follower\._\w+", source), path.name)
             self.assertIsNone(re.search(r'(?:getattr|setattr)\([^,]*follower,\s*[\"\']_', source), path.name)
 
@@ -272,7 +272,7 @@ class SourceContractTests(unittest.TestCase):
         # a request path of the shared transport.
         owners = []
         for path in PLUGINS.glob("*.py"):
-            source = path.read_text()
+            source = path.read_text(encoding="utf-8")
             if "QNetworkAccessManager(" in source: owners.append(path.name)
             self.assertNotIn("QWebSocket", source, path.name)
             self.assertNotIn("_pref_str(", source, path.name)
@@ -289,13 +289,13 @@ class SourceContractTests(unittest.TestCase):
         # default-argument lambda into a bound method of the owning
         # QObject, so nothing can be collected mid-flight.
         for path in PLUGINS.glob("*.py"):
-            source = path.read_text()
+            source = path.read_text(encoding="utf-8")
             self.assertIsNone(re.search(r"\.finished\.connect\(finished\)", source), path.name)
             # PyQt6 enums never equal plain ints: ``error() != 0`` is
             # ALWAYS true and failed every successful thumbnail fetch
             # (a live report). Compare against the enum.
             self.assertIsNone(re.search(r"\.error\(\)\s*[!=]=\s*0\b", source), path.name)
-        manager = (PLUGINS / "FileManager.py").read_text()
+        manager = (PLUGINS / "FileManager.py").read_text(encoding="utf-8")
         self.assertIn("self._thumb_replies[relpath] = reply", manager)
         self.assertIn(
             "lambda r=reply, p=relpath, g=generation, t=path, l=large: self._thumb_finished(p, r, g, t, l)",
@@ -305,7 +305,7 @@ class SourceContractTests(unittest.TestCase):
         # connected to Message.actionTriggered is collected before the
         # click and the button lands on nothing (the live report).
         # Message actions connect bound methods only.
-        device = (PLUGINS / "MoonrakerOutputDevice.py").read_text()
+        device = (PLUGINS / "MoonrakerOutputDevice.py").read_text(encoding="utf-8")
         self.assertNotIn("actionTriggered.connect(lambda", device)
         self.assertIn("actionTriggered.connect(self._on_message_action", device)
 
@@ -313,17 +313,17 @@ class SourceContractTests(unittest.TestCase):
         # The X-Api-Key rides redirects unless the transport pins the
         # same-origin redirect policy (round-2 security F1) — the pin
         # exists because a dropped policy is invisible to the suite.
-        transport = (PLUGINS / "MoonrakerTransport.py").read_text()
+        transport = (PLUGINS / "MoonrakerTransport.py").read_text(encoding="utf-8")
         self.assertIn("SameOriginRedirectPolicy", transport)
 
     def test_qt_adapters_do_not_own_worker_or_http_implementations(self):
         for module in ("MoonrakerPrintFollower", "MoonrakerMonitorModel", "MoonrakerOutputDevice"):
-            source = (PLUGINS / (module + ".py")).read_text()
+            source = (PLUGINS / (module + ".py")).read_text(encoding="utf-8")
             for forbidden in ("QNetworkAccessManager", "QNetworkReply", "ThreadPoolExecutor", "Thread(", "build_index_from_file"):
                 self.assertNotIn(forbidden, source, module)
 
     def test_preview_qml_keeps_public_workflow(self):
-        card = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
+        card = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Load current print"', card)
         self.assertIn('base.followingPaused ? "Attach" : "Detach"', card)
         self.assertIn("This does not pause the printer.", card)
@@ -333,7 +333,7 @@ class SourceContractTests(unittest.TestCase):
 
     def test_removed_preference_api_and_private_follower_access_are_absent(self):
         for path in PLUGINS.glob("*.py"):
-            source = path.read_text()
+            source = path.read_text(encoding="utf-8")
             self.assertNotIn("self._pref_", source, path.name)
             self.assertNotIn("self._follower._", source, path.name)
 
@@ -342,7 +342,7 @@ class SourceContractTests(unittest.TestCase):
         # (v3.0.0) is not a nickname and is always written X.Y.Z.
         for path in PLUGINS.iterdir():
             if path.suffix in {".py", ".qml"}:
-                self.assertIsNone(re.search(r"\bv3\b(?!\.\d)", path.read_text(), re.I), path.name)
+                self.assertIsNone(re.search(r"\bv3\b(?!\.\d)", path.read_text(encoding="utf-8"), re.I), path.name)
 
     def test_qt_imports_name_the_module_that_owns_the_class(self):
         # QHostAddress broke the plugin on Cura 5.13's bundled PyQt6:
@@ -403,7 +403,7 @@ class SourceContractTests(unittest.TestCase):
         import ast
         for path in PLUGINS.glob("*.py"):
             try:
-                tree = ast.parse(path.read_text(), filename=path.name)
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
             except SyntaxError:
                 continue
             for node in ast.walk(tree):
@@ -451,7 +451,7 @@ class CompositionStructureTests(unittest.TestCase):
             self.assertFalse((PLUGINS / name).exists(), name)
 
     def test_runtime_is_construction_and_teardown_only(self):
-        tree = ast.parse((PLUGINS / "FollowerRuntime.py").read_text())
+        tree = ast.parse((PLUGINS / "FollowerRuntime.py").read_text(encoding="utf-8"))
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef))
         self.assertEqual(cls.bases, [])
         self.assertEqual({n.name for n in cls.body if isinstance(n, ast.FunctionDef)}, {"__init__", "close"})
@@ -490,7 +490,7 @@ class CompositionStructureTests(unittest.TestCase):
                      "ConsoleController", "ConsolePolicy", "RemoteFileService", "RemoteJobService",
                      "ToolheadController", "ToolheadPolicy", "FilesViewModel", "UiStateStore", "UploadController",
                      "PluginPersistence", "PersistenceMigration", "MigrationNotice"):
-            source = (PLUGINS / (name + ".py")).read_text()
+            source = (PLUGINS / (name + ".py")).read_text(encoding="utf-8")
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.FunctionDef) and node.name == "__init__":
                     self.assertFalse({arg.arg for arg in node.args.args} & {"follower", "model", "context"}, name)
@@ -582,9 +582,9 @@ class CompositionStructureTests(unittest.TestCase):
         self.assertIn("if reset_session:\n            self._session.reset()", client)
 
     def test_specialised_follower_replies_validate_lifecycle_and_job_identity(self):
-        files = (PLUGINS / "RemoteFileService.py").read_text()
-        pause = (PLUGINS / "PauseController.py").read_text()
-        upload = (PLUGINS / "UploadController.py").read_text()
+        files = (PLUGINS / "RemoteFileService.py").read_text(encoding="utf-8")
+        pause = (PLUGINS / "PauseController.py").read_text(encoding="utf-8")
+        upload = (PLUGINS / "UploadController.py").read_text(encoding="utf-8")
         for source in (files, pause):
             self.assertIn("generation != self._generation", source)
             self.assertIn("job != self._job", source)

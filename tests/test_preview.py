@@ -416,7 +416,7 @@ class PreviewPresentationContractTests(unittest.TestCase):
     """Source-level contracts for what Preview exposes to the user."""
 
     def test_selected_layer_eta_uses_live_observation_and_anchor(self):
-        preview = (PLUGINS / "PreviewFollower.py").read_text()
+        preview = (PLUGINS / "PreviewFollower.py").read_text(encoding="utf-8")
         self.assertIn("state.observed_layer", preview)
         self.assertIn("state.duration - state.anchor_duration", preview)
         self.assertIn("@dataclass(frozen=True)", preview)
@@ -424,9 +424,9 @@ class PreviewPresentationContractTests(unittest.TestCase):
         self.assertIn("datetime.now().astimezone()", preview)
 
     def test_each_scheduled_pause_has_end_of_layer_eta(self):
-        coordinator = (PLUGINS / "PrintCoordinator.py").read_text()
-        follower = (PLUGINS / "PreviewFollower.py").read_text()
-        qml = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
+        coordinator = (PLUGINS / "PrintCoordinator.py").read_text(encoding="utf-8")
+        follower = (PLUGINS / "PreviewFollower.py").read_text(encoding="utf-8")
+        qml = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
         # The end-of-layer ETA moved into PreviewFollower.remaining_end
         # (the coordinator's composition calls it) — the pin follows
         # the semantic, not the old inline call.
@@ -436,9 +436,9 @@ class PreviewPresentationContractTests(unittest.TestCase):
         self.assertIn("parent.pauseEta.length > 0", qml)
 
     def test_preview_layer_scrub_shows_duration_and_local_clock_eta(self):
-        index = (PLUGINS / "GCodeIndex.py").read_text()
-        preview = (PLUGINS / "PreviewFollower.py").read_text()
-        status = (PLUGINS / "PrintCoordinator.py").read_text()
+        index = (PLUGINS / "GCodeIndex.py").read_text(encoding="utf-8")
+        preview = (PLUGINS / "PreviewFollower.py").read_text(encoding="utf-8")
+        status = (PLUGINS / "PrintCoordinator.py").read_text(encoding="utf-8")
         self.assertIn("layer_elapsed_times", index)
         self.assertIn("def update_eta", preview)
         self.assertIn("datetime.now().astimezone()", preview)

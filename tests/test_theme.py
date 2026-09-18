@@ -31,7 +31,7 @@ class ThemeColourGateTests(unittest.TestCase):
         for path in sorted(PLUGINS.rglob("*.qml")):
             if path.parent == PLUGINS / "theme":
                 continue
-            for number, line in enumerate(path.read_text().splitlines(), 1):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 if HEX.search(line):
                     offenders.append(f"{path.relative_to(PLUGINS)}:{number}: {line.strip()[:80]}")
         self.assertEqual(offenders, [],
@@ -46,7 +46,7 @@ class ThemeColourGateTests(unittest.TestCase):
         for path in sorted(PLUGINS.rglob("*.qml")):
             if path.parent == PLUGINS / "theme":
                 continue
-            for number, line in enumerate(path.read_text().splitlines(), 1):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 match = NAMED.search(line)
                 if match and (path, match.group(0)) not in NAMED_ALLOWED:
                     offenders.append(f"{path.relative_to(PLUGINS)}:{number}: {line.strip()[:80]}")
@@ -57,11 +57,11 @@ class ThemeColourGateTests(unittest.TestCase):
         # The cross-check (the panel's catch): a hand-pinned list
         # cannot rot — every MoonrakerTheme.* token the documents
         # cite must exist in the theme document.
-        theme = (PLUGINS / "theme" / "MoonrakerTheme.qml").read_text()
+        theme = (PLUGINS / "theme" / "MoonrakerTheme.qml").read_text(encoding="utf-8")
         declared = set(re.findall(r"readonly property \w+ (\w+)", theme))
         cited = set()
         for path in PLUGINS.rglob("*.qml"):
-            cited.update(re.findall(r"MoonrakerTheme\.(\w+)", path.read_text()))
+            cited.update(re.findall(r"MoonrakerTheme\.(\w+)", path.read_text(encoding="utf-8")))
         self.assertEqual(cited - declared, set(),
                          "cited theme tokens not declared: %s" % sorted(cited - declared))
 

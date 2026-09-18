@@ -65,7 +65,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # The floor is the CURRENT census (2026-09-18, the panel's
         # re-census — the old 93 let 46 real steps convert to probes
         # before the pin fired): 139.
-        text = (ROOT / "tests/harness/scenarios.py").read_text()
+        text = (ROOT / "tests/harness/scenarios.py").read_text(encoding="utf-8")
         real = len(re.findall(
             r'"op": "(deliver_click|click_stage|click_text|key_press)"', text))
         self.assertGreaterEqual(real, 139)
@@ -101,7 +101,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # real-input op (the driver clicks by objectName/text only,
         # and the probe clicks BY GEOMETRY on the track), so the
         # witness is the inline QTest click.
-        text = (ROOT / "tests/harness/scenarios.py").read_text()
+        text = (ROOT / "tests/harness/scenarios.py").read_text(encoding="utf-8")
         direct = len(re.findall(
             r'"op": "(exec_slot|exec_file_slot|emit_click|confirm_box|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))

@@ -7,7 +7,7 @@ from plugins.MoonrakerSession import MoonrakerSessionState, PollPolicy, RequestC
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
-QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
+QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
 
 
 class PauseAtLayerTests(unittest.TestCase):
@@ -27,7 +27,7 @@ class PauseAtLayerTests(unittest.TestCase):
         self.assertEqual(schedule.layers, frozenset({4}))
         schedule.clear()
         self.assertFalse(schedule.layers)
-        self.assertNotIn("pause_at_layer", (PLUGINS / "PrinterConfig.py").read_text())
+        self.assertNotIn("pause_at_layer", (PLUGINS / "PrinterConfig.py").read_text(encoding="utf-8"))
 
     def test_pause_occurs_only_after_target_layer_finishes(self):
         schedule = PauseScheduleService()
@@ -86,7 +86,7 @@ class PauseAtLayerTests(unittest.TestCase):
                       "pauseAtLayerUnavailableText", 'text: "Enabled pauses"', 'text: "Clear all pauses"',
                       "current or a future non-final layer"):
             self.assertIn(token, QML)
-        controller = (PLUGINS / "PauseController.py").read_text()
+        controller = (PLUGINS / "PauseController.py").read_text(encoding="utf-8")
         self.assertIn('body={"script": "PAUSE"}', controller)
         self.assertIn("track_command", controller)
         self.assertIn("generation != self._generation", controller)

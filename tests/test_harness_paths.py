@@ -114,7 +114,7 @@ class RunDirResolutionTests(unittest.TestCase):
         # inline — RUN_DIR resolves through the helper, and the
         # container-side path resolves through it AGAIN via the
         # container mapping. The old doubled construction is gone.
-        text = UI_TEST.read_text()
+        text = UI_TEST.read_text(encoding="utf-8")
         self.assertIn(
             'RUN_DIR="$(tools/ui_test_paths.sh resolve', text
         )
@@ -131,7 +131,7 @@ class RunDirResolutionTests(unittest.TestCase):
         # reached the reported path must fail, whatever the verdict
         # said — and the suite modes' machine-readable record must
         # land too.
-        text = UI_TEST.read_text()
+        text = UI_TEST.read_text(encoding="utf-8")
         self.assertIn('echo "ui_test: EVIDENCE MISSING', text)
         self.assertIn('[ ! -s "$RUN_DIR/index.html" ]', text)
         self.assertIn('[ ! -s "$RUN_DIR/evidence.json" ]', text)
@@ -141,7 +141,7 @@ class RunDirResolutionTests(unittest.TestCase):
         # the wait must read the run's own work dir, never the shared
         # tree's copy (a stale shared file passed every -j unit's
         # boot gate in 4.1.0's green matrix).
-        text = UI_TEST.read_text()
+        text = UI_TEST.read_text(encoding="utf-8")
         self.assertIn('[ -s "$WORK_DIR"/harness_port.txt ]', text)
         self.assertNotIn('[ -s /tmp/mpf/harness_port.txt ]', text)
 
@@ -149,7 +149,7 @@ class RunDirResolutionTests(unittest.TestCase):
         # The evidence record's provenance fields read these from the
         # runner's environment — they must cross into the container
         # or every record says "?".
-        text = UI_TEST.read_text()
+        text = UI_TEST.read_text(encoding="utf-8")
         self.assertIn('CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION"', text)
 
 
@@ -160,7 +160,7 @@ class TestingDocPinTests(unittest.TestCase):
     # here instead of at the gate.
 
     def _doc(self):
-        return (ROOT / "TESTING.md").read_text()
+        return (ROOT / "TESTING.md").read_text(encoding="utf-8")
 
     def test_reconciliation_marker_is_present(self):
         self.assertIn("Reconciliation status (2026-09-15", self._doc())

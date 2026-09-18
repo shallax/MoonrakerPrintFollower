@@ -31,7 +31,7 @@ from verify_marketplace_source import verify as verify_marketplace_source
 class QmlCheckerTests(unittest.TestCase):
     def test_all_qml_pass_structural_checker(self):
         failures = []
-        for path in PLUGINS.glob("*.qml"): failures.extend(check_text(path.read_text(), path.name))
+        for path in PLUGINS.glob("*.qml"): failures.extend(check_text(path.read_text(encoding="utf-8"), path.name))
         self.assertEqual(failures, [])
 
     def test_qml_checker_rejects_duplicate_property_and_unbalanced_brace(self):
@@ -55,7 +55,7 @@ class PackageSourceTests(unittest.TestCase):
         tracked = subprocess.check_output(["git", "--no-pager", "ls-files"], cwd=ROOT, text=True).splitlines()
         self.assertEqual([name for name in tracked if "__pycache__" in name or name.endswith((".pyc", ".pyo"))], [])
         self.assertFalse((PLUGINS / "MoonrakerMonitorEnhanced.qml").exists())
-        gitignore = (ROOT / ".gitignore").read_text()
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
         self.assertIn("__pycache__/", gitignore)
         self.assertIn("*.py[cod]", gitignore)
 

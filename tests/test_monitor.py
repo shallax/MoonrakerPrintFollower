@@ -34,47 +34,47 @@ from plugins.PrintState import LayerResolver, PhysicalLayer
 from qt_runtime_support import QT_AVAILABLE, ROOT, ScriptedSocket, ScriptedTransport, runtime
 
 PLUGINS = ROOT / "plugins"
-MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
-CHANGELOG = (ROOT / "CHANGELOG.md").read_text()
-DATA = (PLUGINS / "MonitorData.py").read_text()
-CONTROLS = (PLUGINS / "MonitorControls.py").read_text()
-FORMATTING = (PLUGINS / "MonitorFormatting.py").read_text()
-POLICY = (PLUGINS / "MonitorPermissions.py").read_text()
-TYPED = "\n".join((PLUGINS / name).read_text() for name in ("MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py", "CuraIntegration.py", "MoonrakerMonitorModel.py"))
-DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text()
-MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text()
-CAMERA_PANE_QML = (PLUGINS / "CameraPane.qml").read_text()
-PRINT_SECTION_QML = (PLUGINS / "PrintSection.qml").read_text()
-SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text()
-TOOLHEAD_SECTION_QML = (PLUGINS / "ToolheadSection.qml").read_text()
-PROFILES_SECTION_QML = (PLUGINS / "ProfilesSection.qml").read_text()
-TUNING_SECTION_QML = (PLUGINS / "TuningSection.qml").read_text()
-FANS_SECTION_QML = (PLUGINS / "FansSection.qml").read_text()
-LEDS_SECTION_QML = (PLUGINS / "LedsSection.qml").read_text()
-PWM_SECTION_QML = (PLUGINS / "PwmSection.qml").read_text()
-POWER_SECTION_QML = (PLUGINS / "PowerSection.qml").read_text()
-SYSTEM_SECTION_QML = (PLUGINS / "SystemSection.qml").read_text()
-SAVE_SECTION_QML = (PLUGINS / "SaveSection.qml").read_text()
-FILE_MANAGER_SECTION_QML = (PLUGINS / "FileManagerSection.qml").read_text()
-MESH_SECTION_QML = (PLUGINS / "MeshSection.qml").read_text()
-TEMP_HISTORY_SECTION_QML = (PLUGINS / "TempHistorySection.qml").read_text()
-FANS_INFO_SECTION_QML = (PLUGINS / "FansInfoSection.qml").read_text()
-FILAMENT_SECTION_QML = (PLUGINS / "FilamentSection.qml").read_text()
-OBJECTS_SECTION_QML = (PLUGINS / "ObjectsSection.qml").read_text()
-TEMPS_SECTION_QML = (PLUGINS / "TempsSection.qml").read_text()
-SYSTEM_INFO_SECTION_QML = (PLUGINS / "SystemInfoSection.qml").read_text()
-MCUS_SECTION_QML = (PLUGINS / "McusSection.qml").read_text()
-JOB_SECTION_QML = (PLUGINS / "JobSection.qml").read_text()
-MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text()
-PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
-BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text()
-BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text()
-POPOVER_QML = (PLUGINS / "MonitorPopOver.qml").read_text()
-TEMP_CHART_QML = (PLUGINS / "TemperatureChart.qml").read_text()
-FILE_MANAGER_QML = (PLUGINS / "FileManager.qml").read_text()
-QMLDIR = (PLUGINS / "qmldir").read_text()
-OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text()
-CAPTURE_HARNESS = (ROOT / "tools" / "capture_monitor.py").read_text()
+MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text(encoding="utf-8")
+CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+DATA = (PLUGINS / "MonitorData.py").read_text(encoding="utf-8")
+CONTROLS = (PLUGINS / "MonitorControls.py").read_text(encoding="utf-8")
+FORMATTING = (PLUGINS / "MonitorFormatting.py").read_text(encoding="utf-8")
+POLICY = (PLUGINS / "MonitorPermissions.py").read_text(encoding="utf-8")
+TYPED = "\n".join((PLUGINS / name).read_text(encoding="utf-8") for name in ("MonitorFormatting.py", "MonitorCamera.py", "BedMeshPresenter.py", "CuraIntegration.py", "MoonrakerMonitorModel.py"))
+DASHBOARD_QML = (PLUGINS / "MoonrakerMonitorDashboard.qml").read_text(encoding="utf-8")
+MONITOR_QML = (PLUGINS / "MoonrakerMonitor.qml").read_text(encoding="utf-8")
+CAMERA_PANE_QML = (PLUGINS / "CameraPane.qml").read_text(encoding="utf-8")
+PRINT_SECTION_QML = (PLUGINS / "PrintSection.qml").read_text(encoding="utf-8")
+SETUP_SECTION_QML = (PLUGINS / "SetupSection.qml").read_text(encoding="utf-8")
+TOOLHEAD_SECTION_QML = (PLUGINS / "ToolheadSection.qml").read_text(encoding="utf-8")
+PROFILES_SECTION_QML = (PLUGINS / "ProfilesSection.qml").read_text(encoding="utf-8")
+TUNING_SECTION_QML = (PLUGINS / "TuningSection.qml").read_text(encoding="utf-8")
+FANS_SECTION_QML = (PLUGINS / "FansSection.qml").read_text(encoding="utf-8")
+LEDS_SECTION_QML = (PLUGINS / "LedsSection.qml").read_text(encoding="utf-8")
+PWM_SECTION_QML = (PLUGINS / "PwmSection.qml").read_text(encoding="utf-8")
+POWER_SECTION_QML = (PLUGINS / "PowerSection.qml").read_text(encoding="utf-8")
+SYSTEM_SECTION_QML = (PLUGINS / "SystemSection.qml").read_text(encoding="utf-8")
+SAVE_SECTION_QML = (PLUGINS / "SaveSection.qml").read_text(encoding="utf-8")
+FILE_MANAGER_SECTION_QML = (PLUGINS / "FileManagerSection.qml").read_text(encoding="utf-8")
+MESH_SECTION_QML = (PLUGINS / "MeshSection.qml").read_text(encoding="utf-8")
+TEMP_HISTORY_SECTION_QML = (PLUGINS / "TempHistorySection.qml").read_text(encoding="utf-8")
+FANS_INFO_SECTION_QML = (PLUGINS / "FansInfoSection.qml").read_text(encoding="utf-8")
+FILAMENT_SECTION_QML = (PLUGINS / "FilamentSection.qml").read_text(encoding="utf-8")
+OBJECTS_SECTION_QML = (PLUGINS / "ObjectsSection.qml").read_text(encoding="utf-8")
+TEMPS_SECTION_QML = (PLUGINS / "TempsSection.qml").read_text(encoding="utf-8")
+SYSTEM_INFO_SECTION_QML = (PLUGINS / "SystemInfoSection.qml").read_text(encoding="utf-8")
+MCUS_SECTION_QML = (PLUGINS / "McusSection.qml").read_text(encoding="utf-8")
+JOB_SECTION_QML = (PLUGINS / "JobSection.qml").read_text(encoding="utf-8")
+MACROS_SECTION_QML = (PLUGINS / "MacrosSection.qml").read_text(encoding="utf-8")
+PREVIEW_CONTROLS_QML = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+BED_MESH_QML = (PLUGINS / "MoonrakerMonitorBedMesh.qml").read_text(encoding="utf-8")
+BED_MESH_MAP_QML = (PLUGINS / "BedMeshMap.qml").read_text(encoding="utf-8")
+POPOVER_QML = (PLUGINS / "MonitorPopOver.qml").read_text(encoding="utf-8")
+TEMP_CHART_QML = (PLUGINS / "TemperatureChart.qml").read_text(encoding="utf-8")
+FILE_MANAGER_QML = (PLUGINS / "FileManager.qml").read_text(encoding="utf-8")
+QMLDIR = (PLUGINS / "qmldir").read_text(encoding="utf-8")
+OUTPUT_PLUGIN = (PLUGINS / "MoonrakerOutputDevicePlugin.py").read_text(encoding="utf-8")
+CAPTURE_HARNESS = (ROOT / "tools" / "capture_monitor.py").read_text(encoding="utf-8")
 
 # The 23 section ids are the persistence keys (INSTRUCTIONS: the stored
 # map only records touched sections; unknown keys default to expanded).
@@ -106,7 +106,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn("_BaseMoonrakerMonitorModel", MONITOR_MODEL)
 
     def test_toolhead_control_surface(self):
-        policy = (PLUGINS / "ToolheadPolicy.py").read_text()
+        policy = (PLUGINS / "ToolheadPolicy.py").read_text(encoding="utf-8")
         for token in ("G91", "G28", "M18", "jog_gate", "push_op", "JogOp",
                       "JOG_DISTANCE_DEFAULT", "EXTRUDE_SPEEDS_MM_PER_MIN", "extrude_distance_ok"):
             self.assertIn(token, policy)
@@ -180,7 +180,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("configfile.get(\"save_config_pending\")", CONTROLS)
 
     def test_emergency_stop_requires_two_clicks_and_a_held_third_press(self):
-        source = (PLUGINS / "MonitorCommands.py").read_text()
+        source = (PLUGINS / "MonitorCommands.py").read_text(encoding="utf-8")
         self.assertIn("HOLD_MS = 600", source)
         self.assertIn("self._reset_timer.setInterval(1000)", source)
         self.assertIn('"printer/emergency_stop"', source)
@@ -827,7 +827,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("SequentialAnimation on rotation", JOB_SECTION_QML)
         self.assertIn("PauseAnimation", JOB_SECTION_QML)
         self.assertIn("root.printerModel.improveEtaPhase", JOB_SECTION_QML)
-        self.assertIn("download_fraction", MONITOR_MODEL + (PLUGINS / "RemoteFileService.py").read_text())
+        self.assertIn("download_fraction", MONITOR_MODEL + (PLUGINS / "RemoteFileService.py").read_text(encoding="utf-8"))
         self.assertIn('"monitorLayerProgress"', MONITOR_MODEL)
         self.assertIn("function monoFamily()", MONITOR_QML)
         self.assertIn("Qt.fontFamilies()", MONITOR_QML)
@@ -924,7 +924,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('title: "PWM outputs"', PWM_SECTION_QML)
 
     def test_monitor_layer_tracks_remote_print_not_cura_slider(self):
-        resolver = (PLUGINS / "PrintState.py").read_text()
+        resolver = (PLUGINS / "PrintState.py").read_text(encoding="utf-8")
         self.assertIn("class LayerResolver", resolver)
         self.assertIn("total = len(index.ranges)", resolver)
         self.assertNotIn("getCurrentLayer", resolver)
@@ -1077,7 +1077,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertGreaterEqual(FANS_SECTION_QML.count("OutlineSlider {"), 1)
         self.assertGreaterEqual(LEDS_SECTION_QML.count("OutlineSlider {"), 5)
         self.assertGreaterEqual(PWM_SECTION_QML.count("OutlineSlider {"), 1)
-        indicator = (PLUGINS / "LoadProgressIndicator.qml").read_text()
+        indicator = (PLUGINS / "LoadProgressIndicator.qml").read_text(encoding="utf-8")
         # The indicator bar's track is an outline too: transparent
         # interior, lining border, Cura-blue fill.
         self.assertIn('color: "transparent"', indicator)
@@ -1086,8 +1086,8 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('UM.Theme.getColor("primary")', indicator)
         # The outline components fill in Cura's brand blue (the same
         # accent as buttons and slider handles), never the text colour.
-        bar = (PLUGINS / "OutlineProgressBar.qml").read_text()
-        slider = (PLUGINS / "OutlineSlider.qml").read_text()
+        bar = (PLUGINS / "OutlineProgressBar.qml").read_text(encoding="utf-8")
+        slider = (PLUGINS / "OutlineSlider.qml").read_text(encoding="utf-8")
         self.assertIn('UM.Theme.getColor("primary")', bar)
         self.assertNotIn('color: UM.Theme.getColor("text")', bar)
         self.assertNotIn('border.color: UM.Theme.getColor("text")', slider)
@@ -1109,7 +1109,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # the pane collapse must close the pop-over, the ETA tooltip
         # must not claim a basis for a paused/absent value, and the
         # chart's filling state must actually render its copy.
-        panel = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
+        panel = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
         self.assertIn("The indicator is a SIBLING of the buttons Row", panel)
         self.assertIn("Collapsing the pane hides the pop-over's", MONITOR_QML)
         self.assertIn('monitorEta === "Paused" ? ""', JOB_SECTION_QML)
@@ -1120,7 +1120,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn("Collecting temperature history", MONITOR_QML + CHANGELOG)
         self.assertIn("_clockTextMinutes", TEMP_CHART_QML)
         # Disabled sliders grey the fill and the handle ring.
-        slider_source = (PLUGINS / "OutlineSlider.qml").read_text()
+        slider_source = (PLUGINS / "OutlineSlider.qml").read_text(encoding="utf-8")
         self.assertGreaterEqual(slider_source.count("control.enabled ? UM.Theme.getColor(\"primary\") : UM.Theme.getColor(\"text_disabled\")"), 2)
         # The colour/colour strings follow the user's locale.
         self.assertIn("britishSpelling", MONITOR_QML)
@@ -1152,7 +1152,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("After release, the latest value is applied once it has been unchanged for 250 ms.", TUNING_SECTION_QML)
         self.assertIn('text: "Refresh Moonraker\'s webcam list."', CAMERA_PANE_QML)
         self.assertIn('title: "Exclude object?"', MONITOR_QML)
-        tuning = (PLUGINS / "MonitorTuning.py").read_text()
+        tuning = (PLUGINS / "MonitorTuning.py").read_text(encoding="utf-8")
         self.assertIn("DEBOUNCE_MS = 250", tuning)
         self.assertIn("current.revision != revision", tuning)
 
@@ -1212,7 +1212,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # A live report: a click on a slider's grab handle
         # must not move it, and a click focuses the slider so the
         # arrow keys nudge one step.
-        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
         for token in ("handlePress", "pressIsOnHandle", "parent.value = parent.valueBeforePress",
                       "focusPolicy: Qt.StrongFocus", "Keys.onUpPressed: increase()", "forceActiveFocus()", "mouse.accepted = parent.handlePress"):
             self.assertIn(token, config)
@@ -1222,7 +1222,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # (groove, handle, keyboard) funnels into the component's own
         # valueTuning/valueCommitted signals — the usage sites never
         # re-derive the interaction state.
-        outline = (PLUGINS / "OutlineSlider.qml").read_text()
+        outline = (PLUGINS / "OutlineSlider.qml").read_text(encoding="utf-8")
         for token in ("handlePress", "pressIsOnHandle", "tuningActive", "focusPolicy: Qt.StrongFocus",
                       "forceActiveFocus()", "control.value = control.valueBeforePress",
                       "signal valueTuning", "signal valueCommitted", "readonly property bool interacting",
@@ -1240,7 +1240,7 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("root.freezeRepeaters ? root.frozenItems", LEDS_SECTION_QML)
         self.assertIn("root.freezeRepeaters ? root.frozenItems", PWM_SECTION_QML)
         # The bed-mesh range filter's keyboard half: focus + arrow keys.
-        range_slider = (PLUGINS / "BedMeshRangeSlider.qml").read_text()
+        range_slider = (PLUGINS / "BedMeshRangeSlider.qml").read_text(encoding="utf-8")
         for token in ("Keys.onLeftPressed", "Keys.onRightPressed", "Keys.onUpPressed", "forceActiveFocus()"):
             self.assertIn(token, range_slider)
 
@@ -1249,7 +1249,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # the SAME blue-to-red min/max bar as the Preview's overlay —
         # the shared dual-ended range-filter component (4.2.0) owns
         # the stops now, so the two surfaces cannot drift.
-        slider = (PLUGINS / "BedMeshRangeSlider.qml").read_text()
+        slider = (PLUGINS / "BedMeshRangeSlider.qml").read_text(encoding="utf-8")
         for stop in ("MoonrakerTheme.bandBlue", "MoonrakerTheme.bandCyan", "MoonrakerTheme.bandGreen", "MoonrakerTheme.bandYellow", "MoonrakerTheme.bandRed"):
             self.assertIn(stop, slider)
         for qml in (MONITOR_QML, PREVIEW_CONTROLS_QML):
@@ -1688,22 +1688,22 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
 
     def test_qml_prose_matches_policy_constants(self):
         import re as _re
-        tuning = (PLUGINS / "MonitorTuning.py").read_text()
+        tuning = (PLUGINS / "MonitorTuning.py").read_text(encoding="utf-8")
         debounce = int(_re.search(r"DEBOUNCE_MS\s*=\s*(\d+)", tuning).group(1))
         self.assertEqual(debounce, 250)
         window = f"unchanged for {debounce} ms" if debounce < 1000 else f"unchanged for {debounce // 1000} seconds"
         self.assertIn(window, TUNING_SECTION_QML)
 
-        commands = (PLUGINS / "MonitorCommands.py").read_text()
+        commands = (PLUGINS / "MonitorCommands.py").read_text(encoding="utf-8")
         click_window = int(_re.search(r"_reset_timer\.setInterval\((\d+)\)", commands).group(1))
         self.assertEqual(click_window, 1000)
         # The helper prose that restated the arm-reset window was
         # removed by request; the constant lives in the
         # code alone now.
 
-        follow = (PLUGINS / "FollowController.py").read_text()
+        follow = (PLUGINS / "FollowController.py").read_text(encoding="utf-8")
         radius = int(_re.search(r"window_radius: int = (\d+)", follow).group(1))
-        self.assertIn(f"(±{radius})", (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text())
+        self.assertIn(f"(±{radius})", (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8"))
 
     def test_classification_table_is_the_single_object_policy(self):
         from plugins.MonitorFormatting import object_kind, wanted_object
@@ -1738,7 +1738,7 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
             self.assertFalse(fan_writable(name), name)
         # The dashboard renders the read-only row instead of a slider,
         # and the command lane refuses the regulated fans fail-closed.
-        controls = (PLUGINS / "MonitorControls.py").read_text()
+        controls = (PLUGINS / "MonitorControls.py").read_text(encoding="utf-8")
         self.assertIn('"writable": fan_writable(name)', controls)
         self.assertIn("if not fan_writable(name):", controls)
         self.assertIn("visible: modelData.writable", FANS_SECTION_QML)
@@ -1751,7 +1751,7 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         # The sliders now read absolute channel values, and the
         # percentage labels hold a fixed width so the rows never
         # reflow.
-        controls = (PLUGINS / "MonitorControls.py").read_text()
+        controls = (PLUGINS / "MonitorControls.py").read_text(encoding="utf-8")
         self.assertIn("ABSOLUTE channels", controls)
         # The chroma normalisation's code is gone: no peak division
         # remains in the channel derivation.
@@ -1781,7 +1781,7 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
         # The submit's rebuild must not kill the tuned slider's focus
         # (a live report): the dashboard remembers the
         # slider's object and re-grants focus on the new delegate.
-        outline = (PLUGINS / "OutlineSlider.qml").read_text()
+        outline = (PLUGINS / "OutlineSlider.qml").read_text(encoding="utf-8")
         self.assertIn("property string controlObject", outline)
         # One LED row holds five sliders: the refocus must land on the
         # RIGHT one — the kind discriminates, and the walk recurses
@@ -1806,8 +1806,8 @@ class MonitorPolicyConsistencyTests(unittest.TestCase):
             self.assertIn('controlKind: "%s"' % kind, LEDS_SECTION_QML)
 
     def test_consumers_use_the_shared_classification_tables(self):
-        data = (PLUGINS / "MonitorData.py").read_text()
-        controls = (PLUGINS / "MonitorControls.py").read_text()
+        data = (PLUGINS / "MonitorData.py").read_text(encoding="utf-8")
+        controls = (PLUGINS / "MonitorControls.py").read_text(encoding="utf-8")
         self.assertIn("wanted_object", data)
         self.assertIn("FAN_OBJECT_PREFIXES", controls)
         self.assertIn("LED_OBJECT_PREFIXES", controls)
@@ -3147,14 +3147,14 @@ class MonitorQtTests(unittest.TestCase):
         self.assertIn("No endstop states reported", FORMATTING)
         for token in ("endstopItems", "endstopSummary", "endstopsChanged",
                       "printer/query_endstops/status", "refresh_endstops"):
-            self.assertIn(token, MONITOR_MODEL + (PLUGINS / "MonitorData.py").read_text())
+            self.assertIn(token, MONITOR_MODEL + (PLUGINS / "MonitorData.py").read_text(encoding="utf-8"))
         for token in ("improveEta()", "monitorEtaBasis === \"blend\"", "monitorEtaBasis === \"index\""):
             self.assertIn(token, JOB_SECTION_QML)
         for token in ("monitorEtaBasis", "def improveEta(", "layer_eta", "remaining_end",
                       "request_monitor_download"):
-            self.assertIn(token, MONITOR_MODEL + (PLUGINS / "MonitorFormatting.py").read_text()
-                          + (PLUGINS / "PreviewFollower.py").read_text() + (PLUGINS / "PrintState.py").read_text())
-        self.assertIn("confirmDownloadForMonitor", (PLUGINS / "MoonrakerPrintFollower.py").read_text())
+            self.assertIn(token, MONITOR_MODEL + (PLUGINS / "MonitorFormatting.py").read_text(encoding="utf-8")
+                          + (PLUGINS / "PreviewFollower.py").read_text(encoding="utf-8") + (PLUGINS / "PrintState.py").read_text(encoding="utf-8"))
+        self.assertIn("confirmDownloadForMonitor", (PLUGINS / "MoonrakerPrintFollower.py").read_text(encoding="utf-8"))
 
     def test_console_burst_drains_pending_per_completion(self):
         # Each console send posts its own request (the shared lane is
@@ -3823,8 +3823,8 @@ Item {
         self.assertEqual(coordinator._detail, "No active Moonraker print to load")
 
     def test_preview_load_feedback_surfaces(self):
-        card = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
-        indicator = (PLUGINS / "LoadProgressIndicator.qml").read_text()
+        card = (PLUGINS / "MoonrakerPreviewCard.qml").read_text(encoding="utf-8")
+        indicator = (PLUGINS / "LoadProgressIndicator.qml").read_text(encoding="utf-8")
         self.assertIn("enabled: !base.loadBusy", card)
         self.assertIn("LoadProgressIndicator {", card)
         # Declared on the root: undeclared dynamic names read as
@@ -3840,14 +3840,14 @@ Item {
         self.assertIn("width: base.hasToolpath ? buttons.width - base.buttonSpacing - followButton.width : buttons.width", card)
         self.assertIn("indicatorBar.sweepPhase", indicator)
         self.assertIn("busy: false", indicator)
-        presentation = (PLUGINS / "PreviewPresentation.py").read_text()
+        presentation = (PLUGINS / "PreviewPresentation.py").read_text(encoding="utf-8")
         self.assertIn('("bedMeshVisibilityRequested", self.bedMeshVisibilityRequested.emit)', presentation)
-        dialog = (PLUGINS / "MoonrakerUploadDialog.qml").read_text()
+        dialog = (PLUGINS / "MoonrakerUploadDialog.qml").read_text(encoding="utf-8")
         # Enter resolves through the dialog's own accepted signal; the
         # unresolved-close wedge heals in the device's requestWrite.
         self.assertIn("onAccepted: {", dialog)
         self.assertIn("onClicked: base.accept()", dialog)
-        device = (PLUGINS / "MoonrakerOutputDevice.py").read_text()
+        device = (PLUGINS / "MoonrakerOutputDevice.py").read_text(encoding="utf-8")
         self.assertIn("A closed-but-unresolved dialog resets here", device)
 
     def test_console_qml_surface(self):
@@ -3889,7 +3889,7 @@ Item {
                       # and not selecting.
                       "consoleLines", "selectByMouse",
                       "server/gcode_store?count=100"):
-            self.assertIn(token, MONITOR_QML + (PLUGINS / "MonitorData.py").read_text())
+            self.assertIn(token, MONITOR_QML + (PLUGINS / "MonitorData.py").read_text(encoding="utf-8"))
         # The webcam pane's title moved with the card (CameraPane.qml).
         self.assertIn('text: "Webcam"', CAMERA_PANE_QML)
         # The poll gate opens on printer attach — never wired to the
@@ -4265,7 +4265,7 @@ Item {
         for path in sorted(PLUGINS.glob("*.qml")):
             if path.name in exempt_files:
                 continue  # settings dialogs carve-out (user-opened surfaces)
-            for number, line in enumerate(path.read_text().splitlines(), 1):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 match = re.search(r"(visible:\s*.+)$", line)
                 if not match:
                     continue

@@ -5,8 +5,8 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
-PACKAGE = json.loads((ROOT / "package.json").read_text())
-PLUGIN_META = json.loads((PLUGINS / "plugin.json").read_text())
+PACKAGE = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+PLUGIN_META = json.loads((PLUGINS / "plugin.json").read_text(encoding="utf-8"))
 FOLLOWER_SOURCES = (
     "MoonrakerPrintFollower.py",
     "FollowerRuntime.py",
@@ -21,21 +21,21 @@ FOLLOWER_SOURCES = (
     "MoonrakerSocket.py",
     "SocketFraming.py",
 )
-PLUGIN = "\n".join((PLUGINS / name).read_text() for name in FOLLOWER_SOURCES)
-CLIENT = (PLUGINS / "MoonrakerClient.py").read_text()
-MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text()
-MACHINE_ACTION = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+PLUGIN = "\n".join((PLUGINS / name).read_text(encoding="utf-8") for name in FOLLOWER_SOURCES)
+CLIENT = (PLUGINS / "MoonrakerClient.py").read_text(encoding="utf-8")
+MONITOR_MODEL = (PLUGINS / "MoonrakerMonitorModel.py").read_text(encoding="utf-8")
+MACHINE_ACTION = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
 # Every shipped QML file is audited; a newly added file must not silently
 # bypass the Qt6.2 import checks.
 QML_FILES = sorted(path.name for path in PLUGINS.glob("*.qml"))
-QML_SOURCES = {path.name: path.read_text() for path in PLUGINS.glob("*.qml")}
+QML_SOURCES = {path.name: path.read_text(encoding="utf-8") for path in PLUGINS.glob("*.qml")}
 CONFIG_QML = QML_SOURCES["MoonrakerFollowerConfiguration.qml"]
 MONITOR_QML = QML_SOURCES["MoonrakerMonitor.qml"]
 CAMERA_PANE_QML = QML_SOURCES["CameraPane.qml"]
 UPLOAD_QML = QML_SOURCES["MoonrakerUploadDialog.qml"]
 ACTION_QML = QML_SOURCES["MoonrakerPreviewCard.qml"]
 EMPTY_QML = QML_SOURCES["MoonrakerPreviewCard.qml"]
-README = (ROOT / "README.md").read_text()
+README = (ROOT / "README.md").read_text(encoding="utf-8")
 
 
 class SdkCompatibilityTests(unittest.TestCase):
