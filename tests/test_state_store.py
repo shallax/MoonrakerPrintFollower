@@ -39,6 +39,15 @@ class StateStoreTests(unittest.TestCase):
         with open(self.path, encoding="utf-8") as handle:
             self.assertEqual(json.load(handle)["sections"], {"toolhead": True})
 
+    def test_write_recreates_a_deleted_parent_directory(self):
+        # A config folder deleted by hand must not strand every later
+        # save as a silent no-op: the write recreates its parent.
+        target = os.path.join(self.dir.name, "deleted", "settings.json")
+        store = StateStore(target, note=lambda kind, text: self.notes.append((kind, text)))
+        self.assertTrue(store.write({"sections": {"toolhead": True}}))
+        with open(target, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["sections"], {"toolhead": True})
+
     def test_read_failure_reports_once_per_session(self):
         # A path that EXISTS but cannot be opened as a file (the
         # temp dir itself) — a genuine failure, unlike the missing
@@ -71,7 +80,12 @@ class StateStoreTests(unittest.TestCase):
                 os.O_NOFOLLOW = saved
 
     def test_write_failure_reports_once_per_session(self):
-        store = StateStore(os.path.join(self.dir.name, "missing", "sections.json"),
+        # A parent path that is a FILE can never hold the document:
+        # the write fails, and the failure reports exactly once.
+        blocker = os.path.join(self.dir.name, "blocker")
+        with open(blocker, "w", encoding="utf-8") as handle:
+            handle.write("not a directory")
+        store = StateStore(os.path.join(blocker, "sections.json"),
                            note=lambda kind, text: self.notes.append((kind, text)))
         self.assertFalse(store.write({"sections": {}}))
         self.assertFalse(store.write({"sections": {}}))

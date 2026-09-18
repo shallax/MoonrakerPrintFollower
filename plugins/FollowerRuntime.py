@@ -33,9 +33,12 @@ from .WhatsNew import should_show as whats_new_should_show
 def _savefile_write(path, text):
     """The injected atomic write (M8): Cura's SaveFile commits with a
     same-directory temp file, an fsync and an flock — the plugin's
-    JSON gains the host's own durability story."""
+    JSON gains the host's own durability story. The folder is
+    recreated on demand: a config folder deleted by hand must not
+    turn every subsequent save into a silent no-op."""
     try:
         from UM.SaveFile import SaveFile
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with SaveFile(path, "w", encoding="utf-8") as handle:
             handle.write(text)
         return True

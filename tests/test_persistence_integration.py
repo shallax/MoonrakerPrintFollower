@@ -193,6 +193,33 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertTrue(record["backupWritten"])
         self.assertTrue(os.path.exists(os.path.join(self.dir.name, record["backupName"])))
 
+    def test_a_deleted_folder_reconfigure_survives_the_next_boot(self):
+        # The Windows lost-config sequence: the folder was deleted by
+        # hand (no settings, no record), the migration re-ran on the
+        # next boot, the settings were re-entered — and the boot
+        # after that must read them back, not wipe them.
+        self.prefs.setValue(PrinterConfigStore.PREF_KEY, "{}")
+        self.prefs.setValue(PrinterConfigStore.MIGRATED_KEY, True)
+        self.binding.run_persistence_migration()  # boot A: skeleton + record
+        config = PrinterConfig()
+        config.url = "http://a:7125"
+        config.api_key = "k"
+        self.persistence.set_machine_config("A", config)
+
+        base = self.dir.name
+        second = PluginPersistence(
+            os.path.join(base, "settings.json"),
+            os.path.join(base, "state", "global.json"),
+            os.path.join(base, "state", "machines"),
+            save=_pretty_save,
+        )
+        binding2 = PrinterBinding(self.app, self.client, second,
+                                  cura_cfg_path=self.cura_cfg, old_state_path=None)
+        binding2.run_persistence_migration()  # boot B: the idempotent pass
+        document = second.settings_document()
+        self.assertEqual(document["machines"]["A"]["url"], "http://a:7125")
+        self.assertEqual(document["machines"]["A"]["api_key"], "k")
+
     def test_the_ui_state_stores_boundary_guard_and_the_facade_branch(self):
         from plugins.UiStateStore import UiStateStore
 

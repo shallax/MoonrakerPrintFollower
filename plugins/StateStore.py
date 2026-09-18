@@ -95,6 +95,9 @@ class StateStore:
                 flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
                 if hasattr(os, "O_NOFOLLOW"):
                     flags |= os.O_NOFOLLOW
+                # Same guard as the production SaveFile wrapper: a
+                # deleted parent folder must not strand the writes.
+                os.makedirs(os.path.dirname(self._path), exist_ok=True)
                 fd = os.open(self._path + ".tmp", flags, 0o600)
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
                     # allow_nan=False: NaN/Infinity round-trip through
