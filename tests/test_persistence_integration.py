@@ -185,9 +185,10 @@ class MigrationTriggerTests(unittest.TestCase):
         # chain, the activation, a real save and the second boot — the
         # interaction that fabricated the phantom migration.
         self.prefs.setValue(PrinterConfigStore.PREF_KEY, "{}")
-        # Boot 1: the chain runs over nothing meaningful, the v2
-        # document activates directly, no record, no markers.
-        self.binding.run_persistence_migration()
+        # Boot 1 through the REAL entry point (_migrate): the legacy
+        # chain and the Moonraker Connection check both run, then the
+        # migration — the interaction the bug lived in.
+        self.binding._migrate()
         document = self.persistence.settings_document()
         self.assertEqual(document["configVersion"], 2)
         self.assertEqual(document.get("machines"), {})
@@ -200,19 +201,22 @@ class MigrationTriggerTests(unittest.TestCase):
             self.prefs.getValue(PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY)))
         self.assertEqual([n for n in os.listdir(self.dir.name)
                           if n.startswith("cura.cfg.")], [])
-        # The production save path.
+        # The production save path (the settings action's verb, via
+        # the binding's apply).
         config = PrinterConfig()
         config.url = "http://a:7125"
         config.api_key = "k"
-        self.persistence.set_machine_config("A", config)
+        self.assertTrue(self.binding.apply(config))
         with open(self.settings_path, encoding="utf-8") as handle:
             before = json.load(handle)
 
-        # Boot 2: a fresh binding over the same state — the document
-        # must be EQUIVALENT and the machinery completely silent.
+        # Boot 2: a fresh binding over the same state (the process
+        # boundary in-process — the MODE=firstinstall harness is the
+        # two-process proof) — the document must be EQUIVALENT and
+        # the machinery completely silent.
         second = PrinterBinding(self.app, self.client, self.persistence,
                                 cura_cfg_path=self.cura_cfg, old_state_path=None)
-        second.run_persistence_migration()
+        second._migrate()
         with open(self.settings_path, encoding="utf-8") as handle:
             self.assertEqual(json.load(handle), before)
         self.assertIsNone(self.persistence.migration_record())
