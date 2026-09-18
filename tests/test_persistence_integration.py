@@ -303,6 +303,65 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertIs(self.prefs.getValue("moonrakerprintfollower/bed_mesh_visible"), True)
         self.assertEqual(self.prefs.getValue("moonrakerprintfollower/bed_mesh_exaggeration"), 20.0)
 
+    def test_a_direct_flat_upgrade_migrates_on_the_first_boot(self):
+        # The one-boot direct upgrade: cura.cfg carries the flat-era
+        # values but printer_configs_v1 has never been flushed to disk.
+        # The legacy chain synthesises the blob in memory THIS boot,
+        # and the backup must accept the actual pre-migration source —
+        # the original flat settings — not the transformed key.
+        with open(self.cura_cfg, "w", encoding="utf-8") as handle:
+            handle.write(
+                "[general]\nversion = 1\n[moonrakerprintfollower]\n"
+                "enabled = False\nurl = http://old:7125\napi_key = oldkey\n"
+            )
+        self.prefs.setValue(PrinterConfigStore.LEGACY_MAP["enabled"], False)
+        self.prefs.setValue(PrinterConfigStore.LEGACY_MAP["url"], "http://old:7125")
+        self.prefs.setValue(PrinterConfigStore.LEGACY_MAP["api_key"], "oldkey")
+        self.binding._migrate()
+
+        document = self.persistence.settings_document()
+        self.assertEqual(document["machines"]["A"]["url"], "http://old:7125")
+        self.assertEqual(document["machines"]["A"]["api_key"], "oldkey")
+        record = self.persistence.migration_record()
+        self.assertEqual(record["status"], "ok")
+        self.assertTrue(record["backupWritten"])
+        with open(os.path.join(self.dir.name, record["backupName"]), "rb") as handle:
+            raw = handle.read()
+        self.assertIn(b"moonrakerprintfollower", raw)
+        self.assertIn(b"http://old:7125", raw)  # the original source, not the blob
+        self.assertNotIn(b"printer_configs_v1", raw)
+        # The legacy source is cleaned only after success.
+        self.assertEqual(self.prefs.getValue(PrinterConfigStore.PREF_KEY), "{}")
+        self.assertFalse(self.binding._store._truthy(
+            self.prefs.getValue(PrinterConfigStore.MIGRATED_KEY)))
+
+    def test_a_direct_moonraker_connection_upgrade_migrates_on_the_first_boot(self):
+        # A pure Connection upgrade: no flat follower values at all —
+        # the import's own marker releases the one-shot gate, and the
+        # backup accepts the real moonraker/instances source.
+        with open(self.cura_cfg, "w", encoding="utf-8") as handle:
+            handle.write(
+                "[general]\nversion = 1\n[moonraker]\n"
+                'instances = {"Old": {"url": "http://mc:7125", "api_key": "mckey"}}\n'
+            )
+        self.prefs.setValue(PrinterConfigStore.MOONRAKER_CONNECTION_PREF_KEY,
+                            json.dumps({"Old": {"url": "http://mc:7125", "api_key": "mckey"}}))
+        self.binding._migrate()
+
+        document = self.persistence.settings_document()
+        self.assertEqual(document["machines"]["Old"]["url"], "http://mc:7125")
+        self.assertEqual(document["machines"]["Old"]["api_key"], "mckey")
+        record = self.persistence.migration_record()
+        self.assertEqual(record["status"], "ok")
+        self.assertTrue(record["backupWritten"])
+        with open(os.path.join(self.dir.name, record["backupName"]), "rb") as handle:
+            raw = handle.read()
+        self.assertIn(b"moonraker", raw)
+        self.assertIn(b"mckey", raw)
+        self.assertNotIn(b"printer_configs_v1", raw)
+        self.assertFalse(self.binding._store._truthy(
+            self.prefs.getValue(PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY)))
+
     def test_a_deleted_folder_reconfigure_survives_the_next_boot(self):
         # The Windows lost-config sequence: the folder was deleted by
         # hand (no settings, no record). Boot A activates the v2

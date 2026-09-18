@@ -445,6 +445,41 @@ class MigrationTests(unittest.TestCase):
             handle.write("[general]\nversion = 1\n")
         self.assertFalse(write_backup(self.cura_cfg, backup))
 
+    def test_the_backup_accepts_a_genuine_flat_legacy_source(self):
+        # The one-boot direct upgrade: the v1 blob was synthesised in
+        # memory this boot and cura.cfg has never flushed it — the
+        # flat values themselves are the source evidence.
+        with open(self.cura_cfg, "w", encoding="utf-8") as handle:
+            handle.write(
+                "[general]\nversion = 1\n[moonrakerprintfollower]\n"
+                "enabled = False\nurl = http://old:7125\n"
+            )
+        backup = os.path.join(self.dir.name, "cura.cfg.2026-09-18-14-30-12")
+        self.assertTrue(write_backup(self.cura_cfg, backup))
+
+    def test_the_backup_accepts_a_genuine_moonraker_connection_source(self):
+        with open(self.cura_cfg, "w", encoding="utf-8") as handle:
+            handle.write(
+                "[general]\nversion = 1\n[moonraker]\n"
+                'instances = {"Old": {"url": "http://mc:7125", "api_key": "k"}}\n'
+            )
+        backup = os.path.join(self.dir.name, "cura.cfg.2026-09-18-14-30-12")
+        self.assertTrue(write_backup(self.cura_cfg, backup))
+
+    def test_the_backup_rejects_defaults_and_unrelated_content(self):
+        # Registered defaults are NOT source evidence (the first-install
+        # invariant), an empty Connection source is not, and neither is
+        # an unrelated plugin's config — the gate fails closed.
+        backup = os.path.join(self.dir.name, "cura.cfg.2026-09-18-14-30-12")
+        for content in (
+            "[general]\nversion = 1\n[moonrakerprintfollower]\nenabled = True\n",
+            "[general]\nversion = 1\n[some_other_plugin]\nthing = 3\n",
+            "[general]\nversion = 1\n[moonraker]\ninstances = {}\n",
+        ):
+            with open(self.cura_cfg, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            self.assertFalse(write_backup(self.cura_cfg, backup), content)
+
     # -- The field split (E3) ------------------------------------------
 
     def test_split_record_keeps_the_field_split(self):

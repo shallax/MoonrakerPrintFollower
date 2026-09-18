@@ -203,10 +203,15 @@ class PrinterBinding(QObject):
             # source of truth. The record's absence must never re-arm
             # a rewrite (the first-install lost-config report).
             return
-        if not self._store._truthy(preferences.getValue(PrinterConfigStore.MIGRATED_KEY)):
+        if not self._store._truthy(preferences.getValue(PrinterConfigStore.MIGRATED_KEY)) and not self._store._truthy(
+            preferences.getValue(PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY)
+        ):
             # The legacy chain has not finished pushing the records;
             # the one-shot must wait (they would re-write the blob
-            # after the clean).
+            # after the clean). EITHER chain finishing releases the
+            # gate: a pure Moonraker Connection upgrade has no flat
+            # follower values, so the follower's own flag never flips
+            # (the 4.5.0 one-boot fix).
             return
         if not self._carry_bed_mesh_preferences(preferences):
             # The migration's clean would destroy the legacy bed-mesh

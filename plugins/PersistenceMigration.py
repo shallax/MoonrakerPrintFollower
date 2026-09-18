@@ -23,13 +23,14 @@ document writers are the facade's stores, which write pretty-printed
 JSON (indent + sorted keys, the ruling)."""
 from __future__ import annotations
 
+import configparser
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import quote_plus
 
-from .PrinterConfig import PrinterConfig
+from .PrinterConfig import PrinterConfig, PrinterConfigStore
 
 
 @dataclass
@@ -95,15 +96,57 @@ def split_record(record: Dict[str, Any]) -> tuple:
     return settings, state
 
 
+def _raw_source_evidence(raw: bytes) -> bool:
+    """The backup's source evidence (the 4.5.0 one-boot upgrade fix):
+    the transformed v1 blob need not be on disk yet — the backup is a
+    copy of the ACTUAL pre-migration source, so the genuine flat
+    legacy settings or a genuine Moonraker Connection instances blob
+    count too. Structured, never a broad substring: the flat check
+    runs the SAME normalised comparison the legacy chain uses
+    (registered defaults are never evidence), and the Connection
+    check requires a real non-empty instances mapping — an arbitrary
+    unrelated cura.cfg still fails closed."""
+    if b"printer_configs_v1" in raw:
+        return True
+    try:
+        parsed = configparser.ConfigParser()
+        parsed.read_string(raw.decode("utf-8", errors="replace"))
+    except Exception:
+        return False
+    if parsed.has_section("moonrakerprintfollower"):
+        raw_legacy = {}
+        for field, pref_key in PrinterConfigStore.LEGACY_MAP.items():
+            option = pref_key.rsplit("/", 1)[-1]
+            if not parsed.has_option("moonrakerprintfollower", option):
+                continue
+            raw_legacy[field] = parsed.get("moonrakerprintfollower", option)
+        if raw_legacy:
+            legacy = asdict(PrinterConfig.from_dict(raw_legacy))
+            defaults = asdict(PrinterConfig())
+            if any(
+                legacy.get(field) != defaults.get(field)
+                for field in raw_legacy
+            ):
+                return True
+    if parsed.has_section("moonraker"):
+        try:
+            instances = json.loads(parsed.get("moonraker", "instances", fallback="{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            instances = {}
+        if isinstance(instances, dict) and instances:
+            return True
+    return False
+
+
 def write_backup(source_path: str, backup_path: str) -> bool:
     """The whole-file cura.cfg copy: fsynced, then verified by content
     against the source bytes before the clean may proceed. The copy
-    must carry the plugin's blob group — existence is not durability
-    (the architecture panel's C6)."""
+    must carry source evidence — existence is not durability (the
+    architecture panel's C6)."""
     try:
         with open(source_path, "rb") as handle:
             raw = handle.read()
-        if not raw or b"printer_configs_v1" not in raw:
+        if not raw or not _raw_source_evidence(raw):
             return False
         with open(backup_path + ".tmp", "wb") as handle:
             handle.write(raw)
