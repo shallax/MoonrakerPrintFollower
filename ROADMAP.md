@@ -1910,9 +1910,14 @@ the floor then drops from 5.11+ to 5.7+ once these land:
   p6 pattern), and the group then becomes a release-gate candidate.
 - The floor declaration: README/CHANGELOG/WhatsNew move from 5.11+ to
   5.7+, after the 5.11/5.12 full suites re-verify green.
-- Out of scope, recorded: 5.6's float→int modal (one coercion fix,
-  deliberately not pursued — the floor is 5.7+) and the 5.0-5.5
-  display wall (a real-GL virtual display, harness-side).
+- Out of scope, ruled (2026-09-18): 5.6 drops — the float→int modal
+  is NAMED (PreviewMotion's sub-path float → CuraAdapter.setPath →
+  5.6's int-typed SimulationViewProxy.currentPath; 5.13 declares the
+  identical property float, so 5.7+ never errors), and the only
+  "fix" is rounding the hand-off, which would cost every 5.7-5.13
+  user the sub-path smoothing to silence a log line on the oldest
+  version — pollution, not support. The 5.0-5.5 display wall stays
+  out (a real-GL virtual display, harness-side).
 - A dark-theme capture leg joins the UI tests: the panel's black-
   glyph class slipped past the light capture theme, and Cura's dark
   mode was found by live-testing the release — the harness's
