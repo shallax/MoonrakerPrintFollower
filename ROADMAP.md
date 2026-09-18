@@ -1909,6 +1909,13 @@ The 2026-09-18 Phase 0 walk (the author's rulings):
   2026-09-18 ruling): it never ran on any supported Cura — the
   getValue arity trap — so no upgrader is affected; the rest of the
   legacy chain stays until 5.0.0's teardown.
+- On machine removal, the record's URL and API key are wiped and the
+  rest kept (the author's 2026-09-18 ruling): Uranium's
+  ContainerRegistry emits containerRemoved with the removed
+  container, and removeMachine removes the machine stack last, so
+  the hook filters on the machine id. The surviving record lets a
+  same-named re-add re-associate without inheriting the old host's
+  credentials; the driver gains a remove_machine verb to prove it.
 - The build order: the persistence refactor, then the theme step
   (the Position row and the dark-theme capture leg), then the
   snapshot for the live migration test, then the 5.7+ pack.
