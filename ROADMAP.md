@@ -1874,6 +1874,55 @@ the floor then drops from 5.11+ to 5.7+ once these land:
   capture/census runs must cover the dark theme so a wrong-coloured
   glyph fails a gate instead of a live session.
 
+The 2026-09-18 Phase 0 walk (the author's rulings):
+
+- The refactor is storage-only: nothing user-visible changes unless
+  the review rounds find an improvement worth making. The plugin's
+  own files replace the cura.cfg crowding, and the format is the
+  plugin's to pick — pretty-printed, maintainable, pleasant to read
+  in an editor. The proof is anticlimactic by design: the URI, the
+  API key and the collapsed sections all survive the upgrade, and
+  the new pretty files are the only visible evidence.
+- The migration is one-shot: on the first Cura load after installing
+  4.5.0, every machine record migrates at once, whether or not that
+  printer is selected in the session. It reaches back to the 4.3.0
+  format only (the printer_configs_v1 blob plus the state file); the
+  pre-rename chain stays in place until 5.0.0's teardown so an older
+  upgrader still lands. After it runs, no trace of the old config
+  remains in cura.cfg and the new files carry a configVersion: 2
+  marker.
+- The build order: the persistence refactor, then the theme step
+  (the Position row and the dark-theme capture leg), then the
+  snapshot for the live migration test, then the 5.7+ pack.
+
+The 2026-09-18 scope additions:
+
+- The Status pane's Position X Y Z row still renders the combined
+  string in the plain text colour while the Toolhead's row uses the
+  axis colours (X red, Y green, Z blue). JobSection's row joins the
+  ruled pattern — one cell per axis in its colour — and loses its
+  WordWrap in the same change.
+- The status column's per-second polish-loop tick: the 4.4.0 round
+  fixed the next-pause trigger (the permanent-slot ruling), but the
+  author's 5.13 log still warns every poll at MoonrakerMonitor.qml's
+  statusContent stack. The Position value is the stack's only live
+  value that wraps and changes length every poll, beside the
+  no-reflow rule its neighbouring block carries — the prime suspect.
+  The fix rides the Position-row change; the author's live log is
+  the acceptance proof.
+- The debt pack (the author's 2026-09-18 pick — every sweep
+  candidate bar the index rework and the big structural items): the
+  4.3.0 reviewer debt trio (the relay drain, the backpressure
+  wake-up regression test, the diagnostics double-start guard plus
+  trace sub-option clearing), the typed-coercion helper with its
+  all-None publish test, the PrintCoordinator.refresh() extraction
+  (TECH_DEBT's own 4.5.0 nomination), the resume grey-out two-clock
+  unification, and the console's expanded-lifecycle reset on stage
+  exit.
+- The review rounds gain a UX persona (the author's call): the
+  settings pages may be redesigned while the settings machinery is
+  open — the persona's verdict stays advisory, the author rules.
+
 ## 5.0.0 — Physical head in the Preview (moved from 4.3.0 to 4.5.0, then to 5.0.0 by the 2026-09-17 re-sequencing)
 
 What a web dashboard cannot do: show the real machine inside the slice.
