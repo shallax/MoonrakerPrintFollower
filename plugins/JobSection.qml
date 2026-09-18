@@ -12,6 +12,11 @@ ColumnLayout {
     id: root
     spacing: 0
     property var printerModel: null
+    // The tuple rule (the live ruling): if ANY axis value is
+    // unavailable, the Position row's cells empty themselves — a
+    // permanent slot, never a visibility flip (the polish-loop
+    // class).
+    readonly property bool positionRowAvailable: root.printerModel != null && root.printerModel.monitorPositionX !== "—" && root.printerModel.monitorPositionX !== "" && root.printerModel.monitorPositionY !== "—" && root.printerModel.monitorPositionY !== "" && root.printerModel.monitorPositionZ !== "—" && root.printerModel.monitorPositionZ !== ""
 
     CollapsibleSectionHeader {
         Layout.fillWidth: true
@@ -213,7 +218,11 @@ ColumnLayout {
             UM.Label {
                 text: root.printerModel != null && root.printerModel.actionStatus.length > 0 ? root.printerModel.actionStatus : "—"
                 Layout.fillWidth: true
-                wrapMode: Text.WordWrap
+                // A live value in the status stack must never wrap:
+                // a per-poll wrap flip reflows the column (the
+                // polish-loop class — the panel's catch).
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
             }
 
             UM.Label {
@@ -535,10 +544,39 @@ ColumnLayout {
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
-            UM.Label {
-                text: root.printerModel != null ? root.printerModel.monitorPosition : "—"
+            // The axis-coloured cells (the 4.5.0 ruling): the
+            // Toolhead's ruled pattern — three fixed-width cells in
+            // the axis colours, no-wrap and elided, so the row can
+            // never reflow per poll (the status stack's polish-loop
+            // class). The tuple rule empties the whole row when any
+            // axis is unavailable.
+            RowLayout {
                 Layout.fillWidth: true
-                wrapMode: Text.WordWrap
+                spacing: UM.Theme.getSize("thin_margin").width
+                UM.Label {
+                    objectName: "jobPositionCellX"
+                    Layout.preferredWidth: 50 * screenScaleFactor
+                    text: positionRowAvailable ? (root.printerModel != null ? root.printerModel.monitorPositionX : "") : ""
+                    color: MoonrakerTheme.axisX
+                    elide: Text.ElideRight
+                    wrapMode: Text.NoWrap
+                }
+                UM.Label {
+                    objectName: "jobPositionCellY"
+                    Layout.preferredWidth: 50 * screenScaleFactor
+                    text: positionRowAvailable ? (root.printerModel != null ? root.printerModel.monitorPositionY : "") : ""
+                    color: MoonrakerTheme.axisY
+                    elide: Text.ElideRight
+                    wrapMode: Text.NoWrap
+                }
+                UM.Label {
+                    objectName: "jobPositionCellZ"
+                    Layout.preferredWidth: 50 * screenScaleFactor
+                    text: positionRowAvailable ? (root.printerModel != null ? root.printerModel.monitorPositionZ : "") : ""
+                    color: MoonrakerTheme.axisZ
+                    elide: Text.ElideRight
+                    wrapMode: Text.NoWrap
+                }
             }
 
             // The motion block (4.2.0): the two

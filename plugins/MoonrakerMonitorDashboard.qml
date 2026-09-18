@@ -509,7 +509,12 @@ Component {
                             verticalAlignment: Text.AlignVCenter
                             text: (root.printer != null && root.printer.emergencyHoldProgress > 0) ? "EMERGENCY STOP — keep holding" : (emergencyButton.clicks === 0 ? "EMERGENCY STOP — click twice, then hold" : (emergencyButton.clicks === 1 ? "EMERGENCY STOP — one more click, then hold" : "EMERGENCY STOP — press and hold to fire"))
                             font: UM.Theme.getFont("medium_bold")
-                            color: "black"
+                            // The remainder copy follows the theme's
+                            // text colour (the 4.5.0 dark-mode
+                            // ruling): hardcoded black was unreadable
+                            // on dark mode's grey button ground. The
+                            // white-over-red sweep copy stays white.
+                            color: UM.Theme.getColor("text")
                         }
                     }
                     MouseArea {

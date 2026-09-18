@@ -311,6 +311,15 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn('sectionIconUrl: Qt.resolvedUrl("Thermometer.svg")', TEMP_HISTORY_SECTION_QML)
         self.assertIn('Qt.resolvedUrl("Download.svg")', JOB_SECTION_QML)
         self.assertIn('sectionIconUrl: Qt.resolvedUrl("Power.svg")', POWER_SECTION_QML)
+        # The Position row's axis-coloured cells (the 4.5.0 ruling):
+        # three fixed cells in the axis tokens, no-wrap — the row
+        # must never reflow per poll (the status stack's polish-loop
+        # class), and the cells carry objectNames so a future
+        # scenario can assert the colour mapping.
+        for axis in ("X", "Y", "Z"):
+            self.assertIn(f'objectName: "jobPositionCell{axis}"', JOB_SECTION_QML)
+            self.assertIn(f"MoonrakerTheme.axis{axis}", JOB_SECTION_QML)
+        self.assertEqual(JOB_SECTION_QML.count("wrapMode: Text.WordWrap"), 0)
         self.assertIn('text: "Open the Moonraker frontend."', MONITOR_QML)
         self.assertNotIn('text: "Open Moonraker frontend"', MONITOR_QML)
         # The section machinery (4.3.0): per-file counts PLUS the
@@ -872,9 +881,13 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertNotIn("id: emergencyDock", MONITOR_QML)
         self.assertEqual(DASHBOARD_QML.count("id: emergencyButton\n"), 1)
 
-    def test_emergency_stop_text_stays_black_during_click_sequence(self):
-        self.assertIn('color: "black"', DASHBOARD_QML)
-        self.assertNotIn('emergencyButton.clicks >= 2 ? "white"', DASHBOARD_QML)
+    def test_emergency_stop_remainder_copy_follows_the_theme_text_colour(self):
+        # The 4.5.0 dark-mode ruling: the idle copy was hardcoded
+        # black and unreadable on dark mode's grey ground. The
+        # remainder follows the theme's text colour; the white
+        # over-the-red-fill sweep copy stays white.
+        self.assertIn('color: UM.Theme.getColor("text")', DASHBOARD_QML)
+        self.assertIn('color: "white"', DASHBOARD_QML)
 
     def test_dashboard_shows_current_z_offset_beside_nudges(self):
         self.assertIn('text: "Current Z offset"', PRINT_SECTION_QML)

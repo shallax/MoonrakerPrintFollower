@@ -349,6 +349,24 @@ EXCLUSIONS = {
         "date": "2026-09-18",
         "recheck": "the settings-dialog scenario lands",
     },
+    "jobPositionCellX": {
+        "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
+        "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
+        "date": "2026-09-18",
+        "recheck": "a scenario asserts the Status pane's axis colours",
+    },
+    "jobPositionCellY": {
+        "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
+        "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
+        "date": "2026-09-18",
+        "recheck": "a scenario asserts the Status pane's axis colours",
+    },
+    "jobPositionCellZ": {
+        "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
+        "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
+        "date": "2026-09-18",
+        "recheck": "a scenario asserts the Status pane's axis colours",
+    },
     # The pause list's stable ListModel: a probe-only seam (the
     # 2026-09-16 layer-0 diagnosis reads the synced rows back through
     # it); the pause-row scenario that supersedes this lands with the

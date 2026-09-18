@@ -11,6 +11,15 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PLUGINS = ROOT / "plugins"
 HEX = re.compile(r"#[0-9A-Fa-f]{6}\b|#[0-9A-Fa-f]{8}\b")
+NAMED = re.compile(r'color:\s*"(black|white|red|green|blue|grey|gray|darkgrey|darkgray|lightgrey|lightgray)"')
+# The named-literal allowlist (the panel's M2): the two justified
+# whites — the e-stop's white-over-red sweep copy and the visibility
+# selector's white glyph on its coloured fill. Every exemption is
+# documented here rather than accidental.
+NAMED_ALLOWED = {
+    (PLUGINS / "MoonrakerMonitorDashboard.qml", 'color: "white"'),
+    (PLUGINS / "VisibilitySelector.qml", 'color: "white"'),
+}
 
 
 class ThemeColourGateTests(unittest.TestCase):
@@ -27,6 +36,22 @@ class ThemeColourGateTests(unittest.TestCase):
                     offenders.append(f"{path.relative_to(PLUGINS)}:{number}: {line.strip()[:80]}")
         self.assertEqual(offenders, [],
                          "magic colour hexes outside the theme: %s" % offenders)
+
+    def test_no_named_colour_literals_outside_the_allowlist(self):
+        # The panel's M2: the dark-mode e-stop label was hardcoded
+        # black and slipped past the hex-only gate — named colour
+        # literals answer to the same ruling now, with the two
+        # justified whites exempted explicitly.
+        offenders = []
+        for path in sorted(PLUGINS.rglob("*.qml")):
+            if path.parent == PLUGINS / "theme":
+                continue
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                match = NAMED.search(line)
+                if match and (path, match.group(0)) not in NAMED_ALLOWED:
+                    offenders.append(f"{path.relative_to(PLUGINS)}:{number}: {line.strip()[:80]}")
+        self.assertEqual(offenders, [],
+                         "named colour literals outside the allowlist: %s" % offenders)
 
     def test_every_cited_theme_token_is_declared(self):
         # The cross-check (the panel's catch): a hand-pinned list
