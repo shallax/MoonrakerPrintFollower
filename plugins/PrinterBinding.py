@@ -117,6 +117,13 @@ class PrinterBinding(QObject):
         if record is not None:
             status = record.get("status")
             if status == "ok":
+                # The post-conditions are idempotent: an install that
+                # migrated on an earlier snapshot still sheds the old
+                # file and the cura.cfg flags (the legacy chain is
+                # record-guarded, so nothing resurrects the blob).
+                from .PersistenceMigration import _clean_preferences, _remove_old_state_file
+                _remove_old_state_file(self._old_state_path)
+                _clean_preferences(preferences.setValue)
                 return
             if status == "failed" and not (
                 record.get("backupWritten") is False
