@@ -1892,10 +1892,12 @@ if QT_AVAILABLE:
             blob = json.dumps({"A": {"url": "http://a:7125"}})
             self.prefs.setValue(PrinterConfigStore.PREF_KEY, blob)
             self.binding.run_persistence_migration()
-            self.assertFalse(os.path.exists(self.persistence.settings_path))
+            # The v2 activation may land, but the one-shot is deferred:
+            # no migrated machine, no record.
+            self.assertIsNone(self.persistence.get_machine("A"))
+            self.assertIsNone(self.persistence.migration_record())
             self.prefs.setValue(PrinterConfigStore.MIGRATED_KEY, True)
             self.binding.run_persistence_migration()
-            self.assertTrue(os.path.exists(self.persistence.settings_path))
             self.assertEqual(self.persistence.get_machine("A")["url"], "http://a:7125")
             self.assertEqual(self.prefs.getValue(PrinterConfigStore.PREF_KEY), "{}")
             self.assertFalse(self.prefs.getValue(PrinterConfigStore.MIGRATED_KEY))

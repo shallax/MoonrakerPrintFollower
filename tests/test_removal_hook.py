@@ -174,22 +174,30 @@ class RemovalHookTests(unittest.TestCase):
         # chain would resurrect the blob into cura.cfg. The record
         # guards it.
         self.persistence.migration_record = lambda: {"status": "ok"}
+        self.persistence.settings_document = lambda: {
+            "configVersion": 2,
+            "global": {"bedMeshVisible": True, "bedMeshExaggeration": 20.0},
+            "machines": {},
+        }
         with patch.object(type(self.binding._store), "migrate_legacy_to_current_machine",
                           side_effect=AssertionError("the legacy chain must not run post-migration")), \
              patch.object(type(self.binding._store), "migrate_moonraker_connection",
                           side_effect=AssertionError("the legacy chain must not run post-migration")):
             self.binding._migrate()
 
-    def test_apply_mirrors_the_legacy_toggles_for_the_leak_probe(self):
-        # E6: the leak instrument reads the legacy flat keys; the new
-        # settings write preserves the mirror.
+    def test_apply_no_longer_writes_the_legacy_mirror(self):
+        # The legacy preference mirror is retired (the author's
+        # ruling): the leak probe reads the facade, and apply must
+        # not touch the legacy keys.
+        for key in ("memory_diagnostics_log", "memory_diagnostics_trace", "enabled"):
+            self.prefs.setValue(PrinterConfigStore.LEGACY_MAP[key], False)
         self.persistence.records["B"] = {"url": "http://b:7125"}
         config = PrinterConfig(url="http://b:7125", memory_diagnostics_log=True,
                                memory_diagnostics_trace=True)
         self.binding.apply(config)
-        self.assertTrue(self.prefs.getValue(PrinterConfigStore.LEGACY_MAP["memory_diagnostics_log"]))
-        self.assertTrue(self.prefs.getValue(PrinterConfigStore.LEGACY_MAP["memory_diagnostics_trace"]))
-        self.assertTrue(self.prefs.getValue(PrinterConfigStore.LEGACY_MAP["enabled"]))
+        self.assertFalse(self.prefs.getValue(PrinterConfigStore.LEGACY_MAP["memory_diagnostics_log"]))
+        self.assertFalse(self.prefs.getValue(PrinterConfigStore.LEGACY_MAP["memory_diagnostics_trace"]))
+        self.assertFalse(self.prefs.getValue(PrinterConfigStore.LEGACY_MAP["enabled"]))
 
 
 if __name__ == "__main__":

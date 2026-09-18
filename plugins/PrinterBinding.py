@@ -110,14 +110,15 @@ class PrinterBinding(QObject):
 
     def _migrate(self):
         record = self._persistence.migration_record() if self._persistence is not None else None
-        if record is None and not self._persistence.settings_document():
+        if record is None:
             # The pre-migration window only: the legacy chain runs
-            # while the blob is still the source and the v2 document
-            # does not exist yet. Once the document exists the chain
-            # must NOT run — its mirror keys fabricate a migration
-            # record on installs that never had legacy data (the
-            # first-install report), and the one-shot's own checks
-            # cover whatever the chain used to.
+            # while the blob is still the source. Once the one-shot's
+            # record exists the legacy migrations must NOT re-run —
+            # the clean reset their flags, and a re-run would
+            # resurrect the blob into cura.cfg. (The preference mirror
+            # that once let the chain fabricate records on clean
+            # installs is retired, so this window is genuinely legacy
+            # only.)
             for migrate in (self._store.migrate_legacy_to_current_machine, self._store.migrate_moonraker_connection):
                 try:
                     migrate()
@@ -138,12 +139,15 @@ class PrinterBinding(QObject):
         document = self._persistence.settings_document()
         if not document:
             # The clean-install activation: the v2 skeleton, no record.
+            # The check then FALLS THROUGH — a legacy install whose
+            # machine appears after boot still needs its one-shot, and
+            # an empty blob returns below without a record (the
+            # first-install ruling).
             self._persistence.write_settings_document({
                 "configVersion": 2,
                 "global": {},
                 "machines": {},
             })
-            return
         record = self._persistence.migration_record()
         if record is not None:
             status = record.get("status")

@@ -696,10 +696,16 @@ class _ProbeCase(unittest.TestCase):
         self.home.mkdir()
         self.log_path = self.tmp / "moonraker_leak.log"
 
-    def _probe(self, surface=None, *, enabled=False):
-        """A probe built with the toggle off, then driven by the test."""
+    def _probe(self, surface=None, *, enabled=False, trace=False):
+        """A probe built with the toggle off, then driven by the test.
+
+        The probe reads the facade through the runtime's binding, so
+        every runtime — the surface doubles included — carries one;
+        the tests flip the toggles by mutating its config."""
+        runtime = surface if surface is not None else SimpleNamespace()
+        runtime.binding = _Binding(log=enabled, trace=trace)
         with _home(self.home), _host(_Preferences(log=False)):
-            probe = LeakProbe(surface if surface is not None else _runtime(log=enabled))
+            probe = LeakProbe(runtime)
         self.addCleanup(probe._timer.stop)
         probe._log_path = str(self.log_path)
         probe._enabled = enabled
@@ -891,6 +897,7 @@ class TickTests(_ProbeCase):
         tracemalloc.start()
         self.addCleanup(tracemalloc.stop)
         with _host(_Preferences(log=False)):
+            probe.runtime.binding.config.memory_diagnostics_log = False
             probe._tick()
         self.assertEqual(self._lines(), ["stop"])
         self.assertFalse(probe._enabled)
@@ -903,6 +910,7 @@ class TickTests(_ProbeCase):
     def test_turning_the_toggle_off_without_a_trace_window_still_stops(self):
         probe = self._probe(enabled=True)
         with _host(_Preferences(log=False)):
+            probe.runtime.binding.config.memory_diagnostics_log = False
             probe._tick()
         self.assertEqual(self._lines(), ["stop"])
         self.assertFalse(probe._enabled)
@@ -912,6 +920,7 @@ class TickTests(_ProbeCase):
         picker = MagicMock(return_value=str(self.log_path))
         with _home(self.home), _host(_Preferences(log=True)), \
                 patch.object(probe, "_pick_log_path", picker):
+            probe.runtime.binding.config.memory_diagnostics_log = True
             probe._tick()
         self.assertTrue(probe._enabled)
         self.assertEqual(probe._log_path, str(self.log_path))
@@ -1010,9 +1019,9 @@ class TickTests(_ProbeCase):
                          ["  qml <roots>: 0 -> 1"])
 
     def test_the_trace_axis_runs_on_the_slow_tick_only(self):
-        probe = self._probe(enabled=True)
+        probe = self._probe(enabled=True, trace=True)
         with patch.object(LeakProbe, "_top_traces", MagicMock(return_value=["trace-armed"])), \
-                _host(_Preferences(log=True, trace=True)):
+                _host(_Preferences(log=True)):
             probe._ticks = 4
             probe._tick()
             self.assertFalse(any("trace-armed" in line for line in self._lines()))
@@ -1037,6 +1046,7 @@ class TickTests(_ProbeCase):
         probe._trace_snapshot = object()
         with patch.object(leakprobe, "tracemalloc", SimpleNamespace(stop=_boom)), \
                 _host(_Preferences(log=False)):
+            probe.runtime.binding.config.memory_diagnostics_log = False
             probe._tick()
         self.assertEqual(self._lines(), ["stop"])
         self.assertIsNone(probe._trace_snapshot)

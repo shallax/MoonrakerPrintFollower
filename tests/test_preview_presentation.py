@@ -383,13 +383,14 @@ class PreviewPresentationTests(unittest.TestCase):
         self.assertEqual(scene.app.requested, [])
         seen = []
         scene.presentation.controlsChanged.connect(lambda: seen.append(1))
+        # A value published pre-boot must flush onto the created cards.
+        scene.presentation.publish({"configuredForFollowing": True})
         scene.app.initializationFinished.emit()
         self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST])
         self.assertEqual(scene.app.joined, [("saveButton", scene.panel_host)])
         self.assertEqual(scene.presentation.controls, (scene.panel_card, scene.overlay_card))
         self.assertEqual(seen, [1])
-        # The values that accumulated pre-boot flushed onto the cards.
-        self.assertTrue(scene.panel_card.property("previewStageActive"))
+        self.assertTrue(scene.panel_card.property("configuredForFollowing"))
 
     def test_verdicts_published_before_the_boot_replay_onto_the_created_cards(self):
         # The monitor's first action edge can land while the cards are
@@ -411,11 +412,12 @@ class PreviewPresentationTests(unittest.TestCase):
         app.initializationFinished.emit()
         self.assertEqual(app.requested, [])
         self.assertEqual(presentation.controls, ())
-
+        # Even a manual refresh must not resurrect a closed adapter.
         self.host(app, PANEL_HOST)
         self.host(app, OVERLAY_HOST)
         presentation.refresh()
-        self.assertEqual(len(presentation.controls), 2)
+        self.assertEqual(app.requested, [])
+        self.assertEqual(presentation.controls, ())
 
     def test_the_corner_overlay_opens_only_while_cura_hides_its_panel(self):
         scene = self.build()

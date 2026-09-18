@@ -305,8 +305,12 @@ class StoreWiringTests(MonitorModelCase):
 
     def test_a_failed_save_reaches_the_console_note_line(self):
         self.model = self.build()
-        self.model._store._path = os.path.join(tempfile.mkdtemp(prefix="mpf-gone-"),
-                                               "missing", "state.json")
+        # A parent path that is a FILE can never hold the document:
+        # the save fails and the note reaches the console.
+        blocker = os.path.join(tempfile.mkdtemp(prefix="mpf-blocker-"), "blocker")
+        with open(blocker, "w", encoding="utf-8") as handle:
+            handle.write("not a directory")
+        self.model._store._path = os.path.join(blocker, "state.json")
         self.model.setControlsCollapsed(True)
         notes = [entry["text"] for entry in self.value("consoleLines") if entry["kind"] == "note"]
         self.assertTrue(any("could not be saved" in text for text in notes), notes)
