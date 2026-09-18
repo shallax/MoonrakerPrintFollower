@@ -99,6 +99,30 @@ class SettingsManager(QObject):
     def settingsApiKey(self):
         return "a1b2c3d4e5f60718293a4b5c6d7e8f90"
 
+    # --- Migration notice surface (see MoonrakerFollowerMachineAction) ---
+    # The production manager exposes the banner/diagnostics record
+    # properties; the canonical capture must load without the
+    # undefined-assignment warnings a lagging fixture produced.
+    @pyqtProperty(bool, notify=settingsChanged)
+    def migrationBannerVisible(self):
+        return False
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def migrationBannerText(self):
+        return ""
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def migrationBackupAvailable(self):
+        return False
+
+    @pyqtProperty(bool, notify=settingsChanged)
+    def migrationDiagnosticsVisible(self):
+        return False
+
+    @pyqtProperty(str, notify=settingsChanged)
+    def migrationDiagnosticsText(self):
+        return ""
+
     @pyqtProperty(str, notify=settingsChanged)
     def settingsPollInterval(self):
         return "750"

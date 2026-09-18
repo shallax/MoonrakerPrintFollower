@@ -397,7 +397,9 @@ The generic Cura output controller remains conservative and does not advertise u
 
 On startup, Moonraker Print Follower looks for the standalone plugin's existing per-printer preference data under `moonraker/instances` and imports compatible settings once.
 
-Existing Moonraker Print Follower URL/API-key values take precedence when already configured. Upload-specific settings such as format/path, start-print behaviour, power devices, retry interval, frontend URL and filename translation are imported from Moonraker Connection. Its legacy camera URL, rotation and mirror settings are also imported as a fallback for Moonraker installations that do not expose webcam configuration through the webcam API. The old preference data is left untouched so rollback remains possible.
+Existing Moonraker Print Follower URL/API-key values take precedence when already configured. Upload-specific settings such as format/path, start-print behaviour, power devices, retry interval, frontend URL and filename translation are imported from Moonraker Connection. Its legacy camera URL, rotation and mirror settings are also imported as a fallback for Moonraker installations that do not expose webcam configuration through the webcam API.
+
+The 4.5 settings migration moves the old preference data into the plugin's new per-machine settings files and, after verifying the move, removes the old preferences. Rollback and recovery are provided by a timestamped copy of Cura's configuration file (`cura.cfg.<timestamp>`) taken before anything is removed; a migration that cannot complete leaves the old preferences in place and retries on the next start.
 
 After verifying the integrated plugin with your printers, the separate Moonraker Connection plugin can be removed.
 

@@ -101,15 +101,20 @@ def _raw_source_evidence(raw: bytes) -> bool:
     the transformed v1 blob need not be on disk yet — the backup is a
     copy of the ACTUAL pre-migration source, so the genuine flat
     legacy settings or a genuine Moonraker Connection instances blob
-    count too. Structured, never a broad substring: the flat check
-    runs the SAME normalised comparison the legacy chain uses
-    (registered defaults are never evidence), and the Connection
-    check requires a real non-empty instances mapping — an arbitrary
-    unrelated cura.cfg still fails closed. A TOTAL predicate:
-    arbitrary cura.cfg bytes yield True or False, never a raise —
-    interpolation is disabled (a legacy `%20` value is data, not a
-    format string) and every structured read sits inside the same
-    defensive boundary."""
+    count too. The v1 blob key is matched by presence, DELIBERATELY:
+    a corrupt blob's value can break INI structure, and the corrupt
+    recovery's backup must still land. The other two sources parse
+    structured — the flat check runs the SAME normalised comparison
+    the legacy chain uses (registered defaults are never evidence),
+    and the Connection check requires a real non-empty instances
+    mapping — so an arbitrary unrelated cura.cfg still fails closed.
+    A TOTAL predicate: arbitrary cura.cfg bytes yield True or False,
+    never a raise — interpolation is disabled (a legacy `%20` value
+    is data, not a format string) and every structured read sits
+    inside the same defensive boundary."""
+    # The corrupt-tolerant key check: the migration only reaches this
+    # gate with an in-memory v1 source, and the corrupt recovery's
+    # backup must not fail on an unparseable value.
     if b"printer_configs_v1" in raw:
         return True
     try:
