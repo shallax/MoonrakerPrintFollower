@@ -96,8 +96,7 @@ format:
 	./tools/docker_dev.sh /usr/lib/qt6/bin/qmlformat -i plugins/*.qml plugins/theme/*.qml
 
 coverage:
-	./tools/docker_dev.sh sh -c "coverage run -m unittest discover -s tests -p 'test_*.py' \
-	    && coverage report --include='plugins/*' --fail-under=80"
+	COVERAGE=1 JOBS=$(JOBS) ./tools/run_tests.sh
 
 install_hooks:
 	./tools/install_hooks.sh
