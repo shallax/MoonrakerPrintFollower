@@ -372,3 +372,67 @@ class SectionOrderArrivalTests(RealEngineTestCase):
                                  Q_ARG(QVariant, container), Q_ARG(QVariant, "information"))
         self.pump()
         self.assertEqual(self._header_order(container), reversed_order)
+
+
+class TuningResetTests(RealEngineTestCase):
+    """The factor sliders' reset buttons command the printer to 100%
+    through the same setSpeedFactor/setFlowFactor path the slider
+    release uses (the camera refresh button's glyph and styling)."""
+
+    def test_each_reset_button_commands_its_factor_to_100(self):
+        from PyQt6.QtTest import QTest
+        from PyQt6.QtCore import Qt
+
+        class ModelDouble(QObject):
+            def __init__(self):
+                super().__init__()
+                self.calls = []
+
+            @pyqtSlot(int)
+            def setSpeedFactor(self, percent):
+                self.calls.append(("speed", percent))
+
+            @pyqtSlot(int)
+            def setFlowFactor(self, percent):
+                self.calls.append(("flow", percent))
+
+            @pyqtSlot(int)
+            def previewSpeedFactor(self, percent):
+                pass
+
+            @pyqtSlot(int)
+            def previewFlowFactor(self, percent):
+                pass
+
+            @pyqtProperty("QVariant")
+            def sectionExpandedMap(self):
+                return {}
+
+            @pyqtProperty(bool)
+            def controlsLocked(self):
+                return False
+
+            @pyqtProperty(bool)
+            def monitorConnected(self):
+                return True
+
+        section = self.mount("TuningSection.qml")
+        window = QQuickWindow()
+        window.resize(520, 400)
+        section.setParentItem(window.contentItem())
+        window.show()
+        self.addCleanup(window.deleteLater)
+        model = ModelDouble()
+        section.setProperty("printerModel", model)
+        self.pump(30)
+        # A real click at each button's centre (the newer Qt's clicked
+        # signal carries a QQuickMouseEvent PyQt cannot introspect, so
+        # the signal is not accessible from Python — the event path is
+        # the honest one anyway).
+        for name in ("moonrakerTuningSpeedReset", "moonrakerTuningFlowReset"):
+            button = self.find(section, name)
+            center = button.mapToScene(QPointF(button.width() / 2, button.height() / 2)).toPoint()
+            QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
+        self.pump(30)
+        self.assertIn(("speed", 100), model.calls)
+        self.assertIn(("flow", 100), model.calls)

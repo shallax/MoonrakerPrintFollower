@@ -54,26 +54,52 @@ ColumnLayout {
                     text: speedSlider.selectedValue() + "%"
                 }
             }
-            OutlineSlider {
-                id: speedSlider
+            RowLayout {
                 Layout.fillWidth: true
-                from: 10
-                to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.speedFactorPercent * 2) : 200)
-                stepSize: 1
-                live: false
-                value: root.printerModel != null ? root.printerModel.speedFactorPercent : 100
-                enabled: root.printerModel != null
-                onValueTuning: {
-                    if (root.printerModel != null)
-                        root.printerModel.previewSpeedFactor(value);
+                spacing: UM.Theme.getSize("thin_margin").width
+                OutlineSlider {
+                    id: speedSlider
+                    Layout.fillWidth: true
+                    from: 10
+                    to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.speedFactorPercent * 2) : 200)
+                    stepSize: 1
+                    live: false
+                    value: root.printerModel != null ? root.printerModel.speedFactorPercent : 100
+                    enabled: root.printerModel != null
+                    onValueTuning: {
+                        if (root.printerModel != null)
+                            root.printerModel.previewSpeedFactor(value);
+                    }
+                    onValueCommitted: {
+                        if (root.printerModel != null)
+                            root.printerModel.setSpeedFactor(value);
+                    }
+                    onInteractingChanged: {
+                        if (root.interactionSink != null)
+                            root.interactionSink(interacting, "", "");
+                    }
                 }
-                onValueCommitted: {
-                    if (root.printerModel != null)
-                        root.printerModel.setSpeedFactor(value);
-                }
-                onInteractingChanged: {
-                    if (root.interactionSink != null)
-                        root.interactionSink(interacting, "", "");
+                // The reset rides the same command path as the slider's
+                // release: M220 S100, the value converging on the next
+                // poll (the camera refresh button's glyph and styling).
+                UM.SimpleButton {
+                    objectName: "moonrakerTuningSpeedReset"
+                    width: UM.Theme.getSize("small_button_icon").width
+                    height: UM.Theme.getSize("small_button_icon").height
+                    Layout.alignment: Qt.AlignVCenter
+                    enabled: root.printerModel != null
+                    color: UM.Theme.getColor("text_inactive")
+                    hoverColor: UM.Theme.getColor("text")
+                    iconSource: UM.Theme.getIcon("ArrowDoubleCircleRight")
+                    onClicked: {
+                        if (root.printerModel != null)
+                            root.printerModel.setSpeedFactor(100);
+                    }
+                    UM.TooltipArea {
+                        anchors.fill: parent
+                        text: "Reset the speed factor to 100%."
+                        acceptedButtons: Qt.NoButton
+                    }
                 }
             }
         }
@@ -93,26 +119,49 @@ ColumnLayout {
                     text: flowSlider.selectedValue() + "%"
                 }
             }
-            OutlineSlider {
-                id: flowSlider
+            RowLayout {
                 Layout.fillWidth: true
-                from: 50
-                to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.flowFactorPercent * 2) : 200)
-                stepSize: 1
-                live: false
-                value: root.printerModel != null ? root.printerModel.flowFactorPercent : 100
-                enabled: root.printerModel != null
-                onValueTuning: {
-                    if (root.printerModel != null)
-                        root.printerModel.previewFlowFactor(value);
+                spacing: UM.Theme.getSize("thin_margin").width
+                OutlineSlider {
+                    id: flowSlider
+                    Layout.fillWidth: true
+                    from: 50
+                    to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.flowFactorPercent * 2) : 200)
+                    stepSize: 1
+                    live: false
+                    value: root.printerModel != null ? root.printerModel.flowFactorPercent : 100
+                    enabled: root.printerModel != null
+                    onValueTuning: {
+                        if (root.printerModel != null)
+                            root.printerModel.previewFlowFactor(value);
+                    }
+                    onValueCommitted: {
+                        if (root.printerModel != null)
+                            root.printerModel.setFlowFactor(value);
+                    }
+                    onInteractingChanged: {
+                        if (root.interactionSink != null)
+                            root.interactionSink(interacting, "", "");
+                    }
                 }
-                onValueCommitted: {
-                    if (root.printerModel != null)
-                        root.printerModel.setFlowFactor(value);
-                }
-                onInteractingChanged: {
-                    if (root.interactionSink != null)
-                        root.interactionSink(interacting, "", "");
+                UM.SimpleButton {
+                    objectName: "moonrakerTuningFlowReset"
+                    width: UM.Theme.getSize("small_button_icon").width
+                    height: UM.Theme.getSize("small_button_icon").height
+                    Layout.alignment: Qt.AlignVCenter
+                    enabled: root.printerModel != null
+                    color: UM.Theme.getColor("text_inactive")
+                    hoverColor: UM.Theme.getColor("text")
+                    iconSource: UM.Theme.getIcon("ArrowDoubleCircleRight")
+                    onClicked: {
+                        if (root.printerModel != null)
+                            root.printerModel.setFlowFactor(100);
+                    }
+                    UM.TooltipArea {
+                        anchors.fill: parent
+                        text: "Reset the extrusion multiplier to 100%."
+                        acceptedButtons: Qt.NoButton
+                    }
                 }
             }
         }
