@@ -888,6 +888,7 @@ CONFIGURE_DRAG_PROBE = (
     "result[\"pressed\"] = [int(x), int(y)]\n"
     "result[\"released\"] = [int(x), int(y + 96)]\n"
     "result")
+
 CONFIGURE_GEOM_PROBE = (
     "window = _main_window()\n"
     "result = {}\n"
@@ -920,6 +921,51 @@ CONFIGURE_GEOM_PROBE = (
     "    if abs(strip_center - box_center) > 2:\n"
     "        raise RuntimeError(\"the info readout's centre is %.1fpx off the title's\"\n"
     "                           % (strip_center - box_center))\n"
+    "result")
+
+CONFIGURE_CONTROLS_FIELD_PROBE = (
+    "window = _main_window()\n"
+    "result = {}\n"
+    "fields = []\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        name = str(item.property(\"objectName\") or \"\")\n"
+    "    except Exception:\n"
+    "        name = \"\"\n"
+    "    if name in (\"controlsCollapsedReadoutText\", \"controlsCollapsedZOffsetLabel\") and _effectively_visible(item):\n"
+    "        fields.append(self._rect(item))\n"
+    "fields.sort(key=lambda r: (r[\"y\"], r[\"x\"]))\n"
+    "result[\"fields\"] = [[r[\"x\"], r[\"y\"]] for r in fields]\n"
+    "if len(fields) != 4:\n"
+    "    raise RuntimeError(\"expected 4 controls readout fields, found %d\" % len(fields))\n"
+    "xs = [r[\"x\"] for r in fields]\n"
+    "if max(xs) - min(xs) > 3:\n"
+    "    raise RuntimeError(\"the readout fields drift off the strip's line: %r\" % xs)\n"
+    "for i in range(1, len(fields)):\n"
+    "    if fields[i][\"y\"] - fields[i - 1][\"y\"] < 30:\n"
+    "        raise RuntimeError(\"the readout fields overlap at y=%d\" % fields[i][\"y\"])\n"
+    "result")
+
+CONFIGURE_CROSSTALK_PROBE = (
+    "from UM.Application import Application\n"
+    "result = {}\n"
+    "app = Application.getInstance()\n"
+    "printer = None\n"
+    "for device in app.getOutputDeviceManager().getOutputDevices():\n"
+    "    if \"Moonraker\" in type(device).__name__:\n"
+    "        printer = getattr(device, \"activePrinter\", None)\n"
+    "        break\n"
+    "if printer is not None:\n"
+    "    effective = printer.sectionLayoutFor(\"information\")\n"
+    "    order = list(effective.get(\"order\", []) or [])\n"
+    "    result[\"order\"] = order\n"
+    "    result[\"hidden\"] = list(effective.get(\"hidden\", []) or [])\n"
+    "    # The info pane's only two sections: the drag below moves\n"
+    "    # meshmap behind temphistory — and the controls popup's\n"
+    "    # reset must leave that order alone (the live report's\n"
+    "    # cross-talk).\n"
+    "    if order[:2] != [\"temphistory\", \"meshmap\"]:\n"
+    "        raise RuntimeError(\"the information layout did not survive the controls reset: %r\" % order)\n"
     "result")
 
 CONFIGURE_FM_CLICK = (
@@ -1727,6 +1773,10 @@ SCENARIOS = [
          # the root — the sliced v1 state resolves it.
          {"op": "wait_rect", "objectName": "moonrakerStripPauseButton", "budget": 150},
          {"op": "wait_rect", "objectName": "moonrakerStripTemps", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerStripBed", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerStripFinish", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerLayerReadout", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerHeightReadout", "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerStripSlot", "budget": 30},
          {"op": "wait_rendered", "objectName": "moonrakerStripTemps", "contains": "205.2 → 210.0 °C", "budget": 30},
          # The strip's own verdict lane settles BEFORE the click: the
@@ -1994,9 +2044,20 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_set_current_print"},
          {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 30},
+         # Pin the layer source: the click targets Cura's SELECTED
+         # layer (the follow re-drives it), and before the sim's
+         # first 6s layer-clock tick the resolver falls back to the
+         # file position — progress 0.5 lands INSIDE the baked
+         # pause's layer, the gate refuses, and the whole scenario
+         # cascades (the 2026-09-18 flake). The first tick makes the
+         # resolution deterministic: layer 1, the candidate 2.
+         {"op": "wait_sim", "path": "print_stats.info.current_layer", "value": 1, "budget": 20},
          {"op": "wait_seconds", "seconds": 3},
          {"op": "exec_code", "verbs": ['clicked.emit'], "code": P_PAUSE_CLICK},
-         {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true', "budget": 20},
+         # The row the click made, not any row: the baked row also
+         # reads "End of layer", and matching it hid a refused click
+         # (the 2026-09-18 flake's false positive).
+         {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true, "label": "End of layer 2', "budget": 20},
          {"op": "wait_model", "prop": "monitorState", "contains": "paused", "budget": 60},
          {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
          # The 4.3.0 ruling: a fired pause STAYS listed, restyled as
@@ -2009,9 +2070,13 @@ SCENARIOS = [
          {"op": "sim_arm", "arms": {"fail_pause_script": True}},
          {"op": "sim_set_current_print"},
          {"op": "wait_model", "prop": "monitorState", "contains": "print", "budget": 30},
+         # The same determinism pin as p6: before the sim's first
+         # layer-clock tick the resolver's file-position fallback
+         # lands inside the baked pause's layer and the click refuses.
+         {"op": "wait_sim", "path": "print_stats.info.current_layer", "value": 1, "budget": 20},
          {"op": "wait_seconds", "seconds": 3},
          {"op": "exec_code", "verbs": ['clicked.emit'], "code": P_PAUSE_CLICK},
-         {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true', "budget": 20},
+         {"op": "wait_exec", "code": P_PAUSE_SCHEDULED, "contains": '"scheduled": true, "label": "End of layer 2', "budget": 20},
          {"op": "wait_exec", "code": P_MISSED, "contains": '"missed": true', "budget": 60},
          {"op": "sim_ledger", "needle": "gcode/script", "method": "POST", "min": 1, "budget": 20},
      ]},
@@ -2490,9 +2555,13 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [True]},
          {"op": "wait_rendered", "objectName": "infoCollapsedReadoutText", "any": True, "contains": "°C", "budget": 15},
          {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [True]},
-         {"op": "wait_rendered", "objectName": "statusCollapsedReadoutLabel", "any": True, "contains": "Print", "budget": 15},
+         {"op": "wait_rendered", "objectName": "statusCollapsedReadoutLabel", "any": True, "contains": "Progress", "budget": 15},
          {"op": "exec_slot", "slot": "setControlsCollapsed", "args": [True]},
          {"op": "wait_rendered", "objectName": "controlsCollapsedReadoutText", "any": True, "contains": "X", "budget": 15},
+         # The three fixed-width fields stay separate and stacked on
+         # the strip's line (the live report: the fields must never
+         # overlap as the values change).
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_CONTROLS_FIELD_PROBE},
          {"op": "exec_code", "verbs": [], "code": CONFIGURE_GEOM_PROBE},
          {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [False]},
          {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [False]},
@@ -2569,5 +2638,118 @@ SCENARIOS = [
          {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [False]},
          {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [False]},
          {"op": "exec_slot", "slot": "setControlsCollapsed", "args": [False]},
+     ]},
+    {"id": "x8", "group": "configure",
+     "name": "unavailable values hide their readouts whole",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "resize_window", "w": 1600, "h": 1000},
+         # A STANDBY session whose values are UNAVAILABLE (the
+         # author's ruling: neither the value nor its glyph may
+         # render; the X/Y/Z tuple hides whole when any one axis is
+         # missing). The sim's kickoff state always carries heaters
+         # and positions, so the scenario overwrites those values
+         # with None — the plugin's aux merge is a DEEP merge (a
+         # blank object would keep the old values alive), and a None
+         # value is what the model reads as unavailable. The sim's
+         # printing lifecycle would supply ETA/layer values of its
+         # own — standby keeps those absent too.
+         {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [True]},
+         # The positive control (the panel's catch): the kickoff's
+         # heaters are real values — the readout renders BEFORE the
+         # unavailability lands, or the absence check below proves
+         # nothing.
+         {"op": "wait_rect", "objectName": "infoCollapsedReadoutText", "budget": 15},
+         {"op": "sim_set", "state": {
+             "print_stats": {"state": "standby", "filename": "", "total_duration": 0.0,
+                             "print_duration": 0.0, "filament_used": 0.0,
+                             "info": {"total_layer": None, "current_layer": None}},
+             "extruder": {"temperature": None, "target": None},
+             "heater_bed": {"temperature": None, "target": None},
+             "motion_report": {"live_position": [], "live_velocity": 0.0,
+                               "live_extruder_velocity": 0.0, "steppers": []},
+             "gcode_move": {"speed_factor": 1.0, "absolute_coordinates": True, "position": []}}},
+         {"op": "wait_rect", "objectName": "infoCollapsedReadoutText", "absent": True, "budget": 15},
+         {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [True]},
+         # The status strip shows ONLY the flow pair: the ETA, the
+         # finish, the layer count and the progress group all hide
+         # with their values (and the idle print gate), while the
+         # flow's 0 rate is a real standby value and must render.
+         {"op": "wait_rect", "objectName": "statusCollapsedReadoutLabel", "absent": True, "budget": 15},
+         {"op": "wait_rect", "objectName": "statusCollapsedFlowLabel", "budget": 15},
+         {"op": "exec_slot", "slot": "setControlsCollapsed", "args": [True]},
+         # The controls strip shows ONLY the z pair: the position
+         # cells hide with their unavailable axes, while the z
+         # offset's honest zero (no homing origin set) is a real
+         # value and must render.
+         {"op": "wait_rect", "objectName": "controlsCollapsedReadoutText", "absent": True, "budget": 15},
+         {"op": "wait_rect", "objectName": "controlsCollapsedZOffsetLabel", "budget": 15},
+         {"op": "exec_slot", "slot": "setInfoCollapsed", "args": [False]},
+         {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [False]},
+         {"op": "exec_slot", "slot": "setControlsCollapsed", "args": [False]},
+     ]},
+    {"id": "x10", "group": "configure",
+     "name": "the improve flow reveals the next-pause fill",
+     "steps": [
+         # The fill's fraction needs the ETA, and the ETA needs the
+         # follower's observed layer — the PREVIEW must be running
+         # (the h2 load flow). scenario1.gcode's baked PAUSE at
+         # layer 20 (the generator bakes it) is the pause ahead.
+         {"op": "click_stage", "stage": "PreviewStage"},
+         {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode",
+                                                     "info": {"current_layer": 5, "total_layer": 40}},
+                                     "virtual_sdcard": {"is_active": True, "progress": 0.5, "file_size": 1048576}}},
+         {"op": "sim_arm", "arms": {"gcode_stream_ms": 120, "layer_clock_interval_s": 0}},
+         {"op": "wait_model", "prop": "monitorFilename", "contains": "scenario1", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCardOverlay", "budget": 30},
+         {"op": "emit_click", "text": "Load current print"},
+         {"op": "confirm_box", "button": "Yes"},
+         {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
+         {"op": "wait_rect", "objectName": "loadIndicatorContent", "absent": True, "budget": 60},
+         {"op": "click_stage", "stage": "MonitorStage"},
+         # The improve-Eta flow builds the index and the snapshot's
+         # next-pause fraction publishes — the fill renders only
+         # then (the live ruling: absent without a pause).
+         {"op": "exec_slot", "slot": "improveEta", "args": []},
+         {"op": "wait_model", "prop": "improvingEta", "value": False, "budget": 60},
+         # The baked pause at zero-based 20 reads human layer 21 —
+         # this leg proves the TARGET resolved from the index.
+         {"op": "wait_model", "prop": "nextPauseLayer", "value": 21, "budget": 30},
+         # The physical layer's resolution feeds the follower's
+         # observed layer, which the remaining needs — "1 / 40"
+         # carries the / only when the current layer resolved.
+         {"op": "wait_model", "prop": "monitorLayer", "contains": "/", "budget": 15},
+         # The ETA's composed clock carries the ≈ marker only when
+         # the remaining seconds exist — the same condition the
+         # fill's fraction needs.
+         {"op": "wait_model", "prop": "nextPauseEta", "contains": "≈", "budget": 30},
+         # The strip renders only while the status pane is collapsed.
+         # The rename made this honest: the old shared objectName
+         # matched the job section's always-rendered twin instead.
+         {"op": "exec_slot", "slot": "setStatusCollapsed", "args": [True]},
+         {"op": "wait_rect", "objectName": "statusNextPauseFill", "budget": 15},
+     ]},
+    {"id": "x9", "group": "configure",
+     "name": "the controls reset never touches the other panes' layouts",
+     "steps": [
+         {"op": "click_stage", "stage": "MonitorStage"},
+         {"op": "resize_window", "w": 1600, "h": 1000},
+         {"op": "sim_set", "state": {"extruder": {"temperature": 195.0, "target": 210.0}}},
+         {"op": "wait_model", "prop": "temperatureItems", "contains": "210", "budget": 30},
+         # Customise the INFORMATION pane: drag its first row down.
+         {"op": "deliver_click", "objectName": "configureInfoSectionsButton"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
+         {"op": "exec_code", "verbs": ['mousePress', 'mouseMove', 'mouseRelease'], "code": CONFIGURE_DRAG_PROBE},
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_CROSSTALK_PROBE},
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
+         # The CONTROLS popup's reset-to-defaults — the information
+         # layout must survive it untouched (the live report).
+         {"op": "deliver_click", "objectName": "configureControlsSectionsButton"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
+         {"op": "deliver_click", "objectName": "resetToDefaultsLabel"},
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_CROSSTALK_PROBE},
+         {"op": "key_press", "key": "Escape"},
+         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
      ]},
 ]

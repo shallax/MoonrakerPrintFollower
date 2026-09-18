@@ -118,12 +118,12 @@ MonitorPopOver {
         if (dragIndex === -1) {
             return;
         }
-        // The mouse y is CARD-relative (the overlay covers the whole
-        // card); the rows start at rowsHost.y + one rowHeight (the
-        // selector), so the target index drops both bands (the live
-        // report: drops landed one row low).
-        dragTarget = Math.max(0, Math.min(rows.length - 1, Math.round((mouseY - rowsHost.y - rowHeight - rowHeight / 2) / rowHeight)));
-        proxy.y = mouseY - rowsHost.y - rowHeight / 2;
+        // The overlay lives INSIDE rowsHost (the layout-warning fix):
+        // the mouse y is rowsHost-relative now, so the target index
+        // drops only the selector band (the live report: drops landed
+        // one row low).
+        dragTarget = Math.max(0, Math.min(rows.length - 1, Math.round((mouseY - rowHeight - rowHeight / 2) / rowHeight)));
+        proxy.y = mouseY - rowHeight / 2;
     }
     function commitDrag() {
         if (dragIndex === -1) {
@@ -218,6 +218,48 @@ MonitorPopOver {
                 font: UM.Theme.getFont("default")
             }
         }
+
+        // The gesture overlay: ALWAYS enabled, the topmost surface in
+        // the rows host. A press on a row's handle band starts the
+        // drag and grabs the whole gesture — press, moves and
+        // release all land here, so the commit never depends on the
+        // dragged delegate surviving its own removal from the list
+        // (the live report: the release alone never committed, and a
+        // follow-up click did). Anywhere else the press is refused
+        // and falls through to the row's own controls. The plain host
+        // keeps the anchors legal — an anchored child of the card's
+        // layout is undefined behaviour and the engine warns.
+        MouseArea {
+            id: dragOverlay
+            anchors.fill: parent
+            z: 30
+            onPressed: function (mouse) {
+                if (mouse.x > 10 * screenScaleFactor) {
+                    mouse.accepted = false;
+                    return;
+                }
+                var band = Math.floor((mouse.y - rowHeight) / rowHeight);
+                if (band < 0 || band >= root.rows.length) {
+                    mouse.accepted = false;
+                    return;
+                }
+                // Hidden sections drag too — the tick state never
+                // gates the handle (the live report: the drag broke
+                // on an unticked row).
+                root.startDrag(root.rows[band].id, root.rows[band].title);
+            }
+            onPositionChanged: {
+                if (root.dragIndex !== -1) {
+                    root.dragDelta(mouseY);
+                }
+            }
+            onReleased: {
+                root.commitDrag();
+            }
+            onCanceled: {
+                root.commitDrag();
+            }
+        }
     }
 
     // Reset to defaults (the live request): the blue text label at
@@ -237,46 +279,6 @@ MonitorPopOver {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
             onClicked: root.layoutCommitted([], [])
-        }
-    }
-
-    // The gesture overlay: ALWAYS enabled, the topmost surface, the
-    // owner of every press. A press on a row's handle band starts
-    // the drag and grabs the whole gesture — press, moves and
-    // release all land here, so the commit never depends on the
-    // dragged delegate surviving its own removal from the list (the
-    // live report: the release alone never committed, and a
-    // follow-up click did). Anywhere else the press is refused and
-    // falls through to the row's own controls.
-    MouseArea {
-        id: dragOverlay
-        anchors.fill: parent
-        z: 30
-        onPressed: function (mouse) {
-            if (mouse.x < rowsHost.x || mouse.x > rowsHost.x + 10 * screenScaleFactor) {
-                mouse.accepted = false;
-                return;
-            }
-            var band = Math.floor((mouse.y - rowsHost.y - rowHeight) / rowHeight);
-            if (band < 0 || band >= root.rows.length) {
-                mouse.accepted = false;
-                return;
-            }
-            // Hidden sections drag too — the tick state never gates
-            // the handle (the live report: the drag broke on an
-            // unticked row).
-            root.startDrag(root.rows[band].id, root.rows[band].title);
-        }
-        onPositionChanged: {
-            if (root.dragIndex !== -1) {
-                root.dragDelta(mouseY);
-            }
-        }
-        onReleased: {
-            root.commitDrag();
-        }
-        onCanceled: {
-            root.commitDrag();
         }
     }
 }

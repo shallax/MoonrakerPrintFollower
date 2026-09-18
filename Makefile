@@ -50,7 +50,7 @@ lint:
 	./tools/docker_dev.sh sh -c "python3 -m compileall -q plugins tools tests \
 	    && python3 tools/check_qml.py plugins \
 	    && python3 tools/check_qml_engine.py \
-	    && check_qml_format plugins/*.qml \
+	    && check_qml_format plugins/*.qml plugins/theme/*.qml \
 	    && ruff check plugins tools tests \
 	    && shellcheck tools/*.sh \
 	    && hadolint Dockerfile \
@@ -93,7 +93,7 @@ snapshot_quick: lint run_tests
 	@echo "wrote /tmp/mpf.curapackage"
 
 format:
-	./tools/docker_dev.sh /usr/lib/qt6/bin/qmlformat -i plugins/*.qml
+	./tools/docker_dev.sh /usr/lib/qt6/bin/qmlformat -i plugins/*.qml plugins/theme/*.qml
 
 coverage:
 	./tools/docker_dev.sh sh -c "coverage run -m unittest discover -s tests -p 'test_*.py' \

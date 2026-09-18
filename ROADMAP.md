@@ -1718,7 +1718,7 @@ the decisions ledger.
   target is not an acceptance criterion; the test is that a feature
   change stays within its component.
 
-## 4.4.0 — Configurable sections
+## 4.4.0 — Configurable sections (settled 2026-09-18)
 
 A candidate from the author (2026-09-15): show/hide and re-order the
 Monitor's sections the way the file manager's columns work. The

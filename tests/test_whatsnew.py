@@ -38,7 +38,7 @@ class WhatsNewContentTests(unittest.TestCase):
         digest = hashlib.sha256(payload).hexdigest()
         self.assertEqual(
             digest,
-            "f8350cb64141432fc740cc83b2aff3c459197b0f38939c0cf47bfc8d0d488dab",
+            "99121f865ce71117c4bca76baae2721f593ce44571b45da6779a924b98fa5cda",
             "the historical what's-new content changed — shipped release "
             "notes are frozen; only a new head entry may be added, and "
             "this pin recomputed for the release")

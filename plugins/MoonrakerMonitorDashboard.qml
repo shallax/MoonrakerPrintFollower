@@ -1,8 +1,10 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3
+import QtQuick.Window 2.15
 import UM 1.5 as UM
 import Cura 1.1 as Cura
+import "theme"
 
 // Component-rooted DELIBERATELY: Cura's monitor-view loader
 // (setMonitorViewQmlPath) creates this document and expects a
@@ -19,6 +21,37 @@ Component {
         }
         property var printer: OutputDevice != null ? OutputDevice.activePrinter : null
         property bool controlsCollapsed: root.printer != null ? root.printer.controlsCollapsed : false
+        // The availability gates (the live ruling): a value that is
+        // unavailable must not render — neither the value nor its
+        // glyph. The X/Y/Z tuple hides WHOLE when any one axis is
+        // absent. Maintained IMPERATIVELY from the model's change
+        // signals: bindings on the setProperty-fed values go stale
+        // on both engines (the camera lesson), and a stale gate
+        // keeps rendering "—" cells forever.
+        property bool positionAvailable: false
+        property bool zOffsetAvailable: false
+        function refreshAvailabilityGates() {
+            positionAvailable = root.printer != null && root.printer.monitorPositionX !== "—" && root.printer.monitorPositionX !== "" && root.printer.monitorPositionY !== "—" && root.printer.monitorPositionY !== "" && root.printer.monitorPositionZ !== "—" && root.printer.monitorPositionZ !== "";
+            zOffsetAvailable = root.printer != null && root.printer.zOffsetText !== "—" && root.printer.zOffsetText !== "";
+            // The strip's length changes with the availability — the
+            // fit re-measures (the panel's catch).
+            Qt.callLater(root.updateControlsReadoutFits);
+        }
+        Connections {
+            target: root.printer
+            function onMonitorPositionXChanged() {
+                root.refreshAvailabilityGates();
+            }
+            function onMonitorPositionYChanged() {
+                root.refreshAvailabilityGates();
+            }
+            function onMonitorPositionZChanged() {
+                root.refreshAvailabilityGates();
+            }
+            function onZOffsetTextChanged() {
+                root.refreshAvailabilityGates();
+            }
+        }
         // The file-manager popup's open state (Snapshot 0: the mock).
         // A printer switch closes it — a stale popup must never carry
         // actions from one machine to the next (round-2 A15).
@@ -57,6 +90,55 @@ Component {
             root.controlsConfigureRows = rows;
             root.controlsConfigureHidden = layout ? layout.hidden : [];
         }
+        // The whole-pair fit, written IMPERATIVELY against the
+        // pane's actual rendered geometry: the label's two
+        // main-axis endpoints mapped into the pane bound the pair
+        // (a single corner read wrong — the live report), and the
+        // hysteresis keeps an intermediate resize geometry from
+        // flickering the pair at the threshold.
+        function fitControlsPair(first, stride) {
+            var children = controlsReadoutRow.children;
+            if (first + stride - 1 >= children.length)
+                return;
+            var last = children[first + stride - 1];
+            var a = last.mapToItem(controlsPane, 0, 0).y;
+            var b = last.mapToItem(controlsPane, last.width, 0).y;
+            var bottom = Math.max(a, b);
+            var hidden = children[first].fitHidden;
+            // Bottom-only, the info fit's lesson: the top guard read
+            // false under some engine mappings and froze the hides.
+            // The pane's full height can exceed the visible viewport
+            // (the monitor's x7 report) — bound against the pane's
+            // VISIBLE extent, the window's height minus the pane's
+            // scene position.
+            var windowHeight = controlsPane.Window != null ? controlsPane.Window.height : 0;
+            var paneTop = controlsPane.mapToItem(null, 0, 0).y;
+            var visibleHeight = Math.min(controlsPane.height, windowHeight - paneTop);
+            var hide = hidden ? bottom > visibleHeight - 14 * screenScaleFactor : bottom > visibleHeight - 6 * screenScaleFactor;
+            for (var i = first; i < first + stride; ++i)
+                children[i].fitHidden = hide;
+        }
+        function updateControlsReadoutFits() {
+            // The position group is the glyph plus the three axis
+            // cells; the z group is a pair (the flow pair moved to
+            // the status strip, the live ruling).
+            fitControlsPair(0, 4);
+            fitControlsPair(4, 2);
+        }
+        onControlsCollapsedChanged: {
+            Qt.callLater(root.updateControlsReadoutFits);
+            // The deferred retry: the callLater can run BEFORE the
+            // collapsed layout settles (the monitor's x7 report) —
+            // the timer re-measures with the settled geometry.
+            fitControlsRetry.restart();
+        }
+        Timer {
+            id: fitControlsRetry
+            interval: 200
+            repeat: false
+            onTriggered: root.updateControlsReadoutFits()
+        }
+
         // The section-order application: the configure popup and the
         // state hydration both flow through sectionLayout; the pane
         // re-parents only when the live order differs (the
@@ -102,7 +184,9 @@ Component {
                     items[p].parent = controlContent;
             }
         }
+
         onPrinterChanged: {
+            refreshAvailabilityGates();
             if (root.printer != null) {
                 root.printer.setFileManagerOpen(false);
             }
@@ -371,7 +455,7 @@ Component {
                     anchors.fill: parent
                     radius: UM.Theme.getSize("default_radius").width
                     color: "transparent"
-                    border.color: "#d32f2f"
+                    border.color: MoonrakerTheme.dangerRed
                     border.width: 2 * screenScaleFactor
                     clip: true
                     Rectangle {
@@ -380,7 +464,7 @@ Component {
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         width: parent.width * Math.min(1.0, (emergencyButton.clicks + (root.printer != null ? root.printer.emergencyHoldProgress : 0)) / 3.0)
-                        color: "#d32f2f"
+                        color: MoonrakerTheme.dangerRed
                     }
                     // The label flips white PROGRESSIVELY as the red
                     // fill sweeps over it: two copies of the same
@@ -507,6 +591,11 @@ Component {
                 // pane's outer edge.
                 id: controlsPane
                 objectName: "moonrakerControlsPane"
+                // The collapsed readout may outrun a short pane: the
+                // PANE clips, so no child can ever spill past its
+                // bounds (the live report).
+                clip: true
+                onHeightChanged: root.updateControlsReadoutFits()
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
                 Layout.preferredWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 390 * screenScaleFactor)
@@ -828,56 +917,96 @@ Component {
                     anchors.top: collapsedTitleBox.bottom
                     anchors.topMargin: 2 * UM.Theme.getSize("default_margin").height
                     anchors.horizontalCenter: collapsedTitleBox.horizontalCenter
-                    width: controlsReadoutRow.implicitHeight
+                    // The box hugs the content: its height tracks
+                    // the row's implicit width, so the centred row
+                    // fills it and the strip starts at the margin
+                    // under the title (the live report). 18 is the
+                    // label line height.
+                    width: 18 * screenScaleFactor
                     height: controlsReadoutRow.implicitWidth
                     Row {
                         id: controlsReadoutRow
-                        // The PANE's height, never the root's: the
-                        // dashboard root spans the full stage, so a
-                        // short window would still read as fitting.
-                        // The BOX's own geometry, never a self-y
-                        // read (the live report: the readouts
-                        // vanished or overflowed on the self-y
-                        // form).
-                        visible: controlsCollapsedReadoutBox.y + controlsCollapsedReadoutBox.height <= controlsPane.height
                         anchors.centerIn: parent
                         spacing: 2 * screenScaleFactor
                         rotation: 90
+                        // The fit hides through OPACITY, never
+                        // the visibility flag: a hidden pair keeps
+                        // its place in the layout, so the survivors
+                        // can never re-centre in the box (the live
+                        // report) — the strip stays anchored under
+                        // the title. The labels' fixed widths are
+                        // the field boundaries.
                         UM.ColorImage {
+                            color: UM.Theme.getColor("text")
+                            property bool fitHidden: false
+                            visible: root.positionAvailable
+                            opacity: fitHidden ? 0 : 1
                             width: 16 * screenScaleFactor
                             height: 16 * screenScaleFactor
                             source: Qt.resolvedUrl("Position.svg")
                         }
                         UM.Label {
                             objectName: "controlsCollapsedReadoutText"
-                            text: root.printer != null ? root.printer.monitorPositionCompact : ""
-                            width: 170 * screenScaleFactor
+                            property bool fitHidden: false
+                            visible: root.positionAvailable
+                            opacity: fitHidden ? 0 : 1
+                            text: root.printer != null ? root.printer.monitorPositionX : ""
+                            // Each axis independent and fixed-width:
+                            // "X 888.88" must sit without reflowing
+                            // (the live ruling). The axis cells wear
+                            // their axis colours: X red, Y green, Z
+                            // blue — the other cells stay themed.
+                            width: 70 * screenScaleFactor
                             font: UM.Theme.getFont("default")
-                            color: UM.Theme.getColor("text")
+                            color: MoonrakerTheme.axisX
+                            elide: Text.ElideRight
+                        }
+                        UM.Label {
+                            objectName: "controlsCollapsedReadoutText"
+                            property bool fitHidden: false
+                            visible: root.positionAvailable
+                            opacity: fitHidden ? 0 : 1
+                            text: root.printer != null ? root.printer.monitorPositionY : ""
+                            width: 70 * screenScaleFactor
+                            font: UM.Theme.getFont("default")
+                            color: MoonrakerTheme.axisY
+                            elide: Text.ElideRight
+                        }
+                        UM.Label {
+                            objectName: "controlsCollapsedReadoutText"
+                            property bool fitHidden: false
+                            visible: root.positionAvailable
+                            opacity: fitHidden ? 0 : 1
+                            text: root.printer != null ? root.printer.monitorPositionZ : ""
+                            width: 70 * screenScaleFactor
+                            font: UM.Theme.getFont("default")
+                            color: MoonrakerTheme.axisZ
                             elide: Text.ElideRight
                         }
                         UM.ColorImage {
+                            color: UM.Theme.getColor("text")
+                            property bool fitHidden: false
+                            visible: root.zOffsetAvailable
+                            opacity: fitHidden ? 0 : 1
                             width: 16 * screenScaleFactor
                             height: 16 * screenScaleFactor
                             source: Qt.resolvedUrl("ZOffset.svg")
                         }
                         UM.Label {
-                            objectName: "controlsCollapsedReadoutText"
+                            // The z pair's own name (the harness
+                            // rule): the position cells share
+                            // controlsCollapsedReadoutText, and the
+                            // standby scenario proves the z offset's
+                            // honest zero renders while the
+                            // unavailable position hides.
+                            objectName: "controlsCollapsedZOffsetLabel"
+                            property bool fitHidden: false
+                            visible: root.zOffsetAvailable
+                            opacity: fitHidden ? 0 : 1
                             text: root.printer != null ? root.printer.zOffsetText : ""
-                            width: 70 * screenScaleFactor
-                            font: UM.Theme.getFont("default")
-                            color: UM.Theme.getColor("text")
-                            elide: Text.ElideRight
-                        }
-                        UM.ColorImage {
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: Qt.resolvedUrl("Flow.svg")
-                        }
-                        UM.Label {
-                            objectName: "controlsCollapsedReadoutText"
-                            text: root.printer != null ? root.printer.monitorFlowRate : ""
-                            width: 60 * screenScaleFactor
+                            // "88.000 mm" must sit comfortably (the
+                            // live ruling).
+                            width: 96 * screenScaleFactor
                             font: UM.Theme.getFont("default")
                             color: UM.Theme.getColor("text")
                             elide: Text.ElideRight

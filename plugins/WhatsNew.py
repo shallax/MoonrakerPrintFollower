@@ -26,6 +26,37 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "4.4.0",
+        "headline": "Version 4.4.0 is the configurable-sections release: every "
+            "Monitor pane orders and hides its own sections, the collapsed "
+            "panes gain live readouts, and the next scheduled pause is "
+            "visible ahead of time.",
+        "items": (
+            "Each Monitor pane's sections can be reordered and hidden "
+            "independently from a configure pop-over, and reset to "
+            "defaults without touching the other panes.",
+            "The collapsed panes now carry live readouts — temperatures, "
+            "ETAs, axis positions, the layer count, and the flow rate — "
+            "each one hidden until its value arrives, arranged so the "
+            "strip clips instead of overflowing.",
+            "The print progress readouts in the Print-job section and the "
+            "status strip stack the overall and current-layer fills, with "
+            "an orange third fill marking the next scheduled pause (baked "
+            "or manual) when one lies ahead.",
+            "A Next pause row under Finish gives the countdown and the "
+            "wall-clock deadline for the next scheduled pause.",
+            "The Preview card's strip gains the current layer and height, "
+            "and the card hides the pause controls until a toolpath is "
+            "available.",
+            "The G-code index is built in a single pass with real byte-"
+            "offset progress, so the indexing bar shows an actual "
+            "percentage.",
+            "Pauses already baked into the G-code are now found when "
+            "the file loads, so they appear in the pause list and the "
+            "next-pause bar like manually scheduled ones.",
+        ),
+    },
+    {
         "version": "4.3.0",
         "headline": "Version 4.3.0 is the QML componentisation release: the "
             "Monitor page is rebuilt out of small self-contained sections, "

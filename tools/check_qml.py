@@ -181,7 +181,12 @@ def check_text(text: str, name: str = "<qml>") -> List[str]:
         if not following.startswith("{"):
             errors.append(f"line {lineno}: bare QML type '{stripped}' has no object body")
     lines = [line.strip() for line in raw_lines if line.strip()]
-    first = next((line for line in lines if not line.startswith("//")), "")
+    # A `pragma` (the theme singleton's engine-mandated `pragma
+    # Singleton`) legally precedes the imports, and qmlformat keeps
+    # it first — the first significant line is the first
+    # non-comment, non-pragma one.
+    first = next((line for line in lines
+                  if not line.startswith("//") and not line.startswith("pragma ")), "")
     if first and not first.startswith("import "):
         errors.append("line 1: QML file should begin with imports")
     return [f"{name}: {error}" for error in errors]

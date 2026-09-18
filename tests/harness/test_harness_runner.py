@@ -61,13 +61,14 @@ class ClassificationRatchetTests(unittest.TestCase):
         # The F08 acceptance, pinned statically: real-input steps may
         # only increase as the conversion proceeds. Today's census
         # (2026-09-15, the what's-new overlay's z16 — the pin includes
-        # key_press, which the classifier counts as real input):
-        # 48 click_stage + 27 deliver_click + 12 click_text +
-        # 6 key_press.
+        # key_press, which the classifier counts as real input).
+        # The floor is the CURRENT census (2026-09-18, the panel's
+        # re-census — the old 93 let 46 real steps convert to probes
+        # before the pin fired): 139.
         text = (ROOT / "tests/harness/scenarios.py").read_text()
         real = len(re.findall(
             r'"op": "(deliver_click|click_stage|click_text|key_press)"', text))
-        self.assertGreaterEqual(real, 93)
+        self.assertGreaterEqual(real, 139)
 
     def test_direct_invocation_can_only_shrink(self):
         # And the other half: direct-invocation steps may only
@@ -121,7 +122,29 @@ class ClassificationRatchetTests(unittest.TestCase):
         # probe proves the plain release commits (the live report's
         # last open item). Its restore slot, x5's file-manager close
         # and outside-press probe ride the same paths with it.
-        self.assertLessEqual(direct, 130)
+        # And the controls-field gate (x4): the three fixed-width
+        # readout fields must stay separate on the strip's line — a
+        # geometry proof no verb expresses (the live report: the
+        # fields must never overlap).
+        # And the availability gate (x8): the collapse and restore
+        # slots — the author's live-untestable ruling rides the
+        # slots exactly as the other readout scenarios do.
+        # And the cross-talk gate (x9): the info drag rides the x6
+        # probe again, and the crosstalk probe runs twice — after
+        # the drag and after the controls reset — raising when the
+        # reset touched the information pane (the live report).
+        # And the next-pause fill (x10): the improve-Eta exec —
+        # the fill appears only once the index lands, and no real
+        # input path exists for the monitor-side download (the h8
+        # precedent's reasoning).
+        # And x10's load flow: the fill's ETA needs the follower's
+        # observed layer, so the scenario rides the h2 load (its
+        # confirm_box counts, the h2 precedent).
+        # And p6/p7's determinism pin: the wait_sim on the layer
+        # clock's first tick (the click's target must resolve from
+        # the mapped layer, never the file-position fallback that
+        # lands inside the baked pause — the 2026-09-18 flake).
+        self.assertLessEqual(direct, 144)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —

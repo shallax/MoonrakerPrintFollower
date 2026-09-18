@@ -1,5 +1,6 @@
 import QtQuick 2.15
 import UM 1.5 as UM
+import "theme"
 
 // The Klipper bed-mesh heat map, shared by the Information pane's
 // mini widget and the pop-over detail view. `compact` drops the hover
@@ -24,7 +25,7 @@ Item {
     property bool hoverClamped: false  // the crosshair reads a clamped (extended) value
     property string hoverText: ""
     property string tooltipText: ""
-    property color outOfWindowGrey: Qt.rgba(0.541, 0.561, 0.596, 1.0)  // #8A8F98
+    property color outOfWindowGrey: MoonrakerTheme.outOfWindowGrey
     signal clicked
 
     function refresh() {
@@ -344,7 +345,7 @@ Item {
                 ctx.globalAlpha = 1.0;
                 // The measured-bounds outline (the Preview's neon
                 // orange, its 2D form).
-                ctx.strokeStyle = "#FF5A00";
+                ctx.strokeStyle = MoonrakerTheme.neonOrange;
                 ctx.globalAlpha = 0.94;
                 ctx.lineWidth = 2 * screenScaleFactor;
                 ctx.strokeRect(meshTopLeft[0], meshTopLeft[1], meshRectW, meshRectH);
@@ -397,7 +398,7 @@ Item {
             // crosshair in the neon orange so the value's status is
             // visible at the pointer, not just in the readout.
             if (!root.compact && (root.hoverColumn >= 0 || root.hoverClamped)) {
-                ctx.strokeStyle = root.hoverClamped ? "#FF5A00" : UM.Theme.getColor("text");
+                ctx.strokeStyle = root.hoverClamped ? MoonrakerTheme.neonOrange : UM.Theme.getColor("text");
                 ctx.lineWidth = 1.5;
                 ctx.beginPath();
                 ctx.arc(root.hoverX, root.hoverY, 6, 0, 2 * Math.PI);

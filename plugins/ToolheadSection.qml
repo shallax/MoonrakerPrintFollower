@@ -3,6 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
+import "theme"
 
 // The Toolhead section (4.3.0 extraction): the header, the jog pad,
 // the extrusion controls, the endstops and the status rows moved out
@@ -11,6 +12,32 @@ ColumnLayout {
     id: root
     spacing: 0
     property var printerModel: null
+    // The Position row's availability (the tuple rule: ANY axis
+    // unavailable empties the whole row). ROOT-scoped: QML cannot
+    // resolve a non-root ancestor's property from its descendants
+    // (the engine's ReferenceError) — the monitor's own
+    // root.etaAvailable pattern.
+    readonly property bool positionRowAvailable: root.printerModel != null && root.printerModel.monitorPositionX !== "—" && root.printerModel.monitorPositionX !== "" && root.printerModel.monitorPositionY !== "—" && root.printerModel.monitorPositionY !== "" && root.printerModel.monitorPositionZ !== "—" && root.printerModel.monitorPositionZ !== ""
+
+    // The homed-axes readout: each axis letter in its axis colour
+    // (the live ruling — X red, Y green, Z blue).
+    function homedAxesRichText(axes) {
+        var colours = {
+            "X": MoonrakerTheme.axisX,
+            "Y": MoonrakerTheme.axisY,
+            "Z": MoonrakerTheme.axisZ
+        };
+        var letters = axes.toUpperCase().split("");
+        var parts = [];
+        for (var i = 0; i < letters.length; ++i) {
+            var letter = letters[i];
+            if (colours[letter] !== undefined)
+                parts.push("<font color=\"" + colours[letter] + "\">" + letter + "</font>");
+            else
+                parts.push(letter);
+        }
+        return parts.join(" ");
+    }
 
     CollapsibleSectionHeader {
         Layout.fillWidth: true
@@ -49,35 +76,14 @@ ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 4 * screenScaleFactor
                 UM.Label {
-                    text: root.printerModel != null && root.printerModel.homedAxes.length > 0 ? root.printerModel.homedAxes.toUpperCase().split('').join(' ') + "  · " : "—"
-                    color: UM.Theme.getColor("text")
-                }
-                // The abs/rel toggle (the
-                // live ruling: the mode TEXT is the
-                // control, never a separate button)
-                // — clicking the word switches and
-                // sends the real G90/G91 through the
-                // command lane.
-                UM.Label {
-                    text: root.printerModel != null ? root.printerModel.positionMode : "Absolute"
-                    color: root.printerModel != null && root.printerModel.jogEnabled ? UM.Theme.getColor("primary") : UM.Theme.getColor("text_inactive")
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: root.printerModel != null && root.printerModel.jogEnabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: {
-                            // The click itself must obey the
-                            // SAME gate as the styling: while
-                            // the controls are locked the word
-                            // reads, it must not act (the
-                            // author's catch).
-                            if (root.printerModel != null && root.printerModel.jogEnabled) {
-                                root.printerModel.setPositionMode(root.printerModel.positionMode !== "Absolute");
-                            }
-                        }
-                    }
-                }
-                UM.Label {
-                    text: " moves"
+                    text: root.printerModel != null && root.printerModel.homedAxes.length > 0 ? root.homedAxesRichText(root.printerModel.homedAxes) : "—"
+                    textFormat: Text.RichText
+                    // The rich-text label's implicit width read too
+                    // narrow and each axis letter wrapped onto its
+                    // own line (the live report); the explicit width
+                    // stays TIGHT.
+                    width: 56 * screenScaleFactor
+                    wrapMode: Text.NoWrap
                     color: UM.Theme.getColor("text")
                 }
             }
@@ -87,21 +93,79 @@ ColumnLayout {
             columnSpacing: UM.Theme.getSize("default_margin").width
             Layout.fillWidth: true
 
+            // The tuple rule (the live ruling): if ANY axis value is
+            // unavailable, the whole Position row reads empty — the
+            // label and the cells. A PERMANENT slot (the M117 /
+            // Next-pause precedent): flipping the row's visibility
+            // in a layout is the polish-loop pattern (the panel's
+            // catch) — the cells empty themselves instead.
             UM.Label {
-                text: "Position"
+                text: positionRowAvailable ? "Position" : ""
                 color: UM.Theme.getColor("text_inactive")
                 Layout.preferredWidth: 110 * screenScaleFactor
             }
-            UM.Label {
-                // The grey-label / black-value
-                // readout pattern (the
-                // ruling, after the MCUs section),
-                // with an honest emdash when there
-                // is no value.
+            // The collapsed readout's style (the live ruling): the
+            // axes as separate fixed-width cells in their axis
+            // colours — X red, Y green, Z blue — each able to hold
+            // "N 888.88" without reflowing.
+            RowLayout {
                 Layout.fillWidth: true
-                text: root.printerModel != null ? root.printerModel.monitorPosition : "—"
-                color: UM.Theme.getColor("text")
-                elide: Text.ElideRight
+                spacing: UM.Theme.getSize("thin_margin").width
+                UM.Label {
+                    // "X 888.88" still sits, and the trio must fit
+                    // the pane's minimum width without overflowing
+                    // (the live report: 50 px per cell).
+                    Layout.preferredWidth: 50 * screenScaleFactor
+                    text: positionRowAvailable ? (root.printerModel != null ? root.printerModel.monitorPositionX : "") : ""
+                    color: MoonrakerTheme.axisX
+                    elide: Text.ElideRight
+                }
+                UM.Label {
+                    Layout.preferredWidth: 50 * screenScaleFactor
+                    text: positionRowAvailable ? (root.printerModel != null ? root.printerModel.monitorPositionY : "") : ""
+                    color: MoonrakerTheme.axisY
+                    elide: Text.ElideRight
+                }
+                UM.Label {
+                    Layout.preferredWidth: 50 * screenScaleFactor
+                    text: positionRowAvailable ? (root.printerModel != null ? root.printerModel.monitorPositionZ : "") : ""
+                    color: MoonrakerTheme.axisZ
+                    elide: Text.ElideRight
+                }
+            }
+        }
+        GridLayout {
+            columns: 2
+            columnSpacing: UM.Theme.getSize("default_margin").width
+            Layout.fillWidth: true
+
+            UM.Label {
+                text: "Moves"
+                color: UM.Theme.getColor("text_inactive")
+                Layout.preferredWidth: 110 * screenScaleFactor
+            }
+            // The abs/rel toggle on its own row under the Position
+            // readout (the live ruling: "Moves:
+            // <absolute|relative>" — the mode TEXT is the control,
+            // never a separate button) — clicking the word switches
+            // and sends the real G90/G91 through the command lane.
+            UM.Label {
+                text: root.printerModel != null ? root.printerModel.positionMode : "Absolute"
+                color: root.printerModel != null && root.printerModel.jogEnabled ? UM.Theme.getColor("primary") : UM.Theme.getColor("text_inactive")
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: root.printerModel != null && root.printerModel.jogEnabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: {
+                        // The click itself must obey the
+                        // SAME gate as the styling: while
+                        // the controls are locked the word
+                        // reads, it must not act (the
+                        // author's catch).
+                        if (root.printerModel != null && root.printerModel.jogEnabled) {
+                            root.printerModel.setPositionMode(root.printerModel.positionMode !== "Absolute");
+                        }
+                    }
+                }
             }
         }
 

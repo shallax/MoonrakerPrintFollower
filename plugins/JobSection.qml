@@ -3,6 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
+import "theme"
 
 // The Print-job section (4.3.0 extraction): the status, progress,
 // layer, ETA and Improve-ETA rows out of the monitor as one
@@ -89,18 +90,105 @@ ColumnLayout {
             }
         }
 
-        OutlineProgressBar {
+        // THE STACKED BAR (the live ruling, mirroring the collapsed
+        // status readout): the print fill is the bottom half and the
+        // layer fill the top half, touching at the centre — no gap.
+        // Without layer info the print fill takes the whole height.
+        Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: 10 * screenScaleFactor
-            from: 0
-            to: 100
-            value: root.printerModel != null ? root.printerModel.monitorProgress : 0
+            // Double the strip's height (the live ruling): with all
+            // three fills stacked the original 10 px was too tiny to
+            // read the sections.
+            Layout.preferredHeight: 20 * screenScaleFactor
+            UM.TooltipArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.NoButton
+                // Lists only the fills that actually render (the live
+                // ruling), top to bottom. A position qualifier only
+                // makes sense beside other fills — the print fill is
+                // always present, so a lone bar names it plainly.
+                text: {
+                    var shown = [];
+                    if (root.printerModel != null && root.printerModel.monitorLayerProgress >= 0)
+                        shown.push("the current layer's progress (top)");
+                    if (root.printerModel != null && root.printerModel.nextPauseFraction >= 0)
+                        shown.push("progress towards the next scheduled pause (middle, orange)");
+                    shown.push("overall print progress (bottom)");
+                    if (shown.length === 1)
+                        shown[0] = "overall print progress";
+                    var body = shown.slice(0, -1).join(", ");
+                    if (shown.length > 1)
+                        body += (shown.length > 2 ? "," : "") + " and ";
+                    return "The stacked progress: " + body + shown[shown.length - 1] + ".";
+                }
+                Rectangle {
+                    anchors.fill: parent
+                    color: "transparent"
+                    border.width: 1 * screenScaleFactor
+                    border.color: UM.Theme.getColor("lining")
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.bottom: parent.bottom
+                        // Thirds with a scheduled pause, halves without,
+                        // the whole height without layer info (the live
+                        // ruling).
+                        height: parent.height * (root.printerModel != null && root.printerModel.monitorLayerProgress >= 0 ? (root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5) : 1.0)
+                        // monitorProgress is a PERCENTAGE (0..100); the
+                        // layer value is already 0..1.
+                        width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.monitorProgress / 100 : 0))
+                        color: UM.Theme.getColor("primary")
+                    }
+                    Rectangle {
+                        // The next scheduled pause's fill (the live
+                        // ruling): the MIDDLE of the stack, the mesh's
+                        // neon orange — NOT RENDERED while no pause
+                        // lies ahead (the gate, not a zero width).
+                        objectName: "nextPauseFill"
+                        visible: root.printerModel != null && root.printerModel.nextPauseFraction >= 0
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        height: parent.height / 3
+                        width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.nextPauseFraction : 0))
+                        color: MoonrakerTheme.neonOrange
+                    }
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        height: parent.height * (root.printerModel != null && root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5)
+                        width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.monitorLayerProgress : 0))
+                        color: UM.Theme.getColor("primary")
+                    }
+                }
+            }
         }
 
-        UM.Label {
-            text: root.printerModel != null ? root.printerModel.monitorProgress.toFixed(2) + "%" : "0.00%"
-            font: UM.Theme.getFont("medium_bold")
+        Row {
             Layout.alignment: Qt.AlignHCenter
+            spacing: 4 * screenScaleFactor
+            UM.Label {
+                text: root.printerModel != null ? root.printerModel.monitorProgress.toFixed(2) + "%" : "0.00%"
+                font: UM.Theme.getFont("medium_bold")
+                // Both percentages share one line height and centre
+                // their glyphs in it (the live report: the pair sat
+                // top-aligned).
+                height: 24 * screenScaleFactor
+                verticalAlignment: Text.AlignVCenter
+            }
+            UM.Label {
+                // The layer percentage rides beside the big overall
+                // one in grey (the live ruling) — the Layer row keeps
+                // just the count.
+                text: root.printerModel != null && root.printerModel.monitorLayerProgress >= 0 ? "(" + (root.printerModel.monitorLayerProgress * 100).toFixed(2) + "%)" : ""
+                color: UM.Theme.getColor("text_inactive")
+                font: UM.Theme.getFont("default")
+                height: 24 * screenScaleFactor
+                verticalAlignment: Text.AlignVCenter
+                UM.TooltipArea {
+                    anchors.fill: parent
+                    text: "Layer progress — how far through the current layer."
+                    acceptedButtons: Qt.NoButton
+                }
+            }
         }
 
         GridLayout {
@@ -150,31 +238,6 @@ ColumnLayout {
                             text: root.printerModel != null && root.printerModel.monitorLayerSource !== undefined && root.printerModel.monitorLayerSource.length > 0 ? "Layer source: " + root.printerModel.monitorLayerSource : ""
                             acceptedButtons: Qt.NoButton
                         }
-                    }
-                    UM.Label {
-                        text: root.printerModel != null && root.printerModel.monitorLayerProgress >= 0 ? (root.printerModel.monitorLayerProgress * 100).toFixed(2) + "%" : ""
-                        color: UM.Theme.getColor("text_inactive")
-                    }
-                }
-                Item {
-                    // NO-REFLOW RULE: the 8 px bar row
-                    // is always reserved — it fades in
-                    // when the index lands mid-print.
-                    Layout.fillWidth: true
-                    Layout.topMargin: UM.Theme.getSize("thin_margin").height
-                    height: 8 * screenScaleFactor
-                    opacity: root.printerModel != null && root.printerModel.monitorLayerProgress >= 0 ? 1 : 0
-                    OutlineProgressBar {
-                        anchors.fill: parent
-                        from: 0
-                        to: 1
-                        value: root.printerModel != null ? root.printerModel.monitorLayerProgress : 0
-                        inset: 1 * screenScaleFactor
-                    }
-                    UM.TooltipArea {
-                        anchors.fill: parent
-                        text: "Layer progress — how far through the current layer."
-                        acceptedButtons: Qt.NoButton
                     }
                 }
             }
@@ -394,6 +457,26 @@ ColumnLayout {
             }
             UM.Label {
                 text: root.printerModel != null ? root.printerModel.monitorFinish : "—"
+                Layout.fillWidth: true
+            }
+
+            // The next scheduled pause's ETA (the live ruling):
+            // countdown and deadline, under Finish — the row hides
+            // whole while no pause lies ahead.
+            // NO-REFLOW RULE (the M117 slot's precedent): the row is
+            // a PERMANENT slot — flipping its visibility reflowed
+            // the section stack and fed a layout polish loop (the
+            // live report, the pause's clear/re-add cycle). The
+            // labels read empty while no pause lies ahead.
+            UM.Label {
+                text: root.printerModel != null && root.printerModel.nextPauseEta.length > 0 ? "Next pause" : ""
+                color: UM.Theme.getColor("text_inactive")
+                Layout.preferredWidth: 110 * screenScaleFactor
+            }
+            UM.Label {
+                // "(baked)" marks the gcode's own pauses (the live
+                // ruling) — the manual schedule reads plain.
+                text: root.printerModel != null ? (root.printerModel.nextPauseEta + (root.printerModel.nextPauseBaked ? " (baked)" : "")) : ""
                 Layout.fillWidth: true
             }
 

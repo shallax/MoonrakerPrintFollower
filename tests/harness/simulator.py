@@ -33,37 +33,12 @@ import tornado.websocket
 CORE_OBJECTS = ("print_stats", "gcode_move", "virtual_sdcard", "motion_report", "bed_mesh", "display_status", "pause_resume")
 
 
-def make_gcode(layers: int = 40) -> str:
-    """A deterministic, Cura-parseable gcode: a square perimeter per
-    layer with extrusion moves and M73 progress. Real parse/render
-    targets for the load pipeline (A25)."""
-    lines = [";FLAVOR:Marlin", ";LAYER_COUNT:%d" % layers, "M73 P0", "G90", "M82"]
-    size = 50.0
-    layer_height = 0.2
-    z = layer_height
-    extruded = 0.0
-    for layer in range(layers):
-        lines.append(";LAYER:%d" % layer)
-        corners = [(100.0, 100.0), (100.0 + size, 100.0),
-                   (100.0 + size, 100.0 + size), (100.0, 100.0 + size)]
-        # Travel to the first corner, then the perimeter.
-        lines.append("G0 X%.2f Y%.2f Z%.2f F6000" % (corners[0][0], corners[0][1], z))
-        for x, y in corners[1:]:
-            extruded += 0.12
-            lines.append("G1 X%.2f Y%.2f E%.4f F1800" % (x, y, extruded))
-        extruded += 0.12
-        lines.append("G1 X%.2f Y%.2f E%.4f F1800" % (corners[0][0], corners[0][1], extruded))
-        # A diagonal infill line for visible geometry.
-        extruded += 0.08
-        lines.append("G1 X%.2f Y%.2f E%.4f F2400" % (100.0 + size, 100.0 + size, extruded))
-        z += layer_height
-        lines.append("M73 P%d" % min(100, int((layer + 1) * 100 / layers)))
-    lines.append("M73 P100")
-    lines.append(";TIME_ELAPSED:1234")
-    return "\n".join(lines) + "\n"
+try:  # The harness stages these files FLAT (simulator_serve imports
+    from .gcodegen import make_gcode  # noqa: F401  # the package form)
+except ImportError:
+    from gcodegen import make_gcode  # noqa: F401  # the staged flat form
 
 
-# Full state once per subscribe reply; pushes carry changes only.
 KICKOFF_STATE: Dict[str, Any] = {
     "print_stats": {
         "state": "standby",
@@ -137,6 +112,8 @@ class PrinterState:
         self.extruder_ramp_deg_s = 30.0
         self.connections = 0
         self._layer_clock_at = time.monotonic()
+        self._prev_state = None
+        self.layer_clock_interval_s = 6.0
         # The scenario-5 race: hold the subscribe reply past the
         # client's proof window, then release — the snapshot must
         # still unlock the aux feed promptly. Stamps on the sim's
@@ -295,7 +272,7 @@ class PrinterState:
             elif name in ("cold_start", "broken_start", "extruder_ramp_deg_s",
                           "slow_first_frame_ms", "webcam_down", "webcam_die_after",
                           "route_delay_ms", "subscribe_hold_ms", "require_api_key",
-                          "refuse_subscribe"):
+                          "refuse_subscribe", "layer_clock_interval_s"):
                 setattr(self, name, value)
             elif name == "console_lines":
                 self.console_lines = list(value)
@@ -374,6 +351,13 @@ class PrinterState:
         self.push_seq = 0
         self.unknown_keys = []
         self._last_pushed = {}
+        # The layer clock's hermetic half (the panel's catch): the
+        # clock ticked unbounded across the shared boot and left the
+        # layer past the print's end (the x10 report) — restamping
+        # per reset means every scenario's print starts from the
+        # kickoff layer instead of the previous scenario's residue.
+        self._layer_clock_at = time.monotonic()
+        self._prev_state = None
         self.console_lines = [{"type": "response", "message": "// Klipper state: Ready",
                                "time": time.time()}]
         self.ledger = []
@@ -423,10 +407,12 @@ class PrinterState:
             # ~6 s of printing (scenario 9 drives past a scheduled
             # pause without the printer pausing).
             info = stats.get("info") or {}
-            if time.monotonic() - self._layer_clock_at > 6.0:
+            if self.layer_clock_interval_s \
+                    and time.monotonic() - self._layer_clock_at > self.layer_clock_interval_s:
                 self._layer_clock_at = time.monotonic()
-                info["current_layer"] = (int(info.get("current_layer") or 0)) + 1
-                info["total_layer"] = 40
+                total = int(info.get("total_layer") or 40)
+                info["current_layer"] = min((int(info.get("current_layer") or 0)) + 1, total)
+                info["total_layer"] = total
                 stats["info"] = info
             if self.motion_speed_mm_s:
                 # The motion ticker (4.2.0): the motion rows' scenarios
@@ -474,6 +460,7 @@ class PrinterState:
         # stored last-frame never aliases the live state's dicts.
         snapshot = {name: json.loads(json.dumps(value)) if isinstance(value, (dict, list)) else value
                     for name, value in self.state.items()}
+        self._prev_state = stats.get("state")
         patch = {name: snapshot[name] for name in snapshot
                  if self._last_pushed.get(name) != snapshot[name]}
         self._last_pushed.update(patch)

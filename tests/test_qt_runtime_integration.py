@@ -1138,6 +1138,9 @@ class QtRuntimeTests(unittest.TestCase):
             view.getCurrentPath = lambda: 0.0
             view.getMinimumPath = lambda: 0
             view.getActivity = lambda: True
+            # The toolpath's own signature (the 2026-09-17 ruling:
+            # the view-swap re-attach needs a toolpath).
+            view.getMaxLayers = lambda: 100
             return view
 
         first = fake_view(40)
@@ -1535,7 +1538,7 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
             time.sleep(0.005)
         return predicate()
 
-    def _reply_double(self, error=False, payload=b"G1 X0 Y0\n", size=None):
+    def _reply_double(self, error=False, payload=b"G1 X0 Y0\n", size=None, content_encoding=None):
         from PyQt6.QtCore import QObject, pyqtSignal
         from PyQt6.QtNetwork import QNetworkReply
 
@@ -1554,7 +1557,11 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
                 return data
             def rawHeader(self, name):
                 # The real API returns the header bytes; absent length
-                # means indeterminate progress.
+                # means indeterminate progress. Content-Encoding is
+                # the download guard's tell — the double serves it
+                # absent unless a test pins a compressed form.
+                if name == b"Content-Encoding":
+                    return content_encoding or b""
                 return str(size).encode("ascii") if size is not None else b""
             def read(self, maxsize): return self.readAll()
             def bytesAvailable(self): return 0
@@ -1746,6 +1753,8 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
             def readAll(self):
                 return self._chunks.pop(0) if self._chunks else b""
             def rawHeader(self, name):
+                if name == b"Content-Encoding":
+                    return b""
                 return b"100" if self._headers else b""
             def error(self):
                 from PyQt6.QtNetwork import QNetworkReply
@@ -1796,6 +1805,39 @@ class RemoteFileServiceDownloadTests(unittest.TestCase):
         path, error = results[0]
         self.assertIsNone(path)
         self.assertIn("connection changed", error)
+
+    def test_compressed_encoding_is_refused(self):
+        # The identity-encoding contract (the critic's catch): a proxy
+        # that ignores the request serves compressed bytes whose
+        # length matches ITS declaration — the Content-Encoding
+        # header is the tell, and the download must refuse.
+        reply = self._reply_double(payload=b"A" * 32, size=32, content_encoding=b"gzip")
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        results = []
+        self.files.download_once("prints/part.gcode", on_ready=lambda p, e: results.append((p, e)))
+        reply.readyRead.emit()
+        reply.finished.emit()
+        self.assertTrue(self._wait(lambda: len(results) == 1))
+        path, error = results[0]
+        self.assertIsNone(path)
+        self.assertIn("compressed", error)
+
+    def test_listing_size_mismatch_is_refused(self):
+        # The listing is the referee, not the transport: a proxy that
+        # delivers honest headers but short bytes fails the listing's
+        # own size check on finish.
+        self.files.bind(("part.gcode", 200, 1))
+        self.files._identity = self._identity("part.gcode", 200)
+        self.files._want_file = True
+        reply = self._reply_double(payload=b"x" * 40, size=40)
+        self.transport.network = SimpleNamespace(get=lambda request: reply)
+        messages = []
+        self.files.failed.connect(messages.append)
+        self.files.request_file()
+        reply.readyRead.emit()
+        reply.finished.emit()
+        self.assertTrue(self._wait(lambda: len(messages) == 1))
+        self.assertIn("does not match the file listing", messages[0])
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
@@ -2222,14 +2264,24 @@ class CuraIntegrationLoadTests(unittest.TestCase):
         self.assertEqual(self.app.loaded, [])
         self.assertEqual(self.releases, [path])  # released, never leaked
 
-    def test_load_refused_while_loading(self):
+    def test_load_supersedes_a_pending_load(self):
+        # The supersede ruling (the panel's fix): an explicit Load
+        # while a load is pending PROCEEDS — Cura's silent-refusal
+        # paths can latch `loading` for the whole watchdog window,
+        # and refusing the user's retry would lock the button for
+        # five minutes. The superseded lease parks as the watch
+        # lease and releases; the new load holds the stage.
         path = self._make_file()
         self.cura._view = object()
         self.assertTrue(self.cura.load(self._lease(path)))
+        second = self._make_file("two.gcode")
         messages = []
         self.cura.loadFailed.connect(messages.append)
-        self.assertFalse(self.cura.load(self._lease(self._make_file("two.gcode"))))
-        self.assertEqual(messages, ["Cura is already loading a file"])
+        self.assertTrue(self.cura.load(self._lease(second)))
+        self.assertEqual(messages, [])
+        self.assertTrue(self.cura.loading)  # the new load holds the stage
+        self.assertIn(path, self.releases)  # the superseded lease released, never leaked
+        self.assertEqual(self.app.loaded, [path, second])  # both loads reached Cura
 
     def test_watchdog_unsticks_loading_and_keeps_the_file(self):
         path = self._make_file()

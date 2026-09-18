@@ -153,7 +153,7 @@ class BedMeshTests(unittest.TestCase):
         # BOTH the Information pop-over and the Preview legend, and
         # one shared model window drives both. The rainbow stops live
         # in the shared component so the two surfaces cannot drift.
-        for stop in ("#1a47f2", "#00b8ff", "#33db61", "#ffd11f", "#eb291f"):
+        for stop in ("MoonrakerTheme.bandBlue", "MoonrakerTheme.bandCyan", "MoonrakerTheme.bandGreen", "MoonrakerTheme.bandYellow", "MoonrakerTheme.bandRed"):
             self.assertIn(stop, RANGE_SLIDER_QML)
         for qml in (MONITOR_QML, PREVIEW_CONTROLS):
             self.assertIn("BedMeshRangeSlider", qml)

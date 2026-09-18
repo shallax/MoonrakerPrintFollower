@@ -9,6 +9,7 @@ from UM.Logger import Logger
 class PreviewPresentation(QObject):
     loadRequested = pyqtSignal()
     attachmentRequested = pyqtSignal()
+    improveEtaRequested = pyqtSignal()
     pauseAtLayerRequested = pyqtSignal(int)
     printPauseRequested = pyqtSignal()
     removePauseRequested = pyqtSignal(int)
@@ -85,6 +86,7 @@ class PreviewPresentation(QObject):
         for name, target in (
             ("loadClicked", self.loadRequested.emit),
             ("pauseClicked", self.attachmentRequested.emit),
+            ("improveEtaRequested", self.improveEtaRequested.emit),
             ("pauseAtLayerRequested", self.pauseAtLayerRequested.emit),
             ("printPauseRequested", self.printPauseRequested.emit),
             ("removePauseAtLayerRequested", self.removePauseRequested.emit),

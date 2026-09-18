@@ -2,6 +2,7 @@ import QtQuick 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
+import "theme"
 
 // The webcam card: the stream viewport with its stall watchdog and the
 // Live badge, the disconnected veil over a stale frame, and the camera
@@ -197,13 +198,13 @@ Cura.RoundedRectangle {
                 // veil while a dead stream restarts.
                 visible: root.configured && (root.printerModel == null || !root.printerModel.monitorConnected || (root.printerModel != null && root.printerModel.cameraRecovering))
                 anchors.fill: cameraImage
-                color: "#c0202428"
+                color: MoonrakerTheme.cameraVeil
 
                 UM.Label {
                     anchors.centerIn: parent
                     text: (root.printerModel != null && root.printerModel.cameraRecovering) ? "Camera recovering…" : "Camera offline"
                     font: UM.Theme.getFont("medium_bold")
-                    color: "#8b949e"
+                    color: MoonrakerTheme.consoleMuted
                 }
             }
 
@@ -219,7 +220,7 @@ Cura.RoundedRectangle {
                 height: 20 * screenScaleFactor
                 width: liveLabel.width + 20 * screenScaleFactor
                 radius: 10 * screenScaleFactor
-                color: "#99000000"
+                color: MoonrakerTheme.cameraLivePill
 
                 RowLayout {
                     anchors.centerIn: parent
@@ -228,12 +229,12 @@ Cura.RoundedRectangle {
                         width: 8 * screenScaleFactor
                         height: 8 * screenScaleFactor
                         radius: 4 * screenScaleFactor
-                        color: "#f85149"
+                        color: MoonrakerTheme.errorRed
                     }
                     UM.Label {
                         id: liveLabel
                         text: "Live"
-                        color: "#ffffff"
+                        color: MoonrakerTheme.cameraLiveText
                         font: UM.Theme.getFont("small")
                     }
                 }

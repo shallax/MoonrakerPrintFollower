@@ -1,5 +1,6 @@
 import QtQuick 2.15
 import UM 1.5 as UM
+import "theme"
 
 // The heightmap range filter (the author's request): a dual-ended
 // rainbow slider shared by the Information pop-over and the Preview
@@ -21,7 +22,7 @@ Item {
     property real high: 0
     // `enabled` is the inherited Item property (Qt 6) — declaring it
     // again triggered the engine's member-override warning.
-    property string outOfWindowColor: "#8a8f98"
+    property color outOfWindowColor: MoonrakerTheme.outOfWindowGrey
     property real outOfWindowAlpha: 0.90  // a desaturating wash, not a cover
     // The two handles track these during a drag; the host-bound
     // low/high stay untouched so the host's bindings survive, and a
@@ -108,23 +109,23 @@ Item {
             orientation: Gradient.Horizontal
             GradientStop {
                 position: 0.00
-                color: "#1a47f2"
+                color: MoonrakerTheme.bandBlue
             }
             GradientStop {
                 position: 0.25
-                color: "#00b8ff"
+                color: MoonrakerTheme.bandCyan
             }
             GradientStop {
                 position: 0.50
-                color: "#33db61"
+                color: MoonrakerTheme.bandGreen
             }
             GradientStop {
                 position: 0.75
-                color: "#ffd11f"
+                color: MoonrakerTheme.bandYellow
             }
             GradientStop {
                 position: 1.00
-                color: "#eb291f"
+                color: MoonrakerTheme.bandRed
             }
         }
     }

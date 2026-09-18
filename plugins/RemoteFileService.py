@@ -14,6 +14,37 @@ from .DownloadStream import DownloadOperation, DownloadTarget
 from .MoonrakerProtocol import download_endpoint, metadata_endpoint, parse_file_identity
 
 
+def _declared_length(reply) -> int:
+    """The response's Content-Length, 0 when absent. Read through the
+    header PAIRS with a case-insensitive scan — the typed lookup
+    would pull the network-request class into this module against
+    the architecture rule, and the raw bytes-key lookup returns
+    empty on the Cura PyQt6 (probed against the author's server).
+    The raw lookup stays as the fallback for replies whose pairs
+    are unavailable (the late-header test's fake)."""
+    try:
+        pairs = reply.rawHeaderPairs()
+    except Exception:
+        pairs = None
+    if pairs is not None:
+        for name, value in pairs:
+            try:
+                key = bytes(name).decode("latin-1", "replace").lower()
+            except Exception:
+                continue
+            if key == "content-length":
+                try:
+                    return int(bytes(value))
+                except (TypeError, ValueError):
+                    return 0
+        return 0
+    try:
+        declared = reply.rawHeader(b"Content-Length")
+        return int(bytes(declared)) if declared else 0
+    except Exception:
+        return 0
+
+
 class FileLease:
     """A consumer's explicit ownership of a cached file, released on the UI thread."""
     def __init__(self, path, release):
@@ -56,6 +87,7 @@ class _OneShotDownload:
             target = service._target_factory(self._path)
             request = self._transport.request(download_endpoint(self._transport.identity[0], self._relpath), timeout_ms=30000)
             request.setRawHeader(b"Accept", b"application/octet-stream")
+            request.setRawHeader(b"Accept-Encoding", b"identity")
             reply = self._transport.network.get(request)
             reply.setReadBufferSize(4 * 1024 * 1024)
             # Same as the job lane: the declared length is read lazily
@@ -96,6 +128,8 @@ class _OneShotDownload:
                 raise OSError(op.reply.errorString())
             if op.size > 0 and op.target.bytes_written != op.size:
                 raise OSError("Downloaded G-code size mismatch; refusing partial file")
+            if op.expected > 0 and op.target.bytes_written != op.expected:
+                raise OSError("Downloaded G-code does not match the file listing's size; refusing")
             self._deliver(self._path, None)
         except Exception as error:
             self._abort()
@@ -262,9 +296,14 @@ class RemoteFileService(QObject):
             op.reading_paused = False
         try:
             if op.size <= 0:
-                declared = reply.rawHeader(b"Content-Length")
-                if declared:
-                    op.size = int(bytes(declared))
+                op.size = _declared_length(reply)
+            # The identity-encoding contract (the critic's catch): a
+            # proxy that ignores the request serves compressed bytes
+            # whose length matches ITS declaration — the reply's own
+            # Content-Encoding header is the tell.
+            encoding = bytes(reply.rawHeader(b"Content-Encoding"))
+            if encoding and encoding.lower() != b"identity":
+                raise OSError("The download was served compressed; refusing")
             chunk = bytes(reply.readAll())
             if chunk:
                 op.received += len(chunk)
@@ -403,6 +442,14 @@ class RemoteFileService(QObject):
             target = self._target_factory(os.path.join(directory, name))
             request = self._transport.request(download_endpoint(self._transport.identity[0], job[0]), timeout_ms=30000)
             request.setRawHeader(b"Accept", b"application/octet-stream")
+            # IDENTITY encoding: Qt's default Accept-Encoding made the
+            # server answer gzip + CHUNKED, which carries no
+            # Content-Length — the transfer's declared size stayed 0
+            # and the bar swept for the whole download (the live
+            # report, the author's nginx probed). Identity also keeps
+            # the bytes on disk identical to the printer's file, which
+            # the size-mismatch guard wants.
+            request.setRawHeader(b"Accept-Encoding", b"identity")
             reply = self._transport.network.get(request)
             reply.setReadBufferSize(4 * 1024 * 1024)
             # The response headers have not arrived yet: the declared
@@ -422,6 +469,11 @@ class RemoteFileService(QObject):
             self._fail(str(error))
             return
         op = DownloadOperation(target, reply, size, generation, job)
+        # The file listing's size is the honest referee (the
+        # critic's catch) — a proxy that ignores identity-encoding
+        # delivers bytes whose length matches its own declaration.
+        if self._identity is not None and self._identity.size > 0:
+            op.expected = int(self._identity.size)
         op.on_writer_done = lambda o=op: self.writerDone.emit(o)
         op.on_writer_drained = lambda o=op: self.writerDrained.emit(o)
         self._download = op
@@ -439,9 +491,14 @@ class RemoteFileService(QObject):
             op.reading_paused = False
         try:
             if op.size <= 0:
-                declared = reply.rawHeader(b"Content-Length")
-                if declared:
-                    op.size = int(bytes(declared))
+                op.size = _declared_length(reply)
+            # The identity-encoding contract (the critic's catch): a
+            # proxy that ignores the request serves compressed bytes
+            # whose length matches ITS declaration — the reply's own
+            # Content-Encoding header is the tell.
+            encoding = bytes(reply.rawHeader(b"Content-Encoding"))
+            if encoding and encoding.lower() != b"identity":
+                raise OSError("The download was served compressed; refusing")
             chunk = bytes(reply.readAll())
             if chunk:
                 op.received += len(chunk)
@@ -496,6 +553,8 @@ class RemoteFileService(QObject):
                 raise OSError(op.reply.errorString())
             if op.size > 0 and op.target.bytes_written != op.size:
                 raise OSError("Downloaded G-code size mismatch; refusing partial file")
+            if op.expected > 0 and op.target.bytes_written != op.expected:
+                raise OSError("Downloaded G-code does not match the file listing's size; refusing")
             self._path = op.target.path
             self._download_attempts = 0
             self._download_retry_at = 0.0

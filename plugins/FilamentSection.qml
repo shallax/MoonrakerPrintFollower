@@ -3,6 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
+import "theme"
 
 // The Filament-sensors section (4.3.0 extraction): the sensor rows
 // out of the monitor as one property-driven component. The host
@@ -37,7 +38,7 @@ ColumnLayout {
                 }
                 UM.Label {
                     text: modelData.state
-                    color: !modelData.enabled ? UM.Theme.getColor("text_inactive") : (modelData.detected ? "#43a047" : "#fb8c00")
+                    color: !modelData.enabled ? UM.Theme.getColor("text_inactive") : (modelData.detected ? MoonrakerTheme.filamentDetected : MoonrakerTheme.warningOrange)
                     font: UM.Theme.getFont("medium")
                 }
             }

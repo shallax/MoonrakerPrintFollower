@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill-rule="evenodd">
+  <!-- Layer: three stacked slabs, the gcode layer readout. No fill
+       attributes: UM.ColorImage injects the theme colour into the
+       root svg element, so the glyph follows Cura's theme and
+       scaling. -->
+  <path d="M3 4h18v4H3V4zm0 6h18v4H3v-4zm0 6h18v4H3v-4z"/>
+</svg>

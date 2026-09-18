@@ -376,6 +376,6 @@ class PreviewFollower:
                 else:
                     finish = datetime.now().astimezone() + timedelta(seconds=remaining)
                     clock = finish.strftime("%a %H:%M" if remaining >= 20 * 3600 else "%H:%M")
-                    text = prefix + f"in {self.format_duration(remaining)} · ~{clock}"
+                    text = prefix + f"in {self.format_duration(remaining)} · ≈{clock}"
         self._state = replace(self._state, eta_text=text)
 

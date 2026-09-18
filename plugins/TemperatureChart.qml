@@ -1,5 +1,6 @@
 import QtQuick 2.15
 import UM 1.5 as UM
+import "theme"
 
 // The Monitor's temperature history plot: solid actuals, translucent
 // target BANDS whose top edge is the setpoint marker (the
@@ -123,7 +124,7 @@ Item {
     }
 
     function _strokeColor(seriesColor, alpha) {
-        var base = String(seriesColor || "#888888");
+        var base = String(seriesColor || MoonrakerTheme.seriesDefault);
         if (base.charAt(0) === "#" && base.length === 7) {
             return Qt.rgba(parseInt(base.substr(1, 2), 16) / 255, parseInt(base.substr(3, 2), 16) / 255, parseInt(base.substr(5, 2), 16) / 255, alpha);
         }

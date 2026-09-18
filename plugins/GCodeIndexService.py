@@ -69,6 +69,10 @@ class GCodeIndexService(QObject):
         self._failed_hydrate = set()
         self._closed = False
         self._error = ""
+        # The build's byte-offset fraction, written from the worker
+        # thread's progress callback and read by the coordinator's
+        # tick — a plain float, atomic enough under the GIL.
+        self._progress = None
         self._completed.connect(self._finish)
         files.changed.connect(self._on_files_changed)
 
@@ -76,6 +80,8 @@ class GCodeIndexService(QObject):
     def view(self): return self._view
     @property
     def generation(self): return self._generation
+    @property
+    def progress(self): return self._progress
     @property
     def phase(self):
         if self._error: return "error"
@@ -88,6 +94,10 @@ class GCodeIndexService(QObject):
         self._cancel.set()
         self._cancel = threading.Event()
         self._job, self._view = job_key, None
+        # The panel's catch: the build's progress survives into the
+        # cache RESTORE otherwise — the bar read the previous
+        # print's final 100% through the whole restore phase.
+        self._progress = None
         self._wanted = self._restored = self._save = False
         self._hydrate.clear()
         self._hydrating = None
@@ -152,7 +162,10 @@ class GCodeIndexService(QObject):
                 self._files.request_file()
                 return
             cancel = self._cancel
-            self._submit("build", lambda: build_index_from_file(lease.path, cancel), lease)
+            self._progress = 0.0
+            self._submit("build", lambda: build_index_from_file(
+                lease.path, cancel,
+                progress=lambda fraction: setattr(self, "_progress", fraction)), lease)
             return
         index = self._view._index
         self._hydrate = {n for n in self._hydrate if n < len(self._view.ranges) and not self._view.hydrated(n)

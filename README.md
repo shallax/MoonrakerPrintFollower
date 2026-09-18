@@ -8,8 +8,33 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.3.0
+- **Release:** 4.4.0
 - **Target:** Cura 5.11–5.13 / SDK 8.11–8.12
+
+## What changed in 4.4.0
+
+Version 4.4.0 is the configurable-sections release: every pane's
+collapsed strip is a real readout, the sections are hideable and
+reorderable, the next scheduled pause is visible ahead of time, and
+the G-code index builds in one pass.
+
+- **Configurable sections** — each pane's configure popover lists
+  its sections with a shared all/none selector, per-row toggles,
+  drag handles and a reset-to-defaults label; the layout persists
+  per pane.
+- **Collapsed readouts** — the collapsed panes show live
+  temperatures, ETA and finish, the layer count, the stacked
+  progress bars, the flow rate, and the X/Y/Z position and Z offset
+  in their axis colours; unavailable values hide their glyphs
+  whole.
+- **The next pause** — a Next pause row under Finish gives the
+  countdown and the deadline (marked "(baked)" for gcode pauses),
+  and both stacked bars gain a third fill in the mesh's neon orange
+  tracking the progress toward the pause in time.
+- **The theme document** — the plugin's colours live in one theme
+  singleton instead of repeated hex literals.
+- **One-pass indexing** — the G-code index builds in a single pass
+  with real byte progress through the download and index phases.
 
 ## What changed in 4.3.0
 

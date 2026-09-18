@@ -87,6 +87,20 @@ class NormaliseSectionLayoutTests(unittest.TestCase):
         self.assertEqual(normalise_section_layout(None), {})
         self.assertEqual(normalise_section_layout([{"order": []}]), {})
 
+    def test_resetting_one_pane_never_touches_the_others(self):
+        # The live report: the controls popup's reset-to-defaults
+        # visibly reset the information pane's customised sections.
+        # The reset re-normalises the whole document with the ONE
+        # pane's entry cleared — every other pane's entry must come
+        # through byte-identical.
+        info_order = list(PANE_SECTION_ORDER["information"])
+        stored = {"information": {"order": [info_order[1], info_order[0]] + info_order[2:],
+                                  "hidden": [info_order[0]]},
+                  "controls": {"order": ["print", "save"], "hidden": ["setup"]}}
+        normalised = normalise_section_layout({**stored, "controls": {"order": [], "hidden": []}})
+        self.assertEqual(normalised["information"], stored["information"])
+        self.assertNotIn("controls", normalised)
+
 
 class LayoutForTests(unittest.TestCase):
     def test_absent_pane_is_the_table_default(self):

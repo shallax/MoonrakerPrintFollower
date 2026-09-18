@@ -2,6 +2,54 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.4.0
+
+Version 4.4.0 is the configurable-sections release: every pane's
+collapsed strip is a real readout, the sections are hideable and
+reorderable, the next scheduled pause is visible ahead of time, and
+the G-code index builds in one pass.
+
+- **Configurable sections.** Each pane's configure popover lists
+  its sections with a shared all/none selector, per-row toggles,
+  drag handles and a reset-to-defaults label. The layout persists
+  per pane — one pane's reset never touches another's.
+- **Collapsed readouts.** The collapsed panes carry live readouts:
+  the information strip shows the printer's hotend and bed
+  temperatures; the status strip leads with the ETA and finish
+  clock, the current/total layer count, one stacked progress bar
+  (print on the bottom, layer on the top, touching) and the flow
+  rate; the controls strip shows the X/Y/Z position in their axis
+  colours and the Z offset. Unavailable values hide their glyphs
+  whole, and groups de-render before the panes clip them.
+- **The next pause.** A Next pause row under Finish gives the
+  countdown and the wall-clock deadline (marked "(baked)" when the
+  pause comes from the gcode), and both stacked bars gain a third
+  fill in the mesh's neon orange — the print's progress toward the
+  pause in time, measured from the last pause (the print's start
+  before any), climbing smoothly and never exceeding 100% even when
+  the ETA slips.
+- **The theme document.** The plugin's colours — the axis identity
+  colours, the neon orange, the console palette and the rest — live
+  in one theme singleton instead of repeated hex literals.
+- **The preview card.** The layer readout shows current/total, the
+  strip gains the current height, the hourglass glyph mirrors the
+  Monitor's improve-Eta action, the attach and pause controls hide
+  without a toolpath (and the follower detaches for real when the
+  toolpath goes away), the baked pauses appear through the light
+  ETA-improve download alone, and every strip row carries a
+  tooltip.
+- **One-pass indexing.** The G-code index builds in a single pass
+  (layers, marker values, block stats, motions and pause offsets
+  together), the download requests identity encoding so the
+  download and index phases read a real byte percentage, and the
+  finish-time estimates use ≈ instead of ~.
+- **The toolhead readout.** The Position row shows the three axes
+  as fixed cells in their axis colours, and the absolute/relative
+  toggle sits on its own Moves row underneath.
+- **The load watchdog.** A Cura parse that runs long no longer
+  trips the plugin's confirmation bound — it now waits five minutes
+  before releasing a load Cura silently refused.
+
 ## 4.3.0
 
 Version 4.3.0 is the QML componentisation release: every

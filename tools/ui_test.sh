@@ -104,11 +104,14 @@ if ! docker exec "$CONTAINER" true >/dev/null 2>&1; then
 fi
 # Per-unit evidence dir: the release gate gives every unit its own name
 # so a later unit never overwrites an earlier one's proof (the panel's
-# evidence-survival finding). Both sides resolve through the one shared
-# rule (tools/ui_test_paths.sh carries the tests) so the host report
-# and the container writes can never drift apart again.
-RUN_DIR="$(tools/ui_test_paths.sh resolve "$WORK_DIR" "${RUN_DIR_NAME:-run-001}")"
-CONTAINER_RUN_DIR="$(container_path "$(tools/ui_test_paths.sh resolve "$CONTAINER_WORK_DIR" "${RUN_DIR_NAME:-run-001}")")"
+# evidence-survival finding). The local default timestamps too (the
+# author's ruling — a reused fixed name left a stale gallery
+# masquerading as the current run's evidence). Both sides resolve
+# through the one shared rule (tools/ui_test_paths.sh carries the
+# tests) so the host report and the container writes can never drift
+# apart again.
+RUN_DIR="$(tools/ui_test_paths.sh resolve "$WORK_DIR" "${RUN_DIR_NAME:-run-$(date +%Y-%m-%d-%H%M%S)}")"
+CONTAINER_RUN_DIR="$(container_path "$(tools/ui_test_paths.sh resolve "$CONTAINER_WORK_DIR" "${RUN_DIR_NAME:-run-$(date +%Y-%m-%d-%H%M%S)}")")"
 
 # The pinned Cura for this run: any version can be selected; prepare
 # one with tools/fetch_cura.py (the manifest records the swap).
@@ -255,7 +258,8 @@ cp "$root/tests/harness/surface_coverage.py" "$WORK_DIR"/coverage.py
 # harness_tests tree, and the copy used to fail every unit at staging.
 mkdir -p "$WORK_DIR"/harness_tests/tests/harness
 cp "$root/tests/harness/simulator.py" "$root/tests/harness/simulator_serve.py" \
-    "$root/tests/test_simulator.py" "$WORK_DIR"/harness_tests/tests/harness/
+    "$root/tests/harness/gcodegen.py" "$root/tests/test_simulator.py" \
+    "$WORK_DIR"/harness_tests/tests/harness/
 
 # The bracket keeps pgrep from matching the exec shell's own command
 # line (which contains the pattern) — without it the guard always

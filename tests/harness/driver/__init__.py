@@ -1095,9 +1095,15 @@ class HarnessServer(QObject):
                             rect = self._rect(item)
                             matches.append((rect["y"], rect["x"], item))
                 if matches:
+                    # The tiebreaker ends at id(): two equal scene
+                    # rects must never fall through to comparing the
+                    # QQuickItems themselves (uncomparable — the x4-14
+                    # crash when the controls readout gained a second
+                    # label).
+                    key = lambda match: (match[0], match[1], id(match[2]))
                     if request.get("all"):
                         texts = []
-                        for _y, _x, item in sorted(matches):
+                        for _y, _x, item in sorted(matches, key=key):
                             try:
                                 label = item.property("text")
                             except Exception:
@@ -1106,7 +1112,7 @@ class HarnessServer(QObject):
                         return {"id": request_id, "ok": True, "texts": texts,
                                 "walk": dict(_WALK_STATS)}
                     # Shared names (repeater rows): the topmost row.
-                    matches.sort()
+                    matches.sort(key=key)
                     item = matches[0][2]
                     try:
                         label = item.property("text")
@@ -1625,10 +1631,20 @@ def _effectively_visible(item):
     # Qt's isVisible() lies for deeply nested repeater content (the
     # rendered label reports invisible); walk the parent chain and AND
     # the visible flags ourselves — the collapse checks depend on it.
+    # Opacity joins the chain: the fit hides whole groups through
+    # opacity, and an opacity-0 item is every bit as absent (the x7
+    # short-window gate).
     node = item
     while node is not None:
         try:
             if not bool(node.property("visible")):
+                return False
+            # The None guard, not the falsy fallback: 0.0 IS falsy,
+            # so `or 1.0` read an opacity-0 item as fully visible and
+            # every absence check on the fit's hiding passed nothing
+            # (the panel's catch — the x7 root cause).
+            opacity = node.property("opacity")
+            if opacity is not None and float(opacity) <= 0.0:
                 return False
         except Exception:
             pass

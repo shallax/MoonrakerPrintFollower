@@ -32,6 +32,12 @@ _MOTION = re.compile(rb"^\s*(?:N\d+\s*)?G0?[0-3](?!\d)", re.IGNORECASE)
 _ELAPSED = re.compile(rb"^\s*;TIME_ELAPSED:\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
 _COMMAND = re.compile(rb"^\s*(?:N\d+\s*)?([GMT]\d+)(?!\d)", re.IGNORECASE)
 _AXIS = re.compile(rb"([XYZ])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", re.IGNORECASE)
+# A baked end-of-layer pause: the pause command word standing alone at
+# the line start (comment lines never match). The PauseAtHeight
+# post-processor emits the configured pause command inside its
+# ;TYPE:CUSTOM block at the END of the target layer's moves, so the
+# line's offset resolves to that layer through the block ranges.
+_PAUSE_COMMAND = re.compile(rb"^\s*(?:PAUSE|M0|M25)\b")
 
 _CACHE_MAGIC = b"MPFI110\0"
 _CACHE_VERSION = 5
@@ -45,6 +51,8 @@ _LARGE_FILE_COMPACT_THRESHOLD = 128 * 1024 * 1024
 _MAX_LINE_BYTES = 64 * 1024
 _MAX_LAYER_BLOCKS = 100_000
 _MAX_MOTIONS_PER_LAYER = 200_000
+# The layer-format sniff window: the file head read before the scan.
+_MARKER_SNIFF_BYTES = 262144
 # How far below the monotonic floor the refinement search may start, in
 # motions. Generous enough to cover a parser-chunk lead and any earlier
 # floor overshoot; the monotonic clamp is applied to the result.
@@ -221,227 +229,26 @@ def _parse_axes(code: bytes) -> Dict[str, float]:
     return values
 
 
-def _build_pass(
-    handle: BinaryIO,
-    marker: re.Pattern[bytes],
-    *,
-    collect_stats: bool,
-    collect_motions: bool = True,
-    cancel_event=None,
-) -> Tuple[
-    List[Tuple[int, int]], List[array], List[array], List[array], List[array],
-    List[Tuple[float, float, float]], List[bool], List[float], List[Optional[float]], List[int],
-]:
-    blocks: List[dict] = []
-    current: Optional[dict] = None
-    stats_values: List[int] = []
-    absolute_xyz = True
-    units_scale = 1.0
-    x = y = z = 0.0
-    line_number = 0
+def _emit_progress(handle: BinaryIO, progress) -> None:
+    # The scanner's honest precision: the file offset against the
+    # size. Every 4096 lines, so the callback stays cheap.
+    try:
+        size = os.fstat(handle.fileno()).st_size
+        progress(min(1.0, handle.tell() / max(1, size)))
+    except (OSError, ValueError):
+        pass
 
-    handle.seek(0)
-    while True:
-        if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
-            return [], [], [], [], [], [], [], [], [], [], []
-        if (line_number & 0xFFF) == 0 and line_number:
-            # Release the GIL every 4096 lines: the parse is a tight
-            # Python loop, and without periodic yields the UI thread
-            # starves for the whole indexing duration on large files.
-            time.sleep(0)
-        offset = handle.tell()
-        line = handle.readline(_MAX_LINE_BYTES + 1)
-        if not line:
-            break
-        if len(line) > _MAX_LINE_BYTES:
-            # A hostile/corrupt file with no newlines would load a
-            # giant "line" into RAM and regex-scan it; truncated
-            # garbage chunks simply match nothing and are skipped.
-            line = b""
-        stripped = line.rstrip(b"\r\n")
-
-        if collect_stats:
-            stats_match = _STATS_MARKER.search(stripped)
-            if stats_match is not None:
-                try:
-                    value = int(stats_match.group(1))
-                    if not stats_values or stats_values[-1] != value:
-                        stats_values.append(value)
-                    # Record the first CURRENT_LAYER seen inside each layer
-                    # block. A global consecutive-value heuristic cannot tell a
-                    # leading start-gcode value (CURRENT_LAYER=0 before the
-                    # first ;LAYER) from the first layer's own value.
-                    if current is not None and current["end"] is None and current["stats"] is None:
-                        current["stats"] = value
-                except (TypeError, ValueError):
-                    pass
-
-        if marker.search(stripped):
-            if current is not None and current["end"] is None:
-                current["end"] = offset
-            if len(blocks) >= _MAX_LAYER_BLOCKS:
-                # Marker-dense hostile file: stop tracking further
-                # layers. The last tracked block already closed at the
-                # offset above; everything after degrades to the
-                # byte-range fraction and the last known layer.
-                current = None
-            else:
-                current = {
-                    "start": offset,
-                    "end": None,
-                    "elapsed": None,
-                    "stats": None,
-                    "motions": array("Q"),
-                    "x": array("f"),
-                    "y": array("f"),
-                    "z": array("f"),
-                    "start_position": (x, y, z),
-                    "start_absolute": absolute_xyz,
-                    "start_units": units_scale,
-                }
-                blocks.append(current)
-        elif current is not None and current["end"] is None:
-            elapsed_match = _ELAPSED.search(stripped)
-            if elapsed_match is not None:
-                current["end"] = offset
-                try:
-                    current["elapsed"] = float(elapsed_match.group(1))
-                except (TypeError, ValueError):
-                    current["elapsed"] = None
-
-        # Track G-code XYZ state even outside the indexed layer body. This is
-        # important for Cura files that emit travel/macro motion between
-        # ;TIME_ELAPSED and the following ;LAYER marker.
-        code = stripped.split(b";", 1)[0]
-        command_match = _COMMAND.search(code)
-        command = command_match.group(1).upper() if command_match else b""
-        axes = _parse_axes(code)
-        if units_scale != 1.0 and axes:
-            axes = {axis: value * units_scale for axis, value in axes.items()}
-        if command == b"G20":
-            units_scale = 25.4
-        elif command == b"G21":
-            units_scale = 1.0
-        elif command == b"G90":
-            absolute_xyz = True
-        elif command == b"G91":
-            absolute_xyz = False
-        elif command == b"G92":
-            if "X" in axes:
-                x = axes["X"]
-            if "Y" in axes:
-                y = axes["Y"]
-            if "Z" in axes:
-                z = axes["Z"]
-        elif _MOTION.search(stripped):
-            nx, ny, nz = x, y, z
-            if "X" in axes:
-                nx = axes["X"] if absolute_xyz else x + axes["X"]
-            if "Y" in axes:
-                ny = axes["Y"] if absolute_xyz else y + axes["Y"]
-            if "Z" in axes:
-                nz = axes["Z"] if absolute_xyz else z + axes["Z"]
-            x, y, z = nx, ny, nz
-            if collect_motions and current is not None and current["end"] is None \
-                    and len(current["motions"]) < _MAX_MOTIONS_PER_LAYER:
-                # Past the cap the layer's path data truncates and the
-                # byte-range fraction covers the rest — a one-layer
-                # hostile file must not grow multi-GB motion arrays.
-                current["motions"].append(offset)
-                current["x"].append(x)
-                current["y"].append(y)
-                current["z"].append(z)
-
-        line_number += 1
-
-    if cancel_event is not None and cancel_event.is_set():
-        return [], [], [], [], [], [], [], [], [], [], []
-
-    file_end = handle.tell()
-    if current is not None and current["end"] is None:
-        current["end"] = file_end
-
-    ranges: List[Tuple[int, int]] = []
-    motions: List[array] = []
-    motion_x: List[array] = []
-    motion_y: List[array] = []
-    motion_z: List[array] = []
-    starts: List[Tuple[float, float, float]] = []
-    start_absolute: List[bool] = []
-    start_units: List[float] = []
-    elapsed_times: List[Optional[float]] = []
-    block_stats: List[Optional[int]] = []
-    for block in blocks:
-        start = int(block["start"])
-        end = int(block["end"] if block["end"] is not None else file_end)
-        ranges.append((start, max(start + 1, end)))
-        motions.append(block["motions"])
-        motion_x.append(block["x"])
-        motion_y.append(block["y"])
-        motion_z.append(block["z"])
-        starts.append(tuple(float(v) for v in block["start_position"]))
-        start_absolute.append(bool(block["start_absolute"]))
-        start_units.append(float(block["start_units"]))
-        elapsed = block.get("elapsed")
-        elapsed_times.append(float(elapsed) if elapsed is not None else None)
-        stats = block.get("stats")
-        block_stats.append(int(stats) if stats is not None else None)
-    return ranges, motions, motion_x, motion_y, motion_z, starts, start_absolute, start_units, elapsed_times, stats_values, block_stats
-
-
-def _collect_marker_values(handle: BinaryIO, capture: Optional[re.Pattern[bytes]], cancel_event=None) -> List[int]:
-    if capture is None:
-        return []
-    values: List[int] = []
-    handle.seek(0)
-    line_number = 0
-    while True:
-        if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
-            return []
-        line = handle.readline(_MAX_LINE_BYTES + 1)
-        if not line:
-            break
-        if len(line) > _MAX_LINE_BYTES:
-            line = b""
-        match = capture.search(line.rstrip(b"\r\n"))
-        if match is not None:
-            try:
-                values.append(int(match.group(1)))
-            except (TypeError, ValueError):
-                pass
-        line_number += 1
-    return values
-
-
-_MARKER_SNIFF_BYTES = 262144
-
-# A baked end-of-layer pause: the pause command word standing alone at
-# the line start (comment lines never match). The PauseAtHeight
-# post-processor emits the configured pause command inside its
-# ;TYPE:CUSTOM block at the END of the target layer's moves, so the
-# line's offset resolves to that layer through the block ranges.
-_PAUSE_COMMAND = re.compile(rb"^\s*(?:PAUSE|M0|M25)\b")
-
-
-def _collect_pause_offsets(handle: BinaryIO, cancel_event=None) -> List[int]:
-    offsets: List[int] = []
-    handle.seek(0)
-    line_number = 0
-    while True:
-        if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
-            return []
-        offset = handle.tell()
-        line = handle.readline(_MAX_LINE_BYTES + 1)
-        if not line:
-            break
-        if len(line) > _MAX_LINE_BYTES:
-            line = b""
-        if _PAUSE_COMMAND.match(line.rstrip(b"\r\n")) is not None:
-            offsets.append(offset)
-        line_number += 1
-    return offsets
-
-def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] = None) -> LayerMotionIndex:
+def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] = None, progress=None, stage=None) -> LayerMotionIndex:
+    # ONE pass (the author's ruling): a single read collects the
+    # layer ranges, the marker values, the block stats, the motions
+    # AND the pause offsets. The old four-pass build re-read the
+    # file per concern, which restarted the progress bar per pass
+    # and quadrupled the I/O on large files. The markers are checked
+    # per line in the sniffed order, so the sniffed format still
+    # wins cheaply and the fallbacks still catch files whose markers
+    # the sniff window missed.
+    if stage is not None:
+        stage("Scanning layers")
     if compact is None:
         try:
             compact = os.path.getsize(path) >= _LARGE_FILE_COMPACT_THRESHOLD
@@ -455,55 +262,248 @@ def build_index_from_file(path: str, cancel_event=None, compact: Optional[bool] 
         (_STATS_MARKER, _STATS_MARKER),
     )
     # Sniff the layer-change format from the file head so the matching
-    # marker pass runs first. A non-matching pass still reads the entire
-    # file, and four full reads of a large G-code dominate the indexing
-    # time; the fallback loop keeps files whose marker appears beyond
-    # the sniff window working as before.
+    # marker is checked first per line; the rest stay in the fallback
+    # order.
     try:
         with open(path, "rb") as probe:
-            # The pass itself matches per line (the markers are
+            # The scan matches per line (the markers are
             # line-anchored), so the sniff must too: a raw blob search
-            # would miss the layer markers and hand the first pass to the
-            # stats marker.
+            # would miss the layer markers and hand the first check to
+            # the stats marker.
             head_lines = probe.read(_MARKER_SNIFF_BYTES).splitlines()
         sniffed = next((marker for marker, _capture in markers
                         if any(marker.match(line) for line in head_lines)), None)
     except OSError:
         sniffed = None
-    ordered = [entry for entry in markers if entry[0] is sniffed] + [entry for entry in markers if entry[0] is not sniffed]
-    ranges = motions = xs = ys = zs = starts = start_absolute = start_units = elapsed_times = stats_values = block_stats = None
-    pause_layers: Tuple[int, ...] = ()
-    marker_values: List[int] = []
-    with open(path, "rb") as handle:
-        for marker, capture in ordered:
-            result = _build_pass(
-                handle, marker, collect_stats=True, collect_motions=not compact, cancel_event=cancel_event
-            )
-            ranges, motions, xs, ys, zs, starts, start_absolute, start_units, elapsed_times, stats_values, block_stats = result
-            if ranges:
-                marker_values = _collect_marker_values(handle, capture, cancel_event)
-                break
-            if cancel_event is not None and cancel_event.is_set():
-                break
+    captures = dict(markers)
+    # Which marker opens layer blocks — decided ONCE per file (the
+    # critic's catch): the sniffed marker, else the earliest-ordered
+    # marker that matches ANY line. A fast census pass reads only the
+    # marker regexes (no block state), so the scan can react to the
+    # single winner — the old per-line take-over was not retroactive
+    # and mis-attributed an earlier-ordered marker's lines to a
+    # later one's blocks when the file primed past the sniff window.
+    winner = sniffed
+    if winner is None:
+        try:
+            with open(path, "rb") as probe:
+                for line in probe:
+                    for marker, _capture in markers:
+                        if marker.match(line.rstrip(b"\r\n")):
+                            winner = marker
+                            break
+                    if winner is not None:
+                        break
+        except OSError:
+            winner = None
 
-        # The baked pauses map to layers by block START only. A block's
-        # recorded end is the ;TIME_ELAPSED line, and PauseAtHeight
-        # emits its pause block AFTER that — between the elapsed
-        # marker and the next layer marker (the live report: the real
-        # job's M0 lines sat past the recorded end and were dropped).
-        # The next block's start is the true boundary, so bisect on
-        # starts alone is exact. A pause before the first marker
-        # (start gcode) belongs to no layer and is skipped.
-        if ranges and not (cancel_event is not None and cancel_event.is_set()):
-            baked: List[int] = []
-            starts_offsets = [start for start, _end in ranges]
-            for offset in _collect_pause_offsets(handle, cancel_event):
-                idx = bisect_right(starts_offsets, offset) - 1
-                if idx < 0 or idx >= len(ranges):
-                    continue
-                if not baked or baked[-1] != idx:
-                    baked.append(idx)
-            pause_layers = tuple(baked)
+    blocks: List[dict] = []
+    current: Optional[dict] = None
+    stats_values: List[int] = []
+    marker_values: List[int] = []
+    pause_offsets: List[int] = []
+    absolute_xyz = True
+    units_scale = 1.0
+    x = y = z = 0.0
+    line_number = 0
+    collect_motions = not compact
+
+    with open(path, "rb") as handle:
+        while True:
+            if cancel_event is not None and (line_number & 0x3FF) == 0 and cancel_event.is_set():
+                return LayerMotionIndex()
+            if (line_number & 0xFFF) == 0 and line_number:
+                # Release the GIL every 4096 lines: the parse is a
+                # tight Python loop, and without periodic yields the
+                # UI thread starves for the whole indexing duration
+                # on large files. The same beat reports the
+                # byte-offset progress.
+                time.sleep(0)
+                if progress is not None:
+                    _emit_progress(handle, progress)
+            offset = handle.tell()
+            line = handle.readline(_MAX_LINE_BYTES + 1)
+            if not line:
+                break
+            if len(line) > _MAX_LINE_BYTES:
+                # A hostile/corrupt file with no newlines would load
+                # a giant "line" into RAM and regex-scan it;
+                # truncated garbage chunks simply match nothing and
+                # are skipped.
+                line = b""
+            stripped = line.rstrip(b"\r\n")
+
+            stats_match = _STATS_MARKER.search(stripped)
+            if stats_match is not None:
+                try:
+                    value = int(stats_match.group(1))
+                    if not stats_values or stats_values[-1] != value:
+                        stats_values.append(value)
+                    # Record the first CURRENT_LAYER seen inside each
+                    # layer block. A global consecutive-value
+                    # heuristic cannot tell a leading start-gcode
+                    # value (CURRENT_LAYER=0 before the first
+                    # ;LAYER) from the first layer's own value.
+                    if current is not None and current["end"] is None and current["stats"] is None:
+                        current["stats"] = value
+                except (TypeError, ValueError):
+                    pass
+
+            # The layer-marker line: the sniffed format first, the
+            # fallbacks in order. Only the ACTIVE marker opens
+            # blocks — the old per-pass loop broke on the first pass
+            # that found ranges, so a later format's lines (e.g. the
+            # stats marker) never acted once an earlier one matched
+            # anywhere. Without a sniff an earlier-ordered marker
+            # still takes over retroactively (its pass would have
+            # found this line before any later marker's pass ran).
+            boundary = False
+            matched = None
+            if winner is not None and winner.search(stripped) is not None:
+                boundary = True
+                matched = captures[winner]
+            if boundary:
+                if current is not None and current["end"] is None:
+                    current["end"] = offset
+                if len(blocks) >= _MAX_LAYER_BLOCKS:
+                    # Marker-dense hostile file: stop tracking further
+                    # layers. The last tracked block already closed at
+                    # the offset above; everything after degrades to
+                    # the byte-range fraction and the last known
+                    # layer.
+                    current = None
+                else:
+                    current = {
+                        "start": offset,
+                        "end": None,
+                        "elapsed": None,
+                        "stats": None,
+                        "motions": array("Q"),
+                        "x": array("f"),
+                        "y": array("f"),
+                        "z": array("f"),
+                        "start_position": (x, y, z),
+                        "start_absolute": absolute_xyz,
+                        "start_units": units_scale,
+                    }
+                    blocks.append(current)
+                if matched is not None:
+                    capture_match = matched.search(stripped)
+                    if capture_match is not None:
+                        try:
+                            marker_values.append(int(capture_match.group(1)))
+                        except (TypeError, ValueError):
+                            pass
+            elif current is not None and current["end"] is None:
+                elapsed_match = _ELAPSED.search(stripped)
+                if elapsed_match is not None:
+                    current["end"] = offset
+                    try:
+                        current["elapsed"] = float(elapsed_match.group(1))
+                    except (TypeError, ValueError):
+                        current["elapsed"] = None
+
+            # A baked end-of-layer pause command (the pause-offsets
+            # concern, collected in the same read).
+            if _PAUSE_COMMAND.match(stripped) is not None:
+                pause_offsets.append(offset)
+
+            # Track G-code XYZ state even outside the indexed layer
+            # body. This is important for Cura files that emit
+            # travel/macro motion between ;TIME_ELAPSED and the
+            # following ;LAYER marker.
+            code = stripped.split(b";", 1)[0]
+            command_match = _COMMAND.search(code)
+            command = command_match.group(1).upper() if command_match else b""
+            axes = _parse_axes(code)
+            if units_scale != 1.0 and axes:
+                axes = {axis: value * units_scale for axis, value in axes.items()}
+            if command == b"G20":
+                units_scale = 25.4
+            elif command == b"G21":
+                units_scale = 1.0
+            elif command == b"G90":
+                absolute_xyz = True
+            elif command == b"G91":
+                absolute_xyz = False
+            elif command == b"G92":
+                if "X" in axes:
+                    x = axes["X"]
+                if "Y" in axes:
+                    y = axes["Y"]
+                if "Z" in axes:
+                    z = axes["Z"]
+            elif _MOTION.search(stripped):
+                nx, ny, nz = x, y, z
+                if "X" in axes:
+                    nx = axes["X"] if absolute_xyz else x + axes["X"]
+                if "Y" in axes:
+                    ny = axes["Y"] if absolute_xyz else y + axes["Y"]
+                if "Z" in axes:
+                    nz = axes["Z"] if absolute_xyz else z + axes["Z"]
+                x, y, z = nx, ny, nz
+                if collect_motions and current is not None and current["end"] is None \
+                        and len(current["motions"]) < _MAX_MOTIONS_PER_LAYER:
+                    # Past the cap the layer's path data truncates and
+                    # the byte-range fraction covers the rest — a
+                    # one-layer hostile file must not grow multi-GB
+                    # motion arrays.
+                    current["motions"].append(offset)
+                    current["x"].append(x)
+                    current["y"].append(y)
+                    current["z"].append(z)
+
+            line_number += 1
+
+        file_end = handle.tell()
+        if current is not None and current["end"] is None:
+            current["end"] = file_end
+
+    ranges: List[Tuple[int, int]] = []
+    motions: List[array] = []
+    xs: List[array] = []
+    ys: List[array] = []
+    zs: List[array] = []
+    starts: List[Tuple[float, float, float]] = []
+    start_absolute: List[bool] = []
+    start_units: List[float] = []
+    elapsed_times: List[Optional[float]] = []
+    block_stats: List[Optional[int]] = []
+    for block in blocks:
+        start = int(block["start"])
+        end = int(block["end"] if block["end"] is not None else file_end)
+        ranges.append((start, max(start + 1, end)))
+        motions.append(block["motions"])
+        xs.append(block["x"])
+        ys.append(block["y"])
+        zs.append(block["z"])
+        starts.append(tuple(float(v) for v in block["start_position"]))
+        start_absolute.append(bool(block["start_absolute"]))
+        start_units.append(float(block["start_units"]))
+        elapsed = block.get("elapsed")
+        elapsed_times.append(float(elapsed) if elapsed is not None else None)
+        stats = block.get("stats")
+        block_stats.append(int(stats) if stats is not None else None)
+
+    # The baked pauses map to layers by block START only. A block's
+    # recorded end is the ;TIME_ELAPSED line, and PauseAtHeight
+    # emits its pause block AFTER that — between the elapsed marker
+    # and the next layer marker (the live report: the real job's M0
+    # lines sat past the recorded end and were dropped). The next
+    # block's start is the true boundary, so bisect on starts alone
+    # is exact. A pause before the first marker (start gcode)
+    # belongs to no layer and is skipped.
+    pause_layers: Tuple[int, ...] = ()
+    if ranges and pause_offsets:
+        baked: List[int] = []
+        starts_offsets = [start for start, _end in ranges]
+        for offset in pause_offsets:
+            idx = bisect_right(starts_offsets, offset) - 1
+            if idx < 0 or idx >= len(ranges):
+                continue
+            if not baked or baked[-1] != idx:
+                baked.append(idx)
+        pause_layers = tuple(baked)
 
     if cancel_event is not None and cancel_event.is_set():
         return LayerMotionIndex()

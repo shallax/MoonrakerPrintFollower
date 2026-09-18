@@ -160,7 +160,7 @@ def preview_eta_text(snapshot, physical):
         return "—"
     finish_dt = datetime.now().astimezone() + timedelta(seconds=remaining)
     finish = finish_dt.strftime("%H:%M")
-    return f"{duration(remaining)} · ~{finish}{day_offset_suffix(finish_dt)}"
+    return f"{duration(remaining)} · ≈{finish}{day_offset_suffix(finish_dt)}"
 
 
 def day_offset_suffix(finish_dt: datetime) -> str:
@@ -174,6 +174,27 @@ def duration(seconds):
     hours, rest = divmod(max(0, int(round(number(seconds)))), 3600)
     minutes, seconds = divmod(rest, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def layer_readout(layer) -> str:
+    """The preview card's current-layer cell: the HUMAN layer number
+    from the PRINTER's observation (never the preview's selection),
+    with the total when known — 'current/total' (the live ruling),
+    the bare number without one, '—' while the resolver has no
+    layer."""
+    index = getattr(layer, "index", None)
+    if index is None:
+        return "—"
+    total = getattr(layer, "total", None)
+    return f"{index + 1}/{total}" if total is not None else str(index + 1)
+
+
+def height_readout(layer) -> str:
+    """The preview card's current-height cell: the printer's absolute
+    Z with its unit, ALWAYS two decimals (the live ruling) — '—'
+    while unresolvable."""
+    height = getattr(layer, "height", None)
+    return f"{height:.2f} mm" if height is not None else "—"
 
 
 def print_job_caption(observation) -> str:
@@ -570,6 +591,11 @@ def core_values(snapshot, physical, connected):
         # separators — the wide form's triple spaces were sized for
         # the expanded row.
         "monitorPositionCompact": f"X {number(position[0]):.1f} Y {number(position[1]):.1f} Z {number(position[2]):.2f}" if len(position) >= 3 else "—",
+        # The collapsed strip's per-axis cells (the live ruling):
+        # each axis independent and fixed-width in the UI.
+        "monitorPositionX": f"X {number(position[0]):.1f}" if len(position) >= 3 else "—",
+        "monitorPositionY": f"Y {number(position[1]):.1f}" if len(position) >= 3 else "—",
+        "monitorPositionZ": f"Z {number(position[2]):.2f}" if len(position) >= 3 else "—",
         "monitorVelocity": f"{velocity:.1f} mm/s" if velocity is not None else "—",
         "monitorFlowRate": f"{_flow_text(flow)} mm³/s" if flow is not None else "—",
         "monitorFlowDiameter": f"{diameter:.2f} mm" if diameter else "—",

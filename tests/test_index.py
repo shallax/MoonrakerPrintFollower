@@ -52,6 +52,21 @@ def legacy_reference(data: bytes):
 
 
 class IndexTests(unittest.TestCase):
+    def test_the_marker_winner_is_decided_once_per_file(self):
+        # The critic's catch: an earlier-ordered marker must win the
+        # WHOLE file even when a later-ordered marker's line appears
+        # first — the old per-line take-over mis-attributed the
+        # prefix lines to the later marker's block and shifted every
+        # layer (and the baked pauses) by one.
+        priming = b"; a long klipper start macro\n" * 4000
+        data = (b";FLAVOR:Marlin\n" + priming +
+                b"SET_PRINT_STATS_INFO CURRENT_LAYER=1 TOTAL_LAYER=2\n"
+                b";LAYER:0\nG1 X1 Y1 E0.1 F1800\n"
+                b"SET_PRINT_STATS_INFO CURRENT_LAYER=2 TOTAL_LAYER=2\n"
+                b";LAYER:1\nG1 X2 Y2 E0.2 F1800\n")
+        index = build_index_from_bytes(data)
+        self.assertEqual(len(index.ranges), 2)
+
     def test_baked_pause_commands_map_to_their_layers(self):
         # The 2026-09-16 ruling: pauses baked into the gcode surface as
         # read-only list rows — the index maps each pause command to
@@ -60,6 +75,21 @@ class IndexTests(unittest.TestCase):
                 b";LAYER:2\nG1 X3 Y3\nM25\n;LAYER:3\nG1 X4 Y4\n")
         index = build_index_from_bytes(data)
         self.assertEqual(tuple(index.pauses), (0, 1, 2))
+
+    def test_the_simulators_generated_gcode_bakes_the_pause_at_layer_20(self):
+        # The harness's x10 premise (the author's request): the sim's
+        # generated gcode carries ONE baked PAUSE, and the index must
+        # find it at layer 20 — otherwise every index scenario
+        # silently loses the baked-pause path.
+        from tests.harness.gcodegen import make_gcode
+        index = build_index_from_bytes(make_gcode(40).encode("utf-8"))
+        self.assertEqual(tuple(index.pauses), (20,))
+        # The per-layer elapsed markers are the x10 ETA's premise —
+        # every layer must resolve (the panel's catch: the round-trip
+        # previously asserted only the pause).
+        self.assertEqual(len(index.layer_elapsed_times), 40)
+        self.assertTrue(all(value is not None for value in index.layer_elapsed_times))
+        self.assertEqual(index.layer_elapsed_times[:3], [30.0, 60.0, 90.0])
 
     def test_baked_pauses_before_the_first_layer_marker_are_skipped(self):
         data = b"G28\nPAUSE\n;LAYER:0\nG1 X1 Y1\n;LAYER:1\nG1 X2 Y2\n"

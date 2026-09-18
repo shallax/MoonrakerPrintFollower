@@ -59,7 +59,7 @@ def pause_eta(remaining: Optional[float], format_duration, clock=None) -> str:
         return "ETA unavailable"
     text = "in " + format_duration(remaining)
     if clock is not None:
-        text += " · ~" + clock(remaining)
+        text += " · ≈" + clock(remaining)
     return text
 
 

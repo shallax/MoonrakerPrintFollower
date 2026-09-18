@@ -39,6 +39,17 @@ class PrintSnapshot:
     # downloading) and whether the index build is running.
     download_fraction: Optional[float] = None
     indexing: bool = False
+    # The index build's byte-offset fraction (the scanner's own
+    # progress), None while not indexing.
+    index_fraction: Optional[float] = None
+    # The NEXT scheduled pause (baked or manual, the live ruling):
+    # its human layer, its composed ETA, the print's progress toward
+    # that pause as a fraction, and whether it is baked — None/""/None
+    # while no pause lies ahead.
+    next_pause_layer: Optional[int] = None
+    next_pause_eta: str = ""
+    next_pause_fraction: Optional[float] = None
+    next_pause_baked: bool = False
     # ONE load state shared by the Preview and the Monitor: true from
     # any load request (either view's) until the terminal state.
     load_active: bool = False

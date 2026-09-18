@@ -248,7 +248,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                             "monitorEta", "monitorEtaBasis", "monitorFinish", "monitorSpeed", "monitorFlow",
                             "monitorPosition", "monitorPositionCompact", "monitorVelocity", "monitorFlowRate", "monitorFlowDiameter",
                             "monitorAccelLimit", "monitorMessage", "monitorLayerSource", "filamentUsed", "filamentRemaining",
-                            "sectionReason", "sectionReasonDetail")),
+                            "sectionReason", "sectionReasonDetail",
+                            # The round's additions (the panel's catch):
+                            # a key outside its signal's group never
+                            # notifies — the next-pause readout and
+                            # the collapsed cells went stale while
+                            # PAUSED (the other keys in the group
+                            # masked it while printing).
+                            "nextPauseLayer", "nextPauseEta", "nextPauseFraction", "nextPauseBaked",
+                            "monitorPositionX", "monitorPositionY", "monitorPositionZ")),
         ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
         ("temperatureChartChanged", ("temperatureChart",)),
         ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
@@ -913,8 +921,23 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             showProbePoints=self._show_probe_points,
             britishSpelling=_british_spelling(),
             improvingEta=(snapshot.load_active or self._improving_eta) and not snapshot.index_ready,
-            improveEtaProgress=(max(0.0, min(1.0, snapshot.download_fraction))
-                                if (snapshot.load_active or self._improving_eta) and snapshot.download_fraction is not None else -1.0),
+            # The next scheduled pause (the live ruling): the
+            # JobSection's readout and both stacked bars' orange
+            # third fill.
+            nextPauseLayer=(-1 if snapshot.next_pause_layer is None else snapshot.next_pause_layer),
+            nextPauseEta=snapshot.next_pause_eta,
+            # The typed property cannot hold None (the live crash: a
+            # NoneType into a C++ double) — the -1.0 sentinel means
+            # "no pause ahead", same contract as the progress fields.
+            nextPauseFraction=(-1.0 if snapshot.next_pause_fraction is None else snapshot.next_pause_fraction),
+            nextPauseBaked=bool(snapshot.next_pause_baked),
+            # The determinate fraction through both phases: the
+            # download's byte fraction, then the index build's own
+            # byte-offset progress (the scanner reports it).
+            improveEtaProgress=(max(0.0, min(1.0, snapshot.download_fraction if snapshot.download_fraction is not None else snapshot.index_fraction))
+                                if (snapshot.load_active or self._improving_eta)
+                                   and (snapshot.download_fraction is not None or snapshot.index_fraction is not None)
+                                else -1.0),
             improveEtaPhase=("Downloading…" if (snapshot.load_active or self._improving_eta) and snapshot.download_fraction is not None
                              else "Indexing…" if (snapshot.load_active or self._improving_eta) and snapshot.indexing
                              else "Resolving…" if snapshot.load_active or self._improving_eta else ""))
@@ -951,6 +974,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     filamentRemaining = value_property(str, "filamentRemaining", monitorChanged, "—")
     britishSpelling = value_property(bool, "britishSpelling", monitorChanged, False)
     improvingEta = value_property(bool, "improvingEta", monitorChanged, False)
+    nextPauseLayer = value_property(int, "nextPauseLayer", monitorChanged, -1)
+    nextPauseEta = value_property(str, "nextPauseEta", monitorChanged, "")
+    nextPauseFraction = value_property(float, "nextPauseFraction", monitorChanged, -1.0)
+    nextPauseBaked = value_property(bool, "nextPauseBaked", monitorChanged, False)
     improveEtaProgress = value_property(float, "improveEtaProgress", monitorChanged, -1.0)
     improveEtaPhase = value_property(str, "improveEtaPhase", monitorChanged, "")
     monitorElapsed = value_property(str, "monitorElapsed", monitorChanged, "00:00:00")
@@ -961,6 +988,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     monitorFlow = value_property(str, "monitorFlow", monitorChanged, "100%")
     monitorPosition = value_property(str, "monitorPosition", monitorChanged, "—")
     monitorPositionCompact = value_property(str, "monitorPositionCompact", monitorChanged, "—")
+    # The collapsed strip's per-axis cells (the live ruling).
+    monitorPositionX = value_property(str, "monitorPositionX", monitorChanged, "—")
+    monitorPositionY = value_property(str, "monitorPositionY", monitorChanged, "—")
+    monitorPositionZ = value_property(str, "monitorPositionZ", monitorChanged, "—")
     # The motion rows (4.2.0): the defaults read "—" until the first
     # snapshot lands — an idle CONNECTED printer reads 0 (Klipper
     # always reports the motion fields once the object exists).

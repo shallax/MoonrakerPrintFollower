@@ -77,6 +77,11 @@ class DownloadOperation:
         self.target = target
         self.reply = reply
         self.size = size  # the declared Content-Length; 0 when absent
+        # The file listing's own size (the critic's catch): a proxy
+        # that ignores the identity-encoding request delivers bytes
+        # whose length matches ITS declaration — the honest referee
+        # is the listing, not the transport. 0 = unknown, skip.
+        self.expected = 0
         self.generation = generation
         self.job = job
         self.received = 0

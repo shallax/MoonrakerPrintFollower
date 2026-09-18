@@ -2,8 +2,10 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Dialogs
 import QtQuick.Layouts 1.3
+import QtQuick.Window 2.15
 import UM 1.5 as UM
 import Cura 1.1 as Cura
+import "theme"
 
 // Component-rooted DELIBERATELY: Cura's monitor-view loader
 // (setMonitorViewQmlPath) creates this document and expects a
@@ -49,7 +51,9 @@ Component {
             cameraPane.applyCamera(url, configured);
         }
 
-        Component.onCompleted: updateCameraImage()
+        Component.onCompleted: {
+            updateCameraImage();
+        }
 
         Connections {
             target: root.printer
@@ -188,21 +192,162 @@ Component {
         }
         property bool miniChartHasSeries: root.miniChartSeries.length > 0
 
-        // The collapsed strip's readout text: the mini legend's own
-        // form (label + live value) — the same rule the pane uses
-        // expanded.
-        function infoReadoutText(name, label) {
-            var payload = root.printer != null ? root.printer.temperatureChart : null;
-            var value = "—";
-            if (payload != null) {
-                var series = payload.series;
-                for (var i = 0; i < series.length; ++i) {
-                    if (series[i].name === name && series[i].points.length > 0) {
-                        value = series[i].points[series[i].points.length - 1][1].toFixed(1) + "°C";
-                    }
-                }
+        // The collapsed strip's readout text: the PRINTER's own
+        // peripherals (the ruling — never the mini chart's series,
+        // which is empty before the history builds). The hotend row
+        // reads the first extruder/hotend object, the bed row the
+        // bed — each in the strip's pair form with the setpoint.
+        function infoReadoutText(kind) {
+            var items = root.printer != null ? root.printer.temperatureItems : [];
+            for (var i = 0; i < items.length; ++i) {
+                var item = items[i];
+                var name = String(item.name || "").toLowerCase();
+                var match = kind === "bed" ? name.indexOf("bed") >= 0 : name.indexOf("extruder") >= 0 || name.indexOf("hotend") >= 0;
+                if (!match)
+                    continue;
+                // A matched object with NO reading is still
+                // unavailable (the panel's catch: the old "— °C"
+                // passed the gate and rendered a dash-unit pair the
+                // ruling says must hide whole).
+                if (item.temperature == null)
+                    return "—";
+                var text = Number(item.temperature).toFixed(1);
+                if (item.target != null && Number(item.target) > 0)
+                    text += " → " + Number(item.target).toFixed(0);
+                return text + " °C";
             }
-            return label + " " + value;
+            return "—";
+        }
+        property string infoHotendText: "—"
+        property string infoBedText: "—"
+        property bool etaAvailable: false
+        property bool finishAvailable: false
+        property bool layerCountAvailable: false
+        property bool flowAvailable: false
+        function refreshAvailabilityGates() {
+            infoHotendText = root.infoReadoutText("hotend");
+            infoBedText = root.infoReadoutText("bed");
+            etaAvailable = root.printer != null && root.printer.printActive && root.printer.monitorEta !== "—";
+            finishAvailable = root.printer != null && root.printer.printActive && root.printer.monitorFinish !== "—";
+            // The CURRENT layer is the value — a total-only form
+            // ("— / 40", the scene's lingering heights) is still
+            // unavailable (the x8 report): the whole pair hides.
+            layerCountAvailable = root.printer != null && root.printer.monitorLayer !== "—" && root.printer.monitorLayer.indexOf("— /") !== 0;
+            flowAvailable = root.printer != null && root.printer.monitorFlowRate !== "—";
+            // A readout appearing mid-print changes the strip's
+            // length — the fit must re-measure against the new
+            // layout (the panel's catch).
+            Qt.callLater(root.updateInfoReadoutFits);
+            Qt.callLater(root.updateStatusReadoutFits);
+        }
+        Connections {
+            target: root.printer
+            function onTemperatureItemsChanged() {
+                root.refreshAvailabilityGates();
+            }
+            function onMonitorEtaChanged() {
+                root.refreshAvailabilityGates();
+            }
+            function onMonitorFinishChanged() {
+                root.refreshAvailabilityGates();
+            }
+            function onMonitorLayerChanged() {
+                root.refreshAvailabilityGates();
+            }
+            function onMonitorFlowRateChanged() {
+                root.refreshAvailabilityGates();
+            }
+        }
+
+        // The whole-group fit, written IMPERATIVELY against the
+        // pane's actual rendered geometry. The group's TRUE visual
+        // bounds come from its last child's two main-axis endpoints
+        // mapped into the pane — the rotated row's main axis maps
+        // onto the pane's y, and a single corner read wrong on the
+        // author's engine (the live report). Hysteresis: hiding
+        // needs the bottom past the pane's edge, re-showing needs
+        // comfortable slack — an intermediate resize geometry must
+        // never flicker the group at the threshold (the live
+        // report).
+        function fitGroup(row, stride, first, pane) {
+            var children = row.children;
+            if (first >= children.length)
+                return;
+            var last = children[first + stride - 1];
+            // The box carries no rotation — map IT once (mapping
+            // through the rotated row read wrong on the container's
+            // engine, the x7 report) and add the child's local
+            // offset along the row's main axis: +90 rows run
+            // UPWARD, -90 downward (the sign lesson), and the
+            // child's along-strip extent is its width.
+            var box = row.parent;
+            // The +90 row's main axis runs DOWNWARD on screen (Qt's
+            // clockwise rotation — the probe-measured correction),
+            // the -90 row's upward; the two panes' opposite reading
+            // directions are DELIBERATE (the ruling).
+            var sign = row.rotation === 90 ? 1 : -1;
+            var offset = sign * (last.x + last.width / 2 - row.width / 2);
+            var bottom = box.mapToItem(pane, 0, 0).y + box.height / 2 + offset + last.width / 2;
+            // The pane's full height can EXCEED the visible viewport
+            // (the page column runs past the window — the x7
+            // report): the fit must bound against the pane's VISIBLE
+            // extent, the WINDOW's height minus the pane's position
+            // in the scene (mapToItem(null) — the document's own
+            // root is the page, not the viewport). On a pane that
+            // ends at the window the min leaves the height
+            // unchanged.
+            var windowHeight = pane.Window != null ? pane.Window.height : 0;
+            var paneTop = pane.mapToItem(null, 0, 0).y;
+            var visibleHeight = Math.min(pane.height, windowHeight - paneTop);
+            var hidden = children[first].fitHidden;
+            // No top guard: the -90-rotated info row's mapping read
+            // the guard false on the author's engine and its groups
+            // never hid (the live report) while the +90 rows worked.
+            // Bottom-only is safe even on zero geometry — the
+            // constant then reads the group's length, which hides
+            // only below a genuinely tiny pane.
+            var hide = hidden ? bottom > visibleHeight - 14 * screenScaleFactor : bottom > visibleHeight - 6 * screenScaleFactor;
+            for (var i = first; i < first + stride && i < children.length; ++i)
+                children[i].fitHidden = hide;
+        }
+        function updateInfoReadoutFits() {
+            fitGroup(infoReadoutRow, 2, 0, infoPanel);
+            // The spacer between the groups is a child too.
+            fitGroup(infoReadoutRow, 2, 3, infoPanel);
+        }
+        function updateStatusReadoutFits() {
+            // The ETA pairs lead, then the layer count, then (past
+            // the margin child) the stacked progress group, then
+            // the flow pair at the strip's end (the live ruling).
+            fitGroup(statusReadoutRow, 2, 0, statusPanel);
+            fitGroup(statusReadoutRow, 2, 2, statusPanel);
+            fitGroup(statusReadoutRow, 2, 4, statusPanel);
+            fitGroup(statusReadoutRow, 3, 7, statusPanel);
+            fitGroup(statusReadoutRow, 2, 10, statusPanel);
+        }
+        onInfoCollapsedChanged: {
+            Qt.callLater(root.updateInfoReadoutFits);
+            // The deferred retry: the callLater can run BEFORE the
+            // collapsed layout settles (the x7 report on the
+            // container's engine) — the timer re-measures with the
+            // settled geometry.
+            fitInfoRetry.restart();
+        }
+        onStatusCollapsedChanged: {
+            Qt.callLater(root.updateStatusReadoutFits);
+            fitStatusRetry.restart();
+        }
+        Timer {
+            id: fitInfoRetry
+            interval: 200
+            repeat: false
+            onTriggered: root.updateInfoReadoutFits()
+        }
+        Timer {
+            id: fitStatusRetry
+            interval: 200
+            repeat: false
+            onTriggered: root.updateStatusReadoutFits()
         }
         property bool allChartSensorsHidden: {
             var legend = root.printer != null ? root.printer.temperatureChartLegend : ({
@@ -242,6 +387,7 @@ Component {
         }
 
         onPrinterChanged: {
+            refreshAvailabilityGates();
             openPopOver = "";
             selectedChartSensor = "";
             // The gcode-store poll follows the console's OWN collapse
@@ -319,7 +465,7 @@ Component {
         }
         property bool infoCollapsed: root.infoPersistedCollapsed || root.infoAutoCollapsed
         property bool statusCollapsed: root.printer != null ? root.printer.statusCollapsed : false
-        property string connectionDotColour: root.printer != null && root.printer.monitorConnected ? "#3fb950" : "#f85149"
+        property string connectionDotColour: root.printer != null && root.printer.monitorConnected ? MoonrakerTheme.successGreen : MoonrakerTheme.errorRed
 
         ColorDialog {
             id: chartColorDialog
@@ -378,6 +524,11 @@ Component {
             Cura.RoundedRectangle {
                 id: infoPanel
                 objectName: "infoPanel"
+                // The collapsed readout may outrun a short pane: the
+                // PANE clips, so no child can ever spill past its
+                // bounds (the live report: every readout overflowed).
+                clip: true
+                onHeightChanged: root.updateInfoReadoutFits()
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
                 Layout.preferredWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 240 * screenScaleFactor)
@@ -578,80 +729,83 @@ Component {
                     }
                 }
                 // The collapsed readout (the author's 2026-09-17
-                // ruling): the top two temperatures per the mini
-                // widget's series fill the empty space BELOW the
-                // title — regular text, not the title's face.
+                // ruling): the hotend and bed temperatures from the
+                // PRINTER's peripherals fill the empty space BELOW
+                // the title — regular text, not the title's face.
+                // The collapsed readout (the author's 2026-09-17
+                // ruling): the hotend and bed temperatures from the
+                // PRINTER's peripherals in ONE rotated flat row of
+                // explicit children — the structure the author's
+                // engine actually lays out (the wrapper/implicit
+                // strips stayed zero-sized there, the live report).
                 Item {
                     id: infoCollapsedReadoutBox
-                    visible: root.infoCollapsed && root.miniChartHasSeries
-                    // A short window must never see the readout
-                    // spill past the pane: the box clips, and each
-                    // line hides when it cannot fit whole (the live
-                    // report).
+                    visible: root.infoCollapsed
                     clip: true
                     anchors.top: infoCollapsedTitleBox.bottom
                     anchors.topMargin: 2 * UM.Theme.getSize("default_margin").height
                     anchors.horizontalCenter: infoCollapsedTitleBox.horizontalCenter
-                    // An EXPLICIT width: everything below carries
-                    // explicit sizes (implicit zero), so the box
-                    // would read 0 wide and the strips would render
-                    // right of the centred position (the live
-                    // report: the text sat right of the title).
-                    width: 16 * screenScaleFactor
-                    Column {
-                        // An EXPLICIT width: the strips carry
-                        // explicit widths (implicit zero), so the
-                        // column would otherwise read 0 wide and the
-                        // strips render right of the centred box (the
-                        // live report: the text sat right of the
-                        // title).
-                        width: 16 * screenScaleFactor
-                        spacing: UM.Theme.getSize("narrow_margin").height
-                        Repeater {
-                            model: root.miniChartSeries
-                            Item {
-                                // The thermometer LEADS the label (the
-                                // live request): the row's -90
-                                // rotation turns the upright glyph 90
-                                // degrees counter-clockwise, so the
-                                // bulb trails the stem. The strip
-                                // swaps the row's extents and the
-                                // outer box centres it on the title
-                                // box.
-                                // A COMPUTED position, never a
-                                // self-y read: the row's own y
-                                // resolves through the layout and
-                                // read false on some engines (the
-                                // live report: the readouts vanished
-                                // entirely).
-                                visible: infoCollapsedReadoutBox.y + index * (readoutRow.implicitWidth + UM.Theme.getSize("narrow_margin").height) + readoutRow.implicitWidth <= infoPanel.height
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                width: readoutRow.implicitHeight
-                                height: readoutRow.implicitWidth
-                                Row {
-                                    id: readoutRow
-                                    anchors.centerIn: parent
-                                    spacing: 2 * screenScaleFactor
-                                    rotation: -90
-                                    UM.ColorImage {
-                                        width: 16 * screenScaleFactor
-                                        height: 16 * screenScaleFactor
-                                        // The bed's line wears the bed
-                                        // icon; every other sensor
-                                        // wears the thermometer the
-                                        // temperature-history section
-                                        // uses (the live request).
-                                        source: modelData.name.toLowerCase().indexOf("bed") >= 0 ? Qt.resolvedUrl("Bed.svg") : Qt.resolvedUrl("Thermometer.svg")
-                                    }
-                                    UM.Label {
-                                        id: readoutLabel
-                                        objectName: "infoCollapsedReadoutText"
-                                        text: root.infoReadoutText(modelData.name, modelData.label)
-                                        font: UM.Theme.getFont("default")
-                                        color: UM.Theme.getColor("text")
-                                    }
-                                }
-                            }
+                    // The box hugs the content: its height tracks
+                    // the row's implicit width, so the centred row
+                    // fills it and the strip starts at the margin
+                    // under the title (direct row positioning hid
+                    // the content on the author's engine, the live
+                    // report). 18 is the label line height.
+                    width: 18 * screenScaleFactor
+                    height: infoReadoutRow.implicitWidth
+                    Row {
+                        id: infoReadoutRow
+                        anchors.centerIn: parent
+                        spacing: 2 * screenScaleFactor
+                        rotation: -90
+                        // The fit hides through OPACITY, never
+                        // the visibility flag: an invisible group
+                        // keeps its place in the layout, so the
+                        // survivors can never re-centre in the box
+                        // (the live report) — the strip stays
+                        // anchored under
+                        // the title.
+                        UM.ColorImage {
+                            color: UM.Theme.getColor("text")
+                            property bool fitHidden: false
+                            visible: root.infoHotendText !== "—"
+                            opacity: fitHidden ? 0 : 1
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Thermometer.svg")
+                        }
+                        UM.Label {
+                            objectName: "infoCollapsedReadoutText"
+                            property bool fitHidden: false
+                            visible: root.infoHotendText !== "—"
+                            opacity: fitHidden ? 0 : 1
+                            text: root.infoHotendText
+                            font: UM.Theme.getFont("default")
+                            color: UM.Theme.getColor("text")
+                            elide: Text.ElideRight
+                        }
+                        Item {
+                            visible: root.infoBedText !== "—"
+                            width: 8 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                        }
+                        UM.ColorImage {
+                            color: UM.Theme.getColor("text")
+                            property bool fitHidden: false
+                            visible: root.infoBedText !== "—"
+                            opacity: fitHidden ? 0 : 1
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Bed.svg")
+                        }
+                        UM.Label {
+                            property bool fitHidden: false
+                            visible: root.infoBedText !== "—"
+                            opacity: fitHidden ? 0 : 1
+                            text: root.infoBedText
+                            font: UM.Theme.getFont("default")
+                            color: UM.Theme.getColor("text")
+                            elide: Text.ElideRight
                         }
                     }
                 }
@@ -1014,7 +1168,7 @@ Component {
                                     Layout.preferredWidth: 14 * screenScaleFactor
                                     Layout.preferredHeight: 14 * screenScaleFactor
                                     source: Qt.resolvedUrl("Bell.svg")
-                                    color: "#e53935"
+                                    color: MoonrakerTheme.consoleBell
                                 }
                             }
 
@@ -1113,21 +1267,21 @@ Component {
                                     // contrast-checked (≥4.5:1 on the
                                     // dark well) — the old muted
                                     // family sat near 2:1.
-                                    var hue = "#d9dde3";
+                                    var hue = MoonrakerTheme.consoleText;
                                     var promptHue = "";
                                     if (entry.kind === "response") {
-                                        hue = entry.error ? "#f85149" : (entry.success ? "#57ab5a" : "#8b949e");
+                                        hue = entry.error ? MoonrakerTheme.errorRed : (entry.success ? MoonrakerTheme.consoleSuccess : MoonrakerTheme.consoleMuted);
                                     } else if (entry.kind === "note") {
-                                        hue = "#d29922";
+                                        hue = MoonrakerTheme.consoleWarn;
                                     } else if (entry.saved === false) {
                                         // Sent but not yet flushed to
                                         // disk: blue until the save
                                         // lands (the ruling —
                                         // the API verdict flips too
                                         // fast to read live).
-                                        hue = "#58a6ff";
+                                        hue = MoonrakerTheme.consoleInfo;
                                     } else {
-                                        promptHue = entry.error ? "#e05650" : (entry.success ? "#3fb950" : "#8b949e");
+                                        promptHue = entry.error ? MoonrakerTheme.consolePromptError : (entry.success ? MoonrakerTheme.successGreen : MoonrakerTheme.consoleMuted);
                                     }
                                     if (entry.restored) {
                                         // Restored lines grey uniformly:
@@ -1137,7 +1291,7 @@ Component {
                                         // current state (the
                                         // report). Restored responses
                                         // keep their muted hues.
-                                        hue = entry.kind === "command" ? "#9da7b3" : (entry.error ? "#d0635e" : (entry.success ? "#4f9a5d" : "#9da7b3"));
+                                        hue = entry.kind === "command" ? MoonrakerTheme.consoleCommand : (entry.error ? MoonrakerTheme.consoleHistoryError : (entry.success ? MoonrakerTheme.consoleHistorySuccess : MoonrakerTheme.consoleCommand));
                                     }
                                     var escaped = String(entry.text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
                                     if (entry.kind === "note") {
@@ -1318,7 +1472,7 @@ Component {
                                     // well itself: grey instead of the
                                     // terminal black (the live
                                     // ruling).
-                                    color: root.printer != null && root.printer.monitorConnected ? "#161b22" : "#2d333b"
+                                    color: root.printer != null && root.printer.monitorConnected ? MoonrakerTheme.consoleBackground : MoonrakerTheme.consoleBackgroundOffline
                                     border.color: UM.Theme.getColor("lining")
                                     border.width: UM.Theme.getSize("default_lining").width
                                     radius: UM.Theme.getSize("default_radius").width
@@ -1429,8 +1583,18 @@ Component {
                                                     // edge: the text must stop
                                                     // short of it or wrapped
                                                     // lines run underneath (the
-                                                    // author's live report).
-                                                    width: consoleFlick.width - consoleScrollbar.width
+                                                    // author's live report). A
+                                                    // CONSTANT reserve (the
+                                                    // status gutter's
+                                                    // precedent): the
+                                                    // scrollbar's own width
+                                                    // fed the column's width →
+                                                    // the text's wrap → the
+                                                    // content height → the
+                                                    // scrollbar's visibility —
+                                                    // a binding loop (the
+                                                    // capture's report).
+                                                    width: consoleFlick.width - 14 * screenScaleFactor
                                                     height: consoleFlick.contentHeight
                                                     // The spacer pins the sparse
                                                     // transcript to the shell's
@@ -1458,7 +1622,7 @@ Component {
                                                         // author's live report).
                                                         wrapMode: TextEdit.Wrap
                                                         font.family: consoleSection.monoFamily()
-                                                        color: "#d9dde3"
+                                                        color: MoonrakerTheme.consoleText
                                                         // No blinking caret: a read-only
                                                         // terminal pane has no cursor, and
                                                         // the caret's phase made the
@@ -1482,7 +1646,7 @@ Component {
                                                 opacity: root.printer == null || root.printer.consoleLines.length === 0 ? 1 : 0
                                                 text: "No commands yet — lines you send appear here."
                                                 font.family: consoleSection.monoFamily()
-                                                color: "#7d8590"
+                                                color: MoonrakerTheme.consoleTextMuted
                                                 elide: Text.ElideRight
                                             }
                                         }
@@ -1500,7 +1664,7 @@ Component {
                                             UM.Label {
                                                 text: ">"
                                                 font: UM.Theme.getFont("medium_bold")
-                                                color: "#3fb950"
+                                                color: MoonrakerTheme.successGreen
                                             }
                                             Cura.TextField {
                                                 id: consoleInput
@@ -1535,6 +1699,11 @@ Component {
             Cura.RoundedRectangle {
                 id: statusPanel
                 objectName: "statusPanel"
+                // The collapsed readout may outrun a short pane: the
+                // PANE clips, so no child can ever spill past its
+                // bounds (the live report).
+                clip: true
+                onHeightChanged: root.updateStatusReadoutFits()
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
                 Layout.preferredWidth: (root.statusCollapsed ? statusCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 410 * screenScaleFactor)
@@ -1806,9 +1975,6 @@ Component {
                 Item {
                     id: statusCollapsedBarsBox
                     visible: root.statusCollapsed
-                    // The same short-window discipline as the
-                    // information readout: clip the box, and each
-                    // wrap hides when it cannot fit whole.
                     clip: true
                     anchors.top: statusCollapsedTitleBox.bottom
                     // The standard margin: the readout's text must
@@ -1816,112 +1982,231 @@ Component {
                     // live report).
                     anchors.topMargin: 2 * UM.Theme.getSize("default_margin").height
                     anchors.horizontalCenter: statusCollapsedTitleBox.horizontalCenter
-                    width: 4 * screenScaleFactor
-                    Item {
-                        id: printWrap
-                        visible: root.printer != null && root.printer.printActive && statusCollapsedBarsBox.y + printWrap.height <= statusPanel.height
-                        width: 4 * screenScaleFactor
-                        // An EXPLICIT height: anchored children add
-                        // nothing to the implicit height, and the next
-                        // wrap anchors to this one's bottom — without
-                        // it the two tracks render on top of each
-                        // other (the live report).
-                        height: printRow.implicitWidth + UM.Theme.getSize("thin_margin").height + 60 * screenScaleFactor
-                        anchors.top: parent.top
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        // The label LEADS the bar, the strip's reading
-                        // direction (the live report). The progress
-                        // glyph is the plugin's Progress.svg — a real
-                        // image, not a unicode glyph (the live
-                        // request).
-                        Item {
-                            width: printRow.implicitHeight
-                            height: printRow.implicitWidth
-                            anchors.top: parent.top
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            Row {
-                                id: printRow
-                                anchors.centerIn: parent
-                                spacing: 2 * screenScaleFactor
-                                rotation: 90
-                                UM.ColorImage {
-                                    width: 16 * screenScaleFactor
-                                    height: 16 * screenScaleFactor
-                                    source: Qt.resolvedUrl("Progress.svg")
-                                }
-                                UM.Label {
-                                    id: printLabel
-                                    objectName: "statusCollapsedReadoutLabel"
-                                    text: "Print"
-                                    font: UM.Theme.getFont("default")
-                                    color: UM.Theme.getColor("text")
-                                }
+                    // The box hugs the content: its height tracks
+                    // the row's implicit width, so the centred row
+                    // fills it and the strip starts at the margin
+                    // under the title (the live report). 18 is the
+                    // label line height.
+                    width: 18 * screenScaleFactor
+                    height: statusReadoutRow.implicitWidth
+                    // ONE rotated flat row of explicit children —
+                    // the structure the author's engine lays out.
+                    // Each bar is its own pair: glyph, label, then
+                    // the TRACK — whose 60 px span lies ALONG the
+                    // row's main axis, so the rotation makes it run
+                    // along the strip (vertical) with the 4 px
+                    // thickness across. The fill grows from the
+                    // label end along the span.
+                    Row {
+                        id: statusReadoutRow
+                        anchors.centerIn: parent
+                        spacing: 2 * screenScaleFactor
+                        rotation: 90
+                        // The fit hides through OPACITY, never
+                        // the visibility flag: the survivors keep
+                        // their places (the live report).
+                        // The ETA leads the strip (the live ruling):
+                        // duration and finish clock, with the preview
+                        // pane's own glyphs — the hourglass then the
+                        // clock.
+                        UM.ColorImage {
+                            color: UM.Theme.getColor("text")
+                            property bool fitHidden: false
+                            // Unavailable values do not render — the
+                            // value and its glyph both hide (the
+                            // live ruling).
+                            visible: root.etaAvailable
+                            opacity: fitHidden ? 0 : 1
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Hourglass.svg")
+                            UM.TooltipArea {
+                                anchors.fill: parent
+                                // The improve-Eta mirror names the
+                                // action (the panel's catch): the
+                                // strip's glyph is not the button.
+                                text: "Improve the estimate — download and index this print's G-code without loading it into the preview."
+                                acceptedButtons: Qt.NoButton
                             }
                         }
+                        UM.Label {
+                            objectName: "statusCollapsedReadoutLabel"
+                            property bool fitHidden: false
+                            visible: root.etaAvailable
+                            opacity: fitHidden ? 0 : 1
+                            text: root.printer != null ? root.printer.monitorEta : "—"
+                            width: 64 * screenScaleFactor
+                            font: UM.Theme.getFont("default")
+                            color: UM.Theme.getColor("text")
+                            elide: Text.ElideRight
+                            UM.TooltipArea {
+                                anchors.fill: parent
+                                text: "Improve the estimate — download and index this print's G-code without loading it into the preview."
+                                acceptedButtons: Qt.NoButton
+                            }
+                        }
+                        UM.ColorImage {
+                            color: UM.Theme.getColor("text")
+                            property bool fitHidden: false
+                            visible: root.finishAvailable
+                            opacity: fitHidden ? 0 : 1
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Clock.svg")
+                        }
+                        UM.Label {
+                            objectName: "statusCollapsedReadoutLabel"
+                            property bool fitHidden: false
+                            visible: root.finishAvailable
+                            opacity: fitHidden ? 0 : 1
+                            text: root.printer != null ? root.printer.monitorFinish : "—"
+                            width: 56 * screenScaleFactor
+                            font: UM.Theme.getFont("default")
+                            color: UM.Theme.getColor("text")
+                            elide: Text.ElideRight
+                        }
+                        UM.ColorImage {
+                            color: UM.Theme.getColor("text")
+                            property bool fitHidden: false
+                            // The layer count (the live ruling): after
+                            // the ETA, before the print progress, with
+                            // the preview card's layer glyph.
+                            visible: root.layerCountAvailable
+                            opacity: fitHidden ? 0 : 1
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Layer.svg")
+                        }
+                        UM.Label {
+                            objectName: "statusCollapsedReadoutLabel"
+                            property bool fitHidden: false
+                            visible: root.layerCountAvailable
+                            opacity: fitHidden ? 0 : 1
+                            // Implicit width (the live ruling: the
+                            // layer info may reflow — it changes
+                            // slowly — so the gap to the print bar
+                            // stays tight while "888 / 888" still
+                            // fits).
+                            text: root.printer != null ? root.printer.monitorLayer : "—"
+                            font: UM.Theme.getFont("default")
+                            color: UM.Theme.getColor("text")
+                            elide: Text.ElideRight
+                        }
+
+                        Item {
+                            // The margin between the layer count and
+                            // the progress group (the live ruling) —
+                            // the stacked fills themselves stay
+                            // touching.
+                            visible: root.printer != null && root.printer.printActive
+                            width: 8 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                        }
+                        UM.ColorImage {
+                            color: UM.Theme.getColor("text")
+                            property bool fitHidden: false
+                            visible: root.printer != null && root.printer.printActive
+                            opacity: fitHidden ? 0 : 1
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Progress.svg")
+                        }
+                        UM.Label {
+                            objectName: "statusCollapsedReadoutLabel"
+                            property bool fitHidden: false
+                            visible: root.printer != null && root.printer.printActive
+                            opacity: fitHidden ? 0 : 1
+                            text: "Progress"
+                            width: 60 * screenScaleFactor
+                            font: UM.Theme.getFont("default")
+                            color: UM.Theme.getColor("text")
+                        }
                         Rectangle {
-                            id: printTrack
-                            width: 4 * screenScaleFactor
-                            height: 60 * screenScaleFactor
-                            anchors.top: parent.top
-                            anchors.topMargin: printRow.implicitWidth + UM.Theme.getSize("thin_margin").height
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            color: UM.Theme.getColor("lining")
+                            id: progressTrack
+                            property bool fitHidden: false
+                            visible: root.printer != null && root.printer.printActive
+                            opacity: fitHidden ? 0 : 1
+                            width: 60 * screenScaleFactor
+                            // THE STACKED BAR (the live ruling): the
+                            // print fill is the BOTTOM half and the
+                            // layer fill the TOP half, touching at
+                            // the centre line — no gap. Without layer
+                            // info the print fill takes the whole
+                            // height. The transparent body with the
+                            // 2 px text outline frames the extent, so
+                            // the fills read against the work
+                            // remaining.
+                            height: 18 * screenScaleFactor
+                            color: "transparent"
+                            border.width: 2 * screenScaleFactor
+                            border.color: UM.Theme.getColor("text")
                             Rectangle {
                                 anchors.left: parent.left
-                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                // The three fills share the height in
+                                // thirds when the pause is scheduled,
+                                // halves without one, and the print
+                                // takes the whole height without
+                                // layer info (the live ruling).
+                                height: parent.height * (root.printer != null && root.printer.monitorLayerProgress >= 0 ? (root.printer.nextPauseFraction >= 0 ? 1 / 3 : 0.5) : 1.0)
+                                // monitorProgress is a PERCENTAGE
+                                // (0..100) while the clamp read it as
+                                // a fraction — anything past 1%
+                                // pegged the bar full (the live
+                                // report). The layer value is
+                                // already 0..1.
+                                width: parent.width * Math.max(0, Math.min(1, root.printer != null ? root.printer.monitorProgress / 100 : 0))
+                                color: UM.Theme.getColor("primary")
+                            }
+                            Rectangle {
+                                // The next scheduled pause's fill (the
+                                // live ruling): the MIDDLE of the
+                                // stack, the mesh's neon orange — NOT
+                                // RENDERED while no pause lies ahead
+                                // (the gate, not a zero width).
+                                objectName: "statusNextPauseFill"
+                                visible: root.printer != null && root.printer.nextPauseFraction >= 0
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                height: parent.height / 3
+                                width: parent.width * Math.max(0, Math.min(1, root.printer != null ? root.printer.nextPauseFraction : 0))
+                                color: MoonrakerTheme.neonOrange
+                            }
+                            Rectangle {
+                                anchors.left: parent.left
                                 anchors.top: parent.top
-                                height: parent.height * Math.max(0, Math.min(1, root.printer != null ? root.printer.monitorProgress : 0))
+                                height: parent.height * (root.printer != null && root.printer.nextPauseFraction >= 0 ? 1 / 3 : 0.5)
+                                width: parent.width * Math.max(0, Math.min(1, root.printer != null ? root.printer.monitorLayerProgress : 0))
                                 color: UM.Theme.getColor("primary")
                             }
                         }
-                    }
-                    Item {
-                        id: layerWrap
-                        visible: root.printer != null && root.printer.monitorLayerProgress >= 0 && statusCollapsedBarsBox.y + (printWrap.visible ? printWrap.height + UM.Theme.getSize("thin_margin").height : 0) + layerWrap.height <= statusPanel.height
-                        width: 4 * screenScaleFactor
-                        height: layerRow.implicitWidth + UM.Theme.getSize("thin_margin").height + 60 * screenScaleFactor
-                        anchors.top: printWrap.visible ? printWrap.bottom : parent.top
-                        anchors.topMargin: UM.Theme.getSize("thin_margin").height
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        Item {
-                            width: layerRow.implicitHeight
-                            height: layerRow.implicitWidth
-                            anchors.top: parent.top
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            Row {
-                                id: layerRow
-                                anchors.centerIn: parent
-                                spacing: 2 * screenScaleFactor
-                                rotation: 90
-                                UM.ColorImage {
-                                    width: 16 * screenScaleFactor
-                                    height: 16 * screenScaleFactor
-                                    source: Qt.resolvedUrl("Progress.svg")
-                                }
-                                UM.Label {
-                                    id: layerLabel
-                                    objectName: "statusCollapsedReadoutLabel"
-                                    text: "Layer"
-                                    font: UM.Theme.getFont("default")
-                                    color: UM.Theme.getColor("text")
-                                }
-                            }
+                        UM.ColorImage {
+                            color: UM.Theme.getColor("text")
+                            property bool fitHidden: false
+                            visible: root.flowAvailable
+                            opacity: fitHidden ? 0 : 1
+                            width: 16 * screenScaleFactor
+                            height: 16 * screenScaleFactor
+                            source: Qt.resolvedUrl("Flow.svg")
                         }
-                        Rectangle {
-                            id: layerTrack
-                            width: 4 * screenScaleFactor
-                            height: 60 * screenScaleFactor
-                            anchors.top: parent.top
-                            anchors.topMargin: layerRow.implicitWidth + UM.Theme.getSize("thin_margin").height
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            color: UM.Theme.getColor("lining")
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.top: parent.top
-                                height: parent.height * Math.max(0, Math.min(1, root.printer != null ? root.printer.monitorLayerProgress : 0))
-                                color: UM.Theme.getColor("primary")
-                            }
+                        UM.Label {
+                            // The flow pair's own name (the harness
+                            // rule): the OTHER strip labels share
+                            // statusCollapsedReadoutLabel, and the
+                            // standby scenario proves the available
+                            // flow renders while the unavailable
+                            // groups hide.
+                            objectName: "statusCollapsedFlowLabel"
+                            property bool fitHidden: false
+                            visible: root.flowAvailable
+                            opacity: fitHidden ? 0 : 1
+                            text: root.printer != null ? root.printer.monitorFlowRate : ""
+                            // "888.8 mm^3/s" must sit comfortably
+                            // (the live ruling).
+                            width: 110 * screenScaleFactor
+                            font: UM.Theme.getFont("default")
+                            color: UM.Theme.getColor("text")
+                            elide: Text.ElideRight
                         }
                     }
                 }

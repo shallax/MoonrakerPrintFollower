@@ -117,6 +117,8 @@ SCENARIO_MAP = {
     "configureInfoSectionsButton": "x4",
     "infoCollapsedReadoutText": "x4",
     "statusCollapsedReadoutLabel": "x4",
+    "statusCollapsedFlowLabel": "x8",
+    "controlsCollapsedZOffsetLabel": "x8",
     "controlsCollapsedReadoutText": "x4",
     "visibilitySelectorGlyph": "x2",
     "visibilitySelectorBox": "x2",
@@ -143,7 +145,13 @@ SCENARIO_MAP = {
     "moonrakerM117Slot": "s6",
     "moonrakerPreviewCard": "v1",
     "moonrakerStripPauseButton": "v19",
+    "moonrakerLayerReadout": "v19", "moonrakerHeightReadout": "v19",
     "moonrakerStripTemps": "v19", "moonrakerStripSlot": "v19",
+    # The strip's next-pause fill renders once the improve-ETA flow
+    # lands the index and the snapshot carries the pause fraction —
+    # x10 observes it (the strip's own pause surfaces are v19). The
+    # job section's stacked-track fill keeps the bare nextPauseFill.
+    "statusNextPauseFill": "x10",
     # The fans section's harness address (the s8 track-click scenario
     # scrolls it into view before the press).
     "moonrakerFansSection": "s8",
@@ -245,6 +253,13 @@ PREFIX_RULES = [
     ("key", "canResumePrint", "g6"),
     ("key", "pauseReason", "g6"),
     ("key", "pauseReasonDetail", "g6"),
+    # The next scheduled pause's published keys ride the improve-ETA
+    # flow: h8's index build leaves the snapshot (and so these keys)
+    # carrying the pause ahead.
+    ("key", "nextPauseEta", "h8"),
+    ("key", "nextPauseFraction", "h8"),
+    ("key", "nextPauseLayer", "h8"),
+    ("key", "nextPauseBaked", "h8"),
     ("key", "resumeReason", "g6"),
     ("key", "resumeReasonDetail", "g6"),
     ("key", "canCancelPrint", "g6"),
@@ -273,6 +288,16 @@ EXCLUSIONS = {
         "evidence": "the container repro reads the synced rows end to end",
         "date": "2026-09-16",
         "recheck": "the baked-pause pause-row scenario lands",
+    },
+    # The job section's stacked-track pause fill: the strip's own
+    # fill took the mapped statusNextPauseFill name (the shared
+    # objectName made the capture's findChildren ambiguous — the
+    # panel's catch); the capture tool addresses this one directly.
+    "nextPauseFill": {
+        "reason": "the job section's stacked-track fill is the capture tool's styling proof, not a scenario surface",
+        "evidence": "capture_monitor.py samples the track's print fill through it on every make all",
+        "date": "2026-09-18",
+        "recheck": "a scenario asserts the job section's stacked track directly",
     },
     # The drag GESTURE stays excluded: the synthetic drag cannot drive
     # a QML MouseArea grab under Xvfb (the console-resize precedent).

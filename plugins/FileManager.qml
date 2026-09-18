@@ -4,6 +4,7 @@ import QtQuick.Dialogs
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
+import "theme"
 
 // The file-manager popup (3.6.0): the real QML surface over the
 // published model slice — no synthetic rows ship (the
@@ -282,7 +283,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.Wrap
                 text: root.printerModel != null && root.printerModel.filePrintConfirm !== "" ? root.printerModel.filePrintConfirm.readyText : ""
-                color: root.printerModel != null && root.printerModel.filePrintConfirm !== "" ? (root.printerModel.filePrintConfirm.homed ? (root.printerModel.filePrintConfirm.ready ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")) : "#fb8c00") : UM.Theme.getColor("text_inactive")
+                color: root.printerModel != null && root.printerModel.filePrintConfirm !== "" ? (root.printerModel.filePrintConfirm.homed ? (root.printerModel.filePrintConfirm.ready ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")) : MoonrakerTheme.warningOrange) : UM.Theme.getColor("text_inactive")
             }
             RowLayout {
                 width: parent.width
@@ -365,7 +366,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.Wrap
                 text: root.deleteBlockedCount() + " selected can't be deleted — the printer is using them."
-                color: "#fb8c00"
+                color: MoonrakerTheme.warningOrange
             }
             RowLayout {
                 width: parent.width
@@ -540,7 +541,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.Wrap
                 text: "A file with this name already exists — it will be overwritten."
-                color: "#fb8c00"
+                color: MoonrakerTheme.warningOrange
             }
             RowLayout {
                 width: parent.width
@@ -729,7 +730,7 @@ Item {
                 width: parent.width
                 wrapMode: Text.Wrap
                 text: root.uploadProgressError()
-                color: "#fb8c00"
+                color: MoonrakerTheme.warningOrange
             }
             RowLayout {
                 // Always present: closing mid-upload dismisses the
@@ -1387,7 +1388,7 @@ Item {
     Rectangle {
         id: scrim
         anchors.fill: parent
-        color: "#66000000"
+        color: MoonrakerTheme.scrim
     }
     MouseArea {
         anchors.fill: scrim
@@ -2608,7 +2609,12 @@ Item {
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: {
                                                 if (root.printerModel != null) {
-                                                    root.printerModel.setFileColumnOrder([]);
+                                                    // The order resets to the CODE-DEFAULT
+                                                    // sequence, never an empty list (an
+                                                    // empty list fills from the current
+                                                    // order and read as "no change" — the
+                                                    // live report).
+                                                    root.printerModel.setFileColumnOrder(root.defaultColumnOrder);
                                                     for (var i = 0; i < root.defaultColumnOrder.length; i++) {
                                                         root.printerModel.setFileColumnVisible(root.defaultColumnOrder[i], true);
                                                     }
@@ -3340,8 +3346,8 @@ Item {
                     Layout.preferredWidth: 88 * screenScaleFactor
                     Layout.preferredHeight: 28 * screenScaleFactor
                     radius: UM.Theme.getSize("default_radius").width
-                    color: bulkDeleteHover.containsMouse ? "#26d32f2f" : "transparent"
-                    border.color: "#d32f2f"
+                    color: bulkDeleteHover.containsMouse ? MoonrakerTheme.dangerHover : "transparent"
+                    border.color: MoonrakerTheme.dangerRed
                     border.width: 2 * screenScaleFactor
                     // The verb and the count are GONE, not greyed,
                     // while no selection exists (the live
@@ -3351,7 +3357,7 @@ Item {
                     UM.Label {
                         anchors.centerIn: parent
                         text: "Delete"
-                        color: "#d32f2f"
+                        color: MoonrakerTheme.dangerRed
                         font: UM.Theme.getFont("medium_bold")
                     }
                     MouseArea {

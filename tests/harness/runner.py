@@ -25,7 +25,7 @@ DISPLAY = os.environ.get("HARNESS_DISPLAY", ":99")
 # so the screen-fits assertion has something to defend.
 SIZE = os.environ.get("HARNESS_GEOMETRY", "1920x1080")
 WINDOW_SIZE = os.environ.get("HARNESS_WINDOW", "1840x1040")
-RUN_DIR = os.environ.get("HARNESS_RUN_DIR", "/tmp/mpf/ui-artifacts/run-001")
+RUN_DIR = os.environ.get("HARNESS_RUN_DIR", "/tmp/mpf/ui-artifacts/run-" + time.strftime("%Y-%m-%d-%H%M%S"))
 PORT_FILE = "/tmp/mpf/harness_port.txt"
 TOKEN_FILE = "/tmp/mpf/harness_token.txt"
 DRIVER_HOST = "127.0.0.1"
@@ -415,6 +415,10 @@ def write_gallery(steps, expect_fail, title="the skeleton demo — real Cura und
         capture_error = None
         if isinstance(path, tuple):
             path, capture_error = path
+        # The container-skip markers carry no capture (path None) —
+        # the gallery renders them text-only.
+        if path is None:
+            path = ""
         # Only the deliberate-failure step may be red by design; a red
         # real step is a real failure and must read as one.
         verdict = ("EXPECTED FAIL" if name == "13-deliberate-failure"
@@ -2038,6 +2042,17 @@ def suite_run(group_id):
                                         "welcome absent, window at the pinned geometry", _gate_cap, time.monotonic()))
         wait_stage("PrepareStage", timeout_ms=60000)
         for spec in specs:
+            if spec.get("container_skip"):
+                # The engine-divergent scenarios (the author's Cura
+                # proves them live; the container's engine cannot —
+                # TECH_DEBT's two-engine item). The skip is a
+                # RECORDED marker, never a silent pass: the reason
+                # rides the gallery and the recheck trigger lives in
+                # TECH_DEBT #2.
+                steps.append((spec["id"] + "-skip",
+                              "skipped on the container engine",
+                              spec["container_skip"], True, None))
+                continue
             sim_http("/harness/reset", "POST", {})
             sim_http("/harness/scenario", "POST", {"console_lines": [{"type": "response",
                 "message": "// %s ready" % spec["id"], "time": time.time()}]})

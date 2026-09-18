@@ -28,8 +28,10 @@ class CuraIntegration(QObject):
     # The bound for the fileCompleted confirmation. Cura's fileCompleted
     # is NOT a terminal signal — several refusal paths return silently
     # before the parse starts — so a load that never confirms must not
-    # latch `loading` for the process lifetime.
-    LOAD_WATCHDOG_MS = 30000
+    # latch `loading` for the process lifetime. Five minutes (the live
+    # ruling): Cura legitimately takes longer than half a minute to
+    # parse huge gcode, and a late completion is absorbed anyway.
+    LOAD_WATCHDOG_MS = 300000
 
     def __init__(self, application, parent=None):
         super().__init__(parent)
@@ -333,10 +335,16 @@ class CuraIntegration(QObject):
         if self._closed:
             lease.close()
             return False
-        if self.loading:
-            lease.close()
-            self.loadFailed.emit("Cura is already loading a file")
-            return False
+        if self.loading and self._load_lease is not None:
+            # A user's explicit Load supersedes a pending one (the
+            # critic's catch): the five-minute watchdog must never
+            # lock the Load button after a silently-refused load.
+            # The stale lease parks as the watch lease (its late
+            # completion is absorbed, and the file's lease ends with
+            # the next load's start below), then the new load
+            # proceeds normally.
+            self._load_watch_lease = self._load_lease
+            self._load_lease = None
         if self._view is None:
             # The no-printer / no-build-volume window: Cura silently
             # drops the file without ever emitting fileCompleted.

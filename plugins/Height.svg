@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill-rule="evenodd">
+  <!-- Height: the vertical measure — a double-headed stem with tick
+       marks, the Z-height readout. Every shape is a CLOSED filled
+       path: UM.ColorImage injects the theme colour into the root svg
+       element, and open paths have no area to tint (the rasterised
+       report). -->
+  <path d="M12 2l3.5 4.5h-7L12 2zm0 20l3.5-4.5h-7L12 22z"/>
+  <path d="M11.25 6.5h1.5v11h-1.5z"/>
+  <path d="M9.5 9.5h5v1h-5zm0 2.5h5v1h-5zm0 2.5h5v1h-5z"/>
+</svg>

@@ -55,6 +55,28 @@ Item {
     property string pauseAtLayerSummary: ""
     property var pauseAtLayerItems: []
     property string pauseAtLayerUnavailableText: ""
+    property bool pauseAtLayerHasBaked: false
+    property bool pauseAtLayerHasClearable: false
+    // The status bar's printer-side readouts (the ruling): the live
+    // layer and Z height from the Moonraker observation. The row
+    // hides whole while the resolver has no layer. The strip's own
+    // discipline: the setProperty-fed values are copied into LOCAL
+    // state that the rows' bindings actually track.
+    property bool layerReadoutAvailable: false
+    property string layerReadoutText: "—"
+    property string heightReadoutText: "—"
+    // The height's own gate (the panel's catch): it is independently
+    // optional — a resolved layer with no height must not render the
+    // banned "—" stand-in.
+    property bool heightReadoutAvailable: false
+    property bool layerHeightRowsVisible: false
+    onLayerReadoutAvailableChanged: layerHeightRowsVisible = base.layerReadoutAvailable
+    onHeightReadoutAvailableChanged: heightReadoutAvailable = base.heightReadoutAvailable
+    onLayerReadoutTextChanged: layerReadout.text = base.layerReadoutText
+    onHeightReadoutTextChanged: heightReadout.text = base.heightReadoutText
+    // The improve-Eta mirror (the ruling): the hourglass glyph is
+    // clickable exactly while the monitor's improve icon is.
+    property bool improveEtaAvailable: false
 
     // The root sizes to the panel so each host shell can place it
     // freely (the panel shell collapses to a strip; the overlay shell
@@ -84,6 +106,7 @@ Item {
     signal loadClicked
     signal pauseClicked
     signal printPauseRequested
+    signal improveEtaRequested
     signal bedMeshVisibilityRequested(bool visible)
     signal bedMeshThresholdsRequested(real low, real high)
     signal bedMeshExaggerationRequested(real scale)
@@ -303,42 +326,109 @@ Item {
                     id: stripTempsColumn
                     width: 200 * screenScaleFactor
                     spacing: 2 * screenScaleFactor
-                    Row {
+                    // Each row lives in a plain-Item wrapper so the
+                    // tooltip can cover the GLYPH too — a hover area
+                    // anchored inside a Row would be positioned by
+                    // the positioner instead of filling it. The
+                    // wrapper's height rides the row's own implicit
+                    // height (content-derived, not a layout read).
+                    Item {
                         visible: stripValid
-                        spacing: 2 * screenScaleFactor
-                        UM.ColorImage {
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: Qt.resolvedUrl("Thermometer.svg")
+                        width: 200 * screenScaleFactor
+                        height: stripTempsRow.implicitHeight
+                        Row {
+                            id: stripTempsRow
+                            width: parent.width
+                            spacing: 2 * screenScaleFactor
+                            UM.ColorImage {
+                                color: UM.Theme.getColor("text")
+                                width: 16 * screenScaleFactor
+                                height: 16 * screenScaleFactor
+                                source: Qt.resolvedUrl("Thermometer.svg")
+                            }
+                            UM.Label {
+                                id: stripTemps
+                                objectName: "moonrakerStripTemps"
+                                width: 182 * screenScaleFactor
+                                color: UM.Theme.getColor("text")
+                                font: UM.Theme.getFont("default")
+                                verticalAlignment: Text.AlignVCenter
+                                elide: Text.ElideRight
+                                clip: true
+                            }
                         }
-                        UM.Label {
-                            id: stripTemps
-                            objectName: "moonrakerStripTemps"
-                            width: 182 * screenScaleFactor
-                            color: UM.Theme.getColor("text")
-                            font: UM.Theme.getFont("default")
-                            verticalAlignment: Text.AlignVCenter
-                            elide: Text.ElideRight
-                            clip: true
+                        UM.TooltipArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.NoButton
+                            text: "The current hotend temperature and its setpoint."
                         }
                     }
-                    Row {
+                    Item {
                         visible: stripValid
-                        spacing: 2 * screenScaleFactor
-                        UM.ColorImage {
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: Qt.resolvedUrl("Bed.svg")
+                        width: 200 * screenScaleFactor
+                        height: stripBedRow.implicitHeight
+                        Row {
+                            id: stripBedRow
+                            width: parent.width
+                            spacing: 2 * screenScaleFactor
+                            UM.ColorImage {
+                                color: UM.Theme.getColor("text")
+                                width: 16 * screenScaleFactor
+                                height: 16 * screenScaleFactor
+                                source: Qt.resolvedUrl("Bed.svg")
+                            }
+                            UM.Label {
+                                id: stripBed
+                                objectName: "moonrakerStripBed"
+                                width: 182 * screenScaleFactor
+                                color: UM.Theme.getColor("text")
+                                font: UM.Theme.getFont("default")
+                                verticalAlignment: Text.AlignVCenter
+                                elide: Text.ElideRight
+                                clip: true
+                            }
                         }
-                        UM.Label {
-                            id: stripBed
-                            objectName: "moonrakerStripBed"
-                            width: 182 * screenScaleFactor
-                            color: UM.Theme.getColor("text")
-                            font: UM.Theme.getFont("default")
-                            verticalAlignment: Text.AlignVCenter
-                            elide: Text.ElideRight
-                            clip: true
+                        UM.TooltipArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.NoButton
+                            text: "The current heated-bed temperature and its setpoint."
+                        }
+                    }
+                    // The printer-side readout (the 2026-09-17
+                    // ruling): the current layer in the LEFT column —
+                    // the visibility rides a LOCAL property written
+                    // imperatively (bindings on the setProperty-fed
+                    // values go stale on this dynamically created
+                    // component).
+                    Item {
+                        visible: layerHeightRowsVisible
+                        width: 200 * screenScaleFactor
+                        height: layerReadoutRow.implicitHeight
+                        Row {
+                            id: layerReadoutRow
+                            width: parent.width
+                            spacing: 2 * screenScaleFactor
+                            UM.ColorImage {
+                                color: UM.Theme.getColor("text")
+                                width: 16 * screenScaleFactor
+                                height: 16 * screenScaleFactor
+                                source: Qt.resolvedUrl("Layer.svg")
+                            }
+                            UM.Label {
+                                id: layerReadout
+                                objectName: "moonrakerLayerReadout"
+                                width: 182 * screenScaleFactor
+                                color: UM.Theme.getColor("text")
+                                font: UM.Theme.getFont("default")
+                                verticalAlignment: Text.AlignVCenter
+                                elide: Text.ElideRight
+                                clip: true
+                            }
+                        }
+                        UM.TooltipArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.NoButton
+                            text: "The printer's current layer."
                         }
                     }
                 }
@@ -350,60 +440,131 @@ Item {
                     // pane's edge (the live report).
                     width: 90 * screenScaleFactor
                     spacing: 2 * screenScaleFactor
-                    Row {
+                    Item {
                         visible: stripValid
-                        spacing: 2 * screenScaleFactor
-                        UM.ColorImage {
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: Qt.resolvedUrl("Hourglass.svg")
-                        }
-                        UM.Label {
-                            // The permanent middle slot: its TEXT
-                            // changes — the print countdown while a
-                            // gate passes, the policy's refusal reason
-                            // whenever one refuses. The slot discharges
-                            // "nothing silently unclickable": whenever
-                            // the control is disabled, this cell says
-                            // why in the policy's own words. The full
-                            // sentence rides the tooltip; the ETA
-                            // renders in the full text colour (the
-                            // 2026-09-16 ruling).
-                            id: stripSlot
-                            objectName: "moonrakerStripSlot"
-                            // Left-aligned: the text flows from its
-                            // icon instead of squeezing against the
-                            // pane's right edge (the live report).
-                            width: 72 * screenScaleFactor
-                            color: UM.Theme.getColor("text")
-                            font: UM.Theme.getFont("default")
-                            verticalAlignment: Text.AlignVCenter
-                            elide: Text.ElideRight
-                            clip: true
-                            UM.TooltipArea {
-                                anchors.fill: parent
-                                acceptedButtons: Qt.NoButton
-                                text: stripPauseTooltip()
+                        width: 90 * screenScaleFactor
+                        height: stripSlotRow.implicitHeight
+                        Row {
+                            id: stripSlotRow
+                            width: parent.width
+                            spacing: 2 * screenScaleFactor
+                            UM.ColorImage {
+                                color: UM.Theme.getColor("text")
+                                width: 16 * screenScaleFactor
+                                height: 16 * screenScaleFactor
+                                source: Qt.resolvedUrl("Hourglass.svg")
+                                // The improve-Eta mirror (the
+                                // 2026-09-17 ruling): the hourglass
+                                // glyph is a real control exactly
+                                // when the monitor's improve icon is
+                                // — the print is active and the
+                                // estimate still rides the plain
+                                // blend with no download running.
+                                // The click is the monitor's
+                                // improveEta itself.
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: base.improveEtaAvailable
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: base.improveEtaRequested()
+                                }
+                            }
+                            UM.Label {
+                                // The permanent middle slot: its TEXT
+                                // changes — the print countdown while
+                                // a gate passes, the policy's refusal
+                                // reason whenever one refuses. The
+                                // slot discharges "nothing silently
+                                // unclickable": whenever the control
+                                // is disabled, this cell says why in
+                                // the policy's own words. The full
+                                // sentence rides the tooltip; the ETA
+                                // renders in the full text colour
+                                // (the 2026-09-16 ruling).
+                                id: stripSlot
+                                objectName: "moonrakerStripSlot"
+                                // Left-aligned: the text flows from
+                                // its icon instead of squeezing
+                                // against the pane's right edge (the
+                                // live report).
+                                width: 72 * screenScaleFactor
+                                color: UM.Theme.getColor("text")
+                                font: UM.Theme.getFont("default")
+                                verticalAlignment: Text.AlignVCenter
+                                elide: Text.ElideRight
+                                clip: true
                             }
                         }
-                    }
-                    Row {
-                        visible: stripValid
-                        spacing: 2 * screenScaleFactor
-                        UM.ColorImage {
-                            width: 16 * screenScaleFactor
-                            height: 16 * screenScaleFactor
-                            source: Qt.resolvedUrl("Clock.svg")
+                        UM.TooltipArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.NoButton
+                            text: "The print's remaining time and its expected finish time."
                         }
-                        UM.Label {
-                            id: stripFinish
-                            objectName: "moonrakerStripFinish"
-                            width: 72 * screenScaleFactor
-                            color: UM.Theme.getColor("text")
-                            font: UM.Theme.getFont("default")
-                            verticalAlignment: Text.AlignVCenter
-                            elide: Text.ElideRight
-                            clip: true
+                    }
+                    Item {
+                        visible: stripValid
+                        width: 90 * screenScaleFactor
+                        height: stripFinishRow.implicitHeight
+                        Row {
+                            id: stripFinishRow
+                            width: parent.width
+                            spacing: 2 * screenScaleFactor
+                            UM.ColorImage {
+                                color: UM.Theme.getColor("text")
+                                width: 16 * screenScaleFactor
+                                height: 16 * screenScaleFactor
+                                source: Qt.resolvedUrl("Clock.svg")
+                            }
+                            UM.Label {
+                                id: stripFinish
+                                objectName: "moonrakerStripFinish"
+                                width: 72 * screenScaleFactor
+                                color: UM.Theme.getColor("text")
+                                font: UM.Theme.getFont("default")
+                                verticalAlignment: Text.AlignVCenter
+                                elide: Text.ElideRight
+                                clip: true
+                            }
+                        }
+                        UM.TooltipArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.NoButton
+                            text: "The print's expected finish clock time."
+                        }
+                    }
+                    // The printer-side readout (the 2026-09-17
+                    // ruling): the current Z height in the right
+                    // column — same local-visibility discipline as
+                    // the layer row.
+                    Item {
+                        visible: heightReadoutAvailable
+                        width: 90 * screenScaleFactor
+                        height: heightReadoutRow.implicitHeight
+                        Row {
+                            id: heightReadoutRow
+                            width: parent.width
+                            spacing: 2 * screenScaleFactor
+                            UM.ColorImage {
+                                color: UM.Theme.getColor("text")
+                                width: 16 * screenScaleFactor
+                                height: 16 * screenScaleFactor
+                                source: Qt.resolvedUrl("Height.svg")
+                            }
+                            UM.Label {
+                                id: heightReadout
+                                objectName: "moonrakerHeightReadout"
+                                width: 72 * screenScaleFactor
+                                color: UM.Theme.getColor("text")
+                                font: UM.Theme.getFont("default")
+                                verticalAlignment: Text.AlignVCenter
+                                elide: Text.ElideRight
+                                clip: true
+                            }
+                        }
+                        UM.TooltipArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.NoButton
+                            text: "The printer's current Z height."
                         }
                     }
                 }
@@ -417,14 +578,12 @@ Item {
 
                 PreviewSecondaryButton {
                     id: followButton
-                    // NOT gated on hasToolpath: the follower attaches
-                    // at the view swap, but hasToolpath only flips once
-                    // the model finishes RENDERING — the button used to
-                    // wait for the render (the "Detach takes a
-                    // long time" report). The follower null-checks the
-                    // view on every drive, so attaching early is safe.
-                    // NO-REFLOW RULE: never hidden — it disables instead
-                    // of vanishing when following changes state.
+                    // The attach/detach control (the author's
+                    // 2026-09-17 ruling): without a toolpath the
+                    // follower has nothing to drive, so the button
+                    // hides entirely and the load button takes the
+                    // whole row.
+                    visible: base.hasToolpath
                     width: Math.round((buttons.width - base.buttonSpacing) * 0.32)
                     height: UM.Theme.getSize("action_button").height
                     text: base.followingPaused ? "Attach" : "Detach"
@@ -435,7 +594,7 @@ Item {
 
                 PreviewSecondaryButton {
                     id: loadButton
-                    width: buttons.width - base.buttonSpacing - followButton.width
+                    width: base.hasToolpath ? buttons.width - base.buttonSpacing - followButton.width : buttons.width
                     height: UM.Theme.getSize("action_button").height
                     text: "Load current print"
                     tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
@@ -473,15 +632,22 @@ Item {
                 wrapMode: Text.WordWrap
                 verticalAlignment: Text.AlignVCenter
                 clip: true
+                // The selection readout means nothing without a
+                // toolpath (the 2026-09-17 ruling) — it hides with
+                // the pause button.
+                visible: base.hasToolpath
             }
 
             PreviewSecondaryButton {
                 id: pauseAtLayerButton
-                // NO-REFLOW RULE: never hidden — it disables until a
-                // schedulable layer is selected.
+                // Hides without a toolpath (the 2026-09-17 ruling:
+                // scheduling against an absent layer view is a lie)
+                // — with one, it disables until a schedulable layer
+                // is selected.
+                visible: base.hasToolpath
                 width: parent.width
                 height: UM.Theme.getSize("action_button").height
-                enabled: (base.pauseAtLayerScheduled || base.pauseAtLayerCanToggle) && base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive
+                enabled: (base.pauseAtLayerScheduled || base.pauseAtLayerCanToggle) && base.followingEnabled && base.pauseAtLayerActive
                 text: base.pauseAtLayerCandidate <= 0 ? "⏸  Pause at end of selected layer" : (base.pauseAtLayerScheduled ? "Remove pause after layer " + base.pauseAtLayerCandidate : "⏸  Enable pause at end of layer " + base.pauseAtLayerCandidate)
                 tooltip: base.pauseAtLayerScheduled ? "Remove the scheduled end-of-layer PAUSE." : (base.pauseAtLayerCanToggle ? "Call the Klipper PAUSE macro once this layer has finished and Moonraker advances to the following layer." : "Scroll Cura Preview to the current or a future non-final layer to schedule an end-of-layer PAUSE.")
                 onClicked: base.pauseAtLayerRequested(base.pauseAtLayerCandidate)
@@ -504,7 +670,11 @@ Item {
 
             Column {
                 id: scheduledPauseList
-                visible: base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive && base.pauseAtLayerItems.length > 0
+                // The improve-Eta path (the ruling): the index alone
+                // reveals the baked rows, no toolpath needed — manual
+                // rows can't exist without one, so the baked flag
+                // keeps a stale manual schedule out of the light view.
+                visible: base.followingEnabled && base.pauseAtLayerActive && base.pauseAtLayerItems.length > 0 && (base.hasToolpath || base.pauseAtLayerHasBaked)
                 width: parent.width
                 height: visible ? implicitHeight : 0
                 spacing: 2 * screenScaleFactor
@@ -639,6 +809,10 @@ Item {
                 }
 
                 PreviewSecondaryButton {
+                    // Hides while nothing is clearable — a baked-only
+                    // list (the improve-Eta path) has no manual rows
+                    // to remove (the 2026-09-17 ruling).
+                    visible: base.pauseAtLayerHasClearable
                     width: parent.width
                     height: UM.Theme.getSize("action_button").height
                     text: "Clear all pauses"

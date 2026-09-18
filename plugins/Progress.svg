@@ -1,8 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill-rule="evenodd">
-  <!-- Progress: a ring with a quarter sweep filled, the progress-ring
-       reading. No fills here: UM.ColorImage injects the theme colour
-       into the root svg element, so the glyph follows Cura's theme
-       and scaling. -->
-  <path d="M12 3.6a8.4 8.4 0 1 0 .001 16.8A8.4 8.4 0 0 0 12 3.6zm0 2.2a6.2 6.2 0 1 1-.001 12.4A6.2 6.2 0 0 1 12 5.8z"/>
-  <path d="M12 3.6A8.4 8.4 0 0 1 20.4 12L18.2 12A6.2 6.2 0 0 0 12 5.8z"/>
+  <!-- Progress: a mini progress bar — a pill track with a solid
+       left-anchored fill. The ring read as an empty circle at glyph
+       size (the live report). No strokes here: UM.ColorImage injects
+       the theme colour into the root svg element, so the glyph
+       follows Cura's theme and scaling. -->
+  <path d="M2 9h20v6H2V9zm2 1.5v3h16v-3H4z"/>
+  <path d="M4.5 11h9v2h-9v-2z"/>
 </svg>

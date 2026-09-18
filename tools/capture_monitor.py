@@ -262,42 +262,38 @@ def main():
             print("captured", path)
 
         grab("01-dashboard-default.png")
-        # The outline bars must render their Cura-blue fill: sample each
-        # visible bar's interior for the accent colour. This doubles as
-        # the styling regression test — a fill that silently stops
-        # rendering leaves the captures looking unstyled, and this is
-        # how the seed missing virtual_sdcard.progress was caught.
-        bars = [child for child in item.findChildren(QQuickItem)
-                if "OutlineProgressBar" in child.metaObject().className()
-                and child.isVisible() and child.width() > 10 and child.height() > 4]
-        if not bars:
-            raise RuntimeError("visible OutlineProgressBar not found in the scene")
+        # The stacked progress track (the 4.4.0 bars replaced the
+        # OutlineProgressBar family): find the track through the
+        # pause fill's parent and sample the PRINT fill's interior
+        # for the accent blue — the styling regression proof, the
+        # old bars' role. The seed's 24% progress must render as a
+        # real fill, never a silent styling loss.
+        tracks = []
+        for child in item.findChildren(QQuickItem):
+            if child.objectName() == "nextPauseFill":
+                track = child.parentItem()
+                if track is not None and track.isVisible() \
+                        and track.width() > 10 and track.height() > 4:
+                    tracks.append(track)
+        if not tracks:
+            raise RuntimeError("visible stacked progress track not found in the scene")
         scene = window.grabWindow()
         blue = QColor(25, 110, 240).name()
-        lining = QColor(192, 193, 194).name()
         filled = 0
-        for bar in bars:
-            top_left = bar.mapToScene(QPointF(0, 0))
-            # ≥10 hits at 4 px pitch = ≥40 px of contiguous blue: the
-            # assertion is calibrated to the 24%-progress seed, so the
-            # fixture's bar must stay ~165 px wide or more — a layout
-            # change that shrinks the pane (or zeroes the seed's
-            # progress) would false-fail here before the render itself.
-            hits = sum(1 for x in range(5, min(int(bar.width()), 400), 4)
-                       for y in range(1, max(2, int(bar.height()) - 1))
-                       if scene.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name() == blue)
+        for track in tracks:
+            top_left = track.mapToScene(QPointF(0, 0))
+            # The print fill occupies the BOTTOM half of the track —
+            # one sample row just above the bottom edge, along the
+            # fill's leading span (≥10 hits at 4 px pitch = ≥40 px
+            # of contiguous blue, calibrated to the 24% seed).
+            hits = sum(1 for x in range(5, min(int(track.width()), 400), 4)
+                       if scene.pixelColor(int(top_left.x() + x),
+                                           int(top_left.y() + track.height() - 2)).name() == blue)
             if hits >= 10:
                 filled += 1
-            # The "little rounded ends" contract: Cura.RoundedRectangle
-            # forces radius 0 unless cornerSide is set, so a square track
-            # paints the corner pixel in the border colour while a
-            # rounded one leaves the corner clear (this pins that fix).
-            corner = scene.pixelColor(int(top_left.x()), int(top_left.y())).name()
-            if corner == lining:
-                raise RuntimeError("progress bar corners render square (cornerSide missing)")
         if not filled:
-            raise RuntimeError("progress bar fill looks empty (no accent-blue pixels)")
-        print("bar fill accent-blue:", filled, "of", len(bars), "bars")
+            raise RuntimeError("the stacked bar's print fill looks empty (no accent-blue pixels)")
+        print("stacked print fill accent-blue:", filled, "of", len(tracks), "tracks")
         model.setControlsCollapsed(True)
         model.setStatusCollapsed(True)
         model.setInfoCollapsed(True)

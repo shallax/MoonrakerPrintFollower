@@ -20,7 +20,9 @@ from plugins.MonitorFormatting import (
     core_values,
     estimate_remaining,
     file_row_payload,
+    height_readout,
     infer_macro_parameters,
+    layer_readout,
     parse_bed_mesh,
     parse_mcu_stats,
     preview_block,
@@ -28,7 +30,7 @@ from plugins.MonitorFormatting import (
     print_job_caption,
 )
 from plugins.MonitorPermissions import Observation
-from plugins.PrintState import LayerResolver
+from plugins.PrintState import LayerResolver, PhysicalLayer
 from qt_runtime_support import QT_AVAILABLE, ROOT, ScriptedSocket, ScriptedTransport, runtime
 
 PLUGINS = ROOT / "plugins"
@@ -613,13 +615,14 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("setPositionMode", TOOLHEAD_SECTION_QML)
         self.assertNotIn('"15"', DASHBOARD_QML)
         # The mode text is the toggle control (the author's live
-        # ruling) and the Move distance combo restores the persisted
-        # selection.
-        self.assertIn('text: " moves"', TOOLHEAD_SECTION_QML)
+        # ruling), now on its own "Moves" row under the Position
+        # readout (the 2026-09-17 ruling), and the Move distance
+        # combo restores the persisted selection.
+        self.assertIn('text: "Moves"', TOOLHEAD_SECTION_QML)
         self.assertIn("jogPresets.indexOf", TOOLHEAD_SECTION_QML)
         # Filament state is colour-coded: green detected, orange runout.
-        self.assertIn('"#43a047"', FILAMENT_SECTION_QML)
-        self.assertIn('"#fb8c00"', FILAMENT_SECTION_QML)
+        self.assertIn("MoonrakerTheme.filamentDetected", FILAMENT_SECTION_QML)
+        self.assertIn("MoonrakerTheme.warningOrange", FILAMENT_SECTION_QML)
         self.assertNotIn('id: powerOffDialog', MONITOR_QML)
         self.assertNotIn('id: cancelPrintDialog', MONITOR_QML)
         # The right column hosts the print actions, power and the lock.
@@ -715,16 +718,17 @@ class MonitorModelContractTests(unittest.TestCase):
         # strip keeps breathing room below the plot.
         self.assertIn('toFixed(0) + "°C"', TEMP_CHART_QML)
         self.assertIn('points[index][1].toFixed(1) + "°C"', TEMP_CHART_QML)
-        # The collapsed readout mirrors the legend's value form on
-        # purpose (the author's ruling: the strip shows the same rule
-        # the pane uses expanded) — the count pins both.
-        self.assertEqual(MONITOR_QML.count('toFixed(1) + "°C"'), 2)
+        # The collapsed readout builds the pair form through the
+        # printer-side infoReadoutText (the 2026-09-17 ruling), which
+        # no longer shares the legend's exact expression — the chart's
+        # own form is the one occurrence.
+        self.assertEqual(MONITOR_QML.count('toFixed(1) + "°C"'), 1)
         self.assertEqual(TEMP_HISTORY_SECTION_QML.count('toFixed(1) + "°C"'), 1)
         self.assertIn("Math.max(1, height - 22)", TEMP_CHART_QML)
         # The console history lives in a terminal-styled pane: dark,
         # fixed-width, newest line pinned to the bottom, with a prompt
         # glyph on the input row.
-        for token in ('color: root.printer != null && root.printer.monitorConnected ? "#161b22" : "#2d333b"', "No commands yet — lines you send appear here.", 'text: ">"'):
+        for token in ('color: root.printer != null && root.printer.monitorConnected ? MoonrakerTheme.consoleBackground : MoonrakerTheme.consoleBackgroundOffline', "No commands yet — lines you send appear here.", 'text: ">"'):
             self.assertIn(token, MONITOR_QML)
         # Both pop-overs open at the same offset over the camera column
         # so a second click on the opener dismisses without moving the
@@ -762,6 +766,36 @@ class MonitorModelContractTests(unittest.TestCase):
         # The model DECLARES the source (a dynamic setProperty would be
         # undefined at QML creation and the .length read would throw).
         self.assertIn('value_property(str, "monitorLayerSource", monitorChanged, "")', MONITOR_MODEL)
+
+    def test_every_value_property_rides_its_signal_group(self):
+        # The panel's catch: a key declared with a notify signal but
+        # absent from that signal's group can never notify — the
+        # next-pause readout went stale while PAUSED (the other keys
+        # in the group masked it while printing). Every declaration
+        # must appear in its signal's group; the allowlist holds the
+        # two pre-existing gaps the round did not add.
+        import ast
+        module = ast.parse(MONITOR_MODEL)
+        groups = {}
+        for node in ast.walk(module):
+            if isinstance(node, ast.Assign) and any(
+                    getattr(target, "id", "") == "_SIGNAL_KEYS" for target in node.targets):
+                for element in ast.walk(node.value):
+                    if isinstance(element, ast.Tuple) and len(element.elts) >= 2 \
+                            and isinstance(element.elts[0], ast.Constant) \
+                            and isinstance(element.elts[1], ast.Tuple):
+                        groups[str(element.elts[0].value)] = {
+                            str(entry.value) for entry in element.elts[1].elts
+                            if isinstance(entry, ast.Constant)}
+        allowlist = {"britishSpelling", "monitorLoading"}
+        missing = []
+        for name, signal in re.findall(r'value_property\([^,]+,\s*"([A-Za-z0-9]+)",\s*(\w+)', MONITOR_MODEL):
+            if name in allowlist:
+                continue
+            if name not in groups.get(signal, set()):
+                missing.append(f"{name} ({signal})")
+        self.assertEqual(missing, [],
+                         "value properties outside their signal groups: %s" % missing)
         self.assertIn('"monitorLayerSource"', MONITOR_MODEL)
         # A slim bar under the layer value shows the within-layer
         # progress; it hides while the layer has no height anchor.
@@ -1022,7 +1056,9 @@ class MonitorModelContractTests(unittest.TestCase):
             self.assertEqual(file_text.count("ProgressBar {"), file_text.count("OutlineProgressBar {"))
             self.assertEqual(file_text.count("Slider {"),
                 file_text.count("OutlineSlider {") + file_text.count("BedMeshRangeSlider {"))
-        self.assertIn("OutlineProgressBar {", JOB_SECTION_QML)
+        # The Print-job section's bar is the stacked Rectangle (the
+        # 2026-09-17 ruling) — no themed bar, the rule's intent.
+        self.assertIn("THE STACKED BAR", JOB_SECTION_QML)
         self.assertEqual(DASHBOARD_QML.count("OutlineSlider {"), 0)
         self.assertGreaterEqual(TUNING_SECTION_QML.count("OutlineSlider {"), 2)
         self.assertGreaterEqual(FANS_SECTION_QML.count("OutlineSlider {"), 1)
@@ -1201,7 +1237,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # the shared dual-ended range-filter component (4.2.0) owns
         # the stops now, so the two surfaces cannot drift.
         slider = (PLUGINS / "BedMeshRangeSlider.qml").read_text()
-        for stop in ("#1a47f2", "#00b8ff", "#33db61", "#ffd11f", "#eb291f"):
+        for stop in ("MoonrakerTheme.bandBlue", "MoonrakerTheme.bandCyan", "MoonrakerTheme.bandGreen", "MoonrakerTheme.bandYellow", "MoonrakerTheme.bandRed"):
             self.assertIn(stop, slider)
         for qml in (MONITOR_QML, PREVIEW_CONTROLS_QML):
             self.assertIn("BedMeshRangeSlider", qml)
@@ -1215,10 +1251,10 @@ class MonitorModelContractTests(unittest.TestCase):
         # and outlines the measured bounds in the Preview's neon
         # orange. The extension is fainter because it is the
         # boundary's continuation, not a measurement.
-        for token in ("#FF5A00", "measured ? 0.58 : 0.28", "clampedValue",
+        for token in ("MoonrakerTheme.neonOrange", "measured ? 0.58 : 0.28", "clampedValue",
                       "bedMeshMachineWidth", "bedMeshMachineDepth", "bedMeshCenterIsZero",
                       "printerToWidget", "constrains both", "hoverClamped",
-                      'root.hoverClamped ? "#FF5A00"'):
+                      'root.hoverClamped ? MoonrakerTheme.neonOrange'):
             self.assertIn(token, BED_MESH_MAP_QML + MONITOR_MODEL)
         # The popover carries the same clamped disclaimer the Preview's
         # legend makes (the author's request).
@@ -1247,6 +1283,22 @@ class MonitorFormattingTests(unittest.TestCase):
         hotend, bed = preview_temperature_pair({"extruder": {"temperature": None}})
         self.assertEqual(hotend, "—")
         self.assertEqual(bed, "—")
+
+    def test_layer_and_height_readouts_render_the_printer_side(self):
+        # The status bar's cells: the HUMAN layer number and the
+        # absolute Z with its unit — '—' while the resolver has
+        # nothing. Zero-based indexes shift; None cells read absent.
+        layer = PhysicalLayer()
+        self.assertEqual(layer_readout(layer), "—")
+        self.assertEqual(height_readout(layer), "—")
+        layer = replace(layer, index=11, height=12.34)
+        self.assertEqual(layer_readout(layer), "12")
+        self.assertEqual(height_readout(layer), "12.34 mm")
+        layer = replace(layer, total=345)
+        self.assertEqual(layer_readout(layer), "12/345")
+        layer = replace(layer, index=0, height=0.0, total=None)
+        self.assertEqual(layer_readout(layer), "1")
+        self.assertEqual(height_readout(layer), "0.00 mm")
 
     def test_print_job_caption_names_every_state(self):
         # The caption's vocabulary (F18): disconnected and unknown
@@ -2486,6 +2538,42 @@ class MonitorQtTests(unittest.TestCase):
         second.setSectionExpanded("toolhead", True)
         self.assertEqual(second._sections["toolhead"], True)
 
+    def test_section_layout_persists_across_model_instances(self):
+        # 4.4.0: the configure popups' committed reorder and hidden
+        # set round-trip through the plugin-owned JSON file — a Cura
+        # restart rehydrates the layout before any popup opens. The
+        # fresh model's EFFECTIVE layout (sectionLayoutFor) reads the
+        # stored order and the hidden set, never the pane default.
+        model = self.monitor()
+        order = ["job", "temps", "fansinfo", "filament", "objects", "systeminfo", "mcus"]
+        self.assertIsNone(model.setSectionLayout("status", order, ["mcus"]))
+        import UM.Resources as UMResourcesModule
+        model_module = self.qt.load("MoonrakerMonitorModel")
+        section_path = UMResourcesModule.Resources.getStoragePath(
+            UMResourcesModule.Resources.Preferences, model_module.SECTIONS_FILE_NAME)
+        with open(section_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+            self.assertEqual(payload["sectionLayout"], {"status": {"order": order, "hidden": ["mcus"]}})
+        second = self.monitor()
+        effective = second.sectionLayoutFor("status")
+        self.assertEqual(effective["order"], order)
+        self.assertEqual(effective["hidden"], ["mcus"])
+
+    def test_resetting_one_pane_does_not_touch_anothers_layout(self):
+        # The live report: the controls popup's reset-to-defaults
+        # visibly reset the information pane's customised sections.
+        # The model must keep every other pane's entry untouched —
+        # the reset re-normalises the whole document with ONE pane's
+        # entry cleared.
+        model = self.monitor()
+        info_order = list(self.qt.load("SectionLayoutPolicy").PANE_SECTION_ORDER["information"])
+        custom = [info_order[1], info_order[0]] + info_order[2:]
+        model.setSectionLayout("information", custom, [info_order[0]])
+        model.setSectionLayout("controls", [], [])
+        effective = model.sectionLayoutFor("information")
+        self.assertEqual(effective["order"], custom)
+        self.assertEqual(effective["hidden"], [info_order[0]])
+
     def test_console_height_persists_and_clamps_across_model_instances(self):
         # 3.6.0: the console's drag handle sets a pane height the model
         # owns. It round-trips through the plugin-owned JSON file (a Cura
@@ -3138,7 +3226,10 @@ class MonitorQtTests(unittest.TestCase):
             layer=SimpleNamespace(index=0, total=0, source="", thickness=None),
             estimated_time=None, metadata_complete=False, layer_eta=None,
             layer_progress=None, index_ready=False,
-            download_fraction=None, indexing=True, load_active=True)
+            download_fraction=None, indexing=True, load_active=True,
+            index_fraction=None,
+            next_pause_layer=None, next_pause_eta="",
+            next_pause_fraction=None, next_pause_baked=False)
         model._publish()
         self.assertTrue(model.improvingEta)
         self.assertEqual(model.improveEtaPhase, "Indexing…")
@@ -3147,8 +3238,36 @@ class MonitorQtTests(unittest.TestCase):
             layer=SimpleNamespace(index=0, total=0, source="", thickness=None),
             estimated_time=None, metadata_complete=False, layer_eta=None,
             layer_progress=None, index_ready=True,
-            download_fraction=None, indexing=False, load_active=False)
+            download_fraction=None, indexing=False, load_active=False,
+            index_fraction=None,
+            next_pause_layer=None, next_pause_eta="",
+            next_pause_fraction=None, next_pause_baked=False)
         model._publish()
+        self.assertFalse(model.improvingEta)
+        model._print_state = original
+
+    def test_publish_coerces_every_optional_snapshot_field(self):
+        # The live crash: an Optional snapshot field fed None into a
+        # typed value_property raised "unable to convert a Python
+        # 'NoneType' object to a C++ 'double' instance" every poll.
+        # Every Optional rides a sentinel through the values dict —
+        # this test feeds None for ALL of them at once.
+        model = self.monitor()
+        original = model._print_state
+        model._print_state = lambda: SimpleNamespace(
+            layer=SimpleNamespace(index=None, total=None, source="", thickness=None),
+            estimated_time=None, metadata_complete=False, layer_eta=None,
+            layer_progress=None, index_ready=False,
+            download_fraction=None, indexing=False, load_active=False,
+            index_fraction=None,
+            next_pause_layer=None, next_pause_eta="",
+            next_pause_fraction=None, next_pause_baked=False,
+            filament_total=None)
+        model._publish()
+        self.assertEqual(model.nextPauseFraction, -1.0)
+        self.assertEqual(model.nextPauseLayer, -1)
+        self.assertFalse(model.nextPauseBaked)
+        self.assertEqual(model.improveEtaProgress, -1.0)
         self.assertFalse(model.improvingEta)
         model._print_state = original
 
@@ -3665,7 +3784,10 @@ Item {
             layer=SimpleNamespace(index=0, total=0, source="", thickness=None),
             estimated_time=None, metadata_complete=False, layer_eta=None,
             layer_progress=None, index_ready=True,
-            download_fraction=None, indexing=False, load_active=False)
+            download_fraction=None, indexing=False, load_active=False,
+            index_fraction=None,
+            next_pause_layer=None, next_pause_eta="",
+            next_pause_fraction=None, next_pause_baked=False)
         model._publish()
         self.assertFalse(model.improvingEta)
 
@@ -3711,13 +3833,12 @@ Item {
         self.assertIn("property bool loadBusy: false", card)
         self.assertIn("property real loadProgress: -1", card)
         self.assertIn("property string loadPhase: \"\"", card)
-        # The Attach/Detach button must not wait for the render:
-        # hasToolpath only flips once the model finishes rendering.
-        self.assertNotIn("base.hasToolpath && (base.followingEnabled", card)
-        # NO-REFLOW RULE: the button never hides — its state is
-        # `enabled`, and the load button keeps its full width.
+        # The Attach/Detach button HIDES without a toolpath (the
+        # 2026-09-17 ruling — the follower has nothing to drive),
+        # and the load button takes the whole row then.
+        self.assertIn("visible: base.hasToolpath", card)
         self.assertIn("enabled: base.followingEnabled || base.followingPaused", card)
-        self.assertIn("width: buttons.width - base.buttonSpacing - followButton.width", card)
+        self.assertIn("width: base.hasToolpath ? buttons.width - base.buttonSpacing - followButton.width : buttons.width", card)
         self.assertIn("indicatorBar.sweepPhase", indicator)
         self.assertIn("busy: false", indicator)
         presentation = (PLUGINS / "PreviewPresentation.py").read_text()
@@ -3774,9 +3895,16 @@ Item {
         self.assertIn('text: "Webcam"', CAMERA_PANE_QML)
         # The poll gate opens on printer attach — never wired to the
         # info pane's collapse (infoCollapsed defaults to false, which
-        # left the feed dead in the default layout).
+        # left the feed dead in the default layout). The collapse
+        # handlers that exist (4.4.0) drive ONLY the readout fits —
+        # their bodies are pinned to the update calls.
         self.assertNotIn("setConsoleExpanded(!root.infoCollapsed)", MONITOR_QML)
-        self.assertNotIn("onInfoCollapsedChanged:", MONITOR_QML)
+        self.assertIn("onInfoCollapsedChanged: {", MONITOR_QML)
+        self.assertIn("Qt.callLater(root.updateInfoReadoutFits)", MONITOR_QML)
+        self.assertIn("fitInfoRetry.restart()", MONITOR_QML)
+        self.assertIn("onStatusCollapsedChanged: {", MONITOR_QML)
+        self.assertIn("Qt.callLater(root.updateStatusReadoutFits)", MONITOR_QML)
+        self.assertIn("fitStatusRetry.restart()", MONITOR_QML)
         # The feed's three voices (the author's live rulings):
         # commands carry ">", Moonraker's responses carry "<", and the
         # plugin's notes carry "#" in amber. Responses render bright
@@ -3784,8 +3912,8 @@ Item {
         # the verdict on the ">" prompt only — green matches the input
         # row's prompt, red is a failure — and the restored hues are
         # contrast-bumped (the old muted family sat near 2:1).
-        for token in ('"#f85149"', '"#57ab5a"', '"#e05650"', '"#3fb950"', '"#d29922"',
-                      '&gt; "', '&lt; "', '# "', '"#9da7b3"', '"#d0635e"', '"#4f9a5d"'):
+        for token in ('MoonrakerTheme.errorRed', 'MoonrakerTheme.consoleSuccess', 'MoonrakerTheme.consolePromptError', 'MoonrakerTheme.successGreen', 'MoonrakerTheme.consoleWarn',
+                      '&gt; "', '&lt; "', '# "', 'MoonrakerTheme.consoleCommand', 'MoonrakerTheme.consoleHistoryError', 'MoonrakerTheme.consoleHistorySuccess'):
             self.assertIn(token, MONITOR_QML)
         # The selection is captured BEFORE the rebuild wipe (the old
         # order made the restore a silent no-op); the rotation rebuild
@@ -3993,16 +4121,58 @@ Item {
             "visible: modelData.writable",
             "visible: !modelData.writable",
             # Carve-outs awaiting the author's ruling (DECISIONS round 6):
-            "visible: base.hasToolpath && base.followingEnabled && base.pauseAtLayerActive && base.pauseAtLayerItems.length > 0",
+            "visible: base.followingEnabled && base.pauseAtLayerActive && base.pauseAtLayerItems.length > 0 && (base.hasToolpath || base.pauseAtLayerHasBaked)",
+            # The toolpath-gated faces (the 2026-09-17 rulings): the
+            # attach control, the pause button and its selection line
+            # hide without a toolpath; the clear-all hides while only
+            # baked rows are listed; the layer/height readout row
+            # hides whole while the resolver has no layer.
+            "visible: base.hasToolpath",
+            "visible: base.pauseAtLayerHasClearable",
+            "visible: base.layerReadoutAvailable",
+            # The preview card's layer/height row pair (the readout
+            # ruling) — written imperatively from the readout's own
+            # availability signal. The height is independently
+            # optional, so it carries its own gate.
+            "visible: layerHeightRowsVisible",
+            "visible: heightReadoutAvailable",
+            # The availability gates (the live ruling): unavailable
+            # values hide their glyphs and cells whole; the X/Y/Z
+            # tuple hides when any one axis is absent.
+            "visible: root.positionAvailable",
+            "visible: root.zOffsetAvailable",
+            "visible: root.flowAvailable",
+            "visible: root.etaAvailable",
+            "visible: root.finishAvailable",
+            "visible: root.layerCountAvailable",
+            "visible: root.infoHotendText !== \"—\"",
+            "visible: root.infoBedText !== \"—\"",
+            # The status strip's progress group (the stacked bar's
+            # glyph, label and track share the print gate).
+            "visible: root.printer != null && root.printer.printActive",
+            "visible: root.printer != null && root.printer.printActive && root.printer.monitorEta !== \"—\"",
+            "visible: root.printer != null && root.printer.printActive && root.printer.monitorFinish !== \"—\"",
+            "visible: root.printer != null && root.printer.monitorLayer !== \"—\"",
+            "visible: root.printerModel != null && root.printerModel.monitorPositionX !== \"—\" && root.printerModel.monitorPositionX !== \"\" && root.printerModel.monitorPositionY !== \"—\" && root.printerModel.monitorPositionY !== \"\" && root.printerModel.monitorPositionZ !== \"—\" && root.printerModel.monitorPositionZ !== \"\"",
+            # The next-pause row is a PERMANENT slot (the M117
+            # precedent): its visibility flip reflowed the section
+            # stack and fed a layout polish loop (the live report).
+            # Its labels read empty while no pause lies ahead.
+            "visible: root.printerModel != null && root.printerModel.nextPauseFraction >= 0",
+            "visible: root.printer != null && root.printer.nextPauseFraction >= 0",
+            # The preview strip's own derived validity (computed in
+            # updateStrip, not a model value).
+            "visible: stripValid",
             # The Endstops summary row yields to the chips once they
             # exist (the author's live ruling — the chips ARE the
             # readout); it sits below the jog pad.
             "visible: root.printerModel == null || root.printerModel.endstopItems.length === 0",
             "visible: root.miniHasSeries",
             # The collapsed status readout's relevance gates (the bars
-            # show only while they mean something).
-            "visible: root.printer != null && root.printer.printActive",
-            "visible: root.printer != null && root.printer.monitorLayerProgress >= 0",
+            # show only while they mean something), plus the fit
+            # conjunction the imperative update writes (4.4.0).
+            "visible: root.printer != null && root.printer.printActive && fitVisible",
+            "visible: root.printer != null && root.printer.monitorLayerProgress >= 0 && fitVisible",
             # The controls configure pop-up's own switch and its scrim
             # (the one-pane dashboard has no openPopOver family).
             "visible: root.configurePaneOpen !== \"\"",
@@ -4010,6 +4180,7 @@ Item {
             # The shared selector's tick/dash label (the row selector's
             # own idiom, in the new component).
             "visible: selectorRoot.visibleCount !== selectorRoot.total",
+            "visible: selectorRoot.visibleCount > 0",
             "visible: root.printerModel != null && !root.miniHasSeries",
             # The console error bell (the author's live request) is a
             # presence signal, not a session gate: it shows only
@@ -4131,8 +4302,10 @@ Item {
         ):
             self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML + PRINT_SECTION_QML + OBJECTS_SECTION_QML)
         # The Preview load button keeps its full width: the follow button
-        # no longer vanishes to widen it.
-        self.assertIn("width: buttons.width - base.buttonSpacing - followButton.width", PREVIEW_CONTROLS_QML)
+        # no longer vanishes to widen it. The attach-gate round made the
+        # width conditional on the toolpath (the hidden follow button
+        # leaves the load button the whole row).
+        self.assertIn("width: base.hasToolpath ? buttons.width - base.buttonSpacing - followButton.width : buttons.width", PREVIEW_CONTROLS_QML)
 
     def test_disconnected_disables_every_monitor_control(self):
         # The author's ruling (2026-09-10): while DISCONNECTED no
@@ -4153,7 +4326,7 @@ Item {
         # Send and Clear disable. The well itself turns grey so the
         # disconnected state is obvious.
         self.assertIn("enabled: root.printer != null\n                                property int consoleRecallIndex", MONITOR_QML)
-        self.assertIn('color: root.printer != null && root.printer.monitorConnected ? "#161b22" : "#2d333b"', MONITOR_QML)
+        self.assertIn('color: root.printer != null && root.printer.monitorConnected ? MoonrakerTheme.consoleBackground : MoonrakerTheme.consoleBackgroundOffline', MONITOR_QML)
         self.assertIn("anchors.bottom: parent.bottom", MONITOR_QML)
         # The connection DOT rides the Printer status pane's title in
         # BOTH pane states (expanded header and the collapsed strip) —
@@ -4163,7 +4336,7 @@ Item {
         self.assertIn('text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."', MONITOR_QML)
         self.assertIn("id: statusCollapsedTitle", MONITOR_QML)
         self.assertIn('text: "Live"', CAMERA_PANE_QML)
-        self.assertIn('color: "#c0202428"', CAMERA_PANE_QML)
+        self.assertIn('color: MoonrakerTheme.cameraVeil', CAMERA_PANE_QML)
         self.assertIn('text: (root.printerModel != null && root.printerModel.cameraRecovering) ? "Camera recovering…" : "Camera offline"', CAMERA_PANE_QML)
         model = self.monitor()
         # The harness may connect asynchronously during construction —

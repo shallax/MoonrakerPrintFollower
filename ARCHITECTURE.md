@@ -454,6 +454,16 @@ console remains a pane: its auto-collapse latch, camera-area
 resize mapping and the host's printer-change resets are structural
 entanglements, not section content.
 
+**The theme singleton (4.4.0).** The plugin's colours live in one
+singleton document (`plugins/theme/MoonrakerTheme.qml`, imported by
+the QML directory as `import "theme"`): the axis identity colours,
+the pause orange, the console palette, the strip accents. No
+document repeats a colour literal; `tests/test_theme.py` scans the
+QML tree and fails any magic colour AND any cited token the
+singleton does not declare (the two directions of the gate), and
+the format/lint targets cover the theme directory like the rest of
+`plugins/`.
+
 **The Preview value-block seam (4.3.0).** The Monitor's data path
 publishes one per-poll block — the strip's verdicts, the state
 word, the temps pair and the aux-landing stamp — through
