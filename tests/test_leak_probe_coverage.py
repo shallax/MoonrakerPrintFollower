@@ -811,6 +811,29 @@ class EntryPointTests(_ProbeCase):
         leakprobe._ACTIVE = None
         self.assertIsNone(stop_leak_probe())
 
+    def test_a_second_start_returns_the_live_probe(self):
+        # The double-start guard: a re-registration must not stack a
+        # second timer and abandon the first.
+        with _home(self.home), _host(_Preferences(log=False)):
+            first = start_leak_probe(SimpleNamespace())
+            second = start_leak_probe(SimpleNamespace())
+        self.addCleanup(first._timer.stop)
+        self.assertIs(first, second)
+        self.assertIs(leakprobe._ACTIVE, first)
+
+    def test_stop_clears_the_trace_even_when_no_snapshot_was_taken(self):
+        # The trace toggle armed but never sampled used to leave
+        # tracemalloc running through the teardown.
+        with _home(self.home), _host(_Preferences(log=False)):
+            probe = start_leak_probe(SimpleNamespace())
+        self.addCleanup(probe._timer.stop)
+        probe._enabled = True
+        probe._trace_snapshot = None
+        tracemalloc.start()
+        stop_leak_probe()
+        self.assertFalse(tracemalloc.is_tracing())
+        self.assertIsNone(leakprobe._ACTIVE)
+
     def test_teardown_drops_the_trace_window_and_never_raises(self):
         with _home(self.home), _host(_Preferences(log=False)):
             probe = start_leak_probe(SimpleNamespace())

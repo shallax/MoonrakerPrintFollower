@@ -615,8 +615,13 @@ _ACTIVE = None
 def start_leak_probe(runtime, parent=None):
     """The single entry. The module global pins the instance: the
     parented timer alone was not enough — the first build's probe was
-    collected before its first timed tick and logged nothing."""
+    collected before its first timed tick and logged nothing. The
+    double-start guard returns the live probe — a second registration
+    must not stack a second timer and abandon the first (the
+    reviewer's catch)."""
     global _ACTIVE
+    if _ACTIVE is not None:
+        return _ACTIVE
     _ACTIVE = LeakProbe(runtime, parent)
     return _ACTIVE
 
@@ -637,7 +642,10 @@ def stop_leak_probe():
     except Exception:
         pass
     probe.runtime = None
-    if probe._enabled and probe._trace_snapshot is not None:
+    # The trace sub-option clears whenever the allocator is running —
+    # a stop before the first trace tick used to leave tracemalloc on
+    # (the snapshot guard missed the armed-but-unsampled state).
+    if getattr(tracemalloc, "is_tracing", lambda: False)():
         try:
             tracemalloc.stop()
         except Exception:

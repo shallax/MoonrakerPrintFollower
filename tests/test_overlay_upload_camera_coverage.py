@@ -1117,6 +1117,38 @@ class CameraBridgeTests(unittest.TestCase):
         # A finished reply terminates the response and releases the relay.
         self.assertTrue(self._pump(lambda: not bridge._relays))
 
+    def test_a_finished_response_drains_its_buffered_tail(self):
+        # A finite (snapshot) response can finish with its last bytes
+        # still in the reply buffer (the readyRead gate closed): the
+        # bridge drains them before the close, or the loader sees a
+        # body shorter than the declared Content-Length.
+        bridge = self._bridge()
+
+        class TailSocket:
+            def __init__(self):
+                self.writes = bytearray()
+                self.disconnects = 0
+
+            def bytesToWrite(self):
+                return 0
+
+            def write(self, chunk):
+                self.writes.extend(chunk)
+
+            def flush(self):
+                pass
+
+            def disconnectFromHost(self):
+                self.disconnects += 1
+
+        socket = TailSocket()
+        reply = FakeReply(body=b"tail")
+        bridge._relays[socket] = (reply, bytearray(), True)
+        bridge._on_upstream_finished(socket, reply)
+        self.assertIn(b"tail", socket.writes)
+        self.assertEqual(bridge._relayed_bytes, 4)
+        self.assertNotIn(socket, bridge._relays)
+
     def test_the_bridge_drains_client_bytes_after_dispatch(self):
         recorded, hold = [], threading.Event()
         self.addCleanup(hold.set)

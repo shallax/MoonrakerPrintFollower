@@ -190,6 +190,27 @@ class MonitorModelCase(unittest.TestCase):
         return [{"relative_path": f".thumbs/{name}-32x32.png", "width": 32, "height": 32}]
 
 
+class PublishSentinelTests(MonitorModelCase):
+    """The typed-coercion helper (the 4.5.0 debt pack): every Optional
+    snapshot field must reach its typed property as the sentinel."""
+
+    def test_the_helper_passes_values_and_replaces_none(self):
+        self.model = self.build()
+        self.assertEqual(self.model._coerce(None, -1.0), -1.0)
+        self.assertEqual(self.model._coerce(0.5, -1.0), 0.5)
+        self.assertEqual(self.model._coerce(-3, -1), -3)
+
+    def test_none_optional_snapshot_fields_publish_the_sentinels(self):
+        # A fresh snapshot carries None for every Optional field: the
+        # typed C++ properties must receive the sentinels, never None
+        # (the live crash this seam guards).
+        self.model = self.build()
+        self.model._publish()
+        self.assertEqual(self.model.nextPauseLayer, -1)
+        self.assertEqual(self.model.nextPauseFraction, -1.0)
+        self.assertEqual(self.model.improveEtaProgress, -1.0)
+
+
 class LocaleAndHydrationTests(MonitorModelCase):
     """The module-level coercions: locale spellings and stored selections."""
 

@@ -626,7 +626,7 @@ watchdog's transition-is-success form, the directory delete route,
 the clipped row viewport, the disconnected gates and the popup's own
 note surface).
 
-## 4.0.0 — Websocket transport (2026-09-11)
+## 4.0.0 — Websocket transport — SHIPPED (2026-09-14)
 
 **RELEASE GATE (resolved):** the 2026-09-11 still-broken list (the
 failure state persisting until a manual reconnect, the preview card
@@ -789,7 +789,7 @@ walk):**
   Test-connection verdict, interval relabel, reason line, trace label)
   get the nod as they are built.
 
-## 4.0.1 — Harness fast-follow (2026-09-13)
+## 4.0.1 — Harness fast-follow — SHIPPED (2026-09-14)
 
 A fast follow after 4.0.0 ships; test-infrastructure only, plus the
 docs cleanup folded in (2026-09-14):
@@ -931,7 +931,7 @@ regressions exercise real semantics. Structural pins retarget in the
 same commits (the per-class policy in `review/DECISIONS.md`);
 ARCHITECTURE §1/4/6/9/11 move with the code they describe.
 
-## 4.1.0 — Deep harness coverage
+## 4.1.0 — Deep harness coverage — SHIPPED (2026-09-15)
 
 **Scope (2026-09-14):** the remainder of the UI-driving suite's
 mandate, now the harness itself has shipped in 4.0.0 — deeper
@@ -1213,7 +1213,7 @@ itself:
 - the visible-interactions rule and the higher-resolution harness
   (confirmed 2026-09-14 — the 4.0.1 fast-follow did not absorb them).
 
-## 4.2.0 — State, permissions & operation boundaries
+## 4.2.0 — State, permissions & operation boundaries — SHIPPED (2026-09-15)
 
 - **The motion cluster (planned 2026-09-15, round-2 rulings
   applied):** three new readout rows join Position in the Monitor
@@ -1718,7 +1718,7 @@ the decisions ledger.
   target is not an acceptance criterion; the test is that a feature
   change stays within its component.
 
-## 4.4.0 — Configurable sections (settled 2026-09-18)
+## 4.4.0 — Configurable sections — SHIPPED (2026-09-18)
 
 A candidate from the author (2026-09-15): show/hide and re-order the
 Monitor's sections the way the file manager's columns work. The
@@ -1776,33 +1776,54 @@ target order), engine-verified in the dev container; the factory path
 is priced out by the per-instance wiring and the host-never-names-ids
 boundary.
 
-The backlog for this release (verified against the 4.3.0 tree):
+The backlog for this release (verified against the 4.3.0 tree; the
+2026-09-18 debt-pack audit reconciles each entry against the tree):
 
 - The resume button's grey-out: both surfaces already grey out; the
   real gap is the two-clock projection/timing mismatch (the strip's
-  stale imperative enablement on host re-parent).
+  stale imperative enablement on host re-parent). OPEN — the strip's
+  enable reads the preview coordinator's verdict while the monitor's
+  resume row reads the model's; the unification rides the
+  coordinator's refresh extraction.
 - The Monitor's first-paint lazy loading, decoupled from the reorder
   mechanism (a Loader body drops the pinned margins — its own item).
+  DEFERRED (its own item, out of the debt pack).
 - The pause-row interaction scenario and the baked-pause harness
   fixture (the scenario_map EXCLUSIONS entry defers it here).
+  DEFERRED to the harness gate phase.
 - The can_resume one-sided gate: a stale pause flag enables a
   toolhead-moving RESUME and locks out new prints — add the missing
-  state check (the author's 2026-09-17 ruling).
+  state check (the author's 2026-09-17 ruling). DONE pre-snapshot:
+  the two-sided gate denies terminal/standby states with a stale
+  pause bit, the "printing"-lag carve-out preserved and pinned.
 - The multi-start pin backfill: drive the rebind path
   (configure→start→configure→start) and assert the handler set is
-  replaced, not appended.
+  replaced, not appended. DONE pre-snapshot: test_client_feed's
+  rebind pin asserts one klippyReady broadcast re-subscribes exactly
+  once.
 - The test-suite ResourceWarnings hoover (the author's 2026-09-17 CI
   note): unclosed json.load handles and kin, context-managed.
+  DONE pre-snapshot (DECISIONS' implement list), re-verified by the
+  coverage wave's suites.
 - The console's expanded lifecycle (the reviewer's 2026-09-17):
   reset the expanded state on stage exit — consoleSyncLines() keeps
-  updating a hidden document after leaving Monitor.
+  updating a hidden document after leaving Monitor. DONE
+  pre-snapshot: leaveMonitorStage collapses the console, re-entry
+  seeds from the persisted map.
 - The 4.3.0 reviewer debt: drain the relay's unread bytes before
   closing downstream (finite/snapshot camera responses), a
   regression test for the backpressure wake-up, and the diagnostics
-  double-start guard plus trace sub-option clearing.
+  double-start guard plus trace sub-option clearing. DONE in the
+  2026-09-18 debt pack: the bridge drains the finished reply's tail
+  before the close; the drain-crossing regression test exists; the
+  probe's double-start guard and trace sub-option clearing land with
+  pins.
 - The pane-sizes docs correction: remove the promise from README,
   CHANGELOG, WhatsNew and the UiStateStore docstring (the author
-  never ruled resizable panes; console resize stays).
+  never ruled resizable panes; console resize stays). DONE
+  pre-4.4.0: the UiStateStore docstring records the correction, and
+  README's remaining "resize" wording is the file-manager columns
+  and the console divider — both still true.
 
 The 2026-09-16 backlog items that shipped inside 4.3.0 (dropped from
 this release after verification): the duplicate temperature label,
@@ -1811,6 +1832,15 @@ the Preview card's arrow temp pair, the card's black label ruling
 chevrons, and the Windows multi-start disconnect.
 
 ## 4.5.0 — Persistence refactor (the 2026-09-17 re-sequencing)
+
+Live state (2026-09-18): the functional build is confirmed by the
+author and pinned at the tag v4.5.0-snapshot (the revert point for
+the remaining work); the coverage wave lifted plugins/ to 99% line
+coverage with the 95% per-project bar in the gates; the debt pack's
+open items (the refresh extraction and the resume grey-out
+unification) and the 5.7+ compatibility pack sit before the ship
+checklist (docs, version bump, make all, PR — the author tests the
+final build).
 
 The author's 2026-09-17 ruling: the physical head moves to 5.0.0 and
 4.5.0 becomes the persistence refactor. The plugin's persistence was

@@ -1761,8 +1761,8 @@ if QT_AVAILABLE:
             super().__init__()
             self.known = []
 
-        def findContainerStacksMetadata(self, stack_id=None):
-            return [entry for entry in self.known if entry.get("id") == stack_id]
+        def findContainerStacksMetadata(self, id=None):  # noqa: A002  # the registry API's own name
+            return [entry for entry in self.known if entry.get("id") == id]
 
     class _Container:
         def __init__(self, container_id, container_type="machine"):

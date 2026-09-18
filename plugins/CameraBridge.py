@@ -227,6 +227,18 @@ class CameraBridge(QObject):
                 # relay — close so the loader sees the failure.
                 socket.abort()
                 return
+        # Drain the tail: a finite (snapshot) response's last bytes can
+        # still sit in the reply buffer when finished fires — without
+        # this the declared Content-Length is never met and the loader
+        # sees a truncated body (the reviewer's drain). A dead-core
+        # reply (the NAM already gone) has nothing to drain.
+        try:
+            tail = bytes(reply.readAll())
+            if tail:
+                socket.write(tail)
+                self._relayed_bytes += len(tail)
+        except Exception:
+            pass
         # Flush any tail and close the response so a snapshot-style
         # reply terminates cleanly.
         try: socket.flush()

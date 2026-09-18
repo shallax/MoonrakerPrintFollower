@@ -805,6 +805,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._values["fileManagerThumbs"] = payload
         self.fileManagerThumbsChanged.emit()
 
+    @staticmethod
+    def _coerce(value, sentinel):
+        """The Optional-snapshot seam (the 4.5.0 debt pack): a None fed
+        straight into a typed C++ property crashed the model — the
+        sentinel stands in uniformly instead of the per-field prose
+        this replaces."""
+        return value if value is not None else sentinel
+
     def _publish(self):
         fm = self._file_manager
         previous = self._values
@@ -977,20 +985,21 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # The next scheduled pause (the live ruling): the
             # JobSection's readout and both stacked bars' orange
             # third fill.
-            nextPauseLayer=(-1 if snapshot.next_pause_layer is None else snapshot.next_pause_layer),
+            nextPauseLayer=self._coerce(snapshot.next_pause_layer, -1),
             nextPauseEta=snapshot.next_pause_eta,
             # The typed property cannot hold None (the live crash: a
             # NoneType into a C++ double) — the -1.0 sentinel means
             # "no pause ahead", same contract as the progress fields.
-            nextPauseFraction=(-1.0 if snapshot.next_pause_fraction is None else snapshot.next_pause_fraction),
+            nextPauseFraction=self._coerce(snapshot.next_pause_fraction, -1.0),
             nextPauseBaked=bool(snapshot.next_pause_baked),
             # The determinate fraction through both phases: the
             # download's byte fraction, then the index build's own
             # byte-offset progress (the scanner reports it).
-            improveEtaProgress=(max(0.0, min(1.0, snapshot.download_fraction if snapshot.download_fraction is not None else snapshot.index_fraction))
-                                if (snapshot.load_active or self._improving_eta)
-                                   and (snapshot.download_fraction is not None or snapshot.index_fraction is not None)
-                                else -1.0),
+            improveEtaProgress=self._coerce(
+                max(0.0, min(1.0, snapshot.download_fraction if snapshot.download_fraction is not None else snapshot.index_fraction))
+                if (snapshot.load_active or self._improving_eta)
+                   and (snapshot.download_fraction is not None or snapshot.index_fraction is not None)
+                else None, -1.0),
             improveEtaPhase=("Downloading…" if (snapshot.load_active or self._improving_eta) and snapshot.download_fraction is not None
                              else "Indexing…" if (snapshot.load_active or self._improving_eta) and snapshot.indexing
                              else "Resolving…" if snapshot.load_active or self._improving_eta else ""))
