@@ -1868,6 +1868,11 @@ the floor then drops from 5.11+ to 5.7+ once these land:
 - Out of scope, recorded: 5.6's float→int modal (one coercion fix,
   deliberately not pursued — the floor is 5.7+) and the 5.0-5.5
   display wall (a real-GL virtual display, harness-side).
+- A dark-theme capture leg joins the UI tests: the panel's black-
+  glyph class slipped past the light capture theme, and the author
+  found Cura's dark mode by live-testing the release — the harness's
+  capture/census runs must cover the dark theme so a wrong-coloured
+  glyph fails a gate instead of a live session.
 
 ## 5.0.0 — Physical head in the Preview (moved from 4.3.0 to 4.5.0, then to 5.0.0 by the 2026-09-17 re-sequencing)
 
