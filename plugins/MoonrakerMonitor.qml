@@ -55,32 +55,6 @@ Component {
             updateCameraImage();
         }
 
-        // The section-order apply (the 4.5.0 live find): the shell
-        // constructs BEFORE the printer model arrives, and the
-        // model's hydration publish can fire sectionLayoutChanged
-        // before the Connections below attach — the panes kept the
-        // default order until an interaction re-emitted. This retry
-        // waits for the printer, then applies once; the Connections
-        // handler carries the live changes afterwards.
-        Timer {
-            id: sectionOrderApply
-            interval: 200
-            repeat: true
-            running: true
-            property int attempts: 0
-            onTriggered: {
-                if (root.printer != null) {
-                    root.applySectionOrder(infoContent, "information");
-                    root.applySectionOrder(statusContent, "status");
-                    sectionOrderApply.running = false;
-                } else if (++sectionOrderApply.attempts > 50) {
-                    // The printer never arrived: the Connections path
-                    // still covers a late-arriving model.
-                    sectionOrderApply.running = false;
-                }
-            }
-        }
-
         Connections {
             target: root.printer
             function onCameraUrlChanged() {
@@ -425,6 +399,17 @@ Component {
             refreshAvailabilityGates();
             openPopOver = "";
             selectedChartSensor = "";
+            // The stored section order applies on the model's ARRIVAL
+            // (the deterministic trigger — no polling): the panes'
+            // onCompleted ran before the printer existed, and the
+            // hydration publish can fire sectionLayoutChanged before
+            // the Connections below attached. The apply reads the
+            // CURRENT effective layout, so one arrival-time pass
+            // covers both windows.
+            if (root.printer != null) {
+                root.applySectionOrder(infoContent, "information");
+                root.applySectionOrder(statusContent, "status");
+            }
             // The gcode-store poll follows the console's OWN collapse
             // state (the ruling: poll only while the console
             // is on screen, with a backfill on expand). A printer that
@@ -709,6 +694,7 @@ Component {
 
                     ColumnLayout {
                         id: infoContent
+                        objectName: "moonrakerInfoContent"
                         // The stored order applies HERE — before the
                         // first frame paints (the 4.5.0 live find).
                         Component.onCompleted: root.applySectionOrder(infoContent, "information")
@@ -1726,7 +1712,20 @@ Component {
                                                 id: consoleInput
                                                 objectName: "moonrakerConsoleInput"
                                                 Layout.fillWidth: true
+                                                // The row's only shrink absorber: on 5.11's
+                                                // theme metrics the field's implicit minimum
+                                                // outran the pane, pushing Send and Clear out
+                                                // of their cells — the presses landed on the
+                                                // field's wider region.
+                                                Layout.minimumWidth: 0
+                                                // Nothing of the field paints or takes input
+                                                // outside its own cell.
+                                                clip: true
                                                 placeholderText: "G-code command…"
+                                                // The placeholder must clear the contrast
+                                                // census on the light pane: the theme's
+                                                // muted tone, never UM's grey-on-grey.
+                                                placeholderTextColor: MoonrakerTheme.consoleTextMuted
                                                 font.family: consoleSection.monoFamily()
                                                 enabled: root.printer != null && root.printer.monitorConnected
                                                 Keys.onReturnPressed: consoleSection.consoleSend()
@@ -1736,11 +1735,16 @@ Component {
                                             Cura.SecondaryButton {
                                                 text: "Send"
                                                 objectName: "moonrakerConsoleSend"
+                                                // The buttons hold their cells; the field
+                                                // gives up the width instead.
+                                                Layout.fillWidth: false
                                                 enabled: root.printer != null && root.printer.monitorConnected
                                                 onClicked: consoleSection.consoleSend()
                                             }
                                             Cura.SecondaryButton {
                                                 text: "Clear"
+                                                objectName: "moonrakerConsoleClear"
+                                                Layout.fillWidth: false
                                                 enabled: root.printer != null && root.printer.monitorConnected && root.printer.consoleLines.length > 0
                                                 onClicked: root.printer.clearConsoleHistory()
                                             }
@@ -1901,6 +1905,7 @@ Component {
 
                 Flickable {
                     id: statusFlick
+                    objectName: "moonrakerStatusFlick"
                     visible: !root.statusCollapsed
                     anchors.top: statusHeader.bottom
                     anchors.left: parent.left
@@ -1920,19 +1925,21 @@ Component {
 
                     ColumnLayout {
                         id: statusContent
+                        objectName: "moonrakerStatusContent"
                         // The stored order applies HERE — the column's
                         // own completion, after its children exist and
                         // BEFORE the first frame paints (the 4.5.0 live
                         // find: any later apply is a visible jump).
                         Component.onCompleted: root.applySectionOrder(statusContent, "status")
-                        // The constant gutter (the whats-new overlay's
-                        // precedent): binding the content width to the
-                        // LIVE scrollbar width fed a layout polish loop
-                        // on the Windows run — the scrollbar
-                        // overlays the gutter instead of squeezing the
-                        // content in a feedback cycle.
-                        Layout.fillWidth: true
-                        Layout.rightMargin: 14
+                        // The constant gutter, exactly as the information
+                        // pane above rules it: the scrollbar overlays the
+                        // gutter rather than squeezing the content in a
+                        // live-width feedback cycle. Layout.fillWidth is
+                        // inert here (a Flickable is not a layout), so the
+                        // explicit viewport-relative width is the only
+                        // thing keeping the column at its own implicit
+                        // width while the sections paint past the pane.
+                        width: statusFlick.width - 14
                         // Spacing lives on the children: collapsed sections
                         // must contribute nothing so headers stack flush.
                         spacing: 0

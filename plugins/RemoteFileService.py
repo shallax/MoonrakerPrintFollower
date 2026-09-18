@@ -78,6 +78,7 @@ class _OneShotDownload:
         self._directory = None
         self._path = None
         self._op = None
+        reply = None
         try:
             self._directory = tempfile.mkdtemp(prefix="file-", dir=root)
             name = os.path.basename(self._relpath.replace("\\", "/")) or "download.gcode"
@@ -97,9 +98,16 @@ class _OneShotDownload:
             # in the drain once the response headers have arrived.
             size = 0
         except Exception as error:
-            # Nothing above opened a handle (the target opens last), so
-            # there is nothing to close here — the one-shot retires
-            # with its directory removed by _finish_immediately.
+            # No file handle exists here (the target opens last), but a
+            # failure AFTER the reply was created — the target factory
+            # raising — must not leave that reply live: abort and
+            # dispose it exactly as the job lane's setup path does, or
+            # the transfer keeps running with nothing reading it.
+            if reply is not None:
+                reply.abort()
+                reply.deleteLater()
+            # The one-shot retires with its directory removed by
+            # _finish_immediately.
             self._finish_immediately(str(error))
             return
         self._op = DownloadOperation(target, reply, size, None, None)

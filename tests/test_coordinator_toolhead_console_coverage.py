@@ -1711,7 +1711,7 @@ class ToolheadCoverageTests(unittest.TestCase):
 class ConsoleCoverageTests(unittest.TestCase):
     def setUp(self):
         self._rt = runtime()
-        self._rt.__enter__()
+        self.events = self._rt.__enter__().events
         self.addCleanup(self._rt.__exit__, None, None, None)
         from plugins.ConsoleController import ConsoleController
         self.controller_class = ConsoleController
@@ -2054,7 +2054,8 @@ class ConsoleCoverageTests(unittest.TestCase):
                          controller.MAX_PERSIST_COMMANDS)
 
     def test_mark_saved_only_touches_the_persisted_window(self):
-        controller = self._make()
+        persistence = _FakePersistence(shard=None)
+        controller = self._make(persistence=persistence)
         old = [{"kind": "command", "text": f"old {n}", "error": False, "success": False,
                 "restored": False, "saved": False} for n in range(12)]
         oldest = old[0]
@@ -2065,11 +2066,64 @@ class ConsoleCoverageTests(unittest.TestCase):
                   "restored": False, "saved": False} for n in range(10)]
                 + [self._response(f"line {n}") for n in range(MAX_TRANSCRIPT - 10)])
         controller._transcript = old + tail
+        # The settle only claims what a SUCCESSFUL write stored, so the
+        # write has to happen first (it is what arms the colour flip).
+        controller._persist()
         controller.mark_saved()
         self.assertFalse(oldest["saved"])       # pushed out of the window
         self.assertFalse(restored["saved"])     # restored lines never claim disk
         self.assertTrue(tail[0]["saved"])       # a retained command inside it
         self.assertNotIn("saved", tail[-1])     # responses are left alone
+
+    def test_a_write_failing_after_a_success_never_colours_its_unwritten_lines(self):
+        # The review's catch: the settle used to colour "on disk" from
+        # the transcript window alone, so a shard write that failed
+        # after an earlier success painted lines it never stored.
+        persistence = _FakePersistence(shard=None)
+        controller = self._make(persistence=persistence)
+        controller.send("G28")
+        stored = controller._transcript[-1]
+        persistence.ok = False
+        controller.send("M18")
+        # The failed write leaves its own note after the command.
+        unwritten = next(entry for entry in controller._transcript if entry["text"] == "M18")
+        controller.mark_saved()  # the settle the successful write armed
+        self.assertTrue(stored["saved"])
+        self.assertFalse(unwritten["saved"])
+
+    def test_a_claim_holds_while_its_line_is_still_in_the_pane(self):
+        # The claim names the entries a success stored, so a line the
+        # pane still shows keeps its "on disk" verdict after newer
+        # traffic has pushed it out of the persisted window — it WAS
+        # written, and only the pane dropping it retires the claim.
+        persistence = _FakePersistence(shard=None)
+        controller = self._make(persistence=persistence)
+        self.assertTrue(controller.send("G28"))
+        written = controller._transcript[-1]
+        controller._transcript.extend(
+            [{"kind": "command", "text": f"M{n}", "error": False, "success": False,
+              "restored": False, "saved": False} for n in range(controller.MAX_PERSIST_COMMANDS)]
+            + [self._response(f"line {n}") for n in range(MAX_TRANSCRIPT)])
+        self.assertFalse(any(entry is written for entry in controller._persist_window()))
+        # A later success settles ITS window; the earlier claim has to
+        # survive that write's bookkeeping.
+        controller._persist()
+        controller.mark_saved()
+        self.assertTrue(written["saved"])
+
+    def test_the_settle_is_not_restarted_by_continuous_traffic(self):
+        # A chatty feed writes the shard every few hundred ms; a settle
+        # restarted by every success would push the colour flip out
+        # forever, so a pending settle is left to fire.
+        persistence = _FakePersistence(shard=None)
+        controller = self._make(persistence=persistence)
+        controller._saved_timer.setInterval(200)
+        controller.send("G28")
+        first = controller._transcript[-1]
+        self.events(150)
+        controller.send("M18")
+        self.events(150)
+        self.assertTrue(first["saved"])
 
     def test_the_connection_note_prints_transitions_only(self):
         controller = self._make()

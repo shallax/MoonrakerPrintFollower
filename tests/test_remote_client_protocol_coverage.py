@@ -2120,6 +2120,26 @@ class RemoteFileServiceOneShotTests(_FileServiceCase):
         download.cancel()  # a dead download must not deliver a second terminal
         self.assertEqual(len(delivered), 1)
 
+    def test_a_one_shot_target_failure_disposes_the_reply_it_already_created(self):
+        def explode(path):
+            raise OSError("the cache is full")
+
+        service = self.mod.RemoteFileService(self.transport, target_factory=explode)
+        self.addCleanup(service.close)
+        reply = FakeReply(pairs=[(b"Content-Length", b"8")])
+        self.transport.network.replies.append(reply)
+        delivered = []
+        download = service.download_once("part.gcode", on_ready=lambda path, error: delivered.append((path, error)))
+        self.assertTrue(download._done)
+        self.assertEqual(delivered, [(None, "the cache is full")])
+        # The reply predates the target, so the setup failure has to
+        # retire it: a live reply would keep streaming with nothing
+        # reading it, and its signals hold this downloader alive.
+        self.assertEqual(reply.aborted, 1)
+        self.assertEqual(reply.deleted, 1)
+        self.assertEqual(service._one_shots, set())
+        self.assertIsNone(download._directory)
+
     def test_a_one_shot_name_gets_the_gcode_extension(self):
         download, reply, delivered = self.start_one_shot(relpath="sub/part")
         reply.push(b"12345678")

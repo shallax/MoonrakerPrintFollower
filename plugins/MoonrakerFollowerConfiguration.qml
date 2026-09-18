@@ -25,7 +25,11 @@ Cura.MachineAction {
     property bool canSave: validPollInterval && validAuxInterval && validConsoleInterval && validZTolerance && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
     // A refused save must be visible: the dialog accepted nothing and
     // said nothing, so the change seemed to revert (the live report).
+    // Two refusal causes share the slot with distinct copy: the
+    // validation refusal names the fields, the disk refusal names the
+    // write — "fix the fields" is a lie for a full disk.
     property bool saveRefused: false
+    property string saveRefusalText: ""
 
     function followMode() {
         if (completedMode.checked)
@@ -40,6 +44,7 @@ Cura.MachineAction {
     function save(closeDialog) {
         if (!base.canSave) {
             saveRefused = true;
+            saveRefusalText = "Settings were not saved — fix the highlighted fields and save again.";
             return;
         }
         var saved = manager.saveConfig({
@@ -78,6 +83,7 @@ Cura.MachineAction {
                 "filename_translate_remove": translateRemoveField.text
             });
         saveRefused = !saved;
+        saveRefusalText = saved ? "" : "Settings were not saved — the file could not be written. Check the disk and try again.";
         if (saved && closeDialog)
             actionDialog.close();
     }
@@ -92,6 +98,8 @@ Cura.MachineAction {
         target: actionDialog
         function onAccepted() {
             base.save(false);
+            if (base.saveRefused)
+                actionDialog.show();  // accepted fires AFTER the close: reopen so the refusal is visible
         }
         function onRejected() {
             base.cancel(false);
@@ -117,7 +125,7 @@ Cura.MachineAction {
         anchors.left: parent.left
         anchors.leftMargin: UM.Theme.getSize("default_margin").width
         visible: saveRefused
-        text: "Settings were not saved — fix the highlighted fields and save again."
+        text: saveRefusalText
         color: UM.Theme.getColor("error")
     }
 

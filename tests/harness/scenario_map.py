@@ -142,6 +142,9 @@ SCENARIO_MAP = {
     "moonrakerKlipperRestart": "v18",
     "moonrakerHomeX": "g2", "moonrakerHomeY": "g2", "moonrakerHomeZ": "g2",
     "moonrakerConsoleInput": "d1", "moonrakerConsoleSend": "d1",
+    # The Clear button gained its own address (the hit-region fix): d3
+    # presses it by name instead of by its rendered text.
+    "moonrakerConsoleClear": "d3",
     "moonrakerM117Slot": "s6",
     "moonrakerPreviewCard": "v1",
     "moonrakerStripPauseButton": "v19",
@@ -370,6 +373,12 @@ EXCLUSIONS = {
         "date": "2026-09-18",
         "recheck": "a scenario asserts the Status pane's axis colours",
     },
+    "moonrakerInfoContent": {
+        "reason": "the information pane's container, addressed by the real-engine tests; the section ORDER is asserted by the configure scenarios through the headers, not by this name",
+        "evidence": "test_qml_real_engine's SectionOrderArrivalTests address it; the s-scenarios pin the rendered order end-to-end",
+        "date": "2026-09-18",
+        "recheck": "the configure scenarios adopt the objectName directly",
+    },
     "jobPositionCellY": {
         "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
         "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
@@ -391,6 +400,21 @@ EXCLUSIONS = {
         "evidence": "the container repro reads the synced rows end to end",
         "date": "2026-09-16",
         "recheck": "the baked-pause pause-row scenario lands",
+    },
+    # The status column's two geometry address points (the status-width
+    # fix): the flickable and the column it holds are measured, never
+    # pressed — a scenario would only be reading their rects.
+    "moonrakerStatusFlick": {
+        "reason": "geometry address point of the status pane; no scenario presses it",
+        "evidence": "test_qml_real_engine's StatusColumnGeometryTests measures the column against it",
+        "date": "2026-09-18",
+        "recheck": "a scenario scrolls or presses inside the status pane",
+    },
+    "moonrakerStatusContent": {
+        "reason": "geometry address point of the status column; no scenario presses it",
+        "evidence": "test_qml_real_engine's StatusColumnGeometryTests measures the sections against it",
+        "date": "2026-09-18",
+        "recheck": "a scenario scrolls or presses inside the status pane",
     },
     # The job section's stacked-track pause fill: the strip's own
     # fill took the mapped statusNextPauseFill name (the shared

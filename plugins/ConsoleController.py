@@ -57,6 +57,12 @@ class ConsoleController(QObject):
         self._saved_timer.setSingleShot(True)
         self._saved_timer.setInterval(2000)
         self._saved_timer.timeout.connect(self.mark_saved)
+        # The entries a SUCCESSFUL shard write actually stored, held by
+        # reference so no line sent during the settle can inherit a
+        # recycled identity: only they may settle to "on disk", so a
+        # write that fails after a success can never colour its
+        # unwritten lines.
+        self._persisted = []
         stored = getattr(self._config(), "console_transcript", None)
         if isinstance(stored, (list, tuple)):
             # EVERY loaded line predates this session: restored stays
@@ -361,14 +367,16 @@ class ConsoleController(QObject):
         """The shard write landed (the 2 s settle after each persist):
         the sent lines are on disk, so their blue pending colour can
         settle (the ruling — the API verdict flips too fast to read).
-        Only entries inside the persisted window may claim "on disk":
-        lines beyond it were never written and die with the session
-        (the engineering panel's over-promise)."""
-        window = {id(entry) for entry in self._persist_window()}
+        Only entries a SUCCESSFUL write actually stored may claim "on
+        disk": lines beyond the persisted window were never written and
+        die with the session (the engineering panel's over-promise), and
+        neither were the lines of a write that failed after one that
+        succeeded (the review's success-then-failure catch)."""
+        persisted, self._persisted = self._persisted, []
         changed_any = False
         for entry in self._transcript:
             if (entry["kind"] == "command" and not entry["restored"] and not entry.get("saved")
-                    and id(entry) in window):
+                    and any(entry is kept for kept in persisted)):
                 entry["saved"] = True
                 changed_any = True
         if changed_any:
@@ -426,9 +434,10 @@ class ConsoleController(QObject):
         # enter it — they made the equality guard compare unequal
         # forever, so every persist rewrote the full multi-machine
         # preference map (the architecture panel's dead guard).
+        window = self._persist_window()
         transcript = [{"kind": entry["kind"], "text": entry["text"],
                        "error": entry["error"], "success": entry["success"]}
-                      for entry in self._persist_window()]
+                      for entry in window]
         # Only the last 50 lines persist (the ruling); the
         # session keeps up to MAX_HISTORY in the pane. The store stamp
         # persists with them so the next session's expand skip is
@@ -439,8 +448,21 @@ class ConsoleController(QObject):
         })
         if ok:
             # Durability is the write itself; the settle only gives the
-            # verdict colour a beat before the blue settles.
-            self._saved_timer.start()
+            # verdict colour a beat before the blue settles. The claim
+            # names exactly the entries THIS write stored: an earlier
+            # success's entries stay claimed (the window may have moved
+            # on since), and entries whose line left the transcript drop
+            # out.
+            self._persisted = [entry for entry in self._persisted
+                               if any(entry is live for live in self._transcript)]
+            for entry in window:
+                if not any(entry is kept for kept in self._persisted):
+                    self._persisted.append(entry)
+            # A pending settle is never restarted: a chatty feed would
+            # otherwise push the colour flip out forever (the review's
+            # bounded-settling requirement).
+            if not self._saved_timer.isActive():
+                self._saved_timer.start()
         else:
             self._note("The console transcript could not be saved — recent lines may not survive a restart.")
 

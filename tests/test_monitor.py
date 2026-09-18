@@ -3124,6 +3124,7 @@ class MonitorQtTests(unittest.TestCase):
             *[{"kind": "response", "text": "B:%d.0" % i, "error": False,
                "success": False, "restored": False} for i in range(60)],
         ]
+        model._console._persist()  # only a successful write may be claimed
         model._console.mark_saved()
         lines = model.consoleLines.value()
         self.assertFalse(lines[0]["saved"])  # OLD0: beyond the pin reach
@@ -3890,6 +3891,14 @@ Item {
                       "consoleLines", "selectByMouse",
                       "server/gcode_store?count=100"):
             self.assertIn(token, MONITOR_QML + (PLUGINS / "MonitorData.py").read_text(encoding="utf-8"))
+        # The input row's hit-region contract (the 5.11/5.12 sweep): the
+        # field shrinks and clips INSIDE its own cell, so Send and Clear
+        # keep theirs and the presses aimed at them land on them.
+        input_cell = MONITOR_QML[MONITOR_QML.index('objectName: "moonrakerConsoleInput"'):
+                                 MONITOR_QML.index('objectName: "moonrakerConsoleSend"')]
+        self.assertIn("Layout.minimumWidth: 0", input_cell)
+        self.assertIn("clip: true", input_cell)
+        self.assertIn('objectName: "moonrakerConsoleClear"', MONITOR_QML)
         # The webcam pane's title moved with the card (CameraPane.qml).
         self.assertIn('text: "Webcam"', CAMERA_PANE_QML)
         # The poll gate opens on printer attach — never wired to the

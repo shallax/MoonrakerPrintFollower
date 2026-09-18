@@ -150,7 +150,7 @@ Item {
         var incoming = base.pauseAtLayerItems || [];
         var keep = {};
         for (var i = 0; i < incoming.length; i++) {
-            keep[incoming[i].layer] = true;
+            keep[Number(incoming[i].layer || 0)] = true;
         }
         for (var r = pauseListModel.count - 1; r >= 0; r--) {
             if (!keep[pauseListModel.get(r).layerNo]) {
@@ -159,15 +159,19 @@ Item {
         }
         for (var k = 0; k < incoming.length; k++) {
             var row = incoming[k];
+            // EVERY role is normalised to a concrete value: a role whose
+            // first value is undefined is dropped from the ListModel, and
+            // the delegate's bare role lookup then throws ReferenceError
+            // (the capture leg's live catch for pauseWord).
             var payload = {
-                "layerNo": row.layer,
-                "eta": row.eta,
-                "pauseWord": row.state || "scheduled",
+                "layerNo": Number(row.layer || 0),
+                "eta": String(row.eta || ""),
+                "pauseWord": String(row.state || "scheduled"),
                 "passed": row.passed === true
             };
             var at = -1;
             for (var f = 0; f < pauseListModel.count; f++) {
-                if (pauseListModel.get(f).layerNo === row.layer) {
+                if (pauseListModel.get(f).layerNo === payload.layerNo) {
                     at = f;
                     break;
                 }
@@ -177,13 +181,13 @@ Item {
                 // at its sorted position among the existing rows.
                 var pos = pauseListModel.count;
                 for (var s = 0; s < pauseListModel.count; s++) {
-                    if (pauseListModel.get(s).layerNo > row.layer) {
+                    if (pauseListModel.get(s).layerNo > payload.layerNo) {
                         pos = s;
                         break;
                     }
                 }
                 pauseListModel.insert(pos, payload);
-            } else if (pauseListModel.get(at).eta !== row.eta || pauseListModel.get(at).pauseWord !== row.state || pauseListModel.get(at).passed !== payload.passed) {
+            } else if (pauseListModel.get(at).eta !== payload.eta || pauseListModel.get(at).pauseWord !== payload.pauseWord || pauseListModel.get(at).passed !== payload.passed) {
                 pauseListModel.set(at, payload);
             }
         }
@@ -251,6 +255,16 @@ Item {
     onPreviewBlockChanged: updateStrip()
     onPreviewBlockStaleChanged: updateStrip()
     onPreviewEtaTextChanged: updateStrip()
+    // The cells read the pause/resume verdicts too (the slot's refusal
+    // word, the button's enablement and its tooltip): a verdict-only
+    // change — the block and the ETA held constant — must refresh them,
+    // or the strip keeps the outgoing verdict's copy.
+    onStripCanPauseChanged: updateStrip()
+    onStripCanResumeChanged: updateStrip()
+    onStripPauseReasonChanged: updateStrip()
+    onStripResumeReasonChanged: updateStrip()
+    onStripPauseReasonDetailChanged: updateStrip()
+    onStripResumeReasonDetailChanged: updateStrip()
 
     Component.onCompleted: {
         updateCardGate();

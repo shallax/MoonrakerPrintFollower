@@ -1364,7 +1364,7 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_set", "state": {"console_lines": [{"type": "response", "message": "// line %d" % i,
                                                        "time": 1.0} for i in range(10)]}},
-         {"op": "click_text", "text": "Clear"},
+         {"op": "deliver_click", "objectName": "moonrakerConsoleClear"},
          {"op": "assert_model", "prop": "consoleHistory", "value": []},
      ]},
     {"id": "d5", "group": "console", "name": "the console resize commits through the model",
