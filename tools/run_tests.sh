@@ -1,4 +1,5 @@
 #!/bin/sh
+: "${PYTHON:=python3}"
 # Run the full test suite locally and fail loudly on any failure.
 #
 # The stdlib suite runs on the host (Python 3.10+); the real-Qt suite
@@ -48,7 +49,7 @@ run_files() {
     # One worker per test file; any worker's failure fails the leg
     # (xargs exits 123, and the tracebacks land in the shared log).
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
-    printf '%s\n' $files | xargs -P "$jobs" -n1 python3 -m unittest discover -s tests -p
+    printf '%s\n' $files | xargs -P "$jobs" -n1 "$PYTHON" -m unittest discover -s tests -p
 }
 
 run_files_container() {
@@ -56,16 +57,16 @@ run_files_container() {
     # invocations would race on the image build) with the fan-out
     # inside: each worker runs its own file's discovery.
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
-    tools/docker_dev.sh sh -c "cd /work && printf '%s\n' $files | xargs -P $jobs -n1 python3 -m unittest discover -s tests -p"
+    tools/docker_dev.sh sh -c "cd /work && printf '%s\n' $files | xargs -P $jobs -n1 $PYTHON -m unittest discover -s tests -p"
 }
 
 run_coverage_container() {
     # shellcheck disable=SC2086  # $files is a deliberate word-split list
     tools/docker_dev.sh sh -c "cd /work && \
         rm -f /tmp/mpf/cov.*.coverage && \
-        printf '%s\n' $files | xargs -P $jobs -n1 sh -c 'f=\"\$1\"; COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage python3 -m coverage run -m unittest discover -s tests -p \"\$f\"' _ && \
-        python3 -m coverage combine /tmp/mpf/cov.*.coverage && \
-        python3 -m coverage report --include='plugins/*' --fail-under=95"
+        printf '%s\n' $files | xargs -P $jobs -n1 sh -c 'f=\"\$1\"; COVERAGE_FILE=/tmp/mpf/cov.\${f%.py}.coverage $PYTHON -m coverage run -m unittest discover -s tests -p \"\$f\"' _ && \
+        $PYTHON -m coverage combine /tmp/mpf/cov.*.coverage && \
+        $PYTHON -m coverage report --include='plugins/*' --fail-under=95"
 }
 
 if [ "${COVERAGE:-0}" = "1" ]; then
@@ -79,8 +80,8 @@ if [ "${LEGS:-all}" = "host" ]; then
     # The pre-commit hook's slice: the host suite fanned out, no
     # container legs (CI owns the container run).
     run_once "stdlib suite" run_files
-    run_once "harness specs" python3 tests/harness/test_harness_specs.py
-    run_once "harness runner" python3 tests/harness/test_harness_runner.py
+    run_once "harness specs" "$PYTHON" tests/harness/test_harness_specs.py
+    run_once "harness runner" "$PYTHON" tests/harness/test_harness_runner.py
     echo "host legs passed"
     exit 0
 fi
@@ -90,8 +91,8 @@ run_once "stdlib suite" run_files
 # unique, every op exists; the evidence record and the PNG dimension
 # check) — not discovered on the host (no package init), so run
 # directly.
-run_once "harness specs" python3 tests/harness/test_harness_specs.py
-run_once "harness runner" python3 tests/harness/test_harness_runner.py
+run_once "harness specs" "$PYTHON" tests/harness/test_harness_specs.py
+run_once "harness runner" "$PYTHON" tests/harness/test_harness_runner.py
 run_once "real-Qt suite (dev container, $jobs workers)" run_files_container
 
 echo "all test suites passed"

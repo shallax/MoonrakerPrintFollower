@@ -10,6 +10,30 @@ on:
 
 
 jobs:
+  cross-platform-suites:
+    # The headless pure-Python suites on the OSes the plugin ships
+    # to: Windows and macOS defects (the no-O_NOFOLLOW write failure,
+    # the boot-storm crashers' siblings) must not wait for a manual
+    # pass. No display needed — the Qt-gated tests
+    # skip where PyQt6 is absent, and the container legs stay Linux.
+    name: Suites (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Run the headless host suites
+        shell: bash
+        run: JOBS=2 PYTHON=python LEGS=host bash tools/run_tests.sh
+
   harness-smoke:
     # The PR-level real-Cura check: the smoke set in one boot against
     # the primary pinned Cura (the full gate stays release-time). The
