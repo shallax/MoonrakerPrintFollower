@@ -4,15 +4,17 @@
 legacy preference chain (the flat keys, the Moonraker Connection
 import) still runs first; the one-shot migration into the facade's
 files runs from Cura's initializationFinished — never construction
-(Cura re-reads the preference file after plugins load and resurrects
-a construction-time clean, the panel's B1) — with the machine-switch
-path as the deferred-until-identity case. The console's
-preference-flush debounce is gone: the transcript writes its own
-per-machine shard (ConsoleController), so the binding no longer
-flushes cura.cfg for it. The removal hook wipes a removed machine's
-credentials via the facade — the explicit removed id, never the
-active identity (E1's wrong-target trap: removeMachine activates a
-replacement first)."""
+(Cura re-reads the preference file after plugins load, drops every
+preference write until it has started, and thus resurrects a
+construction-time clean, the panel's B1). The latch is explicit:
+`_ready` is False until mark_ready observes that signal, so `start()`
+only connects, and a machine that appears before readiness is applied
+there and migrated once readiness lands. The console's preference-flush
+debounce is gone: the transcript writes its own per-machine shard
+(ConsoleController), so the binding no longer flushes cura.cfg for it.
+The removal hook wipes a removed machine's credentials via the facade —
+the explicit removed id, never the active identity (E1's wrong-target
+trap: removeMachine activates a replacement first)."""
 from __future__ import annotations
 
 import time
@@ -22,7 +24,7 @@ from PyQt6.QtCore import QObject, QUrl, pyqtSignal
 from UM.Logger import Logger
 
 from .CuraAdapter import active_machine_identity
-from .PersistenceMigration import read_source, run_migration
+from .PersistenceMigration import _record, read_source, run_migration
 from .PrinterConfig import PrinterConfig, PrinterConfigStore, normalise_url
 
 # The host-identifying fields the removal wipe clears (the
@@ -51,6 +53,19 @@ class PrinterBinding(QObject):
         self._store = PrinterConfigStore(application.getPreferences(), lambda: active_machine_identity(application))
         self._machine_id, self._machine_name = self._store.identity()
         self._closed = False
+        # The boot-complete latch (B1): every destructive step — the
+        # legacy chain's blob push, the one-shot's clean — waits for
+        # Cura's readiness signal, because Cura reads the preference
+        # file for the last time after plugins load and drops every
+        # preference write until it has started. Two hosts have nothing
+        # to wait for and are ready from construction: one with no
+        # readiness signal at all, and one that has already started
+        # (a plugin re-enabled after the boot — Cura sets `started`
+        # just before it emits, so a late construction must not wait
+        # for a signal that will never come again).
+        self._ready = getattr(application, "initializationFinished", None) is None or bool(
+            getattr(application, "started", False)
+        )
         signal = getattr(application, "globalContainerStackChanged", None)
         self._machine_signal = signal
         if signal is not None:
@@ -142,12 +157,17 @@ class PrinterBinding(QObject):
             # The check then FALLS THROUGH — a legacy install whose
             # machine appears after boot still needs its one-shot, and
             # an empty blob returns below without a record (the
-            # first-install ruling).
-            self._persistence.write_settings_document({
+            # first-install ruling). The write's own verdict is logged:
+            # a failed activation is retried by the next boot (there is
+            # no record to read), and it must not go unrecorded here —
+            # but it is NOT a migration failure, so no notice claims
+            # settings were lost when there was nothing to move.
+            if not self._persistence.write_settings_document({
                 "configVersion": 2,
                 "global": {},
                 "machines": {},
-            })
+            }):
+                Logger.log("w", "Moonraker could not activate its settings document.")
         record = self._persistence.migration_record()
         if record is not None:
             status = record.get("status")
@@ -179,6 +199,7 @@ class PrinterBinding(QObject):
             # after the clean).
             return
         self._carry_bed_mesh_preferences(preferences)
+        timestamp = time.strftime("%Y-%m-%d-%H-%M-%S")
         outcome = run_migration(
             blob,
             self._cura_cfg_path,
@@ -190,18 +211,48 @@ class PrinterBinding(QObject):
             state_global_write=self._persistence.write_state_global_document,
             state_machine_write=self._persistence.write_machine_state_document,
             set_pref=preferences.setValue,
-            timestamp=time.strftime("%Y-%m-%d-%H-%M-%S"),
+            timestamp=timestamp,
         )
         if outcome.status == "failed":
+            # Every failure owns a surface (the toast and the banner
+            # both read the record), and the storage that would hold it
+            # may be exactly what failed — so the boot's own copy rides
+            # in the facade, whose record read prefers the document and
+            # falls back to this. The absence of a persisted record is
+            # what makes the next boot replay the attempt.
             Logger.log("w", "Moonraker persistence migration failed: %s", outcome.reason)
+            self._persistence.remember_migration_outcome(_record(outcome, timestamp))
+        elif not outcome.record_persisted:
+            # The migration happened but its verdict never landed: the
+            # next boot replays against an empty source (a no-op).
+            Logger.log("w", "The Moonraker migration record could not be saved.")
 
     def start(self):
+        """The construction-time entry: configuration reads and the
+        connection are allowed here, the destructive half is not. A
+        machine that appears before readiness is applied by
+        _machine_changed and migrated by mark_ready."""
+        if self._ready:
+            self._migrate()
+        self._apply()
+
+    def mark_ready(self):
+        """Cura's readiness (initializationFinished) observed. The
+        deferred destructive half runs now, against the identity the
+        boot resolved. Idempotent: a repeated notification changes
+        nothing (there is one boot)."""
+        if self._ready:
+            return
+        self._ready = True
         self._migrate()
         self._apply()
 
     def apply(self, config):
+        """Persist and apply one machine's settings. Returns whether
+        the settings reached the store: a refused save must not be
+        reported as success by the caller."""
         if self._closed:
-            return
+            return False
         previous = self.config
         self._client.set_trace_http(config.trace_http)
         endpoint_changed = (normalise_url(previous.url), previous.api_key) != (normalise_url(config.url), config.api_key)
@@ -217,15 +268,20 @@ class PrinterBinding(QObject):
         # The facade's typed settings write (the file is the source of
         # truth now — SaveFile's fsync makes the save durable, so the
         # synchronous preference flush retires with the transcript).
+        # The verdict travels back to the caller: a refused save must
+        # never be reported as a completed one.
         machine_id, _ = self.identity
-        self._persistence.set_machine_config(machine_id, config)
+        saved = self._persistence.set_machine_config(machine_id, config)
+        if not saved:
+            Logger.log("w", "Moonraker settings for %s could not be saved.", machine_id)
 
         # Camera selection is UI state, not connection state: persisted
         # above, but never a reconfigure/restart of the client.
         if camera_only:
             self.changed.emit()
-            return
+            return saved
         self._apply()
+        return saved
 
     def _machine_changed(self, *_args):
         machine_id, name = self._store.identity()
@@ -238,7 +294,12 @@ class PrinterBinding(QObject):
         # the generation bump is what stale-callback guards rely on.
         self._client.stop()
         self._machine_id, self._machine_name = machine_id, name
-        self._migrate()
+        # The queue the latch implies: a machine that appears before
+        # readiness is applied now (reads and the connection are
+        # allowed) and its migration runs from mark_ready, against the
+        # identity this update just resolved.
+        if self._ready:
+            self._migrate()
         self._apply()
 
     def _container_removed(self, container, *args):
@@ -265,6 +326,11 @@ class PrinterBinding(QObject):
         # The explicit REMOVED id, never the active identity (E1):
         # removeMachine activates a replacement first, so any
         # active-identity default blanks the wrong printer.
+        # The check re-runs at EXECUTION time: the timer defers the
+        # wipe, and a same-id machine re-added in that window is a live
+        # printer whose credentials must survive (B2's re-check).
+        if self._registry is not None and self._registry.findContainerStacksMetadata(id=machine_id):
+            return
         if machine_id == self._machine_id:
             self._client.stop()
         patch = {field: ("http://" if field == "url" else "") for field in _REMOVAL_WIPE_FIELDS}

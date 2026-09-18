@@ -2,14 +2,17 @@
 
 4.5.0: the persistence facade is constructed HERE — one instance per
 process (the panel's H5: the in-memory document makes a single owner
-mandatory), with Cura's SaveFile as the injected atomic write and a
-lock on the shared documents; the per-machine state shards have a
-single writer by construction and take none. The one-shot migration
-runs from Cura's initializationFinished (B1)."""
+mandatory), with Cura's SaveFile as the injected atomic write and ONE
+lock provider for every document the facade owns (the shards share
+the settings lock — they are not single-writer by construction). The
+destructive half of the boot runs from Cura's initializationFinished
+(B1): the binding's latch opens there, never at construction."""
 
 from __future__ import annotations
 
 import os
+
+from UM.Logger import Logger
 from UM.Resources import Resources
 
 from .BedMeshPresenter import BedMeshPresenter
@@ -35,14 +38,18 @@ def _savefile_write(path, text):
     same-directory temp file, an fsync and an flock — the plugin's
     JSON gains the host's own durability story. The folder is
     recreated on demand: a config folder deleted by hand must not
-    turn every subsequent save into a silent no-op."""
+    turn every subsequent save into a silent no-op. The failure is
+    reported by return value (the store's contract) — logged here
+    with its cause, because a bare False leaves the next unsaved
+    setting without a story."""
     try:
         from UM.SaveFile import SaveFile
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with SaveFile(path, "w", encoding="utf-8") as handle:
             handle.write(text)
         return True
-    except Exception:
+    except Exception as error:
+        Logger.log("w", "Moonraker persistence could not write %s: %s", path, error)
         return False
 
 
@@ -85,10 +92,12 @@ def _raise_migration_toast(record):
 
 
 def _state_lock(state_root):
-    """The cross-process lock for the SHARED documents (the settings
-    file and the global chrome — E9/H2), Cura's own lock-file recipe:
-    the per-machine shards have a single writer by construction and
-    need none."""
+    """The cross-process lock for the plugin's documents (the settings
+    file, the global chrome and the per-machine shards — they share
+    this one provider, E9/H2), Cura's own lock-file recipe. A host
+    without the primitive reports None; the store reads that as "run
+    unlocked" and keeps persisting (a lock is never the reason a save
+    is lost)."""
     try:
         from UM.LockFile import LockFile
         return LockFile(
@@ -161,10 +170,12 @@ class FollowerRuntime:
         )
         # The one-shot's trigger (B1): the clean must run after Cura's
         # second preference read, never from construction — and
-        # saveSettings() only works once Cura has started.
+        # saveSettings() only works once Cura has started. The
+        # binding's latch opens on the same signal (mark_ready runs the
+        # migration internally), so construction below only connects.
         finished = getattr(application, "initializationFinished", None)
         if finished is not None:
-            finished.connect(self.binding.run_persistence_migration)
+            finished.connect(self.binding.mark_ready)
             finished.connect(self.notice.announce)
         self.binding.start()
 

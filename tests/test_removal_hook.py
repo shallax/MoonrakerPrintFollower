@@ -169,6 +169,37 @@ class RemovalHookTests(unittest.TestCase):
         self.assertEqual(self.client.stops, 1)
         self.assertEqual(self.persistence.writes[0][0], "B")
 
+    def test_a_machine_back_before_the_timer_fires_keeps_its_credentials(self):
+        # The wipe defers through QTimer.singleShot(0), and in that
+        # window the same machine id can reappear (the user re-adds it,
+        # Cura re-registers it). The check re-runs at EXECUTION time:
+        # the deferral must never blank a live printer's credentials.
+        self._seed("A", "http://a:7125")
+        deferred = []
+        with patch.object(QTimer, "singleShot",
+                          lambda _ms, callback: deferred.append(callback)):
+            self.registry.containerRemoved.emit(_FakeContainer("A", "machine"))
+        self.assertEqual(self.persistence.writes, [])  # scheduled, not run
+        self.registry.known = [{"id": "A"}]  # the same machine is back
+        for callback in deferred:
+            callback()
+        self.assertEqual(self.persistence.writes, [])
+        self.assertEqual(self.persistence.records["A"]["api_key"], "secret")
+        self.assertEqual(self.persistence.records["A"]["url"], "http://a:7125")
+
+    def test_the_deferred_wipe_still_runs_when_the_machine_stays_removed(self):
+        # The other half of the re-check: nothing re-appeared, so the
+        # wipe runs on the timer as it always did.
+        self._seed("A", "http://a:7125")
+        deferred = []
+        with patch.object(QTimer, "singleShot",
+                          lambda _ms, callback: deferred.append(callback)):
+            self.registry.containerRemoved.emit(_FakeContainer("A", "machine"))
+        for callback in deferred:
+            callback()
+        self.assertEqual(len(self.persistence.writes), 1)
+        self.assertEqual(self.persistence.writes[0][1]["url"], "http://")
+
     def test_the_legacy_chain_skips_once_the_migration_record_exists(self):
         # The clean reset the migrated flags: a re-run of the legacy
         # chain would resurrect the blob into cura.cfg. The record

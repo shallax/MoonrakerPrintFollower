@@ -13,6 +13,7 @@ from plugins.PersistenceMigration import (
     split_record,
     write_backup,
 )
+from plugins.PrinterConfig import PrinterConfigStore
 
 
 def _pretty_write(path, document):
@@ -63,13 +64,14 @@ class MigrationTests(unittest.TestCase):
         _pretty_write(self.settings_path, document)
         return True
 
-    def _run(self, blob_value, timestamp="2026-09-18-14-30-12", writers=None):
+    def _run(self, blob_value, timestamp="2026-09-18-14-30-12", writers=None,
+             record_write=None, set_pref=None):
         writers = writers or self._writers()
         return run_migration(
             blob_value, self.cura_cfg, self.settings_path, self.state_dir,
-            self.old_state, writers["settings"], self._record_write,
+            self.old_state, writers["settings"], record_write or self._record_write,
             writers["state_global"], writers["state_machine"],
-            lambda key, value: self.prefs.__setitem__(key, value),
+            set_pref or (lambda key, value: self.prefs.__setitem__(key, value)),
             timestamp,
         )
 
@@ -279,6 +281,111 @@ class MigrationTests(unittest.TestCase):
         # The clean's in-memory effect: the blob now reads as the
         # registered default, so a re-run sees a healthy empty source.
         self.assertEqual(self._run("{}").reason, "nothing-to-do")
+
+    # -- The commit step (the Q1 ordering fix) ------------------------
+
+    def test_a_failed_verify_leaves_no_record_and_the_next_boot_retries(self):
+        """The two-boot repro of the early-record fault: the candidate
+        write used to persist an ok record BEFORE the verify, so a boot
+        that failed verification left a success on disk and the boot
+        after that ran the legacy cleanup over a migration that never
+        landed. The observable failure is the SECOND boot."""
+        blob = json.dumps({"A": {"url": "http://x:7125"}})
+        self._cfg(blob)
+        events = []
+        writers = self._writers()
+        writers["state_machine"] = lambda machine_id, document: True  # the shard never lands
+
+        def record_write(update):
+            events.append(("record", dict(update)))
+            return self._record_write(update)
+
+        def set_pref(key, value):
+            events.append(("pref", key))
+            self.prefs[key] = value
+
+        boot1 = self._run(blob, writers=writers, record_write=record_write, set_pref=set_pref)
+        self.assertEqual((boot1.status, boot1.reason), ("failed", "verify-failed"))
+        # Uncommitted: nothing cleaned, nothing recorded, cura.cfg intact.
+        self.assertEqual(events, [])
+        self.assertEqual(self.prefs, {})
+        with open(self.settings_path, encoding="utf-8") as handle:
+            self.assertNotIn("migration", json.load(handle).get("global", {}))
+
+        # Boot 2: the source is still intact, so the attempt replays and
+        # this time the verify passes — the clean runs and the ok record
+        # lands as the LAST step, after everything it claims.
+        events.clear()
+        boot2 = self._run(blob, record_write=record_write, set_pref=set_pref)
+        self.assertEqual((boot2.status, boot2.reason), ("ok", "migrated"))
+        self.assertTrue(boot2.record_persisted)
+        kinds = [kind for kind, _ in events]
+        self.assertIn("pref", kinds)
+        self.assertEqual(kinds[-1], "record")
+        self.assertLess(max(i for i, kind in enumerate(kinds) if kind == "pref"),
+                        kinds.index("record"))
+        self.assertEqual(events[-1][1]["status"], "ok")
+        self.assertEqual(self._settings_document()["global"]["migration"]["status"], "ok")
+        self.assertEqual(self.prefs[PrinterConfigStore.PREF_KEY], "{}")
+
+    def test_a_crash_between_the_candidate_writes_and_the_verify_replays(self):
+        """The crash-equivalent: the candidate files landed, then the
+        process died before the verify/clean/commit. Nothing on disk
+        may read as a finished migration — an absent record is exactly
+        "not committed yet" — and the next boot replays from the intact
+        source."""
+        blob = json.dumps({"A": {"url": "http://x:7125"}})
+        self._cfg(blob)
+        writers = self._writers()
+
+        class Crash(Exception):
+            pass
+
+        def crash_after_the_write(document):
+            writers["settings"](document)  # the candidate file DID land
+            raise Crash("the process died before the verify")
+
+        with self.assertRaises(Crash):
+            self._run(blob, writers={**writers, "settings": crash_after_the_write})
+        with open(self.settings_path, encoding="utf-8") as handle:
+            document = json.load(handle)
+        self.assertEqual(document["machines"]["A"]["url"], "http://x:7125")
+        self.assertNotIn("migration", document.get("global", {}))
+        self.assertEqual(self.prefs, {})  # the clean never ran
+        with open(self.cura_cfg, "rb") as handle:
+            self.assertIn(b"printer_configs_v1", handle.read())
+
+        boot2 = self._run(blob)
+        self.assertEqual((boot2.status, boot2.reason), ("ok", "migrated"))
+        self.assertEqual(self._settings_document()["global"]["migration"]["status"], "ok")
+
+    def test_the_final_record_write_is_checked_and_reported(self):
+        # The commit's own write can fail after the migration itself
+        # succeeded: the verdict must not claim a persisted record the
+        # next boot will not find (it replays against an empty source).
+        blob = json.dumps({"A": {"url": "http://x:7125"}})
+        self._cfg(blob)
+        outcome = self._run(blob, record_write=lambda update: False)
+        self.assertEqual((outcome.status, outcome.reason), ("ok", "migrated"))
+        self.assertFalse(outcome.record_persisted)
+        self.assertEqual(self.prefs[PrinterConfigStore.PREF_KEY], "{}")  # the clean ran
+        with open(self.settings_path, encoding="utf-8") as handle:
+            self.assertNotIn("migration", json.load(handle).get("global", {}))
+
+    def test_the_empty_path_reports_a_failed_activation(self):
+        # The activation's own writes are checked too: a half-written
+        # skeleton is a failure the next boot replays, never an ok
+        # outcome with a record nobody can read.
+        writers = self._writers()
+        writers["state_global"] = lambda document: False
+        outcome = self._run("{}", writers=writers)
+        self.assertEqual((outcome.status, outcome.reason), ("failed", "write-failed"))
+        self.assertFalse(os.path.exists(self.settings_path))
+
+        writers = self._writers()
+        writers["settings"] = lambda document: False
+        outcome = self._run("{}", writers=writers)
+        self.assertEqual((outcome.status, outcome.reason), ("failed", "write-failed"))
 
     # -- The backup's content check (C6) ------------------------------
 

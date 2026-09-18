@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 try:
     from PyQt6.QtCore import QObject, pyqtSignal
@@ -221,6 +222,54 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertEqual(document["machines"]["A"]["url"], "http://a:7125")
         self.assertEqual(document["machines"]["A"]["api_key"], "k")
 
+    def test_a_failed_one_shot_reaches_the_notice_without_being_persisted(self):
+        # The failure must not be persisted (the next boot retries from
+        # the intact source) and must still own its surfaces: the record
+        # rides in the facade's session copy until a run commits one.
+        self.prefs.setValue(PrinterConfigStore.PREF_KEY, json.dumps({"A": {"url": "http://a:7125"}}))
+        self.prefs.setValue(PrinterConfigStore.MIGRATED_KEY, True)
+        os.remove(self.cura_cfg)  # the backup's source is gone
+        self.binding.run_persistence_migration()
+        record = self.persistence.migration_record()
+        self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["reason"], "backup-failed")
+        self.assertFalse(record["backupWritten"])
+        # Nothing claims the attempt on disk: no record, the blob intact.
+        self.assertNotIn("migration", self.persistence.settings_document()["global"])
+        self.assertEqual(self.prefs.getValue(PrinterConfigStore.PREF_KEY),
+                         json.dumps({"A": {"url": "http://a:7125"}}))
+        # The notice's own read finds it — the toast and the banner are
+        # what the user sees.
+        toasts = []
+        notice = self.qt.load("MigrationNotice").MigrationNotice(
+            self.persistence, whats_new_gate=lambda: False, raise_toast=toasts.append)
+        self.addCleanup(notice.deleteLater)
+        notice.announce()
+        self.assertEqual(len(toasts), 1)
+        self.assertEqual(toasts[0]["reason"], "backup-failed")
+
+    def test_a_failure_with_an_unwritable_store_still_reaches_the_notice(self):
+        # The storage that would hold the record can be exactly what
+        # failed (a read-only config folder): the session copy is the
+        # notice's only source, so it must survive a dead store.
+        base = self.dir.name
+        dead = PluginPersistence(
+            self.settings_path,
+            os.path.join(base, "state", "global.json"),
+            os.path.join(base, "state", "machines"),
+            save=lambda path, text: False,
+        )
+        binding = PrinterBinding(self.app, self.client, dead,
+                                 cura_cfg_path=self.cura_cfg, old_state_path=None)
+        self.prefs.setValue(PrinterConfigStore.PREF_KEY, json.dumps({"A": {"url": "http://a:7125"}}))
+        self.prefs.setValue(PrinterConfigStore.MIGRATED_KEY, True)
+        self.assertFalse(os.path.exists(self.settings_path))
+        binding.run_persistence_migration()
+        record = dead.migration_record()
+        self.assertEqual((record["status"], record["reason"]), ("failed", "write-failed"))
+        self.assertTrue(record["backupWritten"])  # the backup landed before the write failed
+        self.assertFalse(os.path.exists(self.settings_path))
+
     def test_a_clean_install_activates_the_document_without_a_record(self):
         # The ruling: a first boot has nothing to migrate —
         # the v2 document activates directly, no migration record.
@@ -310,6 +359,209 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertIn("Show backup folder", calls[0]["actions"][0])
         self.assertEqual(calls[1]["actions"], [])  # flavour B: no backup to open
         self.assertIn("cura.cfg.2026-09-18-14-30-12", calls[0]["args"][0])
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class BindingReadinessTests(unittest.TestCase):
+    """The boot-complete latch (B1): Cura re-reads the preference file
+    after plugins load and drops every preference write until it has
+    started, so a construction-time clean is resurrected. The
+    destructive half — the legacy chain's blob push, the one-shot's
+    clean — waits for initializationFinished; reads and the connection
+    do not."""
+
+    class Client:
+        def __init__(self):
+            self.configures = []
+            self.starts = 0
+            self.stops = 0
+
+        def stop(self, reset_session=False):
+            self.stops += 1
+
+        def set_trace_http(self, value):
+            pass
+
+        def configure(self, url, api_key, poll_interval_ms, **kwargs):
+            self.configures.append(url)
+
+        def start(self):
+            self.starts += 1
+
+    def setUp(self):
+        self._rt = runtime()
+        self.qt = self._rt.__enter__()
+        self.addCleanup(self._rt.__exit__, None, None, None)
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        base = self.dir.name
+        self.settings_path = os.path.join(base, "settings.json")
+        self.blob = {"A": {"url": "http://a:7125"}, "B": {"url": "http://b:7125"}}
+        self.save_fails = False
+
+        def save(path, text):
+            if self.save_fails and path == self.settings_path:
+                return False
+            return _pretty_save(path, text)
+
+        self.persistence = PluginPersistence(
+            self.settings_path,
+            os.path.join(base, "state", "global.json"),
+            os.path.join(base, "state", "machines"),
+            save=save,
+        )
+        self.cura_cfg = os.path.join(base, "cura.cfg")
+        with open(self.cura_cfg, "w", encoding="utf-8") as handle:
+            handle.write("[general]\nversion = 1\n[moonrakerprintfollower]\nprinter_configs_v1 = %s\n"
+                         % json.dumps(self.blob))
+        self.prefs = Preferences({})
+        self.prefs.setValue(PrinterConfigStore.PREF_KEY, json.dumps(self.blob))
+        self.prefs.setValue(PrinterConfigStore.MIGRATED_KEY, True)
+        Application = self.qt.Application
+
+        class BootApplication(Application):
+            initializationFinished = pyqtSignal()
+
+        self.app = BootApplication(self.prefs)
+        self.app.stack = self.qt.Machine("A")
+        self.client = self.Client()
+        self.binding = PrinterBinding(self.app, self.client, self.persistence,
+                                      cura_cfg_path=self.cura_cfg, old_state_path=None)
+        self.app.initializationFinished.connect(self.binding.mark_ready)
+
+    def _document(self):
+        return self.persistence.settings_document()
+
+    def test_construction_and_start_cannot_run_the_destructive_half(self):
+        self.binding.start()
+        # Nothing destructive: no document, no clean, cura.cfg intact.
+        self.assertFalse(os.path.exists(self.settings_path))
+        self.assertEqual(self.prefs.getValue(PrinterConfigStore.PREF_KEY), json.dumps(self.blob))
+        with open(self.cura_cfg, "rb") as handle:
+            self.assertIn(b"printer_configs_v1", handle.read())
+        # Reads and the connection stay allowed before readiness.
+        self.assertEqual(self.binding.identity[0], "A")
+        self.assertEqual(self.binding.config.url, "http://a:7125")
+
+    def test_readiness_migrates_the_legacy_install_and_cleans(self):
+        self.binding.start()
+        self.app.initializationFinished.emit()
+        document = self._document()
+        self.assertEqual(document["machines"]["A"]["url"], "http://a:7125")
+        self.assertEqual(document["machines"]["B"]["url"], "http://b:7125")
+        self.assertEqual(self.prefs.getValue(PrinterConfigStore.PREF_KEY), "{}")
+        record = self.persistence.migration_record()
+        self.assertEqual(record["status"], "ok")
+        self.assertTrue(os.path.exists(os.path.join(self.dir.name, record["backupName"])))
+
+    def test_a_clean_install_still_activates_once_ready(self):
+        self.prefs.setValue(PrinterConfigStore.PREF_KEY, "{}")
+        self.binding.start()
+        self.assertFalse(os.path.exists(self.settings_path))
+        self.app.initializationFinished.emit()
+        document = self._document()
+        self.assertEqual(document["configVersion"], 2)
+        self.assertEqual(document["machines"], {})
+        self.assertNotIn("migration", document["global"])
+
+    def test_a_machine_change_before_readiness_resolves_once_ready(self):
+        self.binding.start()
+        self.app.stack = self.qt.Machine("B")
+        self.app.globalContainerStackChanged.emit()
+        # The switch is honoured (reads and the connection), but the
+        # destructive half is still deferred.
+        self.assertEqual(self.binding.identity[0], "B")
+        self.assertFalse(os.path.exists(self.settings_path))
+        self.app.initializationFinished.emit()
+        document = self._document()
+        self.assertIn("A", document["machines"])
+        self.assertIn("B", document["machines"])
+        # The resolved identity's migrated record is what the client
+        # ends up connected to.
+        self.assertEqual(self.client.configures[-1], "http://b:7125")
+
+    def test_a_plugin_loaded_after_the_boot_does_not_wait_forever(self):
+        # The re-enable path: Cura sets `started` immediately before it
+        # emits initializationFinished, so a plugin constructed after
+        # the boot has no signal left to wait for. The latch must be
+        # open from construction — otherwise the migration would never
+        # run for that install.
+        self.app.started = True
+        binding = PrinterBinding(self.app, self.client, self.persistence,
+                                 cura_cfg_path=self.cura_cfg, old_state_path=None)
+        binding.start()
+        self.assertEqual(self.persistence.settings_document()["machines"]["A"]["url"], "http://a:7125")
+
+    def test_repeated_readiness_notifications_are_idempotent(self):
+        original = PrinterBinding.run_persistence_migration
+        calls = []
+
+        def counted(self_):
+            calls.append(1)
+            return original(self_)
+
+        with patch.object(PrinterBinding, "run_persistence_migration", counted):
+            self.binding.start()
+            self.assertEqual(calls, [])
+            self.app.initializationFinished.emit()
+            self.assertEqual(len(calls), 1)
+            self.app.initializationFinished.emit()
+            self.app.initializationFinished.emit()
+        self.assertEqual(len(calls), 1)
+
+    def test_a_refused_save_reports_failure_and_keeps_the_live_connection(self):
+        self.binding.start()
+        self.app.initializationFinished.emit()
+        self.assertEqual(self.client.configures[-1], "http://a:7125")
+        self.save_fails = True
+        self.assertFalse(self.binding.apply(
+            PrinterConfig(url="http://moved:7125", api_key="k")))
+        # The refused write left the document alone: the live connection
+        # stays on the last usable configuration, and nothing claims the
+        # new one was saved.
+        self.assertEqual(self.persistence.get_machine("A")["url"], "http://a:7125")
+        self.assertEqual(self.client.configures[-1], "http://a:7125")
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class FacadeStaleWriterTests(unittest.TestCase):
+    """The facade's key-scoped writes are read-modify-writes: two
+    writers each holding a stale document must not erase each other
+    (the "only the last machine saved" fault, H5's several live
+    writers over one file)."""
+
+    def setUp(self):
+        self._rt = runtime()
+        self.qt = self._rt.__enter__()
+        self.addCleanup(self._rt.__exit__, None, None, None)
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        base = self.dir.name
+        self.paths = (os.path.join(base, "settings.json"),
+                      os.path.join(base, "state", "global.json"),
+                      os.path.join(base, "state", "machines"))
+
+    def _facade(self):
+        return PluginPersistence(*self.paths, save=_pretty_save)
+
+    def test_two_stale_writers_updating_separate_keys_both_survive(self):
+        first, second = self._facade(), self._facade()
+        first.set_machine("A", {"url": "http://a:7125"})  # both now hold a document
+        second.set_machine("B", {"url": "http://b:7125"})  # a sibling write lands
+        first.set_global({"bedMeshVisible": True})         # the stale writer's own key
+        document = self._facade().settings_document()
+        self.assertEqual(document["machines"]["A"]["url"], "http://a:7125")
+        self.assertEqual(document["machines"]["B"]["url"], "http://b:7125")
+        self.assertTrue(document["global"]["bedMeshVisible"])
+
+    def test_the_global_chrome_merge_survives_a_sibling_write(self):
+        first, second = self._facade(), self._facade()
+        first.merge_state_global({"sections": {"toolhead": False}})
+        second.set_machine("A", {"url": "http://a:7125"})
+        first.merge_state_global({"sectionLayout": {"ids": ["toolhead"]}})
+        self.assertEqual(second.state_global_document()["sections"], {"toolhead": False})
+        self.assertEqual(second.state_global_document()["sectionLayout"], {"ids": ["toolhead"]})
+        self.assertEqual(second.get_machine("A")["url"], "http://a:7125")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,21 @@ import unittest
 from plugins.StateStore import StateStore
 
 
+class _Recording:
+    """A lock provider's context manager that narrates its span."""
+
+    def __init__(self, events):
+        self._events = events
+
+    def __enter__(self):
+        self._events.append("acquire")
+        return self
+
+    def __exit__(self, *args):
+        self._events.append("release")
+        return False
+
+
 class StateStoreTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -92,6 +107,62 @@ class StateStoreTests(unittest.TestCase):
         self.assertFalse(store.write({"sections": {}}))
         self.assertEqual(len(self.notes), 1)
         self.assertEqual(self.notes[0][0], "write")
+
+    def test_update_holds_the_lock_across_the_read_and_the_write(self):
+        # The load-bearing half of the read-modify-write: the mutator
+        # runs INSIDE the acquisition, so no sibling writer can land
+        # between the read and the save.
+        events = []
+        store = StateStore(self.path, lock=lambda: _Recording(events))
+        store.update(lambda document: (events.append("mutate"), document)[1])
+        self.assertEqual(events, ["acquire", "mutate", "release"])
+
+    def test_two_stale_readers_updating_separate_keys_both_survive(self):
+        # The facade's key-scoped writes are read-modify-writes; a read
+        # taken before a sibling's write, followed by a replace, erases
+        # the sibling (the "two facades over one file kept only the
+        # last machine saved" fault). update() reads under the lock, so
+        # every key lands.
+        first = StateStore(self.path)
+        second = StateStore(self.path)
+        first.write({"machines": {"A": {"url": "http://a:7125"}}})
+        stale = first.read()  # both readers now hold the same document
+        second.update(lambda document: {**document, "global": {"bedMeshVisible": True}})
+        first.update(lambda document: {**document, "machines": {"A": {"url": "http://a:7125"}}})
+        with open(self.path, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertEqual(saved["machines"]["A"]["url"], "http://a:7125")
+        self.assertTrue(saved["global"]["bedMeshVisible"])
+        # The naive shape (a stale read persisted as a replace) is what
+        # update() exists to prevent — pinned so the two cannot be
+        # confused again.
+        stale["machines"]["A"]["url"] = "http://a:7125"
+        second.write(stale, merge=False)
+        with open(self.path, encoding="utf-8") as handle:
+            self.assertNotIn("global", json.load(handle))
+
+    def test_update_with_no_document_writes_nothing(self):
+        # The deliberate no-op (an absent machine's removal): the
+        # mutator's None means "nothing changed", not a failed save.
+        self.store.write({"machines": {"A": {}}})
+        self.assertTrue(self.store.update(lambda document: None))
+        with open(self.path, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), {"machines": {"A": {}}})
+        self.assertEqual(self.notes, [])
+
+    def test_a_host_without_a_lock_primitive_still_persists(self):
+        # E9's degraded host: the injected provider has no lock to
+        # offer and reports None. `with None:` is a TypeError, so the
+        # store must normalise it to "run unlocked" — otherwise every
+        # save on that host fails silently.
+        store = StateStore(self.path, note=lambda kind, text: self.notes.append((kind, text)),
+                           lock=lambda: None)
+        self.assertTrue(store.write({"sections": {"toolhead": False}}))
+        self.assertTrue(store.update(lambda document: {**document, "controlsLocked": True}))
+        self.assertTrue(store.write({"sections": {"toolhead": True}}, merge=False))
+        with open(self.path, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["sections"], {"toolhead": True})
+        self.assertEqual(self.notes, [])
 
     def test_non_dict_documents_read_as_none(self):
         with open(self.path, "w", encoding="utf-8") as handle:

@@ -476,7 +476,16 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "filename_translate_remove": str(raw.get("filename_translate_remove") or ""),
             })
             config = PrinterConfig.from_dict(data)
-            self._follower.apply_printer_config(config)
+            saved = self._follower.apply_printer_config(config)
+            if saved is False:
+                # A refused persistence write is not a saved setting: the
+                # dialog stays open on its refusal label (saveRefused in
+                # the QML) rather than closing over a lost change. `is
+                # False` (not falsy): a facade that returns nothing —
+                # the harness doubles, a build without persistence —
+                # still counts as a save, never as a refusal.
+                Logger.log("w", "Moonraker settings save refused: the settings file could not be written")
+                return False
             if self._output_plugin is not None:
                 try:
                     self._output_plugin.refresh()

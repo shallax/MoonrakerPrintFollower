@@ -38,6 +38,16 @@ SETTINGS_FIELDS = tuple(
 OLD_STATE_FILE_NAME = "moonrakerprintfollower_sections.json"
 
 
+def _machines(document: Dict[str, Any]) -> Dict[str, Any]:
+    machines = document.get("machines")
+    return machines if isinstance(machines, dict) else {}
+
+
+def _global_section(document: Dict[str, Any]) -> Dict[str, Any]:
+    section = document.get("global")
+    return section if isinstance(section, dict) else {}
+
+
 class PluginPersistence:
     """The typed, key-scoped operations over the two stores."""
 
@@ -57,6 +67,9 @@ class PluginPersistence:
         self._lock = lock
         self._note = note
         self._shards: Dict[str, StateStore] = {}
+        # The session's own copy of the migration record: a store that
+        # cannot be written still owes the notice its failure record.
+        self._session_record: Optional[Dict[str, Any]] = None
 
     # -- The settings document ----------------------------------------
 
@@ -95,48 +108,73 @@ class PluginPersistence:
     def set_machine(self, machine_id: str, patch: Dict[str, Any]) -> bool:
         """Key-scoped deep merge (E2): only this machine's record
         changes — the sibling records and the global section are read
-        back and re-written untouched, never replaced."""
-        document = self.settings_document()
-        machines = document.get("machines")
-        if not isinstance(machines, dict):
-            machines = {}
-        entry = machines.get(machine_id)
-        merged = dict(entry) if isinstance(entry, dict) else {}
-        merged.update(patch)
-        machines[machine_id] = merged
-        document["machines"] = machines
-        return self._settings.write(document, merge=False)
+        back and re-written untouched, never replaced. The read and the
+        write share ONE lock acquisition (E9): a sibling facade writing
+        another machine between them would otherwise be erased."""
+        def mutate(document):
+            machines = _machines(document)
+            entry = machines.get(machine_id)
+            merged = dict(entry) if isinstance(entry, dict) else {}
+            merged.update(patch)
+            machines[machine_id] = merged
+            document["machines"] = machines
+            return document
+        return self._settings.update(mutate)
 
     def set_global(self, patch: Dict[str, Any]) -> bool:
-        document = self.settings_document()
-        global_section = document.get("global")
-        if not isinstance(global_section, dict):
-            global_section = {}
-        global_section.update(patch)
-        document["global"] = global_section
-        return self._settings.write(document, merge=False)
+        def mutate(document):
+            global_section = _global_section(document)
+            global_section.update(patch)
+            document["global"] = global_section
+            return document
+        return self._settings.update(mutate)
 
     def remove_machine(self, machine_id: str) -> bool:
-        document = self.settings_document()
-        machines = document.get("machines")
-        if isinstance(machines, dict) and machine_id in machines:
+        def mutate(document):
+            machines = document.get("machines")
+            if not isinstance(machines, dict) or machine_id not in machines:
+                return None  # already absent: no write (the no-op reporter)
             del machines[machine_id]
-            document["machines"] = machines
-            return self._settings.write(document, merge=False)
-        return True
+            return document
+        return self._settings.update(mutate)
 
     def migration_record(self) -> Optional[Dict[str, Any]]:
         document = self.settings_document()
         global_section = document.get("global") or {}
         record = global_section.get("migration")
-        return dict(record) if isinstance(record, dict) else None
+        if isinstance(record, dict):
+            return dict(record)
+        # The session's own write is the fallback: a store that cannot
+        # be read back (or written at all) still owes the notice the
+        # failure it just routed here.
+        return dict(self._session_record) if self._session_record else None
 
     def set_migration_record(self, update: Dict[str, Any]) -> bool:
-        """The runner's final-record write: merges into the record,
-        never replacing it — a later run cannot erase a failure (C2)."""
-        record = self.migration_record() or {}
-        record.update(update)
-        return self.set_global({"migration": record})
+        """The runner's final-record write: merges into the record under
+        the lock, never replacing it — a later run cannot erase a
+        failure (C2). The merged record is kept for the session too."""
+        def mutate(document):
+            global_section = _global_section(document)
+            stored = global_section.get("migration")
+            record = dict(stored) if isinstance(stored, dict) else dict(self._session_record or {})
+            record.update(update)
+            global_section["migration"] = record
+            document["global"] = global_section
+            # A record write may be the first thing to reach a store
+            # whose document does not exist yet (a migration failure
+            # before the skeleton): the document never exists without
+            # its version marker.
+            document.setdefault("configVersion", 2)
+            self._session_record = dict(record)
+            return document
+        return self._settings.update(mutate)
+
+    def remember_migration_outcome(self, record: Dict[str, Any]) -> None:
+        """The boot's failure routing (B1): the one-shot's failures are
+        not persisted — the next launch retries from the intact source
+        — so the record the notice surfaces lives here until a run
+        commits one to the document."""
+        self._session_record = dict(record)
 
     # -- The state side -----------------------------------------------
 
@@ -146,7 +184,9 @@ class PluginPersistence:
             # The shard filename is the quoted id — Cura's own
             # convention for id-derived files (machine_instances/
             # <quote_plus(id)>.global.cfg, the domain panel's L2):
-            # ids are name-derived and may carry spaces.
+            # ids are name-derived and may carry spaces. The shard
+            # takes the SAME lock as the shared documents: a second
+            # process may write this machine's shard too.
             store = StateStore(
                 os.path.join(self._state_dir, f"{quote_plus(machine_id)}.json"),
                 save=self._save, lock=self._lock, note=self._note,
@@ -164,12 +204,14 @@ class PluginPersistence:
     def merge_state_global(self, update: Dict[str, Any], delete: tuple = ()) -> bool:
         """The chrome's top-level merge (the StateStore semantics on the
         global document): foreign keys survive, `delete` drops the named
-        keys deliberately (the chart block's removal precedent)."""
-        document = self.state_global_document()
-        document.update(update)
-        for key in delete:
-            document.pop(key, None)
-        return self._state_global.write(document, merge=False)
+        keys deliberately (the chart block's removal precedent). The
+        read happens under the same lock as the write (E9)."""
+        def mutate(document):
+            document.update(update)
+            for key in delete:
+                document.pop(key, None)
+            return document
+        return self._state_global.update(mutate)
 
     def reset_failures(self) -> None:
         """The per-session latch boundary, forwarded to every store."""
@@ -184,16 +226,18 @@ class PluginPersistence:
 
     def set_machine_state(self, machine_id: str, patch: Dict[str, Any]) -> bool:
         """The per-machine shard's top-level merge — the shard owns
-        only its machine's keys. consoleHistory is RETIRED (the
-        pre-cleanup migration wrote it, nothing ever read it): it is
-        dropped after the merge, so no writer can resurrect it, and
-        shards that already carry it shed it on their first write."""
-        document = self._shard(machine_id).read()
-        if not isinstance(document, dict):
-            document = {}
-        document.update(patch)
-        document.pop("consoleHistory", None)
-        return self._shard(machine_id).write(document, merge=False)
+        only its machine's keys, under the same lock as every other
+        document (the shards share the injected lock, so a second
+        process cannot interleave a shard read-modify-write either).
+        consoleHistory is RETIRED (the pre-cleanup migration wrote it,
+        nothing ever read it): it is dropped after the merge, so no
+        writer can resurrect it, and shards that already carry it shed
+        it on their first write."""
+        def mutate(document):
+            document.update(patch)
+            document.pop("consoleHistory", None)
+            return document
+        return self._shard(machine_id).update(mutate)
 
     def write_machine_state_document(self, machine_id: str, document: Dict[str, Any]) -> bool:
         return self._shard(machine_id).write(document, merge=False)

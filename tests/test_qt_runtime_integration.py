@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 import tempfile
 import time
 from http.server import ThreadingHTTPServer
@@ -2310,6 +2311,116 @@ class CuraIntegrationLoadTests(unittest.TestCase):
         self.assertEqual(invalidated, [])  # absorbed, not "file replaced"
         self.assertIn(path, self.releases)  # released once the parse finished
         self.assertFalse(os.path.exists(path))
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
+class SettingsSaveRefusalTests(unittest.TestCase):
+    """The settings dialog's verdict: a refused persistence write must
+    reach saveConfig's caller as a failure. Cura's MachineAction flow
+    keeps the dialog open on that False (the QML's `saveRefused`), so
+    the user sees the refusal instead of a dialog that closed over a
+    change that never landed."""
+
+    def setUp(self):
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+        self.fail_save = False
+        self.followers = []
+        self.addCleanup(self._close)
+
+    def _close(self):
+        for follower in self.followers:
+            follower.deinitialize()
+        self.qt.events()
+
+    def _follower(self):
+        app = self.qt.Application()
+        module = self.qt.load("MoonrakerClient")
+        root = self.qt.load("FollowerRuntime")
+        transport = ScriptedTransport()
+        real_save = root._savefile_write
+
+        def save(path, text):
+            if self.fail_save and path.endswith("settings.json"):
+                return False  # the disk refuses the settings document alone
+            return real_save(path, text)
+
+        with patch.object(root, "MoonrakerClient",
+                          lambda parent: module.MoonrakerClient(parent, transport=transport, socket=ScriptedSocket())), \
+                patch.object(root, "_savefile_write", save):
+            follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(app)
+        self.followers.append(follower)
+        return app, follower
+
+    def _action(self, follower):
+        from PyQt6.QtCore import QObject
+
+        class _MachineActionBase(QObject):
+            def __init__(self, key, label):
+                super().__init__()
+
+        application = SimpleNamespace(
+            getContainerRegistry=lambda: SimpleNamespace(
+                containerAdded=SimpleNamespace(connect=lambda _fn: None)),
+        )
+        with patch.dict(sys.modules, {
+                "cura.MachineAction": SimpleNamespace(MachineAction=_MachineActionBase),
+                "UM.Settings": SimpleNamespace(DefinitionContainer=SimpleNamespace(
+                    DefinitionContainer=type("DefinitionContainer", (), {}))),
+                "UM.Settings.DefinitionContainer": SimpleNamespace(
+                    DefinitionContainer=type("DefinitionContainer", (), {})),
+        }):
+            action = self.qt.load("MoonrakerFollowerMachineAction").MoonrakerFollowerMachineAction(
+                application, follower)
+        self.addCleanup(action.deleteLater)
+        return action
+
+    @staticmethod
+    def _params(**overrides):
+        params = {
+            "enabled": True,
+            "url": "http://printer-a:7125",
+            "api_key": "k",
+            "feed_mode": "websocket",
+            "poll_interval_ms": 2500,
+            "aux_interval_ms": 1000,
+            "console_interval_ms": 1000,
+            "follow_mode": "exact",
+            "z_tolerance": "0.05",
+            "ready_retry_interval_s": "1.0",
+            "filename_translate_input": "a",
+            "filename_translate_output": "b",
+        }
+        params.update(overrides)
+        return params
+
+    def test_a_saved_setting_reports_success(self):
+        _, follower = self._follower()
+        action = self._action(follower)
+        changed = []
+        action.settingsChanged.connect(lambda: changed.append(True))
+        self.assertTrue(action.saveConfig(self._params()))
+        self.assertEqual(len(changed), 1)
+
+    def test_a_refused_write_is_not_reported_as_saved(self):
+        _, follower = self._follower()
+        action = self._action(follower)
+        # A first, successful save: there is a live configuration to
+        # fall back to.
+        self.assertTrue(action.saveConfig(self._params()))
+        self.fail_save = True
+        changed = []
+        action.settingsChanged.connect(lambda: changed.append(True))
+        self.assertFalse(action.saveConfig(self._params(url="http://moved:7125")))
+        self.assertEqual(changed, [])
+        # The refused write left the document alone: the previous usable
+        # connection is what remains configured.
+        self.assertEqual(follower.current_printer_config().url, "http://printer-a:7125")
+        # And the disk recovering brings the dialog's success back.
+        self.fail_save = False
+        self.assertTrue(action.saveConfig(self._params(url="http://moved:7125")))
+        self.assertEqual(follower.current_printer_config().url, "http://moved:7125")
 
 
 if __name__ == "__main__":

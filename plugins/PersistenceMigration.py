@@ -8,12 +8,19 @@ run without Cura (the StateStore pattern).
 
 The control flow (the architecture panel's Q1 contract): strict
 read, backup (fsynced, verified by content), the new files, the
-clean LAST — gated on the backup existing when a backup was owed —
-and the outcome persisted in the new settings document so no later
-run can recompute it away. Everything before the clean is
-idempotently replayable, so a crash anywhere replays from the same
-source. The document writers are the facade's stores, which write
-pretty-printed JSON (indent + sorted keys, the ruling)."""
+verify, the clean LAST — gated on the backup existing when a backup
+was owed — and the "ok" outcome persisted AFTER all of them, as the
+commit step. Nothing else may persist an "ok" record: a candidate
+write used to carry one before the verify ran, so a migration that
+failed verification left a success on disk for the next boot to clean
+up after. While no record exists the attempt is UNCOMMITTED, and the
+next boot replays it from the same intact source. Every failure here
+is also REPORTED rather than only logged — the persisted record, or
+the caller's session copy of the returned outcome, is what the toast
+and the banner read. Everything before the clean is idempotently
+replayable, so a crash anywhere replays from the same source. The
+document writers are the facade's stores, which write pretty-printed
+JSON (indent + sorted keys, the ruling)."""
 from __future__ import annotations
 
 import json
@@ -29,13 +36,17 @@ from .PrinterConfig import PrinterConfig
 class MigrationOutcome:
     """The persisted tri-state (the critic's C2): `status` is one of
     "ok"/"failed" — "pending" is implicit while no record exists —
-    and `reason` stays machine-readable for the notice's flavour."""
+    and `reason` stays machine-readable for the notice's flavour.
+    `record_persisted` is the commit step's own verdict: the migration
+    can complete while its record write fails, and the caller must
+    know that the next boot has nothing to read."""
 
     status: str = "ok"
     reason: str = "nothing-to-do"
     backup_name: Optional[str] = None
     backup_written: bool = False
     records: int = 0
+    record_persisted: bool = True
 
 
 def read_source(value: Any) -> Tuple[str, Dict[str, Any]]:
@@ -121,8 +132,11 @@ def run_migration(
     timestamp: str,
 ) -> MigrationOutcome:
     """One migration attempt, safe to re-run: everything before the
-    clean is idempotently replayable and the outcome record lands
-    last, so a later run can never erase a failure (C2). `timestamp`
+    clean is idempotently replayable and the OK record lands last —
+    after the backup, the candidate files, the verify and the clean
+    have all succeeded, which is the only moment the attempt becomes
+    committed. Every failure returns with cura.cfg intact and nothing
+    claiming success on disk, so the next boot replays it. `timestamp`
     is the caller's filesystem-safe sortable form (digits and dashes,
     the ruling)."""
     outcome = MigrationOutcome()
@@ -134,11 +148,17 @@ def run_migration(
         # Nothing to migrate. The schema activation only happens when
         # no document exists yet; an existing v2 document is the
         # source of truth and must never be replaced on this path
-        # (the first-install lost-config report).
+        # (the first-install lost-config report). The ok record rides
+        # inside that one atomic activation write — there is no
+        # separate commit to make, and a failed activation is a
+        # failure (the next boot retries rather than reading a
+        # success that never landed).
         if not _read_settings_document(settings_path):
-            _write_empty_documents(
+            if not _write_empty_documents(
                 settings_write, state_global_write, old_state_path, outcome, timestamp,
-            )
+            ):
+                outcome.status = "failed"
+                outcome.reason = "write-failed"
         return outcome
 
     if source_state == "corrupt":
@@ -146,7 +166,9 @@ def run_migration(
         # blob is a migration gone wrong — flag it and start clean,
         # provided the backup landed. Nothing is silent: the record
         # and the notice both carry the failure, and the backup holds
-        # the raw material to pick apart.
+        # the raw material to pick apart. A corrupt blob is stale
+        # input: the pieces of a live v2 document that already exist
+        # are carried through untouched, never replaced.
         outcome.status = "failed"
         outcome.reason = "corrupt-blob"
         backup_name = f"cura.cfg.{timestamp}"
@@ -154,16 +176,20 @@ def run_migration(
             outcome.backup_name = backup_name
             outcome.backup_written = True
             _clean_preferences(set_pref)
-            _write_empty_documents(
+            if not _write_empty_documents(
                 settings_write, state_global_write, old_state_path, outcome, timestamp,
-            )
+                existing=_read_settings_document(settings_path),
+            ):
+                outcome.reason = "write-failed"  # nothing landed: no record to read back
         # A failed backup leaves cura.cfg untouched; the next launch
         # retries (the notice's flavour B has no backup to open).
         return outcome
 
     # Records: back up before anything moves, write the new files,
-    # verify by re-read, then clean — the clean is the commit point
-    # and it is last (Q1).
+    # verify by re-read, clean, and commit the ok record LAST (Q1).
+    # Nothing before the commit writes a record: an absent record is
+    # exactly "this attempt has not been committed", which is what
+    # makes the replay correct.
     outcome.reason = "migrated"
     outcome.records = len(records)
     backup_name = f"cura.cfg.{timestamp}"
@@ -192,26 +218,40 @@ def run_migration(
     _clean_preferences(set_pref)
     _remove_old_state_file(old_state_path)
     outcome.status = "ok"
-    settings_record_write(_record(outcome, timestamp))
+    # The commit step, and the only place an ok record is ever
+    # written. If this write itself fails the migration still
+    # happened — the clean has run — but the next boot has no record
+    # to read: it replays against an empty source, which is a no-op,
+    # and the caller logs the unpersisted verdict.
+    outcome.record_persisted = bool(settings_record_write(_record(outcome, timestamp)))
     return outcome
 
 
 def _write_empty_documents(
-    settings_write, state_global_write, old_state_path, outcome, timestamp,
-) -> None:
+    settings_write, state_global_write, old_state_path, outcome, timestamp, existing=None,
+) -> bool:
     """The empty-but-healthy path: new files, configVersion 2, the
     old chrome carried across where the old state file exists — and
     the old file removed once the new document is written (found
-    live: no old-config trace remains)."""
-    state_global_write({**_read_old_chrome(old_state_path), "configVersion": 2})
-    settings_write({
+    live: no old-config trace remains). Reports whether both writes
+    landed: a half-written activation is a failure the caller must
+    replay, and the ok record lives inside the settings write, so a
+    failed write must not be followed by an unearned success."""
+    existing = existing or {}
+    existing_machines = existing.get("machines")
+    machines = dict(existing_machines) if isinstance(existing_machines, dict) else {}
+    global_section = _global_section_of(existing)
+    global_section["migration"] = _record(outcome, timestamp)
+    if not state_global_write({**_read_old_chrome(old_state_path), "configVersion": 2}):
+        return False
+    if not settings_write({
         "configVersion": 2,
-        "global": {
-            "migration": _record(outcome, timestamp),
-        },
-        "machines": {},
-    })
+        "global": global_section,
+        "machines": machines,
+    }):
+        return False
     _remove_old_state_file(old_state_path)
+    return True
 
 
 def _read_old_chrome(old_state_path: Optional[str]) -> Dict[str, Any]:
@@ -232,6 +272,12 @@ def _write_new_files(
     records, settings_write, state_global_write, state_machine_write,
     old_state_path, outcome, timestamp, existing=None,
 ) -> bool:
+    """The candidate writes, before anything is verified or cleaned.
+    NO record is written here — not even a failed one: `outcome` and
+    `timestamp` stay in the signature for the callers that pass them,
+    while the record is the commit step's business alone (an ok record
+    that reached disk before the verify is the fault this shape
+    fixes)."""
     chrome = _read_old_chrome(old_state_path)
     if not state_global_write({**chrome, "configVersion": 2}):
         return False
@@ -250,14 +296,18 @@ def _write_new_files(
         # A re-run must not clobber the live config: the existing
         # records win, the migrated records only fill gaps.
         machines = {**machines, **existing_machines}
-    global_section = existing.get("global") if isinstance(existing.get("global"), dict) else {}
-    global_section = dict(global_section)
-    global_section["migration"] = _record(outcome, timestamp)
     return settings_write({
         "configVersion": 2,
-        "global": global_section,
+        "global": _global_section_of(existing),
         "machines": machines,
     })
+
+
+def _global_section_of(document: Dict[str, Any]) -> Dict[str, Any]:
+    """The document's global section as a copy: the live document's
+    keys win over anything a migration is about to write into it."""
+    section = document.get("global")
+    return dict(section) if isinstance(section, dict) else {}
 
 
 def _read_settings_document(settings_path: str) -> Dict[str, Any]:

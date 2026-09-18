@@ -35,7 +35,7 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     def current_printer_config(self): return self._runtime.binding.config
     def current_printer_identity(self): return self._runtime.binding.identity
-    def apply_printer_config(self, config): self._runtime.binding.apply(config)
+    def apply_printer_config(self, config): return self._runtime.binding.apply(config)
 
     @property
     def persistence(self): return self._runtime.persistence
