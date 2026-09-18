@@ -280,7 +280,13 @@ FM_POPUP_PROBE = (
     "                                         round(item.width()), round(item.height())])\n"
     "with open('/tmp/mpf/fm_popup_probe.json', 'w') as _f:\n"
     "    _json.dump(result, _f)\n"
-    "result")
+    "# The full census rides the file; the RETURNED summary stays under\n"
+    "# the driver's 4000-char transport cap (the reworked popup's named\n"
+    "# content outgrew it — the 2026-09-18 gate probe's truncation).\n"
+    "{\"matches\": result[\"matches\"][:12], \"fields\": result[\"fields\"][:12],\n"
+    " \"names\": result[\"names\"][:24],\n"
+    " \"counts\": {\"matches\": len(result[\"matches\"]), \"fields\": len(result[\"fields\"]),\n"
+    "             \"names\": len(result[\"names\"])}}")
 
 FM_BUTTON_PROBE = (
     "import json as _json\n"
