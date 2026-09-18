@@ -479,6 +479,32 @@ class MigrationTests(unittest.TestCase):
         self.assertTrue(_raw_source_evidence(
             b"[moonrakerprintfollower]\nurl = http://host/%zzzz\n"))
 
+    def test_the_v1_key_scanner_matches_only_a_real_option_assignment(self):
+        from plugins.PersistenceMigration import _has_v1_blob_key
+        # The corrupt value still qualifies — the scanner never parses it.
+        self.assertTrue(_has_v1_blob_key(
+            b"[moonrakerprintfollower]\nprinter_configs_v1 = {broken json {{{\n"))
+        # The colon delimiter works.
+        self.assertTrue(_has_v1_blob_key(
+            b"[moonrakerprintfollower]\nprinter_configs_v1: {broken json {{{\n"))
+        # Case and whitespace tolerance.
+        self.assertTrue(_has_v1_blob_key(
+            b"[MoonrakerPrintFollower]\n    PRINTER_CONFIGS_V1    = broken\n"))
+        # Comments never match, either delimiter style.
+        self.assertFalse(_has_v1_blob_key(
+            b"[moonrakerprintfollower]\n# printer_configs_v1 = whatever\n"))
+        self.assertFalse(_has_v1_blob_key(
+            b"[moonrakerprintfollower]\n; printer_configs_v1 = whatever\n"))
+        # The wrong section never matches.
+        self.assertFalse(_has_v1_blob_key(
+            b"[other_plugin]\nprinter_configs_v1 = whatever\n"))
+        # A mention inside a VALUE never matches.
+        self.assertFalse(_has_v1_blob_key(
+            b"[other_plugin]\ndescription = printer_configs_v1\n"))
+        # Garbage input stays a boolean, never a raise.
+        for content in (b"", b"\x00\x01garbage", b"[unclosed", b"\xff\xfe"):
+            self.assertFalse(_has_v1_blob_key(content), content)
+
     def test_the_source_evidence_fails_closed_on_malformed_content(self):
         from plugins.PersistenceMigration import _raw_source_evidence
         for content in (

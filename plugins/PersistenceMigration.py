@@ -96,26 +96,61 @@ def split_record(record: Dict[str, Any]) -> tuple:
     return settings, state
 
 
+def _has_v1_blob_key(raw: bytes) -> bool:
+    """The deliberately narrow v1-key scanner: does
+    [moonrakerprintfollower] contain an assignment whose KEY is
+    printer_configs_v1? The VALUE is never inspected — a corrupt blob
+    value is exactly when the pre-migration backup matters most, so
+    `{broken json {{{` must still qualify. Comments, blank lines,
+    other sections, and the key appearing inside a value never match.
+    Case-insensitive, whitespace-tolerant, both `=` and `:` delimiters,
+    and never raises for arbitrary input."""
+    try:
+        text = raw.decode("utf-8", errors="replace")
+        section = None
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith(("#", ";")):
+                continue
+            if line.startswith("["):
+                end = line.find("]")
+                if end < 0:
+                    section = None
+                    continue
+                section = line[1:end].strip().casefold()
+                continue
+            if section != "moonrakerprintfollower":
+                continue
+            equals = line.find("=")
+            colon = line.find(":")
+            separators = [index for index in (equals, colon) if index >= 0]
+            if not separators:
+                continue
+            key = line[: min(separators)].strip().casefold()
+            if key == "printer_configs_v1":
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def _raw_source_evidence(raw: bytes) -> bool:
     """The backup's source evidence (the 4.5.0 one-boot upgrade fix):
     the transformed v1 blob need not be on disk yet — the backup is a
     copy of the ACTUAL pre-migration source, so the genuine flat
     legacy settings or a genuine Moonraker Connection instances blob
-    count too. The v1 blob key is matched by presence, DELIBERATELY:
-    a corrupt blob's value can break INI structure, and the corrupt
-    recovery's backup must still land. The other two sources parse
-    structured — the flat check runs the SAME normalised comparison
-    the legacy chain uses (registered defaults are never evidence),
-    and the Connection check requires a real non-empty instances
-    mapping — so an arbitrary unrelated cura.cfg still fails closed.
-    A TOTAL predicate: arbitrary cura.cfg bytes yield True or False,
-    never a raise — interpolation is disabled (a legacy `%20` value
-    is data, not a format string) and every structured read sits
-    inside the same defensive boundary."""
-    # The corrupt-tolerant key check: the migration only reaches this
-    # gate with an in-memory v1 source, and the corrupt recovery's
-    # backup must not fail on an unparseable value.
-    if b"printer_configs_v1" in raw:
+    count too. The v1 blob key is detected structurally but without
+    parsing its value: a corrupt blob's value can break INI structure,
+    and the corrupt recovery's backup must still land. The other two
+    sources parse structured — the flat check runs the SAME
+    normalised comparison the legacy chain uses (registered defaults
+    are never evidence), and the Connection check requires a real
+    non-empty instances mapping — so an arbitrary unrelated cura.cfg
+    still fails closed. A TOTAL predicate: arbitrary cura.cfg bytes
+    yield True or False, never a raise — interpolation is disabled (a
+    legacy `%20` value is data, not a format string) and every
+    structured read sits inside the same defensive boundary."""
+    if _has_v1_blob_key(raw):
         return True
     try:
         parsed = configparser.ConfigParser(interpolation=None)
