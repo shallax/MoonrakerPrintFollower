@@ -96,7 +96,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             # The migration notice's overlay owner (the UX ruling):
             # the toast waits for this model's What's-New dismissal.
             if getattr(self._follower, "notice", None) is not None:
-                self._follower.notice.attach_model(monitor)
+                self._follower.notice().attach_model(monitor)
             # The strip's one control routes through the Monitor's
             # lane — the revalidated pause/resume slots, never a raw
             # command path.

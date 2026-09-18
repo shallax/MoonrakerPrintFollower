@@ -401,9 +401,11 @@ class ConsoleController(QObject):
     def _persist_window(self) -> list:
         """The entries the persisted record will hold: the last
         MAX_TRANSCRIPT lines plus the newest commands pinned at the
-        front. mark_saved and _persist share this so the "on disk"
-        colour never claims a line the record dropped."""
-        entries = self._transcript
+        front — minus the plugin's notes, which are session-transient
+        by design (the docstring's contract, now true: a note never
+        survives a restart). mark_saved and _persist share this so
+        the "on disk" colour never claims a line the record dropped."""
+        entries = [entry for entry in self._transcript if entry["kind"] != "note"]
         transcript = list(entries[-MAX_TRANSCRIPT:])
         have = sum(1 for entry in transcript if entry["kind"] == "command")
         if have < self.MAX_PERSIST_COMMANDS:

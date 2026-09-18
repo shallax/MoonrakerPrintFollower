@@ -68,6 +68,10 @@ class PluginPersistence:
     def state_dir(self) -> str:
         return self._state_dir
 
+    @property
+    def state_global_path(self) -> str:
+        return self._state_global._path
+
     def set_machine_config(self, machine_id: str, config: PrinterConfig) -> bool:
         """The typed settings write: the record's settings fields,
         serialised for JSON (the enum as its persisted value)."""

@@ -1903,6 +1903,13 @@ class MonitorQtTests(unittest.TestCase):
         self.addCleanup(output.stop)
         return output._current.activePrinter
 
+    def stored_transcript(self):
+        """The persisted transcript's home (4.5.0): the per-machine
+        state shard under the persistence folder."""
+        machine_id = self.follower.current_printer_identity()[0]
+        shard = self.follower.persistence.get_machine_state(machine_id) or {}
+        return shard.get("consoleTranscript", [])
+
     def deliver(self):
         client = self.follower.client
         status = {
@@ -2321,7 +2328,7 @@ class MonitorQtTests(unittest.TestCase):
         model.setExtrudeDistance(25)
         model.setExtrudeSpeed(120)
         model.setJogDistance(10)
-        stored = _read_state()["toolhead"]
+        stored = _read_state(self.follower.persistence)["toolhead"]
         self.assertEqual(stored["extrudeDistance"], 25.0)
         self.assertEqual(stored["extrudeSpeed"], 120.0)
         self.assertEqual(stored["jogDistance"], 10.0)
@@ -2506,10 +2513,7 @@ class MonitorQtTests(unittest.TestCase):
         # The write really lands in the plugin-owned JSON file, so a Cura
         # restart round-trips through the file rather than any model state
         # or Uranium preference-store behaviour.
-        import UM.Resources as UMResourcesModule
-        section_path = UMResourcesModule.Resources.getStoragePath(
-            UMResourcesModule.Resources.Preferences,
-            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        section_path = self.follower.persistence.state_global_path
         with open(section_path, "r", encoding="utf-8") as handle:
             self.assertEqual(json.load(handle), {
                 # A fresh model stores no what's-new marker — the
@@ -2560,10 +2564,7 @@ class MonitorQtTests(unittest.TestCase):
         model = self.monitor()
         order = ["job", "temps", "fansinfo", "filament", "objects", "systeminfo", "mcus"]
         self.assertIsNone(model.setSectionLayout("status", order, ["mcus"]))
-        import UM.Resources as UMResourcesModule
-        model_module = self.qt.load("MoonrakerMonitorModel")
-        section_path = UMResourcesModule.Resources.getStoragePath(
-            UMResourcesModule.Resources.Preferences, model_module.SECTIONS_FILE_NAME)
+        section_path = self.follower.persistence.state_global_path
         with open(section_path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
             self.assertEqual(payload["sectionLayout"], {"status": {"order": order, "hidden": ["mcus"]}})
@@ -2593,10 +2594,8 @@ class MonitorQtTests(unittest.TestCase):
         # restart rehydrates it before the pane exists), never hydrates
         # negative, and an unchanged height is not rewritten — a drag
         # riding its clamp must stop touching the disk.
-        import UM.Resources as UMResourcesModule
         model_module = self.qt.load("MoonrakerMonitorModel")
-        section_path = UMResourcesModule.Resources.getStoragePath(
-            UMResourcesModule.Resources.Preferences, model_module.SECTIONS_FILE_NAME)
+        section_path = self.follower.persistence.state_global_path
         model = self.monitor()
         self.assertEqual(model.consoleHeight, 0)  # never dragged
         model.setConsoleHeight(240)
@@ -2615,10 +2614,12 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(second.consoleHeight, model_module.CONSOLE_HEIGHT_MAX)
         with open(section_path, "r", encoding="utf-8") as handle:
             self.assertEqual(json.load(handle)["consoleHeight"], model_module.CONSOLE_HEIGHT_MAX)
-        # The unchanged-height pin moved to the state store (4.2.0):
-        # the module-level _write_state is a legacy wrapper now, the
-        # model saves through its store instance.
-        with patch.object(second._store, "write", wraps=second._store.write) as write:
+        # The unchanged-height pin: an unchanged height is not
+        # rewritten — a drag riding its clamp must stop touching the
+        # disk. The 4.5.0 store slot is the facade; the spy rides the
+        # facade's global merge.
+        with patch.object(second._store, "merge_state_global",
+                          wraps=second._store.merge_state_global) as write:
             second.setConsoleHeight(180)
             second.setConsoleHeight(180)
             self.assertEqual(write.call_count, 1)
@@ -2626,10 +2627,7 @@ class MonitorQtTests(unittest.TestCase):
     def test_panel_state_migrates_the_legacy_flat_section_file(self):
         # The first shipped format stored the bare section map; it must
         # still hydrate into sections with default panel toggles.
-        import UM.Resources as UMResourcesModule
-        section_path = UMResourcesModule.Resources.getStoragePath(
-            UMResourcesModule.Resources.Preferences,
-            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        section_path = self.follower.persistence.state_global_path
         with open(section_path, "w", encoding="utf-8") as handle:
             json.dump({"setup": False, "toolhead": True}, handle)
         model = self.monitor()
@@ -2642,20 +2640,14 @@ class MonitorQtTests(unittest.TestCase):
         # is a bool: a document that lacks `sections` and carries the
         # UI-state store's sibling keys must not hydrate them as
         # sections (the silent collapse-state reset, 4.3.0).
-        import UM.Resources as UMResourcesModule
-        section_path = UMResourcesModule.Resources.getStoragePath(
-            UMResourcesModule.Resources.Preferences,
-            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        section_path = self.follower.persistence.state_global_path
         with open(section_path, "w", encoding="utf-8") as handle:
             json.dump({"sectionSizes": {"info": 240.0}, "setup": False}, handle)
         model = self.monitor()
         self.assertEqual(model._sections, {})
 
     def test_the_ui_state_store_owns_the_sections_writes(self):
-        import UM.Resources as UMResourcesModule
-        section_path = UMResourcesModule.Resources.getStoragePath(
-            UMResourcesModule.Resources.Preferences,
-            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        section_path = self.follower.persistence.state_global_path
         with open(section_path, "w", encoding="utf-8") as handle:
             json.dump({"sections": {"setup": False},
                        "controlsLocked": True,
@@ -2689,10 +2681,7 @@ class MonitorQtTests(unittest.TestCase):
         # A truncated or hand-edited file must never raise or hydrate
         # inverted: unreadable JSON yields defaults, and string flags like
         # 'false' must collapse (bool('false') is True).
-        import UM.Resources as UMResourcesModule
-        section_path = UMResourcesModule.Resources.getStoragePath(
-            UMResourcesModule.Resources.Preferences,
-            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        section_path = self.follower.persistence.state_global_path
         with open(section_path, "w", encoding="utf-8") as handle:
             handle.write("{not json")
         model = self.monitor()
@@ -2846,10 +2835,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(bed["color"], "#123456")
 
     def test_temperature_chart_defaults_when_the_block_is_missing(self):
-        import UM.Resources as UMResourcesModule
-        section_path = UMResourcesModule.Resources.getStoragePath(
-            UMResourcesModule.Resources.Preferences,
-            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        section_path = self.follower.persistence.state_global_path
         with open(section_path, "w", encoding="utf-8") as handle:
             json.dump({"sections": {"setup": False}}, handle)
         model = self.monitor()
@@ -2859,10 +2845,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertTrue(all(item["visible"] for item in chart["series"]))
 
     def test_legacy_global_chart_block_migrates_into_the_per_printer_record(self):
-        import UM.Resources as UMResourcesModule
-        section_path = UMResourcesModule.Resources.getStoragePath(
-            UMResourcesModule.Resources.Preferences,
-            self.qt.load("MoonrakerMonitorModel").SECTIONS_FILE_NAME)
+        section_path = self.follower.persistence.state_global_path
         with open(section_path, "w", encoding="utf-8") as handle:
             json.dump({"sections": {"setup": False},
                        "temperatureChart": {"visible": {"extruder": False},
@@ -2900,7 +2883,7 @@ class MonitorQtTests(unittest.TestCase):
         # The persisted record carries kind/text/error/success; the
         # controller stamps restored=True on load (everything loaded
         # predates this session — the pane greys it).
-        self.assertEqual(self.follower.current_printer_config().console_transcript[-1],
+        self.assertEqual(self.stored_transcript()[-1],
                          {"kind": "command", "text": "M104 S200", "error": False, "success": False})
         second = self.monitor()
         self.assertEqual(second.consoleHistory, ["M104 S200"])
@@ -2925,7 +2908,7 @@ class MonitorQtTests(unittest.TestCase):
             {"kind": "command", "text": "C2", "error": False, "success": False, "restored": False},
         ]
         model._console._persist()
-        stored = self.follower.current_printer_config().console_transcript
+        stored = self.stored_transcript()
         commands = [entry["text"] for entry in stored if entry["kind"] == "command"]
         self.assertIn("C1", commands)
         self.assertIn("C2", commands)
@@ -2949,7 +2932,7 @@ class MonitorQtTests(unittest.TestCase):
             {"kind": "response", "text": "ok", "error": False, "success": True, "restored": False},
         ]
         model._console._persist()
-        stored = self.follower.current_printer_config().console_transcript
+        stored = self.stored_transcript()
         self.assertEqual(stored[-1]["success"], True)
 
     def test_console_empty_input_and_clear_and_refused_sends(self):
@@ -2965,7 +2948,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(model.consoleHistory, ["G28"])
         model.clearConsoleHistory()
         self.assertEqual(model.consoleHistory, [])
-        self.assertEqual(self.follower.current_printer_config().console_transcript, [])
+        self.assertEqual(self.stored_transcript(), [])
         # A refused send (lane full / Moonraker down) explains itself
         # as a neutral "//" feed line and does not enter the history.
         model._console._data.request = lambda *args, **kwargs: False
@@ -3016,7 +2999,7 @@ class MonitorQtTests(unittest.TestCase):
              "time": model._console._store_time + 2.0},
         ])
         model._console._persist()
-        stored = self.follower.current_printer_config().console_transcript
+        stored = self.stored_transcript()
         commands = [entry for entry in stored if entry["kind"] == "command"]
         self.assertGreaterEqual(len(commands), 8)
         # The three head commands survive the window as the record head.
@@ -3492,7 +3475,10 @@ class MonitorQtTests(unittest.TestCase):
                 meta[-1].callback({"result": {"layer_height": 0.2, "job_id": "1A2B"}}, None)
                 self.qt.events(1)
                 history = [r for r in self.transport.requests if r.channel == "mr-history"]
-                history[-1].callback({"result": {"count": 0, "jobs": []}}, None)
+                # A MISMATCHED job id (not an empty history — an empty
+                # history is unattestable and give-up-able by the
+                # contract): the refusal is permanent.
+                history[-1].callback({"result": {"count": 1, "jobs": [{"job_id": "DIFFERENT"}]}}, None)
                 self.qt.events(1)
                 key = ("part.gcode", coordinator._files.job_key)
                 if step < coordinator.MR_META_CHECK_LIMIT - 1:
@@ -3659,7 +3645,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual([entry["text"] for entry in lines if entry["kind"] != "note"],
                          ["ok", "!! Heater extruder not heating", "Target reached"])
         # The transcript persists with the responses.
-        transcript = self.follower.current_printer_config().console_transcript
+        transcript = self.stored_transcript()
         self.assertEqual([entry["text"] for entry in transcript], ["ok", "!! Heater extruder not heating", "Target reached"])
         # The store holds Klipper's output VERBATIM — Moonraker strips
         # nothing (data_store.py stores the payload as delivered) — and
