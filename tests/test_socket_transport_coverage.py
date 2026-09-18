@@ -836,9 +836,11 @@ class SocketWriteTests(SocketCase):
 
     def test_stop_aborts_a_mid_handshake_socket_instead_of_writing(self):
         # The boot crash was observed with a stop landing inside the
-        # TLS handshake; the hypothesis is the plaintext close-frame
-        # write driving the native stack through a teardown it is not
-        # in. The connecting socket gets the hard abort, never a write.
+        # TLS handshake — protocol-level teardown during an incomplete
+        # negotiation drove an unsafe native teardown path (the exact
+        # byte-level mechanism is not proven, and the code no longer
+        # depends on it). The connecting socket gets the hard abort,
+        # never a write.
         instance = self.owner()
         stub = _DeadSocket(connecting=True)
         instance._socket = stub
@@ -899,6 +901,18 @@ class SocketWriteTests(SocketCase):
         instance.stop()
         self.assertEqual(len(stub.written), 1)
         self.assertEqual(stub.disconnects, 1)
+
+    def test_a_graceful_close_that_throws_falls_back_to_abort(self):
+        # A teardown that failed midway is still a teardown: the
+        # exception path makes a best-effort hard abort before the
+        # socket goes away.
+        instance = self.owner()
+        stub = _DeadSocket(fail=True)
+        instance._socket = stub
+        instance._upgraded = True
+        instance.stop()
+        self.assertEqual(stub.aborted, 1)
+        self.assertIsNone(instance._socket)
 
     def test_stop_before_start_is_harmless(self):
         instance = self.owner()

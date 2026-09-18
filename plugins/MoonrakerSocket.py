@@ -160,17 +160,18 @@ class MoonrakerSocket(QObject):
         """Tear the session down.
 
         The graceful RFC 6455 close is only valid once the WebSocket
-        upgrade has completed: before that the channel is a transport
-        mid-negotiation — TCP-connected-but-TLS-pending included, the
-        socket state never distinguishes them — and a frame write is a
-        plaintext byte write into a handshake. The boot crash was
-        observed in exactly that window (the machine-changed stop
-        landing inside the TLS handshake, a Cura reader thread faulting
-        on the native teardown); heap corruption from the close-frame
-        write is the hypothesis that fits the evidence, not a
-        dump-proven fact. abort() is the state-safe hard teardown for
-        everything short of an upgraded channel, and the generation
-        guard already makes the old socket's events harmless.
+        upgrade has completed: before that the channel is still
+        negotiating — TCP-connected-but-TLS-pending included, the
+        socket state never distinguishes them. Issuing protocol-level
+        WebSocket teardown while the underlying socket was still
+        negotiating/handshaking drove an unsafe native teardown path
+        (the machine-changed stop landed inside the TLS handshake and
+        a Cura reader thread faulted); the precise byte-level
+        mechanism remains a hypothesis, and the code no longer
+        depends on that theory. abort() is the state-safe hard
+        teardown for everything short of an upgraded channel, and the
+        generation guard already makes the old socket's events
+        harmless.
         """
         self._generation += 1
         self._keepalive_timer.stop()
@@ -191,7 +192,13 @@ class MoonrakerSocket(QObject):
                     socket.flush()
                     socket.disconnectFromHost()
             except Exception:
-                pass
+                # A graceful teardown that failed midway is still a
+                # teardown: fall back to the hard path before the
+                # object goes away.
+                try:
+                    socket.abort()
+                except Exception:
+                    pass
             try:
                 socket.deleteLater()
             except Exception:
