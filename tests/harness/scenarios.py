@@ -1758,6 +1758,14 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"},
                                     "virtual_sdcard": {"is_active": True, "progress": 0.98, "file_size": 1048576}}},
+         # The j4 pin: at 0.98 the display reads 98% and the sim's
+         # per-push advance crosses to 100% in ~5 s — faster than
+         # some versions' model update cadence, so no poll ever reads
+         # a 9 (the sweep's all-versions flake). Hold the progress:
+         # the print still runs (duration and the layer clock
+         # advance), the 98.0 display persists, and the completion
+         # below still lands.
+         {"op": "sim_set", "state": {"progress_hold": True}},
          {"op": "wait_model", "prop": "monitorProgress", "contains": "9", "budget": 15},
          {"op": "sim_set", "state": {"print_stats": {"state": "complete", "filename": "scenario1.gcode"}}},
          {"op": "wait_model", "prop": "monitorState", "contains": "complete", "budget": 15},

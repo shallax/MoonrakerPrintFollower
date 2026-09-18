@@ -104,6 +104,10 @@ class PrinterState:
         self.drop_next = 0           # drop this many pushes
         self.refuse_subscribe = ""   # message to refuse with ("" = accept)
         self.push_cadence_ms = 250
+        # The j4 pin: while held, the print runs (duration, layers,
+        # pushes) but the sd progress stands still, so a scenario can
+        # pin the model's progress display deterministically.
+        self.progress_hold = False
         # The print lifecycle arms (scenario 1): a cold start raises
         # the transient extrude error and ramps the heater; a broken
         # start keeps the error past the client's verdict window.
@@ -272,7 +276,8 @@ class PrinterState:
             elif name in ("cold_start", "broken_start", "extruder_ramp_deg_s",
                           "slow_first_frame_ms", "webcam_down", "webcam_die_after",
                           "route_delay_ms", "subscribe_hold_ms", "require_api_key",
-                          "refuse_subscribe", "layer_clock_interval_s"):
+                          "refuse_subscribe", "layer_clock_interval_s",
+                          "progress_hold"):
                 setattr(self, name, value)
             elif name == "console_lines":
                 self.console_lines = list(value)
@@ -326,6 +331,7 @@ class PrinterState:
         self.drop_next = 0
         self.refuse_subscribe = ""
         self.push_cadence_ms = 250
+        self.progress_hold = False
         self.cold_start = False
         self.broken_start = False
         self.extruder_ramp_deg_s = 30.0
@@ -399,7 +405,8 @@ class PrinterState:
         stats = self.state["print_stats"]
         if stats.get("state") == "printing":
             sd = self.state["virtual_sdcard"]
-            sd["progress"] = round(min(1.0, sd.get("progress", 0.0) + 0.001), 6)
+            if not self.progress_hold:
+                sd["progress"] = round(min(1.0, sd.get("progress", 0.0) + 0.001), 6)
             sd["file_position"] = int(sd.get("file_size", 0) * sd["progress"])
             stats["print_duration"] = round(float(stats.get("print_duration", 0.0)) + self.push_cadence_ms / 1000.0, 3)
             self.state["display_status"]["progress"] = sd["progress"]
