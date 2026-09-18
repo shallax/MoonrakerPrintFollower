@@ -109,6 +109,19 @@ def main() -> int:
     args = ap.parse_args()
     version = args.version
     vdir = BASE / version
+
+    def normalise_binary(root):
+        # The binary's casing changed mid-series (Ultimaker-Cura in
+        # the 5.0 era, UltiMaker-Cura after); the harness launches
+        # ONE name, so the prepare step links the old one to it.
+        new = root / "UltiMaker-Cura"
+        old = root / "Ultimaker-Cura"
+        if not new.exists() and old.exists():
+            new.symlink_to(old.name)
+
+    # Idempotent and cheap: a tree prepared before this fix still
+    # gets the link (the version sweep fetched ahead of it).
+    normalise_binary(vdir / "root")
     if (vdir / "manifest.json").exists() and not args.force:
         print(f"{version}: already prepared at {vdir}")
         return 0
@@ -116,10 +129,23 @@ def main() -> int:
 
     appimage = vdir / "UltiMaker-Cura.AppImage"
     if not appimage.exists() or args.force:
-        url = (f"https://github.com/Ultimaker/Cura/releases/download/"
-               f"{version}/UltiMaker-Cura-{version}-linux-X64.AppImage")
-        print(f"downloading {url}")
-        download(url, appimage)
+        # The asset naming changed mid-series: 5.0.0 ships
+        # -linux.AppImage, the later releases -linux-X64.AppImage
+        # (the version sweep's assessment needs both forms).
+        for asset in (f"UltiMaker-Cura-{version}-linux-X64.AppImage",
+                      f"UltiMaker-Cura-{version}-linux.AppImage"):
+            url = (f"https://github.com/Ultimaker/Cura/releases/download/"
+                   f"{version}/{asset}")
+            print(f"downloading {url}")
+            try:
+                download(url, appimage)
+                break
+            except Exception:
+                if appimage.exists():
+                    appimage.unlink()
+                print(f"{asset}: not there, trying the other form")
+        else:
+            raise RuntimeError(f"no AppImage asset found for Cura {version}")
     sha256 = hashlib.sha256(appimage.read_bytes()).hexdigest()
 
     root = vdir / "root"
@@ -128,6 +154,7 @@ def main() -> int:
         appimage.chmod(0o755)
         sh(str(appimage), "--appimage-extract", cwd=vdir)
         shutil.move(str(vdir / "squashfs-root"), str(root))
+    normalise_binary(root)
     # CuraEngine's ELF carries a RELATIVE interpreter path
     # ("lib64/ld-linux-x86-64.so.2") — the kernel resolves it from the
     # spawning process's cwd, which is the appdir. Without this link
