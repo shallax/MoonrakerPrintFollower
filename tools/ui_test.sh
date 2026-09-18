@@ -144,9 +144,17 @@ fi
 # never see this (their manifest reads "modern").
 if grep -q '"env": "legacy"' "$WORK_DIR/cura_versions/$CURA_VERSION/manifest.json" 2>/dev/null; then
     CROOT="$(container_path "$CURA_ROOT")"
-    MPF_ENV="QT_XCB_GL_INTEGRATION=none QSG_RHI_BACKEND=software QT_PLUGIN_PATH=$CROOT/qt/plugins QML2_IMPORT_PATH=$CROOT/qt/qml QML_IMPORT_PATH=$CROOT/qt/qml"
+    MPF_QT_GL_INTEGRATION="none"
+    MPF_QSG_RHI="software"
+    MPF_QT_PLUGIN_PATH="$CROOT/qt/plugins"
+    MPF_QML2_IMPORT_PATH="$CROOT/qt/qml"
+    MPF_QML_IMPORT_PATH="$CROOT/qt/qml"
 else
-    MPF_ENV=""
+    MPF_QT_GL_INTEGRATION=""
+    MPF_QSG_RHI=""
+    MPF_QT_PLUGIN_PATH=""
+    MPF_QML2_IMPORT_PATH=""
+    MPF_QML_IMPORT_PATH=""
 fi
 
 # Nothing outlives a run: Cura, its video ffmpeg and the simulator die
@@ -348,13 +356,18 @@ chmod -R 777 "$RUN_DIR"
 case "$MODE" in
     discover)
         docker exec -e CURA_ROOT="$(container_path "$CURA_ROOT")" -e CURA_WHEELS="$(container_path "$CURA_WHEELS")" \
-            -e MPF_LAUNCH="$MPF_LAUNCH" -e MPF_ENV="$MPF_ENV" \
+            -e MPF_LAUNCH="$MPF_LAUNCH" -e MPF_QT_GL_INTEGRATION="$MPF_QT_GL_INTEGRATION" \
+            -e MPF_QSG_RHI="$MPF_QSG_RHI" -e MPF_QT_PLUGIN_PATH="$MPF_QT_PLUGIN_PATH" \
+            -e MPF_QML2_IMPORT_PATH="$MPF_QML2_IMPORT_PATH" -e MPF_QML_IMPORT_PATH="$MPF_QML_IMPORT_PATH" \
             "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
             DISPLAY=:99 APPDIR=\$CURA_ROOT \
             LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
             PYTHONPATH=\$CURA_WHEELS:\$CURA_ROOT \
             XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
-            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \$MPF_ENV timeout 1800 \
+            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \
+            QT_XCB_GL_INTEGRATION=\$MPF_QT_GL_INTEGRATION QSG_RHI_BACKEND=\$MPF_QSG_RHI \
+            QT_PLUGIN_PATH=\$MPF_QT_PLUGIN_PATH QML2_IMPORT_PATH=\$MPF_QML2_IMPORT_PATH QML_IMPORT_PATH=\$MPF_QML_IMPORT_PATH \
+            timeout 1800 \
             \$MPF_LAUNCH" >/tmp/mpf/cura_run.log 2>&1 &'
         # wait for the driver's port, then run the discovery
         for _ in $(seq 1 120); do [ -s "$WORK_DIR"/harness_port.txt ] && break; sleep 1; done
@@ -363,13 +376,18 @@ case "$MODE" in
         ;;
     scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite|real)
         docker exec -e CURA_ROOT="$(container_path "$CURA_ROOT")" -e CURA_WHEELS="$(container_path "$CURA_WHEELS")" \
-            -e MPF_LAUNCH="$MPF_LAUNCH" -e MPF_ENV="$MPF_ENV" \
+            -e MPF_LAUNCH="$MPF_LAUNCH" -e MPF_QT_GL_INTEGRATION="$MPF_QT_GL_INTEGRATION" \
+            -e MPF_QSG_RHI="$MPF_QSG_RHI" -e MPF_QT_PLUGIN_PATH="$MPF_QT_PLUGIN_PATH" \
+            -e MPF_QML2_IMPORT_PATH="$MPF_QML2_IMPORT_PATH" -e MPF_QML_IMPORT_PATH="$MPF_QML_IMPORT_PATH" \
             "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
             DISPLAY=:99 APPDIR=\$CURA_ROOT \
             LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
             PYTHONPATH=\$CURA_WHEELS:\$CURA_ROOT \
             XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
-            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \$MPF_ENV timeout 1800 \
+            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \
+            QT_XCB_GL_INTEGRATION=\$MPF_QT_GL_INTEGRATION QSG_RHI_BACKEND=\$MPF_QSG_RHI \
+            QT_PLUGIN_PATH=\$MPF_QT_PLUGIN_PATH QML2_IMPORT_PATH=\$MPF_QML2_IMPORT_PATH QML_IMPORT_PATH=\$MPF_QML_IMPORT_PATH \
+            timeout 1800 \
             \$MPF_LAUNCH" >/tmp/mpf/cura_run.log 2>&1 &'
         # The port must appear before the scenario can start; the CI
         # runners are 2-vCPU VMs and boot Cura far more slowly than a
