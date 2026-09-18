@@ -62,7 +62,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
             "MoonrakerProtocol.py", "MoonrakerSocket.py", "SocketFraming.py", "UploadController.py", "CuraOutputWriter.py",
             "ToolheadPolicy.py", "ToolheadController.py", "MonitorTemperatureHistory.py", "ConsolePolicy.py", "ConsoleController.py",
             "FileManagerPolicy.py", "FileManager.py",
-            "PluginPersistence.py", "PersistenceMigration.py",
+            "PluginPersistence.py", "PersistenceMigration.py", "MigrationNotice.py",
         ):
             self.assertIn(f"`{module}`", ARCH)
 
@@ -143,8 +143,8 @@ class SourceContractTests(unittest.TestCase):
             "SectionLayoutPolicy": set(),
             "FollowController": set(),
             "FollowerRuntime": {"BedMeshPresenter", "CuraIntegration", "FileDownload", "GCodeIndex", "GCodeIndexService",
-                "MoonrakerClient", "PauseController", "PluginPersistence", "PreviewFollower", "PreviewMotion",
-                "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService"},
+                "MigrationNotice", "MoonrakerClient", "PauseController", "PluginPersistence", "PreviewFollower", "PreviewMotion",
+                "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService", "WhatsNew"},
             "GCodeIndex": {"MoonrakerProtocol"},
             "GCodeIndexService": {"GCodeIndex"},
             "MonitorCamera": {"CameraBridge"},
@@ -158,6 +158,7 @@ class SourceContractTests(unittest.TestCase):
             "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
             "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "FilesViewModel", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PrintStartOwner", "PrinterConfig", "SectionLayoutPolicy", "StateStore", "ToolheadController", "ToolheadPolicy", "UiStateStore", "WhatsNew"},
             "PersistenceMigration": {"PrinterConfig"},
+            "MigrationNotice": set(),
             "PluginPersistence": {"PrinterConfig", "StateStore"},
             "FilesViewModel": set(),
             "PrintStartOwner": set(),
@@ -486,7 +487,7 @@ class CompositionStructureTests(unittest.TestCase):
                      "PrintStartOwner", "PrinterBinding", "PrinterConfig", "PrintState",
                      "ConsoleController", "ConsolePolicy", "RemoteFileService", "RemoteJobService",
                      "ToolheadController", "ToolheadPolicy", "FilesViewModel", "UiStateStore", "UploadController",
-                     "PluginPersistence", "PersistenceMigration"):
+                     "PluginPersistence", "PersistenceMigration", "MigrationNotice"):
             source = (PLUGINS / (name + ".py")).read_text()
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.FunctionDef) and node.name == "__init__":

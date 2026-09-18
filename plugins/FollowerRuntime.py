@@ -16,6 +16,7 @@ from .BedMeshPresenter import BedMeshPresenter
 from .CuraIntegration import CuraIntegration
 from .GCodeIndex import PersistentIndexCache
 from .GCodeIndexService import GCodeIndexService
+from .MigrationNotice import MigrationNotice
 from .MoonrakerClient import MoonrakerClient
 from .PauseController import PauseController
 from .PluginPersistence import OLD_STATE_FILE_NAME, PluginPersistence
@@ -26,6 +27,7 @@ from .PrintCoordinator import PrintCoordinator
 from .PrinterBinding import PrinterBinding
 from .RemoteFileService import RemoteFileService
 from .FileDownload import FileDownload
+from .WhatsNew import should_show as whats_new_should_show
 
 
 def _savefile_write(path, text):
@@ -39,6 +41,44 @@ def _savefile_write(path, text):
         return True
     except Exception:
         return False
+
+
+def _raise_migration_toast(record):
+    """The UM.Message toast (the UX spec): flavour A carries the
+    backup-folder action, flavour B has no backup to open. The action
+    handler is a bound function, never a lambda — Uranium's Signal
+    holds plain functions weakly (the MoonrakerOutputDevice
+    precedent)."""
+    try:
+        from UM.Message import Message
+    except Exception:
+        return
+    backup = str(record.get("backupName") or "")
+    if record.get("backupWritten") and backup:
+        message = Message(
+            ("Moonraker Print Follower could not move your settings into its new files, so it started with them empty. "
+             "Cura's configuration file was copied to %s before anything was removed. To go back: close Cura, reinstall "
+             "the previous version of the plugin, then copy that file over cura.cfg in Cura's configuration folder.") % backup,
+            0, False,
+        )
+        message.addAction("show_backup_folder", "Show backup folder", "", "Open Cura's configuration folder")
+
+        def open_folder(_message, _action):
+            from PyQt6.QtCore import QUrl
+            from PyQt6.QtGui import QDesktopServices
+            from UM.Resources import Resources
+            QDesktopServices.openUrl(QUrl.fromLocalFile(Resources.getConfigStoragePath()))
+
+        message.actionTriggered.connect(open_folder)
+    else:
+        message = Message(
+            ("Moonraker Print Follower could not move your settings into its new files, so it started with them empty. "
+             "Nothing was removed — your existing Cura configuration is untouched. The move is tried again the next "
+             "time Cura starts."),
+            0, False,
+        )
+    message.setTitle("Moonraker — settings did not carry over")
+    message.show()
 
 
 def _state_lock(state_root):
@@ -100,12 +140,24 @@ class FollowerRuntime:
             files=self.files, index=self.index, cura=self.cura, preview=self.preview,
             pauses=self.pauses, presentation=self.presentation, bed_mesh=self.bed_mesh, parent=parent)
         self._closed = False
+        # The migration notice (the UX spec): the toast raises once
+        # per failure, after the What's-New sequence, from ONE
+        # plugin-level owner — never per device.
+        self.notice = MigrationNotice(
+            self.persistence,
+            whats_new_gate=lambda: whats_new_should_show(
+                (self.persistence.state_global_document() or {}).get("whatsNewSeen") or ""
+            ),
+            raise_toast=lambda record: _raise_migration_toast(record),
+            parent=parent,
+        )
         # The one-shot's trigger (B1): the clean must run after Cura's
         # second preference read, never from construction — and
         # saveSettings() only works once Cura has started.
         finished = getattr(application, "initializationFinished", None)
         if finished is not None:
             finished.connect(self.binding.run_persistence_migration)
+            finished.connect(self.notice.announce)
         self.binding.start()
 
     def close(self):

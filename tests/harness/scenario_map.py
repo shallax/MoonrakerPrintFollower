@@ -279,6 +279,76 @@ PREFIX_RULES = [
 # fields are validated by test_coverage.py. An entry whose re-check
 # trigger fires must be re-probed, not carried forward silently.
 EXCLUSIONS = {
+    # The migration-failure surfaces: the settings-dialog scenario is
+    # deferred (no harness scenario drives the dialog yet), so the
+    # banner's end-to-end proof rides the unit tests — the notice's
+    # state machine and the model's record values — until it lands.
+    "MoonrakerMonitorModel.dismissMigrationBanner": {
+        "reason": "the dialog's Dismiss verb; the dialog scenario is deferred",
+        "evidence": "test_migration_notice's latch tests; the model's record values in test_monitor",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "MoonrakerMonitorModel.openMigrationBackupFolder": {
+        "reason": "the backup folder open; the dialog scenario is deferred",
+        "evidence": "the QDesktopServices recipe matches Cura's own CrashHandler",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationNotice": {
+        "reason": "the failure banner; the dialog scenario is deferred",
+        "evidence": "test_migration_notice; the model's record values in test_monitor",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationDismissButton": {
+        "reason": "the banner's only dismiss path; the dialog scenario is deferred",
+        "evidence": "test_migration_notice's latch tests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationShowBackupButton": {
+        "reason": "the backup folder action; the dialog scenario is deferred",
+        "evidence": "test_migration_notice; the QDesktopServices recipe",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationDiagnosticsRow": {
+        "reason": "the permanent post-dismissal row; the dialog scenario is deferred",
+        "evidence": "the model's migrationDiagnosticsVisible/Text values in test_monitor",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationBannerVisible": {
+        "reason": "the banner's visibility key; the dialog scenario is deferred",
+        "evidence": "the model's record-value unit tests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationBannerText": {
+        "reason": "the banner's copy key; the dialog scenario is deferred",
+        "evidence": "the model's record-value unit tests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationBackupAvailable": {
+        "reason": "the backup-action's gate key; the dialog scenario is deferred",
+        "evidence": "the model's record-value unit tests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationDiagnosticsVisible": {
+        "reason": "the diagnostics row's visibility key; the dialog scenario is deferred",
+        "evidence": "the model's record-value unit tests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationDiagnosticsText": {
+        "reason": "the diagnostics row's copy key; the dialog scenario is deferred",
+        "evidence": "the model's record-value unit tests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
     # The pause list's stable ListModel: a probe-only seam (the
     # 2026-09-16 layer-0 diagnosis reads the synced rows back through
     # it); the pause-row scenario that supersedes this lands with the

@@ -53,6 +53,7 @@ private follower state to either integration.
 | `PrinterConfig.py` | Per-machine settings schema and coercion (the records, the bounds, the normalisers) | Networking, Qt or the settings file (the persistence facade owns the files) |
 | `PluginPersistence.py` | The two plugin-owned stores: the settings document and the per-machine state shards, the typed key-scoped operations and the in-memory document — one instance per file per process, constructed at the composition root and handed down | Schema, coercion or networking |
 | `PersistenceMigration.py` | The one-shot migration's control flow: the strict source read, the backup gate, the verify-by-re-read interlock and the clean-as-commit-point | Qt, Resources or the stores |
+| `MigrationNotice.py` | The migration-failure surfaces' ordering: the once-per-failure toast after the What's-New sequence and the escape hatch | The surfaces themselves (the toast wiring is injected; the banner lives in the model's values) |
 | `MoonrakerClient.py` | Core polling, retries, command deadline timer, Qt notifications | Cura lifecycle |
 | `MoonrakerSession.py` | Binding state, merged core snapshot, polling policy, coalescer, command tracker | UI or G-code files |
 | `MoonrakerTransport.py` | Request builder, credentials, HTTP pool, JSON lanes and metrics | Feature state |

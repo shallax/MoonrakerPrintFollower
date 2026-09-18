@@ -39,6 +39,7 @@ class MoonrakerPrintFollower(QObject, Extension):
 
     @property
     def persistence(self): return self._runtime.persistence
+    def notice(self): return self._runtime.notice
 
     @pyqtSlot()
     def confirmForceLoadCurrentPrint(self): self._runtime.coordinator.confirm_load()

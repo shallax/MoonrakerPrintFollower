@@ -115,6 +115,28 @@ def _state_height(value) -> int:
 _chart_state = normalise_temperature_chart
 
 
+def _migration_banner_text(record):
+    """The dialog banner's copy (the UX spec): the rollback recipe is
+    the message — the file name, the folder route and the
+    reinstall-previous-version steps."""
+    backup = str(record.get("backupName") or "")
+    if record.get("backupWritten") and backup:
+        return ("Your Moonraker settings did not carry over from the previous version, so the plugin is using defaults. "
+                "Cura's configuration was saved as %s. Open it from Help > Show Configuration Folder. "
+                "To roll back: close Cura, reinstall the previous version of the plugin, and copy that file over cura.cfg.") % backup
+    return ("Your Moonraker settings did not carry over from the previous version, so the plugin is using defaults. "
+            "Nothing was removed — your existing Cura configuration is untouched.")
+
+
+def _migration_diagnostics_text(record):
+    """The permanent diagnostics row's copy (after dismissal): the
+    recipe is demoted, never deleted."""
+    backup = str(record.get("backupName") or "")
+    if record.get("backupWritten") and backup:
+        return "Settings migration failed. The previous configuration is saved as %s." % backup
+    return "Settings migration failed. Nothing was removed."
+
+
 def _read_state(store=None) -> dict:
     """The persisted panel state: collapsed sections, the control-pane
     collapse, the lock-all toggle and the console's dragged height. The
@@ -224,6 +246,7 @@ def value_property(kind, name, signal, default=None):
 
 
 class MoonrakerMonitorModel(PrinterOutputModel):
+    whatsNewDismissed = pyqtSignal()
     monitorChanged = pyqtSignal()
     previewBlockChanged = pyqtSignal(dict)
     webcamsChanged = pyqtSignal()
@@ -274,7 +297,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                             # PAUSED (the other keys in the group
                             # masked it while printing).
                             "nextPauseLayer", "nextPauseEta", "nextPauseFraction", "nextPauseBaked",
-                            "monitorPositionX", "monitorPositionY", "monitorPositionZ")),
+                            "monitorPositionX", "monitorPositionY", "monitorPositionZ",
+                            "migrationBannerVisible", "migrationBannerText", "migrationBackupAvailable",
+                            "migrationDiagnosticsVisible", "migrationDiagnosticsText")),
         ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
         ("temperatureChartChanged", ("temperatureChart",)),
         ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
@@ -962,6 +987,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             improveEtaPhase=("Downloading…" if (snapshot.load_active or self._improving_eta) and snapshot.download_fraction is not None
                              else "Indexing…" if (snapshot.load_active or self._improving_eta) and snapshot.indexing
                              else "Resolving…" if snapshot.load_active or self._improving_eta else ""))
+        record = self._migration_record()
+        failed = bool(record and record.get("status") == "failed")
+        values["migrationBannerVisible"] = bool(failed and not record.get("bannerDismissed"))
+        values["migrationBannerText"] = _migration_banner_text(record) if failed else ""
+        values["migrationBackupAvailable"] = bool(failed and record.get("backupWritten") and record.get("backupName"))
+        values["migrationDiagnosticsVisible"] = bool(failed and record.get("bannerDismissed"))
+        values["migrationDiagnosticsText"] = _migration_diagnostics_text(record) if failed else ""
         self._values = values
         try:
             url = self._camera.url
@@ -985,6 +1017,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 getattr(self, signal_name).emit()
 
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
+    # The migration-failure surfaces (the UX ruling): the dialog's
+    # banner and the permanent diagnostics row read these.
+    migrationBannerVisible = value_property(bool, "migrationBannerVisible", monitorChanged, False)
+    migrationBannerText = value_property(str, "migrationBannerText", monitorChanged, "")
+    migrationBackupAvailable = value_property(bool, "migrationBackupAvailable", monitorChanged, False)
+    migrationDiagnosticsVisible = value_property(bool, "migrationDiagnosticsVisible", monitorChanged, False)
+    migrationDiagnosticsText = value_property(str, "migrationDiagnosticsText", monitorChanged, "")
     monitorConnected = value_property(bool, "monitorConnected", monitorChanged, False)
     monitorFilename = value_property(str, "monitorFilename", monitorChanged, "")
     monitorProgress = value_property(float, "monitorProgress", monitorChanged, 0.0)
@@ -1824,6 +1863,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 config[key] = {name: value for name, value in entries.items() if name in names}
         return config
 
+    def _migration_record(self):
+        """The settings document's migration record via the facade;
+        None in the harness's config-only double."""
+        if hasattr(self._store, "migration_record"):
+            return self._store.migration_record()
+        return None
+
+    @pyqtSlot()
+    def dismissMigrationBanner(self):
+        if hasattr(self._store, "set_migration_record"):
+            self._store.set_migration_record({"bannerDismissed": True})
+            self._publish()
+
+    @pyqtSlot()
+    def openMigrationBackupFolder(self):
+        # The recipe's route: the folder that exists NOW — the config
+        # directory moves between Cura versions and portable installs.
+        QDesktopServices.openUrl(QUrl.fromLocalFile(Resources.getConfigStoragePath()))
+
     def _on_store_note(self, _kind, text):
         """The store's failure sink (A6): the console note line is
         the durable channel (the action status's precedence can hide
@@ -1926,6 +1984,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # until the next release.
         self._whats_new_seen = whats_new_latest()
         self._save_state()
+        # The migration notice's ordering hook (the UX ruling): the
+        # failure toast waits for this moment, never races the overlay.
+        self.whatsNewDismissed.emit()
 
     @pyqtSlot()
     def improveEta(self):
