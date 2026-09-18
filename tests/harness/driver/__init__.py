@@ -447,11 +447,62 @@ class HarnessServer(QObject):
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "quit":
+            # The ack has to reach the caller: closeApplication()
+            # tears the process (and this socket) down inside the
+            # call, so a reply written after it never arrives and a
+            # requested close reads as a lost request. The close is
+            # queued for the next event-loop turn instead — this
+            # handler returns, the ack is written and flushed, and
+            # only then does Cura close itself.
             try:
-                Application.getInstance().closeApplication()
-                return {"id": request_id, "ok": True}
+                application = Application.getInstance()
+                QTimer.singleShot(int(request.get("delay_ms", 400)),
+                                  application.closeApplication)
+                return {"id": request_id, "ok": True, "closing": True}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "plugin_settings":
+            # The plugin's settings document as it is on disk, resolved
+            # through Cura's own storage rule. The bytes are the file's,
+            # never the plugin's view of them — the first-install leg
+            # asks what survived a boot, not what the plugin remembers.
+            try:
+                from UM.Resources import Resources
+                root = Resources.getStoragePath(Resources.Preferences, "MoonrakerPrintFollower")
+                path = os.path.join(str(root), "settings.json")
+                try:
+                    with open(path, "r", encoding="utf-8") as handle:
+                        decoded = json.load(handle)
+                    document = decoded if isinstance(decoded, dict) else None
+                except FileNotFoundError:
+                    document = None
+                return {"id": request_id, "ok": True, "path": path,
+                        "exists": os.path.exists(path), "document": document}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": repr(exc)}
+        if cmd == "plugin_save_config":
+            # The settings dialog's own save verb for the active machine
+            # (the action's validation and the plugin's real persistence
+            # path), driven with the caller's overrides. A refused save
+            # is an error — a silent no-op would leave the next boot with
+            # nothing to defend.
+            try:
+                from dataclasses import asdict
+                action = Application.getInstance().getMachineActionManager().getMachineAction(
+                    "MoonrakerPrintFollowerConfigureAction")
+                if action is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "the settings machine action is not registered"}
+                current = action._config()
+                params = asdict(current)
+                params["feed_mode"] = getattr(current.feed_mode, "value", str(current.feed_mode))
+                params.update(dict(request.get("params") or {}))
+                if not action.saveConfig(params):
+                    return {"id": request_id, "ok": False,
+                            "error": "the settings save was refused"}
+                return {"id": request_id, "ok": True, "saved": True}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": repr(exc)}
         if cmd == "header_tree":
             import collections
             window = _main_window()

@@ -146,13 +146,16 @@ def wait_stage(wanted, timeout_ms=20000):
     return rpc({"id": 1, "cmd": "wait_stage", "stage": wanted, "timeout_ms": timeout_ms}, timeout=timeout_ms / 1000.0 + 5)
 
 
-def ensure_ready():
+def ensure_ready(require_aux=True):
     """The boot gate: on a fresh seeded profile Cura's one-shot
     welcome check can run before the saved machine is restored, and
     the dialog's grey-out then eats every click. Seed the machine
     (the Add-printer wizard's own code path) and hide the welcome
     overlay until the gate is clear. Orchestration only — no
-    plugin-surface claims."""
+    plugin-surface claims. The first-install leg passes
+    require_aux=False: a clean install has no printer to connect to,
+    so the discovery chain cannot come alive — that absence is the
+    state under test, not a bad boot."""
     for _ in range(10):
         reply = rpc({"id": 1, "cmd": "welcome"})
         if reply.get("ok") and not reply.get("up"):
@@ -195,6 +198,8 @@ def ensure_ready():
         rpc({"id": 1, "cmd": "seed_machine"})
         exec_rpc(REFRESH_EMIT)
         time.sleep(10)
+    if not require_aux:
+        return _pin_ok
     # The aux gate: the discovery chain (object list -> aux
     # subscription -> temperatures/webcams) can stay dead on a boot
     # that has the model — the flake policy declares that boot bad
@@ -1977,6 +1982,223 @@ def scenario1(expect_fail=False):
     return _verdict(steps)
 
 
+# ---- The first-install leg (modes firstinstall1 / firstinstall2) ----
+#
+# One machine, one xdg tree, two boots: ui_test.sh's firstinstall mode
+# seeds the tree CLEAN for boot 1 (no plugin config folder, no cura.cfg
+# section) and hands the same tree back for boot 2 untouched. Boot 1
+# proves the activation semantics a never-run install gets and then
+# configures the printer through the plugin's own save path; boot 2
+# proves the second boot keeps that config (the lost-config report).
+FIRST_INSTALL_URL = "http://127.0.0.1:7125"
+# The record's witness: an inert settings field carrying a value only
+# this leg writes, so a record rebuilt from the legacy defaults can
+# never read as the one boot 1 saved.
+FIRST_INSTALL_MARKER = "harness-firstinstall"
+# Boot 1's document, written where both boots can read it (the mode's
+# unit dir — a container path, handed in by ui_test.sh).
+BOOT1_DOCUMENT = os.environ.get("HARNESS_BOOT1_DOC", "/tmp/mpf/boot1-document.json")
+
+
+def plugin_document():
+    """The settings document as the driver reads it OFF DISK (Cura's
+    own storage rule). None when there is no readable document — the
+    absence is a state this leg must be able to see."""
+    try:
+        reply = rpc({"id": 1, "cmd": "plugin_settings"})
+    except RuntimeError:
+        return None
+    if not reply.get("ok"):
+        return None
+    return reply
+
+
+def document_of(reply):
+    document = (reply or {}).get("document")
+    return document if isinstance(document, dict) else None
+
+
+def cura_process_alive():
+    """Cura's own process, by full command line (the bracket keeps
+    pgrep from matching its own argv — the harness's standing idiom)."""
+    try:
+        done = subprocess.run(["pgrep", "-f", "UltiMaker-Cur[a]"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return True
+    return done.returncode == 0
+
+
+def driver_port_dead():
+    """The driver's socket: a refused connection is the plugin's own
+    death certificate (the port file outlives the process)."""
+    try:
+        port = int(open(PORT_FILE, encoding="utf-8").read().strip())
+    except (OSError, ValueError):
+        return True
+    try:
+        with socket.create_connection((DRIVER_HOST, port), timeout=2):
+            return False
+    except OSError:
+        return True
+
+
+def first_install1():
+    """Boot 1 of the first-install leg: a machine that has never run
+    the plugin. The v2 document must appear with nothing migrated into
+    it, the printer's config must save through the plugin's own save
+    verb, and the app must quit cleanly — boot 2 reads whatever this
+    boot leaves on disk."""
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "firstinstall1.mp4")
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, video_path])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(boot_step(hello))
+        # The aux half of the gate is skipped by construction: a clean
+        # install has no printer to discover, so the chain it checks
+        # cannot come alive.
+        gate = ensure_ready(require_aux=False)
+        steps.append(("01-gate", "boot gate: the machine is restored, no welcome overlay",
+                      "welcome absent, window at the pinned geometry (no printer configured yet)",
+                      gate, shot("01-gate")))
+        # The activation (the author's ruling): nothing was migrated,
+        # so the document activates directly — the version, no machine
+        # records, and NO migration record for the second boot to
+        # re-run against live config.
+        document = wait_for(lambda: document_of(plugin_document()), 120.0)
+        global_section = (document or {}).get("global")
+        activated = (isinstance(document, dict)
+                     and document.get("configVersion") == 2
+                     and document.get("machines") == {}
+                     and isinstance(global_section, dict)
+                     and "migration" not in global_section)
+        steps.append(("02-activate", "the plugin activates its v2 settings document on a clean install",
+                      "configVersion 2, machines {}, no migration key in global",
+                      activated, shot("02-activate")))
+        # The configuration: the settings dialog's own save verb, so
+        # the write goes through the plugin's validation and its
+        # persistence path — never a file edited behind the app.
+        save = rpc({"id": 1, "cmd": "plugin_save_config",
+                    "params": {"url": FIRST_INSTALL_URL,
+                               "api_key": FIRST_INSTALL_MARKER,
+                               # The save validates that the translate
+                               # pair has equal lengths; the marker is
+                               # its own output so both stay inert.
+                               "filename_translate_input": FIRST_INSTALL_MARKER,
+                               "filename_translate_output": FIRST_INSTALL_MARKER}},
+                   timeout=60)
+        steps.append(("03-configure", "the printer is configured through the settings save the dialog uses",
+                      "the save was accepted", bool(save.get("ok")), shot("03-configure")))
+        # The save read back from the file, not from the plugin's
+        # memory: what boot 2 gets is what is on disk.
+        after = document_of(plugin_document())
+        machines = (after or {}).get("machines")
+        marked = {key: value for key, value in (machines or {}).items()
+                  if isinstance(value, dict)
+                  and value.get("filename_translate_input") == FIRST_INSTALL_MARKER}
+        recorded = (len(marked) == 1
+                    and list(marked.values())[0].get("url") == FIRST_INSTALL_URL)
+        steps.append(("04-recorded", "the saved config is in the settings file on disk",
+                      "exactly one machine record carries the leg's marker and the printer's url",
+                      recorded, shot("04-recorded")))
+        if after:
+            # The handoff: boot 2 diffs the live record against this.
+            with open(BOOT1_DOCUMENT, "w", encoding="utf-8") as handle:
+                json.dump(after, handle, indent=2, sort_keys=True)
+        # The clean exit: boot 2 must find a tree Cura closed itself,
+        # not one this script killed mid-write. The driver acks the
+        # request before it closes, so an ack that did not arrive is a
+        # failure, not the shutdown eating its own reply.
+        try:
+            quit_reply = rpc({"id": 1, "cmd": "quit"}, timeout=30)
+        except RuntimeError as exc:
+            quit_reply = {"ok": False, "error": repr(exc)}
+        deadline = time.time() + 150
+        while time.time() < deadline and (cura_process_alive() or not driver_port_dead()):
+            time.sleep(2)
+        exited = driver_port_dead() and not cura_process_alive()
+        if not (quit_reply.get("ok") and exited):
+            # Which half failed — the ack (did the ask land) or the
+            # exit (did the app leave) — has to reach the log: the
+            # gallery's assertion line is static text.
+            print(f"ui_test: quit reply={quit_reply!r} exited={exited}")
+        steps.append(("05-quit", "the driver asks Cura to close itself for the second boot",
+                      "closeApplication accepted and the process is gone",
+                      bool(quit_reply.get("ok")) and exited, shot("05-quit")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "First install — boot 1: the clean activation and the save"
+    write_gallery(steps, False, title, video=video_path)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return _verdict(steps)
+
+
+def first_install2():
+    """Boot 2 of the first-install leg: the same tree, booted again.
+    The document boot 1 left holds live configuration; the migration
+    machinery must not replace it with records rebuilt from the legacy
+    blob — the machine record must still be there, field for field."""
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "firstinstall2.mp4")
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, video_path])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(boot_step(hello))
+        # This boot has a printer: the saved record points at the
+        # simulator, so the full gate applies.
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: the saved machine is restored and connects",
+                      "welcome absent, window at the pinned geometry",
+                      gate, shot("01-gate")))
+        try:
+            with open(BOOT1_DOCUMENT, encoding="utf-8") as handle:
+                before = json.load(handle)
+        except (OSError, ValueError):
+            before = None
+        previous = (before or {}).get("machines") or {}
+        document = wait_for(lambda: document_of(plugin_document()), 90.0)
+        current = (document or {}).get("machines") or {}
+        survived = bool(previous) and all(
+            isinstance(current.get(key), dict)
+            and all(current[key].get(field) == value for field, value in record.items())
+            for key, record in previous.items())
+        steps.append(("02-record-survives", "the config written on the first boot is still there",
+                      "every field of the boot-1 machine record is unchanged after the second boot",
+                      survived, shot("02-record-survives")))
+        # Beyond the record: "untouched" is asserted over the WHOLE
+        # document. The migration machinery's signature is the record
+        # it writes into global, and a record rebuilt from the legacy
+        # defaults could never carry boot 1's values field for field —
+        # so an equal document proves neither happened.
+        untouched = bool(before) and document is not None and document == before
+        steps.append(("03-untouched", "the second boot leaves the settings document alone",
+                      "the document is identical to the one the first boot left",
+                      untouched, shot("03-untouched")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "First install — boot 2: the config survives the second boot"
+    write_gallery(steps, False, title, video=video_path)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return _verdict(steps)
+
+
 SUITE_STATE = {"sim": {}, "model": {}, "item": {}, "rect": {}, "stash": {}}
 
 # The suite's groups by name — SCENARIO_GROUP accepts either.
@@ -3252,6 +3474,10 @@ def main():
         return scenario7()
     if mode == "scenario11":
         return scenario11()
+    if mode == "firstinstall1":
+        return first_install1()
+    if mode == "firstinstall2":
+        return first_install2()
     if mode == "scenario10":
         return scenario10()
     if mode == "scenario8":

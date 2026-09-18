@@ -592,7 +592,9 @@ transcription drift):
 - Multi-printer interaction and large files.
 - Chart continuity across preheat / print / pause / target-change.
 - Power-area plausibility (heater power bands on the chart).
-- Persistence across a Cura restart AND a printer switch.
+- Persistence across a Cura restart AND a printer switch (the
+  clean-install restart half is automated now — `MODE=firstinstall`,
+  TESTING.md §3).
 - Multi-hotend / chamber mini-widget selection.
 - A dense 25x25 bed mesh crosshair.
 - The bed-mesh pop-over open with its probe-points toggle (the one

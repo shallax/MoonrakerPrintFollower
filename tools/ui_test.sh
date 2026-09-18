@@ -6,6 +6,9 @@
 #        make ui_test MODE=discover   -> dump stage-menu coordinates
 #        make ui_test MODE=scenarioN  -> one gate scenario (1..11)
 #        make ui_test MODE=suite SCENARIO_GROUP=<group name>
+#        make ui_test MODE=firstinstall -> the first-install leg: a clean
+#            profile booted twice, the config written on the first boot
+#            checked on the second (XDG_SEED picks the fixture)
 #        make ui_test MODE=real       -> read-only observation of a real
 #            printer (REAL_URL + REAL_API_KEY in the environment; the
 #            host and key never touch the repo — TESTING.md §2.5)
@@ -45,6 +48,24 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
 HARNESS_GEOMETRY="${HARNESS_GEOMETRY:-1920x1080}"
 HARNESS_WINDOW="${HARNESS_WINDOW:-1840x1040}"
 
+# The mode and the fixture policy resolve ONCE, here — the boot path
+# below reads them, and a later re-resolution would let the seeding
+# and the launch disagree about what the run is.
+MODE="${MODE:-scenario}"
+export HARNESS_MODE="$MODE"
+# The fixture the run boots from: "full" is the committed seed (an
+# install that has already run the 4.5.0 one-shot), "clean" is the
+# same tree with the plugin's own config folder, its old state file
+# and its cura.cfg section removed (a machine that has never run the
+# plugin), and "keep" reuses the tree exactly as the last boot left
+# it. The first-install leg needs clean for its first boot and keep
+# (by construction) for its second, so the default follows the mode.
+XDG_SEED="${XDG_SEED:-$([ "$MODE" = "firstinstall" ] && echo clean || echo full)}"
+case "$XDG_SEED" in
+    full|clean|keep) ;;
+    *) echo "ui_test: XDG_SEED must be full, clean or keep (got '$XDG_SEED')" >&2; exit 1 ;;
+esac
+
 # The slot mount maps the slot's host dir onto the container's
 # /tmp/mpf — inside a slot container, host-form paths do not exist.
 # Every path handed to the container resolves through the shared,
@@ -59,7 +80,10 @@ container_path() {
 # on the success path and after a failed runner alike; only the
 # plugin's own lines count, so Cura's own boot noise stays invisible.
 scan_cura_log() {
-    scan="$(grep -nE 'MoonrakerPrintFollower|/Moonraker[A-Za-z]+\.qml' "$WORK_DIR"/cura_run.log 2>/dev/null \
+    # Every boot's log (the first-install leg boots twice and the
+    # second launch truncates the log file): a first boot's warning
+    # must not go unseen because a later boot overwrote the file.
+    scan="$(grep -nE 'MoonrakerPrintFollower|/Moonraker[A-Za-z]+\.qml' "$WORK_DIR"/cura_run*.log 2>/dev/null \
         | grep -E 'WARNING|ERROR|polish loop' || true)"
     if [ -n "$scan" ]; then
         echo "ui_test: CURA LOG NOISE (the log-scan ruling) - fix the code, never the filter:" >&2
@@ -182,6 +206,9 @@ trap cleanup EXIT INT TERM
 # Cura's own writes land with owner-only modes (settings files go
 # 0600, its dirs 0775): on CI the next unit's host-side rm hits them
 # as a different uid. The container's root does the destructive pass.
+if [ "$XDG_SEED" = "keep" ]; then
+    echo "ui_test: XDG_SEED=keep — booting the xdg tree the last run left behind"
+else
 docker exec "$CONTAINER" rm -rf "$(container_path "$WORK_DIR"/xdg)"
 mkdir -p "$WORK_DIR"/xdg
 cp -r "$root/tests/harness/config/." "$WORK_DIR"/xdg/
@@ -196,6 +223,44 @@ chmod -R 777 "$WORK_DIR"/xdg
 # tree keeps it. Recreate it — the version carry-over copies it and
 # the boot writes its lock and settings into it.
 mkdir -p "$WORK_DIR"/xdg/cura/5.13
+# The clean seed (the first-install leg's boot 1): the committed
+# fixture is an install that already ran the one-shot, which is
+# exactly what the leg must NOT have. The plugin's config folder, the
+# old state file and the cura.cfg section go; Cura's own machine and
+# preferences stay. The transform must LAND — a silent no-op would
+# run the "clean install" leg against the pre-migrated fixture, the
+# blind spot the leg exists to close.
+if [ "$XDG_SEED" = "clean" ]; then
+    python3 - "$WORK_DIR/xdg/config/cura/5.13" << 'PY'
+import os, shutil, sys
+base = sys.argv[1]
+removed = []
+folder = os.path.join(base, "MoonrakerPrintFollower")
+if os.path.isdir(folder):
+    shutil.rmtree(folder)
+    removed.append("MoonrakerPrintFollower/")
+old_state = os.path.join(base, "moonrakerprintfollower_sections.json")
+if os.path.exists(old_state):
+    os.remove(old_state)
+    removed.append("moonrakerprintfollower_sections.json")
+cfg = os.path.join(base, "cura.cfg")
+lines = open(cfg, encoding="utf-8").readlines()
+kept, dropping = [], False
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        dropping = stripped == "[moonrakerprintfollower]"
+    if not dropping:
+        kept.append(line)
+if len(kept) == len(lines):
+    raise SystemExit("ui_test: the clean seed found no [moonrakerprintfollower] section in cura.cfg")
+if not removed:
+    raise SystemExit("ui_test: the clean seed found no plugin config folder to remove")
+open(cfg, "w", encoding="utf-8").writelines(kept)
+print("ui_test: clean seed removed " + ", ".join(removed + ["the cura.cfg section"]))
+PY
+fi
+fi
 # Real mode points the seeded machine record at the real host, at
 # runtime, from the environment — the host and key never touch the
 # repo, the logs or any committed file.
@@ -255,8 +320,6 @@ cp "$root/tests/harness/models/voron_cube.stl" "$WORK_DIR"/models/voron_cube.stl
 # run would let the wait loop pass before Cura is actually up.
 rm -f "$WORK_DIR"/harness_port.txt
 COORDS="$WORK_DIR"/harness_coords.json
-MODE="${MODE:-scenario}"
-export HARNESS_MODE="$MODE"
 
 # Stage the production plugin and the driver into the run's Cura
 # profile (the XDG data dir the spike established). A RED run stages
@@ -359,65 +422,56 @@ mkdir -p "$RUN_DIR"
 chmod 777 "$WORK_DIR"
 chmod -R 777 "$RUN_DIR"
 
-case "$MODE" in
-    discover)
-        docker exec -e CURA_ROOT="$(container_path "$CURA_ROOT")" -e CURA_WHEELS="$(container_path "$CURA_WHEELS")" \
-            -e MPF_LAUNCH="$MPF_LAUNCH" -e MPF_QT_GL_INTEGRATION="$MPF_QT_GL_INTEGRATION" \
-            -e MPF_QSG_RHI="$MPF_QSG_RHI" -e MPF_QT_PLUGIN_PATH="$MPF_QT_PLUGIN_PATH" \
-            -e MPF_QML2_IMPORT_PATH="$MPF_QML2_IMPORT_PATH" -e MPF_QML_IMPORT_PATH="$MPF_QML_IMPORT_PATH" \
-            "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
-            DISPLAY=:99 APPDIR=\$CURA_ROOT \
-            LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
-            PYTHONPATH=\$CURA_WHEELS:\$CURA_ROOT \
-            XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
-            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \
-            QT_XCB_GL_INTEGRATION=\$MPF_QT_GL_INTEGRATION QSG_RHI_BACKEND=\$MPF_QSG_RHI \
-            QT_PLUGIN_PATH=\$MPF_QT_PLUGIN_PATH QML2_IMPORT_PATH=\$MPF_QML2_IMPORT_PATH QML_IMPORT_PATH=\$MPF_QML_IMPORT_PATH \
-            timeout 1800 \
-            \$MPF_LAUNCH" >/tmp/mpf/cura_run.log 2>&1 &'
-        # wait for the driver's port, then run the discovery
-        for _ in $(seq 1 120); do [ -s "$WORK_DIR"/harness_port.txt ] && break; sleep 1; done
-        docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
-            python3 /tmp/mpf/harness_runner.py discover
-        ;;
-    scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite|real)
-        docker exec -e CURA_ROOT="$(container_path "$CURA_ROOT")" -e CURA_WHEELS="$(container_path "$CURA_WHEELS")" \
-            -e MPF_LAUNCH="$MPF_LAUNCH" -e MPF_QT_GL_INTEGRATION="$MPF_QT_GL_INTEGRATION" \
-            -e MPF_QSG_RHI="$MPF_QSG_RHI" -e MPF_QT_PLUGIN_PATH="$MPF_QT_PLUGIN_PATH" \
-            -e MPF_QML2_IMPORT_PATH="$MPF_QML2_IMPORT_PATH" -e MPF_QML_IMPORT_PATH="$MPF_QML_IMPORT_PATH" \
-            "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
-            DISPLAY=:99 APPDIR=\$CURA_ROOT \
-            LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
-            PYTHONPATH=\$CURA_WHEELS:\$CURA_ROOT \
-            XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
-            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \
-            QT_XCB_GL_INTEGRATION=\$MPF_QT_GL_INTEGRATION QSG_RHI_BACKEND=\$MPF_QSG_RHI \
-            QT_PLUGIN_PATH=\$MPF_QT_PLUGIN_PATH QML2_IMPORT_PATH=\$MPF_QML2_IMPORT_PATH QML_IMPORT_PATH=\$MPF_QML_IMPORT_PATH \
-            timeout 1800 \
-            \$MPF_LAUNCH" >/tmp/mpf/cura_run.log 2>&1 &'
-        # The port must appear before the scenario can start; the CI
-        # runners are 2-vCPU VMs and boot Cura far more slowly than a
-        # dev box, so the deadline is generous. The failure report
-        # distinguishes a slow boot from a dead one. The wait reads
-        # the SLOT's tree (a slot container writes the port file into
-        # its own /tmp/mpf — the shared tree's copy is not evidence
-        # for this run).
-        boot_start=$(date +%s)
-        for tick in $(seq 1 300); do
-            [ -s "$WORK_DIR"/harness_port.txt ] && break
-            # The boot is the longest silent phase; a line every half
-            # minute keeps a watching terminal from assuming a hang.
-            # (The counter must not be the underscore parameter —
-            # arithmetic on it reads the previous command's last arg.)
-            case $(( tick % 30 )) in
-                0) echo "ui_test: still booting ($(( $(date +%s) - boot_start ))s)" ;;
-            esac
-            sleep 1
-        done
-        if [ -s "$WORK_DIR"/harness_port.txt ]; then
-            echo "ui_test: driver up after $(( $(date +%s) - boot_start ))s"
-        else
+# One boot: Cura on the run's display and profile, detached, with the
+# launch env the spike established. Every mode boots through here —
+# the first-install mode's two boots included — so the launch cannot
+# drift between modes.
+launch_cura() {
+    docker exec -e CURA_ROOT="$(container_path "$CURA_ROOT")" -e CURA_WHEELS="$(container_path "$CURA_WHEELS")" \
+        -e MPF_LAUNCH="$MPF_LAUNCH" -e MPF_QT_GL_INTEGRATION="$MPF_QT_GL_INTEGRATION" \
+        -e MPF_QSG_RHI="$MPF_QSG_RHI" -e MPF_QT_PLUGIN_PATH="$MPF_QT_PLUGIN_PATH" \
+        -e MPF_QML2_IMPORT_PATH="$MPF_QML2_IMPORT_PATH" -e MPF_QML_IMPORT_PATH="$MPF_QML_IMPORT_PATH" \
+        "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
+        DISPLAY=:99 APPDIR=\$CURA_ROOT \
+        LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
+        PYTHONPATH=\$CURA_WHEELS:\$CURA_ROOT \
+        XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
+        LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \
+        QT_XCB_GL_INTEGRATION=\$MPF_QT_GL_INTEGRATION QSG_RHI_BACKEND=\$MPF_QSG_RHI \
+        QT_PLUGIN_PATH=\$MPF_QT_PLUGIN_PATH QML2_IMPORT_PATH=\$MPF_QML2_IMPORT_PATH QML_IMPORT_PATH=\$MPF_QML_IMPORT_PATH \
+        timeout 1800 \
+        \$MPF_LAUNCH" >/tmp/mpf/cura_run.log 2>&1 &'
+}
+
+# The driver's ready marker must appear before any runner can start.
+# The CI runners are 2-vCPU VMs and boot Cura far more slowly than a
+# dev box, so the deadline is generous; the failure report must
+# distinguish a slow boot from a dead one. The wait reads the SLOT's
+# tree (a slot container writes the port file into its own /tmp/mpf —
+# the shared tree's copy is not evidence for this run). The caller
+# decides what a failed boot means for its verdict.
+wait_for_boot() {
+    boot_start=$(date +%s)
+    for tick in $(seq 1 300); do
+        [ -s "$WORK_DIR"/harness_port.txt ] && break
+        # The boot is the longest silent phase; a line every half
+        # minute keeps a watching terminal from assuming a hang.
+        # (The counter must not be the underscore parameter —
+        # arithmetic on it reads the previous command's last arg.)
+        case $(( tick % 30 )) in
+            0) echo "ui_test: still booting ($(( $(date +%s) - boot_start ))s)" ;;
+        esac
+        sleep 1
+    done
+    if [ -s "$WORK_DIR"/harness_port.txt ]; then
+        echo "ui_test: driver up after $(( $(date +%s) - boot_start ))s"
+        return 0
+    fi
             echo "ui_test: the driver never came up"
+            # The dead boot's report ends in a failure: the caller
+            # decides the verdict, so the whole block returns instead
+            # of exiting (the mode may have a second boot to report).
+
             if docker exec "$CONTAINER" bash -lc 'pgrep -f "UltiMaker-Cur[a]" >/dev/null'; then
                 echo "ui_test: Cura is still running — the boot did not finish within the deadline"
             else
@@ -493,8 +547,53 @@ case "$MODE" in
             echo "ui_test: cura_run.log ($(wc -c < "$WORK_DIR"/cura_run.log) bytes, known-benign lines filtered):"
             tail -40 "$WORK_DIR"/cura_run.log | grep -vE \
                 'ast\.Str is deprecated|def visit_Str|Timers cannot be (started|stopped) from another thread|QNativeSocketEngine::write\(\) was not called|typeresolution\.cycle|typecompiler.*Component as the root of a QML document|Binding loop detected for property "height"'
-            exit 1
-        fi
+            return 1
+}
+
+case "$MODE" in
+    discover)
+        launch_cura
+        # wait for the driver's port, then run the discovery
+        for _ in $(seq 1 120); do [ -s "$WORK_DIR"/harness_port.txt ] && break; sleep 1; done
+        docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
+            python3 /tmp/mpf/harness_runner.py discover
+        ;;
+    firstinstall)
+        # One xdg tree, two boots. The seed is clean (the mode's
+        # default XDG_SEED), so the first boot is a machine that has
+        # never run the plugin; the second boot gets the tree the
+        # first left — the fixture is never re-copied between them.
+        launch_cura
+        if ! wait_for_boot; then exit 1; fi
+        BOOT1_DOC="$CONTAINER_RUN_DIR/boot1-document.json"
+        docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
+            HARNESS_COORDS="$COORDS" HARNESS_MODE="${MODE}1" \
+            HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
+            HARNESS_BOOT1_DOC="$BOOT1_DOC" \
+            CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
+            python3 /tmp/mpf/harness_runner.py firstinstall1 || RUNNER_RC=$?
+        # The first boot's log survives the second launch (which
+        # truncates cura_run.log) — the log scan covers both boots.
+        cp "$WORK_DIR"/cura_run.log "$WORK_DIR"/cura_run_boot1.log 2>/dev/null || true
+        # The second boot needs the tree to itself: whatever the first
+        # boot left running (a quit that did not land, a crashed
+        # runner) goes first, and the ready marker goes with it — a
+        # stale port would send the second runner to a dead socket.
+        docker exec "$CONTAINER" bash -lc \
+            'pkill -9 -f "UltiMaker-Cur[a]" 2>/dev/null; sleep 1; true'
+        rm -f "$WORK_DIR"/harness_port.txt
+        launch_cura
+        if ! wait_for_boot; then exit 1; fi
+        docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR/boot2" \
+            HARNESS_COORDS="$COORDS" HARNESS_MODE="${MODE}2" \
+            HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
+            HARNESS_BOOT1_DOC="$BOOT1_DOC" \
+            CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
+            python3 /tmp/mpf/harness_runner.py firstinstall2 || RUNNER_RC=$?
+        ;;
+    scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite|real)
+        launch_cura
+        if ! wait_for_boot; then exit 1; fi
         if [ "$MODE" = "real" ]; then
             # The host and key ride the container exec ONLY for real
             # mode — simulator runs never carry them (the panel's
@@ -522,12 +621,21 @@ echo "ui_test: gallery at $RUN_DIR/index.html"
 # while every gallery sat in a directory neither the gate nor CI
 # ever read. Discover dumps coordinates, not a gallery; the gate
 # scenarios write only the gallery, so the machine-readable record
-# is required only for the suite modes that produce it.
+# is required only for the suite modes that produce it — and the
+# first-install leg's second boot must have left its own gallery
+# beside the first's.
 if [ "${MODE:-scenario}" != "discover" ] && [ ! -s "$RUN_DIR/index.html" ]; then
     echo "ui_test: EVIDENCE MISSING — no gallery at $RUN_DIR/index.html" >&2
     exit 1
 fi
 case "${MODE:-scenario}" in
+    firstinstall)
+        echo "ui_test: boot-2 gallery at $RUN_DIR/boot2/index.html"
+        if [ ! -s "$RUN_DIR/boot2/index.html" ]; then
+            echo "ui_test: EVIDENCE MISSING — no boot-2 gallery at $RUN_DIR/boot2/index.html" >&2
+            exit 1
+        fi
+        ;;
     suite|real)
         if [ ! -s "$RUN_DIR/evidence.json" ]; then
             echo "ui_test: EVIDENCE MISSING — no evidence.json at $RUN_DIR/evidence.json" >&2
