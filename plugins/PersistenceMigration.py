@@ -159,19 +159,24 @@ def run_migration(
         # and the notice both carry the failure, and the backup holds
         # the raw material to pick apart. A corrupt blob is stale
         # input: the pieces of a live v2 document that already exist
-        # are carried through untouched, never replaced.
+        # are carried through untouched, never replaced. The clean
+        # runs ONLY after the recovery documents (with the failed
+        # record) have landed — a recovery write failure must leave
+        # the corrupt source in place for the next boot's replay (the
+        # 4.5.0 transactional fix).
         outcome.status = "failed"
         outcome.reason = "corrupt-blob"
         backup_name = f"cura.cfg.{timestamp}"
         if write_backup(cura_cfg_path, os.path.join(os.path.dirname(cura_cfg_path), backup_name)):
             outcome.backup_name = backup_name
             outcome.backup_written = True
-            _clean_preferences(set_pref)
             if not _recover_empty_documents(
                 settings_write, state_global_write, old_state_path, outcome, timestamp,
                 existing=_read_settings_document(settings_path),
             ):
                 outcome.reason = "write-failed"  # nothing landed: no record to read back
+            else:
+                _clean_preferences(set_pref)
         # A failed backup leaves cura.cfg untouched; the next launch
         # retries (the notice's flavour B has no backup to open).
         return outcome

@@ -563,7 +563,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # on every connection transition into connected (the
         # e-stop's automatic cycle included).
         self._data.connectionStateChanged.connect(self._on_connection_state)
-        self._data.set_active(True)
+        self._data.set_owner_active(True)
         self._publish()
 
     def _on_file_manager_note(self, text: str) -> None:
@@ -677,7 +677,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._publish()
 
     def setMonitoringActive(self, active):
-        self._data.set_active(active)
+        self._data.set_owner_active(active)
         if active:
             # The stage-entry hook (the 4.5.0 live find): the Monitor
             # shell exists by the time Cura activates the stage, and

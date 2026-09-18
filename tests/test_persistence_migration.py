@@ -179,6 +179,49 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(self.prefs, {})
         self.assertFalse(os.path.exists(self.settings_path))
 
+    def test_a_corrupt_recovery_state_write_failure_leaves_the_source_for_replay(self):
+        # The 4.5.0 ordering: the clean runs only after the recovery
+        # documents have landed — a failed recovery leaves the corrupt
+        # source in place and the next boot replays it.
+        self._cfg("not json {{{")
+        writers = self._writers()
+        writers["state_global"] = lambda doc: False
+        outcome = self._run("not json {{{", writers=writers)
+        self.assertEqual((outcome.status, outcome.reason), ("failed", "write-failed"))
+        self.assertTrue(outcome.backup_written)
+        self.assertEqual(self.prefs, {})  # no clean, no preference writes
+        self.assertTrue(os.path.exists(self.cura_cfg))
+        self.assertFalse(os.path.exists(os.path.join(self.state_dir, "global.json")))
+
+        # The next boot with functioning writers retries from the same
+        # source: the recovery lands, the failed record is durable, and
+        # ONLY THEN the legacy state is cleaned.
+        outcome = self._run("not json {{{")
+        self.assertEqual((outcome.status, outcome.reason), ("failed", "corrupt-blob"))
+        document = self._settings_document()
+        self.assertEqual(document["global"]["migration"]["status"], "failed")
+        from plugins.PrinterConfig import PrinterConfigStore
+        self.assertEqual(self.prefs[PrinterConfigStore.PREF_KEY], "{}")
+        self.assertIs(self.prefs[PrinterConfigStore.MIGRATED_KEY], False)
+
+    def test_a_corrupt_recovery_settings_write_failure_leaves_the_source_for_replay(self):
+        self._cfg("not json {{{")
+        writers = self._writers()
+        writers["settings"] = lambda doc: False
+        outcome = self._run("not json {{{", writers=writers)
+        self.assertEqual((outcome.status, outcome.reason), ("failed", "write-failed"))
+        self.assertTrue(outcome.backup_written)
+        self.assertEqual(self.prefs, {})
+        self.assertFalse(os.path.exists(self.settings_path))
+
+        outcome = self._run("not json {{{")
+        self.assertEqual((outcome.status, outcome.reason), ("failed", "corrupt-blob"))
+        document = self._settings_document()
+        self.assertEqual(document["global"]["migration"]["status"], "failed")
+        from plugins.PrinterConfig import PrinterConfigStore
+        self.assertEqual(self.prefs[PrinterConfigStore.PREF_KEY], "{}")
+        self.assertIs(self.prefs[PrinterConfigStore.MIGRATED_KEY], False)
+
     # -- The records path ---------------------------------------------
 
     def test_records_migrate_and_split_across_the_two_homes(self):

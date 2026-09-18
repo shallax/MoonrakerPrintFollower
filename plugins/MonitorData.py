@@ -230,24 +230,34 @@ class MonitorData(QObject):
         """The manual Reconnect (a live request, 3.6.0):
         the client cycle of the e-stop recovery, minus the
         connected-only gate — a manual reconnect exists for when the
-        UI state is STUCK, which includes being disconnected."""
+        UI state is STUCK, which includes being disconnected. It
+        re-arms the RUNTIME only, never ownership: a deposed
+        monitor's reconnect is a no-op (the 4.5.0 ownership
+        close-out — the reconnect action used to re-grant ownership,
+        letting a cached stale monitor re-claim the shared client)."""
+        if not self._owner_active:
+            return
         self._client.stop()
         self._client.start()
-        self.set_active(True)
+        if self._owner_active:
+            self._activate_runtime()
 
     def reconnect_after_emergency(self) -> None:
         """The ruling (2026-09-10, live-proven on a
         printer): after an emergency stop the host refuses commands
         until the connection is cycled. The plugin cycles the client
-        once and re-arms the monitor — the same sequence as a
-        manual disconnect/reconnect that recovered it."""
+        once and re-arms the RUNTIME — the emergency path must not
+        grant ownership either."""
         if not self._active or not self._client.connected:
+            return
+        if not self._owner_active:
             return
         self._client.stop()
         self._client.start()
         # The stop invalidated the session and deactivated the
-        # monitor; the manual recovery re-arms it the same way.
-        self.set_active(True)
+        # monitor; the manual recovery re-arms the runtime.
+        if self._owner_active:
+            self._activate_runtime()
 
     def _update(self, **patch):
         from dataclasses import replace
@@ -314,12 +324,14 @@ class MonitorData(QObject):
         self._commands_busy = busy
         self._rebuild_observation()
 
-    def set_active(self, active):
-        """The plugin's ownership grant: this monitor belongs to the
-        selected machine. The runtime arm follows immediately — the
-        arm also builds the initial observation the model's first
-        publish reads, so it must not depend on the transport state.
-        A reconnect re-arms an OWNED monitor through
+    def set_owner_active(self, active):
+        """The plugin's ownership grant — the ONLY writer of
+        ownership: this monitor belongs to the selected machine (a
+        cached, deposed monitor can never re-acquire it, not even
+        through its own reconnect action). The runtime arm follows
+        immediately — the arm also builds the initial observation the
+        model's first publish reads, so it must not depend on the
+        transport state. A reconnect re-arms an OWNED monitor through
         _connection_changed (and a deposed one never)."""
         self._owner_active = bool(active)
         if not active:

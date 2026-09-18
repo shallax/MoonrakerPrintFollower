@@ -250,7 +250,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(data.connection_state, "no")
         self.assertFalse(data.connected)
         # A session invalidation is a fresh generation: unknown again.
-        data.set_active(False)
+        data.set_owner_active(False)
         self.assertEqual(data.connection_state, "unknown")
 
     def test_observation_carries_the_pushins_and_the_assumption(self):
@@ -1203,8 +1203,8 @@ class MonitorDataAuxTests(unittest.TestCase):
         self.client.configure("http://printer-a", "test-key", 750)
         self.addCleanup(self.client.stop)
         self.data = self.qt.load("MonitorData").MonitorData(self.client, None)
-        self.data.set_active(True)
-        self.addCleanup(self.data.set_active, False)
+        self.data.set_owner_active(True)
+        self.addCleanup(self.data.set_owner_active, False)
 
     def deliver(self, channel, payload, error=None):
         request = next((r for r in self.transport.requests if r.channel == channel), None)
@@ -1246,8 +1246,8 @@ class MonitorDataAuxTests(unittest.TestCase):
         client.configure("http://printer-a", "test-key", 750, feed_mode="websocket")
         client.start()
         data = self.qt.load("MonitorData").MonitorData(client, None)
-        data.set_active(True)
-        self.addCleanup(data.set_active, False)
+        data.set_owner_active(True)
+        self.addCleanup(data.set_owner_active, False)
         data._objects({"result": {"objects": ["fan", "heater_bed"]}}, None)
         self.assertTrue(any("fan" in subscription and "heater_bed" in subscription
                             for subscription in socket.subscriptions), socket.subscriptions)

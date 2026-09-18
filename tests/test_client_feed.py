@@ -383,7 +383,7 @@ if QT_AVAILABLE:
             self.app = QCoreApplication.instance() or QCoreApplication([])
             self.client = self.FakeDataClient()
             self.data = self.ProbeData(self.client)
-            self.data.set_active(True)
+            self.data.set_owner_active(True)
             # set_active fires the lanes once (the boot pass); the
             # asserts below drive the ticks manually, so silence the
             # timers.

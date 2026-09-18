@@ -24,7 +24,7 @@ from PyQt6.QtCore import QObject, QUrl, pyqtSignal
 from UM.Logger import Logger
 
 from .CuraAdapter import active_machine_identity
-from .PersistenceMigration import _record, read_source, run_migration
+from .PersistenceMigration import MigrationOutcome, _record, read_source, run_migration
 from .PrinterConfig import PrinterConfig, PrinterConfigStore, normalise_url
 
 # The host-identifying fields the removal wipe clears (the
@@ -103,15 +103,19 @@ class PrinterBinding(QObject):
         parsed = QUrl(url)
         return parsed.isValid() and parsed.scheme() in {"http", "https"} and bool(parsed.host())
 
-    def _carry_bed_mesh_preferences(self, preferences) -> None:
+    def _carry_bed_mesh_preferences(self, preferences) -> bool:
         """The bed-mesh keys' move (the no-trace ruling): the values
         carry into the settings document's global section once, then
         the clean resets the preferences. Idempotent — the keys'
         presence in the global section is the guard, so a later run
-        can never overwrite the user's live values with defaults."""
+        can never overwrite the user's live values with defaults.
+        Returns False when a REQUIRED carry could not be persisted:
+        the caller must neither clean the preference source nor
+        proceed into a migration that would (the 4.5.0
+        transactional fix)."""
         global_section = self._persistence.settings_document().get("global") or {}
         if "bedMeshVisible" in global_section and "bedMeshExaggeration" in global_section:
-            return
+            return True
         patch = {}
         if "bedMeshVisible" not in global_section:
             patch["bedMeshVisible"] = bool(preferences.getValue("moonrakerprintfollower/bed_mesh_visible"))
@@ -121,7 +125,8 @@ class PrinterBinding(QObject):
             except (TypeError, ValueError):
                 patch["bedMeshExaggeration"] = 20.0
         if patch:
-            self._persistence.set_global(patch)
+            return bool(self._persistence.set_global(patch))
+        return True
 
     def _migrate(self):
         record = self._persistence.migration_record() if self._persistence is not None else None
@@ -176,8 +181,13 @@ class PrinterBinding(QObject):
                 # migrated on an earlier snapshot still sheds the old
                 # file and the cura.cfg flags (the legacy chain is
                 # record-guarded, so nothing resurrects the blob).
+                # The carry gates the clean: a failed carry keeps the
+                # legacy bed-mesh source intact for the next boot's
+                # retry (the 4.5.0 transactional fix).
                 from .PersistenceMigration import _clean_preferences, _remove_old_state_file
-                self._carry_bed_mesh_preferences(preferences)
+                if not self._carry_bed_mesh_preferences(preferences):
+                    Logger.log("w", "Moonraker could not carry the bed-mesh preferences; the post-migration cleanup is held back.")
+                    return
                 _remove_old_state_file(self._old_state_path)
                 _clean_preferences(preferences.setValue)
                 return
@@ -198,7 +208,17 @@ class PrinterBinding(QObject):
             # the one-shot must wait (they would re-write the blob
             # after the clean).
             return
-        self._carry_bed_mesh_preferences(preferences)
+        if not self._carry_bed_mesh_preferences(preferences):
+            # The migration's clean would destroy the legacy bed-mesh
+            # values after this point: hold back and retry next boot
+            # (the 4.5.0 transactional fix). The failure still owns
+            # its surface — the session-scoped write-failed outcome,
+            # with no persisted record (the absence is what makes the
+            # next boot replay).
+            outcome = MigrationOutcome(status="failed", reason="write-failed")
+            Logger.log("w", "Moonraker persistence migration failed: %s", outcome.reason)
+            self._persistence.remember_migration_outcome(_record(outcome, time.strftime("%Y-%m-%d-%H-%M-%S")))
+            return
         timestamp = time.strftime("%Y-%m-%d-%H-%M-%S")
         outcome = run_migration(
             blob,

@@ -1767,7 +1767,7 @@ class MonitorDataTests(unittest.TestCase):
         self.data.connectionStateChanged.connect(self.states.append)
         self.data.auxiliaryChanged.connect(lambda: self.aux_changes.append(1))
         self.data.consoleStoreChanged.connect(lambda: self.console_changes.append(1))
-        self.addCleanup(self.data.set_active, False)
+        self.addCleanup(self.data.set_owner_active, False)
 
     def pump(self, ms=20):
         # A real nested event loop: processEvents() alone never delivers the
@@ -1783,7 +1783,7 @@ class MonitorDataTests(unittest.TestCase):
 
     def activate(self):
         self.client.connected = True
-        self.data.set_active(True)
+        self.data.set_owner_active(True)
 
 
 class MonitorConnectionTests(MonitorDataTests):
@@ -1828,7 +1828,7 @@ class MonitorConnectionTests(MonitorDataTests):
 
     def test_a_bare_connection_event_falls_back_to_the_client_flag(self):
         self.client.connected = True
-        self.data.set_active(True)  # owned (the re-arm gate)
+        self.data.set_owner_active(True)  # owned (the re-arm gate)
         self.data._connection_changed()
         self.assertTrue(self.data.active)
         self.assertEqual("", self.data.connection_detail)
@@ -1860,7 +1860,7 @@ class MonitorConnectionTests(MonitorDataTests):
         self.activate()
         self.data.set_console_expanded(True, 5.0)
         self.data._console_entries = [{"text": "x"}]
-        self.data.set_active(False)
+        self.data.set_owner_active(False)
         self.assertEqual(["monitor"], self.client.transport.cancelled)
         self.assertFalse(self.data._console_expanded)
         self.assertIsNone(self.data._console_seed)
@@ -1877,10 +1877,20 @@ class MonitorConnectionTests(MonitorDataTests):
         self.assertTrue([call for call in self.client.session.calls
                          if call[0] == RequestCategory.AUXILIARY])
 
-    def test_reconnect_cycles_the_client_and_rearms(self):
+    def test_reconnect_cycles_the_client_and_rearms_an_owned_monitor(self):
+        # The manual reconnect re-arms the RUNTIME of an OWNED monitor
+        # — a deposed monitor's reconnect is a no-op (the 4.5.0
+        # ownership close-out).
+        self.data.set_owner_active(True)
         self.data.reconnect()
         self.assertEqual((1, 1), (self.client.stopped, self.client.started))
         self.assertTrue(self.data.active)
+
+    def test_reconnect_is_a_no_op_without_ownership(self):
+        self.data.reconnect()
+        self.assertEqual((0, 0), (self.client.stopped, self.client.started))
+        self.assertFalse(self.data.active)
+        self.assertFalse(self.data._owner_active)
 
     def test_an_emergency_reconnect_needs_an_armed_connected_client(self):
         self.data.reconnect_after_emergency()
@@ -1909,10 +1919,10 @@ class MonitorRequestTests(MonitorDataTests):
         self.activate()
         self.data.request("probe", "GET", "p", lambda payload, error: answers.append(payload))
         stale = self.request_to("probe")
-        self.data.set_active(False)
+        self.data.set_owner_active(False)
         stale.callback({"result": 1}, None)
         self.assertEqual([], answers, "a stale session must not reach the callback")
-        self.data.set_active(True)
+        self.data.set_owner_active(True)
         self.data.request("probe", "GET", "p", lambda payload, error: answers.append(payload))
         self.request_to("probe").callback({"result": 2}, None)
         self.assertEqual([{"result": 2}], answers)
@@ -1972,7 +1982,7 @@ class MonitorRequestTests(MonitorDataTests):
         self.data.later(0, lambda: calls.append("fired"))
         self.pump()
         self.assertEqual(["fired"], calls)
-        self.data.set_active(False)
+        self.data.set_owner_active(False)
         self.data.later(0, lambda: calls.append("stale"))
         self.pump()
         self.assertEqual(["fired"], calls)

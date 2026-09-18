@@ -154,3 +154,37 @@ class MonitorOwnershipTests(OutputDeviceTestCase):
         client.connectionChanged.emit(True, "connected over http")
         self.qt.events(10)
         self.assertTrue(monitor._data._active)
+
+    def test_a_deposed_monitor_cannot_regrant_ownership_through_reconnect(self):
+        # The ownership close-out: ONLY the plugin grants ownership.
+        # A cached stale monitor's manual Reconnect must be a no-op —
+        # it used to self-grant through set_active(True) and re-claim
+        # the shared client.
+        app, client, follower, plugin = self._install()
+        monitor_a = plugin._current.activePrinter
+        self._switch(app, follower, plugin, "B")
+        monitor_b = plugin._current.activePrinter
+        self.assertFalse(monitor_a._data._owner_active)
+
+        monitor_a._data.reconnect()
+        self.qt.events(10)
+        self.assertFalse(monitor_a._data._owner_active)
+        self.assertFalse(monitor_a._data._active)
+        self.assertTrue(monitor_b._data._owner_active)
+        self.assertTrue(monitor_b._data._active)
+        self.assertIs(plugin._current.activePrinter, monitor_b)
+
+    def test_a_deposed_monitor_cannot_recover_through_the_emergency_path(self):
+        # The emergency cycle must not grant ownership either: a
+        # deposed monitor is inactive and unowned, and stays both.
+        app, client, follower, plugin = self._install()
+        monitor_a = plugin._current.activePrinter
+        self._switch(app, follower, plugin, "B")
+        monitor_b = plugin._current.activePrinter
+
+        monitor_a._data.reconnect_after_emergency()
+        self.qt.events(10)
+        self.assertFalse(monitor_a._data._owner_active)
+        self.assertFalse(monitor_a._data._active)
+        self.assertTrue(monitor_b._data._owner_active)
+        self.assertTrue(monitor_b._data._active)

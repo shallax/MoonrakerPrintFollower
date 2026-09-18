@@ -2787,7 +2787,7 @@ class MonitorQtTests(unittest.TestCase):
         model._data._update(auxiliary={"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
         model._data.auxiliaryChanged.emit()
         self.assertEqual(len(self.chart_of(model)["series"]), 1)
-        model._data.set_active(False)  # emits invalidated
+        model._data.set_owner_active(False)  # emits invalidated
         chart = self.chart_of(model)
         self.assertEqual(chart["series"], [])
 

@@ -236,6 +236,73 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertTrue(record["backupWritten"])
         self.assertTrue(os.path.exists(os.path.join(self.dir.name, record["backupName"])))
 
+    def test_a_failed_bed_mesh_carry_holds_the_migration_back_and_retries(self):
+        # The 4.5.0 transactional fix: a REQUIRED carry that fails must
+        # hold the migration back — the clean that would destroy the
+        # legacy bed-mesh values never runs, and the next boot retries
+        # from the intact source.
+        key = PrinterConfigStore.PREF_KEY
+        self.prefs.addPreference(key, "{}")
+        self.prefs.setValue(key, json.dumps({"A": {"url": "http://a:7125"}}))
+        self.prefs.setValue(PrinterConfigStore.MIGRATED_KEY, True)
+        self.prefs.setValue("moonrakerprintfollower/bed_mesh_visible", False)
+        self.prefs.setValue("moonrakerprintfollower/bed_mesh_exaggeration", 7.5)
+
+        original_set_global = self.persistence.set_global
+        self.persistence.set_global = lambda patch: False
+        self.binding.run_persistence_migration()
+        # The hold-back surfaces the session-scoped write-failed
+        # verdict, with nothing persisted and nothing cleaned.
+        record = self.persistence.migration_record()
+        self.assertEqual((record["status"], record["reason"]), ("failed", "write-failed"))
+        self.assertFalse(record["backupWritten"])
+        self.assertNotIn("migration", self.persistence.settings_document().get("global", {}))
+        self.assertEqual(self.prefs.getValue(key), json.dumps({"A": {"url": "http://a:7125"}}))
+        self.assertEqual(self.prefs.getValue("moonrakerprintfollower/bed_mesh_visible"), False)
+        self.assertEqual(self.prefs.getValue("moonrakerprintfollower/bed_mesh_exaggeration"), 7.5)
+
+        # The next boot with a working store: the carry lands, the
+        # migration runs, and ONLY THEN the legacy keys reset.
+        self.persistence.set_global = original_set_global
+        self.binding.run_persistence_migration()
+        document = self.persistence.settings_document()
+        self.assertEqual(document["machines"]["A"]["url"], "http://a:7125")
+        self.assertEqual(document["global"]["bedMeshVisible"], False)
+        self.assertEqual(document["global"]["bedMeshExaggeration"], 7.5)
+        self.assertEqual(self.prefs.getValue(key), "{}")
+        self.assertIs(self.prefs.getValue("moonrakerprintfollower/bed_mesh_visible"), True)
+        self.assertEqual(self.prefs.getValue("moonrakerprintfollower/bed_mesh_exaggeration"), 20.0)
+
+    def test_the_post_migration_tidy_holds_the_clean_on_a_failed_carry(self):
+        # The ok-record tidy path: a failed carry must leave the old
+        # values available for another retry, not destroy them in the
+        # clean that follows.
+        self.persistence.write_settings_document({
+            "configVersion": 2,
+            "global": {"migration": {
+                "status": "ok", "reason": "migrated", "backupWritten": True,
+                "backupName": "cura.cfg.2026-09-18-14-30-12", "records": 1,
+                "toastShown": False, "bannerDismissed": False,
+            }},
+            "machines": {},
+        })
+        self.prefs.setValue("moonrakerprintfollower/bed_mesh_visible", False)
+        self.prefs.setValue("moonrakerprintfollower/bed_mesh_exaggeration", 7.5)
+
+        original_set_global = self.persistence.set_global
+        self.persistence.set_global = lambda patch: False
+        self.binding.run_persistence_migration()
+        self.assertEqual(self.prefs.getValue("moonrakerprintfollower/bed_mesh_visible"), False)
+        self.assertEqual(self.prefs.getValue("moonrakerprintfollower/bed_mesh_exaggeration"), 7.5)
+
+        self.persistence.set_global = original_set_global
+        self.binding.run_persistence_migration()
+        document = self.persistence.settings_document()
+        self.assertEqual(document["global"]["bedMeshVisible"], False)
+        self.assertEqual(document["global"]["bedMeshExaggeration"], 7.5)
+        self.assertIs(self.prefs.getValue("moonrakerprintfollower/bed_mesh_visible"), True)
+        self.assertEqual(self.prefs.getValue("moonrakerprintfollower/bed_mesh_exaggeration"), 20.0)
+
     def test_a_deleted_folder_reconfigure_survives_the_next_boot(self):
         # The Windows lost-config sequence: the folder was deleted by
         # hand (no settings, no record). Boot A activates the v2
@@ -293,7 +360,10 @@ class MigrationTriggerTests(unittest.TestCase):
     def test_a_failure_with_an_unwritable_store_still_reaches_the_notice(self):
         # The storage that would hold the record can be exactly what
         # failed (a read-only config folder): the session copy is the
-        # notice's only source, so it must survive a dead store.
+        # notice's only source, so it must survive a dead store. The
+        # bed-mesh carry fails first and holds the migration back —
+        # the surfaced outcome is the carry's write-failed verdict,
+        # with no backup (nothing moved, so nothing was copied).
         base = self.dir.name
         dead = PluginPersistence(
             self.settings_path,
@@ -309,8 +379,9 @@ class MigrationTriggerTests(unittest.TestCase):
         binding.run_persistence_migration()
         record = dead.migration_record()
         self.assertEqual((record["status"], record["reason"]), ("failed", "write-failed"))
-        self.assertTrue(record["backupWritten"])  # the backup landed before the write failed
+        self.assertFalse(record["backupWritten"])
         self.assertFalse(os.path.exists(self.settings_path))
+        self.assertEqual([n for n in os.listdir(base) if n.startswith("cura.cfg.")], [])
 
     def test_a_clean_install_activates_the_document_without_a_record(self):
         # The ruling: a first boot has nothing to migrate —
