@@ -538,6 +538,17 @@ they cannot recur silently.
   popups pointed at the wrong control entirely). `test_monitor`'s
   tooltip-discipline pin fails the leg if either form returns.
   Passive readouts get the same pattern, not an exemption.
+- **The Uranium-controls-first rule (the 2026-09-18 ruling):** where
+  possible, use Cura's native controls — `UM.CheckBox`, `UM.ToolTip`,
+  `Cura.ComboBox`, `Cura.RadioButton` and the rest — over raw Qt
+  Quick Controls or bespoke drawn ones. The native controls carry the
+  theme (light and dark) for free; a bespoke control forks that
+  theming and drifts (the live report: the popover rows' drawn
+  checkbox, the tri-state selector, the file-manager select-all and
+  row checkboxes, the filter markers and the page-size radios all
+  drifted from the native set). Bespoke drawing stays only where no
+  native control fits (e.g. the drag handles; the multi-select filter
+  rows, which `Cura.ComboBox` cannot express).
 
 ### Verifying QML geometry
 

@@ -979,6 +979,61 @@ CONFIGURE_CROSSTALK_PROBE = (
     "        raise RuntimeError(\"the information layout did not survive the controls reset: %r\" % order)\n"
     "result")
 
+CONFIGURE_DISMISS_PROBE = (
+    "qtest = _import_qtest()\n"
+    "window = _main_window()\n"
+    "result = {}\n"
+    "card = None\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        name = str(item.property(\"objectName\") or \"\")\n"
+    "    except Exception:\n"
+    "        name = \"\"\n"
+    "    if name == \"sectionConfigurePopOver\" and _effectively_visible(item):\n"
+    "        card = item\n"
+    "        break\n"
+    "if card is None:\n"
+    "    raise RuntimeError(\"no visible configure pop-over\")\n"
+    "r = self._rect(card)\n"
+    "# A press on the card's own surface (the title band owns no\n"
+    "# control) must not dismiss the card.\n"
+    "qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton,\n"
+    "                       Qt.KeyboardModifier.NoModifier,\n"
+    "                       QPoint(int(r[\"x\"] + r[\"w\"] / 2), int(r[\"y\"] + 12)))\n"
+    "qtest.QTest.qWait(120)\n"
+    "if not _effectively_visible(card):\n"
+    "    raise RuntimeError(\"an in-bounds click dismissed the pop-over\")\n"
+    "# A press above the card's top edge (the header band) dismisses\n"
+    "# it through the outside-click layer.\n"
+    "qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton,\n"
+    "                       Qt.KeyboardModifier.NoModifier,\n"
+    "                       QPoint(int(r[\"x\"] + 30), int(r[\"y\"] - 10)))\n"
+    "qtest.QTest.qWait(120)\n"
+    "if _effectively_visible(card):\n"
+    "    raise RuntimeError(\"an outside click failed to dismiss the pop-over\")\n"
+    "result")
+
+CONFIGURE_TRI_PROBE = (
+    "window = _main_window()\n"
+    "expected = EXPECT_STATE\n"
+    "found = None\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        name = str(item.property(\"objectName\") or \"\")\n"
+    "    except Exception:\n"
+    "        name = \"\"\n"
+    "    if name == \"visibilitySelectorBox\" and _effectively_visible(item):\n"
+    "        try:\n"
+    "            found = int(item.property(\"checkState\"))\n"
+    "        except Exception:\n"
+    "            found = -1\n"
+    "        break\n"
+    "if found is None:\n"
+    "    raise RuntimeError(\"no visible selector checkbox\")\n"
+    "if found != expected:\n"
+    "    raise RuntimeError(\"the selector state is \" + str(found) + \", expected \" + str(expected))\n"
+    "result")
+
 CONFIGURE_FM_CLICK = (
     "qtest = _import_qtest()\n"
     "window = _main_window()\n"
@@ -1117,10 +1172,6 @@ CONFIGURE_FM_PROBE = (
     "        t = str(item.property(\"text\") or \"\")\n"
     "    except Exception:\n"
     "        t = \"\"\n"
-    "    if t == \"✕\" and _effectively_visible(item) and bg is not None:\n"
-    "        r = self._rect(item)\n"
-    "        if bg[0] <= r[\"x\"] <= bg[0] + bg[2] and bg[1] <= r[\"y\"] <= bg[1] + bg[3]:\n"
-    "            result[\"close_x\"] = [r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]]\n"
     "    if name == \"sectionConfigureRowTitle\" and bg is not None:\n"
     "        r = self._rect(item)\n"
     "        # Only the rows INSIDE the popup: the closed pane popups\n"
@@ -1143,13 +1194,10 @@ CONFIGURE_FM_PROBE = (
     "    result[\"row_chain\"] = chain\n"
     "# The gate: the rows must render at a sane width — a collapsed\n"
     "# layout renders them negative/narrow (the live report: the\n"
-    "# popup clipped all its contents). And the blue ✕ must be there\n"
-    "# (the live report: no close affordance).\n"
+    "# popup clipped all its contents).\n"
     "for row in result.get(\"rows\", ()):\n"
     "    if row[3] < 100:\n"
     "        raise RuntimeError(\"the columns popup's rows render %dpx wide (%s)\" % (row[3], row[0]))\n"
-    "if \"close_x\" not in result:\n"
-    "    raise RuntimeError(\"the columns popup has no visible close ✕\")\n"
     "result")
 
 
@@ -2492,12 +2540,12 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
          {"op": "key_press", "key": "Escape"},
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
-         # The blue ✕ dismisses the card (the live ruling: a Close
-         # button read as chrome — and did nothing).
+         # Dismissal geometry: a click on the card's own surface must
+         # NOT dismiss it; a click outside its bounds must (the live
+         # report: in-bounds clicks dismissed the pop-over).
          {"op": "deliver_click", "objectName": "configureControlsSectionsButton"},
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
-         {"op": "click_text", "text": "✕"},
-         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
+         {"op": "exec_code", "verbs": ["mouseClick"], "code": CONFIGURE_DISMISS_PROBE},
          {"op": "deliver_click", "objectName": "configureControlsSectionsButton"},
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
          {"op": "key_press", "key": "Escape"},
@@ -2520,27 +2568,27 @@ SCENARIOS = [
          {"op": "resize_window", "w": 1600, "h": 1000},
          {"op": "deliver_click", "objectName": "configureStatusSectionsButton"},
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
-         # The tri-state selector: filled + tick at ALL (the live
-         # report: it rendered empty).
-         {"op": "assert_rendered", "objectName": "visibilitySelectorGlyph", "equals": "✓"},
+         # The tri-state selector: the native checkbox's checkState —
+         # checked at ALL (the live report: it rendered empty).
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_TRI_PROBE.replace("EXPECT_STATE", "2")},
          {"op": "click_text", "text": "Temperatures"},
          {"op": "wait_model", "prop": "sectionHiddenMap", "contains": "temps", "budget": 15},
-         # One hidden of several: filled + dash.
-         {"op": "assert_rendered", "objectName": "visibilitySelectorGlyph", "equals": "–"},
+         # One hidden of several: partially checked.
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_TRI_PROBE.replace("EXPECT_STATE", "1")},
          {"op": "wait_rect", "objectName": "moonrakerTemperatureDetail", "absent": True, "budget": 15},
          {"op": "click_text", "text": "Temperatures"},
          {"op": "wait_rect", "objectName": "moonrakerTemperatureDetail", "budget": 15},
-         {"op": "assert_rendered", "objectName": "visibilitySelectorGlyph", "equals": "✓"},
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_TRI_PROBE.replace("EXPECT_STATE", "2")},
          # The NONE state: the selector hides everything, and the
-         # glyph empties (the live report: none rendered dashed).
+         # state empties (the live report: none rendered dashed).
          {"op": "deliver_click", "objectName": "visibilitySelectorBox"},
          {"op": "wait_model", "prop": "sectionHiddenMap", "contains": "temps", "budget": 15},
-         {"op": "wait_rect", "objectName": "visibilitySelectorGlyph", "absent": True, "budget": 15},
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_TRI_PROBE.replace("EXPECT_STATE", "0")},
          # Reset to defaults: the blue label at the card's bottom
          # commits the empty layout, so every section returns.
          {"op": "deliver_click", "objectName": "resetToDefaultsLabel"},
          {"op": "wait_rect", "objectName": "moonrakerTemperatureDetail", "budget": 15},
-         {"op": "assert_rendered", "objectName": "visibilitySelectorGlyph", "equals": "✓"},
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_TRI_PROBE.replace("EXPECT_STATE", "2")},
          {"op": "key_press", "key": "Escape"},
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
      ]},

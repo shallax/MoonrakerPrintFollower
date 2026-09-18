@@ -297,14 +297,20 @@ Component {
         // The configure pop-up overlays the pane, not the layout (the
         // pop-over precedent: layout children cannot overlap). The
         // scrim sits below the card and closes it on any outside
-        // click. Its z sits above the pane content but below the
-        // card's own 999, mirroring the monitor's outside-click
-        // layer.
+        // click, with a bounds check so an in-bounds click on the
+        // card's own surface never dismisses it (the live report).
+        // Its z sits above the pane content but below the card's own
+        // 999, mirroring the monitor's outside-click layer.
         MouseArea {
             visible: root.configurePaneOpen !== ""
             anchors.fill: parent
             z: 995
-            onClicked: root.configurePaneOpen = ""
+            onClicked: {
+                if (controlsConfigurePopOver.visible && mouse.x >= controlsConfigurePopOver.x && mouse.x <= controlsConfigurePopOver.x + controlsConfigurePopOver.width && mouse.y >= controlsConfigurePopOver.y && mouse.y <= controlsConfigurePopOver.y + controlsConfigurePopOver.height) {
+                    return;
+                }
+                root.configurePaneOpen = "";
+            }
         }
 
         property bool tuningSliderPressed: false
@@ -1094,7 +1100,6 @@ Component {
             // bindings: an anchor to a header row's inner items
             // drops silently and the card lands at the top-left (the
             // live report).
-            onClosed: root.configurePaneOpen = ""
             onLayoutCommitted: function (order, hidden) {
                 if (root.printer != null) {
                     root.printer.setSectionLayout("controls", order, hidden);

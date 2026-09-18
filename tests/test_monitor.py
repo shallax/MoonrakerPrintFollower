@@ -4204,10 +4204,12 @@ Item {
             # (the one-pane dashboard has no openPopOver family).
             "visible: root.configurePaneOpen !== \"\"",
             "visible: root.configurePaneOpen === \"controls\"",
-            # The shared selector's tick/dash label (the row selector's
-            # own idiom, in the new component).
-            "visible: selectorRoot.visibleCount !== selectorRoot.total",
-            "visible: selectorRoot.visibleCount > 0",
+            # The filter rows' marker pair: radio-ness is static per
+            # category, so the circle and the native checkbox swap by
+            # it (the Uranium-controls ruling) — the selection state
+            # lives inside the marker.
+            "visible: modelData.radio",
+            "visible: !modelData.radio",
             "visible: root.printerModel != null && !root.miniHasSeries",
             # The console error bell (the live request) is a
             # presence signal, not a session gate: it shows only
@@ -4254,8 +4256,6 @@ Item {
             "visible: root.printerModel != null && root.printerModel.fileRenameConflict",
             "visible: root.uploadProgressState() === \"uploading\"",
             "visible: root.uploadProgressState() === \"failed\"",
-            "visible: root.filterValues(modelData.category).indexOf(modelData.key) < 0",
-            "visible: root.filterValues(modelData.category).indexOf(modelData.key) >= 0",
             "visible: root.thumbState(modelData.relpath) === \"ready\" && recentsThumb.status !== Image.Error",
             "visible: root.thumbState(modelData.relpath) === \"loading\"",
             "visible: root.thumbState(modelData.relpath) === \"failed\" || root.thumbState(modelData.relpath) === \"none\"",
@@ -4275,9 +4275,7 @@ Item {
             "visible: !root.narrowMode && root.printerModel != null && root.printerModel.fileManagerSearch.length === 0 && (root.printerModel.fileManagerDirectory.length > 0 || root.activeDirectories.length > 0)",
             "visible: root.printerModel != null && root.printerModel.fileManagerDirectory.length > 0",
             "visible: root.narrowMode",
-            "visible: root.pageSelectionState() !== \"none\"",
             "visible: modelData.printing === true",
-            "visible: root.rowChecked(modelData)",
             "visible: root.thumbState(modelData.relpath) === \"ready\" && thumbImage.status !== Image.Error",
             "visible: modelData[0] === \"Status\" && root.rowChecked(rowDelegate.rowData)",
             "visible: gridVertical.height > 0 && gridVertical.contentY > 2",
@@ -4287,8 +4285,6 @@ Item {
             "visible: root.printerModel != null && (root.walkErrorText() !== \"\" || (root.printerModel.fileManagerRefreshedAt !== \"Not yet refreshed\" && root.printerModel.fileManagerEmptyKind === \"over_filtered\"))",
             "visible: root.printerModel == null || root.printerModel.fileManagerSelected > 0",
             "visible: root.printerModel == null || root.activeRows.length > 0",
-            "visible: root.printerModel == null || String(root.printerModel.fileManagerPageSize) !== String(modelData)",
-            "visible: root.printerModel != null && String(root.printerModel.fileManagerPageSize) === String(modelData)",
         }
         for path in sorted(PLUGINS.glob("*.qml")):
             if path.name in exempt_files:

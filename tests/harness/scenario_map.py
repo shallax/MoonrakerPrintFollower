@@ -120,7 +120,6 @@ SCENARIO_MAP = {
     "statusCollapsedFlowLabel": "x8",
     "controlsCollapsedZOffsetLabel": "x8",
     "controlsCollapsedReadoutText": "x4",
-    "visibilitySelectorGlyph": "x2",
     "visibilitySelectorBox": "x2",
     "columnsPopupBackground": "x5",
     "sectionConfigureHandle": "x6",

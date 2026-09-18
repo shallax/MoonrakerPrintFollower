@@ -96,30 +96,25 @@ Item {
             }
         }
 
-        // The drawn checkbox: a bordered square that fills with a
-        // tick when visible — the column popup's exact vocabulary,
-        // kept verbatim so the retrofit never restyles a live surface
-        // (an eye would fork two idioms).
-        Rectangle {
+        // The visibility checkbox: the native themed checkbox (the
+        // Uranium-controls-first ruling) — a click re-commits the
+        // row's visibility; the whole-row fill below toggles too.
+        Item {
             id: checkboxBox
-            width: 20 * screenScaleFactor
-            height: 20 * screenScaleFactor
+            width: UM.Theme.getSize("checkbox").width
+            height: UM.Theme.getSize("checkbox").height
             y: (parent.height - height) / 2
-            radius: 4 * screenScaleFactor
-            color: rowRoot.rowVisible ? UM.Theme.getColor("primary") : UM.Theme.getColor("main_background")
-            border.color: rowRoot.rowVisible ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
-            border.width: UM.Theme.getSize("default_lining").width
-            UM.Label {
-                anchors.centerIn: parent
-                text: rowRoot.rowVisible ? "✓" : ""
-                color: UM.Theme.getColor("main_background")
-                font: UM.Theme.getFont("medium_bold")
-            }
-            MouseArea {
+            UM.CheckBox {
+                id: rowCheck
                 anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
+                checked: rowRoot.rowVisible
                 enabled: rowRoot.interactive
-                onClicked: rowRoot.toggleRequested()
+                onClicked: {
+                    rowRoot.toggleRequested();
+                    rowCheck.checked = Qt.binding(function () {
+                            return rowRoot.rowVisible;
+                        });
+                }
             }
         }
 

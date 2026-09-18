@@ -144,7 +144,14 @@ class ClassificationRatchetTests(unittest.TestCase):
         # clock's first tick (the click's target must resolve from
         # the mapped layer, never the file-position fallback that
         # lands inside the baked pause — the 2026-09-18 flake).
-        self.assertLessEqual(direct, 144)
+        # One more deliberate raise (4.5.0, DECISIONS): the popover
+        # rounds' six exec_codes — the dismissal probe's geometry
+        # clicks (no real-input op clicks by coordinates, the s8
+        # precedent) and the selector's five tri-state reads (the
+        # bespoke glyph used to assert by text; the native checkbox
+        # carries its state in checkState, which no declarative op
+        # reads yet).
+        self.assertLessEqual(direct, 150)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —

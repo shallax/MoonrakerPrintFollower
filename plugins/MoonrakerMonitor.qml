@@ -2351,7 +2351,21 @@ Component {
         // layout children: anchored children inside a layout reflow
         // every pane (and Qt logs undefined-behavior warnings), and a
         // layout child cannot overlap the layout. A click outside any
-        // open card closes it; the pop-overs sit above this layer.
+        // open card closes it — but a click on the card's own surface
+        // must not: the card's background owns no mouse handler, so
+        // the press lands here and the bounds check keeps the card
+        // open (the live report: in-bounds clicks dismissed the
+        // pop-over).
+        function clickInsideOpenPopOver(x, y) {
+            var cards = [infoConfigurePopOver, statusConfigurePopOver, chartPanel, meshPanel];
+            for (var i = 0; i < cards.length; i++) {
+                var card = cards[i];
+                if (card.visible && x >= card.x && x <= card.x + card.width && y >= card.y && y <= card.y + card.height) {
+                    return true;
+                }
+            }
+            return false;
+        }
         MouseArea {
             id: outsideClickLayer
             visible: root.openPopOver !== ""
@@ -2359,6 +2373,9 @@ Component {
             z: 998
             acceptedButtons: Qt.LeftButton
             onClicked: {
+                if (root.clickInsideOpenPopOver(mouse.x, mouse.y)) {
+                    return;
+                }
                 root.openPopOver = "";
                 root.selectedChartSensor = "";
             }
@@ -2382,7 +2399,6 @@ Component {
             // The x/y land from the trigger's onClicked (the
             // imperative positioning above) — bindings here latched
             // the pre-layout position (the live report).
-            onClosed: root.openPopOver = ""
             onLayoutCommitted: function (order, hidden) {
                 if (root.printer != null) {
                     root.printer.setSectionLayout("information", order, hidden);
@@ -2400,7 +2416,6 @@ Component {
             // The x/y land from the trigger's onClicked (the
             // imperative positioning above) — bindings here latched
             // the pre-layout position (the live report).
-            onClosed: root.openPopOver = ""
             onLayoutCommitted: function (order, hidden) {
                 if (root.printer != null) {
                     root.printer.setSectionLayout("status", order, hidden);
@@ -2417,13 +2432,9 @@ Component {
             // height; each further row adds its line height, capped at
             // the monitor area.
             height: Math.min(590 * screenScaleFactor + Math.max(0, Math.ceil((root.printer != null ? root.printer.temperatureChartLegend.series.length : 0) / 2) - 3) * 30 * screenScaleFactor, parent.height - 2 * UM.Theme.getSize("default_margin").height)
-            onClosed: {
-                root.openPopOver = "";
-                root.selectedChartSensor = "";
-            }
-            // Reset the tooltip proxies on EVERY close path — the Close
-            // button, the opener's second click, the outside-click layer
-            // and auto-close all flip `visible` — so a reopen never
+            // Reset the tooltip proxies on EVERY close path — the
+            // outside-click layer, the opener's second click and
+            // auto-close all flip `visible` — so a reopen never
             // flashes the previous hover's values at a stale position.
             onVisibleChanged: {
                 if (!visible) {
@@ -2627,7 +2638,6 @@ Component {
             height: Math.min((520 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
             contentWidth: 390 * screenScaleFactor
             title: "Bed mesh — " + (root.printer != null ? root.printer.bedMeshProfile : "")
-            onClosed: root.openPopOver = ""
 
             Loader {
                 Layout.fillWidth: true
