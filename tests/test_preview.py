@@ -425,8 +425,13 @@ class PreviewPresentationContractTests(unittest.TestCase):
 
     def test_each_scheduled_pause_has_end_of_layer_eta(self):
         coordinator = (PLUGINS / "PrintCoordinator.py").read_text()
+        follower = (PLUGINS / "PreviewFollower.py").read_text()
         qml = (PLUGINS / "MoonrakerPreviewCard.qml").read_text()
-        self.assertIn("self._preview.remaining(layer, self._index.view, end=True)", coordinator)
+        # The end-of-layer ETA moved into PreviewFollower.remaining_end
+        # (the coordinator's composition calls it) — the pin follows
+        # the semantic, not the old inline call.
+        self.assertIn("self._preview.remaining_end(", coordinator)
+        self.assertIn("def remaining_end", follower)
         self.assertIn("property string pauseEta", qml)
         self.assertIn("parent.pauseEta.length > 0", qml)
 

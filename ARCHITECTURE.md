@@ -38,7 +38,9 @@ the two Preview action slots and `deinitialize()`. It contains no following logi
 `FollowerRuntime.py` constructs and closes the follower's components. It implements
 no domain algorithms. `PrintCoordinator.py` connects cross-domain events through
 explicit constructor dependencies; components never call back into the coordinator
-through a shared mutable follower object.
+through a shared mutable follower object. Its refresh pass is a composition over
+`NextPausePipeline.py` (the pause anchor and computation) and
+`LoadStateTracker.py` (the load state and lease handoff).
 
 `MoonrakerOutputDevicePlugin.py` is the Monitor/output composition boundary. It
 passes explicit client, configuration and immutable print-state capabilities into
@@ -59,12 +61,14 @@ private follower state to either integration.
 | `MoonrakerTransport.py` | Request builder, credentials, HTTP pool, JSON lanes and metrics | Feature state |
 | `MoonrakerProtocol.py` | Endpoint construction, file identity, coordinate conversion | Networking or UI |
 | `MoonrakerSocket.py` | The websocket connection: handshake, the one merged subscription set, per-class raw-fragment accumulators, the keepalive round-trip and its own generation — never the HTTP pool | Status policy, timers beyond the keepalive, the UI |
+| `NextPausePipeline.py` | The next scheduled pause: the time anchor, the job-boundary layer-index reset, the baked merge and the pause computation | Downloads or the monitor's verdicts |
 | `SocketFraming.py` | Pure RFC 6455 framing: handshake build/verify, frame codec, extended lengths, size caps, close codes | Qt, sockets, policy |
 | `RemoteJobService.py` | Print observation and same-filename run identity | Preview selection |
 | `PrintState.py` | Immutable `PrintSnapshot`/`PhysicalLayer` and the single `LayerResolver` | QML/Cura writes |
 | `RemoteFileService.py` | Metadata, streamed downloads, cached files and `FileLease` — the identity-neutral `request_metadata_only` (4.2.0) included | Index algorithms or Cura loading |
 | `DownloadStream.py` | Bounded streaming G-code downloads to disk and the `DownloadOperation` lifecycle | Networking policy or Cura |
 | `GCodeIndexService.py` | Index lifecycle, bounded worker execution and `IndexView` | Networking or UI |
+| `LoadStateTracker.py` | The refresh-side load state: the pending flags and their age-out windows, the busy term, the monitor request's terminal conditions and the lease handoff | Snapshot semantics or Cura loading |
 | `GCodeIndex.py` | Parsing, motion matching, compact hydration and cache serialization algorithms | Application orchestration |
 | `FollowController.py` | Follow-mode decisions and state precedence | Preview writes or networking |
 | `CuraIntegration.py` | Scene/view/file lifecycle, guarded callbacks and Preview API access | Printer protocol |

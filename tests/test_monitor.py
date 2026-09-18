@@ -3291,7 +3291,7 @@ class MonitorQtTests(unittest.TestCase):
         self.qt.events(1)
         self.assertFalse(model.improvingEta)
         coordinator = self.follower._runtime.coordinator
-        self.assertFalse(coordinator._monitor_requested)
+        self.assertFalse(coordinator._loads.monitor_requested)
         # The glyph stays the retry affordance: the QML no longer gates
         # it on the busy flag.
         self.assertNotIn("!root.printer.improvingEta", MONITOR_QML)
@@ -3306,9 +3306,9 @@ class MonitorQtTests(unittest.TestCase):
         self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
         model.improveEta()
         coordinator = self.follower._runtime.coordinator
-        self.assertTrue(coordinator._monitor_requested)
+        self.assertTrue(coordinator._loads.monitor_requested)
         coordinator.reset_binding()
-        self.assertFalse(coordinator._monitor_requested)
+        self.assertFalse(coordinator._loads.monitor_requested)
         model._publish()  # the model clears its flag on the next snapshot
         self.assertFalse(model.improvingEta)
 
@@ -3815,9 +3815,9 @@ Item {
         coordinator = self.follower._runtime.coordinator
         presentation = self.follower._runtime.presentation
         coordinator.request_load()
-        coordinator._load_requested_at = 0.0  # an aged request
+        coordinator._loads._load_requested_at = 0.0  # an aged request
         coordinator.refresh()
-        self.assertFalse(coordinator._load_requested)
+        self.assertFalse(coordinator._loads.load_requested)
         self.assertFalse(presentation._values.get("loadBusy"))
         self.assertNotIn("Resolving current print…", presentation._values.get("loadPhase", ""))
         self.assertEqual(coordinator._detail, "No active Moonraker print to load")

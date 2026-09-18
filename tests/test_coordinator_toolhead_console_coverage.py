@@ -540,47 +540,47 @@ class CoordinatorCoverageTests(unittest.TestCase):
         coordinator.request_load()
         self.assertEqual(coordinator._detail,
                          "Set a Moonraker URL before loading the current print")
-        self.assertFalse(coordinator._load_requested)
+        self.assertFalse(coordinator._loads.load_requested)
         coordinator.download_for_monitor()
         self.assertEqual(coordinator._detail,
                          "Set a Moonraker URL before improving the monitor estimate")
-        self.assertFalse(coordinator._monitor_requested)
+        self.assertFalse(coordinator._loads.monitor_requested)
 
     def test_a_load_request_ages_out_against_a_standby_printer(self):
         parts = self._make()
         coordinator = parts.coordinator
         coordinator.request_load()
-        self.assertTrue(coordinator._load_requested)
+        self.assertTrue(coordinator._loads.load_requested)
         self.assertEqual(coordinator._detail, "Resolving current print…")
         self.assertEqual(parts.client.forced, 1)
-        coordinator._load_requested_at = time.monotonic() - 10.0
+        coordinator._loads._load_requested_at = time.monotonic() - 10.0
         coordinator.refresh()
-        self.assertFalse(coordinator._load_requested)
+        self.assertFalse(coordinator._loads.load_requested)
         self.assertEqual(coordinator._detail, "No active Moonraker print to load")
 
     def test_a_monitor_request_ages_out_against_a_standby_printer(self):
         parts = self._make()
         coordinator = parts.coordinator
         coordinator.download_for_monitor()
-        self.assertTrue(coordinator._monitor_requested)
+        self.assertTrue(coordinator._loads.monitor_requested)
         self.assertEqual(coordinator._detail,
                          "Downloading and indexing the print for the monitor…")
         self.assertEqual(parts.index.requests, 1)
-        coordinator._monitor_requested_at = time.monotonic() - 10.0
+        coordinator._loads._monitor_requested_at = time.monotonic() - 10.0
         coordinator.refresh()
-        self.assertFalse(coordinator._monitor_requested)
+        self.assertFalse(coordinator._loads.monitor_requested)
         self.assertEqual(coordinator._detail, "No active Moonraker print to load")
 
     def test_an_active_print_gets_the_longer_request_window(self):
         parts = self._printing(self._make())
         coordinator = parts.coordinator
-        coordinator._monitor_requested = True
-        coordinator._monitor_requested_at = time.monotonic() - 3.0
+        coordinator._loads.request_monitor()
+        coordinator._loads._monitor_requested_at = time.monotonic() - 3.0
         coordinator.refresh()
-        self.assertTrue(coordinator._monitor_requested)  # the 5 s window holds
-        coordinator._monitor_requested_at = time.monotonic() - 6.0
+        self.assertTrue(coordinator._loads.monitor_requested)  # the 5 s window holds
+        coordinator._loads._monitor_requested_at = time.monotonic() - 6.0
         coordinator.refresh()
-        self.assertFalse(coordinator._monitor_requested)
+        self.assertFalse(coordinator._loads.monitor_requested)
         self.assertNotEqual(coordinator._detail, "No active Moonraker print to load")
 
     def test_the_toolpath_arrival_nudges_cura_once_and_attaches(self):
@@ -680,61 +680,58 @@ class CoordinatorCoverageTests(unittest.TestCase):
 
     def test_the_monitor_download_retires_on_index_error(self):
         parts = self._printing(self._make())
-        parts.coordinator._monitor_requested = True
-        parts.coordinator._monitor_requested_at = time.monotonic()
+        parts.coordinator._loads.request_monitor()
         parts.index.phase = "error"
         parts.coordinator.refresh()
-        self.assertFalse(parts.coordinator._monitor_requested)
+        self.assertFalse(parts.coordinator._loads.monitor_requested)
 
     def test_the_monitor_download_retires_on_download_error(self):
         parts = self._printing(self._make())
-        parts.coordinator._monitor_requested = True
-        parts.coordinator._monitor_requested_at = time.monotonic()
+        parts.coordinator._loads.request_monitor()
         parts.files.phase = "error"
         parts.coordinator.refresh()
-        self.assertFalse(parts.coordinator._monitor_requested)
+        self.assertFalse(parts.coordinator._loads.monitor_requested)
 
     def test_the_monitor_download_retires_once_the_index_lands(self):
         parts = self._printing(self._make())
-        parts.coordinator._monitor_requested = True
-        parts.coordinator._monitor_requested_at = time.monotonic()
+        parts.coordinator._loads.request_monitor()
         parts.index.view = _view()
         parts.coordinator.refresh()
-        self.assertFalse(parts.coordinator._monitor_requested)
+        self.assertFalse(parts.coordinator._loads.monitor_requested)
 
     def test_a_pending_load_hands_the_file_lease_to_cura(self):
         parts = self._printing(self._make())
         coordinator = parts.coordinator
-        coordinator._load_job = coordinator.snapshot.job_key
+        coordinator._loads._load_job = coordinator.snapshot.job_key
         parts.files.path = "/downloads/cube.gcode"
         parts.files._lease = "LEASE-1"
         coordinator.refresh()
-        self.assertIsNone(coordinator._load_job)
+        self.assertIsNone(coordinator._loads._load_job)
         self.assertEqual(parts.cura.loads, ["LEASE-1"])
         # A lease that vanished between the read and the load loads nothing.
-        coordinator._load_job = coordinator.snapshot.job_key
+        coordinator._loads._load_job = coordinator.snapshot.job_key
         parts.files._lease = None
         coordinator.refresh()
-        self.assertIsNone(coordinator._load_job)
+        self.assertIsNone(coordinator._loads._load_job)
         self.assertEqual(parts.cura.loads, ["LEASE-1"])
 
     def test_a_print_that_changed_mid_load_reports_it(self):
         parts = self._printing(self._make())
         coordinator = parts.coordinator
-        coordinator._load_job = ("gone.gcode", 1, 1)
+        coordinator._loads._load_job = ("gone.gcode", 1, 1)
         coordinator.refresh()
-        self.assertIsNone(coordinator._load_job)
+        self.assertIsNone(coordinator._loads._load_job)
         self.assertEqual(coordinator._detail, "Print changed before it could be loaded")
 
     def test_a_load_waits_while_cura_is_still_busy(self):
         parts = self._printing(self._make())
         coordinator = parts.coordinator
-        coordinator._load_job = coordinator.snapshot.job_key
+        coordinator._loads._load_job = coordinator.snapshot.job_key
         parts.files.path = "/downloads/cube.gcode"
         parts.files._lease = "LEASE-1"
         parts.cura.loading = True
         coordinator.refresh()
-        self.assertEqual(coordinator._load_job, coordinator.snapshot.job_key)
+        self.assertEqual(coordinator._loads._load_job, coordinator.snapshot.job_key)
         self.assertEqual(parts.cura.loads, [])
 
     def test_the_trace_line_names_the_resolution_source(self):
@@ -811,10 +808,9 @@ class CoordinatorCoverageTests(unittest.TestCase):
         parts.cura.loading = True
         self.assertEqual(published()["loadPhase"], "Rendering…")
         parts.cura.loading = False
-        coordinator._load_requested = True
-        coordinator._load_requested_at = time.monotonic()
+        coordinator._loads.request_load()
         self.assertEqual(published()["loadPhase"], "Resolving current print…")
-        coordinator._load_requested = False
+        coordinator._loads.reset()
         self.assertEqual(published()["loadProgress"], -1.0)
 
     def test_a_baked_pause_blocks_the_manual_toggle_for_that_layer(self):
@@ -846,7 +842,7 @@ class CoordinatorCoverageTests(unittest.TestCase):
         before = parts.preview.invalidations
         parts.cura.invalidated.emit("stage swapped")
         self.assertEqual(parts.preview.invalidations, before + 1)
-        self.assertTrue(coordinator._load_requested)
+        self.assertTrue(coordinator._loads.load_requested)
 
     def test_a_view_swap_restores_attachment_only_with_a_toolpath(self):
         parts = self._make()
@@ -917,9 +913,9 @@ class CoordinatorCoverageTests(unittest.TestCase):
         parts.cura.fileLoaded.emit("/downloads/cube.gcode")
         self.assertEqual(parts.preview.invalidations, before + 1)
         self.assertEqual(parts.client.forced, 1)
-        coordinator._load_job = ("cube.gcode", 1, 1)
+        coordinator._loads._load_job = ("cube.gcode", 1, 1)
         parts.cura.loadFailed.emit("no disk space")
-        self.assertIsNone(coordinator._load_job)
+        self.assertIsNone(coordinator._loads._load_job)
         self.assertEqual(coordinator._detail, "Could not load current print: no disk space")
 
     def test_confirm_load_delegates_to_cura_replace_prompt(self):
@@ -927,7 +923,7 @@ class CoordinatorCoverageTests(unittest.TestCase):
         parts.coordinator.confirm_load()
         self.assertIsNotNone(parts.cura.confirm_replace_callback)
         parts.cura.confirm_replace_callback()
-        self.assertTrue(parts.coordinator._load_requested)
+        self.assertTrue(parts.coordinator._loads.load_requested)
 
     def test_the_preview_block_keeps_the_newest_stamp(self):
         parts = self._printing(self._make())
@@ -1002,28 +998,28 @@ class CoordinatorCoverageTests(unittest.TestCase):
     def test_reset_binding_clears_the_whole_session(self):
         parts = self._printing(self._make())
         coordinator = parts.coordinator
-        coordinator._load_job = ("x", 1, 1)
-        coordinator._load_requested = True
-        coordinator._monitor_requested = True
+        coordinator._loads._load_job = ("x", 1, 1)
+        coordinator._loads.request_load()
+        coordinator._loads.request_monitor()
         coordinator._header_total_mm = 100.0
-        coordinator._pause_anchor_elapsed = 30.0
-        coordinator._pause_anchor_job = coordinator.snapshot.job_key
-        coordinator._last_index = 4
+        coordinator._next_pause._anchor_elapsed = 30.0
+        coordinator._next_pause._anchor_job = coordinator.snapshot.job_key
+        coordinator._next_pause._last_index = 4
         coordinator._user_detached = True
         coordinator._mr_meta = {"layer_height": 0.2}
         coordinator._mr_meta_key = ("cube.gcode", coordinator.snapshot.job_key)
         coordinator._mr_meta_checks = 2
-        coordinator._prev_print_state = "printing"
+        coordinator._next_pause._prev_state = "printing"
         parts.cura.has_toolpath = True
         coordinator.reset_binding()
-        self.assertIsNone(coordinator._load_job)
-        self.assertFalse(coordinator._load_requested)
-        self.assertFalse(coordinator._monitor_requested)
+        self.assertIsNone(coordinator._loads._load_job)
+        self.assertFalse(coordinator._loads.load_requested)
+        self.assertFalse(coordinator._loads.monitor_requested)
         self.assertIsNone(coordinator._header_total_mm)
-        self.assertIsNone(coordinator._pause_anchor_elapsed)
-        self.assertIsNone(coordinator._pause_anchor_job)
-        self.assertIsNone(coordinator._prev_print_state)
-        self.assertIsNone(coordinator._last_index)
+        self.assertIsNone(coordinator._next_pause._anchor_elapsed)
+        self.assertIsNone(coordinator._next_pause._anchor_job)
+        self.assertIsNone(coordinator._next_pause._prev_state)
+        self.assertIsNone(coordinator._next_pause._last_index)
         self.assertFalse(coordinator._user_detached)
         self.assertEqual(coordinator._mr_meta, {})
         self.assertEqual(coordinator._mr_meta_key, ("", ""))
@@ -1177,7 +1173,7 @@ class CoordinatorCoverageTests(unittest.TestCase):
         self.assertEqual(snapshot.next_pause_layer, 10)
         self.assertAlmostEqual(snapshot.next_pause_fraction, 120.0 / 420.0, places=4)
         # The compute can build its own rows when the caller has none.
-        self.assertEqual(coordinator._compute_next_pause(snapshot.layer, 120.0)[0], 10)
+        self.assertEqual(coordinator._next_pause.compute(snapshot.layer, 120.0)[0], 10)
         # An exhausted remaining with time left short-circuits to a full bar.
         parts.preview.remaining_value = -500.0
         coordinator.refresh()
@@ -1235,17 +1231,17 @@ class CoordinatorCoverageTests(unittest.TestCase):
         parts = self._printing(self._make())
         coordinator = parts.coordinator
         coordinator.request_load()
-        self.assertTrue(coordinator._load_requested)
+        self.assertTrue(coordinator._loads.load_requested)
         coordinator.observe(_status("printing"))
-        self.assertFalse(coordinator._load_requested)
-        self.assertEqual(coordinator._load_job, coordinator.snapshot.job_key)
+        self.assertFalse(coordinator._loads.load_requested)
+        self.assertEqual(coordinator._loads._load_job, coordinator.snapshot.job_key)
         self.assertEqual(parts.files.file_requests, [True])
 
     def test_a_load_request_with_no_active_print_explains_itself(self):
         coordinator = self._make().coordinator
         coordinator.request_load()
         coordinator.observe(_status("standby"))
-        self.assertFalse(coordinator._load_requested)
+        self.assertFalse(coordinator._loads.load_requested)
         self.assertEqual(coordinator._detail, "No active Moonraker print to load")
 
     def test_a_non_numeric_metadata_estimate_is_ignored(self):
@@ -1261,7 +1257,7 @@ class CoordinatorCoverageTests(unittest.TestCase):
         parts = self._printing(self._make())
         coordinator = parts.coordinator
         parts.client.statusReceived.emit(_status("paused"))
-        self.assertEqual(coordinator._pause_anchor_elapsed, 120.0)
+        self.assertEqual(coordinator._next_pause._anchor_elapsed, 120.0)
         before = coordinator.snapshot.job_key
         parts.client.statusReceived.emit(_status("printing", print_stats={
             "state": "printing", "filename": "cube.gcode", "print_duration": "ages",
@@ -1269,35 +1265,35 @@ class CoordinatorCoverageTests(unittest.TestCase):
         # The bad duration was swallowed as 0.0, and a rewind to zero is
         # a restart: the run identity advances and the anchor clears.
         self.assertNotEqual(coordinator.snapshot.job_key, before)
-        self.assertIsNone(coordinator._pause_anchor_elapsed)
+        self.assertIsNone(coordinator._next_pause._anchor_elapsed)
 
     def test_the_pause_anchor_holds_the_last_pause_and_clears_on_a_new_job(self):
         coordinator = self._make().coordinator
-        coordinator._update_pause_anchor("cube.gcode", "printing", 100.0)
-        coordinator._update_pause_anchor("cube.gcode", "paused", 140.0)
-        self.assertEqual(coordinator._pause_anchor_elapsed, 140.0)
+        coordinator._next_pause.update_anchor("cube.gcode", "printing", 100.0)
+        coordinator._next_pause.update_anchor("cube.gcode", "paused", 140.0)
+        self.assertEqual(coordinator._next_pause._anchor_elapsed, 140.0)
         # Still paused: a later poll never re-stamps the anchor.
-        coordinator._update_pause_anchor("cube.gcode", "paused", 200.0)
-        self.assertEqual(coordinator._pause_anchor_elapsed, 140.0)
+        coordinator._next_pause.update_anchor("cube.gcode", "paused", 200.0)
+        self.assertEqual(coordinator._next_pause._anchor_elapsed, 140.0)
         # A new job clears the anchor AND the last known index.
-        coordinator._last_index = 12
-        coordinator._update_pause_anchor("other.gcode", "printing", 5.0)
-        self.assertIsNone(coordinator._pause_anchor_elapsed)
-        self.assertIsNone(coordinator._last_index)
+        coordinator._next_pause._last_index = 12
+        coordinator._next_pause.update_anchor("other.gcode", "printing", 5.0)
+        self.assertIsNone(coordinator._next_pause._anchor_elapsed)
+        self.assertIsNone(coordinator._next_pause._last_index)
 
     def test_a_resolver_that_drops_to_none_keeps_the_last_index(self):
         parts = self._printing(self._make())
         coordinator = parts.coordinator
         # The frame that OPENS a run clears the remembered index with the
         # anchor; a later frame of the same run is what records it.
-        self.assertIsNone(coordinator._last_index)
+        self.assertIsNone(coordinator._next_pause._last_index)
         self._printing(parts)
-        self.assertEqual(coordinator._last_index, 4)
+        self.assertEqual(coordinator._next_pause._last_index, 4)
         parts.client.statusReceived.emit(_status("paused", print_stats={
             "state": "paused", "filename": "cube.gcode", "print_duration": 130.0,
             "info": {"current_layer": 0, "total_layer": 100}}))
         self.assertIsNone(coordinator.snapshot.layer.index)
-        self.assertEqual(coordinator._last_index, 4)
+        self.assertEqual(coordinator._next_pause._last_index, 4)
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime not available")
