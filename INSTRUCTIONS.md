@@ -34,8 +34,13 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   committed screenshots, i.e. what CI checks), `make lint` (structure,
   qmlformat, ruff, shellcheck, hadolint only), `make run_tests`
   (stdlib suite on the host, the real-Qt suite in the container),
-  `make generate_screenshots`, `make package`, `make install_hooks`,
-  `make docker_exec ARGS="…"`, `make clean`. The targets are thin
+  `make generate_screenshots`, `make package`, `make format`
+  (qmlformat in the container), `make coverage` (plugins/ report,
+  the gcov gate), `make snapshot_package` (build + verify + copy to
+  /tmp/mpf.curapackage for the author to SCP), `make snapshot_quick`
+  (the fast iteration path: lint + tests + package, no captures),
+  `make install_hooks`, `make docker_exec ARGS="…"`, `make clean`.
+  The targets are thin
   wrappers over the `tools/*.sh` scripts, which remain the single
   source of truth.
 - The Makefile is the single entry point for procedures another
@@ -570,10 +575,8 @@ not needed in ordinary operation.
 
 Local (also run by the pre-commit hook):
 
-    python -m compileall -q plugins tools tests
-    python tools/check_qml.py plugins
-    ruff check plugins tools tests
-    sh tools/check_qml_format.sh plugins/*.qml   # qt6-declarative-dev-tools; 6.4 has no --check
+    make lint        # compileall, check_qml(.py + engine), qmlformat, ruff,
+                     # shellcheck, hadolint, gitleaks — one container pass
     make run_tests   # every suite once, verdict + failures extracted from that single pass
 
 CI runs the same checks (the `lint` job) plus the full suite including the
