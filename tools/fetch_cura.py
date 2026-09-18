@@ -136,20 +136,38 @@ def main() -> int:
         )
         return "direct" if "PyInstaller archive" in (probe.stderr or "") else "loader"
 
+    def probe_env(root):
+        # The boot env's era boundary, established by live per-version
+        # probes (the 2026-09-18 sweep): 5.0-5.4's Qt aborts its GLX
+        # probe under the harness's virtual display, 5.5 self-cycles
+        # its QML without the appdir paths — every one of them boots
+        # under the legacy env (GL integration skipped, software RHI,
+        # appdir plugin/QML paths); 5.6+ boots under the plain env.
+        # The prepare-time script cannot run the full boot itself
+        # (the display and the harness user live in the container),
+        # so the boundary is the semver gate those probes measured.
+        try:
+            parts = tuple(int(p) for p in version.split("."))
+        except ValueError:
+            parts = (0, 0, 0)
+        return "legacy" if parts < (5, 6, 0) else "modern"
+
     # Idempotent and cheap: a tree prepared before this fix still
     # gets the link (the version sweep fetched ahead of it).
     normalise_binary(vdir / "root")
     launch = probe_launch(vdir / "root")
+    env = probe_env(vdir / "root")
     manifest_path = vdir / "manifest.json"
     if manifest_path.exists():
-        # The probe's verdict updates in place on prepared trees —
+        # The probes' verdicts update in place on prepared trees —
         # the launch form must match what this tree actually boots as.
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest.get("launch") != launch:
+        if manifest.get("launch") != launch or manifest.get("env") != env:
             manifest["launch"] = launch
+            manifest["env"] = env
             manifest_path.write_text(json.dumps(manifest, indent=2) + "\n",
                                      encoding="utf-8")
-            print(f"{version}: updated the launch verdict to {launch}")
+            print(f"{version}: updated the boot verdicts to {launch}/{env}")
     if manifest_path.exists() and not args.force:
         print(f"{version}: already prepared at {vdir}")
         return 0
@@ -228,6 +246,7 @@ def main() -> int:
                        f"{version}/UltiMaker-Cura-{version}-linux-X64.AppImage",
         "appimage_sha256": sha256,
         "launch": launch,
+        "env": env,
         "bundled_python": pyv,
         "bundled_pyqt6": qt6,
         "wheels": [

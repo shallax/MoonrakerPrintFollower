@@ -136,6 +136,18 @@ if grep -q '"launch": "direct"' "$WORK_DIR/cura_versions/$CURA_VERSION/manifest.
 else
     MPF_LAUNCH="/lib64/ld-linux-x86-64.so.2 ./UltiMaker-Cura"
 fi
+# The legacy era's boot env (the prepare-time probe's verdict): the
+# old Qt aborts its GLX probe under the virtual display (the sweep's
+# 5.0-5.5 wall) and 5.5 self-cycles its QML without the appdir
+# paths — the GL integration is skipped, the software RHI renders,
+# and the appdir plugin/QML paths ride along. The modern versions
+# never see this (their manifest reads "modern").
+if grep -q '"env": "legacy"' "$WORK_DIR/cura_versions/$CURA_VERSION/manifest.json" 2>/dev/null; then
+    CROOT="$(container_path "$CURA_ROOT")"
+    MPF_ENV="QT_XCB_GL_INTEGRATION=none QSG_RHI_BACKEND=software QT_PLUGIN_PATH=$CROOT/qt/plugins QML2_IMPORT_PATH=$CROOT/qt/qml QML_IMPORT_PATH=$CROOT/qt/qml"
+else
+    MPF_ENV=""
+fi
 
 # Nothing outlives a run: Cura, its video ffmpeg and the simulator die
 # with the run (the container runs docker-init, which reaps the
@@ -336,13 +348,13 @@ chmod -R 777 "$RUN_DIR"
 case "$MODE" in
     discover)
         docker exec -e CURA_ROOT="$(container_path "$CURA_ROOT")" -e CURA_WHEELS="$(container_path "$CURA_WHEELS")" \
-            -e MPF_LAUNCH="$MPF_LAUNCH" \
+            -e MPF_LAUNCH="$MPF_LAUNCH" -e MPF_ENV="$MPF_ENV" \
             "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
             DISPLAY=:99 APPDIR=\$CURA_ROOT \
             LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
             PYTHONPATH=\$CURA_WHEELS:\$CURA_ROOT \
             XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
-            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb timeout 1800 \
+            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \$MPF_ENV timeout 1800 \
             \$MPF_LAUNCH" >/tmp/mpf/cura_run.log 2>&1 &'
         # wait for the driver's port, then run the discovery
         for _ in $(seq 1 120); do [ -s "$WORK_DIR"/harness_port.txt ] && break; sleep 1; done
@@ -351,13 +363,13 @@ case "$MODE" in
         ;;
     scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite|real)
         docker exec -e CURA_ROOT="$(container_path "$CURA_ROOT")" -e CURA_WHEELS="$(container_path "$CURA_WHEELS")" \
-            -e MPF_LAUNCH="$MPF_LAUNCH" \
+            -e MPF_LAUNCH="$MPF_LAUNCH" -e MPF_ENV="$MPF_ENV" \
             "$CONTAINER" bash -lc 'su ubuntu -s /bin/bash -c "cd \$CURA_ROOT && \
             DISPLAY=:99 APPDIR=\$CURA_ROOT \
             LD_LIBRARY_PATH=\$CURA_ROOT:\$CURA_ROOT/usr/lib/x86_64-linux-gnu:\$CURA_ROOT/lib/x86_64-linux-gnu:\$CURA_ROOT/usr/lib:\$CURA_WHEELS/PyQt6/Qt6/lib \
             PYTHONPATH=\$CURA_WHEELS:\$CURA_ROOT \
             XDG_DATA_HOME=/tmp/mpf/xdg XDG_CONFIG_HOME=/tmp/mpf/xdg/config HOME=/tmp/mpf/fakehome \
-            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb timeout 1800 \
+            LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \$MPF_ENV timeout 1800 \
             \$MPF_LAUNCH" >/tmp/mpf/cura_run.log 2>&1 &'
         # The port must appear before the scenario can start; the CI
         # runners are 2-vCPU VMs and boot Cura far more slowly than a
