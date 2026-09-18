@@ -156,30 +156,40 @@ class MoonrakerSocket(QObject):
             socket.connected.connect(on_ready)
             socket.connectToHost(parsed.host(), parsed.port(80))
 
-    def stop(self) -> None:
+    def stop(self, *, close_frame: bool = True) -> None:
+        """Tear the session down.
+
+        The graceful RFC 6455 close is only valid once the WebSocket
+        upgrade has completed: before that the channel is a transport
+        mid-negotiation — TCP-connected-but-TLS-pending included, the
+        socket state never distinguishes them — and a frame write is a
+        plaintext byte write into a handshake. The boot crash was
+        observed in exactly that window (the machine-changed stop
+        landing inside the TLS handshake, a Cura reader thread faulting
+        on the native teardown); heap corruption from the close-frame
+        write is the hypothesis that fits the evidence, not a
+        dump-proven fact. abort() is the state-safe hard teardown for
+        everything short of an upgraded channel, and the generation
+        guard already makes the old socket's events harmless.
+        """
         self._generation += 1
         self._keepalive_timer.stop()
         socket = self._socket
         self._socket = None
         if socket is not None:
             try:
-                if socket.state() == QAbstractSocket.SocketState.ConnectedState:
-                    # The graceful close is only valid on a fully
-                    # connected channel.
+                if not self._upgraded:
+                    socket.abort()
+                elif close_frame:
                     socket.write(encode_close_frame(1000))
                     socket.flush()
                     socket.disconnectFromHost()
                 else:
-                    # Mid-connect or mid-TLS-handshake: a plaintext
-                    # write plus a graceful disconnect drives the
-                    # native stack through a teardown it is not in —
-                    # the Windows boot crash (the machine-changed stop
-                    # landed inside the handshake and the corrupted
-                    # heap faulted an unrelated thread). abort() is
-                    # the state-safe hard teardown; the generation
-                    # guard already makes the old socket's events
-                    # harmless.
-                    socket.abort()
+                    # The peer-close path has already sent its one
+                    # response frame: finish the graceful teardown
+                    # without a second close on the wire.
+                    socket.flush()
+                    socket.disconnectFromHost()
             except Exception:
                 pass
             try:
@@ -306,8 +316,10 @@ class MoonrakerSocket(QObject):
             if kind == "ping":
                 self._write_control(encode_pong(event[1]))
             elif kind == "close":
+                # One response frame, then teardown — stop() must not
+                # add a second close on top of this one.
                 self._write_control(encode_close_frame(1000))
-                self.stop()
+                self.stop(close_frame=False)
                 return
             elif kind == "error":
                 self.failed.emit(event[1])

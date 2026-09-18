@@ -55,6 +55,7 @@ if QT_AVAILABLE:
     from plugins.SocketFraming import (
         MAX_HANDSHAKE_HEADER_BYTES,
         accept_value,
+        encode_close_frame,
     )
 
 
@@ -192,6 +193,7 @@ class _DeadSocket:
         self._delete_raises = delete_raises
         self.written = []
         self.aborted = 0
+        self.disconnects = 0
 
     def state(self):
         if self._unconnected:
@@ -210,7 +212,7 @@ class _DeadSocket:
         pass
 
     def disconnectFromHost(self) -> None:
-        pass
+        self.disconnects += 1
 
     def abort(self) -> None:
         self.aborted += 1
@@ -833,10 +835,10 @@ class SocketWriteTests(SocketCase):
         self.assertIsNone(instance._socket)
 
     def test_stop_aborts_a_mid_handshake_socket_instead_of_writing(self):
-        # The Windows boot crash: a plaintext close frame written into
-        # a channel whose TLS handshake is still in flight drives the
-        # native stack through a teardown it is not in. The connecting
-        # socket gets the hard abort instead, never a write.
+        # The boot crash was observed with a stop landing inside the
+        # TLS handshake; the hypothesis is the plaintext close-frame
+        # write driving the native stack through a teardown it is not
+        # in. The connecting socket gets the hard abort, never a write.
         instance = self.owner()
         stub = _DeadSocket(connecting=True)
         instance._socket = stub
@@ -844,6 +846,59 @@ class SocketWriteTests(SocketCase):
         self.assertEqual(stub.written, [])
         self.assertEqual(stub.aborted, 1)
         self.assertIsNone(instance._socket)
+
+    def test_stop_aborts_a_connected_socket_that_never_upgraded(self):
+        # TCP-connected is not protocol-ready: QSslSocket reaches
+        # ConnectedState before TLS negotiates, and a plain socket is
+        # connected before the HTTP 101 arrives. Only _upgraded
+        # authorises a frame write — this is the review's real-socket
+        # repro (state=ConnectedState, encrypted=False).
+        instance = self.owner()
+        stub = _DeadSocket()  # ConnectedState
+        instance._socket = stub
+        instance.stop()
+        self.assertEqual(stub.written, [])
+        self.assertEqual(stub.aborted, 1)
+        self.assertEqual(stub.disconnects, 0)
+        self.assertIsNone(instance._socket)
+
+    def test_stop_writes_the_close_frame_once_upgraded(self):
+        instance = self.owner()
+        stub = _DeadSocket()
+        instance._socket = stub
+        instance._upgraded = True
+        instance.stop()
+        self.assertEqual(len(stub.written), 1)
+        self.assertEqual(stub.written[0][0] & 0x0F, 0x8)  # a close frame
+        self.assertEqual(stub.aborted, 0)
+        self.assertEqual(stub.disconnects, 1)
+        self.assertIsNone(instance._socket)
+
+    def test_stop_after_a_peer_close_does_not_double_the_frame(self):
+        # A peer-initiated close receives at most the intended one
+        # response frame: the teardown that follows must not add a
+        # second close on the wire.
+        instance = self.owner()
+        stub = _DeadSocket()
+        instance._socket = stub
+        instance._upgraded = True
+        instance._buffer = encode_close_frame(1000)
+        instance._process_buffer()
+        self.assertEqual(len(stub.written), 1)
+        self.assertEqual(stub.written[0][0] & 0x0F, 0x8)
+        self.assertEqual(stub.aborted, 0)
+        self.assertEqual(stub.disconnects, 1)
+        self.assertIsNone(instance._socket)
+
+    def test_stop_is_harmless_when_repeated(self):
+        instance = self.owner()
+        stub = _DeadSocket()
+        instance._socket = stub
+        instance._upgraded = True
+        instance.stop()
+        instance.stop()
+        self.assertEqual(len(stub.written), 1)
+        self.assertEqual(stub.disconnects, 1)
 
     def test_stop_before_start_is_harmless(self):
         instance = self.owner()
