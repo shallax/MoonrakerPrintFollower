@@ -350,7 +350,38 @@ def runtime():
         module("UM.Resources", Resources=SimpleNamespace(
             Preferences="preferences",
             getCacheStoragePath=lambda: cache,
+            getConfigStoragePath=lambda: cache,
             getStoragePath=lambda kind, name: os.path.join(cache, name)))
+        # The 4.5.0 persistence facade's injected primitives: SaveFile
+        # commits a same-directory temp and swaps (the fsync/flock are
+        # the production host's), LockFile is a plain context manager
+        # in the single-process double.
+        class _SaveFile:
+            def __init__(self, path, mode, encoding="utf-8", **kwargs):
+                self._path = path
+                self._mode = mode
+
+            def __enter__(self):
+                os.makedirs(os.path.dirname(self._path), exist_ok=True)
+                self._handle = open(self._path, self._mode, encoding="utf-8")
+                return self._handle
+
+            def __exit__(self, *args):
+                self._handle.close()
+                return False
+
+        class _LockFile:
+            def __init__(self, filename, timeout=10, wait_msg=""):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        module("UM.SaveFile", SaveFile=_SaveFile)
+        module("UM.LockFile", LockFile=_LockFile)
         module("UM.Backend.Backend", BackendState=SimpleNamespace(Done=1))
         module("UM.Mesh.MeshWriter", MeshWriter=type("MeshWriter", (), {}))
         module("UM.Message", Message=Message)
