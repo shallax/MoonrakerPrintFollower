@@ -1768,8 +1768,8 @@ Scope settled in the 2026-09-16/17 Phase 0 walk (author rulings):
 - The remote planning round's items (the console's expanded
   lifecycle, the test-suite ResourceWarnings hoover, the duplicate
   temperature entry, the card's temp-pair arrow, the ETA/label
-  colours, the pause-list cap, the multi-start pattern) ride the
-  backlog section below — the two lines re-converge there.
+  colours, the pause-list cap, the multi-start pattern) shipped
+  inside 4.3.0 — the record sits in the backlog section below.
 
 The reorder mechanism: runtime reparenting (detach-all, re-attach in
 target order), engine-verified in the dev container; the factory path
