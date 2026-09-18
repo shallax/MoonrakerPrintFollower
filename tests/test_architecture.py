@@ -61,6 +61,7 @@ class ArchitectureDocumentTests(unittest.TestCase):
             "MoonrakerProtocol.py", "MoonrakerSocket.py", "SocketFraming.py", "UploadController.py", "CuraOutputWriter.py",
             "ToolheadPolicy.py", "ToolheadController.py", "MonitorTemperatureHistory.py", "ConsolePolicy.py", "ConsoleController.py",
             "FileManagerPolicy.py", "FileManager.py",
+            "PluginPersistence.py", "PersistenceMigration.py",
         ):
             self.assertIn(f"`{module}`", ARCH)
 
@@ -155,6 +156,8 @@ class SourceContractTests(unittest.TestCase):
             "MoonrakerClient": {"MoonrakerProtocol", "MoonrakerSession"},
             "MoonrakerFollowerMachineAction": {"FollowController", "MoonrakerProtocol", "MoonrakerSession", "MoonrakerTransport", "PrinterConfig"},
             "MoonrakerMonitorModel": {"ConsoleController", "FileManager", "FileManagerPolicy", "FilesViewModel", "MonitorCamera", "MonitorCommands", "MonitorControls", "MonitorData", "MonitorFormatting", "MonitorPermissions", "MonitorTemperatureHistory", "MonitorTuning", "PrintStartOwner", "PrinterConfig", "SectionLayoutPolicy", "StateStore", "ToolheadController", "ToolheadPolicy", "UiStateStore", "WhatsNew"},
+            "PersistenceMigration": {"PrinterConfig"},
+            "PluginPersistence": {"PrinterConfig", "StateStore"},
             "FilesViewModel": set(),
             "PrintStartOwner": set(),
             "UiStateStore": set(),
@@ -481,7 +484,8 @@ class CompositionStructureTests(unittest.TestCase):
                      "PreviewMotion", "PreviewPresentation", "PreviewSmoothing", "PrintCoordinator",
                      "PrintStartOwner", "PrinterBinding", "PrinterConfig", "PrintState",
                      "ConsoleController", "ConsolePolicy", "RemoteFileService", "RemoteJobService",
-                     "ToolheadController", "ToolheadPolicy", "FilesViewModel", "UiStateStore", "UploadController"):
+                     "ToolheadController", "ToolheadPolicy", "FilesViewModel", "UiStateStore", "UploadController",
+                     "PluginPersistence", "PersistenceMigration"):
             source = (PLUGINS / (name + ".py")).read_text()
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.FunctionDef) and node.name == "__init__":

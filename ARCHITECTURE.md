@@ -49,8 +49,10 @@ private follower state to either integration.
 
 | Component | Owns | Does not own |
 | --- | --- | --- |
-| `PrinterBinding.py` | Per-printer configuration, migrations, active-machine transitions | Preview, files, uploads |
-| `PrinterConfig.py` | Per-machine settings schema, URL normalisation, both migrations | Networking or Qt |
+| `PrinterBinding.py` | Per-printer configuration, migration triggers, active-machine transitions | Preview, files, uploads |
+| `PrinterConfig.py` | Per-machine settings schema and coercion (the records, the bounds, the normalisers) | Networking, Qt or the settings file (the persistence facade owns the files) |
+| `PluginPersistence.py` | The two plugin-owned stores: the settings document and the per-machine state shards, the typed key-scoped operations and the in-memory document — one instance per file per process, constructed at the composition root and handed down | Schema, coercion or networking |
+| `PersistenceMigration.py` | The one-shot migration's control flow: the strict source read, the backup gate, the verify-by-re-read interlock and the clean-as-commit-point | Qt, Resources or the stores |
 | `MoonrakerClient.py` | Core polling, retries, command deadline timer, Qt notifications | Cura lifecycle |
 | `MoonrakerSession.py` | Binding state, merged core snapshot, polling policy, coalescer, command tracker | UI or G-code files |
 | `MoonrakerTransport.py` | Request builder, credentials, HTTP pool, JSON lanes and metrics | Feature state |
@@ -84,7 +86,7 @@ private follower state to either integration.
 | `MonitorControls.py` | Macro, preset, fan/LED/PWM, setup and power/exclusion dispatch (the restart guards included), each through the permission policy's `_allowed` gate | Qt model inheritance |
 | `ToolheadPolicy.py` | Pure jog/home/extrude G-code, the DISPATCH-time jog gate and the stepwise jog queue — every command executes as its own move, never merged or cancelled (the 2026-09-17 ruling; the click-time gate is `MonitorPermissions.can_jog`) | Qt, timers or networking |
 | `MonitorPermissions.py` | Pure permission policy: the frozen observation record and the action rulings table (can_jog, can_power, can_restart, can_start_print, can_pause, can_resume, …) with disabled reasons; `is_paused` (the authoritative paused bit) and `pause_resume_supported` (the capability signal) ride the observation | Qt, networking or mutable state |
-| `StateStore.py` | The Monitor state file's explicit owner: the read-modify-write merge, the atomic replace and the rate-limited failure reporting | Qt, networking or value coercion |
+| `StateStore.py` | The plugin JSON documents' file-semantics owner: the read-modify-write merge, the pretty atomic replace (the injected save primitive — Cura's SaveFile in production), the fsync, the optional cross-process lock and the rate-limited failure reporting | Qt, networking or value coercion |
 | `ToolheadController.py` | Monitor toolhead commands, pause-first sequencing and the jog queue | Model inheritance or formatting |
 | `MonitorFormatting.py` | Pure ETA, mesh, macro and peripheral projections/parsers | Mutable state or I/O |
 | `PreviewFormatting.py` | Pure status, icon, ETA and pause-item projections for the Preview panel | Mutable state or I/O |
@@ -105,11 +107,36 @@ private follower state to either integration.
 
 ## 3. Binding and migration
 
-`PrinterBinding.start()` performs both migrations before configuring the first live
-connection. Legacy follower preferences migrate once into a real Cura machine;
-when the initial identity is `unknown`, migration is retried when the stack appears.
-Standalone Moonraker Connection settings are imported for their stored machines.
-Migration failures are logged independently and must not prevent plugin startup.
+`PrinterBinding.start()` performs the legacy migrations before configuring the
+first live connection. Legacy follower preferences migrate once into a real
+Cura machine; when the initial identity is `unknown`, migration is retried when
+the stack appears. Standalone Moonraker Connection settings are imported for
+their stored machines. Migration failures are logged independently and must
+not prevent plugin startup.
+
+The 4.5.0 one-shot migration then moves the configuration into the plugin's
+own stores. It runs from Cura's `initializationFinished` — never from plugin
+construction, because Cura re-reads the preference file after plugins load
+and resurrects a construction-time clean — with the machine-stack-change path
+as the deferred-until-identity case (a stale `cura/active_machine` emits no
+startup signal at all). The control flow is strict: the v1 blob is read so
+absent and corrupt are distinguishable; a whole-file backup of cura.cfg is
+written to `cura.cfg.<timestamp>`, fsynced and verified by content; the new
+files are written and verified by re-read; and the clean is LAST — the commit
+point — gated on "the source was understood" (never "records extracted": an
+empty-but-present blob is healthy). The clean is an in-memory
+return-to-default (`setValue`), never file surgery and never
+`removePreference` — Uranium's writer re-emits any in-memory value that
+differs from its registered default. The outcome persists as a tri-state
+record in the settings document, so no later run can erase a failure; the v1
+import stays idempotent because a Cura backup restore can re-introduce the
+blob. On machine removal, Cura's `containerRemoved` drives a credential wipe:
+the record's URL, API key and host-identifying fields (camera, frontend,
+upload paths) are cleared and the live session stopped, while the harmless
+rest survives for a same-named re-add — filtered on the machine type and
+registry absence, idempotent, deferred off the removal stack, and recorded
+with a `removed_at` reason, because Cura itself can remove machines without
+the user.
 
 Switching Cura machines invalidates even when both profiles use the same endpoint.
 Changing URL/API key on the same machine also stops the old session before settings
@@ -350,6 +377,20 @@ Monitor data is a deeply frozen snapshot. Controllers receive data/command/tunin
 capabilities, not the model or follower. Tuning owns its revisions and debounce
 lifetimes. Macro argument parsing is cached until static configuration changes.
 Camera selection is persisted through the public configuration operation.
+
+The Monitor's state lives in the plugin's own persistence (4.5.0): a
+settings document beside cura.cfg and a state directory sharded per machine.
+The global chrome — the sections map, the section layout, the pane
+collapses, the console height, the file-manager columns, the what's-new
+marker and the toolhead jog selection — is one shared document; the
+per-machine state (the console transcript, history and store-time) is one
+small file per machine, so a console write touches only that printer's
+record. The chart's visibility/colour block and the probe-point toggle stay
+in the per-machine settings record, where the 4.3.0 migration placed them.
+The stores pretty-print with sorted keys and write atomically through the
+injected save primitive (Cura's SaveFile in production — fsync and flock);
+the settings document and the global chrome take the cross-process lock,
+while the per-machine shards have a single writer by construction.
 
 Manual toolhead control is pure policy plus one queue owner: `ToolheadPolicy`
 generates every G-code string and classifies the print state at DISPATCH
