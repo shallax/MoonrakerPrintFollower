@@ -110,8 +110,9 @@ fi
 # through the one shared rule (tools/ui_test_paths.sh carries the
 # tests) so the host report and the container writes can never drift
 # apart again.
-RUN_DIR="$(tools/ui_test_paths.sh resolve "$WORK_DIR" "${RUN_DIR_NAME:-run-$(date +%Y-%m-%d-%H%M%S)}")"
-CONTAINER_RUN_DIR="$(container_path "$(tools/ui_test_paths.sh resolve "$CONTAINER_WORK_DIR" "${RUN_DIR_NAME:-run-$(date +%Y-%m-%d-%H%M%S)}")")"
+RUN_DIR_NAME="${RUN_DIR_NAME:-run-$(date +%Y-%m-%d-%H%M%S)}"
+RUN_DIR="$(tools/ui_test_paths.sh resolve "$WORK_DIR" "$RUN_DIR_NAME")"
+CONTAINER_RUN_DIR="$(container_path "$(tools/ui_test_paths.sh resolve "$CONTAINER_WORK_DIR" "$RUN_DIR_NAME")")"
 
 # The pinned Cura for this run: any version can be selected; prepare
 # one with tools/fetch_cura.py (the manifest records the swap).
