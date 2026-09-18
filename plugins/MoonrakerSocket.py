@@ -147,8 +147,8 @@ class MoonrakerSocket(QObject):
         socket.readyRead.connect(on_data)
         if isinstance(socket, QSslSocket):
             # TLS: the upgrade request may only be written once the
-            # encrypted channel exists (a plaintext write would hit a
-            # TLS port and die as a remote close — the live proxy run).
+            # encrypted channel exists — the live proxy run died as a
+            # remote close when the request preceded the negotiation.
             socket.sslErrors.connect(on_ssl_errors)
             socket.encrypted.connect(on_ready)
             socket.connectToHostEncrypted(parsed.host(), parsed.port(443))
