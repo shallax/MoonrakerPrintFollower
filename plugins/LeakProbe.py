@@ -569,12 +569,16 @@ class LeakProbe:
         except Exception as exc:
             self._log(f"camera-err {exc!r}")
         self._ticks += 1
-        if self._trace_enabled_now() and self._ticks % _SLOW_TICKS == 0:
-            for line in self._top_traces():
-                self._log(line)
+        if self._trace_enabled_now():
+            if self._ticks % _SLOW_TICKS == 0:
+                for line in self._top_traces():
+                    self._log(line)
         elif self._trace_snapshot is not None:
             # The trace toggle went off: drop the allocator tax and the
-            # window so re-enabling starts a fresh one.
+            # window so re-enabling starts a fresh one. (The author's
+            # live find: the old elif wiped the window on EVERY
+            # ordinary tick, so every slow tick re-armed from scratch
+            # and the compare branch never ran.)
             try:
                 tracemalloc.stop()
             except Exception:

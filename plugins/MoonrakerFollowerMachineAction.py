@@ -20,6 +20,7 @@ from UM.Resources import Resources
 from UM.Settings.DefinitionContainer import DefinitionContainer
 
 from .FollowController import FollowMode
+from .MoonrakerMonitorModel import _migration_banner_text, _migration_diagnostics_text
 from .MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
 from .MoonrakerSession import RequestCategory
 from .MoonrakerTransport import MoonrakerHttpTransport
@@ -36,6 +37,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
     testStatusChanged = pyqtSignal()
     testBusyChanged = pyqtSignal()
     cacheStatusChanged = pyqtSignal()
+    migrationChanged = pyqtSignal()
 
     def __init__(self, application: Any, follower: Any, output_plugin: Any = None) -> None:
         super().__init__(self.KEY, self.LABEL)
@@ -92,6 +94,56 @@ class MoonrakerFollowerMachineAction(MachineAction):
 
     def _config(self) -> PrinterConfig:
         return self._follower.current_printer_config()
+
+    # ------------------------------------------------------------------
+    # The migration failure surfaces (the settings page's mirror — the
+    # model's values reach the Monitor; this page's manager is the
+    # ACTION, so the five live here, computed from the record the
+    # facade keeps. The 2026-09-18 live find: the page read these off
+    # the wrong object and the broken bindings showed a dead banner.)
+    # ------------------------------------------------------------------
+
+    def _migration_record(self) -> Dict[str, Any]:
+        persistence = getattr(self._follower, "persistence", None)
+        record = persistence.migration_record() if persistence is not None else None
+        return dict(record) if isinstance(record, dict) else {}
+
+    @pyqtProperty(bool, notify=migrationChanged)
+    def migrationBannerVisible(self) -> bool:
+        record = self._migration_record()
+        return bool(record.get("status") == "failed" and not record.get("bannerDismissed"))
+
+    @pyqtProperty(str, notify=migrationChanged)
+    def migrationBannerText(self) -> str:
+        record = self._migration_record()
+        return _migration_banner_text(record) if record.get("status") == "failed" else ""
+
+    @pyqtProperty(bool, notify=migrationChanged)
+    def migrationBackupAvailable(self) -> bool:
+        record = self._migration_record()
+        return bool(record.get("status") == "failed" and record.get("backupWritten") and record.get("backupName"))
+
+    @pyqtProperty(bool, notify=migrationChanged)
+    def migrationDiagnosticsVisible(self) -> bool:
+        record = self._migration_record()
+        return bool(record.get("status") == "failed" and record.get("bannerDismissed"))
+
+    @pyqtProperty(str, notify=migrationChanged)
+    def migrationDiagnosticsText(self) -> str:
+        record = self._migration_record()
+        return _migration_diagnostics_text(record) if record.get("status") == "failed" else ""
+
+    @pyqtSlot()
+    def dismissMigrationBanner(self) -> None:
+        persistence = getattr(self._follower, "persistence", None)
+        if persistence is not None:
+            persistence.set_migration_record({"bannerDismissed": True})
+        self.migrationChanged.emit()
+
+    @pyqtSlot()
+    def openMigrationBackupFolder(self) -> None:
+        from PyQt6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl.fromLocalFile(Resources.getConfigStoragePath()))
 
     @pyqtProperty(str, notify=settingsChanged)
     def machineName(self) -> str:

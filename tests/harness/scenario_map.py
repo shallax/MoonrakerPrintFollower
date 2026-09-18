@@ -295,6 +295,21 @@ EXCLUSIONS = {
         "date": "2026-09-18",
         "recheck": "the settings-dialog scenario lands",
     },
+    # The settings page reads its migration surface off the ACTION (the
+    # live find: the page's bindings pointed at the wrong manager), so
+    # the action's two verbs join the model's in the deferred set.
+    "MoonrakerFollowerMachineAction.dismissMigrationBanner": {
+        "reason": "the settings page's Dismiss verb; the dialog scenario is deferred",
+        "evidence": "test_config_formatting_coverage's SettingsPageMigrationMirrorTests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "MoonrakerFollowerMachineAction.openMigrationBackupFolder": {
+        "reason": "the settings page's backup folder open; the dialog scenario is deferred",
+        "evidence": "SettingsPageMigrationMirrorTests pins the config-path handover",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
     "migrationNotice": {
         "reason": "the failure banner; the dialog scenario is deferred",
         "evidence": "test_migration_notice; the model's record values in test_monitor",

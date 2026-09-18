@@ -883,10 +883,14 @@ Cura.MachineAction {
                             id: memoryDiagnosticsBox
                             text: "Log memory diagnostics (diagnostics)"
                             checked: manager.settingsMemoryDiagnosticsLog
+                            // The trace rides the parent (the ruling):
+                            // unchecking the parent unchecks the trace.
+                            onCheckedChanged: if (!checked)
+                                memoryDiagnosticsTraceBox.checked = false
                         }
                         UM.CheckBox {
                             id: memoryDiagnosticsTraceBox
-                            text: "Log Python allocation traces (diagnostics — heavy, stalls Cura briefly)"
+                            text: "Log Python allocation traces (diagnostics — Cura becomes almost unusable while this runs; the first trace starts about a minute after enabling)"
                             checked: manager.settingsMemoryDiagnosticsTrace
                             // The trace only runs inside the main
                             // diagnostics sampler — grey it out while

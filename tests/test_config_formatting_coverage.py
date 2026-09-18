@@ -3228,6 +3228,105 @@ class UiStateStoreCoverageTests(unittest.TestCase):
         self.assertEqual(store.writes, 0)
 
 
+class SettingsPageMigrationMirrorTests(unittest.TestCase):
+    """The settings page reads its migration surface off the ACTION (the
+    live find: the page's bindings pointed at the wrong manager and a
+    broken binding left the banner visible with dead buttons)."""
+
+    def setUp(self):
+        context = runtime()
+        self.qt = context.__enter__()
+        self.addCleanup(context.__exit__, None, None, None)
+
+    def _action(self, follower):
+        from PyQt6.QtCore import QObject
+
+        class _MachineActionBase(QObject):
+            def __init__(self, key, label):
+                super().__init__()
+                self._key = key
+                self._label = label
+
+        application = SimpleNamespace(
+            getContainerRegistry=lambda: SimpleNamespace(
+                containerAdded=SimpleNamespace(connect=lambda _fn: None)),
+        )
+        with patch.dict(sys.modules, {
+                "cura.MachineAction": SimpleNamespace(MachineAction=_MachineActionBase),
+                "UM.Settings": SimpleNamespace(DefinitionContainer=SimpleNamespace(
+                    DefinitionContainer=type("DefinitionContainer", (), {}))),
+                "UM.Settings.DefinitionContainer": SimpleNamespace(
+                    DefinitionContainer=type("DefinitionContainer", (), {})),
+            }):
+            from plugins.MoonrakerFollowerMachineAction import MoonrakerFollowerMachineAction
+            action = MoonrakerFollowerMachineAction(application, follower)
+        self.addCleanup(action.deleteLater)
+        return action
+
+    class _Facade:
+        def __init__(self, record=None):
+            self.record = dict(record or {})
+            self.writes = []
+
+        def migration_record(self):
+            return dict(self.record)
+
+        def set_migration_record(self, update):
+            self.record.update(update)
+            self.writes.append(dict(update))
+
+    class _Follower:
+        def __init__(self, persistence):
+            self.persistence = persistence
+
+        def current_printer_config(self):
+            return None
+
+        def current_printer_identity(self):
+            return ("A", "Printer A")
+
+    @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+    def test_the_action_mirrors_the_record_states(self):
+        facade = self._Facade()
+        action = self._action(self._Follower(facade))
+
+        # No record: nothing shows.
+        self.assertFalse(action.migrationBannerVisible)
+        self.assertEqual(action.migrationBannerText, "")
+        self.assertFalse(action.migrationBackupAvailable)
+        self.assertFalse(action.migrationDiagnosticsVisible)
+
+        # A failed record with a backup: the banner and the backup
+        # button, the diagnostics row after dismissal.
+        facade.record = {"status": "failed", "backupWritten": True, "backupName": "cura.cfg.stamp"}
+        self.assertTrue(action.migrationBannerVisible)
+        self.assertTrue(action.migrationBackupAvailable)
+        self.assertFalse(action.migrationDiagnosticsVisible)
+        self.assertIn("cura.cfg.stamp", action.migrationBannerText)
+        action.dismissMigrationBanner()
+        self.assertEqual(facade.writes, [{"bannerDismissed": True}])
+        self.assertFalse(action.migrationBannerVisible)
+        self.assertTrue(action.migrationDiagnosticsVisible)
+        # A backup existed: the diagnostics row carries flavour A's
+        # rollback recipe (flavour B is the no-backup case).
+        self.assertIn("cura.cfg.stamp", action.migrationDiagnosticsText)
+
+    @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+    def test_the_backup_folder_opens_cura_s_config_folder(self):
+        from PyQt6.QtGui import QDesktopServices
+
+        opened = []
+
+        def fake_open(url):
+            opened.append(url.toLocalFile())
+
+        action = self._action(self._Follower(None))
+        with patch.object(QDesktopServices, "openUrl", staticmethod(fake_open)):
+            action.openMigrationBackupFolder()
+        from UM.Resources import Resources
+        self.assertEqual(opened, [Resources.getConfigStoragePath()])
+
+
 class PluginPackageCoverageTests(unittest.TestCase):
     """The package entry point. The plugin classes are stand-ins: the
     wiring is what register() owns, not the extensions themselves."""
