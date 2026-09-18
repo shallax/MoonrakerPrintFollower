@@ -436,3 +436,84 @@ class TuningResetTests(RealEngineTestCase):
         self.pump(30)
         self.assertIn(("speed", 100), model.calls)
         self.assertIn(("flow", 100), model.calls)
+
+
+class TuningResetConvergenceTests(RealEngineTestCase):
+    """The reset's end-to-end convergence: the click commands 100, the
+    printer's confirmation publishes 100, and the SLIDER must read 100
+    — never the to-clamp (the live 200-reset find)."""
+
+    def test_the_flow_slider_reads_100_after_the_reset_converges(self):
+        from PyQt6.QtTest import QTest
+        from PyQt6.QtCore import Qt
+
+        class ModelDouble(QObject):
+            flowFactorPercentChanged = pyqtSignal()
+
+            def __init__(self):
+                super().__init__()
+                self._flow = 137
+                self.calls = []
+
+            @pyqtProperty(int)
+            def speedFactorPercent(self):
+                return 100
+
+            @pyqtProperty(int, notify=flowFactorPercentChanged)
+            def flowFactorPercent(self):
+                return self._flow
+
+            def confirm(self, value):
+                self._flow = value
+                self.flowFactorPercentChanged.emit()
+
+            @pyqtSlot(int)
+            def setFlowFactor(self, percent):
+                self.calls.append(("flow", percent))
+
+            @pyqtSlot(int)
+            def previewFlowFactor(self, percent):
+                pass
+
+            @pyqtProperty("QVariant")
+            def sectionExpandedMap(self):
+                return {}
+
+            @pyqtProperty(bool)
+            def controlsLocked(self):
+                return False
+
+            @pyqtProperty(bool)
+            def monitorConnected(self):
+                return True
+
+        section = self.mount("TuningSection.qml")
+        window = QQuickWindow()
+        window.resize(520, 400)
+        section.setParentItem(window.contentItem())
+        window.show()
+        self.addCleanup(window.deleteLater)
+        model = ModelDouble()
+        section.setProperty("printerModel", model)
+        self.pump(30)
+        slider = None
+        for item in section.findChildren(QQuickItem):
+            if "OutlineSlider" in item.metaObject().className() and item.property("from") == 50:
+                slider = item
+                break
+        self.assertIsNotNone(slider, "the flow slider did not build")
+        self.assertEqual(slider.property("value"), 137)
+        # A prior user interaction writes the slider's value directly
+        # (the drag path) — under the old binding that destroyed the
+        # model link and the reset's 100 could never reach the handle.
+        slider.setProperty("value", 200)
+        self.pump(30)
+        button = self.find(section, "moonrakerTuningFlowReset")
+        center = button.mapToScene(QPointF(button.width() / 2, button.height() / 2)).toPoint()
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton, pos=center)
+        self.pump(30)
+        self.assertIn(("flow", 100), model.calls)
+        model.confirm(100)  # the printer's polled confirmation
+        self.pump(30)
+        self.assertEqual(slider.property("value"), 100,
+                         "the slider must read the confirmed 100, not the to-clamp")

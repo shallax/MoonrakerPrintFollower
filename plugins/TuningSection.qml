@@ -13,6 +13,16 @@ ColumnLayout {
     spacing: 0
     property var printerModel: null
     property var interactionSink: null
+    // The factor sliders sync from the model IMPERATIVELY: their own
+    // drag writes would destroy a value binding, freezing the handle
+    // at the last interaction (the live 200-reset find). The arrival
+    // path covers a model that attaches after the section completes.
+    onPrinterModelChanged: {
+        if (root.printerModel != null) {
+            speedSlider.value = root.printerModel.speedFactorPercent !== undefined ? root.printerModel.speedFactorPercent : 100;
+            flowSlider.value = root.printerModel.flowFactorPercent !== undefined ? root.printerModel.flowFactorPercent : 100;
+        }
+    }
 
     CollapsibleSectionHeader {
         Layout.fillWidth: true
@@ -60,12 +70,31 @@ ColumnLayout {
                 OutlineSlider {
                     id: speedSlider
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     from: 10
                     to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.speedFactorPercent * 2) : 200)
                     stepSize: 1
                     live: false
-                    value: root.printerModel != null ? root.printerModel.speedFactorPercent : 100
+                    value: 100
                     enabled: root.printerModel != null
+                    // The model's percent syncs IMPERATIVELY, never by
+                    // binding: the slider's own drag writes control.value
+                    // and would destroy a binding, freezing the handle at
+                    // the last interaction forever (the live 200-reset
+                    // find — the command applied, the UI could not
+                    // follow). The change handler only fires when the
+                    // percent CHANGES, so a mid-drag poll never snaps.
+                    Component.onCompleted: {
+                        if (root.printerModel != null)
+                            speedSlider.value = root.printerModel.speedFactorPercent;
+                    }
+                    Connections {
+                        target: root.printerModel
+                        function onSpeedFactorPercentChanged() {
+                            if (root.printerModel != null)
+                                speedSlider.value = root.printerModel.speedFactorPercent;
+                        }
+                    }
                     onValueTuning: {
                         if (root.printerModel != null)
                             root.printerModel.previewSpeedFactor(value);
@@ -86,6 +115,12 @@ ColumnLayout {
                     objectName: "moonrakerTuningSpeedReset"
                     width: UM.Theme.getSize("small_button_icon").width
                     height: UM.Theme.getSize("small_button_icon").height
+                    // The cell must survive the row: the fillWidth
+                    // slider otherwise squeezes it to zero and the
+                    // press lands on the slider's track under the
+                    // glyph, committing the track position (the live
+                    // 200-reset find).
+                    Layout.minimumWidth: UM.Theme.getSize("small_button_icon").width
                     Layout.alignment: Qt.AlignVCenter
                     enabled: root.printerModel != null
                     color: UM.Theme.getColor("text_inactive")
@@ -125,12 +160,24 @@ ColumnLayout {
                 OutlineSlider {
                     id: flowSlider
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     from: 50
                     to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.flowFactorPercent * 2) : 200)
                     stepSize: 1
                     live: false
-                    value: root.printerModel != null ? root.printerModel.flowFactorPercent : 100
+                    value: 100
                     enabled: root.printerModel != null
+                    Component.onCompleted: {
+                        if (root.printerModel != null)
+                            flowSlider.value = root.printerModel.flowFactorPercent;
+                    }
+                    Connections {
+                        target: root.printerModel
+                        function onFlowFactorPercentChanged() {
+                            if (root.printerModel != null)
+                                flowSlider.value = root.printerModel.flowFactorPercent;
+                        }
+                    }
                     onValueTuning: {
                         if (root.printerModel != null)
                             root.printerModel.previewFlowFactor(value);
@@ -148,6 +195,12 @@ ColumnLayout {
                     objectName: "moonrakerTuningFlowReset"
                     width: UM.Theme.getSize("small_button_icon").width
                     height: UM.Theme.getSize("small_button_icon").height
+                    // The cell must survive the row: the fillWidth
+                    // slider otherwise squeezes it to zero and the
+                    // press lands on the slider's track under the
+                    // glyph, committing the track position (the live
+                    // 200-reset find).
+                    Layout.minimumWidth: UM.Theme.getSize("small_button_icon").width
                     Layout.alignment: Qt.AlignVCenter
                     enabled: root.printerModel != null
                     color: UM.Theme.getColor("text_inactive")
