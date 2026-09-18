@@ -39,9 +39,10 @@ class UiStateStore:
         only — a shape change or a renamed id silently re-expands
         every existing user's sections)."""
         payload = {str(key): bool(value) for key, value in dict(sections or {}).items()}
-        if not self._survives(payload):
-            Logger.log("w", "Moonraker UI state: the sections map did not survive validation — the save was skipped.")
-            return False
+        # No round-trip guard here: the coercion above makes the
+        # payload JSON-safe by construction (the guard stays on
+        # set_section_layout, whose caller normalises instead — the
+        # coverage wave's dead-branch find).
         return self._write({"sections": payload})
 
     def set_section_layout(self, layout: dict) -> bool:

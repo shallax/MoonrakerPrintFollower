@@ -84,16 +84,22 @@ class _OneShotDownload:
             if os.path.splitext(name)[1].lower() not in {".g", ".gcode"}:
                 name += ".gcode"
             self._path = os.path.join(self._directory, name)
-            target = service._target_factory(self._path)
             request = self._transport.request(download_endpoint(self._transport.identity[0], self._relpath), timeout_ms=30000)
             request.setRawHeader(b"Accept", b"application/octet-stream")
             request.setRawHeader(b"Accept-Encoding", b"identity")
             reply = self._transport.network.get(request)
             reply.setReadBufferSize(4 * 1024 * 1024)
+            # The target opens LAST so a raise above leaves no open
+            # handle behind (the coverage agent's live find — the
+            # orphaned fd also resisted file deletion on Windows).
+            target = service._target_factory(self._path)
             # Same as the job lane: the declared length is read lazily
             # in the drain once the response headers have arrived.
             size = 0
         except Exception as error:
+            # Nothing above opened a handle (the target opens last), so
+            # there is nothing to close here — the one-shot retires
+            # with its directory removed by _finish_immediately.
             self._finish_immediately(str(error))
             return
         self._op = DownloadOperation(target, reply, size, None, None)

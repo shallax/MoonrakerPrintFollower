@@ -41,10 +41,6 @@ def _transcript_from_history(lines) -> list:
             for line in lines][-MAX_TRANSCRIPT:]
 
 
-def _trim_transcript(entries: list) -> list:
-    return entries[-MAX_TRANSCRIPT:]
-
-
 class ConsoleController(QObject):
     changed = pyqtSignal()
 

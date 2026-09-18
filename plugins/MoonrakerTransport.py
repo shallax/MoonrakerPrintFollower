@@ -282,7 +282,13 @@ class MoonrakerHttpTransport(QObject):
                 declared = reply.header(QNetworkRequest.KnownHeaders.ContentLengthHeader)
                 if declared is not None and int(declared) > MAX_REPLY_BYTES:
                     raise ValueError("Moonraker response exceeds the size cap")
-                raw = bytes(reply.read(MAX_REPLY_BYTES + 1))
+                buffered = reply.read(MAX_REPLY_BYTES + 1)
+                # An empty 200/204 body buffers nothing and read()
+                # returns None — bytes(None) used to raise here, so
+                # "{}" endpoints failed as a NoneType conversion error
+                # instead of the intended empty object (the coverage
+                # agent's live find).
+                raw = bytes(buffered) if buffered is not None else b""
                 if len(raw) > MAX_REPLY_BYTES or reply.bytesAvailable() > 0:
                     raise ValueError("Moonraker response exceeds the size cap")
                 text = raw.decode("utf-8", errors="replace")
