@@ -106,10 +106,16 @@ Cura.RoundedRectangle {
             return;
         }
         _cameraApplyInProgress = true;
-        cameraImage.stop();
-        cameraImage.source = url;
-        cameraImage.visible = visible;
-        _cameraApplyInProgress = false;
+        try {
+            cameraImage.stop();
+            cameraImage.source = url;
+            cameraImage.visible = visible;
+        } finally {
+            // The guard must release even if an assignment throws —
+            // a stuck latch would silence the visibility lifecycle
+            // handler forever (the review's hardening note).
+            _cameraApplyInProgress = false;
+        }
         _appliedUrl = text;
         _appliedVisible = visible;
         if (shouldRun) {
