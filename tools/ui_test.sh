@@ -60,7 +60,12 @@ export HARNESS_MODE="$MODE"
 # plugin), and "keep" reuses the tree exactly as the last boot left
 # it. The first-install leg needs clean for its first boot and keep
 # (by construction) for its second, so the default follows the mode.
-XDG_SEED="${XDG_SEED:-$([ "$MODE" = "firstinstall" ] && echo clean || [ "$MODE" = "migration" ] && echo premigration || echo full)}"
+case "${MODE:-scenario}" in
+    firstinstall) _seed_default="clean" ;;
+    migration) _seed_default="premigration" ;;
+    *) _seed_default="full" ;;
+esac
+XDG_SEED="${XDG_SEED:-$_seed_default}"
 case "$XDG_SEED" in
     full|clean|keep|premigration) ;;
     *) echo "ui_test: XDG_SEED must be full, clean or keep (got '$XDG_SEED')" >&2; exit 1 ;;

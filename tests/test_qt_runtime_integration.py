@@ -562,6 +562,20 @@ class QtRuntimeTests(unittest.TestCase):
         client.session.merge_status({"print_stats": {"state": "paused"}})
         self.assertEqual(client.session.commands.get("Pause").outcome, "confirmed")
 
+    def test_the_controls_speed_projection_follows_a_live_change(self):
+        # The harness's c2-05/06 regression (the 5.7/5.8 re-verify):
+        # a live gcode_move speed/flow change must reach the model's
+        # published projection — the readout sat at 100 while the sim
+        # moved to 1.37/1.28.
+        model, client, transport = self.monitor()
+        model.updateMoonrakerStatus({"gcode_move": {"speed_factor": 1.0, "extrude_factor": 1.0}})
+        self.qt.events(300)
+        self.assertEqual(model.speedFactorPercent, 100)
+        model.updateMoonrakerStatus({"gcode_move": {"speed_factor": 1.37, "extrude_factor": 1.28}})
+        self.qt.events(300)
+        self.assertEqual(model.speedFactorPercent, 137)
+        self.assertEqual(model.flowFactorPercent, 128)
+
     def test_monitor_unchanged_intervals_are_not_restarted(self):
         model, client, transport = self.monitor()
         timer = next(iter(model._data._timers.values()))
