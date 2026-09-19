@@ -1524,6 +1524,52 @@ Row {
                 return {"id": request_id, "ok": ok, "active": active, "created": True}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "switch_machine":
+            # The multi-machine leg's verb: activate a machine stack by
+            # its exact NAME (the seeded records' stable key — machine
+            # ids carry container prefixes per Cura version). The
+            # driver reports the before/after so a no-op switch is
+            # visible, never silently green.
+            try:
+                from cura.Settings.CuraContainerRegistry import CuraContainerRegistry
+                manager = Application.getInstance().getMachineManager()
+                before = manager.activeMachine.getName() if manager.activeMachine else None
+                target = str(request.get("name") or "")
+                stacks = CuraContainerRegistry.getInstance().findContainerStacks()
+                machine_id = None
+                for stack in stacks:
+                    if str(stack.getMetaDataEntry("type") or "") != "machine":
+                        continue
+                    if stack.getName() == target:
+                        machine_id = stack.getId()
+                        break
+                if machine_id is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "no machine named %r" % target, "before": before}
+                manager.setActiveMachine(machine_id)
+                after = manager.activeMachine.getName() if manager.activeMachine else None
+                return {"id": request_id, "ok": bool(after == target),
+                        "before": before, "after": after}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "read_json_file":
+            # The migration leg's verb: read a JSON file RELATIVE to
+            # Cura's configuration folder (absolute paths are refused —
+            # the driver is a test instrument, never an arbitrary file
+            # reader). The parsed document rides the reply so the leg
+            # asserts the migrated state files directly.
+            try:
+                from UM.Resources import Resources
+                name = str(request.get("name") or "")
+                if not name or name.startswith("/") or ".." in name:
+                    return {"id": request_id, "ok": False, "error": "refused path %r" % name}
+                base = Resources.getConfigStoragePath()
+                path = os.path.join(base, name)
+                with open(path, encoding="utf-8") as handle:
+                    document = json.load(handle)
+                return {"id": request_id, "ok": True, "document": document}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "welcome":
             # The boot gate's probe: is the welcome dialog still up in
             # the main window? Its visible check is one-shot at startup

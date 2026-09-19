@@ -60,9 +60,9 @@ export HARNESS_MODE="$MODE"
 # plugin), and "keep" reuses the tree exactly as the last boot left
 # it. The first-install leg needs clean for its first boot and keep
 # (by construction) for its second, so the default follows the mode.
-XDG_SEED="${XDG_SEED:-$([ "$MODE" = "firstinstall" ] && echo clean || echo full)}"
+XDG_SEED="${XDG_SEED:-$([ "$MODE" = "firstinstall" ] && echo clean || [ "$MODE" = "migration" ] && echo premigration || echo full)}"
 case "$XDG_SEED" in
-    full|clean|keep) ;;
+    full|clean|keep|premigration) ;;
     *) echo "ui_test: XDG_SEED must be full, clean or keep (got '$XDG_SEED')" >&2; exit 1 ;;
 esac
 
@@ -258,6 +258,48 @@ if not removed:
     raise SystemExit("ui_test: the clean seed found no plugin config folder to remove")
 open(cfg, "w", encoding="utf-8").writelines(kept)
 print("ui_test: clean seed removed " + ", ".join(removed + ["the cura.cfg section"]))
+PY
+fi
+
+if [ "$XDG_SEED" = "premigration" ]; then
+    python3 - "$WORK_DIR/xdg/config/cura/5.13" << 'PY'
+import json, os, shutil, sys
+base = sys.argv[1]
+removed = []
+folder = os.path.join(base, "MoonrakerPrintFollower")
+if os.path.isdir(folder):
+    shutil.rmtree(folder)
+    removed.append("MoonrakerPrintFollower/")
+# The 4.3.0-era blob: two machine records — the multi-machine leg's
+# switch target rides the second, and its console history makes the
+# per-machine transcript migration part of the proof.
+legacy = {
+    "FDM Printer Base Description": {"url": "http://127.0.0.1:7125", "enabled": True},
+    "Second Machine": {"url": "http://127.0.0.1:7126", "enabled": True,
+                       "console_history": ["// second machine history"]},
+}
+cfg = os.path.join(base, "cura.cfg")
+lines = open(cfg, encoding="utf-8").readlines()
+out, dropping, saw = [], False, False
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        dropping = stripped == "[moonrakerprintfollower]"
+        if dropping:
+            saw = True
+            continue
+    if not dropping:
+        out.append(line)
+if not saw:
+    raise SystemExit("ui_test: the premigration seed found no [moonrakerprintfollower] section in cura.cfg")
+if not removed:
+    raise SystemExit("ui_test: the premigration seed found no plugin config folder to remove")
+out.append("[moonrakerprintfollower]\n")
+out.append("printer_configs_v1 = %s\n" % json.dumps(legacy))
+open(cfg, "w", encoding="utf-8").writelines(out)
+state = os.path.join(base, "moonrakerprintfollower_sections.json")
+open(state, "w", encoding="utf-8").write(json.dumps({"whatsNewSeen": "4.4.0", "sections": {}}))
+print("ui_test: premigration seed rewound to the v1 blob (2 records)")
 PY
 fi
 fi
@@ -591,6 +633,37 @@ case "$MODE" in
             CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
             python3 /tmp/mpf/harness_runner.py firstinstall2 || RUNNER_RC=$?
         ;;
+    migration)
+        # One xdg tree, two boots, seeded PRE-migration: boot 1 runs
+        # the real one-shot (the v1 blob -> the v2 files), boot 2
+        # reuses the tree boot 1 left and proves the one-shot never
+        # re-runs. The staging ran once before this dispatch, so the
+        # premigration seed is never re-copied between the boots.
+        launch_cura
+        if ! wait_for_boot; then exit 1; fi
+        BOOT1_DOC="$CONTAINER_RUN_DIR/boot1-document.json"
+        docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR" \
+            HARNESS_COORDS="$COORDS" HARNESS_MODE="${MODE}1" \
+            HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
+            HARNESS_BOOT1_DOC="$BOOT1_DOC" \
+            CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
+            python3 /tmp/mpf/harness_runner.py migration1 || RUNNER_RC=$?
+        # The first boot's log survives the second launch (which
+        # truncates cura_run.log) — the log scan covers both boots.
+        cp "$WORK_DIR"/cura_run.log "$WORK_DIR"/cura_run_boot1.log 2>/dev/null || true
+        # The second boot needs the tree to itself.
+        docker exec "$CONTAINER" bash -lc \
+            'pkill -9 -f "UltiMaker-Cur[a]" 2>/dev/null; sleep 1; true'
+        rm -f "$WORK_DIR"/harness_port.txt
+        launch_cura
+        if ! wait_for_boot; then exit 1; fi
+        docker exec "$CONTAINER" env DISPLAY=:99 HARNESS_RUN_DIR="$CONTAINER_RUN_DIR/boot2" \
+            HARNESS_COORDS="$COORDS" HARNESS_MODE="${MODE}2" \
+            HARNESS_GEOMETRY="$HARNESS_GEOMETRY" HARNESS_WINDOW="$HARNESS_WINDOW" \
+            HARNESS_BOOT1_DOC="$BOOT1_DOC" \
+            CURA_VERSION="$CURA_VERSION" PLUGIN_VERSION="$PLUGIN_VERSION" \
+            python3 /tmp/mpf/harness_runner.py migration2 || RUNNER_RC=$?
+        ;;
     scenario|fail|scenario1|scenario1fail|scenario2|scenario3|scenario4|scenario5|scenario6|scenario7|scenario8|scenario9|scenario10|scenario11|suite|real)
         launch_cura
         if ! wait_for_boot; then exit 1; fi
@@ -629,7 +702,7 @@ if [ "${MODE:-scenario}" != "discover" ] && [ ! -s "$RUN_DIR/index.html" ]; then
     exit 1
 fi
 case "${MODE:-scenario}" in
-    firstinstall)
+    firstinstall|migration)
         echo "ui_test: boot-2 gallery at $RUN_DIR/boot2/index.html"
         if [ ! -s "$RUN_DIR/boot2/index.html" ]; then
             echo "ui_test: EVIDENCE MISSING — no boot-2 gallery at $RUN_DIR/boot2/index.html" >&2

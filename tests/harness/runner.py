@@ -2226,6 +2226,215 @@ def first_install2():
     return _verdict(steps)
 
 
+# ---- The migration leg (modes migration1 / migration2) ----
+#
+# One xdg tree, two boots, seeded PRE-migration (ui_test.sh's
+# premigration seed: the 4.3.0-era printer_configs_v1 blob with two
+# machine records plus the old state file, no v2 files): boot 1 runs
+# the real one-shot — every machine record migrates at once, the
+# backup lands, the blob leaves cura.cfg, the transcript splits into
+# the per-machine shard, and the machine-switch verb re-routes the
+# live model; boot 2 proves the one-shot never re-runs (the document
+# and the backup set are untouched).
+MIGRATION_MACHINES = {
+    "FDM Printer Base Description": "http://127.0.0.1:7125",
+    "Second Machine": "http://127.0.0.1:7126",
+}
+
+# The post-migration cura.cfg check: the blob must be GONE and the
+# migrated marker keys present — read through the driver's own
+# process (the exec verb), never a staged file.
+MIGRATION_CFG_PROBE = """
+from UM.Resources import Resources
+import os
+path = os.path.join(Resources.getConfigStoragePath(), "cura.cfg")
+try:
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    result = {"blob_gone": "printer_configs_v1" not in text,
+              "migrated_marker": "printer_configs_migrated_v1" in text,
+              "connection_marker": "moonraker_connection_migrated_v1" in text}
+except Exception as exc:
+    result = {"error": repr(exc)}
+"""
+
+# The live identity after the machine switch: the binding's identity
+# pair must name the switched-to machine.
+MIGRATION_IDENTITY_PROBE = """
+from UM.Application import Application
+app = Application.getInstance()
+result = {}
+for e in app.getExtensions():
+    if "MoonrakerPrintFollower" in type(e).__name__:
+        binding = getattr(getattr(e, "_runtime", None), "binding", None)
+        if binding is not None:
+            try:
+                result["identity"] = [str(binding._machine_id), str(binding._machine_name)]
+            except Exception as exc:
+                result["identity"] = ["ERR", repr(exc)[:80]]
+        break
+"""
+
+
+def migration1():
+    """Boot 1 of the migration leg: the pre-migration fixture runs the
+    real one-shot, and the machine switch re-routes the live model."""
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "migration1.mp4")
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, video_path])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(boot_step(hello))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: the pre-migration machine is restored",
+                      "welcome absent, window at the pinned geometry",
+                      gate, shot("01-gate")))
+        # The one-shot runs at boot (B1's initializationFinished);
+        # poll the file on disk until the ok record lands.
+        def migrated_document():
+            reply = rpc({"id": 1, "cmd": "read_json_file",
+                         "name": "MoonrakerPrintFollower/settings.json"})
+            if not reply.get("ok"):
+                return None
+            document = reply.get("document")
+            if not isinstance(document, dict):
+                return None
+            record = (document.get("global") or {}).get("migration")
+            if not isinstance(record, dict) or record.get("status") != "ok":
+                return None
+            return document
+        document = wait_for(migrated_document, 120.0)
+        machines = (document or {}).get("machines") or {}
+        record = ((document or {}).get("global") or {}).get("migration") or {}
+        migrated = (isinstance(document, dict)
+                    and document.get("configVersion") == 2
+                    and all(machines.get(name) == url
+                            or (isinstance(machines.get(name), dict)
+                                and machines[name].get("url") == url)
+                            for name, url in MIGRATION_MACHINES.items())
+                    and record.get("status") == "ok"
+                    and record.get("reason") == "migrated"
+                    and record.get("records") == len(MIGRATION_MACHINES)
+                    and record.get("backupWritten") is True
+                    and isinstance(record.get("backupName"), str))
+        steps.append(("02-migrated", "the one-shot migrated every machine record at once",
+                      "configVersion 2, both records with their urls, ok/migrated, records 2, backup written",
+                      migrated, shot("02-migrated")))
+        # The v1 blob left cura.cfg behind the migration.
+        cfg = wait_for(lambda: exec_rpc(MIGRATION_CFG_PROBE), 30.0)
+        blob_gone = (isinstance(cfg, dict)
+                     and cfg.get("blob_gone") is True
+                     and cfg.get("migrated_marker") is True)
+        steps.append(("03-blob-gone", "the v1 blob is gone from cura.cfg",
+                      "no printer_configs_v1 key; the migrated marker is in place",
+                      blob_gone, shot("03-blob-gone")))
+        # The second machine's history landed in its own state shard.
+        shard_reply = rpc({"id": 1, "cmd": "read_json_file",
+                           "name": "MoonrakerPrintFollower/machines/Second+Machine.json"})
+        shard = shard_reply.get("document") if shard_reply.get("ok") else None
+        transcript = (shard or {}).get("consoleTranscript") or []
+        shard_ok = bool(transcript and str((transcript[0] or {}).get("text")) == "// second machine history")
+        steps.append(("04-shard", "the console history split into the second machine's state shard",
+                      "Second Machine's shard carries the history line",
+                      shard_ok, shot("04-shard")))
+        # The machine switch: the live model follows the new machine.
+        switch = rpc({"id": 1, "cmd": "switch_machine", "name": "Second Machine"})
+        identity = wait_for(lambda: exec_rpc(MIGRATION_IDENTITY_PROBE), 30.0)
+        switched = (bool(switch.get("ok")) and isinstance(identity, dict)
+                    and (identity.get("identity") or [None])[1] == "Second Machine")
+        steps.append(("05-switch", "the machine switch re-routes the live model",
+                      "the binding's identity names Second Machine",
+                      switched, shot("05-switch")))
+        if document:
+            with open(BOOT1_DOCUMENT, "w", encoding="utf-8") as handle:
+                json.dump(document, handle, indent=2, sort_keys=True)
+        try:
+            quit_reply = rpc({"id": 1, "cmd": "quit"}, timeout=30)
+        except RuntimeError as exc:
+            quit_reply = {"ok": False, "error": str(exc)}
+        steps.append(("06-clean-exit", "the app quit cleanly after the migration",
+                      "the driver acked the quit", bool(quit_reply.get("ok")), shot("06-clean-exit")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Migration — boot 1: the v1 blob migrates into the v2 files"
+    write_gallery(steps, False, title, video=video_path)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return _verdict(steps)
+
+
+def migration2():
+    """Boot 2 of the migration leg: the second boot leaves the
+    migrated tree alone — the one-shot never re-runs."""
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "migration2.mp4")
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, video_path])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(boot_step(hello))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: the migrated machine is restored",
+                      "welcome absent, window at the pinned geometry",
+                      gate, shot("01-gate")))
+        try:
+            with open(BOOT1_DOCUMENT, encoding="utf-8") as handle:
+                before = json.load(handle)
+        except (OSError, ValueError):
+            before = None
+        reply = rpc({"id": 1, "cmd": "read_json_file",
+                     "name": "MoonrakerPrintFollower/settings.json"})
+        document = reply.get("document") if reply.get("ok") else None
+        untouched = bool(before) and document is not None and document == before
+        if not untouched:
+            print("MIGRATION-DIFF " + json.dumps(
+                _recursive_diff(before, document), sort_keys=True)[:4000])
+        steps.append(("02-untouched", "the second boot leaves the migrated document alone",
+                      "the document is identical to the one boot 1 left",
+                      untouched, shot("02-untouched")))
+        # The backup set: exactly the one backup boot 1 wrote — no
+        # re-run, no new copy.
+        backup_probe = """
+from UM.Resources import Resources
+import os
+base = Resources.getConfigStoragePath()
+result = {"backups": sorted(
+    name for name in os.listdir(base)
+    if name.startswith("cura.cfg."))}
+"""
+        backups = wait_for(lambda: exec_rpc(backup_probe), 30.0)
+        one_backup = isinstance(backups, dict) and len(backups.get("backups") or []) == 1
+        steps.append(("03-one-backup", "no second migration ran",
+                      "exactly one cura.cfg backup exists after the second boot",
+                      one_backup, shot("03-one-backup")))
+        try:
+            quit_reply = rpc({"id": 1, "cmd": "quit"}, timeout=30)
+        except RuntimeError as exc:
+            quit_reply = {"ok": False, "error": str(exc)}
+        steps.append(("04-clean-exit", "the app quit cleanly after the second boot",
+                      "the driver acked the quit", bool(quit_reply.get("ok")), shot("04-clean-exit")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Migration — boot 2: the second boot leaves the migrated tree alone"
+    write_gallery(steps, False, title, video=video_path)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return _verdict(steps)
+
+
 SUITE_STATE = {"sim": {}, "model": {}, "item": {}, "rect": {}, "stash": {}}
 
 # The suite's groups by name — SCENARIO_GROUP accepts either.
@@ -3527,6 +3736,10 @@ def main():
         return first_install1()
     if mode == "firstinstall2":
         return first_install2()
+    if mode == "migration1":
+        return migration1()
+    if mode == "migration2":
+        return migration2()
     if mode == "scenario10":
         return scenario10()
     if mode == "scenario8":
