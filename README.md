@@ -9,7 +9,7 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
 - **Release:** 4.5.0
-- **Target:** Cura 5.11–5.13 / SDK 8.11–8.12
+- **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
 
 ## What changed in 4.5.0
 
@@ -407,11 +407,11 @@ After verifying the integrated plugin with your printers, the separate Moonraker
 
 ## Cura / SDK compatibility
 
-The plugin targets **Cura 5.11 / SDK 8.11** through **Cura 5.13 / SDK 8.12**. The package declares SDK 8.11 as its minimum package SDK, and `plugin.json` records exactly SDK 8.11 and 8.12 — a deliberate product boundary; the 5.11 floor is not an API dependency.
+The plugin targets **Cura 5.7 / SDK 8.7** through **Cura 5.13 / SDK 8.12**. The package declares SDK 8.7 as its minimum package SDK, and `plugin.json` records the SDKs 8.7 through 8.12 — a deliberate product boundary; the 5.7 floor is not an API dependency.
 
-The implementation stays on APIs present across Cura 5.11–5.13: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls, and Cura's native nozzle interface. Optional conveniences are capability-checked where required.
+The implementation stays on APIs present across Cura 5.7–5.13: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls, and Cura's native nozzle interface. Optional conveniences are capability-checked where required.
 
-Cura 4.x / SDK 7.x is not supported, and Cura 5.0–5.10 are no longer advertised.
+Cura 4.x / SDK 7.x is not supported, and neither is Cura 5.6 or older. On Cura 5.11 alone the preview integration is limited by 5.11's SimulationView: the live print does not render as view layers and the layer slider hides after a plugin load (the follower's card, state and pause scheduling still work).
 
 Actual rendering, output-device presentation, webcam streaming and printer interaction should still be smoke-tested on representative Cura releases before publishing a compatibility claim.
 

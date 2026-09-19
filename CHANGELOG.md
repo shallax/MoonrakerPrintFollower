@@ -21,6 +21,10 @@ it, migrated automatically on the first start after the upgrade.
   matching the collapsed readout and the Toolhead section.
 - **Dark mode:** the emergency-stop label's idle text follows the
   theme, readable on the button's dark ground.
+- **The Cura floor.** Cura 5.7 / SDK 8.7 through Cura 5.13 / SDK
+  8.12 is now the supported range — every minor in between verified
+  end to end by the version sweep — with 5.11's preview limitations
+  documented in the README.
 - **Fixes:** the console's notes no longer persist across restarts
   (they are session-transient by design), the status column's live
   values never wrap (the per-second polish-loop warning), an empty

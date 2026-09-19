@@ -40,6 +40,9 @@ WHATS_NEW: Tuple[dict, ...] = (
             "matching the collapsed readout and the Toolhead.",
             "Dark mode: the emergency-stop label is readable on the "
             "button's dark ground.",
+            "Cura 5.7 or newer (SDK 8.7+) is now the floor — every "
+            "version in between verifies end to end, with 5.11's "
+            "preview limitation documented in the README.",
         ),
     },
     {
