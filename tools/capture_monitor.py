@@ -350,7 +350,6 @@ def main():
 
         def grab(name):
             image = settled_window()
-            image = window.grabWindow()
             if image.isNull():
                 raise RuntimeError("grabWindow produced a null image for " + name)
             # Reject blank renders like the other capture scripts: the
