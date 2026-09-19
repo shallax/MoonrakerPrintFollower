@@ -202,36 +202,19 @@ Component {
             nudge.destroy();
         }
 
-        // The mini widget's series: primary sensors (extruders, bed,
-        // chamber heater) by default; when EVERY primary is hidden,
-        // up to two of the remaining visible sensors stand in so the
-        // preview never goes blank while data exists (the
-        // request).
+        // The mini widget's series: the legend's stable mini row list
+        // (the model selects it with the same policy that picks the
+        // mini payload's series — primaries first, topped up to two,
+        // or two visible others when no primary shows). The identity
+        // only changes when the config or the sensor set does, so the
+        // mini legend's delegates never rebuild at the sample cadence;
+        // the live values ride the latest projection instead.
         property var miniChartSeries: {
-            var payload = root.printer != null ? root.printer.temperatureChart : null;
-            if (payload == null) {
+            var legend = root.printer != null ? root.printer.temperatureChartLegend : null;
+            if (legend == null) {
                 return [];
             }
-            var series = payload.series;
-            var primary = [];
-            var others = [];
-            for (var i = 0; i < series.length; ++i) {
-                if (!series[i].visible) {
-                    continue;
-                }
-                if (series[i].primary) {
-                    primary.push(series[i]);
-                } else {
-                    others.push(series[i]);
-                }
-            }
-            if (primary.length === 0) {
-                return others.slice(0, 2);
-            }
-            // Primaries always get priority; when fewer than two are
-            // visible, non-primaries top the preview up to two so it
-            // never shrinks to a single line.
-            return primary.concat(others.slice(0, Math.max(0, 2 - primary.length)));
+            return legend.miniSeries;
         }
         property bool miniChartHasSeries: root.miniChartSeries.length > 0
 
@@ -2625,9 +2608,13 @@ Component {
                         }
                     }
                     // Hidden when the pop-over is closed: the closed
-                    // card's zero-sized canvas must never paint.
-                    visible: root.openPopOver === "chart" && root.printer != null && root.printer.temperatureChart.series.length > 0
-                    chart: root.printer != null ? root.printer.temperatureChart : ({
+                    // card's zero-sized canvas must never paint. The
+                    // full payload is the model's dormant object until
+                    // the pop-over opens, so this gate also reads the
+                    // legend (which never goes dormant) for the
+                    // has-data case.
+                    visible: root.openPopOver === "chart" && root.printer != null && root.printer.temperatureChartLegend.series.length > 0
+                    chart: root.printer != null ? root.printer.temperatureChartFull : ({
                             "series": [],
                             "showTargets": true,
                             "showPower": true
@@ -2636,7 +2623,7 @@ Component {
 
                 UM.Label {
                     Layout.fillWidth: true
-                    visible: root.printer != null && root.printer.temperatureChart.series.length === 0
+                    visible: root.printer != null && root.printer.temperatureChartLegend.series.length === 0
                     text: "No temperature data yet — the chart fills once the printer reports temperatures."
                     color: UM.Theme.getColor("text_inactive")
                     wrapMode: Text.WordWrap
@@ -2694,13 +2681,15 @@ Component {
                             }
                             UM.Label {
                                 text: {
-                                    var payload = root.printer != null ? root.printer.temperatureChart.series : [];
-                                    for (var i = 0; i < payload.length; ++i) {
-                                        if (payload[i].name === modelData.name && payload[i].points.length > 0) {
-                                            return payload[i].points[payload[i].points.length - 1][1].toFixed(1) + "°C";
-                                        }
+                                    // The live value rides the latest
+                                    // projection — one scalar per
+                                    // sensor, never a search through
+                                    // the chart payload.
+                                    var latest = root.printer != null ? root.printer.temperatureChartLatest : null;
+                                    if (latest == null || latest[modelData.name] === undefined) {
+                                        return "—";
                                     }
-                                    return "—";
+                                    return Number(latest[modelData.name]).toFixed(1) + "°C";
                                 }
                                 color: UM.Theme.getColor("text_inactive")
                             }
@@ -2957,9 +2946,14 @@ Component {
                     font: UM.Theme.getFont("medium")
                     color: UM.Theme.getColor("text")
                 }
+                // The rows are the legend's stable identities: a hover
+                // publish updates each row's text by sensor name, so
+                // the delegates are never torn down while the cursor
+                // moves.
                 Repeater {
-                    model: chartPanel.hoverValuesProxy
+                    model: root.printer != null ? root.printer.temperatureChartLegend.series : []
                     RowLayout {
+                        visible: modelData.visible
                         spacing: UM.Theme.getSize("narrow_margin").width
                         Rectangle {
                             width: 8 * screenScaleFactor
@@ -2968,7 +2962,7 @@ Component {
                             color: modelData.color
                         }
                         UM.Label {
-                            text: modelData.label + ": " + modelData.text
+                            text: modelData.label + ": " + (chartPanel.hoverValuesProxy[modelData.name] !== undefined ? chartPanel.hoverValuesProxy[modelData.name] : "—")
                             font: UM.Theme.getFont("default")
                         }
                     }

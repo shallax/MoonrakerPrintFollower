@@ -48,7 +48,7 @@ from plugins.MonitorPermissions import (Observation, R_ALREADY_PAUSED, R_ALREADY
                                         can_start_print, can_z_offset, jog_caption,
                                         section_reason)
 from plugins.MonitorTemperatureHistory import (PALETTE, TemperatureHistory, _segments,
-                                               chart_payload)
+                                               chart_payload, series_metadata)
 from plugins.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
 from plugins.PersistenceMigration import (MigrationOutcome, _clean_preferences, _read_old_chrome,
                                           _record, _remove_old_state_file, _verify_new_files,
@@ -1202,16 +1202,20 @@ class MonitorTemperatureHistoryCoverageTests(unittest.TestCase):
         payload = chart_payload(history, {"colors": {"heater_bed": "#123456"},
                                           "visible": {"heater_bed": False},
                                           "showTargets": False})
-        series = {item["name"]: item for item in payload["series"]}
-        self.assertEqual(series["heater_bed"]["color"], "#123456")
-        self.assertFalse(series["heater_bed"]["visible"])
-        self.assertTrue(series["heater_bed"]["primary"])
-        self.assertFalse(series["temperature_sensor chamber"]["primary"])
-        self.assertTrue(series["temperature_sensor chamber"]["color"].startswith("#"))
+        # The hidden series stays out of the data payload — its
+        # identity and colour ride the metadata the legend reads.
+        self.assertEqual([item["name"] for item in payload["series"]], ["temperature_sensor chamber"])
+        self.assertFalse(payload["series"][0]["primary"])
+        self.assertTrue(payload["series"][0]["color"].startswith("#"))
         self.assertFalse(payload["showTargets"])
         self.assertTrue(payload["showPower"])
         self.assertEqual(payload["palette"], list(PALETTE))
         self.assertTrue(payload["filling"])
+        metadata = {item["name"]: item for item in series_metadata(history, {
+            "colors": {"heater_bed": "#123456"}, "visible": {"heater_bed": False}})}
+        self.assertEqual(metadata["heater_bed"]["color"], "#123456")
+        self.assertFalse(metadata["heater_bed"]["visible"])
+        self.assertTrue(metadata["heater_bed"]["primary"])
         self.assertEqual(chart_payload(history, None)["series"][0]["name"], "heater_bed")
 
 

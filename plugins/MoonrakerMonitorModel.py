@@ -64,7 +64,16 @@ from dataclasses import replace
 
 from .PrinterConfig import normalise_temperature_chart
 from .StateStore import StateStore
-from .MonitorTemperatureHistory import TemperatureHistory, chart_payload
+from .MonitorTemperatureHistory import (
+    DORMANT_CHART,
+    PALETTE,
+    TemperatureHistory,
+    chart_payload,
+    latest_values,
+    mini_chart_payload,
+    mini_names,
+    series_metadata,
+)
 import time
 from .MonitorTuning import MonitorTuning
 from .ToolheadController import ToolheadController
@@ -250,7 +259,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     monitorChanged = pyqtSignal()
     previewBlockChanged = pyqtSignal(dict)
     webcamsChanged = pyqtSignal()
-    temperatureChartChanged = pyqtSignal()
+    temperatureChartMiniChanged = pyqtSignal()
+    temperatureChartFullChanged = pyqtSignal()
+    temperatureChartLatestChanged = pyqtSignal()
     temperatureChartLegendChanged = pyqtSignal()
     consoleChanged = pyqtSignal()
     cameraTransformChanged = pyqtSignal()
@@ -301,7 +312,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                             "migrationBannerVisible", "migrationBannerText", "migrationBackupAvailable",
                             "migrationDiagnosticsVisible", "migrationDiagnosticsText")),
         ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
-        ("temperatureChartChanged", ("temperatureChart",)),
+        ("temperatureChartMiniChanged", ("temperatureChartMini",)),
+        ("temperatureChartFullChanged", ("temperatureChartFull",)),
+        ("temperatureChartLatestChanged", ("temperatureChartLatest",)),
         ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
         ("cameraTransformChanged", ("cameraName", "cameraRotation", "cameraFlipHorizontal", "cameraFlipVertical")),
         ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
@@ -451,10 +464,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         else:
             self._chart_config = {}
         self._history = TemperatureHistory()
-        self._chart_payload = None  # rebuilt only when the history or config changes
-        self._chart_payload_revision = -1
+        # Each chart surface has its own cache, invalidated only by what
+        # it actually reads: the mini and latest caches by the history
+        # revision and config, the full cache additionally by the
+        # pop-over's open state (closed serves the shared dormant
+        # object — same identity every feed, so no signal and no
+        # QVariant re-conversion while no full chart exists).
+        self._chart_mini = None
+        self._chart_mini_key = None
+        self._chart_full = None
+        self._chart_full_key = None
+        self._chart_latest = None
+        self._chart_latest_revision = -1
         self._chart_open = False  # the pop-over's hydration gate (K)
-        self._chart_config_key = None
         self._legend_payload = None
         self._data = MonitorData(client, self)
         # The hydrated lock reaches the policy record (the phase-6
@@ -1045,7 +1067,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             sectionLayout=self._section_layout,
             sectionHiddenMap={section: True for entry in self._section_layout.values()
                               for section in entry["hidden"]},
-            temperatureChart=self._chart_value(),
+            temperatureChartMini=self._chart_mini_value(),
+            temperatureChartFull=self._chart_full_value(),
+            temperatureChartLatest=self._chart_latest_value(),
             temperatureChartLegend=self._legend_value(),
             showProbePoints=self._show_probe_points,
             britishSpelling=_british_spelling(),
@@ -1203,7 +1227,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     mcuItems = value_property(QVariant, "mcuItems", systemChanged, [])
     webcamNames = value_property(QVariant, "webcamNames", webcamsChanged, [])
     activeWebcamIndex = value_property(int, "activeWebcamIndex", webcamsChanged, -1)
-    temperatureChart = value_property(QVariant, "temperatureChart", temperatureChartChanged, {})
+    temperatureChartMini = value_property(QVariant, "temperatureChartMini", temperatureChartMiniChanged, {})
+    temperatureChartFull = value_property(QVariant, "temperatureChartFull", temperatureChartFullChanged, {})
+    temperatureChartLatest = value_property(QVariant, "temperatureChartLatest", temperatureChartLatestChanged, {})
     temperatureChartLegend = value_property(QVariant, "temperatureChartLegend", temperatureChartLegendChanged, {})
     endstopItems = value_property(QVariant, "endstopItems", endstopsChanged, [])
     endstopSummary = value_property(str, "endstopSummary", endstopsChanged, "")
@@ -1926,7 +1952,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # A missing entry means the palette default, so compare against
         # the colour the series actually renders with right now.
         if any(series["name"] == str(name) and series["color"] == color
-               for series in self._chart_value().get("series", ())):
+               for series in series_metadata(self._history, self._chart_config)):
             return
         config = self._prune_chart_config(self._chart_config)
         config = deepcopy(config)
@@ -1951,38 +1977,65 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._apply_chart_config()
         self._publish()
 
-    def _chart_value(self):
-        """The sample payload, rebuilt only when the history's revision
-        or the persisted config actually changed. The pop-over's state
-        rides the cache key: CLOSED serves the mini preview payload
-        (only the mini's series carry data — the 2026-09-19 review's
-        K), OPEN hydrates the full payload."""
-        key = json.dumps(self._chart_config, sort_keys=True) + ("|open" if self._chart_open else "")
-        if (self._chart_payload is None or self._chart_payload_revision != self._history.revision
-                or key != self._chart_config_key):
-            self._chart_payload = chart_payload(self._history, self._chart_config,
-                                                mini=not self._chart_open)
-            self._chart_payload_revision = self._history.revision
-            self._chart_config_key = key
-        return self._chart_payload
+    def _chart_config_key(self):
+        return json.dumps(self._chart_config, sort_keys=True)
+
+    def _chart_mini_value(self):
+        """The compact preview (temperatureChartMini): a bounded
+        payload rebuilt per history revision — its cost stops growing
+        once the window outgrows the mini render budget."""
+        key = (self._history.revision, self._chart_config_key())
+        if self._chart_mini is None or self._chart_mini_key != key:
+            self._chart_mini = mini_chart_payload(self._history, self._chart_config)
+            self._chart_mini_key = key
+        return self._chart_mini
+
+    def _chart_full_value(self):
+        """The pop-over payload (temperatureChartFull): DORMANT while
+        the pop-over is closed — the same empty object every publish,
+        so the property never re-converts and the full-chart signal
+        never fires on a raw history sample. Opening hydrates it;
+        closing returns the path to dormancy on the very next publish."""
+        if not self._chart_open:
+            return DORMANT_CHART
+        key = (self._history.revision, self._chart_config_key())
+        if self._chart_full is None or self._chart_full_key != key:
+            self._chart_full = chart_payload(self._history, self._chart_config)
+            self._chart_full_key = key
+        return self._chart_full
+
+    def _chart_latest_value(self):
+        """One scalar per series for the legends' live-value labels —
+        never a full payload search."""
+        if self._chart_latest is None or self._chart_latest_revision != self._history.revision:
+            self._chart_latest = latest_values(self._history)
+            self._chart_latest_revision = self._history.revision
+        return self._chart_latest
 
     def _legend_value(self):
-        """Legend metadata (identity, labels, colours, visibility): its
-        own property so legend delegates only rebuild when something
-        actually changed, never at the 1 Hz sample cadence."""
+        """Legend metadata (identity, labels, colours, visibility, and
+        the mini selection's row list): its own property so legend
+        delegates only rebuild when the config or the sensor set
+        actually changed, never at the sample cadence."""
         if self._legend_payload is None:
             self._legend_payload = {}
         key = json.dumps(self._chart_config, sort_keys=True) + "|" + "|".join(self._history.names())
         if self._legend_payload.get("_key") != key:
-            chart = self._chart_value()
+            metadata = series_metadata(self._history, self._chart_config)
+            selected = set(mini_names([series["name"] for series in metadata],
+                                      self._chart_config.get("visible")
+                                      if isinstance(self._chart_config.get("visible"), dict) else {}))
             self._legend_payload = {
                 "_key": key,
                 "series": [{"name": series["name"], "label": series["label"],
                             "color": series["color"], "visible": series["visible"],
-                            "primary": series["primary"]} for series in chart["series"]],
-                "showTargets": chart["showTargets"],
-                "showPower": chart["showPower"],
-                "palette": chart["palette"],
+                            "primary": series["primary"]} for series in metadata],
+                "miniSeries": [{"name": series["name"], "label": series["label"],
+                                "color": series["color"]}
+                               for series in metadata if series["name"] in selected],
+                "showTargets": bool(self._chart_config.get("showTargets", True)),
+                "showPower": bool(self._chart_config.get("showPower", True)),
+                "palette": list(PALETTE),
             }
         return self._legend_payload
 
@@ -1990,12 +2043,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def setChartOpen(self, opened):
         # The pop-over's hydration gate (the 2026-09-19 review's K):
         # the full chart payload materialises only while the pop-over
-        # is open; the preview rides the mini payload otherwise.
+        # is open; closed, it is the shared dormant object.
         opened = bool(opened)
         if opened == self._chart_open:
             return
         self._chart_open = opened
-        self._chart_payload = None  # the key change rebuilds on publish
+        self._chart_full = None  # hydration or dormancy lands on the next publish
         self._publish()
 
     def _apply_chart_config(self):

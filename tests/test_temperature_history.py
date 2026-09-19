@@ -6,13 +6,19 @@ import unittest
 
 from plugins.MonitorFormatting import chart_temperature_objects
 from plugins.MonitorTemperatureHistory import (
+    DORMANT_CHART,
     FILLING_SECONDS,
     GAP_RESET_SECONDS,
     MAX_SAMPLES,
+    MINI_RENDER_BUDGET,
     WINDOW_SECONDS,
     TemperatureHistory,
-    _series_bounds,
+    _mini_points,
     chart_payload,
+    latest_values,
+    mini_chart_payload,
+    mini_names,
+    series_metadata,
 )
 
 
@@ -324,7 +330,10 @@ class ChartBoundsTests(unittest.TestCase):
         self.assertNotIn("targetMin", series["temperature_sensor chamber"]["bounds"])
 
     def test_an_empty_series_reports_no_domain(self):
-        self.assertEqual(_series_bounds([], []), {})
+        history = TemperatureHistory()
+        points, bounds = history.points_and_bounds("missing")
+        self.assertEqual(points, [])
+        self.assertEqual(bounds, {})
 
 
 class ChartPayloadTests(unittest.TestCase):
@@ -363,11 +372,175 @@ class ChartPayloadTests(unittest.TestCase):
             "showTargets": False,
             "showPower": False,
         })
-        by_name = {series["name"]: series for series in payload["series"]}
-        self.assertFalse(by_name["extruder"]["visible"])
-        self.assertEqual(by_name["heater_bed"]["color"], "#123456")
+        # The hidden series stays OUT of the data payload; its metadata
+        # (and its re-enable path) lives in the legend's source.
+        self.assertEqual([series["name"] for series in payload["series"]], ["heater_bed"])
+        self.assertEqual(payload["series"][0]["color"], "#123456")
         self.assertFalse(payload["showTargets"])
         self.assertFalse(payload["showPower"])
+        by_name = {series["name"]: series for series in series_metadata(history, {
+            "visible": {"extruder": False},
+            "colors": {"heater_bed": "#123456"},
+            "showTargets": False,
+            "showPower": False,
+        })}
+        self.assertFalse(by_name["extruder"]["visible"])
+        self.assertEqual(by_name["heater_bed"]["color"], "#123456")
+
+    def test_a_hidden_series_carries_no_data_in_the_full_payload(self):
+        history = TemperatureHistory()
+        history.observe({"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5},
+                         "heater_bed": {"temperature": 60.0}}, 1000.0)
+        payload = chart_payload(history, {"visible": {"heater_bed": False}})
+        self.assertEqual([series["name"] for series in payload["series"]], ["extruder"])
+
+    def test_toggled_off_tracks_are_not_built(self):
+        history = TemperatureHistory()
+        for tick in range(10):
+            history.observe({"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}},
+                            1000.0 + tick * 2.5)
+        with_targets = chart_payload(history, {"showTargets": True, "showPower": True})
+        self.assertTrue(with_targets["series"][0]["targets"])
+        self.assertTrue(with_targets["series"][0]["powers"])
+        no_targets = chart_payload(history, {"showTargets": False, "showPower": True})
+        self.assertEqual(no_targets["series"][0]["targets"], [])
+        self.assertTrue(no_targets["series"][0]["powers"])
+        no_power = chart_payload(history, {"showTargets": True, "showPower": False})
+        self.assertEqual(no_power["series"][0]["powers"], [])
+        self.assertTrue(no_power["series"][0]["targets"])
+
+    def test_latest_values_projects_one_scalar_per_series(self):
+        history = TemperatureHistory()
+        history.observe({"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}}, 1000.0)
+        history.observe({"extruder": {"temperature": 203.5}, "heater_bed": {"temperature": 61.0}}, 1002.5)
+        self.assertEqual(latest_values(history), {"extruder": 203.5, "heater_bed": 61.0})
+
+    def test_the_dormant_chart_is_empty_and_stable(self):
+        self.assertEqual(DORMANT_CHART["series"], [])
+        self.assertIsInstance(DORMANT_CHART["wallOrigin"], type(None))
+
+
+class MiniReductionTests(unittest.TestCase):
+    """The sparkline's bounded render reduction: a single pass over the
+    raw window that keeps every extreme, in order, within the budget —
+    while the raw history stays untouched at full resolution."""
+
+    def mature(self, ticks=MAX_SAMPLES, with_spike=True):
+        history = TemperatureHistory(window_seconds=10 ** 9)
+        for tick in range(ticks):
+            value = 60.0 + (tick % 200) * 0.5
+            if with_spike and tick == ticks - 100:
+                value = 95.0  # a one-sample spike the reduction must keep
+            history.observe({"heater_bed": {"temperature": value}}, 1000.0 + tick * 2.5)
+        return history
+
+    def test_the_reduction_stays_within_the_render_budget(self):
+        history = self.mature()
+        raw = history.series("heater_bed")
+        self.assertEqual(len(raw), MAX_SAMPLES)
+        points, _ = _mini_points(raw)
+        self.assertLessEqual(len(points), MINI_RENDER_BUDGET)
+        self.assertGreater(len(points), MINI_RENDER_BUDGET / 2)
+
+    def test_the_reduction_keeps_the_first_and_last_samples(self):
+        history = self.mature()
+        raw = history.series("heater_bed")
+        points, _ = _mini_points(raw)
+        self.assertEqual(points[0], [raw[0].elapsed, raw[0].temperature])
+        self.assertEqual(points[-1], [raw[-1].elapsed, raw[-1].temperature])
+
+    def test_the_reduction_preserves_elapsed_order(self):
+        history = self.mature()
+        points, _ = _mini_points(history.series("heater_bed"))
+        for earlier, later in zip(points[:-1], points[1:], strict=True):
+            self.assertLess(earlier[0], later[0])
+
+    def test_the_reduction_keeps_the_minima_maxima_and_the_spike(self):
+        history = self.mature()
+        raw = history.series("heater_bed")
+        temperatures = [sample.temperature for sample in raw]
+        points, _ = _mini_points(raw)
+        kept = [point[1] for point in points]
+        self.assertEqual(min(kept), min(temperatures))
+        self.assertEqual(max(kept), max(temperatures))
+        self.assertIn(95.0, kept, "the one-sample spike was erased")
+
+    def test_the_reduction_bounds_match_the_raw_domain(self):
+        history = self.mature()
+        raw = history.series("heater_bed")
+        _, bounds = _mini_points(raw)
+        temperatures = [sample.temperature for sample in raw]
+        self.assertEqual(bounds["tempMin"], min(temperatures))
+        self.assertEqual(bounds["tempMax"], max(temperatures))
+        self.assertEqual(bounds["elapsedMin"], raw[0].elapsed)
+        self.assertEqual(bounds["elapsedMax"], raw[-1].elapsed)
+
+    def test_a_short_window_passes_through_unchanged(self):
+        history = self.mature(ticks=40, with_spike=False)
+        raw = history.series("heater_bed")
+        points, _ = _mini_points(raw)
+        self.assertEqual(points, [[sample.elapsed, sample.temperature] for sample in raw])
+
+    def test_an_empty_series_reduces_to_nothing(self):
+        self.assertEqual(_mini_points(()), ([], {}))
+
+    def test_the_raw_history_keeps_full_resolution_after_the_reduction(self):
+        history = self.mature()
+        mini_chart_payload(history, {})
+        raw = history.series("heater_bed")
+        self.assertEqual(len(raw), MAX_SAMPLES)
+
+
+class MiniPayloadTests(unittest.TestCase):
+    """The compact payload carries ONLY what the sparkline draws —
+    bounded points for the selected series, no targets, no power —
+    and never data for a hidden sensor."""
+
+    def history(self):
+        history = TemperatureHistory(window_seconds=10 ** 9)
+        for tick in range(500):
+            history.observe({
+                "extruder": {"temperature": 200.0 + tick * 0.05, "target": 210.0, "power": 0.5},
+                "heater_bed": {"temperature": 60.0, "target": 60.0, "power": 0.2},
+                "temperature_sensor chamber": {"temperature": 25.0},
+            }, 1000.0 + tick * 2.5)
+        return history
+
+    def test_the_mini_payload_carries_no_target_or_power_data(self):
+        payload = mini_chart_payload(self.history(), {})
+        for series in payload["series"]:
+            self.assertNotIn("targets", series)
+            self.assertNotIn("powers", series)
+        self.assertFalse(payload["showTargets"])
+        self.assertFalse(payload["showPower"])
+
+    def test_the_mini_payload_selection_matches_the_shared_policy(self):
+        history = self.history()
+        payload = mini_chart_payload(history, {})
+        self.assertEqual([series["name"] for series in payload["series"]],
+                         mini_names(history.names(), {}))
+        # Both primaries ride along — the policy is never less than two
+        # while two primaries exist.
+        self.assertEqual(len(payload["series"]), 2)
+
+    def test_the_mini_payload_keeps_only_bounded_points(self):
+        payload = mini_chart_payload(self.history(), {})
+        for series in payload["series"]:
+            self.assertLessEqual(len(series["points"]), MINI_RENDER_BUDGET)
+
+    def test_the_mini_payload_drops_hidden_sensors_entirely(self):
+        payload = mini_chart_payload(self.history(), {"visible": {"extruder": False}})
+        self.assertNotIn("extruder", [series["name"] for series in payload["series"]])
+        # The bed is still a visible primary: the preview survives.
+        self.assertIn("heater_bed", [series["name"] for series in payload["series"]])
+
+    def test_the_mini_payload_metadata_stays_complete_for_its_series(self):
+        payload = mini_chart_payload(self.history(), {})
+        bed = next(series for series in payload["series"] if series["name"] == "heater_bed")
+        self.assertTrue(bed["primary"])
+        self.assertTrue(bed["visible"])
+        self.assertTrue(bed["color"].startswith("#"))
+        self.assertGreaterEqual(bed["label"], "")
 
 
 if __name__ == "__main__":

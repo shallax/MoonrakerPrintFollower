@@ -717,6 +717,24 @@ EXCLUSIONS = {
         "date": "2026-09-19",
         "recheck": "the chip gains an interactive surface",
     },
+    "temperatureDataCanvas": {
+        "reason": "the temperature chart's data canvas: display-only, painted from the model's payloads; no scenario verb addresses a canvas",
+        "evidence": "test_qml_real_engine's ChartSurfaceTests (strategy, paint-job snapshot, hover); the capture census renders its pixels",
+        "date": "2026-09-19",
+        "recheck": "the canvas gains an interactive surface",
+    },
+    "temperatureHoverCursor": {
+        "reason": "the chart hover cursor line: display-only scene-graph geometry following the snapped hover second",
+        "evidence": "test_qml_real_engine's ChartSurfaceTests hover-scene-graph contract",
+        "date": "2026-09-19",
+        "recheck": "the cursor gains an interactive surface",
+    },
+    "temperatureHoverMarkers": {
+        "reason": "the chart hover markers' repeater: display-only scene-graph dots at each series' nearest sample",
+        "evidence": "test_qml_real_engine's ChartSurfaceTests hover-scene-graph contract",
+        "date": "2026-09-19",
+        "recheck": "the markers gain an interactive surface",
+    },
     "moonrakerEmergencyButton": {
         "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
         "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",

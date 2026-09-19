@@ -302,6 +302,28 @@ def main():
         else:
             print("e-stop label contrast: the emergency button was not visible — skipped")
 
+        def settle_chart_canvases(timeout_ms=3000):
+            """The chart's data canvas paints on the RENDER thread:
+            after any state flip that requests a paint, wait until
+            every visible chart canvas has landed its paint (the
+            painted-size properties update on completion) — a grab
+            before that catches a blank or stale texture. A grace
+            pass afterwards drains any queued repaint, so the
+            determinism leg's two runs both catch the final frame."""
+            deadline = time.monotonic() + timeout_ms / 1000
+            while time.monotonic() < deadline:
+                canvases = [child for child in item.findChildren(QQuickItem)
+                            if child.objectName() == "temperatureDataCanvas" and child.isVisible()]
+                if canvases and all(canvas.property("paintedHeight") or 0 > 0
+                                    for canvas in canvases):
+                    for _ in range(20):
+                        app.processEvents()
+                        time.sleep(0.01)
+                    return
+                app.processEvents()
+                time.sleep(0.01)
+            print("settle_chart_canvases: timed out waiting for the chart paint")
+
         def grab(name):
             image = window.grabWindow()
             if image.isNull():
@@ -401,6 +423,7 @@ def main():
             raise RuntimeError("openPopOver setProperty returned False")
         for _ in range(3):
             app.processEvents()
+        settle_chart_canvases()
         grab("07-chart-popover.png")
         opened = window.grabWindow()
         if opened == collapsed:
@@ -420,6 +443,7 @@ def main():
         if not chart_items:
             raise RuntimeError("visible compact TemperatureChart not found in the scene")
         chart = chart_items[0]
+        settle_chart_canvases()
         top_left = chart.mapToScene(QPointF(0, 0))
         scene = window.grabWindow()
         colours = {scene.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name()

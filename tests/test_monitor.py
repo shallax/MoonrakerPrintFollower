@@ -826,13 +826,22 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("mpf_reload", MONITOR_QML)  # Refresh camera restarts the stream
 
     def test_temperature_chart_repaints_and_popovers_are_overlays(self):
-        # A QML Canvas paints exactly once unless asked: the chart must
-        # requestPaint on payload, geometry, visibility and hover
-        # changes (it used to render one frame and freeze).
+        # A QML Canvas paints exactly once unless asked: the data
+        # canvas must requestPaint on payload, geometry and visibility
+        # changes (it used to render one frame and freeze) — and it
+        # paints OFF the main thread (Image target + Threaded
+        # strategy). The hover surface is scene-graph geometry: the
+        # overlay Canvas is gone, and NOTHING in the hover path may
+        # request a paint.
         self.assertIn("onChartChanged", TEMP_CHART_QML)
         self.assertIn("dataCanvas.requestPaint()", TEMP_CHART_QML)
-        self.assertIn("overlay.requestPaint()", TEMP_CHART_QML)
         self.assertIn("onVisibleChanged", TEMP_CHART_QML)
+        self.assertIn("renderTarget: Canvas.Image", TEMP_CHART_QML)
+        self.assertIn("renderStrategy: Canvas.Threaded", TEMP_CHART_QML)
+        self.assertNotIn("overlay.requestPaint()", TEMP_CHART_QML)
+        self.assertNotIn("id: overlay", TEMP_CHART_QML)
+        self.assertIn("id: hoverCursorLine", TEMP_CHART_QML)
+        self.assertIn("id: hoverMarkers", TEMP_CHART_QML)
         # One open pop-over at a time; the shells are overlay siblings
         # of the pane RowLayout, never layout children (anchored layout
         # children reflow every pane and log undefined-behavior
@@ -877,8 +886,9 @@ class MonitorModelContractTests(unittest.TestCase):
         # The top gridline's temperature label must be clamped by the
         # FONT ASCENT into the canvas (it used to baseline at y = -3,
         # always off-screen, and the fixed 10 px clamp shaved digit
-        # tops on larger desktop fonts).
-        self.assertIn("Math.ceil(root._fontPixels() * 0.8) + 3", TEMP_CHART_QML)
+        # tops on larger desktop fonts). The clamp now reads the paint
+        # job's snapshot (the threaded paint must not reach the theme).
+        self.assertIn("Math.ceil(job.fontPixels * 0.8) + 3", TEMP_CHART_QML)
         # Units are explicit (°C — Cura has no temperature-unit
         # preference, so the plugin follows Cura) on the axis, the
         # tooltip rows and both legend live values; the X-axis tick
@@ -920,10 +930,13 @@ class MonitorModelContractTests(unittest.TestCase):
         # A refused console send keeps the typed draft.
         self.assertIn("if (root.printer.sendConsoleCommand(consoleInput.text)) {", MONITOR_QML)
         # When every primary sensor is hidden, up to two visible
-        # non-primary sensors stand in for the mini chart.
-        self.assertIn("others.slice(0, 2)", MONITOR_QML)
-        self.assertIn("2 - primary.length", MONITOR_QML)
-        self.assertIn('"series": root.miniSeries', TEMP_HISTORY_SECTION_QML)
+        # non-primary sensors stand in for the mini chart. The policy
+        # lives ONCE in the model (mini_names), and the legend carries
+        # the selection as a stable row list — the section's chart
+        # reads the bounded mini payload directly.
+        self.assertIn("mini_names(", MONITOR_MODEL)
+        self.assertIn("legend.miniSeries", MONITOR_QML)
+        self.assertIn("temperatureChartMini", TEMP_HISTORY_SECTION_QML)
         # The Layer row discloses which source produced the value, and
         # the terminal picks an installed monospace face at runtime
         # (the generic and comma lists do not resolve everywhere).
@@ -944,11 +957,11 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("points[j][0] * mapScaleX + mapOffsetX", TEMP_CHART_QML)
         self.assertIn("targetSeg[u][1] * mapScaleY + mapOffsetY", TEMP_CHART_QML)
         self.assertIn("powerSeg[q][1] * plotBottom", TEMP_CHART_QML)
-        # The hover search runs once per mouse move, not again in every
-        # overlay repaint: the markers it published are what the overlay
-        # draws. One call site plus the definition.
+        # The hover search runs once per mouse move, not again in any
+        # repaint: the markers it published are what the scene-graph
+        # Repeater draws directly. One call site plus the definition.
         self.assertEqual(TEMP_CHART_QML.count("_nearestIndex("), 2)
-        self.assertIn("var marks = root._hoverMarks;", TEMP_CHART_QML)
+        self.assertIn("model: root._hoverMarks", TEMP_CHART_QML)
         self.assertIn("_hoverMarks = marks;", TEMP_CHART_QML)
         # The render domain comes off the payload, with the scan kept for
         # a payload that predates it.
@@ -3006,14 +3019,24 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(model.consoleHeight, 412)
 
     def chart_of(self, model):
-        chart = model.temperatureChart
+        chart = model.temperatureChartFull
         return chart if isinstance(chart, dict) else chart.value()
 
+    def mini_of(self, model):
+        chart = model.temperatureChartMini
+        return chart if isinstance(chart, dict) else chart.value()
+
+    def legend_of(self, model):
+        legend = model.temperatureChartLegend
+        return legend if isinstance(legend, dict) else legend.value()
+
     def test_the_full_chart_payload_hydrates_only_while_the_popover_is_open(self):
-        # K (the 2026-09-19 review): closed serves the mini preview —
-        # every series' metadata rides along for the legend, but only
-        # the mini's series carry points/segments; open hydrates the
-        # full payload; closing returns to the mini shape.
+        # K (the 2026-09-19 review): closed serves the dormant empty
+        # object — the full payload, its QVariant conversion and its
+        # signal all stay asleep per feed; open hydrates the full
+        # payload; closing returns it to dormancy on the very next
+        # publish. The mini preview is a separate, bounded payload
+        # that keeps serving while the pop-over is closed.
         model = self.monitor()
         model._data._update(auxiliary={
             "extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5},
@@ -3022,17 +3045,68 @@ class MonitorQtTests(unittest.TestCase):
         })
         model._data.auxiliaryChanged.emit()
         self.qt.events(1)
-        chart = self.chart_of(model)
-        self.assertEqual(len(chart["series"]), 3, "the legend keeps every series")
-        self.assertLessEqual(len([s for s in chart["series"] if s.get("points")]), 2,
-                             "closed: only the mini's series carry data")
+        self.assertEqual(self.chart_of(model)["series"], [], "closed: the full payload is dormant")
+        mini = self.mini_of(model)
+        self.assertLessEqual(len(mini["series"]), 2, "the mini payload carries only its own series")
+        self.assertEqual(len(self.legend_of(model)["series"]), 3, "the legend keeps every series")
         model.setChartOpen(True)
         full = self.chart_of(model)
         self.assertEqual([s["name"] for s in full["series"] if s.get("points")],
                          ["extruder", "heater_bed", "temperature_sensor chamber"])
         model.setChartOpen(False)
-        closed_again = self.chart_of(model)
-        self.assertLessEqual(len([s for s in closed_again["series"] if s.get("points")]), 2)
+        self.assertEqual(self.chart_of(model)["series"], [], "closing returns the full payload to dormancy")
+
+    def test_the_full_payload_stays_dormant_across_feeds_while_closed(self):
+        # The same dormant object across auxiliary feeds: the STORED
+        # value's identity is stable, so the full-chart property never
+        # re-converts and its signal never fires while the pop-over is
+        # closed. (The property read itself crosses QVariant, so the
+        # identity is asserted on the stored value, not the read.)
+        model = self.monitor()
+        model._data._update(auxiliary={"extruder": {"temperature": 200.0, "target": 210.0}})
+        model._data.auxiliaryChanged.emit()
+        self.qt.events(1)
+        fired = []
+        model.temperatureChartFullChanged.connect(lambda: fired.append(1))
+        self.assertEqual(self.chart_of(model)["series"], [])
+        dormant = model._values["temperatureChartFull"]
+        for tick in range(5):
+            model._data._update(auxiliary={"extruder": {"temperature": 200.0 + tick}})
+            model._data.auxiliaryChanged.emit()
+            self.qt.events(1)
+        self.assertIs(model._values["temperatureChartFull"], dormant,
+                      "a feed must not rebuild the closed full payload")
+        self.assertEqual(fired, [], "the full-chart signal fired while closed")
+
+    def test_toggles_hydrate_the_open_chart_immediately(self):
+        # Targets/power toggled while the pop-over is ALREADY open
+        # must hydrate on the toggle's own publish — never wait for
+        # the next auxiliary sample. The history is seeded directly:
+        # the harness's data lane drops target/power from injected
+        # auxiliary (probe-proven, old code included), so the lane is
+        # bypassed and the payload plumbing under test is the toggle's.
+        model = self.monitor()
+        # Two samples: a one-sample track never forms a drawable
+        # segment (the lone-setpoint rule), and the toggle contract
+        # needs a real one.
+        model._history.observe({"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}},
+                               1000.0, 1000000.0)
+        model._history.observe({"extruder": {"temperature": 200.5, "target": 210.0, "power": 0.5}},
+                               1002.5, 1000002.5)
+        model._schedule_publish()
+        self.qt.events(1)
+        model.setShowTemperatureTargets(True)
+        model.setShowTemperaturePower(True)
+        model.setChartOpen(True)
+        self.assertTrue(self.chart_of(model)["series"][0]["targets"])
+        model.setShowTemperatureTargets(False)
+        self.assertEqual(self.chart_of(model)["series"][0]["targets"], [])
+        self.assertTrue(self.chart_of(model)["series"][0]["powers"])
+        model.setShowTemperaturePower(False)
+        self.assertEqual(self.chart_of(model)["series"][0]["powers"], [])
+        model.setShowTemperatureTargets(True)
+        self.assertTrue(self.chart_of(model)["series"][0]["targets"],
+                        "re-enabling hydrates on the same toggle")
 
     def test_temperature_chart_config_persists_across_model_instances(self):
         model = self.monitor()
@@ -3041,7 +3115,7 @@ class MonitorQtTests(unittest.TestCase):
         model._data._update(auxiliary=auxiliary)
         model._data.auxiliaryChanged.emit()  # the real feed path: _aux updates then emits
         # Defaults: everything visible, palette colours, toggles on.
-        default = self.chart_of(model)
+        default = self.legend_of(model)
         self.assertTrue(default["showTargets"])
         self.assertTrue(default["showPower"])
         model.setTemperatureSensorVisible("extruder", False)
@@ -3061,11 +3135,11 @@ class MonitorQtTests(unittest.TestCase):
         second._data._update(auxiliary=auxiliary)
         second._data.auxiliaryChanged.emit()
         self.qt.events()  # the publish coalescer flushes on the next turn
-        chart = self.chart_of(second)
-        self.assertFalse(chart["showTargets"])
-        self.assertFalse(chart["showPower"])
-        extruder = next(item for item in chart["series"] if item["name"] == "extruder")
-        bed = next(item for item in chart["series"] if item["name"] == "heater_bed")
+        legend = self.legend_of(second)
+        self.assertFalse(legend["showTargets"])
+        self.assertFalse(legend["showPower"])
+        extruder = next(item for item in legend["series"] if item["name"] == "extruder")
+        bed = next(item for item in legend["series"] if item["name"] == "heater_bed")
         self.assertFalse(extruder["visible"])
         self.assertEqual(bed["color"], "#123456")
 
@@ -3075,28 +3149,31 @@ class MonitorQtTests(unittest.TestCase):
         model._data._update(auxiliary=auxiliary)
         model._data.auxiliaryChanged.emit()
         self.qt.events()  # the publish coalescer flushes on the next turn
-        self.assertEqual(len(self.chart_of(model)["series"][0]["points"]), 1)
+        self.assertEqual(len(self.mini_of(model)["series"][0]["points"]), 1)
         # Core-only publishes (no aux reply) must not append samples:
         # the old per-publish feed duplicated samples and halved the
         # effective window.
         for _ in range(5):
             model._data._update(core={"print_stats": {"state": "printing"}})
-        self.assertEqual(len(self.chart_of(model)["series"][0]["points"]), 1)
+        self.assertEqual(len(self.mini_of(model)["series"][0]["points"]), 1)
         # A second aux reply appends exactly one more sample.
         model._data._update(auxiliary=auxiliary)
         model._data.auxiliaryChanged.emit()
         self.qt.events()  # the publish coalescer flushes on the next turn
-        self.assertEqual(len(self.chart_of(model)["series"][0]["points"]), 2)
+        self.assertEqual(len(self.mini_of(model)["series"][0]["points"]), 2)
 
     def test_history_resets_when_the_session_is_invalidated(self):
         model = self.monitor()
         model._data._update(auxiliary={"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
         model._data.auxiliaryChanged.emit()
         self.qt.events()  # the publish coalescer flushes on the next turn
-        self.assertEqual(len(self.chart_of(model)["series"]), 1)
+        self.assertEqual(len(self.mini_of(model)["series"]), 1)
         model._data.set_owner_active(False)  # emits invalidated
-        chart = self.chart_of(model)
-        self.assertEqual(chart["series"], [])
+        self.assertEqual(self.mini_of(model)["series"], [])
+        # Every render cache empties with the reset — the legend and
+        # the full payload included.
+        self.assertEqual(self.legend_of(model)["series"], [])
+        self.assertEqual(self.chart_of(model)["series"], [])
 
     def test_chart_setters_are_idempotent_and_validate(self):
         model = self.monitor()
@@ -3117,8 +3194,8 @@ class MonitorQtTests(unittest.TestCase):
         # Invalid colours are rejected outright.
         model.setTemperatureSensorColor("extruder", "#fff")
         self.assertEqual(writes, [1])
-        chart = self.chart_of(model)
-        extruder = next(item for item in chart["series"] if item["name"] == "extruder")
+        legend = self.legend_of(model)
+        extruder = next(item for item in legend["series"] if item["name"] == "extruder")
         self.assertEqual(extruder["color"], "#d32f2f")  # the palette default, unchanged
         model.setTemperatureSensorColor("extruder", "#123456")
         self.assertEqual(writes, [1, 1])
@@ -3147,18 +3224,18 @@ class MonitorQtTests(unittest.TestCase):
         model._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
         model._data.auxiliaryChanged.emit()
         self.qt.events()  # the publish coalescer flushes on the next turn
-        chart = self.chart_of(model)
-        extruder = next(item for item in chart["series"] if item["name"] == "extruder")
-        bed = next(item for item in chart["series"] if item["name"] == "heater_bed")
+        legend = self.legend_of(model)
+        extruder = next(item for item in legend["series"] if item["name"] == "extruder")
+        bed = next(item for item in legend["series"] if item["name"] == "heater_bed")
         self.assertFalse(extruder["visible"])
         self.assertEqual(bed["color"], "#123456")
         second = self.monitor()
         second._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
         second._data.auxiliaryChanged.emit()
         self.qt.events()  # the publish coalescer flushes on the next turn
-        chart = self.chart_of(second)
-        extruder = next(item for item in chart["series"] if item["name"] == "extruder")
-        bed = next(item for item in chart["series"] if item["name"] == "heater_bed")
+        legend = self.legend_of(second)
+        extruder = next(item for item in legend["series"] if item["name"] == "extruder")
+        bed = next(item for item in legend["series"] if item["name"] == "heater_bed")
         self.assertFalse(extruder["visible"])
         self.assertEqual(bed["color"], "#123456")
 
@@ -3167,10 +3244,10 @@ class MonitorQtTests(unittest.TestCase):
         with open(section_path, "w", encoding="utf-8") as handle:
             json.dump({"sections": {"setup": False}}, handle)
         model = self.monitor()
-        chart = self.chart_of(model)
-        self.assertTrue(chart["showTargets"])
-        self.assertTrue(chart["showPower"])
-        self.assertTrue(all(item["visible"] for item in chart["series"]))
+        legend = self.legend_of(model)
+        self.assertTrue(legend["showTargets"])
+        self.assertTrue(legend["showPower"])
+        self.assertTrue(all(item["visible"] for item in legend["series"]))
 
     def test_legacy_global_chart_block_migrates_into_the_per_printer_record(self):
         section_path = self.follower.persistence.state_global_path
@@ -3190,8 +3267,8 @@ class MonitorQtTests(unittest.TestCase):
             "showTargets": False,
             "showPower": False,
         })
-        extruder = next(item for item in self.chart_of(model)["series"] if item["name"] == "extruder")
-        bed = next(item for item in self.chart_of(model)["series"] if item["name"] == "heater_bed")
+        extruder = next(item for item in self.legend_of(model)["series"] if item["name"] == "extruder")
+        bed = next(item for item in self.legend_of(model)["series"] if item["name"] == "heater_bed")
         self.assertFalse(extruder["visible"])
         self.assertEqual(bed["color"], "#123456")
         # …and the global file keeps chrome only afterwards.
@@ -4395,12 +4472,12 @@ Item {
         # alone left "↑ 0.005" wider than "↑ 0.05" (the report).
         self.assertIn("Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4", TUNING_SECTION_QML)
         # The expanded chart's power axis carries its 0-100% legend,
-        # pinned (never scaled), drawn OUTSIDE the plot in a reserved
-        # right gutter — chips painted over the data looked janky (the
-        # report), so the plot domain shrinks to fit instead.
+        # pinned (never scaled), drawn INSIDE the plot's right edge
+        # (the live ruling — the outside gutter's last glyph clipped
+        # at the card edge), painted last so the data never covers it.
         self.assertIn("function _rightGutter()", TEMP_CHART_QML)
-        self.assertIn('ctx.fillText("100%", labelX, 4 + ascent)', TEMP_CHART_QML)
-        self.assertIn('ctx.fillText("0%", labelX, root._plotBottom() - descent - 1)', TEMP_CHART_QML)
+        self.assertIn('ctx.fillText("100%", plotWidth - 4, 4 + ascent)', TEMP_CHART_QML)
+        self.assertIn('ctx.fillText("0%", plotWidth - 4, plotBottom - descent - 1)', TEMP_CHART_QML)
         self.assertNotIn("fillRect(chipX", TEMP_CHART_QML)
 
     def test_console_resize_handle_surface(self):
@@ -4543,8 +4620,8 @@ Item {
             "previewStageActive", "configuredForFollowing", "modelData.type", "hasWhite",
             "root.configured", "tooltipText", "sectionIcon", "macroParameters",
             "webcamNames", "root.busy", "root.progress", "improveEtaProgress",
-            "temperatureChart.series", "allChartSensorsHidden", "selectedChartSensor",
-            "hoverClockProxy",
+            "temperatureChartLegend.series", "allChartSensorsHidden", "selectedChartSensor",
+            "hoverClockProxy", "root.compact",
         )
         # The whitelist is itself frozen (round-2 security F13: the
         # set must not grow silently) — an addition is a visible diff.
@@ -4553,8 +4630,8 @@ Item {
             "previewStageActive", "configuredForFollowing", "modelData.type", "hasWhite",
             "root.configured", "tooltipText", "sectionIcon", "macroParameters",
             "webcamNames", "root.busy", "root.progress", "improveEtaProgress",
-            "temperatureChart.series", "allChartSensorsHidden", "selectedChartSensor",
-            "hoverClockProxy",
+            "temperatureChartLegend.series", "allChartSensorsHidden", "selectedChartSensor",
+            "hoverClockProxy", "root.compact",
         ))
         allowed = {
             # Capability-static gates (the UX panel's ruling): these
@@ -4645,6 +4722,11 @@ Item {
             "visible: !consolePanel.tooNarrow",
             # The file manager's popup: reflow is fine there, nothing critical on it (the ruling, ROADMAP 3.6.0) — each state-gated entry lands here by name.
             "visible: open",
+            # The chart hover tooltip's rows follow the legend's
+            # visibility: a floating pop-over whose reflow is its
+            # nature (the file manager's carve-out precedent) — the
+            # rows must not linger as "—" ghosts for hidden sensors.
+            "visible: modelData.visible",
             # The what's-new overlay: the pre-collapsed sections ARE
             # the feature (the latest entry open, previous versions
             # gated behind their headers) — each gate lands here by

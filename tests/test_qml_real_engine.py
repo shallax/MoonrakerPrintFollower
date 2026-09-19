@@ -1497,3 +1497,141 @@ class CameraOwnershipTests(RealEngineTestCase):
         self.pump()
         self.assertFalse(chip.property("visible"))
         self.addCleanup(window.deleteLater)
+
+
+class ChartSurfaceTests(RealEngineTestCase):
+    """The temperature chart's rendering architecture: the data canvas
+    must request the threaded image strategy (read back through the
+    engine — the offscreen probe platform never drives a render pass,
+    so the painted-size properties cannot testify here; the capture
+    census leg renders the chart's actual pixels in this same
+    container), the paint's input must be the main-thread plain-data
+    snapshot, and the hover surface must be scene-graph geometry whose
+    publications never request a canvas paint."""
+
+    def chart_payload(self, with_tracks=True):
+        series = [{
+            "name": "extruder", "label": "Extruder", "color": "#d32f2f",
+            "visible": True, "primary": True,
+            "points": [[float(tick), 200.0 + tick * 0.1] for tick in range(40)],
+            "bounds": {"tempMin": 200.0, "tempMax": 204.0,
+                       "elapsedMin": 0.0, "elapsedMax": 39.0},
+        }]
+        if with_tracks:
+            series[0]["targets"] = [[[0.0, 210.0], [39.0, 210.0]]]
+            series[0]["powers"] = [[[float(tick), 0.5] for tick in range(40)]]
+        return {
+            "series": series,
+            "showTargets": True,
+            "showPower": True,
+            "palette": [],
+            "filling": False,
+            "wallOrigin": 100000.0,
+        }
+
+    def mount_chart(self, compact=False, with_tracks=True):
+        chart = self.mount("TemperatureChart.qml")
+        chart.setProperty("compact", compact)
+        chart.setProperty("chart", self.chart_payload(with_tracks))
+        window = QQuickWindow()
+        window.resize(800, 500)
+        chart.setParentItem(window.contentItem())
+        chart.setWidth(800)
+        chart.setHeight(500)
+        window.show()
+        self.addCleanup(window.deleteLater)
+        self.pump(30)
+        return chart, window
+
+    @staticmethod
+    def enum_value(item, enumerator, key):
+        """The enum value QML's `key` resolves to, from the item's own
+        QMetaObject — PyQt6 cannot convert the C++ enum instance that
+        property() returns, and Qt 6 reordered the Canvas enums, so
+        hard-coded values would rot. keyToValue returns (value, ok)."""
+        meta = item.metaObject()
+        for index in range(meta.enumeratorCount()):
+            enum = meta.enumerator(index)
+            if enum.name() == enumerator:
+                return enum.keyToValue(key)[0]
+        raise AssertionError("no enumerator %s" % enumerator)
+
+    @staticmethod
+    def read_js(engine, item, expression):
+        """A QML-side property read as (value, isUndefined): PyQt6's
+        QQmlExpression returns that pair, and this is the only read
+        path that survives the C++ enum instance."""
+        from PyQt6.QtQml import QQmlExpression
+
+        js = QQmlExpression(engine.rootContext(), item, expression)
+        return js.evaluate()
+
+    def test_the_data_canvas_requests_the_threaded_image_strategy(self):
+        chart, _ = self.mount_chart()
+        canvas = self.find(chart, "temperatureDataCanvas")
+        threaded = self.enum_value(canvas, "RenderStrategy", "Threaded")
+        image = self.enum_value(canvas, "RenderTarget", "Image")
+        self.assertEqual(self.read_js(self.engine, canvas, "renderStrategy"),
+                         (threaded, False), "the canvas must request Canvas.Threaded")
+        self.assertEqual(self.read_js(self.engine, canvas, "renderTarget"),
+                         (image, False), "the canvas must request Canvas.Image")
+        self.assertEqual(self.canvas_messages(), [],
+                         "the runtime complained about the chart canvas")
+
+    def canvas_messages(self):
+        return [message for message in self.new_messages()
+                if "Canvas" in message or "canvas" in message]
+
+    def test_the_paint_input_is_the_main_thread_plain_data_snapshot(self):
+        # The threaded paint must never reach a theme singleton or
+        # another QML item: its complete input is the snapshot the
+        # document builds on the main thread, and it must exist — with
+        # the series, mapping and labels resolved — before any paint.
+        chart, _ = self.mount_chart()
+        canvas = self.find(chart, "temperatureDataCanvas")
+        job = canvas.property("paintJob").toVariant()
+        self.assertIsNotNone(job, "the paint job was never snapshotted")
+        self.assertEqual(len(job["series"]), 1)
+        self.assertEqual(len(job["series"][0]["points"]), 40)
+        self.assertEqual(len(job["grid"]), 5)
+        self.assertGreaterEqual(len(job["ticks"]), 5)
+        self.assertIn("actual", job["series"][0])
+        # A trackless payload (the mini's shape) snapshots without
+        # touching targets/powers at all.
+        mini, _ = self.mount_chart(compact=True, with_tracks=False)
+        mini_job = self.find(mini, "temperatureDataCanvas").property("paintJob").toVariant()
+        self.assertEqual(len(mini_job["series"]), 1)
+        self.assertEqual(len(mini_job["grid"]), 3)
+        self.assertEqual(self.canvas_messages(), [])
+
+    def test_the_hover_surface_is_scene_graph_and_publishes_values(self):
+        chart, _ = self.mount_chart()
+        before = len(_APPLICATION["messages"])
+        chart.setProperty("hoverX", 400.0)
+        self.pump(30)
+        cursor = self.find(chart, "temperatureHoverCursor")
+        self.assertTrue(cursor.property("visible"))
+        self.assertGreater(cursor.property("x"), 0)
+        self.assertNotEqual(chart.property("hoverClock"), "")
+        values = chart.property("hoverValues").toVariant()
+        self.assertIn("extruder", values)
+        self.assertTrue(str(values["extruder"]).endswith("°C"))
+        markers = self.find(chart, "temperatureHoverMarkers")
+        self.assertEqual(markers.property("count"), 1)
+        # The hover published scalars and moved items — the data
+        # canvas was never asked to repaint (a repaint would show up
+        # as engine noise, and there is no overlay Canvas left to
+        # receive one).
+        self.assertEqual(_APPLICATION["messages"][before:], [])
+        # Leaving clears the hover state.
+        chart.setProperty("hoverX", -1.0)
+        self.pump(30)
+        self.assertFalse(cursor.property("visible"))
+        self.assertEqual(markers.property("count"), 0)
+
+    def test_the_compact_chart_never_shows_the_hover_surface(self):
+        chart, _ = self.mount_chart(compact=True)
+        chart.setProperty("hoverX", 400.0)
+        self.pump(30)
+        cursor = self.find(chart, "temperatureHoverCursor")
+        self.assertFalse(cursor.property("visible"))

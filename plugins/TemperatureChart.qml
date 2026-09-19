@@ -7,9 +7,14 @@ import "theme"
 // ruling — dashed targets got chopped by the actual line at steady
 // state), translucent power areas on a 0-100% second axis, and a
 // hover cursor snapped to the 1 s sample grid with per-series values.
-// Two canvases: the data canvas repaints only when the payload or
-// geometry changes; the overlay repaints on hover and draws nothing
-// but the cursor, so mouse motion never re-rasterises the polylines.
+// The DATA surface is one threaded, image-backed Canvas: its paint
+// walks every visible sample, so it must never run on Cura's main
+// thread. The paint reads only the plain-data snapshot this document
+// builds on the main thread (theme colours, fonts, mapping scalars,
+// tick labels and series arrays) — never a QML object. The HOVER
+// surface is ordinary scene-graph geometry (a cursor line and marker
+// dots), so mouse motion moves items and updates scalars; nothing in
+// the hover path rasterises or repaints a canvas.
 Item {
     id: root
 
@@ -24,7 +29,11 @@ Item {
     property bool compact: false
     property real hoverX: -1  // item x of the hover cursor; -1 = none
     property string hoverClock: ""  // HH:MM:SS at the snapped cursor
-    property var hoverValues: []    // [{label, color, text}] per visible series
+    // Sensor name -> "210.3°C" | "—", one entry per visible series.
+    // A map, not a list: the tooltip's delegates bind by their own
+    // name, so a hover publish updates text in place instead of
+    // rebuilding the rows.
+    property var hoverValues: ({})
     property point hoverCursor: Qt.point(-1, -1)  // raw cursor in item coordinates
     property string tooltipText: ""
     signal clicked
@@ -35,6 +44,7 @@ Item {
     property real _maxElapsed: 1
     property int _hoverSnap: -1  // cursor elapsed rounded to the sample grid
     property var _hoverMarks: []  // [{elapsed, temperature, color}] per hovering series
+    property color _labelColor: UM.Theme.getColor("text_inactive")
 
     function _seriesBounds(series) {
         // The payload carries each series' render domain (the history
@@ -134,12 +144,11 @@ Item {
     }
 
     function _rightGutter() {
-        // The 0-100% power labels live OUTSIDE the plot, in a reserved
-        // right margin (the ruling: chips painted over the
-        // data looked janky, and the labels must never collide with the
-        // lines). The plot domain shrinks to fit; the compact sparkline
-        // keeps its full width.
-        return (root.chart.showPower && !root.compact) ? 34 : 0;
+        // The power labels moved INSIDE the plot (the live ruling,
+        // replacing the reserved right margin): the plot spans the
+        // full width and the labels sit at its right edge, drawn last
+        // so the data never covers them.
+        return 0;
     }
 
     function _xFor(elapsed) {
@@ -241,16 +250,103 @@ Item {
         return root._fontPixels() + "px sans-serif";
     }
 
+    function _snapshotPaintJob() {
+        // The threaded paint's complete input, built on the MAIN
+        // thread as plain data: colours, fonts, mapping scalars, tick
+        // labels and the series arrays. The paint callback touches
+        // nothing but this snapshot and the canvas's own size — a
+        // theme singleton or QML item read from the render thread is
+        // not safe, and every repaint is a new snapshot so the paint
+        // never sees a half-updated job.
+        var job = {};
+        job.compact = root.compact;
+        job.showPower = root.chart.showPower !== undefined ? root.chart.showPower : true;
+        job.showTargets = root.chart.showTargets !== undefined ? root.chart.showTargets : true;
+        job.gutter = root._rightGutter();
+        job.plotBottom = root._plotBottom();
+        job.gridColor = UM.Theme.getColor("lining");
+        job.labelColor = root._labelColor;
+        job.fontString = root._fontString();
+        job.fontPixels = root._fontPixels();
+        job.lines = root.compact ? 2 : 4;
+        job.minTemp = _minTemp;
+        job.maxTemp = _maxTemp;
+        job.minElapsed = _minElapsed;
+        job.maxElapsed = _maxElapsed;
+        var plotWidth = width - job.gutter;
+        var elapsedSpan = root._maxElapsed - root._minElapsed;
+        var tempSpan = root._maxTemp - root._minTemp;
+        job.mapScaleX = elapsedSpan > 0 ? plotWidth / elapsedSpan : 0;
+        job.mapOffsetX = -root._minElapsed * job.mapScaleX;
+        job.mapScaleY = tempSpan > 0 ? -job.plotBottom / tempSpan : 0;
+        job.mapOffsetY = tempSpan > 0 ? job.plotBottom - root._minTemp * job.mapScaleY : job.plotBottom;
+        // Grid rows: their positions and label texts resolve here, so
+        // the paint draws them without computing a thing.
+        job.grid = [];
+        for (var g = 0; g <= job.lines; ++g) {
+            var gy = g * job.plotBottom / job.lines;
+            var value = root._maxTemp - (root._maxTemp - root._minTemp) * g / job.lines;
+            job.grid.push({
+                    "y": gy,
+                    "text": value.toFixed(0) + "°C"
+                });
+        }
+        // Time-axis ticks, likewise resolved to x/text/side.
+        job.ticks = [];
+        if (!root.compact && root._maxElapsed > root._minElapsed) {
+            var ticks = 4;
+            for (var tick = 0; tick <= ticks; ++tick) {
+                var telapsed = root._minElapsed + (root._maxElapsed - root._minElapsed) * tick / ticks;
+                var clock = root._clockTextMinutes(telapsed);
+                if (clock !== "") {
+                    job.ticks.push({
+                            "x": root._xFor(telapsed),
+                            "text": clock,
+                            "side": tick === 0 ? "left" : (tick === ticks ? "right" : "center")
+                        });
+                }
+            }
+        }
+        var series = root.chart.series !== undefined ? root.chart.series : [];
+        job.series = [];
+        job.hasPower = false;
+        for (var s = 0; s < series.length; ++s) {
+            if (!series[s].visible) {
+                continue;
+            }
+            var powers = series[s].powers !== undefined ? series[s].powers : [];
+            for (var p = 0; p < powers.length; ++p) {
+                if (powers[p].length >= 2) {
+                    job.hasPower = true;
+                }
+            }
+            job.series.push({
+                    "color": series[s].color,
+                    "actual": root._strokeColor(series[s].color, 1),
+                    "power": root._strokeColor(series[s].color, 0.22),
+                    "target": root._strokeColor(series[s].color, 0.10),
+                    "targetEdge": root._strokeColor(series[s].color, 0.4),
+                    "points": series[s].points,
+                    "targets": series[s].targets,
+                    "powers": powers
+                });
+        }
+        dataCanvas.paintJob = job;
+    }
+
     function _updateHover(x) {
         // Snap the cursor to the 1 s sample grid and publish the clock
         // and per-series values for the pop-over's readout row. The
-        // overlay repaints only when the snapped second changes.
+        // scene-graph cursor and markers follow their bindings; nothing
+        // repaints, and the publications are gated on the snapped
+        // second — history is append-only, so a given second's values
+        // never change, and re-publishing on every raw mousemove would
+        // just fire change signals for nothing.
         if (x < 0) {
             _hoverSnap = -1;
             hoverClock = "";
-            hoverValues = [];
+            hoverValues = {};
             _hoverMarks = [];
-            overlay.requestPaint();
             return;
         }
         var fraction = Math.max(0, Math.min(1, x / (width - root._rightGutter())));
@@ -258,13 +354,8 @@ Item {
         var snapped = Math.round(cursor);
         if (snapped !== _hoverSnap) {
             _hoverSnap = snapped;
-            overlay.requestPaint();
-            // Publications are gated on the snapped second too: history
-            // is append-only, so a given second's values never change,
-            // and re-publishing an identical-content array on every
-            // mousemove would just fire change signals for nothing.
             hoverClock = _clockText(snapped);
-            var values = [];
+            var values = {};
             var marks = [];
             var series = chart.series !== undefined ? chart.series : [];
             for (var i = 0; i < series.length; ++i) {
@@ -272,11 +363,7 @@ Item {
                     continue;
                 }
                 var index = _nearestIndex(series[i].points, snapped);
-                values.push({
-                        "label": series[i].label,
-                        "color": series[i].color,
-                        "text": index >= 0 ? series[i].points[index][1].toFixed(1) + "°C" : "—"
-                    });
+                values[series[i].name] = index >= 0 ? series[i].points[index][1].toFixed(1) + "°C" : "—";
                 // The overlay's markers, published with the readout it
                 // already searched for: the cursor's nearest sample is
                 // found once per move, not again in every repaint.
@@ -295,9 +382,10 @@ Item {
 
     onChartChanged: {
         _recomputeBounds();
+        _snapshotPaintJob();
         dataCanvas.requestPaint();
         // The window scrolls under a parked cursor: re-snap the hover so
-        // the overlay line, markers and readout follow the data instead
+        // the cursor line, markers and readout follow the data instead
         // of sitting at pre-scroll positions. _hoverSnap is cleared
         // first so the publish runs even when the new elapsed second
         // collides with the old one — after a gap reset the wall clock
@@ -310,27 +398,33 @@ Item {
     }
     onWidthChanged: {
         _recomputeBounds();
+        _snapshotPaintJob();
         dataCanvas.requestPaint();
-        overlay.requestPaint();
     }
     onHeightChanged: {
         _recomputeBounds();
+        _snapshotPaintJob();
         dataCanvas.requestPaint();
-        overlay.requestPaint();
     }
     onVisibleChanged: {
         if (visible) {
             _recomputeBounds();
+            _snapshotPaintJob();
             dataCanvas.requestPaint();
             // The pop-over can close with the cursor parked over the
-            // chart; reopening must not show a stale overlay cursor at
-            // a pre-scroll position (the data canvas repaints above,
-            // the overlay did not).
-            overlay.requestPaint();
+            // chart; reopening must not show a stale cursor at a
+            // pre-scroll position.
+            if (!root.compact && root.hoverX >= 0) {
+                _hoverSnap = -1;
+                _updateHover(root.hoverX);
+            }
         }
     }
     onHoverXChanged: _updateHover(hoverX)
-    Component.onCompleted: _recomputeBounds()
+    Component.onCompleted: {
+        _recomputeBounds();
+        _snapshotPaintJob();
+    }
 
     // The tooltip sits under the mouse area so it can never steal the
     // click; it only shows when the call site supplies text.
@@ -348,89 +442,84 @@ Item {
 
     Canvas {
         id: dataCanvas
+        objectName: "temperatureDataCanvas"
         anchors.fill: parent
+        // The data surface walks every visible sample on every payload
+        // change, so its painting runs OFF Cura's main thread: the
+        // Image target rasterises to a cached texture and the Threaded
+        // strategy paints it on the render thread. The paint callback
+        // reads only the item's own plain-data snapshot (paintJob) and
+        // the canvas's own size — never a theme singleton or another
+        // QML item.
+        property var paintJob: null
+        renderTarget: Canvas.Image
+        renderStrategy: Canvas.Threaded
         onPaint: {
+            var job = paintJob;
+            if (job == null) {
+                return;
+            }
             var ctx = getContext("2d");
             ctx.reset();
-            var series = root.chart.series !== undefined ? root.chart.series : [];
-            var gridColor = UM.Theme.getColor("lining");
-            var labelColor = UM.Theme.getColor("text_inactive");
-            var lines = root.compact ? 2 : 4;
+            var series = job.series;
+            var lines = job.lines;
             var drewPower = false;
-            var gutter = root._rightGutter();
-
-            // The plot geometry, resolved once: mapping a point through
-            // root._xFor/root._yFor re-reads six QML properties per
-            // coordinate, and the data layers walk every sample of every
-            // visible series (up to 1800 each) on every paint. A scale
-            // and offset per axis makes each coordinate a multiply-add,
-            // which measured at roughly a third of the paint's cost.
+            var gutter = job.gutter;
             var plotWidth = width - gutter;
-            var plotBottom = root._plotBottom();
-            var elapsedSpan = root._maxElapsed - root._minElapsed;
-            var tempSpan = root._maxTemp - root._minTemp;
-            var mapScaleX = elapsedSpan > 0 ? plotWidth / elapsedSpan : 0;
-            var mapOffsetX = -root._minElapsed * mapScaleX;
-            var mapScaleY = tempSpan > 0 ? -plotBottom / tempSpan : 0;
-            var mapOffsetY = tempSpan > 0 ? plotBottom - root._minTemp * mapScaleY : plotBottom;
+            var plotBottom = job.plotBottom;
+            var mapScaleX = job.mapScaleX;
+            var mapOffsetX = job.mapOffsetX;
+            var mapScaleY = job.mapScaleY;
+            var mapOffsetY = job.mapOffsetY;
 
             // Horizontal grid + temperature labels.
             for (var g = 0; g <= lines; ++g) {
-                var gy = g * root._plotBottom() / lines;
-                ctx.strokeStyle = gridColor;
+                var gy = job.grid[g].y;
+                ctx.strokeStyle = job.gridColor;
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 ctx.moveTo(0, gy);
-                ctx.lineTo(width - gutter, gy);
+                ctx.lineTo(plotWidth, gy);
                 ctx.stroke();
-                if (!root.compact) {
-                    var value = root._maxTemp - (root._maxTemp - root._minTemp) * g / lines;
-                    ctx.fillStyle = labelColor;
-                    ctx.font = root._fontString();
+                if (!job.compact) {
+                    ctx.fillStyle = job.labelColor;
+                    ctx.font = job.fontString;
                     ctx.textAlign = "left";
                     // The g = 0 row would baseline above the canvas
                     // edge; clamp by the actual font ascent so the top
                     // value stays fully visible at any theme size.
                     // Temperatures carry their unit: the plugin follows
                     // Cura, which always displays °C.
-                    ctx.fillText(value.toFixed(0) + "°C", 4, Math.max(gy - 3, Math.ceil(root._fontPixels() * 0.8) + 3));
+                    ctx.fillText(job.grid[g].text, 4, Math.max(gy - 3, Math.ceil(job.fontPixels * 0.8) + 3));
                 }
             }
 
             // Time-axis ticks: HH:MM labels under the plot (full size
-            // only; the mini widget is a sparkline).
-            if (!root.compact && root._maxElapsed > root._minElapsed) {
-                var ticks = 4;
-                for (var tick = 0; tick <= ticks; ++tick) {
-                    var telapsed = root._minElapsed + (root._maxElapsed - root._minElapsed) * tick / ticks;
-                    var clock = root._clockTextMinutes(telapsed);
-                    if (clock !== "") {
-                        ctx.fillStyle = labelColor;
-                        ctx.font = root._fontString();
-                        // Edge ticks align inward so they never clip at
-                        // the canvas sides; the strip sits below the
-                        // plot, clear of the temperature labels.
-                        if (tick === 0) {
-                            ctx.textAlign = "left";
-                            ctx.fillText(clock, 2, height - 2);
-                        } else if (tick === ticks) {
-                            ctx.textAlign = "right";
-                            ctx.fillText(clock, width - 2, height - 2);
-                        } else {
-                            ctx.textAlign = "center";
-                            ctx.fillText(clock, root._xFor(telapsed), height - 2);
-                        }
-                    }
+            // only; the mini widget is a sparkline). Resolved in the
+            // snapshot — positions, text and alignment.
+            for (var tick = 0; tick < job.ticks.length; ++tick) {
+                var entry = job.ticks[tick];
+                ctx.fillStyle = job.labelColor;
+                ctx.font = job.fontString;
+                // Edge ticks align inward so they never clip at
+                // the canvas sides; the strip sits below the plot,
+                // clear of the temperature labels.
+                if (entry.side === "left") {
+                    ctx.textAlign = "left";
+                    ctx.fillText(entry.text, 2, height - 2);
+                } else if (entry.side === "right") {
+                    ctx.textAlign = "right";
+                    ctx.fillText(entry.text, width - 2, height - 2);
+                } else {
+                    ctx.textAlign = "center";
+                    ctx.fillText(entry.text, entry.x, height - 2);
                 }
-                ctx.textAlign = "left";
             }
+            ctx.textAlign = "left";
 
             // Power areas (second axis, 0-100%), split at None gaps.
-            if (root.chart.showPower) {
+            if (job.showPower) {
                 for (var p = 0; p < series.length; ++p) {
-                    if (!series[p].visible) {
-                        continue;
-                    }
                     var powers = series[p].powers;
                     for (var seg = 0; seg < powers.length; ++seg) {
                         var powerSeg = powers[seg];
@@ -438,7 +527,7 @@ Item {
                             continue;
                         }
                         drewPower = true;
-                        ctx.fillStyle = root._strokeColor(series[p].color, 0.22);
+                        ctx.fillStyle = series[p].power;
                         ctx.beginPath();
                         ctx.moveTo(powerSeg[0][0] * mapScaleX + mapOffsetX, plotBottom);
                         for (var q = 0; q < powerSeg.length; ++q) {
@@ -455,18 +544,15 @@ Item {
             // the setpoint curve — the fill's top edge IS the target
             // marker, so at steady state the actual rests exactly on
             // it. A thin same-hue stroke sharpens the boundary.
-            if (root.chart.showTargets) {
+            if (job.showTargets) {
                 for (var t = 0; t < series.length; ++t) {
-                    if (!series[t].visible) {
-                        continue;
-                    }
                     var targets = series[t].targets;
                     for (var band = 0; band < targets.length; ++band) {
                         var targetSeg = targets[band];
                         if (targetSeg.length < 2) {
                             continue;
                         }
-                        ctx.fillStyle = root._strokeColor(series[t].color, 0.10);
+                        ctx.fillStyle = series[t].target;
                         ctx.beginPath();
                         ctx.moveTo(targetSeg[0][0] * mapScaleX + mapOffsetX, plotBottom);
                         for (var u = 0; u < targetSeg.length; ++u) {
@@ -475,7 +561,7 @@ Item {
                         ctx.lineTo(targetSeg[targetSeg.length - 1][0] * mapScaleX + mapOffsetX, plotBottom);
                         ctx.closePath();
                         ctx.fill();
-                        ctx.strokeStyle = root._strokeColor(series[t].color, 0.4);
+                        ctx.strokeStyle = series[t].targetEdge;
                         ctx.lineWidth = 1;
                         ctx.beginPath();
                         ctx.moveTo(targetSeg[0][0] * mapScaleX + mapOffsetX, targetSeg[0][1] * mapScaleY + mapOffsetY);
@@ -490,12 +576,12 @@ Item {
             // Actual temperature lines, drawn last so they always read
             // over the bands.
             for (var s = 0; s < series.length; ++s) {
-                if (!series[s].visible || series[s].points.length < 2) {
+                if (series[s].points.length < 2) {
                     continue;
                 }
                 var points = series[s].points;
-                ctx.strokeStyle = root._strokeColor(series[s].color, 1);
-                ctx.lineWidth = root.compact ? 1.2 : 1.6;
+                ctx.strokeStyle = series[s].actual;
+                ctx.lineWidth = job.compact ? 1.2 : 1.6;
                 ctx.beginPath();
                 ctx.moveTo(points[0][0] * mapScaleX + mapOffsetX, points[0][1] * mapScaleY + mapOffsetY);
                 for (var j = 1; j < points.length; ++j) {
@@ -505,55 +591,51 @@ Item {
                 ctx.lineWidth = 1;
             }
 
-            // Power-axis labels (0-100%, pinned — never scaled) sit in
-            // the reserved right gutter, clear of the data. Painted
-            // last so they are never over-drawn; no background chip —
-            // the gutter is empty by construction.
-            if (drewPower && !root.compact) {
-                var ascent = Math.ceil(root._fontPixels() * 0.8);
-                var descent = Math.ceil(root._fontPixels() * 0.2);
-                var labelX = width - gutter + 4;
-                ctx.font = root._fontString();
-                ctx.textAlign = "left";
-                ctx.fillStyle = labelColor;
+            // Power-axis labels (0-100%, pinned — never scaled) sit
+            // INSIDE the plot's right edge, drawn last so they read
+            // over the data (the live ruling — the outside gutter's
+            // last glyph clipped at the card edge).
+            if (drewPower && !job.compact) {
+                var ascent = Math.ceil(job.fontPixels * 0.8);
+                var descent = Math.ceil(job.fontPixels * 0.2);
+                ctx.font = job.fontString;
+                ctx.textAlign = "right";
+                ctx.fillStyle = job.labelColor;
                 // The 100% baseline starts 4px+ascent down so its top
                 // never clips at the canvas edge; the 0% sits just
                 // above the plot's bottom edge.
-                ctx.fillText("100%", labelX, 4 + ascent);
-                ctx.fillText("0%", labelX, root._plotBottom() - descent - 1);
+                ctx.fillText("100%", plotWidth - 4, 4 + ascent);
+                ctx.fillText("0%", plotWidth - 4, plotBottom - descent - 1);
             }
         }
     }
 
-    Canvas {
-        id: overlay
-        anchors.fill: parent
-        onPaint: {
-            var ctx = getContext("2d");
-            ctx.reset();
-            if (root.compact || root.hoverX < 0 || root._hoverSnap < 0) {
-                return;
-            }
-            var labelColor = UM.Theme.getColor("text_inactive");
-            var x = root._xFor(root._hoverSnap);
-            ctx.strokeStyle = labelColor;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, height);
-            ctx.stroke();
-            // Per-series markers, snapped to each series' nearest sample
-            // in time — a late-starting sensor shows its honest position,
-            // and the readout's "—" marks when it has nothing there. The
-            // search already ran when the readout was published; this
-            // paint only maps the samples it kept.
-            var marks = root._hoverMarks;
-            for (var h = 0; h < marks.length; ++h) {
-                ctx.fillStyle = root._strokeColor(marks[h].color, 1);
-                ctx.beginPath();
-                ctx.arc(root._xFor(marks[h].elapsed), root._yFor(marks[h].temperature), 2.5, 0, 2 * Math.PI);
-                ctx.fill();
-            }
+    // The hover surface: ordinary scene-graph items whose bindings
+    // read the snapped scalars. Moving the mouse changes a few
+    // properties — no canvas repaint, no rasterised overlay, no
+    // image upload.
+    Rectangle {
+        id: hoverCursorLine
+        objectName: "temperatureHoverCursor"
+        visible: !root.compact && root.hoverX >= 0 && root._hoverSnap >= 0
+        width: 1
+        height: parent.height
+        x: root._xFor(root._hoverSnap)
+        color: root._labelColor
+    }
+
+    Repeater {
+        id: hoverMarkers
+        objectName: "temperatureHoverMarkers"
+        model: root._hoverMarks
+        Rectangle {
+            visible: !root.compact
+            width: 5
+            height: 5
+            radius: 2.5
+            x: root._xFor(modelData.elapsed) - 2.5
+            y: root._yFor(modelData.temperature) - 2.5
+            color: modelData.color
         }
     }
 
