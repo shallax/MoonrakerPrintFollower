@@ -398,6 +398,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._improve_started_snapshot = None
         self._migration_record_cache = None
         self._migration_record_read = False
+        self._peripheral_cache = (None, {})
+        self._endstop_cache = (None, {})
         self._values = {}
         state = _read_state(self._store)
         self._whats_new_seen = state["whatsNewSeen"]
@@ -894,8 +896,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             message = str(display.get("message") or "")
             if message:
                 values["monitorMessage"] = message
-        values.update(peripheral_values(self._data.snapshot))
-        values.update(endstop_values(self._data.snapshot, self._client.connected))
+        # The lane-identity caches (the 2026-09-19 review's I): the
+        # peripheral scan and the endstop projection rebuild only
+        # when their lane's data object actually changed — a
+        # core-only heartbeat used to rescan every sensor and fan.
+        aux_key = id(self._data.snapshot.auxiliary)
+        if self._peripheral_cache[0] != aux_key:
+            self._peripheral_cache = (aux_key, peripheral_values(self._data.snapshot))
+        values.update(self._peripheral_cache[1])
+        endstops_key = (id(self._data.snapshot.endstops), self._client.connected)
+        if self._endstop_cache[0] != endstops_key:
+            self._endstop_cache = (endstops_key,
+                                   endstop_values(self._data.snapshot, self._client.connected))
+        values.update(self._endstop_cache[1])
         values.update(self._file_manager_values())
         values["fileManagerOpen"] = self._file_manager_open
         values["filePrintConfirm"] = self._file_print_confirm or ""

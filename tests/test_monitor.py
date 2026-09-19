@@ -2305,6 +2305,39 @@ class MonitorQtTests(unittest.TestCase):
         z_scripts = [r for r in self.scripts() if "G1 Z" in str(r.options.get("body"))]
         self.assertGreaterEqual(len(z_scripts), 1)
 
+    def test_unchanged_projections_are_not_rebuilt_on_heartbeats(self):
+        # I (the 2026-09-19 performance review): the console's
+        # transcript projection, the controls' deep copy and the
+        # peripheral scan all rebuild only when their inputs actually
+        # changed — an unchanged heartbeat serves the same objects.
+        from unittest.mock import patch
+        model = self.monitor()
+        self.qt.events(1)
+        # Warm-up: the connection transition's note is a REAL
+        # transcript change and must land before the window.
+        self.deliver_state("standby")
+        self.qt.events(1)
+        console_first = model._console.values
+        controls_first = model._controls.values
+        module = self.qt.load("MoonrakerMonitorModel")
+        scans = []
+        original = module.peripheral_values
+        def counting(snapshot):
+            scans.append(1)
+            return original(snapshot)
+        with patch.object(module, "peripheral_values", counting):
+            for _ in range(5):
+                self.deliver_state("standby")
+                self.qt.events(1)
+            self.assertEqual(scans, [], "core-only landings must not rescan peripherals")
+            model._data._merge_aux({"extruder": {"temperature": 200.0, "target": 210.0}})
+            self.qt.events(1)
+            self.assertEqual(len(scans), 1, "an aux landing rescans exactly once")
+        self.assertIs(console_first["consoleLines"], model._console.values["consoleLines"],
+                      "an unchanged transcript must keep its projection")
+        self.assertIs(controls_first, model._controls.values,
+                      "unchanged controls must keep their copy")
+
     def test_stale_polls_cannot_raise_the_z_projection_between_dispatched_moves(self):
         # B (the 2026-09-19 review): an op leaves the queue at
         # dispatch, so a stale poll between the dispatch and the
@@ -2465,21 +2498,21 @@ class MonitorQtTests(unittest.TestCase):
         model._sections["console"] = False
         model._console._append_entries([{"kind": "command", "text": "!! cold",
                                          "error": False, "success": False, "restored": True}])
-        model._console.changed.emit()  # the real error path emits through the send callback
+        model._console._emit_changed()  # the real error path emits through the send callback
         self.assertFalse(model.consoleErrorBell)
         model._console._append_entries([{"kind": "command", "text": "!! cold",
                                          "error": True, "success": False, "restored": False}])
-        model._console.changed.emit()
+        model._console._emit_changed()
         self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertTrue(model.consoleErrorBell)
         # Expanding clears it.
         model._sections["console"] = True
-        model._console.changed.emit()
+        model._console._emit_changed()
         self.qt.events()
         self.assertFalse(model.consoleErrorBell)
         # Old errors never re-ring after collapsing again.
         model._sections["console"] = False
-        model._console.changed.emit()
+        model._console._emit_changed()
         self.qt.events()
         self.assertFalse(model.consoleErrorBell)
 

@@ -34,6 +34,7 @@ class MonitorControls(QObject):
         self._macro_cache = {}
         self._config_identity = None
         self._values = {}
+        self._values_copy = None
         self._macros, self._presets = [], []
         data.changed.connect(self.observe)
         data.invalidated.connect(self.reset)
@@ -43,7 +44,14 @@ class MonitorControls(QObject):
         self.observe()
 
     @property
-    def values(self): return deepcopy(self._values)
+    def values(self):
+        # Copy-on-change (the 2026-09-19 review's I): the served
+        # projection is a stable deep copy rebuilt only when the next
+        # observation changes the outward values — the model consumed
+        # a fresh deep copy on every heartbeat before.
+        if self._values_copy is None:
+            self._values_copy = deepcopy(self._values)
+        return self._values_copy
 
     def reset(self):
         self._remembered_colors.clear()
@@ -162,6 +170,7 @@ class MonitorControls(QObject):
         # review). The remembered tuning state still updates above.
         if new_values != self._values:
             self._values = new_values
+            self._values_copy = None
             self.changed.emit()
 
     @staticmethod

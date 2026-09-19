@@ -111,6 +111,12 @@ class ConsoleController(QObject):
         # authoritative — the shard must not be re-read every
         # heartbeat for a machine that already loaded.
         self._loaded_identity = None
+        # The projection cache (the 2026-09-19 review's I): values()
+        # rebuilds only when a transcript mutation bumped the
+        # revision — the model consumed a fresh [dict(entry) ...]
+        # projection on every heartbeat before.
+        self._projection_revision = 0
+        self._projection_cache = None
         commands.emergencyStopped.connect(self._emergency_stopped)
         # Every connection transition writes a "#" note into the feed
         # (the request: the console says when it lost or
@@ -121,9 +127,20 @@ class ConsoleController(QObject):
         # per-printer, so it swaps to the incoming machine's record.
         data.invalidated.connect(self._session_invalidated)
 
+    def _emit_changed(self):
+        # Every transcript mutation bumps the projection revision;
+        # values() rebuilds only when it differs from the cached
+        # build (the publish coalescer's unchanged heartbeats pay
+        # nothing here).
+        self._projection_revision += 1
+        self.changed.emit()
+
     @property
     def values(self):
-        return {
+        cache = self._projection_cache
+        if cache is not None and cache[0] == self._projection_revision:
+            return cache[1]
+        payload = {
             "consoleHistory": [entry["text"] for entry in self._transcript if entry["kind"] == "command"],
             "consoleLines": [dict(entry) for entry in self._transcript],
             "consoleDropped": self._dropped,
@@ -133,6 +150,8 @@ class ConsoleController(QObject):
             "consoleRevisions": self._revisions,
             "consolePending": len(self._in_flight),
         }
+        self._projection_cache = (self._projection_revision, payload)
+        return payload
 
     def _connection_note(self, state) -> None:
         # Only genuine TRANSITIONS write a note: a flapping link re-emits
@@ -159,7 +178,7 @@ class ConsoleController(QObject):
         Session-transient: notes never persist."""
         self._append_entries([{"kind": "note", "text": str(text),
                                "error": False, "success": False, "restored": False}])
-        self.changed.emit()
+        self._emit_changed()
 
     def _append_entries(self, additions) -> None:
         """Append transcript entries, trimming to the session ring cap.
@@ -177,6 +196,10 @@ class ConsoleController(QObject):
                     if entry["kind"] == "command"][-self.MAX_PERSIST_COMMANDS:]
             self._transcript = keep + self._transcript
             self._dropped += len(dropped_head) - len(keep)
+        # The helper is a transcript mutation: the projection revision
+        # bumps even when the caller's own emit does not run (the ring
+        # tests drive it directly).
+        self._projection_revision += 1
 
     def send(self, text) -> bool:
         """Accept a console line; True only when it actually entered the
@@ -226,7 +249,7 @@ class ConsoleController(QObject):
                 self._persist()
             if token in self._in_flight:
                 self._in_flight.discard(token)
-            self.changed.emit()
+            self._emit_changed()
         # The console posts its own request instead of riding the shared
         # one-shot lane: the lane's card ticker is off-limits for console
         # traffic (the panel UX ruling), and the lane's completion signal
@@ -243,7 +266,7 @@ class ConsoleController(QObject):
         # feed's "!!" lines are their own red signal — no status banner
         # anywhere outside the feed.
         self._persist()
-        self.changed.emit()
+        self._emit_changed()
         return True
 
     def append_responses(self, entries) -> None:
@@ -270,7 +293,7 @@ class ConsoleController(QObject):
         # A live "!!" line is its own red signal in the feed — no
         # banner, no status line outside it (the ruling).
         self._persist()
-        self.changed.emit()
+        self._emit_changed()
 
     def clear(self) -> None:
         if not self._transcript:
@@ -284,7 +307,7 @@ class ConsoleController(QObject):
             self._persistence.set_machine_state(machine_id, {
                 "consoleTranscript": [],
             })
-        self.changed.emit()
+        self._emit_changed()
 
     def reload_if_empty(self) -> None:
         """Keep the transcript aligned with the ACTIVE machine's record.
@@ -371,7 +394,7 @@ class ConsoleController(QObject):
         self._dropped = 0
         self._store_time = store_time
         self._revisions += 1
-        self.changed.emit()
+        self._emit_changed()
 
     def mark_saved(self) -> None:
         """The shard write landed (the 2 s settle after each persist):
@@ -391,12 +414,12 @@ class ConsoleController(QObject):
                 changed_any = True
         if changed_any:
             self._revisions += 1
-            self.changed.emit()
+            self._emit_changed()
 
     def _session_invalidated(self) -> None:
         if self._in_flight:
             self._in_flight.clear()
-            self.changed.emit()
+            self._emit_changed()
         self.reload_if_empty()
 
     def _emergency_stopped(self) -> None:

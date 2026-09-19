@@ -138,6 +138,12 @@ class ProjectionTests(ControlsCase):
         values = self.controls.values
         values["temperaturePresetItems"].append({"index": 99})
         values["fanControlItems"].append("junk")
+        # The copy-on-change contract (the 2026-09-19 review's I):
+        # the served copy is stable until the next observation, so a
+        # caller's mutation cannot reach the controller's canonical
+        # projection — the next rebuild restores it.
+        self.data.rebuild(presets={"presets": {}})
+        self.data.changed.emit()
         self.assertNotIn(99, [item["index"] for item in self.controls.values["temperaturePresetItems"]])
         self.assertEqual(self.controls.values["fanControlItems"], [])
 
