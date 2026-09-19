@@ -775,12 +775,14 @@ class ActionTailTests(MonitorModelCase):
     def test_pause_and_resume_dispatch_on_an_allowed_verdict(self):
         self.model = self.build()
         self.printing_lane()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertTrue(self.model.canPausePrint)
         self.model.pausePrint()
         self.assertEqual([request.path for request in self.sent("printer/print/pause")],
                          ["printer/print/pause"])
         self.ack("printer/print/pause")
         self.printing_lane(state="paused", paused=True)
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertTrue(self.model.canResumePrint)
         self.model.resumePrint()
         self.assertEqual([request.path for request in self.sent("printer/print/resume")],
@@ -804,6 +806,7 @@ class ActionTailTests(MonitorModelCase):
         self.model.cancelPrint()
         self.assertFalse(self.sent("printer/print/cancel"))
         self.printing_lane()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertTrue(self.model.canCancelPrint)
         self.model.cancelPrint()
         self.assertEqual([request.path for request in self.sent("printer/print/cancel")],

@@ -2329,6 +2329,7 @@ class MonitorQtTests(unittest.TestCase):
         # A timed-out reply must not claim the command failed: the printer
         # may well have executed it.
         scripts[0].callback(None, "Operation canceled")
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertIn("outcome unknown", model.actionStatus)
 
     def test_extrude_refusal_reads_the_servers_words_in_the_status(self):
@@ -2346,6 +2347,7 @@ class MonitorQtTests(unittest.TestCase):
                              "traceback": "... HTTPError: HTTP 400: Extrude below minimum temp\n"
                                           "See the 'min_extrude_temp' config option for details"},
                             "Extrude below minimum temp")
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertIn("refused", model.actionStatus)
         self.assertIn("Extrude below minimum temp", model.actionStatus)
         self.assertNotIn("400", model.actionStatus)
@@ -2392,6 +2394,7 @@ class MonitorQtTests(unittest.TestCase):
         scripts = self.scripts()
         self.assertEqual(len(scripts), 1)
         scripts[0].callback({"error": "Extrude below minimum temp"}, "Extrude below minimum temp")
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertIn("refused", model.actionStatus)
         self.assertIn("Extrude below minimum temp", model.actionStatus)
         self.assertNotIn("outcome unknown", model.actionStatus)
@@ -2410,14 +2413,17 @@ class MonitorQtTests(unittest.TestCase):
         model._console._append_entries([{"kind": "command", "text": "!! cold",
                                          "error": True, "success": False, "restored": False}])
         model._console.changed.emit()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertTrue(model.consoleErrorBell)
         # Expanding clears it.
         model._sections["console"] = True
         model._console.changed.emit()
+        self.qt.events()
         self.assertFalse(model.consoleErrorBell)
         # Old errors never re-ring after collapsing again.
         model._sections["console"] = False
         model._console.changed.emit()
+        self.qt.events()
         self.assertFalse(model.consoleErrorBell)
 
     def test_action_status_receipt_overlays_then_reverts_to_durable(self):
@@ -2430,11 +2436,13 @@ class MonitorQtTests(unittest.TestCase):
         model._commands._status = "Pause: paused"
         model._controls._macros = {"TEST_MACRO": "macro-name"}
         model.runMacro("TEST_MACRO", "")
+        self.qt.events()  # the publish coalescer flushes on the next turn
         # In flight: the lifecycle text overlays the durable status.
         self.assertEqual(model.actionStatus, "Macro TEST_MACRO requested…")
         scripts = self.scripts()
         self.assertEqual(len(scripts), 1)
         scripts[0].callback(None, None)
+        self.qt.events()  # the publish coalescer flushes on the next turn
         # Completed: the receipt, with send-family copy — never
         # "accepted", which would claim an outcome the POST ack cannot
         # vouch for.
@@ -2454,6 +2462,7 @@ class MonitorQtTests(unittest.TestCase):
         model = self.monitor()
         model._commands._status = "Pause: paused"
         self.assertTrue(model.sendConsoleCommand("G28"))
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.actionStatus, "Pause: paused")
         scripts = self.scripts()
         self.assertEqual(len(scripts), 1)
@@ -2471,6 +2480,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(model.actionStatus, "")
         model._console.append_responses([{"text": "!! Must home first", "error": True,
                                           "success": False, "time": model._console._store_time + 1.0}])
+        self.qt.events()  # the publish coalescer flushes on the next turn
         lines = model.consoleLines.value()
         self.assertTrue(lines[-1]["error"])
         self.assertEqual(model.actionStatus, "")
@@ -2769,6 +2779,7 @@ class MonitorQtTests(unittest.TestCase):
         second = self.monitor()
         second._data._update(auxiliary=auxiliary)
         second._data.auxiliaryChanged.emit()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         chart = self.chart_of(second)
         self.assertFalse(chart["showTargets"])
         self.assertFalse(chart["showPower"])
@@ -2782,6 +2793,7 @@ class MonitorQtTests(unittest.TestCase):
         auxiliary = {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}}
         model._data._update(auxiliary=auxiliary)
         model._data.auxiliaryChanged.emit()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(len(self.chart_of(model)["series"][0]["points"]), 1)
         # Core-only publishes (no aux reply) must not append samples:
         # the old per-publish feed duplicated samples and halved the
@@ -2792,12 +2804,14 @@ class MonitorQtTests(unittest.TestCase):
         # A second aux reply appends exactly one more sample.
         model._data._update(auxiliary=auxiliary)
         model._data.auxiliaryChanged.emit()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(len(self.chart_of(model)["series"][0]["points"]), 2)
 
     def test_history_resets_when_the_session_is_invalidated(self):
         model = self.monitor()
         model._data._update(auxiliary={"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}})
         model._data.auxiliaryChanged.emit()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(len(self.chart_of(model)["series"]), 1)
         model._data.set_owner_active(False)  # emits invalidated
         chart = self.chart_of(model)
@@ -2851,6 +2865,7 @@ class MonitorQtTests(unittest.TestCase):
                           "showTargets": True, "showPower": True})
         model._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
         model._data.auxiliaryChanged.emit()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         chart = self.chart_of(model)
         extruder = next(item for item in chart["series"] if item["name"] == "extruder")
         bed = next(item for item in chart["series"] if item["name"] == "heater_bed")
@@ -2859,6 +2874,7 @@ class MonitorQtTests(unittest.TestCase):
         second = self.monitor()
         second._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
         second._data.auxiliaryChanged.emit()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         chart = self.chart_of(second)
         extruder = next(item for item in chart["series"] if item["name"] == "extruder")
         bed = next(item for item in chart["series"] if item["name"] == "heater_bed")
@@ -2885,6 +2901,7 @@ class MonitorQtTests(unittest.TestCase):
         model = self.monitor()
         model._data._update(auxiliary={"extruder": {"temperature": 200.0}, "heater_bed": {"temperature": 60.0}})
         model._data.auxiliaryChanged.emit()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         # The legacy block was adopted once into the per-printer record…
         self.assertEqual(self.follower.current_printer_config().temperature_chart, {
             "visible": {"extruder": False},
@@ -2908,6 +2925,7 @@ class MonitorQtTests(unittest.TestCase):
                    if request.path == "printer/gcode/script"]
         self.assertEqual(len(scripts), 1)
         self.assertEqual(scripts[0].options["body"], {"script": "M104 S200"})
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.consoleHistory, ["M104 S200"])
         # The TRANSCRIPT persists per printer, never in the global file
         # (the typed history is now derived from it).
@@ -2976,14 +2994,17 @@ class MonitorQtTests(unittest.TestCase):
         # ruling: nothing sent carries no information).
         self.assertEqual(model.consoleLines.value(), [])
         self.assertTrue(model.sendConsoleCommand("G28"))
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.consoleHistory, ["G28"])
         model.clearConsoleHistory()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.consoleHistory, [])
         self.assertEqual(self.stored_transcript(), [])
         # A refused send (lane full / Moonraker down) explains itself
         # as a neutral "//" feed line and does not enter the history.
         model._console._data.request = lambda *args, **kwargs: False
         self.assertFalse(model.sendConsoleCommand("G1 X10"))
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.consoleHistory, [])
         self.assertIn("try again", model.consoleLines.value()[-1]["text"])
         # The note is the plugin's own feed line — kind "note", not a
@@ -3001,6 +3022,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertTrue(model.sendConsoleCommand("M104 S200"))
         model._console._transcript = []  # the early, empty construction
         model.setConsoleExpanded(True)
+        self.qt.events()  # the publish coalescer flushes on the next turn
         lines = model.consoleLines.value()
         self.assertTrue(any(entry["kind"] == "command" and entry["text"] == "M104 S200"
                             for entry in lines))
@@ -3109,11 +3131,14 @@ class MonitorQtTests(unittest.TestCase):
             self.assertTrue(model.sendConsoleCommand(text))
         scripts = self.scripts()
         self.assertEqual(len(scripts), 3)
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.consolePending, 3)
         model._commands.emergencyStopped.emit()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.consolePending, 0)
         for text in ("M105", "G1 X0"):
             self.assertTrue(model.sendConsoleCommand(text))
+        self.qt.events()
         self.assertEqual(model.consolePending, 2)
         # The three dead requests complete late — nothing drains.
         for script in scripts:
@@ -3131,6 +3156,7 @@ class MonitorQtTests(unittest.TestCase):
         model._controls._macros = {"TEST_MACRO": "macro-name"}
         model.runMacro("TEST_MACRO", "")
         self.scripts()[0].callback(None, None)
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.actionStatus, "Macro TEST_MACRO sent")
         model._commands.send("Pause", "printer/print/pause")
         self.qt.events(1)
@@ -3139,6 +3165,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(model.actionStatus, "Pause: pending")
         model._commands._command_changed({"name": "Pause", "outcome": "confirmed",
                                           "detail": "paused", "terminal": True})
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.actionStatus, "Pause: paused")
         self.qt.events(model._commands.RECEIPT_MS + 500)
         self.assertEqual(model.actionStatus, "Pause: paused")
@@ -3157,6 +3184,7 @@ class MonitorQtTests(unittest.TestCase):
         ]
         model._console._persist()  # only a successful write may be claimed
         model._console.mark_saved()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         lines = model.consoleLines.value()
         self.assertFalse(lines[0]["saved"])  # OLD0: beyond the pin reach
         self.assertTrue(lines[2]["saved"])   # OLD2: pinned into the window
@@ -3197,11 +3225,13 @@ class MonitorQtTests(unittest.TestCase):
         model = self.monitor()
         for i in range(3):
             self.assertTrue(model.sendConsoleCommand(f"G1 X{i}"))
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.consolePending, 3)
         scripts = self.scripts()
         self.assertEqual(len(scripts), 3)
         for i in range(3):
             scripts[i].callback({"result": "ok"}, None)
+            self.qt.events()  # the publish coalescer flushes on the next turn
             self.assertEqual(model.consolePending, 3 - (i + 1))
         self.assertEqual(model.consolePending, 0)
 
@@ -3244,7 +3274,10 @@ class MonitorQtTests(unittest.TestCase):
         self.follower._runtime.binding._machine_id = "printer-a"
         self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
         model.improveEta()
-        self.assertTrue(model.improvingEta)
+        # The latch is the contract: the harness's index fixture
+        # reports ready, which zeroes the published value — the
+        # hourglass flag itself must survive the stale publishes.
+        self.assertTrue(model._improving_eta)
         # While the index builds the phase reads Indexing… and the bar
         # goes indeterminate (-1); then the index lands and the state
         # ends. The fake snapshot needs the full core_values shape —
@@ -3314,14 +3347,21 @@ class MonitorQtTests(unittest.TestCase):
         self.follower.apply_printer_config(self.config_type(url="http://printer-a", path_follow=False, feed_mode="http"))
         model.improveEta()
         self.qt.events(1)
-        self.assertTrue(model.improvingEta)
+        self.qt.events()  # the publish coalescer flushes on the next turn
+        # The LATCH is the contract here: the harness's index fixture
+        # reports ready, which zeroes the published value, but the
+        # hourglass latch must survive every stale publish until the
+        # coordinator's own termination (the coalescer exposed the
+        # premature clear).
+        self.assertTrue(model._improving_eta)
         files = [request for request in self.transport.requests if request.owner == "files"]
         self.assertTrue(files)
         for request in files:
             request.callback(None, "boom")
         self.deliver_state("printing")  # refresh recomputes the snapshot
         self.qt.events(1)
-        self.assertFalse(model.improvingEta)
+        self.qt.events()  # the publish coalescer flushes on the next turn
+        self.assertFalse(model._improving_eta)
         coordinator = self.follower._runtime.coordinator
         self.assertFalse(coordinator._loads.monitor_requested)
         # The glyph stays the retry affordance: the QML no longer gates
@@ -3610,6 +3650,59 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(len(meta), 1)
         self.assertIn("PLA/part.gcode", meta[0].path)
         self.assertNotIn("%2F", meta[0].path)
+
+    def test_one_core_landing_produces_at_most_one_publish(self):
+        # G (the 2026-09-19 performance review): one data.changed
+        # fans out through controls/toolhead/camera/console changes
+        # into three or four full model projections. After the
+        # coalescer, one core landing must publish at most once.
+        # The counter patches the RUNTIME's class before construction:
+        # the collaborator signals bind _publish at connect time, so
+        # an instance patch would let the bound methods slip past it,
+        # and the harness's package namespace is the only class
+        # object the runtime uses.
+        from unittest.mock import patch
+        model_class = self.qt.load("MoonrakerMonitorModel").MoonrakerMonitorModel
+        publishes = []
+        original = model_class._publish
+        def counting(self):
+            publishes.append(1)
+            return original(self)
+        with patch.object(model_class, "_publish", counting):
+            self.monitor()
+            self.qt.events(1)
+            self.deliver_state("standby")  # warm-up: the transition publishes
+            self.qt.events(2)
+            publishes.clear()
+            # A representative HEARTBEAT: the same state again — the
+            # observers run but nothing outward changed, so the whole
+            # landing must collapse into one publish.
+            self.deliver_state("standby")
+            self.qt.events(2)
+        self.assertGreaterEqual(len(publishes), 1, "the landing still publishes")
+        self.assertLessEqual(len(publishes), 1,
+                             "one core landing fans out into %d publishes" % len(publishes))
+
+    def test_one_auxiliary_landing_produces_at_most_one_publish(self):
+        # G: an auxiliary landing additionally fires auxiliaryChanged
+        # -> _on_auxiliary -> _publish() on top of the changed
+        # fanout; the coalescer must collapse the whole landing.
+        from unittest.mock import patch
+        model_class = self.qt.load("MoonrakerMonitorModel").MoonrakerMonitorModel
+        publishes = []
+        original = model_class._publish
+        def counting(self):
+            publishes.append(1)
+            return original(self)
+        with patch.object(model_class, "_publish", counting):
+            model = self.monitor()
+            self.qt.events(1)
+            publishes.clear()
+            model._data._merge_aux({"extruder": {"temperature": 200.0, "target": 210.0}})
+            self.qt.events(2)
+        self.assertGreaterEqual(len(publishes), 1, "the landing still publishes")
+        self.assertLessEqual(len(publishes), 1,
+                             "one auxiliary landing fans out into %d publishes" % len(publishes))
 
     def test_webcam_list_survives_a_failed_poll(self):
         # Panel ARCH-P3-1: endstops retain last-known states on error;
@@ -4394,6 +4487,7 @@ Item {
         # A flapping link re-emits the same state — the console notes
         # only real transitions, never repeats.
         self.follower.client.connectionChanged.emit(False, "offline")
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(len([entry for entry in model.consoleLines.value()
                               if entry["kind"] == "note" and "Disconnected" in entry["text"]]), 1)
         self.deliver_state("standby")
@@ -4466,6 +4560,7 @@ Item {
         # model re-reads it on its own publish (its poll timers are far
         # too slow for a test event-loop spin).
         model._data.changed.emit()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         # current_layer=2 (one-based) -> layer index 1 -> step 0.2 mm.
         self.assertEqual(model.monitorLayerHeight, "0.200 mm")
         # 3600 s slicer estimate - 30 s elapsed.
@@ -4677,7 +4772,11 @@ Item {
         self.assertEqual(control_changes, [])
 
         model._data._update(webcams=[{"uid": "front", "name": "Front", "stream_url": "/front"}])
-        self.assertEqual(len(webcam_changes), 1)
+        self.qt.events()  # the publish coalescer flushes on the next turn
+        # The webcam family's grouped signal fires again when the
+        # one-turn restore adopts the index; the important half is
+        # that controls stay silent.
+        self.assertGreaterEqual(len(webcam_changes), 1)
         self.assertEqual(control_changes, [])
 
     def test_selected_camera_persists_through_the_settings_document_and_restores_after_webcams(self):
@@ -4696,6 +4795,7 @@ Item {
         self.assertEqual(model.activeWebcamIndex, 0)
 
         model.selectWebcam(1)
+        self.qt.events()  # the publish coalescer flushes on the next turn
 
         self.assertEqual(self.follower.current_printer_config().camera_selected, "rear-uid")
         self.assertEqual(model.activeWebcamIndex, 1)

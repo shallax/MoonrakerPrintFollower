@@ -314,6 +314,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(model.emergencyStopClicks, 0)
         # A genuinely new click starts a fresh arm sequence.
         model.emergencyStopClick()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.emergencyStopClicks, 1)
 
     def test_power_lock_blocks_mutation_during_print(self):

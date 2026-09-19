@@ -134,7 +134,7 @@ class MonitorControls(QObject):
         setup = self._allowed(can_restart)
         objects = {name.lower() for name in snapshot.objects}
         profiles = mesh_profiles(aux.get("bed_mesh"))
-        self._values = {
+        new_values = {
             "macroNames": list(self._macros), "hasQuadGantryLevel": "quad_gantry_level" in objects,
             "hasBedMesh": "bed_mesh" in objects, "canRunSetup": setup,
             "temperaturePresetNames": [item["name"] for item in self._presets],
@@ -155,7 +155,14 @@ class MonitorControls(QObject):
             "saveConfigSummary": "Unsaved: " + ", ".join(sorted(changes)) if changes else ("Unsaved Klipper configuration changes" if bool(configfile.get("save_config_pending")) else ""),
             "canSaveConfig": setup and bool(configfile.get("save_config_pending")), "bedMeshProfileNames": profiles,
         }
-        self.changed.emit()
+        # Emit only when the OUTWARD projection changed (the publish
+        # storm's suppression): the model listens to this signal for
+        # every heartbeat, and an unchanged projection must not
+        # rebuild the whole model (the 2026-09-19 performance
+        # review). The remembered tuning state still updates above.
+        if new_values != self._values:
+            self._values = new_values
+            self.changed.emit()
 
     @staticmethod
     def preset_active(item, auxiliary):

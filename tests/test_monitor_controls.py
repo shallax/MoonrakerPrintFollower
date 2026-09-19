@@ -142,12 +142,23 @@ class ProjectionTests(ControlsCase):
         self.assertEqual(self.controls.values["fanControlItems"], [])
 
     def test_every_capability_change_republishes(self):
+        # The publish storm's suppression (the 2026-09-19 review):
+        # each capability whose PROJECTION changes must emit, and an
+        # input that changes nothing outward must stay silent.
         seen = []
         self.controls.changed.connect(lambda: seen.append(len(seen)))
-        self.data.changed.emit()
-        self.tuning.changed.emit()
+        self.data.rebuild(objects=("gcode_macro TEST",))
+        self.data.changed.emit()  # the macro list appears
+        self.tuning.displayed["speed-factor"] = 137
+        self.tuning.changed.emit()  # the speed slider changes
+        self.data.rebuild(objects=())
+        self.data.changed.emit()  # the macro list disappears again
+        self.mesh.changed.emit()  # the mesh passthrough emits
+        self.assertEqual(len(seen), 4)
+        # The suppression's own half: an unchanged projection never
+        # re-emits — this input would have published a full model
+        # rebuild on every heartbeat before.
         self.commands.changed.emit()
-        self.mesh.changed.emit()
         self.assertEqual(len(seen), 4)
 
     def test_the_printer_surface_projects_into_the_values(self):

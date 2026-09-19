@@ -395,7 +395,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._show_probe_points = bool(getattr(self._config(), "show_probe_points", False))
         self._qv_cache = {}
         self._improving_eta = False
-        self._skip_clear_once = False
+        self._improve_started_snapshot = None
         self._values = {}
         state = _read_state(self._store)
         self._whats_new_seen = state["whatsNewSeen"]
@@ -532,13 +532,31 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_manager.uploadFinished.connect(self._on_upload_finished)
         # The light publish: thumb transitions never rebuild the rows.
         self._thumbs_dirty = False
+        self._publish_pending = False
         self._file_manager.thumbsChanged.connect(self._publish_thumbs)
         self._file_manager_open = False
         # The console's saved-state colouring now rides its own 2 s
         # settle after each shard write (ConsoleController); the
         # preference-flush channel retired with the transcript (4.5.0).
-        for signal in (self._data.changed, self._commands.changed, self._controls.changed, self._camera.changed,
-                       self._toolhead.changed, self._console.changed, self._file_manager.changed, bed_mesh.changed):
+        # The publication coalescer (the 2026-09-19 performance
+        # review): ONE data.changed fans out through the
+        # collaborators, each of which used to publish the full model
+        # again — one landing built the projection three or four
+        # times. The heartbeat signals schedule; one flush per
+        # event-loop turn rebuilds once. The two USER-ACTION
+        # collaborators publish synchronously so a jog or slider's
+        # own status is visible before the slot returns — and their
+        # observe() now emits only when the projection actually
+        # changed, so heartbeats no longer fan out through them.
+        for signal in (self._data.changed, self._commands.changed, self._camera.changed,
+                       self._console.changed, bed_mesh.changed):
+            signal.connect(self._schedule_publish)
+        # The user-action collaborators publish synchronously so a
+        # click's own re-render happens before the slot returns; the
+        # file manager joins them because its view mutations (sort,
+        # search, page) must re-render immediately (the live report
+        # of the carousel advancing one step then stopping).
+        for signal in (self._controls.changed, self._toolhead.changed, self._file_manager.changed):
             signal.connect(self._publish)
         # The history feeds once per auxiliary reply, not per publish
         # (per-publish feeding duplicated samples and halved the window);
@@ -578,7 +596,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if state != "yes":
             return
         self._camera_refresh_nonce += 1
-        self._publish()
+        self._schedule_publish()
 
     def _on_stream_failed(self) -> None:
         from .CameraTiming import mark
@@ -662,7 +680,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _on_auxiliary(self):
         self._history.observe(self._data.snapshot.auxiliary, time.monotonic(), time.time())
-        self._publish()
+        self._schedule_publish()
 
     def _on_invalidated(self):
         self._history.reset()
@@ -677,6 +695,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # moot, whatever the snapshot says.
         self._file_manager.unbind()
         self._improving_eta = False
+        self._improve_started_snapshot = None
         self._publish()
 
     def setMonitoringActive(self, active):
@@ -816,20 +835,39 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         this replaces."""
         return value if value is not None else sentinel
 
+    def _schedule_publish(self):
+        """The publication coalescer (the 2026-09-19 performance
+        review): heartbeat signals schedule one flush per event-loop
+        turn, so a single data landing publishes the full model once
+        instead of once per collaborator."""
+        if self._publish_pending:
+            return
+        self._publish_pending = True
+        QTimer.singleShot(0, self._flush_publish)
+
+    def _flush_publish(self):
+        self._publish_pending = False
+        self._publish()
+
     def _publish(self):
         fm = self._file_manager
         previous = self._values
         snapshot = self._print_state()
-        if self._improving_eta and not self._skip_clear_once \
-                and (snapshot.index_ready or not snapshot.load_active):
-            # The index landed, or the download/build failed and the
-            # coordinator cleared its flags (panel finding P1-1): the
-            # hourglass ends and the glyph becomes the retry
-            # affordance — settled BEFORE the values build so the
-            # published value reflects the cleared state. The 90 s
-            # timer stays as the last resort for a hung pull.
+        if self._improving_eta and snapshot is not self._improve_started_snapshot \
+                and not snapshot.load_active:
+            # The coordinator REBUILT its snapshot since the improve
+            # began (every rebuild is a new object) and the load is
+            # terminated — the index landed or the download/build
+            # failed (panel finding P1-1). The identity gate is the
+            # replacement for the one-shot skip latch: the publish
+            # coalescer's extra turns re-publish the SAME pre-rebuild
+            # snapshot, which used to clear the hourglass the moment
+            # any publish ran. The hourglass ends and the glyph
+            # becomes the retry affordance — settled BEFORE the
+            # values build so the published value reflects the
+            # cleared state. The 90 s timer stays as the last resort
+            # for a hung pull.
             self._improving_eta = False
-        self._skip_clear_once = False
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
         # Connected with no auxiliary data landed yet: the pane's
         # loading state (the 2026-09-16 request — the empty grey page
@@ -2064,9 +2102,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # rebuild, and the stale snapshot in this very publish
             # reads as "the load never started" (the red run: the
             # hourglass never fired when the improve ran from a
-            # settled state). Skip the clear once; every later
-            # publish sees the updated snapshot and clears honestly.
-            self._skip_clear_once = True
+            # settled state). The started-snapshot is recorded BEFORE
+            # the publish so the identity gate cannot fire on it.
+            self._improve_started_snapshot = self._print_state()
             self._publish()
             self._request_monitor_download()
             QTimer.singleShot(90000, self._improve_eta_timeout)

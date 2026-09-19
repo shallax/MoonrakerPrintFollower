@@ -207,6 +207,7 @@ class QtRuntimeTests(unittest.TestCase):
         # scenario 3 caught it).
         model, _client, _transport = self.monitor()
         model._data._update(auxiliary={"display_status": {"message": "probe-m117-x", "progress": 0.6}})
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.monitorMessage, "probe-m117-x")
 
     def test_filtered_aux_refresh_preserves_the_discovery_settings(self):

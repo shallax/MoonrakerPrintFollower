@@ -135,7 +135,7 @@ class ToolheadController(QObject):
         observation = getattr(self._data, "observation", None)
         jog_verdict = can_jog(observation) if observation is not None \
             else Verdict("disabled", R_UNKNOWN)
-        self._values = {
+        new_values = {
             "jogEnabled": jog_verdict.mode == "allowed",
             "jogDistance": self._jog_distance,
             "extrudeDistance": self._extrude_distance,
@@ -144,7 +144,14 @@ class ToolheadController(QObject):
             "positionMode": position_mode_text(self._absolute_coordinates),
             "jogStatus": self._status,
         }
-        self.changed.emit()
+        # The Z projection, the mode latch and the clamp state update
+        # above regardless; the OUTWARD signal fires only when the
+        # projection visibly changed — an unchanged heartbeat must
+        # not rebuild the whole model (the publish storm's
+        # suppression, the 2026-09-19 performance review).
+        if new_values != self._values:
+            self._values = new_values
+            self.changed.emit()
 
     def set_distance(self, distance):
         # The free-text field is a magnitude; the buttons carry direction,
