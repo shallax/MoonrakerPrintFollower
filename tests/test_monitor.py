@@ -3890,7 +3890,9 @@ class MonitorQtTests(unittest.TestCase):
         lines = model.consoleLines.value()
         self.assertEqual([entry["text"] for entry in lines if entry["kind"] != "note"],
                          ["ok", "!! Heater extruder not heating", "Target reached"])
-        # The transcript persists with the responses.
+        # The transcript persists with the responses (after the
+        # response-churn debounce's window).
+        model._console._flush_debounced()
         transcript = self.stored_transcript()
         self.assertEqual([entry["text"] for entry in transcript], ["ok", "!! Heater extruder not heating", "Target reached"])
         # The store holds Klipper's output VERBATIM — Moonraker strips

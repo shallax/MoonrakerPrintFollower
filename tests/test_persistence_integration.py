@@ -78,6 +78,7 @@ class ConsoleShardTests(unittest.TestCase):
         self.console.append_responses([
             {"text": "ok", "error": False, "success": True, "time": 5.0},
         ])
+        self.console._flush_debounced()  # the response debounce's window
         shard = self._shard()
         self.assertEqual(shard["consoleTranscript"][0]["text"], "ok")
         self.assertEqual(shard["consoleStoreTime"], 5.0)
@@ -142,6 +143,7 @@ class ConsoleShardTests(unittest.TestCase):
             identity=lambda: ("A", "A"), persistence=persistence,
         )
         console.append_responses([{"text": "x", "error": False, "success": True, "time": 1.0}])
+        console._flush_debounced()  # the response debounce's window
         notes = [entry["text"] for entry in console._transcript if entry["kind"] == "note"]
         self.assertTrue(any("could not be saved" in note for note in notes))
 

@@ -57,6 +57,17 @@ class ConsoleController(QObject):
         self._saved_timer.setSingleShot(True)
         self._saved_timer.setInterval(2000)
         self._saved_timer.timeout.connect(self.mark_saved)
+        # The response-churn debounce (the 2026-09-19 review's J):
+        # server batches coalesce into one shard write per window —
+        # each batch used to fsync on the GUI thread immediately.
+        # User sends stay immediate; the identity at arm time is
+        # only informational (the flush persists the CURRENT
+        # transcript, and an invalidation retires the dirty window
+        # outright so A's lines can never land in B's shard).
+        self._persist_timer = QTimer(self)
+        self._persist_timer.setSingleShot(True)
+        self._persist_timer.setInterval(400)
+        self._persist_timer.timeout.connect(self._flush_debounced)
         # The entries a SUCCESSFUL shard write actually stored, held by
         # reference so no line sent during the settle can inherit a
         # recycled identity: only they may settle to "on disk", so a
@@ -292,7 +303,7 @@ class ConsoleController(QObject):
         self._append_entries(fresh)
         # A live "!!" line is its own red signal in the feed — no
         # banner, no status line outside it (the ruling).
-        self._persist()
+        self._debounced_persist()
         self._emit_changed()
 
     def clear(self) -> None:
@@ -417,6 +428,10 @@ class ConsoleController(QObject):
             self._emit_changed()
 
     def _session_invalidated(self) -> None:
+        # A machine switch retires the dirty debounce window: the
+        # pending responses die with the session instead of risking
+        # a write under the incoming machine's identity.
+        self._persist_timer.stop()
         if self._in_flight:
             self._in_flight.clear()
             self._emit_changed()
@@ -452,7 +467,20 @@ class ConsoleController(QObject):
                     have += 1
         return transcript
 
+    def _debounced_persist(self) -> None:
+        if not self._persist_timer.isActive():
+            self._persist_timer.start()
+
+    def _flush_debounced(self) -> None:
+        self._persist_timer.stop()
+        self._persist()
+
     def _persist(self) -> None:
+        # Any immediate persist (a user send, a clear) supersedes the
+        # pending debounce: the fresh write already covers the
+        # transcript, and a late second write would only re-fsync the
+        # same content.
+        self._persist_timer.stop()
         machine_id = self._resolved_identity()
         if machine_id is None or self._persistence is None:
             # The identity is unresolved or the harness runs the

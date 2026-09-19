@@ -1732,6 +1732,34 @@ class ConsoleCoverageTests(unittest.TestCase):
             self.data, self.commands, config=lambda: self.config,
             apply_config=self._apply_config, identity=identity_fn, persistence=persistence)
 
+    def test_a_response_burst_coalesces_into_one_shard_write(self):
+        # J (the 2026-09-19 review): ten response batches inside one
+        # debounce window produce ONE shard write, and the final
+        # transcript carries every surviving line.
+        persistence = _FakePersistence()
+        controller = self._make(identity=("A", "Printer A"), persistence=persistence)
+        for i in range(10):
+            controller.append_responses([{"text": "line %d" % i, "error": False,
+                                          "success": False, "time": 1000.0 + i}])
+        self.assertEqual(controller._transcript[-1]["text"], "line 9")
+        self.assertEqual(persistence.writes, {}, "nothing persists inside the window")
+        self.events(450)  # the debounce fires
+        stored = persistence.writes.get("A", {}).get("consoleTranscript") or []
+        self.assertEqual([entry["text"] for entry in stored[-10:]], ["line %d" % i for i in range(10)])
+        self.assertEqual(list(persistence.writes), ["A"], "one write for the whole burst")
+
+    def test_a_machine_switch_retires_the_dirty_debounce_window(self):
+        identity = {"value": ("A", "Printer A")}
+        persistence = _FakePersistence()
+        controller = self._make(identity=lambda: identity["value"], persistence=persistence)
+        controller.append_responses([{"text": "dirty A line", "error": False,
+                                      "success": False, "time": 10.0}])
+        identity["value"] = ("B", "Printer B")
+        controller._session_invalidated()
+        self.events(450)  # the debounce would have fired
+        self.assertNotIn("A", persistence.writes, "A's dirty lines must never persist after the switch")
+        self.assertNotIn("B", persistence.writes, "the retired window must not leak into B")
+
     def test_an_empty_line_is_nothing_but_an_oversized_one_explains_itself(self):
         controller = self._make()
         self.assertFalse(controller.send(""))
