@@ -163,6 +163,11 @@ for g in connection status temperatures console webcams files motion printing se
     UNITS="$UNITS
 15 $PRIMARY group-$g suite $g"
 done
+# The first-install leg (TESTING.md §3): one clean profile booted
+# twice — the journey the pre-migrated fixture cannot cover, and the
+# reason a config-losing first install once shipped green.
+UNITS="$UNITS
+10 $PRIMARY firstinstall firstinstall"
 UNITS="$UNITS
 20 $SECONDARY smoke suite smoke"
 

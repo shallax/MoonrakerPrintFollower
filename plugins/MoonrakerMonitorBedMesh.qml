@@ -42,7 +42,7 @@ Component {
         // The status handler is a NAMED function on the root item: the
         // old inline connect() closure resolved attachDashboard in the
         // component TYPE scope and threw ReferenceError on the real
-        // Windows run (the author's log) — named functions resolve
+        // Windows run (a log) — named functions resolve
         // through the instance scope reliably.
         function onDashboardStatus(status) {
             if (status === Component.Ready) {

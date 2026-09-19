@@ -23,6 +23,8 @@ from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlComponent, QQmlEngine
 from PyQt6.QtQuick import QQuickWindow  # noqa: F401  (type-registers the QML Window wrapper)
 
+import capture_contrast
+
 THEME_ASSETS = os.path.join(ROOT, "tests", "theme_assets")
 QML_STUBS = os.path.join(ROOT, "tests", "qml_stubs")
 
@@ -69,8 +71,13 @@ def main():
     install_capture_warning_filter()
 
     from theme_support import ThemeBackend, materialise_theme_assets as _shared_materialise, verify_capture_tree
-    backend = ThemeBackend(os.path.join(THEME_ASSETS, "cura-light"))
-    overlay = _shared_materialise(os.path.join(ROOT, "dist", ".capture-theme"), backend)
+    # `or`, not a get() default: an empty CAPTURE_THEME is a value, and
+    # it used to select the whole theme-assets parent as the theme.
+    theme = os.environ.get("CAPTURE_THEME") or "cura-light"
+    backend = ThemeBackend(os.path.join(THEME_ASSETS, theme))
+    # CAPTURE_THEME_TREE: parallel capture legs need their own overlay.
+    overlay = _shared_materialise(
+        os.environ.get("CAPTURE_THEME_TREE") or os.path.join(ROOT, "dist", ".capture-theme"), backend)
 
     engine = QQmlEngine()
     # The repository's capture ordering: real components first, plugins,
@@ -87,6 +94,11 @@ def main():
     # The window stands in for Cura's main window: the popup parents
     # into its content item, exactly as production attaches it.
     window = QQuickWindow()
+    # The popup's modal dimmer composites onto the window, not onto the
+    # card: an unpainted white window turned the dim into a light grey in
+    # the dark theme, which the white card text could not be read on. The
+    # window stands in for Cura's main window, so paint its page ground.
+    window.setColor(backend.getColor("main_background"))
     window.resize(TARGET_WIDTH, TARGET_HEIGHT)
     window.show()
 
@@ -124,6 +136,10 @@ def main():
     print(f"whats-new capture: {path} ({image.width()}x{image.height()}, diversity {diversity})")
     if diversity < 20:
         raise RuntimeError("whats-new capture is blank (diversity check)")
+    # Contrast census: the pinned screenshots catch drift, not
+    # unreadability, so every text element in this frame is read
+    # against the ground its pixels actually show. Read-only.
+    capture_contrast.audit(root, image, "08-whats-new.png")
 
 
 if __name__ == "__main__":

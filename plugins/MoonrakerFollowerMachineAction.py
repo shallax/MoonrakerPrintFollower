@@ -20,6 +20,7 @@ from UM.Resources import Resources
 from UM.Settings.DefinitionContainer import DefinitionContainer
 
 from .FollowController import FollowMode
+from .MoonrakerMonitorModel import _migration_banner_text, _migration_diagnostics_text
 from .MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
 from .MoonrakerSession import RequestCategory
 from .MoonrakerTransport import MoonrakerHttpTransport
@@ -36,6 +37,7 @@ class MoonrakerFollowerMachineAction(MachineAction):
     testStatusChanged = pyqtSignal()
     testBusyChanged = pyqtSignal()
     cacheStatusChanged = pyqtSignal()
+    migrationChanged = pyqtSignal()
 
     def __init__(self, application: Any, follower: Any, output_plugin: Any = None) -> None:
         super().__init__(self.KEY, self.LABEL)
@@ -92,6 +94,56 @@ class MoonrakerFollowerMachineAction(MachineAction):
 
     def _config(self) -> PrinterConfig:
         return self._follower.current_printer_config()
+
+    # ------------------------------------------------------------------
+    # The migration failure surfaces (the settings page's mirror — the
+    # model's values reach the Monitor; this page's manager is the
+    # ACTION, so the five live here, computed from the record the
+    # facade keeps. The 2026-09-18 live find: the page read these off
+    # the wrong object and the broken bindings showed a dead banner.)
+    # ------------------------------------------------------------------
+
+    def _migration_record(self) -> Dict[str, Any]:
+        persistence = getattr(self._follower, "persistence", None)
+        record = persistence.migration_record() if persistence is not None else None
+        return dict(record) if isinstance(record, dict) else {}
+
+    @pyqtProperty(bool, notify=migrationChanged)
+    def migrationBannerVisible(self) -> bool:
+        record = self._migration_record()
+        return bool(record.get("status") == "failed" and not record.get("bannerDismissed"))
+
+    @pyqtProperty(str, notify=migrationChanged)
+    def migrationBannerText(self) -> str:
+        record = self._migration_record()
+        return _migration_banner_text(record) if record.get("status") == "failed" else ""
+
+    @pyqtProperty(bool, notify=migrationChanged)
+    def migrationBackupAvailable(self) -> bool:
+        record = self._migration_record()
+        return bool(record.get("status") == "failed" and record.get("backupWritten") and record.get("backupName"))
+
+    @pyqtProperty(bool, notify=migrationChanged)
+    def migrationDiagnosticsVisible(self) -> bool:
+        record = self._migration_record()
+        return bool(record.get("status") == "failed" and record.get("bannerDismissed"))
+
+    @pyqtProperty(str, notify=migrationChanged)
+    def migrationDiagnosticsText(self) -> str:
+        record = self._migration_record()
+        return _migration_diagnostics_text(record) if record.get("status") == "failed" else ""
+
+    @pyqtSlot()
+    def dismissMigrationBanner(self) -> None:
+        persistence = getattr(self._follower, "persistence", None)
+        if persistence is not None:
+            persistence.set_migration_record({"bannerDismissed": True})
+        self.migrationChanged.emit()
+
+    @pyqtSlot()
+    def openMigrationBackupFolder(self) -> None:
+        from PyQt6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl.fromLocalFile(Resources.getConfigStoragePath()))
 
     @pyqtProperty(str, notify=settingsChanged)
     def machineName(self) -> str:
@@ -271,7 +323,13 @@ class MoonrakerFollowerMachineAction(MachineAction):
 
     @pyqtSlot(str, result=bool)
     def validUrl(self, value: str) -> bool:
-        return self._url_is_usable(normalise_url(value))
+        # A malformed bracketed host makes urlsplit raise — a live
+        # slot exception aborts Cura, so the validator refuses
+        # instead (the 2026-09-19 coverage round's find).
+        try:
+            return self._url_is_usable(normalise_url(value))
+        except ValueError:
+            return False
 
     @pyqtSlot(str, str, result=bool)
     def insecureKeyWarning(self, url: str, key: str) -> bool:
@@ -281,7 +339,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
         but the Connection tab must say so (panel security P2-1)."""
         if not str(key or "").strip():
             return False
-        text = normalise_url(url)
+        try:
+            text = normalise_url(url)
+        except ValueError:
+            return False  # a malformed host reads as no warning, never a crash
         parsed = QUrl(text)
         if not (parsed.isValid() and parsed.scheme().lower() == "http"):
             return False
@@ -424,7 +485,16 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "filename_translate_remove": str(raw.get("filename_translate_remove") or ""),
             })
             config = PrinterConfig.from_dict(data)
-            self._follower.apply_printer_config(config)
+            saved = self._follower.apply_printer_config(config)
+            if saved is False:
+                # A refused persistence write is not a saved setting: the
+                # dialog stays open on its refusal label (saveRefused in
+                # the QML) rather than closing over a lost change. `is
+                # False` (not falsy): a facade that returns nothing —
+                # the harness doubles, a build without persistence —
+                # still counts as a save, never as a refusal.
+                Logger.log("w", "Moonraker settings save refused: the settings file could not be written")
+                return False
             if self._output_plugin is not None:
                 try:
                     self._output_plugin.refresh()
@@ -532,8 +602,8 @@ class MoonrakerFollowerMachineAction(MachineAction):
     @pyqtSlot()
     def clearCache(self) -> None:
         """The Diagnostics tab's cache-clear: drop the persistent index
-        cache so the next Improve-ETA re-downloads and re-indexes (the
-        author asked for a re-testable download flow)."""
+        cache so the next Improve-ETA re-downloads and re-indexes (a
+        request for a re-testable download flow)."""
         try:
             shutil.rmtree(self._cache_root(), ignore_errors=True)
             self._cache_status = "Cache cleared. Restart Cura to also drop the session's downloaded file."

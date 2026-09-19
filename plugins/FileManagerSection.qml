@@ -45,9 +45,15 @@ ColumnLayout {
                     root.printerModel.setFileManagerOpen(true);
                 }
             }
-            UM.TooltipArea {
-                anchors.fill: parent
-                acceptedButtons: Qt.NoButton
+            HoverHandler {
+                id: tooltipHover1
+            }
+            UM.ToolTip {
+                visible: tooltipHover1.hovered
+                targetPoint: Qt.point(parent.width / 2, 0)
+                x: 0
+                y: parent.height + UM.Theme.getSize("default_margin").height
+                width: UM.Theme.getSize("tooltip").width
                 text: root.printerModel != null && root.printerModel.monitorConnected ? "Open the file manager." : "The printer is disconnected."
             }
         }

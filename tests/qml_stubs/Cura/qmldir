@@ -9,8 +9,6 @@ RoundedRectangle 1.0 RoundedRectangle.qml
 RoundedRectangle 1.1 RoundedRectangle.qml
 MessageDialog 1.0 MessageDialog.qml
 MessageDialog 1.1 MessageDialog.qml
-NetworkMJPGImage 1.0 NetworkMJPGImage.qml
-NetworkMJPGImage 1.1 NetworkMJPGImage.qml
 TextField 1.0 TextField.qml
 TextField 1.1 TextField.qml
 CheckBox 1.0 CheckBox.qml

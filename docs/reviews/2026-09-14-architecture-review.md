@@ -267,5 +267,5 @@ This review shipped as the 4.0.2 round-1 input (F01–F05, shipped in
 4.0.2) and the 4.1.0–4.4.0 plan input (F06–F11); the per-finding
 dispositions are in `review/DECISIONS.md` (the 4.1.0 section). Draft
 PR #19, the original carrier of this report, was closed as superseded
-on the author's ruling after this copy landed in-tree — nothing of
+on a ruling after this copy landed in-tree — nothing of
 the review is lost.

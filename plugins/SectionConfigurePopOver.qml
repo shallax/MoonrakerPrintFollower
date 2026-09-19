@@ -7,7 +7,7 @@ import Cura 1.1 as Cura
 // configured order, the shared row per entry, the drag proxy and the
 // live insertion slot. View-only: the host owns the open flag and
 // the rows; every change commits once through layoutCommitted.
-// The drag reflows LIVE (the author's ruling): the dragged row
+// The drag reflows LIVE (a ruling): the dragged row
 // leaves the list the moment the gesture starts, the rows after the
 // drop point step down by one around a blank slot, and the floating
 // proxy carries the dragged card. The gesture itself lives in a
@@ -155,7 +155,7 @@ MonitorPopOver {
             anchors.fill: parent
             spacing: 0
 
-            // The all/none three-state selector (the author's live
+            // The all/none three-state selector (a live
             // ruling) — the shared component, counts owned here.
             VisibilitySelector {
                 width: parent.width

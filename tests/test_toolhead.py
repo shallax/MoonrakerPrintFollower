@@ -185,7 +185,7 @@ class ToolheadQueueTests(unittest.TestCase):
     def test_max_distance_taps_never_merge_past_the_range(self):
         # Two max retracts must stay two valid ops: the coalesced form
         # (-200) exceeds the per-op range and crashed the slot (the
-        # author's live report).
+        # live report).
         pending = ()
         for _ in range(2):
             pending, status = push_op(pending, make_extrude_op(-EXTRUDE_DISTANCE_MAX, 300.0, True))
@@ -219,7 +219,7 @@ class ToolheadQueueTests(unittest.TestCase):
 
     def test_equal_and_opposite_taps_do_not_cancel(self):
         # A queued +25 jog followed by a -25 tap must stay two moves:
-        # the wiggle executes in full (the author's 2026-09-17 ruling).
+        # the wiggle executes in full (the 2026-09-17 ruling).
         pending, status = push_op((), make_jog_op("x", 25.0, True))
         pending, status = push_op(pending, make_jog_op("x", -25.0, True))
         self.assertEqual(len(pending), 2)

@@ -27,6 +27,15 @@ Component {
         // every write.
         property bool cameraConfigured: false
 
+        onOpenPopOverChanged: {
+            // The chart pop-over's hydration gate (the 2026-09-19
+            // review's K): the model builds the full temperature
+            // payload only while the pop-over is open.
+            if (root.printer != null) {
+                root.printer.setChartOpen(openPopOver === "chart");
+            }
+        }
+
         // The camera image's visible AND source are applied
         // IMPERATIVELY: bindings on this dynamically created
         // document do not reliably re-evaluate when the model's
@@ -51,17 +60,42 @@ Component {
             cameraPane.applyCamera(url, configured);
         }
 
+        // One publish cycle can change BOTH cameraUrl and
+        // cameraRefreshNonce (the first discovery does): without
+        // coalescing each change applies the camera separately and
+        // the first discovery drives TWO stream starts (the
+        // camera-delay find's second cause). One callLater per
+        // cycle: the initial attach, an explicit refresh and a
+        // camera switch all still apply exactly once.
+        property bool _cameraApplyPending: false
+        function scheduleCameraApply() {
+            if (_cameraApplyPending) {
+                return;
+            }
+            _cameraApplyPending = true;
+            Qt.callLater(function () {
+                    _cameraApplyPending = false;
+                    updateCameraImage();
+                });
+        }
+
         Component.onCompleted: {
-            updateCameraImage();
+            // The coalescer, not a direct application: completion
+            // races the queued URL/nonce notifications, and a direct
+            // call here was one of the two start-owners the
+            // duplicate-start find named. The callLater deferral also
+            // guarantees the reconciliation runs after the printer
+            // binding and the pane have settled.
+            scheduleCameraApply();
         }
 
         Connections {
             target: root.printer
             function onCameraUrlChanged() {
-                root.updateCameraImage();
+                root.scheduleCameraApply();
             }
             function onCameraRefreshChanged() {
-                root.updateCameraImage();
+                root.scheduleCameraApply();
             }
         }
         // One open pop-over at a time ("" | "chart" | "mesh"); every
@@ -157,6 +191,15 @@ Component {
                 if (attached.indexOf(items[p]) === -1)
                     items[p].parent = container;
             }
+            // The reparent reorders the children, but a reparent that
+            // lands inside the pane's own layout pass leaves the
+            // layout's item list stale — the live panes kept the old
+            // order until a visibility toggle forced the rebuild (the
+            // 4.5.0 live find). A zero-size child added and removed
+            // in the same block schedules that rebuild invisibly.
+            var nudge = Qt.createQmlObject("import QtQuick 2.15; Item {}", container, "orderNudge");
+            nudge.parent = null;
+            nudge.destroy();
         }
 
         // The mini widget's series: primary sensors (extruders, bed,
@@ -264,7 +307,7 @@ Component {
         // bounds come from its last child's two main-axis endpoints
         // mapped into the pane — the rotated row's main axis maps
         // onto the pane's y, and a single corner read wrong on the
-        // author's engine (the live report). Hysteresis: hiding
+        // engine (the live report). Hysteresis: hiding
         // needs the bottom past the pane's edge, re-showing needs
         // comfortable slack — an intermediate resize geometry must
         // never flicker the group at the threshold (the live
@@ -301,7 +344,7 @@ Component {
             var visibleHeight = Math.min(pane.height, windowHeight - paneTop);
             var hidden = children[first].fitHidden;
             // No top guard: the -90-rotated info row's mapping read
-            // the guard false on the author's engine and its groups
+            // the guard false on the engine and its groups
             // never hid (the live report) while the +90 rows worked.
             // Bottom-only is safe even on zero geometry — the
             // constant then reads the group's length, which hides
@@ -390,6 +433,17 @@ Component {
             refreshAvailabilityGates();
             openPopOver = "";
             selectedChartSensor = "";
+            // The stored section order applies on the model's ARRIVAL
+            // (the deterministic trigger — no polling): the panes'
+            // onCompleted ran before the printer existed, and the
+            // hydration publish can fire sectionLayoutChanged before
+            // the Connections below attached. The apply reads the
+            // CURRENT effective layout, so one arrival-time pass
+            // covers both windows.
+            if (root.printer != null) {
+                root.applySectionOrder(infoContent, "information");
+                root.applySectionOrder(statusContent, "status");
+            }
             // The gcode-store poll follows the console's OWN collapse
             // state (the ruling: poll only while the console
             // is on screen, with a backfill on expand). A printer that
@@ -409,8 +463,9 @@ Component {
             consoleSection.consoleSyncLines();
             // The camera's configured flag is maintained imperatively
             // (root bindings here freeze); a printer attach is one of
-            // its triggers.
-            updateCameraImage();
+            // its triggers — through the SAME coalescer as every
+            // other camera trigger (the duplicate-start find).
+            scheduleCameraApply();
         }
         focus: true
         // The Esc ladder lives in the DASHBOARD document now: that
@@ -421,41 +476,89 @@ Component {
         // the stage-exit branch from under it (the harness probe's
         // finding). This document only answers openPopOver, which
         // the dashboard's ladder writes through baseMonitorLoader.
-        // The author's ruling (2026-09-10): when the stage is too
-        // narrow for the Webcam pane at its minimum, the Information
-        // pane auto-collapses to make room. The trigger is computed
-        // from FIXED constants — the expanded Info width, the webcam
-        // pane's label-free minimum and the status pane's minimum —
-        // NEVER from the post-collapse layout, so collapsing
-        // Information cannot move the goal post and no
-        // hysteresis oscillation can form. Re-expansion waits for
-        // the required width PLUS a margin, so the boundary cannot
-        // jitter either.
-        property real infoComfortWidth: (240 + 220 + 410) * screenScaleFactor + 4 * UM.Theme.getSize("default_margin").width
+        // The narrow-window collapse/lock contract — see INSTRUCTIONS.md
+        // "Standing UI rules"; changes here require explicit
+        // double-confirmation.
+        // The ruling (the narrow-window rule, re-based on the camera):
+        // every decision below reads the WEBCAM pane's own width, never
+        // the stage's. The camera is what the panes' expansions take
+        // their room from, and its width already carries whatever the
+        // panes around it gave up (the controls pane's yield widens the
+        // camera with no stage change at all). An expansion is blocked
+        // while it would take the camera under its comfort minimum;
+        // folding is what gives that room back.
+        // One evaluation serves the fold and the release, and it is
+        // driven by the camera rather than the window: a stage that
+        // lands under the squeeze without ever crossing it (a jump)
+        // still folds, because the rules run where the camera's width
+        // settles.
+        readonly property real cameraViewportWidth: cameraPane.viewportWidth
+        property bool webcamSqueezed: root.cameraViewportWidth > 0 && root.cameraViewportWidth < 220 * screenScaleFactor
+        // The expansion cost: the pane's expanded width less the
+        // collapsed strip it replaces — what opening it takes off the
+        // camera.
+        readonly property real infoExpandCost: (270 - 44) * screenScaleFactor
+        readonly property real statusExpandCost: (410 - 44) * screenScaleFactor
+        // The forward check: an expansion is refused while the camera
+        // could not stay at its comfort minimum through it.
+        readonly property bool infoExpandBlocked: root.cameraViewportWidth - root.infoExpandCost < 220 * screenScaleFactor
+        readonly property bool statusExpandBlocked: root.cameraViewportWidth - root.statusExpandCost < 220 * screenScaleFactor
         property bool infoPersistedCollapsed: root.printer != null ? root.printer.infoCollapsed : false
-        // The author's ruling: fold the Information pane before the
-        // WEBCAM pane starts being crushed. Empirically probed in the
-        // harness (probe3): the camera column squeezes below its
-        // 220 px comfort width at a stage width of ~900 px — the old
-        // release threshold (734 px) sat BELOW the squeeze boundary,
-        // so every shrink released the latch the instant it fired
-        // (and the latch only fires on transitions, so it never
-        // re-armed below that). The comfort width — info 240 +
-        // camera 220 + status 410 + margins — plus a 40 px margin
-        // puts the release ABOVE the squeeze boundary: the latch
-        // holds, and the dead zone between the two prevents
-        // flapping. Both thresholds come from the same fixed
-        // constant, never from the post-collapse layout.
-        property bool webcamSqueezed: cameraPane.viewportWidth > 0 && cameraPane.viewportWidth < 220 * screenScaleFactor
+        property bool statusPersistedCollapsed: root.printer != null ? root.printer.statusCollapsed : false
         property bool infoAutoCollapsed: false
-        onWebcamSqueezedChanged: {
-            if (webcamSqueezed && !root.infoPersistedCollapsed) {
-                root.infoAutoCollapsed = true;
+        property bool statusAutoCollapsed: false
+        // The camera seen with a pane's OWN fold released: the room that
+        // fold holds is credited back out, so the figure is the same
+        // before and after the layout takes the fold's room and no
+        // decision depends on how many passes the layout needed. It is
+        // also the forward check read backwards — the fold releases
+        // exactly when the lock would stop refusing the expansion.
+        readonly property real infoOpenWidth: root.cameraViewportWidth - (root.infoAutoCollapsed && !root.infoPersistedCollapsed ? root.infoExpandCost : 0)
+        readonly property real statusOpenWidth: root.cameraViewportWidth - (root.statusAutoCollapsed && !root.statusPersistedCollapsed ? root.statusExpandCost : 0)
+        // The camera can only be trusted once the layout has taken the
+        // fold the flags just made: in the pass that writes a flag the
+        // camera still reads the pre-fold width, and folding the next
+        // pane against it would fold one the first fold just made room
+        // for (the probe's transient, and the click-twice report behind
+        // it). The pane's own width is the layout's statement that its
+        // fold has landed — and where the camera is pinned at its floor
+        // it is the only signal there is, a fold there moving the panes
+        // and not the camera. The room measure itself stays the camera.
+        readonly property bool infoFoldLanded: infoPanel.width < 200 * screenScaleFactor
+        onCameraViewportWidthChanged: root.applyNarrowWindowRules()
+        onWidthChanged: root.applyNarrowWindowRules()
+        function applyNarrowWindowRules() {
+            // The un-laid-out document reads zero: no camera, no rule.
+            if (!(root.cameraViewportWidth > 0)) {
+                return;
             }
-        }
-        onWidthChanged: {
-            if (root.width >= infoComfortWidth + 40 * screenScaleFactor) {
-                root.infoAutoCollapsed = false;
+            // Read every measure before either flag moves: the cascade's
+            // order is decided by the flags as they stand, never by a
+            // value this evaluation is about to write.
+            var infoOpen = root.infoOpenWidth;
+            var statusOpen = root.statusOpenWidth;
+            var infoWasCollapsed = root.infoCollapsed;
+            var statusWasFolded = root.statusAutoCollapsed;
+            var comfort = 220 * screenScaleFactor;
+            if (!root.infoPersistedCollapsed) {
+                // The information pane folds while the camera cannot
+                // hold it, and reclaims its room LAST: while the status
+                // pane's fold stands, reopening it would spend the very
+                // room that fold is holding and the pair would land the
+                // camera under its comfort (the release churn). Once
+                // the status pane is back it measures its own room
+                // again. A collapse the user made themselves is never
+                // the fold's to take or to drop.
+                root.infoAutoCollapsed = infoOpen < comfort || statusWasFolded;
+            }
+            if (!root.statusPersistedCollapsed) {
+                // The cascade: the status pane folds once the
+                // information pane's room is spent and the camera is
+                // STILL under comfort, and unfolds again the moment the
+                // camera can absorb it — the very check the lock
+                // publishes, so the refusal and the release cannot
+                // disagree.
+                root.statusAutoCollapsed = statusOpen < comfort && root.infoFoldLanded && (infoWasCollapsed || statusWasFolded);
             }
         }
         onInfoAutoCollapsedChanged: {
@@ -464,7 +567,15 @@ Component {
             }
         }
         property bool infoCollapsed: root.infoPersistedCollapsed || root.infoAutoCollapsed
-        property bool statusCollapsed: root.printer != null ? root.printer.statusCollapsed : false
+        // The narrow-window lock: an expansion that would crush the
+        // camera is refused on every path — the fold's own reasons (the
+        // auto collapse, a camera already under its comfort) and the
+        // forward check — and the refusal says so (the console's
+        // too-narrow precedent). Hiding a pane stays available; only
+        // the expand direction waits for the camera's room.
+        readonly property bool infoExpandLocked: root.infoCollapsed && (root.infoAutoCollapsed || root.webcamSqueezed || root.infoExpandBlocked)
+        property bool statusCollapsed: root.statusPersistedCollapsed || root.statusAutoCollapsed
+        readonly property bool statusExpandLocked: root.statusCollapsed && (root.statusAutoCollapsed || root.webcamSqueezed || root.statusExpandBlocked)
         property string connectionDotColour: root.printer != null && root.printer.monitorConnected ? MoonrakerTheme.successGreen : MoonrakerTheme.errorRed
 
         ColorDialog {
@@ -528,14 +639,19 @@ Component {
                 // PANE clips, so no child can ever spill past its
                 // bounds (the live report: every readout overflowed).
                 clip: true
+                // The pane's own width is where its fold LANDS — the one
+                // signal left where the camera is pinned at its floor
+                // (see the rule): the stage's width alone would stall
+                // the cascade one pane short.
+                onWidthChanged: root.applyNarrowWindowRules()
                 onHeightChanged: root.updateInfoReadoutFits()
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
-                Layout.preferredWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 240 * screenScaleFactor)
-                Layout.minimumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 170 * screenScaleFactor)
+                Layout.preferredWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 270 * screenScaleFactor)
+                Layout.minimumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 200 * screenScaleFactor)
                 // Shrink-only: max == preferred keeps the wide layout
                 // unchanged, but narrow stages may compress the pane.
-                Layout.maximumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 240 * screenScaleFactor)
+                Layout.maximumWidth: (root.infoCollapsed ? infoCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 270 * screenScaleFactor)
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 // No Layout.leftMargin here: the host RowLayout's
@@ -554,6 +670,15 @@ Component {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
+                        // Auto-collapsed-by-width is not a clickable
+                        // expand: only a wider window restores the
+                        // pane (the header button's guard, and the
+                        // console's strip precedent). Unguarded, this
+                        // click discarded the user's own collapse and
+                        // the pane sprang open on the next widen.
+                        if (root.infoExpandLocked) {
+                            return;
+                        }
                         if (root.printer != null) {
                             root.printer.setInfoCollapsed(false);
                         }
@@ -578,7 +703,7 @@ Component {
                         // Square at the OLD button width: the theme
                         // adds its padding around the 32px content, so
                         // the height tracks the rendered width (the
-                        // author's ruling).
+                        // ruling).
                         width: 28 * screenScaleFactor
                         iconSize: 12 * screenScaleFactor
                         height: width
@@ -589,13 +714,12 @@ Component {
                         // pane collapse buttons uniform). This pane is
                         // leftmost and collapses left.
                         iconSource: root.infoCollapsed ? UM.Theme.getIcon("ChevronSingleRight") : UM.Theme.getIcon("ChevronSingleLeft")
-                        tooltip: root.infoAutoCollapsed ? "The window is too narrow — widen it to show the information." : (root.infoCollapsed ? "Show the information." : "Hide the information.")
                         onClicked: {
                             // Auto-collapsed-by-width is not a
                             // clickable toggle: only a wider window
                             // restores the pane (the console's
                             // too-narrow precedent).
-                            if (root.infoAutoCollapsed) {
+                            if (root.infoExpandLocked) {
                                 return;
                             }
                             // The NEW state is computed locally: the
@@ -613,6 +737,14 @@ Component {
                                 root.openPopOver = "";
                             }
                         }
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: root.infoExpandLocked ? "The window is too narrow — widen it to show the information." : (root.infoCollapsed ? "Show the information." : "Hide the information.")
+                        }
                     }
                     // The configure trigger: the column configurer's
                     // glyph, adjacent to the collapse toggle (the
@@ -627,7 +759,6 @@ Component {
                         height: width
                         implicitHeight: width
                         text: "⇄"
-                        tooltip: "Configure the information sections."
                         onClicked: {
                             root.buildConfigureRows("information");
                             // Positioned imperatively at open time,
@@ -640,6 +771,14 @@ Component {
                             infoConfigurePopOver.x = infoEdge.x;
                             infoConfigurePopOver.y = infoEdge.y + infoHeader.height + UM.Theme.getSize("thin_margin").height;
                             root.openPopOver = "sections-info";
+                        }
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: "Configure the information sections."
                         }
                     }
                     UM.Label {
@@ -660,7 +799,9 @@ Component {
                     anchors.bottom: parent.bottom
                     anchors.topMargin: UM.Theme.getSize("default_margin").height
                     anchors.leftMargin: UM.Theme.getSize("default_margin").width
-                    anchors.rightMargin: UM.Theme.getSize("default_margin").width
+                    // No right inset: the content's own 14px gutter is
+                    // the only dead band right of the sections (the
+                    // 4.5.0 live ruling — a margin's width, no more).
                     anchors.bottomMargin: UM.Theme.getSize("default_margin").height
                     clip: true
                     contentWidth: width
@@ -672,7 +813,20 @@ Component {
 
                     ColumnLayout {
                         id: infoContent
-                        width: infoFlick.width - infoScrollbar.width - UM.Theme.getSize("default_margin").width
+                        objectName: "moonrakerInfoContent"
+                        // The stored order applies HERE — before the
+                        // first frame paints (the 4.5.0 live find).
+                        Component.onCompleted: root.applySectionOrder(infoContent, "information")
+                        // The constant gutter (the status pane's own
+                        // precedent): binding the content width to the
+                        // LIVE scrollbar width feeds the polish loop —
+                        // the scrollbar overlays the gutter instead of
+                        // squeezing the content in a feedback cycle.
+                        // Layout.fillWidth is inert here (the Flickable
+                        // is not a layout) — the 4.5.0 live find's
+                        // 1px crush; the explicit width stays, trimmed
+                        // to the 14px gutter alone.
+                        width: infoFlick.width - 14
                         // Spacing lives on the children: collapsed sections
                         // must contribute nothing so headers stack flush.
                         spacing: 0
@@ -728,14 +882,14 @@ Component {
                         anchors.centerIn: parent
                     }
                 }
-                // The collapsed readout (the author's 2026-09-17
+                // The collapsed readout (the 2026-09-17
                 // ruling): the hotend and bed temperatures from the
                 // PRINTER's peripherals fill the empty space BELOW
                 // the title — regular text, not the title's face.
-                // The collapsed readout (the author's 2026-09-17
+                // The collapsed readout (the 2026-09-17
                 // ruling): the hotend and bed temperatures from the
                 // PRINTER's peripherals in ONE rotated flat row of
-                // explicit children — the structure the author's
+                // explicit children — the structure the
                 // engine actually lays out (the wrapper/implicit
                 // strips stayed zero-sized there, the live report).
                 Item {
@@ -749,7 +903,7 @@ Component {
                     // the row's implicit width, so the centred row
                     // fills it and the strip starts at the margin
                     // under the title (direct row positioning hid
-                    // the content on the author's engine, the live
+                    // the content on the engine, the live
                     // report). 18 is the label line height.
                     width: 18 * screenScaleFactor
                     height: infoReadoutRow.implicitWidth
@@ -827,6 +981,7 @@ Component {
 
                     CameraPane {
                         id: cameraPane
+                        traceCameraTiming: printer != null && printer.traceCameraTiming
                         Layout.fillWidth: true
                         // The webcam card ALWAYS fills: the layout
                         // allocates the console's capped preferred
@@ -865,8 +1020,8 @@ Component {
                         }
                         // NO fillHeight: the card hugs the webcam card
                         // directly (a fill slot plus a maximum clamp
-                        // left a huge gap between the cards — the
-                        // author's live report). Its height is the
+                        // left a huge gap between the cards — a
+                        // live report). Its height is the
                         // user's, bounded by the clamp window below.
                         // UNTIL they drag the handle, the card keeps the
                         // pane default: the live test found even
@@ -881,8 +1036,8 @@ Component {
                         // EXPLICIT height, never the inner column's
                         // implicit: the real Cura engine computed the
                         // implicit from a collapsed chain and the card
-                        // rendered two lines tall with a white gap (the
-                        // author's report; the harness engine disagreed).
+                        // rendered two lines tall with a white gap (a
+                        // report; the harness engine disagreed).
                         // The pane bounds are the clamp window: the
                         // console's floor keeps the header row and the
                         // input row usable, and its ceiling leaves the
@@ -1083,10 +1238,16 @@ Component {
                                     color: consoleResizeArea.containsMouse ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
                                 }
 
-                                UM.TooltipArea {
-                                    anchors.fill: parent
+                                HoverHandler {
+                                    id: tooltipHover1
+                                }
+                                UM.ToolTip {
+                                    visible: tooltipHover1.hovered
+                                    targetPoint: Qt.point(parent.width / 2, 0)
+                                    x: 0
+                                    y: parent.height + UM.Theme.getSize("default_margin").height
+                                    width: UM.Theme.getSize("tooltip").width
                                     text: "Drag to resize the console."
-                                    acceptedButtons: Qt.NoButton
                                 }
                             }
 
@@ -1117,7 +1278,7 @@ Component {
                                     // the theme adds its padding around
                                     // the 32px content, so the height
                                     // tracks the rendered width (the
-                                    // author's ruling).
+                                    // ruling).
                                     width: 28 * screenScaleFactor
                                     iconSize: 12 * screenScaleFactor
                                     height: width
@@ -1132,19 +1293,26 @@ Component {
                                     // (the ruling — the first direction read
                                     // inverted).
                                     iconSource: root.printer != null && root.printer.sectionExpandedMap["console"] !== false && !consolePanel.tooNarrow ? UM.Theme.getIcon("ChevronSingleDown") : UM.Theme.getIcon("ChevronSingleUp")
-                                    tooltip: consolePanel.tooNarrow ? "The window is too narrow — widen it to expand the console." : (root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? "Collapse the console." : "Expand the console.")
                                     onClicked: {
                                         if (root.printer != null && !consolePanel.tooNarrow) {
                                             // The poll follows the pane:
                                             // collapsing stops the
                                             // gcode-store fetch (the
-                                            // author's expanded-only
+                                            // expanded-only
                                             // ruling), expanding starts
                                             // it with a backfill seed.
                                             var expanding = root.printer.sectionExpandedMap["console"] === false;
                                             root.printer.setSectionExpanded("console", expanding);
                                             root.printer.setConsoleExpanded(expanding);
                                         }
+                                    }
+                                    UM.ToolTip {
+                                        visible: parent.hovered
+                                        targetPoint: Qt.point(parent.width / 2, 0)
+                                        x: 0
+                                        y: parent.height + UM.Theme.getSize("default_margin").height
+                                        width: UM.Theme.getSize("tooltip").width
+                                        text: consolePanel.tooNarrow ? "The window is too narrow — widen it to expand the console." : (root.printer != null && root.printer.sectionExpandedMap["console"] !== false ? "Collapse the console." : "Expand the console.")
                                     }
                                 }
 
@@ -1180,7 +1348,7 @@ Component {
                                 // spilled past the card, and the fade
                                 // keeps the closing pane clean.
                                 opacity: consolePanel.consoleBodyOpacity
-                                // The author's cheat: if the app started
+                                // The cheat: if the app started
                                 // with the console collapsed, the FIRST
                                 // expand scrolls to the tail once (the
                                 // restore ran collapsed and its metrics
@@ -1371,7 +1539,7 @@ Component {
                                             // metrics to settle, or for the
                                             // first expand of a start-
                                             // collapsed console — the
-                                            // author's cheat). Recolour
+                                            // cheat). Recolour
                                             // rebuilds never follow.
                                             consoleFlick.restoreScrollPending = true;
                                         } else {
@@ -1482,8 +1650,8 @@ Component {
                                     // the pane is dragged shorter than
                                     // they need they are cut at the well's
                                     // own edge instead of floating
-                                    // outside the black border (the
-                                    // author's live report).
+                                    // outside the black border (a
+                                    // live report).
                                     clip: true
 
                                     ColumnLayout {
@@ -1495,6 +1663,13 @@ Component {
                                             id: consoleOutputHost
                                             Layout.fillWidth: true
                                             Layout.fillHeight: true
+                                            // 5.11's TextArea metrics inflate the flick's content
+                                            // implicit height, which FLOORS this fillHeight slot
+                                            // and pushes the input row out of the well — the
+                                            // transcript then grabs the Send/Clear presses (the
+                                            // sweep's d1-07/d3-01 find). The explicit floor
+                                            // keeps the slot shrinkable on every version.
+                                            Layout.minimumHeight: 0
 
                                             Flickable {
                                                 id: consoleFlick
@@ -1582,8 +1757,8 @@ Component {
                                                     // overlays the well's right
                                                     // edge: the text must stop
                                                     // short of it or wrapped
-                                                    // lines run underneath (the
-                                                    // author's live report). A
+                                                    // lines run underneath (a
+                                                    // live report). A
                                                     // CONSTANT reserve (the
                                                     // status gutter's
                                                     // precedent): the
@@ -1618,8 +1793,8 @@ Component {
                                                         // Long Klipper lines wrap
                                                         // instead of overflowing the
                                                         // well; wrapping breaks on
-                                                        // word boundaries (the
-                                                        // author's live report).
+                                                        // word boundaries (a
+                                                        // live report).
                                                         wrapMode: TextEdit.Wrap
                                                         font.family: consoleSection.monoFamily()
                                                         color: MoonrakerTheme.consoleText
@@ -1670,7 +1845,20 @@ Component {
                                                 id: consoleInput
                                                 objectName: "moonrakerConsoleInput"
                                                 Layout.fillWidth: true
+                                                // The row's only shrink absorber: on 5.11's
+                                                // theme metrics the field's implicit minimum
+                                                // outran the pane, pushing Send and Clear out
+                                                // of their cells — the presses landed on the
+                                                // field's wider region.
+                                                Layout.minimumWidth: 0
+                                                // Nothing of the field paints or takes input
+                                                // outside its own cell.
+                                                clip: true
                                                 placeholderText: "G-code command…"
+                                                // The placeholder must clear the contrast
+                                                // census on the light pane: the theme's
+                                                // muted tone, never UM's grey-on-grey.
+                                                placeholderTextColor: MoonrakerTheme.consoleTextMuted
                                                 font.family: consoleSection.monoFamily()
                                                 enabled: root.printer != null && root.printer.monitorConnected
                                                 Keys.onReturnPressed: consoleSection.consoleSend()
@@ -1680,11 +1868,16 @@ Component {
                                             Cura.SecondaryButton {
                                                 text: "Send"
                                                 objectName: "moonrakerConsoleSend"
+                                                // The buttons hold their cells; the field
+                                                // gives up the width instead.
+                                                Layout.fillWidth: false
                                                 enabled: root.printer != null && root.printer.monitorConnected
                                                 onClicked: consoleSection.consoleSend()
                                             }
                                             Cura.SecondaryButton {
                                                 text: "Clear"
+                                                objectName: "moonrakerConsoleClear"
+                                                Layout.fillWidth: false
                                                 enabled: root.printer != null && root.printer.monitorConnected && root.printer.consoleLines.length > 0
                                                 onClicked: root.printer.clearConsoleHistory()
                                             }
@@ -1704,6 +1897,11 @@ Component {
                 // bounds (the live report).
                 clip: true
                 onHeightChanged: root.updateStatusReadoutFits()
+                // The pane's own width is where its fold LANDS — the one
+                // signal left where the camera is pinned at its floor
+                // (see the rule): the stage's width alone would stall
+                // the cascade one pane short.
+                onWidthChanged: root.applyNarrowWindowRules()
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
                 Layout.preferredWidth: (root.statusCollapsed ? statusCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 410 * screenScaleFactor)
@@ -1725,6 +1923,13 @@ Component {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
+                        // Auto-collapsed-by-width is not a clickable
+                        // expand: only a wider window restores the
+                        // pane (the information pane's strip and the
+                        // console's strip carry the same guard).
+                        if (root.statusExpandLocked) {
+                            return;
+                        }
                         if (root.printer != null) {
                             root.printer.setStatusCollapsed(false);
                         }
@@ -1758,14 +1963,20 @@ Component {
                         height: 10 * screenScaleFactor
                         radius: 5 * screenScaleFactor
                         color: connectionDotColour
-                        UM.TooltipArea {
-                            anchors.fill: parent
+                        HoverHandler {
+                            id: tooltipHover2
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover2.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             // The transport detail rides the dot's
                             // tooltip: "connected over websocket" or
                             // "connected over HTTP polling" (the
-                            // author's chosen spot for it).
+                            // chosen spot for it).
                             text: root.printer != null && root.printer.monitorConnected ? (root.printer.connectionDetail.length > 0 ? "Connected to Moonraker — " + root.printer.connectionDetail + "." : "Connected to Moonraker.") : "Disconnected from Moonraker."
-                            acceptedButtons: Qt.NoButton
                         }
                     }
                     // Open the Moonraker UI in a browser, icon-style in the
@@ -1785,10 +1996,16 @@ Component {
                             }
                         }
 
-                        UM.TooltipArea {
-                            anchors.fill: parent
+                        HoverHandler {
+                            id: tooltipHover3
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover3.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "Open the Moonraker frontend."
-                            acceptedButtons: Qt.NoButton
                         }
                     }
                     // The configure trigger, beside its collapse
@@ -1803,7 +2020,6 @@ Component {
                         height: width
                         implicitHeight: width
                         text: "⇄"
-                        tooltip: "Configure the printer-status sections."
                         onClicked: {
                             root.buildConfigureRows("status");
                             // Imperative positioning, the same reason
@@ -1812,6 +2028,14 @@ Component {
                             statusConfigurePopOver.x = statusEdge.x - statusConfigurePopOver.width;
                             statusConfigurePopOver.y = statusEdge.y + statusHeader.height + UM.Theme.getSize("thin_margin").height;
                             root.openPopOver = "sections-status";
+                        }
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: "Configure the printer-status sections."
                         }
                     }
                     // The toggle hugs the right edge: the pane is on the
@@ -1824,7 +2048,7 @@ Component {
                         // Square at the OLD button width: the theme
                         // adds its padding around the 32px content, so
                         // the height tracks the rendered width (the
-                        // author's ruling).
+                        // ruling).
                         width: 28 * screenScaleFactor
                         iconSize: 12 * screenScaleFactor
                         height: width
@@ -1834,17 +2058,32 @@ Component {
                         // and info toggles; this pane is rightmost and
                         // collapses right.
                         iconSource: root.statusCollapsed ? UM.Theme.getIcon("ChevronSingleLeft") : UM.Theme.getIcon("ChevronSingleRight")
-                        tooltip: root.statusCollapsed ? "Show the printer status." : "Hide the printer status."
                         onClicked: {
+                            // Auto-collapsed-by-width is not a
+                            // clickable toggle: only a wider window
+                            // restores the pane (the information
+                            // pane's toggle carries the same guard).
+                            if (root.statusExpandLocked) {
+                                return;
+                            }
                             if (root.printer != null) {
                                 root.printer.setStatusCollapsed(!root.statusCollapsed);
                             }
+                        }
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: root.statusExpandLocked ? "The window is too narrow — widen it to show the printer status." : (root.statusCollapsed ? "Show the printer status." : "Hide the printer status.")
                         }
                     }
                 }
 
                 Flickable {
                     id: statusFlick
+                    objectName: "moonrakerStatusFlick"
                     visible: !root.statusCollapsed
                     anchors.top: statusHeader.bottom
                     anchors.left: parent.left
@@ -1852,7 +2091,11 @@ Component {
                     anchors.bottom: parent.bottom
                     anchors.topMargin: UM.Theme.getSize("default_margin").height
                     anchors.leftMargin: UM.Theme.getSize("default_margin").width
-                    anchors.rightMargin: UM.Theme.getSize("default_margin").width
+                    // No right inset: the content's own 14px gutter is
+                    // the only dead band right of the sections — the
+                    // same ruling the information pane above carries,
+                    // and the inset that used to double the pane's
+                    // right gap against the scroll bar.
                     anchors.bottomMargin: UM.Theme.getSize("default_margin").height
                     clip: true
                     contentWidth: width
@@ -1864,13 +2107,21 @@ Component {
 
                     ColumnLayout {
                         id: statusContent
-                        // The constant gutter (the whats-new overlay's
-                        // precedent): binding the content width to the
-                        // LIVE scrollbar width fed a layout polish loop
-                        // on the author's Windows run — the scrollbar
-                        // overlays the gutter instead of squeezing the
-                        // content in a feedback cycle.
-                        width: statusFlick.width - 14 - UM.Theme.getSize("default_margin").width
+                        objectName: "moonrakerStatusContent"
+                        // The stored order applies HERE — the column's
+                        // own completion, after its children exist and
+                        // BEFORE the first frame paints (the 4.5.0 live
+                        // find: any later apply is a visible jump).
+                        Component.onCompleted: root.applySectionOrder(statusContent, "status")
+                        // The constant gutter, exactly as the information
+                        // pane above rules it: the scrollbar overlays the
+                        // gutter rather than squeezing the content in a
+                        // live-width feedback cycle. Layout.fillWidth is
+                        // inert here (a Flickable is not a layout), so the
+                        // explicit viewport-relative width is the only
+                        // thing keeping the column at its own implicit
+                        // width while the sections paint past the pane.
+                        width: statusFlick.width - 14
                         // Spacing lives on the children: collapsed sections
                         // must contribute nothing so headers stack flush.
                         spacing: 0
@@ -1923,7 +2174,7 @@ Component {
                 // The loading prompt (the 2026-09-16 request): an
                 // overlay ABOVE the flick, never a layout child — a
                 // layout child flipping visibility reflowed the
-                // section stack and fed a polish loop (the author's
+                // section stack and fed a polish loop (the
                 // Windows run).
                 Item {
                     anchors.fill: statusFlick
@@ -1966,7 +2217,7 @@ Component {
                         color: connectionDotColour
                     }
                 }
-                // The collapsed readout (the author's 2026-09-17
+                // The collapsed readout (the 2026-09-17
                 // ruling): the dual-stacked progress bars fill the
                 // empty space BELOW the title — print above layer,
                 // thin tracks at the pill weight, each labelled and
@@ -1990,7 +2241,7 @@ Component {
                     width: 18 * screenScaleFactor
                     height: statusReadoutRow.implicitWidth
                     // ONE rotated flat row of explicit children —
-                    // the structure the author's engine lays out.
+                    // the structure the engine lays out.
                     // Each bar is its own pair: glyph, label, then
                     // the TRACK — whose 60 px span lies ALONG the
                     // row's main axis, so the rotation makes it run
@@ -2020,13 +2271,19 @@ Component {
                             width: 16 * screenScaleFactor
                             height: 16 * screenScaleFactor
                             source: Qt.resolvedUrl("Hourglass.svg")
-                            UM.TooltipArea {
-                                anchors.fill: parent
+                            HoverHandler {
+                                id: tooltipHover4
+                            }
+                            UM.ToolTip {
+                                visible: tooltipHover4.hovered
+                                targetPoint: Qt.point(parent.width / 2, 0)
+                                x: 0
+                                y: parent.height + UM.Theme.getSize("default_margin").height
+                                width: UM.Theme.getSize("tooltip").width
                                 // The improve-Eta mirror names the
                                 // action (the panel's catch): the
                                 // strip's glyph is not the button.
                                 text: "Improve the estimate — download and index this print's G-code without loading it into the preview."
-                                acceptedButtons: Qt.NoButton
                             }
                         }
                         UM.Label {
@@ -2035,14 +2292,23 @@ Component {
                             visible: root.etaAvailable
                             opacity: fitHidden ? 0 : 1
                             text: root.printer != null ? root.printer.monitorEta : "—"
-                            width: 64 * screenScaleFactor
+                            // The longest ETA form must clear the slot
+                            // or the value wraps — the same live-report
+                            // width the finish clock's slot carries.
+                            width: 84 * screenScaleFactor
                             font: UM.Theme.getFont("default")
                             color: UM.Theme.getColor("text")
                             elide: Text.ElideRight
-                            UM.TooltipArea {
-                                anchors.fill: parent
+                            HoverHandler {
+                                id: tooltipHover5
+                            }
+                            UM.ToolTip {
+                                visible: tooltipHover5.hovered
+                                targetPoint: Qt.point(parent.width / 2, 0)
+                                x: 0
+                                y: parent.height + UM.Theme.getSize("default_margin").height
+                                width: UM.Theme.getSize("tooltip").width
                                 text: "Improve the estimate — download and index this print's G-code without loading it into the preview."
-                                acceptedButtons: Qt.NoButton
                             }
                         }
                         UM.ColorImage {
@@ -2060,7 +2326,12 @@ Component {
                             visible: root.finishAvailable
                             opacity: fitHidden ? 0 : 1
                             text: root.printer != null ? root.printer.monitorFinish : "—"
-                            width: 56 * screenScaleFactor
+                            // The finish reads day-first on a print
+                            // crossing midnight, and that form is the
+                            // widest the strip holds: the slot must
+                            // clear it or the value wraps (the live
+                            // report).
+                            width: 84 * screenScaleFactor
                             font: UM.Theme.getFont("default")
                             color: UM.Theme.getColor("text")
                             elide: Text.ElideRight
@@ -2217,7 +2488,21 @@ Component {
         // layout children: anchored children inside a layout reflow
         // every pane (and Qt logs undefined-behavior warnings), and a
         // layout child cannot overlap the layout. A click outside any
-        // open card closes it; the pop-overs sit above this layer.
+        // open card closes it — but a click on the card's own surface
+        // must not: the card's background owns no mouse handler, so
+        // the press lands here and the bounds check keeps the card
+        // open (the live report: in-bounds clicks dismissed the
+        // pop-over).
+        function clickInsideOpenPopOver(x, y) {
+            var cards = [infoConfigurePopOver, statusConfigurePopOver, chartPanel, meshPanel];
+            for (var i = 0; i < cards.length; i++) {
+                var card = cards[i];
+                if (card.visible && x >= card.x && x <= card.x + card.width && y >= card.y && y <= card.y + card.height) {
+                    return true;
+                }
+            }
+            return false;
+        }
         MouseArea {
             id: outsideClickLayer
             visible: root.openPopOver !== ""
@@ -2225,6 +2510,9 @@ Component {
             z: 998
             acceptedButtons: Qt.LeftButton
             onClicked: {
+                if (root.clickInsideOpenPopOver(mouse.x, mouse.y)) {
+                    return;
+                }
                 root.openPopOver = "";
                 root.selectedChartSensor = "";
             }
@@ -2248,7 +2536,6 @@ Component {
             // The x/y land from the trigger's onClicked (the
             // imperative positioning above) — bindings here latched
             // the pre-layout position (the live report).
-            onClosed: root.openPopOver = ""
             onLayoutCommitted: function (order, hidden) {
                 if (root.printer != null) {
                     root.printer.setSectionLayout("information", order, hidden);
@@ -2266,7 +2553,6 @@ Component {
             // The x/y land from the trigger's onClicked (the
             // imperative positioning above) — bindings here latched
             // the pre-layout position (the live report).
-            onClosed: root.openPopOver = ""
             onLayoutCommitted: function (order, hidden) {
                 if (root.printer != null) {
                     root.printer.setSectionLayout("status", order, hidden);
@@ -2283,13 +2569,9 @@ Component {
             // height; each further row adds its line height, capped at
             // the monitor area.
             height: Math.min(590 * screenScaleFactor + Math.max(0, Math.ceil((root.printer != null ? root.printer.temperatureChartLegend.series.length : 0) / 2) - 3) * 30 * screenScaleFactor, parent.height - 2 * UM.Theme.getSize("default_margin").height)
-            onClosed: {
-                root.openPopOver = "";
-                root.selectedChartSensor = "";
-            }
-            // Reset the tooltip proxies on EVERY close path — the Close
-            // button, the opener's second click, the outside-click layer
-            // and auto-close all flip `visible` — so a reopen never
+            // Reset the tooltip proxies on EVERY close path — the
+            // outside-click layer, the opener's second click and
+            // auto-close all flip `visible` — so a reopen never
             // flashes the previous hover's values at a stale position.
             onVisibleChanged: {
                 if (!visible) {
@@ -2452,8 +2734,15 @@ Component {
                     }
                     Cura.SecondaryButton {
                         text: "Custom…"
-                        tooltip: "Pick any " + (root.printer != null && root.printer.britishSpelling ? "colour" : "color") + " for " + root.selectedChartSensorLabel + "."
                         onClicked: chartColorDialog.open()
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: "Pick any " + (root.printer != null && root.printer.britishSpelling ? "colour" : "color") + " for " + root.selectedChartSensorLabel + "."
+                        }
                     }
                 }
 
@@ -2486,7 +2775,6 @@ Component {
             height: Math.min((520 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
             contentWidth: 390 * screenScaleFactor
             title: "Bed mesh — " + (root.printer != null ? root.printer.bedMeshProfile : "")
-            onClosed: root.openPopOver = ""
 
             Loader {
                 Layout.fillWidth: true
@@ -2515,7 +2803,7 @@ Component {
                     showProbePoints: root.printer != null ? root.printer.showProbePoints : false
                 }
 
-                // The dual-ended range filter (the author's request):
+                // The dual-ended range filter (a request):
                 // the SAME five-stop blue-to-red scale the Preview's
                 // bed-mesh overlay uses, shared by both surfaces. The
                 // window lives in the model, so the Preview card's
@@ -2553,7 +2841,7 @@ Component {
                 }
 
                 UM.Label {
-                    // The Klipper-clamped disclaimer (the author's
+                    // The Klipper-clamped disclaimer (a
                     // request): the same honest claim the Preview's
                     // legend makes.
                     Layout.fillWidth: true

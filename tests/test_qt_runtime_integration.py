@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 import tempfile
 import time
 from http.server import ThreadingHTTPServer
@@ -58,7 +59,17 @@ class QtRuntimeTests(unittest.TestCase):
         app = self.qt.Application()
         config = self.qt.load("PrinterConfig").PrinterConfig(
             url="http://printer-a", api_key="test-key", upload_dialog=True)
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        class _Presentation(QObject):
+            bedMeshThresholdsRequested = pyqtSignal(float, float)
+            printPauseRequested = pyqtSignal()
+
+            def publish_pause_verdicts(self, *args):
+                pass
+
         follower = SimpleNamespace(client=client, transport=transport, session=client.session,
+            presentation=_Presentation(),
             current_printer_config=lambda: config,
             current_printer_identity=lambda: (app.stack.getId(), app.stack.getName()),
             apply_printer_config=lambda updated: None)
@@ -192,10 +203,11 @@ class QtRuntimeTests(unittest.TestCase):
         # MonitorData contract); the M117 slot reads the message from
         # whatever mapping shape they take. The isinstance(dict)
         # check never matched the live shape and the message never
-        # reached the slot (the author's live report; the harness's
+        # reached the slot (the live report; the harness's
         # scenario 3 caught it).
         model, _client, _transport = self.monitor()
         model._data._update(auxiliary={"display_status": {"message": "probe-m117-x", "progress": 0.6}})
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.monitorMessage, "probe-m117-x")
 
     def test_filtered_aux_refresh_preserves_the_discovery_settings(self):
@@ -239,7 +251,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(data.connection_state, "no")
         self.assertFalse(data.connected)
         # A session invalidation is a fresh generation: unknown again.
-        data.set_active(False)
+        data.set_owner_active(False)
         self.assertEqual(data.connection_state, "unknown")
 
     def test_observation_carries_the_pushins_and_the_assumption(self):
@@ -285,7 +297,7 @@ class QtRuntimeTests(unittest.TestCase):
             self.assertFalse(binding.usable(self.qt.load("PrinterConfig").normalise_url(placeholder)))
 
     def test_override_detach_stays_detached_until_the_user_reattaches(self):
-        # The author's ruling: ANY layer intervention detaches, and the
+        # The ruling: ANY layer intervention detaches, and the
         # detach persists — no watchdog, no snap-back. The view-swap
         # re-attach (leaving the stage while attached) is the only
         # automatic one.
@@ -482,7 +494,7 @@ class QtRuntimeTests(unittest.TestCase):
         client.start()
         # A PROVEN endpoint: the ladder protects its outages. (The
         # never-connected cap — the eager first connection, the
-        # author's ruling — is pinned in the client feed tests.)
+        # ruling — is pinned in the client feed tests.)
         transport.requests[-1].callback({"result": {"status": {"print_stats": {"state": "idle"}}}}, None)
         self.qt.events()
         client.force_refresh()
@@ -549,6 +561,20 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertFalse(client.session.commands.get("Pause").terminal)
         client.session.merge_status({"print_stats": {"state": "paused"}})
         self.assertEqual(client.session.commands.get("Pause").outcome, "confirmed")
+
+    def test_the_controls_speed_projection_follows_a_live_change(self):
+        # The harness's c2-05/06 regression (the 5.7/5.8 re-verify):
+        # a live gcode_move speed/flow change must reach the model's
+        # published projection — the readout sat at 100 while the sim
+        # moved to 1.37/1.28.
+        model, client, transport = self.monitor()
+        model.updateMoonrakerStatus({"gcode_move": {"speed_factor": 1.0, "extrude_factor": 1.0}})
+        self.qt.events(300)
+        self.assertEqual(model.speedFactorPercent, 100)
+        model.updateMoonrakerStatus({"gcode_move": {"speed_factor": 1.37, "extrude_factor": 1.28}})
+        self.qt.events(300)
+        self.assertEqual(model.speedFactorPercent, 137)
+        self.assertEqual(model.flowFactorPercent, 128)
 
     def test_monitor_unchanged_intervals_are_not_restarted(self):
         model, client, transport = self.monitor()
@@ -770,6 +796,114 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(bridge._server.findChildren(QTcpSocket), [])
         self.assertEqual(bridge._relays, {})
 
+    def test_cancelled_consumer_aborts_the_upstream_before_first_bytes(self):
+        # E (the 2026-09-19 review): a local client that disconnects
+        # before the first upstream bytes MUST abort its upstream —
+        # this is the exact mechanism the double-start produced
+        # (T7 with no T8). The server side sees the abort as a closed
+        # connection.
+        from PyQt6.QtNetwork import QTcpSocket
+        closed = threading.Event()
+
+        class Handler(PipeSafeHandler):
+            def do_GET(self):
+                try:
+                    while self.rfile.read(4096):
+                        pass
+                except Exception:
+                    pass
+                closed.set()
+
+            def log_message(self, *_args): pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        bridge = self.qt.load("CameraBridge").CameraBridge()
+        self.assertTrue(bridge.configure("http://127.0.0.1:" + str(server.server_port), "test-key"))
+        self.addCleanup(bridge.stop)
+        socket = QTcpSocket()
+        self.addCleanup(socket.abort)
+        socket.connectToHost("127.0.0.1", bridge.port)
+        socket.write(b"GET /webcam/?action=stream HTTP/1.1\r\nHost: local\r\n\r\n")
+        for _ in range(200):
+            self.qt.events(10)
+            if any(relay[0] is not None for relay in bridge._relays.values()):
+                break
+        # The bridge keys its relays on the SERVER-side socket object —
+        # a different Python wrapper for the same connection.
+        self.assertTrue(any(relay[0] is not None for relay in bridge._relays.values()),
+                        "the upstream must be created before the cancel")
+        socket.abort()
+        for _ in range(200):
+            self.qt.events(10)
+            if not bridge._relays:
+                break
+        self.assertEqual(bridge._relays, {}, "the cancelled consumer's relay must release")
+        self.assertTrue(closed.wait(2.0), "the upstream must see the connection close")
+        self.assertFalse(bridge._first_upstream_bytes)
+
+    def test_recovery_signal_means_first_proven_bytes(self):
+        # F (the 2026-09-19 review): issuing a request is NOT
+        # recovery; the first real upstream bytes are, exactly once
+        # per failure transition.
+        from PyQt6.QtCore import QObject, pyqtSignal
+        from PyQt6.QtNetwork import QNetworkReply, QTcpSocket
+        bridge = self.qt.load("CameraBridge").CameraBridge()
+        self.assertTrue(bridge.configure("http://127.0.0.1:9", "test-key"))
+        self.addCleanup(bridge.stop)
+        emitted = []
+        bridge.upstreamStarted.connect(lambda: emitted.append(1))
+
+        class BytesReply(QObject):
+            readyRead = pyqtSignal()
+            finished = pyqtSignal()
+
+            def __init__(self):
+                super().__init__()
+                self._error = QNetworkReply.NetworkError.NoError
+
+            def setReadBufferSize(self, _size): pass
+            def readAll(self): return b""
+            def bytesAvailable(self): return 46314
+            def attribute(self, _name): return None
+            def header(self, _name): return None
+            def error(self): return self._error
+            def errorString(self): return "simulated"
+            def abort(self): pass
+            def deleteLater(self): pass
+
+        replies = []
+        def fake_get(_request):
+            reply = BytesReply()
+            replies.append(reply)
+            return reply
+
+        socket = QTcpSocket()
+        self.addCleanup(socket.abort)
+        socket.connectToHost("127.0.0.1", bridge.port)
+        socket.write(b"GET /webcam/?action=stream HTTP/1.1\r\nHost: local\r\n\r\n")
+        bridge._nam.get = fake_get
+        for _ in range(200):
+            self.qt.events(10)
+            relay = bridge._relays.get(socket)
+            if relay is not None and relay[0] is not None:
+                break
+        self.assertEqual(1, len(replies))
+        self.assertEqual([], emitted, "issuing the request is not recovery")
+        # The bridge keys its relays on the SERVER-side socket wrapper;
+        # the client-side Python object is a different wrapper.
+        server_socket = next(iter(bridge._relays))
+        reply = replies[0]
+        bridge._on_upstream_ready(server_socket, reply)
+        bridge._on_upstream_ready(server_socket, reply)
+        self.assertEqual([1], emitted, "first bytes mark recovery exactly once")
+        bridge._stream_healthy = False
+        bridge._on_upstream_ready(server_socket, reply)
+        self.assertEqual([1, 1], emitted, "recovery re-arms after a failure transition")
+
     def test_real_http_thumbnail_fetch_follows_metadata_path(self):
         # Live-proven: a real Moonraker answers <file>.png with 404 —
         # the thumbnail lives at the metadata's relative_path under
@@ -824,7 +958,7 @@ class QtRuntimeTests(unittest.TestCase):
     def test_real_http_delete_files_surfaces_the_refusal_words(self):
         # Snapshot 3: deleting the printing file draws Moonraker's
         # 403 — the service must keep the row and put the server's
-        # own words in the note (the author's ruling: refusals
+        # own words in the note (the ruling: refusals
         # surface, never vanish).
         class Handler(PipeSafeHandler):
             def do_DELETE(self):
@@ -913,7 +1047,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertIn(b'name="path"', body)
         self.assertIn(b"prints", body)
         # The popup's feed: progress reached 100 and the verdict is
-        # the success (the author's live request).
+        # the success (the live request).
         self.assertEqual(finished_events, [(True, "bench.gcode")])
         self.assertEqual(max(progress_events), 100)
         self.assertEqual(notes, ["Uploaded bench.gcode."])
@@ -987,12 +1121,12 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(foreign[1])
 
     def test_real_http_moonraker_400_surfaces_the_tracebacks_words(self):
-        # The author's live report: a cold extrude surfaced a bare
+        # A live report: a cold extrude surfaced a bare
         # 400 while Moonraker's real words sat in the traceback tail
         # ({'code', 'message': 'Unknown', 'traceback'}). The error
         # must read "Extrude below minimum temp", not a status code
         # or the whole dict — and the script endpoint answers HTTP
-        # 200 with the error DICT inside "error" (the author's
+        # 200 with the error DICT inside "error" (the
         # second report: "Extrude refused: {'code': 400, ...}").
         def body_with(shape):
             inner = {
@@ -1085,7 +1219,7 @@ class QtRuntimeTests(unittest.TestCase):
             self.assertEqual(handle.read(), body)
 
     def test_moonraker_error_text_covers_every_known_shape(self):
-        # The author's live request: ALL 400-class errors must read
+        # A live request: ALL 400-class errors must read
         # like the cold-extrude one — the server's words, one line,
         # never a dict, a code or a whole exception. Pure shapes.
         from plugins.MoonrakerTransport import _moonraker_error_text
@@ -1159,7 +1293,7 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(preview.state.expected_layer, 0)
 
         # Cura's late restoration moves the view: with the echo window
-        # gone (the author's ruling — ANY layer intervention detaches),
+        # gone (the ruling — ANY layer intervention detaches),
         # a late restore detaches like a user action. That spurious
         # detach is the accepted cost; the swap itself keeps the
         # attachment.
@@ -1192,8 +1326,8 @@ class MonitorDataAuxTests(unittest.TestCase):
         self.client.configure("http://printer-a", "test-key", 750)
         self.addCleanup(self.client.stop)
         self.data = self.qt.load("MonitorData").MonitorData(self.client, None)
-        self.data.set_active(True)
-        self.addCleanup(self.data.set_active, False)
+        self.data.set_owner_active(True)
+        self.addCleanup(self.data.set_owner_active, False)
 
     def deliver(self, channel, payload, error=None):
         request = next((r for r in self.transport.requests if r.channel == channel), None)
@@ -1217,7 +1351,7 @@ class MonitorDataAuxTests(unittest.TestCase):
     def test_aux_accepts_objects_that_appeared_after_the_first_list(self):
         # A device switched on mid-print never appears in the first
         # objects/list — its data must still render and join the
-        # subscription instead of being dropped (the author's rule).
+        # subscription instead of being dropped (the rule).
         self.deliver("objects", {"result": {"objects": ["fan"]}})
         self.deliver("aux", {"result": {"status": {"fan": {"speed": 0.5},
                                                     "temperature_sensor mcu": {"temperature": 32.0}}}})
@@ -1235,8 +1369,8 @@ class MonitorDataAuxTests(unittest.TestCase):
         client.configure("http://printer-a", "test-key", 750, feed_mode="websocket")
         client.start()
         data = self.qt.load("MonitorData").MonitorData(client, None)
-        data.set_active(True)
-        self.addCleanup(data.set_active, False)
+        data.set_owner_active(True)
+        self.addCleanup(data.set_owner_active, False)
         data._objects({"result": {"objects": ["fan", "heater_bed"]}}, None)
         self.assertTrue(any("fan" in subscription and "heater_bed" in subscription
                             for subscription in socket.subscriptions), socket.subscriptions)
@@ -1997,7 +2131,7 @@ class ToolheadControllerTests(unittest.TestCase):
         self.controller.jog("z", -1)
         self.assertEqual(self.controller._pending, ())
         # On the maximum side the FIRST tap clamps to the boundary,
-        # and the client-side Z estimate (the author's live report:
+        # and the client-side Z estimate (the live report:
         # stale-poll clamping let rapid taps overshoot) makes the
         # second tap a no-op.
         self.data.snapshot.core["motion_report"]["live_position"][2] = 195.0
@@ -2015,7 +2149,7 @@ class ToolheadControllerTests(unittest.TestCase):
         self.assertEqual(self.controller._pending, ())
 
     def test_z_floor_is_zero_even_with_a_negative_configured_minimum(self):
-        # The author's live ruling: the jog pad must never send the
+        # The live ruling: the jog pad must never send the
         # head below 0.00 Z — whatever position_min says (many
         # printers configure a negative Z minimum for probe travel).
         self.data.set_state("paused")
@@ -2028,7 +2162,7 @@ class ToolheadControllerTests(unittest.TestCase):
         self.assertEqual(self.controller._pending, ())
 
     def test_rejected_z_nudge_reports_and_notes_once_per_burst(self):
-        # The author's live request: a rejected nudge must explain
+        # A live request: a rejected nudge must explain
         # itself in the jog status AND the console — the note once
         # per burst, so a flurry of taps cannot flood the feed.
         self.data.set_state("paused")
@@ -2310,6 +2444,116 @@ class CuraIntegrationLoadTests(unittest.TestCase):
         self.assertEqual(invalidated, [])  # absorbed, not "file replaced"
         self.assertIn(path, self.releases)  # released once the parse finished
         self.assertFalse(os.path.exists(path))
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the Qt integration suite")
+class SettingsSaveRefusalTests(unittest.TestCase):
+    """The settings dialog's verdict: a refused persistence write must
+    reach saveConfig's caller as a failure. Cura's MachineAction flow
+    keeps the dialog open on that False (the QML's `saveRefused`), so
+    the user sees the refusal instead of a dialog that closed over a
+    change that never landed."""
+
+    def setUp(self):
+        self.context = runtime()
+        self.qt = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+        self.fail_save = False
+        self.followers = []
+        self.addCleanup(self._close)
+
+    def _close(self):
+        for follower in self.followers:
+            follower.deinitialize()
+        self.qt.events()
+
+    def _follower(self):
+        app = self.qt.Application()
+        module = self.qt.load("MoonrakerClient")
+        root = self.qt.load("FollowerRuntime")
+        transport = ScriptedTransport()
+        real_save = root._savefile_write
+
+        def save(path, text):
+            if self.fail_save and path.endswith("settings.json"):
+                return False  # the disk refuses the settings document alone
+            return real_save(path, text)
+
+        with patch.object(root, "MoonrakerClient",
+                          lambda parent: module.MoonrakerClient(parent, transport=transport, socket=ScriptedSocket())), \
+                patch.object(root, "_savefile_write", save):
+            follower = self.qt.load("MoonrakerPrintFollower").MoonrakerPrintFollower(app)
+        self.followers.append(follower)
+        return app, follower
+
+    def _action(self, follower):
+        from PyQt6.QtCore import QObject
+
+        class _MachineActionBase(QObject):
+            def __init__(self, key, label):
+                super().__init__()
+
+        application = SimpleNamespace(
+            getContainerRegistry=lambda: SimpleNamespace(
+                containerAdded=SimpleNamespace(connect=lambda _fn: None)),
+        )
+        with patch.dict(sys.modules, {
+                "cura.MachineAction": SimpleNamespace(MachineAction=_MachineActionBase),
+                "UM.Settings": SimpleNamespace(DefinitionContainer=SimpleNamespace(
+                    DefinitionContainer=type("DefinitionContainer", (), {}))),
+                "UM.Settings.DefinitionContainer": SimpleNamespace(
+                    DefinitionContainer=type("DefinitionContainer", (), {})),
+        }):
+            action = self.qt.load("MoonrakerFollowerMachineAction").MoonrakerFollowerMachineAction(
+                application, follower)
+        self.addCleanup(action.deleteLater)
+        return action
+
+    @staticmethod
+    def _params(**overrides):
+        params = {
+            "enabled": True,
+            "url": "http://printer-a:7125",
+            "api_key": "k",
+            "feed_mode": "websocket",
+            "poll_interval_ms": 2500,
+            "aux_interval_ms": 1000,
+            "console_interval_ms": 1000,
+            "follow_mode": "exact",
+            "z_tolerance": "0.05",
+            "ready_retry_interval_s": "1.0",
+            "filename_translate_input": "a",
+            "filename_translate_output": "b",
+        }
+        params.update(overrides)
+        return params
+
+    def test_a_saved_setting_reports_success(self):
+        _, follower = self._follower()
+        action = self._action(follower)
+        changed = []
+        action.settingsChanged.connect(lambda: changed.append(True))
+        self.assertTrue(action.saveConfig(self._params()))
+        self.assertEqual(len(changed), 1)
+
+    def test_a_refused_write_is_not_reported_as_saved(self):
+        _, follower = self._follower()
+        action = self._action(follower)
+        # A first, successful save: there is a live configuration to
+        # fall back to.
+        self.assertTrue(action.saveConfig(self._params()))
+        self.fail_save = True
+        changed = []
+        action.settingsChanged.connect(lambda: changed.append(True))
+        self.assertFalse(action.saveConfig(self._params(url="http://moved:7125")))
+        self.assertEqual(changed, [])
+        # The refused write left the document alone: the previous usable
+        # connection is what remains configured.
+        self.assertEqual(follower.current_printer_config().url, "http://printer-a:7125")
+        # And the disk recovering brings the dialog's success back.
+        self.fail_save = False
+        self.assertTrue(action.saveConfig(self._params(url="http://moved:7125")))
+        self.assertEqual(follower.current_printer_config().url, "http://moved:7125")
 
 
 if __name__ == "__main__":

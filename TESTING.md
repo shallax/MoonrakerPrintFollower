@@ -115,7 +115,7 @@ allowlist pin over `plugins/` contents guarantee it never ships.
   after the fact against Cura's own state (the stage changed, the
   layer moved by the expected delta). The resolved address (parent
   chain, class, geometry, text) lands in the step's delivery record.
-- **Input (the author's ruling 2026-09-11; the split validated in
+- **Input (the 2026-09-11 ruling; the split validated in
   Phase A) — AMENDED (2026-09-15):** the claim that XTEST is the
   REAL-behaviour path was struck — Phase A found the environment's
   limit: under the WM-less Xvfb, XTEST hover and motion work but
@@ -127,7 +127,7 @@ allowlist pin over `plugins/` contents guarantee it never ships.
   directly into Cura's window with exact button/timestamp control,
   for race windows, precise drag paths and delegate rows that shift
   coordinates. Phase A validated QTest end-to-end on Cura's OWN
-  stage-header buttons (the injection the author challenged):
+  stage-header buttons (the injection that was challenged):
   synthesized press/release → DeliveryAgent → Button → clicked →
   handler, all three stages switching for real, on video. XTEST
   remains as the per-phase human-clickability realism control
@@ -207,7 +207,7 @@ REAL protocols over real TCP, in both transports:
   the aggregate stats, and the route-delay lane simulates a loaded
   peer per endpoint. Scenarios assert a request-rate budget over a
   steady window and the runner records the profile — the honest
-  proxy for the author's printer-side dwell, which itself is only
+  proxy for the printer-side dwell, which itself is only
   verifiable in real-printer mode (§2.5).
 - **Fault injection**: dropped push frames, a stalled stream, refused
   subscriptions (both the unauthorized and the structured-refusal
@@ -248,7 +248,15 @@ truth #5):
   `tools/harness/Dockerfile`, run with `docker run --init`;
   `tools/harness_release.sh` runs the local matrix (the release
   WORKFLOW orchestrates the whole gate — §5).
-- `make ui_test MODE=discover` — dump stage-menu coordinates.
+- `make ui_test MODE=discover` — dump stage-menu coordinates;
+- `make ui_test MODE=firstinstall` — the first-install leg: one clean
+  profile booted twice (boot 1 proves the clean activation, boot 2
+  the survival of what boot 1 saved — §3). `XDG_SEED=clean|full|keep`
+  picks the fixture and is resolved once, like the run dir: `clean`
+  is this mode's default (the committed fixture with the plugin's
+  folder, its legacy blob and its cura.cfg section removed), `full`
+  is the fixture as it ships (every other mode's default), `keep`
+  boots the tree the previous run left behind.
 
 Lifecycle and isolation (a scenario is a REBIND — the production
 session boundary the plugin already supports): **AMENDED
@@ -385,8 +393,8 @@ vocabulary the gates established.
    a slow drag spanning several deliveries. Assertions run over the
    recorded `preview.state.attached` and `expected_layer` series:
    detach, stays detached until Attach. Variant: view-swap away and
-   back re-attaches — THE ONLY automatic re-attach (the author's
-   ruling, 2026-09-11: "view-swap re-attach is the ONLY automatic
+   back re-attaches — THE ONLY automatic re-attach (the
+   2026-09-11 ruling: "view-swap re-attach is the ONLY automatic
    re-attach; any layer-selection change detaches and stays
    detached").
 7. **Transport handover** — reopen the Monitor repeatedly in
@@ -409,6 +417,44 @@ vocabulary the gates established.
     latch arms; a demonstrably fresh print clears it.
 11. **Scroll-to-prompt** — flood the console; the view follows to the
     prompt on send; recall history works.
+
+### The first-install leg (`MODE=firstinstall`)
+
+The committed fixture is pre-migrated: `tests/harness/config` ships
+a MoonrakerPrintFollower folder already holding a v2 document, so
+every scenario boots a profile the plugin has migrated before. The
+one path no scenario covered was the true first install — a machine
+with no config folder at all — which is how a config-losing first
+install shipped green past the gates. This leg is its proof, and it
+is not a suite scenario: it boots twice.
+
+One profile, two boots, one slot (`XDG_SEED=clean`, the mode's
+default; the fixture is copied once, before boot 1, and never
+re-seeded between them):
+
+1. **Boot 1 — the activation.** With no config folder the plugin
+   activates the v2 document directly: `configVersion` 2, no machine
+   records, and no migration record in `global` (nothing was
+   migrated, so there is nothing to record). The leg then configures
+   the printer through the settings dialog's own save verb and reads
+   the document back OFF DISK — a file edited behind the app would
+   prove nothing about the plugin's write path. The app then closes
+   itself, so boot 2 reads a tree the app closed rather than one the
+   harness killed mid-write; the driver acks the close request
+   before Cura closes, so an ack that never arrives is a failure, not
+   a shutdown eating its own reply.
+2. **Boot 2 — the survival.** The record boot 1 wrote is still
+   there, field for field, and the document as a whole is untouched:
+   the migration machinery left no record of its own in `global` and
+   rebuilt nothing from a legacy blob. The red revision is the one
+   this leg was written for: the boot that finds no migration record
+   treated the live document as "needs migration" and replaced it —
+   the second boot is where a first install lost its configuration.
+
+Evidence is two galleries — the run's own `index.html` and
+`boot2/index.html` beside it, each with its recording — and the clean
+seed is fail-loud: the transform exits when there was nothing to
+remove, so the leg cannot pass against a pre-migrated fixture.
 
 ### The suite — the full functional surface, end-to-end
 
@@ -465,7 +511,7 @@ centre-line, containment, non-overlap; `assert_rect_change` for the
 pane shrink/grow; `wait_rect` for rendered presence), rendered
 follows-model checks (`wait_rendered`/`assert_rendered` read the
 label's actual text after a push — the model being right is not
-enough), and the UI exercise the author's ruling demands: pane
+enough), and the UI exercise the ruling demands: pane
 collapse/expand (info panel width, the temperatures section, the
 status panel) and window resize to narrow/wide — the console's
 width-driven auto-collapse and re-expand, with the panel layout
@@ -475,7 +521,7 @@ cube inserts through Cura's reader chain, the engine slices it — the
 scenario pins the slice count at 39 — and the panel renders), and
 the button appears once a
 post-processing script is active — v1 activates PauseAtHeight
-through the plugin's manager. The author's alignment question is
+through the plugin's manager. The alignment question is
 settled by a stock-Cura control boot: the button sits top-aligned
 in Cura's native 60px action-panel row identically without the
 plugin, so the apparent offset to our card's bottom line is Cura's
@@ -491,7 +537,7 @@ stays covered by the model-level flows instead. The
 margin-symmetry pin caught and closed a real asymmetry: the controls
 pane reserved the scrollbar's width inside itself even when the
 scrollbar was hidden, so the right gap read three margins wide
-against the left pane's one (the author's doubled-edge class, the
+against the left pane's one (the doubled-edge class, the
 right side this time). The reservation is gone (the scrollbar
 overlays), and the pin now measures the panes' true outer edges:
 11px vs 11px, green.
@@ -524,7 +570,7 @@ existed and every later read saw `None`.
 ## 3b. The test model and the engine
 
 `tests/harness/models/voron_cube.stl` is the suite's test model (the
-author's ruling, 2026-09-13): the Voron Design Cube v7, fetched from
+2026-09-13 ruling): the Voron Design Cube v7, fetched from
 a public mirror of the official STL and re-headed to a standard
 binary STL header (the official export carries UltiMaker's "ATF"
 header variant, which the reader chain silently rejects). The full
@@ -588,8 +634,7 @@ SimulationView is the ACTIVE view (the Preview stage click).
   verdict recorded as the expected red) and the z10/z11/z15 proof
   trio (the refused press and the overlay refusal).
 
-## 5. Phasing (each phase ends with screenshots AND video shown to the
-   author)
+## 5. Phasing (each phase ends with screenshots AND video for review)
 
 - **Phase A — the skeleton proof (COMPLETE, 2026-09-12):** boot
   real Cura under Xvfb in the harness image, click PREPARE →
@@ -631,7 +676,11 @@ SimulationView is the ACTIVE view (the Preview stage click).
   scenario is addressed by one of its steps. The local
   `harness_release.sh -j N` runs the same units in per-slot
   containers; the serial default keeps the shared-boot debris proof.
-  The soak group stays out of the release path.
+  **ADDED (2026-09-18):** the local matrix also carries the
+  first-install leg (§3) as a 10-minute unit on the primary; the
+  release WORKFLOW's matrix does not run it — its step passes
+  `MODE=suite` for every unit. The soak group stays out of the
+  release path.
 
 ## 6. Boundaries
 

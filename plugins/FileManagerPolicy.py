@@ -6,7 +6,7 @@ searching, column-order merge, selection, attempts aggregation and the
 Recents projection — so the QML layer renders only the published page
 slice and never recomputes a rule itself.
 
-The author's rulings encoded here (2026-09-10): exactly ONE column is
+The rulings encoded here (2026-09-10): exactly ONE column is
 sorted at a time; unknown values always sort last in both directions;
 filters apply FIRST and search narrows WITHIN the filtered subset;
 search is global (name + path, token-AND); OR within a filter
@@ -565,7 +565,7 @@ def filter_option_counts(rows: Sequence[FileRow], *, now: float) -> Dict[str, An
         raw = row.slicer or ""
         key = raw.casefold() or "unknown"
         # Group case-insensitively (the matcher does the same — the
-        # author's live report: a literal "Unknown" and an unreported
+        # live report: a literal "Unknown" and an unreported
         # slicer split into TWO Unknown options); the first raw
         # spelling is the display label.
         labels.setdefault(key, raw if key != "unknown" else "unknown")

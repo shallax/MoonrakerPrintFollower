@@ -10,6 +10,30 @@ on:
 
 
 jobs:
+  cross-platform-suites:
+    # The headless pure-Python suites on the OSes the plugin ships
+    # to: Windows and macOS defects (the no-O_NOFOLLOW write failure,
+    # the boot-storm crashers' siblings) must not wait for a manual
+    # pass. No display needed — the Qt-gated tests
+    # skip where PyQt6 is absent, and the container legs stay Linux.
+    name: Suites (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Run the headless host suites
+        shell: bash
+        run: JOBS=2 PYTHON=python LEGS=host bash tools/run_tests.sh
+
   harness-smoke:
     # The PR-level real-Cura check: the smoke set in one boot against
     # the primary pinned Cura (the full gate stays release-time). The
@@ -186,7 +210,7 @@ jobs:
       - name: Run all discovered tests with the real Qt runtime
         run: |
           python -c "from PyQt6.QtCore import QCoreApplication"
-          python -m unittest discover -s tests -p "test_*.py"
+          env JOBS=2 LEGS=host tools/run_tests.sh
 
   release:
     name: Release
@@ -204,7 +228,7 @@ jobs:
         run: python tools/check_qml.py plugins
 
       - name: Run all discovered tests
-        run: python -m unittest discover -s tests -p "test_*.py"
+        run: env JOBS=2 LEGS=host tools/run_tests.sh
 
       - name: Read package and CI metadata
         id: build_meta

@@ -3,17 +3,16 @@ import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
 
-// The Information pane's shared pop-over shell: a titled, closable
-// floating card that hosts one widget's enlarged content. The pane's
-// small glanceable widgets open their pop-over on click; the Close
-// button emits `closed` so the call site owns its open flag. The card
+// The Information pane's shared pop-over shell: a titled floating
+// card that hosts one widget's enlarged content. The pane's small
+// glanceable widgets open their pop-over on click; a click outside
+// the card dismisses it and the host owns the open flag. The card
 // grows with its content up to the parent's size, so a machine with
 // many sensors gets a taller legend instead of a crushed chart.
 Cura.RoundedRectangle {
     id: root
 
     property string title: ""
-    signal closed
 
     property real contentWidth: 520 * screenScaleFactor
 
@@ -44,25 +43,11 @@ Cura.RoundedRectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: UM.Theme.getSize("default_margin").width
             UM.Label {
                 Layout.fillWidth: true
                 text: root.title
                 font: UM.Theme.getFont("medium_bold")
                 elide: Text.ElideRight
-            }
-            // A clickable blue ✕, the card's dismissal (the live
-            // ruling: a Close button read as chrome).
-            UM.Label {
-                Layout.alignment: Qt.AlignVCenter
-                text: "✕"
-                color: UM.Theme.getColor("primary")
-                font: UM.Theme.getFont("medium_bold")
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.closed()
-                }
             }
         }
 

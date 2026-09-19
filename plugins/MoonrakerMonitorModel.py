@@ -115,6 +115,28 @@ def _state_height(value) -> int:
 _chart_state = normalise_temperature_chart
 
 
+def _migration_banner_text(record):
+    """The dialog banner's copy (the UX spec): the rollback recipe is
+    the message — the file name, the folder route and the
+    reinstall-previous-version steps."""
+    backup = str(record.get("backupName") or "")
+    if record.get("backupWritten") and backup:
+        return ("Your Moonraker settings did not carry over from the previous version, so the plugin is using defaults. "
+                "Cura's configuration was saved as %s. Open it from Help > Show Configuration Folder. "
+                "To roll back: close Cura, reinstall the previous version of the plugin, and copy that file over cura.cfg.") % backup
+    return ("Your Moonraker settings did not carry over from the previous version, so the plugin is using defaults. "
+            "Nothing was removed — your existing Cura configuration is untouched.")
+
+
+def _migration_diagnostics_text(record):
+    """The permanent diagnostics row's copy (after dismissal): the
+    recipe is demoted, never deleted."""
+    backup = str(record.get("backupName") or "")
+    if record.get("backupWritten") and backup:
+        return "Settings migration failed. The previous configuration is saved as %s." % backup
+    return "Settings migration failed. Nothing was removed."
+
+
 def _read_state(store=None) -> dict:
     """The persisted panel state: collapsed sections, the control-pane
     collapse, the lock-all toggle and the console's dragged height. The
@@ -122,7 +144,7 @@ def _read_state(store=None) -> dict:
     current shape on read. The FILE semantics live in the StateStore
     (4.2.0, F11); the coercion below is the model's own (its tests pin
     the fallback document)."""
-    decoded = (store or StateStore(_sections_path())).read()
+    decoded = _store_read(store or StateStore(_sections_path()))
     if isinstance(decoded, dict):
         sections = decoded.get("sections")
         if not isinstance(sections, dict):
@@ -173,6 +195,24 @@ def _toolhead_state(stored) -> dict:
     }
 
 
+def _store_read(store):
+    """The store slot's read: the persistence facade owns the global
+    document in production (4.5.0); the StateStore double serves the
+    harness's config-only path."""
+    if hasattr(store, "state_global_document"):
+        return store.state_global_document()
+    return store.read()
+
+
+def _store_write(store, update: dict, merge: bool = True, delete: tuple = ()) -> None:
+    """The store slot's write: the facade's global-document merge in
+    production, the StateStore's merge in the double."""
+    if hasattr(store, "merge_state_global") and merge:
+        store.merge_state_global(update, delete=delete)
+    else:
+        store.write(update, merge=merge, delete=delete)
+
+
 def _write_state(state: dict) -> None:
     # The legacy module-level name (tests pin it): a transient store
     # — note the MERGE semantics (4.2.0): foreign keys in the file
@@ -206,6 +246,7 @@ def value_property(kind, name, signal, default=None):
 
 
 class MoonrakerMonitorModel(PrinterOutputModel):
+    whatsNewDismissed = pyqtSignal()
     monitorChanged = pyqtSignal()
     previewBlockChanged = pyqtSignal(dict)
     webcamsChanged = pyqtSignal()
@@ -256,7 +297,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                             # PAUSED (the other keys in the group
                             # masked it while printing).
                             "nextPauseLayer", "nextPauseEta", "nextPauseFraction", "nextPauseBaked",
-                            "monitorPositionX", "monitorPositionY", "monitorPositionZ")),
+                            "monitorPositionX", "monitorPositionY", "monitorPositionZ",
+                            "migrationBannerVisible", "migrationBannerText", "migrationBackupAvailable",
+                            "migrationDiagnosticsVisible", "migrationDiagnosticsText")),
         ("webcamsChanged", ("webcamNames", "activeWebcamIndex")),
         ("temperatureChartChanged", ("temperatureChart",)),
         ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
@@ -285,6 +328,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("sectionLayoutChanged", ("sectionLayout", "sectionHiddenMap")),
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
+        ("traceCameraTimingChanged", ("traceCameraTiming",)),
         ("cameraRecoveringChanged", ("cameraRecovering",)),
         ("connectionDetailChanged", ("connectionDetail",)),
         ("fileManagerChanged", ("fileManagerRows", "fileManagerRecents", "fileManagerDirectory", "fileManagerDirectories", "fileManagerDiskText", "fileManagerNote",
@@ -311,7 +355,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
                  request_load=None, request_monitor_download=None, request_file_download=None,
-                 download_failed=None, preferences_flushed=None, identity=None, state_store=None):
+                 download_failed=None, identity=None, state_store=None, persistence=None):
         super().__init__(output_controller, number_of_extruders)
         self._client, self._print_state, self._config, self._apply_config, self._mesh = \
             client, print_state, config, apply_config, bed_mesh
@@ -319,7 +363,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # The state file's owner (4.2.0, F11/A6): passed in as a
         # capability — 4.3.0's UI-state store consumes the same
         # instance; the default builds the production path.
-        self._store = state_store or StateStore(_sections_path(), note=self._on_store_note)
+        # The store slot: the persistence facade owns the global chrome
+        # in production (4.5.0); the StateStore double serves the
+        # harness's config-only path.
+        self._store = persistence or state_store or StateStore(_sections_path(), note=self._on_store_note)
         # Failure notes that fired before the console existed (the
         # hydration read runs first) queue here and flush once the
         # console lands.
@@ -348,7 +395,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._show_probe_points = bool(getattr(self._config(), "show_probe_points", False))
         self._qv_cache = {}
         self._improving_eta = False
-        self._skip_clear_once = False
+        self._improve_started_snapshot = None
+        self._migration_record_cache = None
+        self._migration_record_read = False
+        self._peripheral_cache = (None, {})
+        self._endstop_cache = (None, {})
         self._values = {}
         state = _read_state(self._store)
         self._whats_new_seen = state["whatsNewSeen"]
@@ -396,12 +447,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # full-document rewrite would erase the UI-state store's
             # sibling keys (4.3.0, the sibling rule's single
             # exception removed).
-            self._store.write({"sections": dict(self._sections)}, delete=("temperatureChart",))
+            _store_write(self._store, {"sections": dict(self._sections)}, delete=("temperatureChart",))
         else:
             self._chart_config = {}
         self._history = TemperatureHistory()
         self._chart_payload = None  # rebuilt only when the history or config changes
         self._chart_payload_revision = -1
+        self._chart_open = False  # the pop-over's hydration gate (K)
         self._chart_config_key = None
         self._legend_payload = None
         self._data = MonitorData(client, self)
@@ -421,7 +473,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._camera_recovering = False
         self._camera.streamFailed.connect(self._on_stream_failed)
         self._camera.streamRecovered.connect(self._on_stream_recovered)
-        # The wake recovery (the author's live report): a stream that
+        # The wake recovery (a live report): a stream that
         # survives a suspend shows a FROZEN frame — the image's size
         # is already set, so the render watchdog cannot see it. A
         # wake transition reloads the camera source once, the same
@@ -451,7 +503,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._toolhead.set_distance(self._toolhead_state["jogDistance"])
         self._toolhead.set_extrude_distance(self._toolhead_state["extrudeDistance"])
         self._toolhead.set_extrude_speed(self._toolhead_state["extrudeSpeed"])
-        self._console = ConsoleController(self._data, self._commands, config, apply_config, identity, self)
+        self._console = ConsoleController(self._data, self._commands, config, apply_config, identity, self,
+                                          persistence=self._store if hasattr(self._store, "set_machine_state") else None)
         # The hydration-time store notes flush now that the console
         # exists (a read failure before this point would otherwise
         # stay silent — the exact class F11 exists to kill).
@@ -466,7 +519,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_manager = FileManager(client, self)
         self._file_manager.set_column_state(self._file_columns_state)
         # Metascan outcomes land in the console as local notes (the
-        # author's live report: the option appeared to do nothing).
+        # live report: the option appeared to do nothing).
         self._file_manager_note = ""
         # The print-start operation's owner (4.3.0): the armed state,
         # the watchdog and the failure verdict moved out of the model
@@ -484,14 +537,31 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_manager.uploadFinished.connect(self._on_upload_finished)
         # The light publish: thumb transitions never rebuild the rows.
         self._thumbs_dirty = False
+        self._publish_pending = False
         self._file_manager.thumbsChanged.connect(self._publish_thumbs)
         self._file_manager_open = False
-        if preferences_flushed is not None:
-            # The console marks its sent lines SAVED when the preference
-            # file actually flushes (the colour ruling).
-            preferences_flushed.connect(self._console.mark_saved)
-        for signal in (self._data.changed, self._commands.changed, self._controls.changed, self._camera.changed,
-                       self._toolhead.changed, self._console.changed, self._file_manager.changed, bed_mesh.changed):
+        # The console's saved-state colouring now rides its own 2 s
+        # settle after each shard write (ConsoleController); the
+        # preference-flush channel retired with the transcript (4.5.0).
+        # The publication coalescer (the 2026-09-19 performance
+        # review): ONE data.changed fans out through the
+        # collaborators, each of which used to publish the full model
+        # again — one landing built the projection three or four
+        # times. The heartbeat signals schedule; one flush per
+        # event-loop turn rebuilds once. The two USER-ACTION
+        # collaborators publish synchronously so a jog or slider's
+        # own status is visible before the slot returns — and their
+        # observe() now emits only when the projection actually
+        # changed, so heartbeats no longer fan out through them.
+        for signal in (self._data.changed, self._commands.changed, self._camera.changed,
+                       self._console.changed, bed_mesh.changed):
+            signal.connect(self._schedule_publish)
+        # The user-action collaborators publish synchronously so a
+        # click's own re-render happens before the slot returns; the
+        # file manager joins them because its view mutations (sort,
+        # search, page) must re-render immediately (the live report
+        # of the carousel advancing one step then stopping).
+        for signal in (self._controls.changed, self._toolhead.changed, self._file_manager.changed):
             signal.connect(self._publish)
         # The history feeds once per auxiliary reply, not per publish
         # (per-publish feeding duplicated samples and halved the window);
@@ -512,12 +582,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # restored transcript lands the moment the config is readable
         # (the "commands never rehydrate" report).
         self._data.changed.connect(self._console.reload_if_empty)
-        # The author's ruling (2026-09-10): after a reconnect the
+        # The ruling (2026-09-10): after a reconnect the
         # camera stream restarts — the nonce bump reloads the stream
         # on every connection transition into connected (the
         # e-stop's automatic cycle included).
         self._data.connectionStateChanged.connect(self._on_connection_state)
-        self._data.set_active(True)
+        self._data.set_owner_active(True)
         self._publish()
 
     def _on_file_manager_note(self, text: str) -> None:
@@ -531,9 +601,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if state != "yes":
             return
         self._camera_refresh_nonce += 1
-        self._publish()
+        self._schedule_publish()
 
     def _on_stream_failed(self) -> None:
+        from .CameraTiming import mark
+        mark("T6-watchdog", "camera render stalled")
         import time
         now = time.monotonic()
         # The FIRST failure retries immediately: a camera's first
@@ -551,7 +623,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def setMachineGeometry(self, width, depth, center_is_zero) -> None:
         """The physical bed dimensions from the machine stack (4.2.0,
-        the author's request): the expanded bed-mesh map draws the
+        a request): the expanded bed-mesh map draws the
         probed bounds within the real bed, extends the boundary
         values to the bed edges and outlines the exact Klipper mesh
         bounds — the Preview overlay's honest visualisation."""
@@ -569,15 +641,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         previous = self._camera_app_state
         self._camera_app_state = state
         if state == Qt.ApplicationState.ApplicationActive and previous not in (None, Qt.ApplicationState.ApplicationActive):
-            # Woke up: reload the camera source once. No veil — the
-            # stream may come back instantly, and a stuck veil would
-            # read as a failure the user must recover.
+            # Woke up: reload the camera source once — for the ACTIVE
+            # monitor only; a deposed cached monitor must not publish
+            # (the 2026-09-19 review's F3). No veil — the stream may
+            # come back instantly, and a stuck veil would read as a
+            # failure the user must recover.
+            if not getattr(self._data, "active", False):
+                return
             self._camera_refresh_nonce += 1
             self._publish()
 
     @pyqtSlot()
     def cameraRenderStalled(self) -> None:
-        # The render watchdog (the author's live report): a stream
+        # The render watchdog (a live report): a stream
         # that CONNECTED but never painted a frame raises no error
         # signal — the QML pane watches the image's frame size and
         # reports a stall here. The recovery is the same as a stream
@@ -607,13 +683,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # The console constructed before the active machine existed
             # and read an empty record; by attach time the identity is
             # real, so re-load the transcript if it never did (the
-            # author's "completely empty at app start" report).
+            # "completely empty at app start" report).
             self._console.reload_if_empty()
         self._data.set_console_expanded(expanded, stored)
 
     def _on_auxiliary(self):
         self._history.observe(self._data.snapshot.auxiliary, time.monotonic(), time.time())
-        self._publish()
+        self._schedule_publish()
 
     def _on_invalidated(self):
         self._history.reset()
@@ -628,9 +704,24 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # moot, whatever the snapshot says.
         self._file_manager.unbind()
         self._improving_eta = False
+        self._improve_started_snapshot = None
         self._publish()
 
-    def setMonitoringActive(self, active): self._data.set_active(active)
+    def setMonitoringActive(self, active):
+        self._data.set_owner_active(active)
+        # The post-migration ready point: the record may have landed
+        # since construction (the early publishes read it while the
+        # migration was still pending) — the cache re-reads once here
+        # and then holds, even a None (the heartbeat never parses the
+        # settings file; H1).
+        self._migration_record_read = False
+        self._migration_record_cache = None
+        if active:
+            # The stage-entry hook (the 4.5.0 live find): the Monitor
+            # shell exists by the time Cura activates the stage, and
+            # the pane order's apply must land before the first frame
+            # — the signal path the toggle uses, fired here.
+            self.sectionLayoutChanged.emit()
 
     def _file_manager_values(self):
         fm = self._file_manager
@@ -639,7 +730,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # The popup is closed: the grid's bindings are inert, and
             # rebuilding the ROW payloads per poll is pure waste —
             # closing a 400-file listing stalled for seconds (the
-            # author's live report). The cheap view state still
+            # live report). The cheap view state still
             # publishes (the view-mutation contract), only the heavy
             # rows/recents/thumbs/option-scan is skipped. Reopening
             # refills everything below.
@@ -752,20 +843,47 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._values["fileManagerThumbs"] = payload
         self.fileManagerThumbsChanged.emit()
 
+    @staticmethod
+    def _coerce(value, sentinel):
+        """The Optional-snapshot seam (the 4.5.0 debt pack): a None fed
+        straight into a typed C++ property crashed the model — the
+        sentinel stands in uniformly instead of the per-field prose
+        this replaces."""
+        return value if value is not None else sentinel
+
+    def _schedule_publish(self):
+        """The publication coalescer (the 2026-09-19 performance
+        review): heartbeat signals schedule one flush per event-loop
+        turn, so a single data landing publishes the full model once
+        instead of once per collaborator."""
+        if self._publish_pending:
+            return
+        self._publish_pending = True
+        QTimer.singleShot(0, self._flush_publish)
+
+    def _flush_publish(self):
+        self._publish_pending = False
+        self._publish()
+
     def _publish(self):
         fm = self._file_manager
         previous = self._values
         snapshot = self._print_state()
-        if self._improving_eta and not self._skip_clear_once \
-                and (snapshot.index_ready or not snapshot.load_active):
-            # The index landed, or the download/build failed and the
-            # coordinator cleared its flags (panel finding P1-1): the
-            # hourglass ends and the glyph becomes the retry
-            # affordance — settled BEFORE the values build so the
-            # published value reflects the cleared state. The 90 s
-            # timer stays as the last resort for a hung pull.
+        if self._improving_eta and snapshot is not self._improve_started_snapshot \
+                and not snapshot.load_active:
+            # The coordinator REBUILT its snapshot since the improve
+            # began (every rebuild is a new object) and the load is
+            # terminated — the index landed or the download/build
+            # failed (panel finding P1-1). The identity gate is the
+            # replacement for the one-shot skip latch: the publish
+            # coalescer's extra turns re-publish the SAME pre-rebuild
+            # snapshot, which used to clear the hourglass the moment
+            # any publish ran. The hourglass ends and the glyph
+            # becomes the retry affordance — settled BEFORE the
+            # values build so the published value reflects the
+            # cleared state. The 90 s timer stays as the last resort
+            # for a hung pull.
             self._improving_eta = False
-        self._skip_clear_once = False
         values = core_values(self._data.snapshot, snapshot, self._client.connected)
         # Connected with no auxiliary data landed yet: the pane's
         # loading state (the 2026-09-16 request — the empty grey page
@@ -779,8 +897,19 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             message = str(display.get("message") or "")
             if message:
                 values["monitorMessage"] = message
-        values.update(peripheral_values(self._data.snapshot))
-        values.update(endstop_values(self._data.snapshot, self._client.connected))
+        # The lane-identity caches (the 2026-09-19 review's I): the
+        # peripheral scan and the endstop projection rebuild only
+        # when their lane's data object actually changed — a
+        # core-only heartbeat used to rescan every sensor and fan.
+        aux_key = id(self._data.snapshot.auxiliary)
+        if self._peripheral_cache[0] != aux_key:
+            self._peripheral_cache = (aux_key, peripheral_values(self._data.snapshot))
+        values.update(self._peripheral_cache[1])
+        endstops_key = (id(self._data.snapshot.endstops), self._client.connected)
+        if self._endstop_cache[0] != endstops_key:
+            self._endstop_cache = (endstops_key,
+                                   endstop_values(self._data.snapshot, self._client.connected))
+        values.update(self._endstop_cache[1])
         values.update(self._file_manager_values())
         values["fileManagerOpen"] = self._file_manager_open
         values["filePrintConfirm"] = self._file_print_confirm or ""
@@ -865,7 +994,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # tooltips.
         pause_verdict = can_pause(observation)
         resume_verdict = can_resume(observation)
-        # The heightmap range filter (the author's request): ONE
+        # The heightmap range filter (a request): ONE
         # window drives both surfaces — the Monitor pop-over reads the
         # published keys, the Preview card and scene node follow
         # through the presenter. The window follows the mesh range
@@ -924,35 +1053,72 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # The next scheduled pause (the live ruling): the
             # JobSection's readout and both stacked bars' orange
             # third fill.
-            nextPauseLayer=(-1 if snapshot.next_pause_layer is None else snapshot.next_pause_layer),
+            nextPauseLayer=self._coerce(snapshot.next_pause_layer, -1),
             nextPauseEta=snapshot.next_pause_eta,
             # The typed property cannot hold None (the live crash: a
             # NoneType into a C++ double) — the -1.0 sentinel means
             # "no pause ahead", same contract as the progress fields.
-            nextPauseFraction=(-1.0 if snapshot.next_pause_fraction is None else snapshot.next_pause_fraction),
+            nextPauseFraction=self._coerce(snapshot.next_pause_fraction, -1.0),
             nextPauseBaked=bool(snapshot.next_pause_baked),
             # The determinate fraction through both phases: the
             # download's byte fraction, then the index build's own
             # byte-offset progress (the scanner reports it).
-            improveEtaProgress=(max(0.0, min(1.0, snapshot.download_fraction if snapshot.download_fraction is not None else snapshot.index_fraction))
-                                if (snapshot.load_active or self._improving_eta)
-                                   and (snapshot.download_fraction is not None or snapshot.index_fraction is not None)
-                                else -1.0),
+            improveEtaProgress=self._coerce(
+                max(0.0, min(1.0, snapshot.download_fraction if snapshot.download_fraction is not None else snapshot.index_fraction))
+                if (snapshot.load_active or self._improving_eta)
+                   and (snapshot.download_fraction is not None or snapshot.index_fraction is not None)
+                else None, -1.0),
             improveEtaPhase=("Downloading…" if (snapshot.load_active or self._improving_eta) and snapshot.download_fraction is not None
                              else "Indexing…" if (snapshot.load_active or self._improving_eta) and snapshot.indexing
                              else "Resolving…" if snapshot.load_active or self._improving_eta else ""))
+        record = self._migration_record()
+        failed = bool(record and record.get("status") == "failed")
+        values["migrationBannerVisible"] = bool(failed and not record.get("bannerDismissed"))
+        values["migrationBannerText"] = _migration_banner_text(record) if failed else ""
+        values["migrationBackupAvailable"] = bool(failed and record.get("backupWritten") and record.get("backupName"))
+        values["migrationDiagnosticsVisible"] = bool(failed and record.get("bannerDismissed"))
+        values["migrationDiagnosticsText"] = _migration_diagnostics_text(record) if failed else ""
         self._values = values
+        first_attach = False
         try:
             url = self._camera.url
-            if url and url != self._camera_last_url:
-                # Any camera-URL transition deserves a fresh load: the
-                # first attach's initial request dies silently in the
-                # loader (the report — the manual refresh
-                # worked because it changed the URL).
-                self._camera_last_url = url
-                self._camera_refresh_nonce += 1
+            if url:
+                last_url = self._camera_last_url
+                # A query-only transition is the upstream's own noise
+                # (a rotated nonce in the reported stream URL): the
+                # live stream keeps working, so no reload and no nonce
+                # bump — the pane's guard ignores the query too. An
+                # origin, port or path transition still reloads.
+                def _stripped(u):
+                    cut = u.find("?")
+                    return u[:cut] if cut >= 0 else u
+                changed = _stripped(url) != _stripped(last_url or "")
+                if url != last_url:
+                    self._camera_last_url = url
+                if changed:
+                    # Any camera-URL transition deserves a fresh load:
+                    # the first attach's initial request dies silently
+                    # in the loader (the report — the manual refresh
+                    # worked because it changed the URL).
+                    first_attach = not last_url
+                    self._camera_refresh_nonce += 1
+                    # The bump rides THIS publish's values (the camera-
+                    # delay fix): published one cycle late it drove a
+                    # SECOND stream application after the URL's — the
+                    # QML coalescer collapses the same-cycle pair into
+                    # one.
+                    values["cameraRefreshNonce"] = self._camera_refresh_nonce
             self.setCameraUrl(QUrl(url))
-        except AttributeError: pass
+        except AttributeError:
+            pass
+        from .CameraTiming import enabled as camera_timing_enabled, mark as camera_timing_mark
+        values["traceCameraTiming"] = camera_timing_enabled()
+        if first_attach:
+            # T5: the FINAL url QML consumes, sanitised to
+            # scheme/host/port/path (never query credentials).
+            sanitised = QUrl(str(url))
+            sanitised.setQuery("")
+            camera_timing_mark("T5", "camera URL published: %s" % sanitised.toString())
 
         # Qt notify signals are part of control ownership. Broadcasting every
         # signal for every poll was re-evaluating bound ComboBox/Slider values
@@ -964,6 +1130,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 getattr(self, signal_name).emit()
 
     monitorState = value_property(str, "monitorState", monitorChanged, "Not connected")
+    # The migration-failure surfaces (the UX ruling): the dialog's
+    # banner and the permanent diagnostics row read these.
+    migrationBannerVisible = value_property(bool, "migrationBannerVisible", monitorChanged, False)
+    migrationBannerText = value_property(str, "migrationBannerText", monitorChanged, "")
+    migrationBackupAvailable = value_property(bool, "migrationBackupAvailable", monitorChanged, False)
+    migrationDiagnosticsVisible = value_property(bool, "migrationDiagnosticsVisible", monitorChanged, False)
+    migrationDiagnosticsText = value_property(str, "migrationDiagnosticsText", monitorChanged, "")
     monitorConnected = value_property(bool, "monitorConnected", monitorChanged, False)
     monitorFilename = value_property(str, "monitorFilename", monitorChanged, "")
     monitorProgress = value_property(float, "monitorProgress", monitorChanged, 0.0)
@@ -1579,7 +1752,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     bedMeshMachineWidth = value_property(float, "bedMeshMachineWidth", typedControlsChanged, 0.0)
     bedMeshMachineDepth = value_property(float, "bedMeshMachineDepth", typedControlsChanged, 0.0)
     bedMeshCenterIsZero = value_property(bool, "bedMeshCenterIsZero", typedControlsChanged, False)
-    # The heightmap range filter (the author's request): values
+    # The heightmap range filter (a request): values
     # outside this window render grey.
     bedMeshThresholdLow = value_property(float, "bedMeshThresholdLow", typedControlsChanged, 0.0)
     bedMeshThresholdHigh = value_property(float, "bedMeshThresholdHigh", typedControlsChanged, 0.0)
@@ -1622,6 +1795,32 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     statusCollapsed = value_property(bool, "statusCollapsed", statusPaneChanged, False)
     consoleHeight = value_property(int, "consoleHeight", consoleHeightChanged, 0)
     cameraRefreshNonce = value_property(int, "cameraRefreshNonce", cameraRefreshChanged, 0)
+    # The T0-T9 cold-camera timing chain's QML side: the host mirrors
+    # the trace gate, and the pane's first decoded frame lands here so
+    # T9 shares the SAME monotonic origin as every Python stage.
+    traceCameraTimingChanged = pyqtSignal()
+    traceCameraTiming = value_property(bool, "traceCameraTiming", traceCameraTimingChanged, False)
+
+    @pyqtSlot()
+    def cameraFirstFrameRendered(self):
+        from .CameraTiming import mark_once
+        mark_once("T9", "first decoded frame")
+
+    @pyqtSlot(result=int)
+    def cameraPaneInstanceId(self):
+        # The pane's process-wide diagnostic id: every pane instance
+        # (one per machine model) draws from the SAME sequence, so
+        # pane-side trace lines can never collide across models.
+        from .CameraTiming import next_actor_id
+        return next_actor_id()
+
+    @pyqtSlot(int, str)
+    def cameraPaneTrace(self, pane_id, event):
+        # The QML side of the cold-start trace: applyCamera calls,
+        # visibility start/stops and watchdog firings, labelled with
+        # the pane's id and sanitised by the pane itself.
+        from .CameraTiming import mark
+        mark("T6-qml", "pane %d: %s" % (int(pane_id), str(event)))
     cameraRecovering = value_property(bool, "cameraRecovering", cameraRecoveringChanged, False)
     connectionDetail = value_property(str, "connectionDetail", connectionDetailChanged, "")
     sectionExpandedMap = value_property(QVariant, "sectionExpandedMap", sectionsChanged, {})
@@ -1754,11 +1953,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _chart_value(self):
         """The sample payload, rebuilt only when the history's revision
-        or the persisted config actually changed."""
-        key = json.dumps(self._chart_config, sort_keys=True)
+        or the persisted config actually changed. The pop-over's state
+        rides the cache key: CLOSED serves the mini preview payload
+        (only the mini's series carry data — the 2026-09-19 review's
+        K), OPEN hydrates the full payload."""
+        key = json.dumps(self._chart_config, sort_keys=True) + ("|open" if self._chart_open else "")
         if (self._chart_payload is None or self._chart_payload_revision != self._history.revision
                 or key != self._chart_config_key):
-            self._chart_payload = chart_payload(self._history, self._chart_config)
+            self._chart_payload = chart_payload(self._history, self._chart_config,
+                                                mini=not self._chart_open)
             self._chart_payload_revision = self._history.revision
             self._chart_config_key = key
         return self._chart_payload
@@ -1783,6 +1986,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             }
         return self._legend_payload
 
+    @pyqtSlot(bool)
+    def setChartOpen(self, opened):
+        # The pop-over's hydration gate (the 2026-09-19 review's K):
+        # the full chart payload materialises only while the pop-over
+        # is open; the preview rides the mini payload otherwise.
+        opened = bool(opened)
+        if opened == self._chart_open:
+            return
+        self._chart_open = opened
+        self._chart_payload = None  # the key change rebuilds on publish
+        self._publish()
+
     def _apply_chart_config(self):
         """Persist the chart config into the per-printer record (the
         camera_selected precedent); the global JSON keeps chrome only."""
@@ -1803,6 +2018,35 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 config[key] = {name: value for name, value in entries.items() if name in names}
         return config
 
+    def _migration_record(self):
+        """The settings document's migration record via the facade;
+        None in the harness's config-only double. Cached: the record
+        lands once during hydration and only the dismiss slot mutates
+        it — the heartbeat must not re-read the settings file (H1 of
+        the 2026-09-19 performance review)."""
+        if self._migration_record_read:
+            return self._migration_record_cache
+        self._migration_record_read = True
+        if hasattr(self._store, "migration_record"):
+            self._migration_record_cache = self._store.migration_record()
+        return self._migration_record_cache
+
+    @pyqtSlot()
+    def dismissMigrationBanner(self):
+        if hasattr(self._store, "set_migration_record"):
+            self._store.set_migration_record({"bannerDismissed": True})
+            # The cache mirrors the store's merge: the diagnostics row
+            # still needs the status/backup fields under the flag.
+            self._migration_record_cache = {**(self._migration_record_cache or {}),
+                                            "bannerDismissed": True}
+            self._publish()
+
+    @pyqtSlot()
+    def openMigrationBackupFolder(self):
+        # The recipe's route: the folder that exists NOW — the config
+        # directory moves between Cura versions and portable installs.
+        QDesktopServices.openUrl(QUrl.fromLocalFile(Resources.getConfigStoragePath()))
+
     def _on_store_note(self, _kind, text):
         """The store's failure sink (A6): the console note line is
         the durable channel (the action status's precedence can hide
@@ -1814,7 +2058,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             self._store_notes.append(text)
 
     def _save_state(self):
-        self._store.write({
+        _store_write(self._store, {
             "whatsNewSeen": self._whats_new_seen,
             "controlsCollapsed": self._controls_collapsed,
             "controlsLocked": self._controls_locked,
@@ -1905,6 +2149,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # until the next release.
         self._whats_new_seen = whats_new_latest()
         self._save_state()
+        # The migration notice's ordering hook (the UX ruling): the
+        # failure toast waits for this moment, never races the overlay.
+        self.whatsNewDismissed.emit()
 
     @pyqtSlot()
     def improveEta(self):
@@ -1920,9 +2167,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # rebuild, and the stale snapshot in this very publish
             # reads as "the load never started" (the red run: the
             # hourglass never fired when the improve ran from a
-            # settled state). Skip the clear once; every later
-            # publish sees the updated snapshot and clears honestly.
-            self._skip_clear_once = True
+            # settled state). The started-snapshot is recorded BEFORE
+            # the publish so the identity gate cannot fire on it.
+            self._improve_started_snapshot = self._print_state()
             self._publish()
             self._request_monitor_download()
             QTimer.singleShot(90000, self._improve_eta_timeout)
@@ -1934,7 +2181,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot(bool)
     @pyqtSlot(float, float)
     def setBedMeshThresholds(self, low, high):
-        # The heightmap range filter (the author's request): ONE
+        # The heightmap range filter (a request): ONE
         # shared window drives both surfaces — the Monitor pop-over
         # re-reads the published keys, the Preview card and scene node
         # follow through the presenter — so the two sliders stay

@@ -119,8 +119,8 @@ class FileManager(QObject):
         self._upload_replies: Dict[str, tuple] = {}
         self._upload_seq = 0
         # Snapshot 3's column config lives HERE, not in the model (the
-        # author's live ruling: the file manager is its own thing,
-        # composed into the Monitor page — the model only merges).
+        # live ruling: the file manager is its own thing, composed
+        # into the Monitor page — the model only merges).
         columns = normalise_columns({})
         self._column_widths: Dict[str, float] = dict(columns["widths"])
         self._column_order: List[str] = list(columns["order"])
@@ -345,9 +345,8 @@ class FileManager(QObject):
         Live-proven (2026-09-10): Moonraker's metascan response IS
         the parsed metadata (a 200 carrying the full result) — no
         re-read. Non-gcode files draw a host refusal ("not a valid
-        gcode file"), and BOTH outcomes answer as a console note: the
-        author's live report was an option that appeared to do
-        nothing at all."""
+        gcode file"), and BOTH outcomes answer as a console note: a
+        live report of an option that appeared to do nothing at all."""
         generation = self._generation
         transport = self._client.transport
 
@@ -999,8 +998,8 @@ class FileManager(QObject):
         """Filter → search → sort over the right scope: the whole tree
         while a search is active (the global-search ruling),
         otherwise the CURRENT level only — a directory shows its own
-        files, never a recursive aggregate of the subtree (the
-        author's live ruling). One evaluation per revision set: the
+        files, never a recursive aggregate of the subtree (the live
+        ruling). One evaluation per revision set: the
         cached rows serve every caller until the data, the history,
         the view or the minute bucket moves (the F06 repair — a
         temperature tick no longer sorts the file list)."""
@@ -1043,7 +1042,7 @@ class FileManager(QObject):
         # clamp_page's `total` is the ROW count (it derives the last
         # page itself) — passing the page count double-counted and
         # clamped every listing over one page back to page 1 (the
-        # author's dead carousel, bisected in the probe).
+        # dead carousel, bisected in the probe).
         return clamp_page(self._view.page, len(self.current_rows()), self._view.page_size)
 
     def page_number(self) -> int:

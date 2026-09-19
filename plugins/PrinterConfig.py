@@ -94,7 +94,7 @@ class FeedMode(str, Enum):
 
 @dataclass
 class PrinterConfig:
-    # Live Preview follower settings. Enabled by default (the author's
+    # Live Preview follower settings. Enabled by default (the
     # 2026-09-17 ruling): a fresh machine should follow without an
     # extra checkbox trip.
     enabled: bool = True
@@ -465,7 +465,16 @@ class PrinterConfigStore:
         return PrinterConfig.from_dict(raw)
 
     def migrate_legacy_to_current_machine(self) -> bool:
-        """Move pre-per-printer follower preferences into the active machine once."""
+        """Move pre-per-printer follower preferences into the active machine once.
+
+        The registered defaults are NOT migration evidence: the keys
+        are seeded with them at construction, so a fresh install reads
+        every key present. A per-machine record is materialised only
+        when at least one legacy field carries a meaningful
+        non-default value — the NORMALISED comparison, never the raw
+        stored form (strings vs ints/bools). A no-source run leaves
+        no flag behind either: rechecking a cheap no-op is better
+        than persisting a fake migration marker."""
         if self._truthy(self._preferences.getValue(self.MIGRATED_KEY)):
             return False
         machine_id, _ = self.identity()
@@ -476,7 +485,20 @@ class PrinterConfigStore:
             return False
         data = self._load_all()
         if machine_id not in data:
-            data[machine_id] = asdict(self._legacy_config())
+            legacy = asdict(self._legacy_config())
+            defaults = asdict(PrinterConfig())
+            meaningful = any(
+                legacy.get(field) != defaults.get(field)
+                for field in self.LEGACY_MAP
+            )
+            if not meaningful:
+                # Nothing to migrate: the fabricated default record
+                # would become the NEXT boot's apparent legacy source
+                # (the second-boot phantom migration a first install
+                # must never see). No flag is written — the cheap
+                # no-op simply re-runs.
+                return False
+            data[machine_id] = legacy
             self._save_all(data)
         self._preferences.setValue(self.MIGRATED_KEY, True)
         return True
@@ -496,7 +518,10 @@ class PrinterConfigStore:
             self._preferences.getValue(self.MOONRAKER_CONNECTION_PREF_KEY)
         )
         if not legacy_all:
-            self._preferences.setValue(self.MOONRAKER_CONNECTION_MIGRATED_KEY, True)
+            # Checking is not importing: an empty source must not
+            # persist a fake migration marker (the reviewer's
+            # first-install invariant — a marker means an import
+            # HAPPENED).
             return 0
 
         data = self._load_all()
@@ -546,7 +571,10 @@ class PrinterConfigStore:
 
         if imported:
             self._save_all(data)
-        self._preferences.setValue(self.MOONRAKER_CONNECTION_MIGRATED_KEY, True)
+            # The marker means an import HAPPENED: an empty source is
+            # not an import, and a fresh install must not carry a fake
+            # migration marker for a check that found nothing.
+            self._preferences.setValue(self.MOONRAKER_CONNECTION_MIGRATED_KEY, True)
         return imported
 
     def get(self, machine_id: Optional[str] = None) -> PrinterConfig:

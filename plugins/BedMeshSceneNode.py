@@ -20,8 +20,8 @@ class BedMeshSceneNode(SceneNode):
     extends to the physical Cura bed edges, sampled with KLIPPER'S OWN CLAMP
     (bed_mesh._get_linear_index constrains both the index and the fraction):
     outside the probed bounds the compensation continues the boundary edge's
-    interpolated value — no made-up slope, no drop to zero (the author's
-    accuracy ruling, 2026-09-15). Extended vertices are intentionally more
+    interpolated value — no made-up slope, no drop to zero (the accuracy
+    ruling, 2026-09-15). Extended vertices are intentionally more
     transparent so the unprobed region is not presented as measured data. A
     neon-orange raised ribbon follows the exact Klipper mesh bounds so the
     measured/interpolated area remains obvious even when the alpha change at
@@ -142,7 +142,7 @@ class BedMeshSceneNode(SceneNode):
         Klipper's own behaviour (bed_mesh.py _get_linear_index
         constrains both the index and the fraction), so the extended
         perimeter shows the boundary values continued, never a
-        made-up slope (the author's accuracy ruling, 2026-09-15)."""
+        made-up slope (the accuracy ruling, 2026-09-15)."""
         rows = len(matrix)
         columns = len(matrix[0]) if rows else 0
         u = (printer_x - x_min) / (x_max - x_min) * (columns - 1)

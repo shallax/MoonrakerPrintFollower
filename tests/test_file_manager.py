@@ -198,7 +198,7 @@ class MutationPolicyTests(unittest.TestCase):
         self.assertEqual(upload_relpath("", "bench.gcode"), "bench.gcode")
         self.assertEqual(upload_relpath("prints", "bench.gcode"), "prints/bench.gcode")
         # The filename comes from the actual file, wherever it was
-        # picked from (the author's ruling).
+        # picked from (the ruling).
         self.assertEqual(upload_relpath("prints", "/tmp/x/bench.gcode"), "prints/bench.gcode")
 
     def test_collision_and_delete_candidates(self):
@@ -207,7 +207,7 @@ class MutationPolicyTests(unittest.TestCase):
         self.assertTrue(name_collides(rows, "b.gcode"))
         self.assertFalse(name_collides(rows, "c.gcode"))
         # The printing file is never a delete candidate (the
-        # author's gate).
+        # gate).
         self.assertEqual(delete_candidates(rows, "b.gcode"), [rows[0]])
         self.assertEqual(delete_candidates(rows, ""), rows)
 
@@ -281,7 +281,7 @@ class SortingTests(unittest.TestCase):
         self.assertEqual([r.filename for r in sort_rows(rows, "nonsense", True)], ["alpha", "beta"])
 
     def test_every_sortable_column_key_resolves_on_a_full_row(self):
-        # The author's live crash: sorting by Status raised
+        # A live crash: sorting by Status raised
         # AttributeError because the column key "status" has no
         # matching FileRow field. Every column key must survive a
         # full row, known values and all.
@@ -358,7 +358,7 @@ class FilterOptionCountsTests(unittest.TestCase):
         self.assertIn(["unknown", "Unknown", 1], options)
 
     def test_slicer_options_group_case_insensitively_into_one_unknown(self):
-        # The author's live report: a literal "Unknown" and an
+        # A live report: a literal "Unknown" and an
         # unreported slicer split into TWO Unknown options.
         rows = [make_row("a", slicer="Unknown"), make_row("b"), make_row("c", slicer="CURA 5.9"), make_row("d", slicer="Cura 5.9")]
         options = filter_option_counts(rows, now=self.NOW)["slicer"]
@@ -472,7 +472,7 @@ class RecentsTests(unittest.TestCase):
             {"filename": "c.gcode", "status": "completed", "exists": True, "end_time": 20.0},
         ]
         result = recent_prints(jobs)
-        # Gone files are DROPPED, not greyed (the author's live
+        # Gone files are DROPPED, not greyed (the live
         # ruling): Moonraker's history is the source of truth, and
         # unlike a local store the user cannot clean a recently
         # deleted entry out of it.
@@ -480,7 +480,7 @@ class RecentsTests(unittest.TestCase):
         self.assertEqual(result[0]["status"], "completed")  # newest job's verdict
 
     def test_no_local_persistence_survives_in_the_projection(self):
-        # The × dismissal is GONE (the author's live ruling,
+        # The × dismissal is GONE (the live ruling,
         # 2026-09-10): recents come from Moonraker's history and
         # carry no client-side state — the projection takes the jobs
         # and nothing else.
@@ -582,7 +582,7 @@ class FileManagerServiceTests(unittest.TestCase):
             self.assertTrue(all(size == 0 for size in seen))
 
     def test_clear_walk_error_releases_the_banner(self):
-        # The banner's dismiss (the author's live ruling): the error
+        # The banner's dismiss (the live ruling): the error
         # clears until the next walk re-reports one.
         self.service._walk_error = "Walk failed"
         self.service.clear_walk_error()
@@ -665,7 +665,7 @@ class FileManagerServiceTests(unittest.TestCase):
         self.assertEqual([row.filename for row in self.service.current_rows()], ["root.gcode"])
 
     def test_directory_scope_is_not_recursive(self):
-        # The author's live ruling: a directory shows ITS OWN files,
+        # The live ruling: a directory shows ITS OWN files,
         # never a recursive aggregate of the subtree.
         self.service.open()
         self.directory("path=gcodes&", [("root.gcode", {})], dirs=("prints",))
@@ -695,7 +695,7 @@ class FileManagerServiceTests(unittest.TestCase):
         self.assertEqual(self.service.subdirectories(), [])
 
     def test_refresh_rediscovers_directories_and_drops_deleted_files(self):
-        # The author's live report: refresh never pulled down new
+        # A live report: refresh never pulled down new
         # directories (a known directory was never re-walked) and
         # deleted files lingered. Every walk builds a fresh listing
         # and swaps it in on completion.

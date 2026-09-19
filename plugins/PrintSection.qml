@@ -66,16 +66,30 @@ ColumnLayout {
                 // The refusal words (4.3.0): the policy's short form
                 // rides the tooltip — a dead Pause must never be
                 // silent.
-                tooltip: root.printerModel != null && !root.printerModel.canPausePrint && root.printerModel.pauseReason.length > 0 ? root.printerModel.pauseReason : "Pause the current print immediately (Klipper PAUSE)."
                 onClicked: root.printerModel.pausePrint()
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: root.printerModel != null && !root.printerModel.canPausePrint && root.printerModel.pauseReason.length > 0 ? root.printerModel.pauseReason : "Pause the current print immediately (Klipper PAUSE)."
+                }
             }
 
             Cura.PrimaryButton {
                 Layout.fillWidth: true
                 text: "Resume"
                 enabled: root.printerModel != null && root.printerModel.canResumePrint
-                tooltip: root.printerModel != null && !root.printerModel.canResumePrint && root.printerModel.resumeReason.length > 0 ? root.printerModel.resumeReason : "Resume the paused print (Klipper RESUME)."
                 onClicked: root.printerModel.resumePrint()
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: root.printerModel != null && !root.printerModel.canResumePrint && root.printerModel.resumeReason.length > 0 ? root.printerModel.resumeReason : "Resume the paused print (Klipper RESUME)."
+                }
             }
 
             Cura.SecondaryButton {

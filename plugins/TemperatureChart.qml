@@ -34,6 +34,53 @@ Item {
     property real _minElapsed: 0
     property real _maxElapsed: 1
     property int _hoverSnap: -1  // cursor elapsed rounded to the sample grid
+    property var _hoverMarks: []  // [{elapsed, temperature, color}] per hovering series
+
+    function _seriesBounds(series) {
+        // The payload carries each series' render domain (the history
+        // knows it while the samples are built), so the chart never
+        // walks the samples it is about to draw. A payload built
+        // without that metadata — a preview, a test — gets the scanned
+        // equivalent.
+        if (series.bounds !== undefined) {
+            return series.bounds;
+        }
+        var minTemp = Infinity;
+        var maxTemp = -Infinity;
+        var minElapsed = Infinity;
+        var maxElapsed = -Infinity;
+        var points = series.points;
+        for (var j = 0; j < points.length; ++j) {
+            minTemp = Math.min(minTemp, points[j][1]);
+            maxTemp = Math.max(maxTemp, points[j][1]);
+            minElapsed = Math.min(minElapsed, points[j][0]);
+            maxElapsed = Math.max(maxElapsed, points[j][0]);
+        }
+        var bounds = {
+            "tempMin": minTemp,
+            "tempMax": maxTemp,
+            "elapsedMin": minElapsed,
+            "elapsedMax": maxElapsed
+        };
+        // Lit setpoints only, and only the extremes: the caller decides
+        // whether they join the domain at all.
+        var minTarget = Infinity;
+        var maxTarget = -Infinity;
+        var targets = series.targets;
+        for (var t = 0; t < targets.length; ++t) {
+            for (var u = 0; u < targets[t].length; ++u) {
+                if (targets[t][u][1] > 0) {
+                    minTarget = Math.min(minTarget, targets[t][u][1]);
+                    maxTarget = Math.max(maxTarget, targets[t][u][1]);
+                }
+            }
+        }
+        if (minTarget !== Infinity) {
+            bounds.targetMin = minTarget;
+            bounds.targetMax = maxTarget;
+        }
+        return bounds;
+    }
 
     function _recomputeBounds() {
         var minTemp = Infinity;
@@ -41,32 +88,26 @@ Item {
         var minElapsed = Infinity;
         var maxElapsed = -Infinity;
         var series = chart.series !== undefined ? chart.series : [];
+        var showTargets = chart.showTargets;
         for (var i = 0; i < series.length; ++i) {
             if (!series[i].visible) {
                 continue;
             }
-            var points = series[i].points;
-            for (var j = 0; j < points.length; ++j) {
-                minTemp = Math.min(minTemp, points[j][1]);
-                maxTemp = Math.max(maxTemp, points[j][1]);
-                minElapsed = Math.min(minElapsed, points[j][0]);
-                maxElapsed = Math.max(maxElapsed, points[j][0]);
+            var bounds = _seriesBounds(series[i]);
+            if (bounds.tempMin !== undefined && bounds.tempMin !== null) {
+                minTemp = Math.min(minTemp, bounds.tempMin);
+                maxTemp = Math.max(maxTemp, bounds.tempMax);
+                minElapsed = Math.min(minElapsed, bounds.elapsedMin);
+                maxElapsed = Math.max(maxElapsed, bounds.elapsedMax);
             }
             // Setpoints join the domain so a droop to a new target is
             // visible while it happens, not only once the actual nearly
             // arrives (target > 0 = heater on) — and only while targets
             // are shown: hiding them must not leave the domain inflated
             // by a far-away setpoint.
-            if (chart.showTargets) {
-                var targets = series[i].targets;
-                for (var t = 0; t < targets.length; ++t) {
-                    for (var u = 0; u < targets[t].length; ++u) {
-                        if (targets[t][u][1] > 0) {
-                            minTemp = Math.min(minTemp, targets[t][u][1]);
-                            maxTemp = Math.max(maxTemp, targets[t][u][1]);
-                        }
-                    }
-                }
+            if (showTargets && bounds.targetMin !== undefined && bounds.targetMin !== null) {
+                minTemp = Math.min(minTemp, bounds.targetMin);
+                maxTemp = Math.max(maxTemp, bounds.targetMax);
             }
         }
         if (!isFinite(minTemp)) {
@@ -135,16 +176,36 @@ Item {
         // The sample nearest the snapped cursor time, within 1.5 s;
         // -1 means the series has nothing at that instant (it started
         // late or ended early) and the readout shows an honest "—".
-        var best = -1;
-        var bestDistance = Infinity;
-        for (var i = 0; i < points.length; ++i) {
-            var distance = Math.abs(points[i][0] - elapsed);
-            if (distance < bestDistance) {
-                bestDistance = distance;
-                best = i;
+        // Samples ascend by elapsed, so the nearest one is one of the
+        // two straddling the cursor: a binary search, not a scan — this
+        // runs per visible series on every mouse move.
+        var count = points.length;
+        if (count === 0) {
+            return -1;
+        }
+        var low = 0;
+        var high = count;
+        while (low < high) {
+            var middle = (low + high) >> 1;
+            if (points[middle][0] < elapsed) {
+                low = middle + 1;
+            } else {
+                high = middle;
             }
         }
-        return bestDistance <= 1.5 ? best : -1;
+        var best = low < count ? low : count - 1;
+        if (low > 0) {
+            // A tie keeps the earlier sample, as the scan did.
+            if (Math.abs(points[low - 1][0] - elapsed) <= Math.abs(points[best][0] - elapsed)) {
+                best = low - 1;
+            }
+            // Samples can share an elapsed value: the first of the run is
+            // the one a scan would have returned.
+            while (best > 0 && points[best - 1][0] === points[best][0]) {
+                best -= 1;
+            }
+        }
+        return Math.abs(points[best][0] - elapsed) <= 1.5 ? best : -1;
     }
 
     function _clockText(elapsed) {
@@ -188,6 +249,7 @@ Item {
             _hoverSnap = -1;
             hoverClock = "";
             hoverValues = [];
+            _hoverMarks = [];
             overlay.requestPaint();
             return;
         }
@@ -203,6 +265,7 @@ Item {
             // mousemove would just fire change signals for nothing.
             hoverClock = _clockText(snapped);
             var values = [];
+            var marks = [];
             var series = chart.series !== undefined ? chart.series : [];
             for (var i = 0; i < series.length; ++i) {
                 if (!series[i].visible || series[i].points.length === 0) {
@@ -214,8 +277,19 @@ Item {
                         "color": series[i].color,
                         "text": index >= 0 ? series[i].points[index][1].toFixed(1) + "°C" : "—"
                     });
+                // The overlay's markers, published with the readout it
+                // already searched for: the cursor's nearest sample is
+                // found once per move, not again in every repaint.
+                if (index >= 0) {
+                    marks.push({
+                            "elapsed": series[i].points[index][0],
+                            "temperature": series[i].points[index][1],
+                            "color": series[i].color
+                        });
+                }
             }
             hoverValues = values;
+            _hoverMarks = marks;
         }
     }
 
@@ -260,11 +334,16 @@ Item {
 
     // The tooltip sits under the mouse area so it can never steal the
     // click; it only shows when the call site supplies text.
-    UM.TooltipArea {
-        anchors.fill: parent
-        visible: root.tooltipText.length > 0
+    HoverHandler {
+        id: tooltipHover1
+    }
+    UM.ToolTip {
+        visible: tooltipHover1.hovered
+        targetPoint: Qt.point(parent.width / 2, 0)
+        x: 0
+        y: parent.height + UM.Theme.getSize("default_margin").height
+        width: UM.Theme.getSize("tooltip").width
         text: root.tooltipText
-        acceptedButtons: Qt.NoButton
     }
 
     Canvas {
@@ -279,6 +358,21 @@ Item {
             var lines = root.compact ? 2 : 4;
             var drewPower = false;
             var gutter = root._rightGutter();
+
+            // The plot geometry, resolved once: mapping a point through
+            // root._xFor/root._yFor re-reads six QML properties per
+            // coordinate, and the data layers walk every sample of every
+            // visible series (up to 1800 each) on every paint. A scale
+            // and offset per axis makes each coordinate a multiply-add,
+            // which measured at roughly a third of the paint's cost.
+            var plotWidth = width - gutter;
+            var plotBottom = root._plotBottom();
+            var elapsedSpan = root._maxElapsed - root._minElapsed;
+            var tempSpan = root._maxTemp - root._minTemp;
+            var mapScaleX = elapsedSpan > 0 ? plotWidth / elapsedSpan : 0;
+            var mapOffsetX = -root._minElapsed * mapScaleX;
+            var mapScaleY = tempSpan > 0 ? -plotBottom / tempSpan : 0;
+            var mapOffsetY = tempSpan > 0 ? plotBottom - root._minTemp * mapScaleY : plotBottom;
 
             // Horizontal grid + temperature labels.
             for (var g = 0; g <= lines; ++g) {
@@ -346,11 +440,11 @@ Item {
                         drewPower = true;
                         ctx.fillStyle = root._strokeColor(series[p].color, 0.22);
                         ctx.beginPath();
-                        ctx.moveTo(root._xFor(powerSeg[0][0]), root._plotBottom());
+                        ctx.moveTo(powerSeg[0][0] * mapScaleX + mapOffsetX, plotBottom);
                         for (var q = 0; q < powerSeg.length; ++q) {
-                            ctx.lineTo(root._xFor(powerSeg[q][0]), root._plotBottom() - powerSeg[q][1] * root._plotBottom());
+                            ctx.lineTo(powerSeg[q][0] * mapScaleX + mapOffsetX, plotBottom - powerSeg[q][1] * plotBottom);
                         }
-                        ctx.lineTo(root._xFor(powerSeg[powerSeg.length - 1][0]), root._plotBottom());
+                        ctx.lineTo(powerSeg[powerSeg.length - 1][0] * mapScaleX + mapOffsetX, plotBottom);
                         ctx.closePath();
                         ctx.fill();
                     }
@@ -374,19 +468,19 @@ Item {
                         }
                         ctx.fillStyle = root._strokeColor(series[t].color, 0.10);
                         ctx.beginPath();
-                        ctx.moveTo(root._xFor(targetSeg[0][0]), root._yFor(root._minTemp));
+                        ctx.moveTo(targetSeg[0][0] * mapScaleX + mapOffsetX, plotBottom);
                         for (var u = 0; u < targetSeg.length; ++u) {
-                            ctx.lineTo(root._xFor(targetSeg[u][0]), root._yFor(targetSeg[u][1]));
+                            ctx.lineTo(targetSeg[u][0] * mapScaleX + mapOffsetX, targetSeg[u][1] * mapScaleY + mapOffsetY);
                         }
-                        ctx.lineTo(root._xFor(targetSeg[targetSeg.length - 1][0]), root._yFor(root._minTemp));
+                        ctx.lineTo(targetSeg[targetSeg.length - 1][0] * mapScaleX + mapOffsetX, plotBottom);
                         ctx.closePath();
                         ctx.fill();
                         ctx.strokeStyle = root._strokeColor(series[t].color, 0.4);
                         ctx.lineWidth = 1;
                         ctx.beginPath();
-                        ctx.moveTo(root._xFor(targetSeg[0][0]), root._yFor(targetSeg[0][1]));
+                        ctx.moveTo(targetSeg[0][0] * mapScaleX + mapOffsetX, targetSeg[0][1] * mapScaleY + mapOffsetY);
                         for (var v = 1; v < targetSeg.length; ++v) {
-                            ctx.lineTo(root._xFor(targetSeg[v][0]), root._yFor(targetSeg[v][1]));
+                            ctx.lineTo(targetSeg[v][0] * mapScaleX + mapOffsetX, targetSeg[v][1] * mapScaleY + mapOffsetY);
                         }
                         ctx.stroke();
                     }
@@ -403,9 +497,9 @@ Item {
                 ctx.strokeStyle = root._strokeColor(series[s].color, 1);
                 ctx.lineWidth = root.compact ? 1.2 : 1.6;
                 ctx.beginPath();
-                ctx.moveTo(root._xFor(points[0][0]), root._yFor(points[0][1]));
+                ctx.moveTo(points[0][0] * mapScaleX + mapOffsetX, points[0][1] * mapScaleY + mapOffsetY);
                 for (var j = 1; j < points.length; ++j) {
-                    ctx.lineTo(root._xFor(points[j][0]), root._yFor(points[j][1]));
+                    ctx.lineTo(points[j][0] * mapScaleX + mapOffsetX, points[j][1] * mapScaleY + mapOffsetY);
                 }
                 ctx.stroke();
                 ctx.lineWidth = 1;
@@ -440,7 +534,6 @@ Item {
             if (root.compact || root.hoverX < 0 || root._hoverSnap < 0) {
                 return;
             }
-            var series = root.chart.series !== undefined ? root.chart.series : [];
             var labelColor = UM.Theme.getColor("text_inactive");
             var x = root._xFor(root._hoverSnap);
             ctx.strokeStyle = labelColor;
@@ -449,20 +542,16 @@ Item {
             ctx.moveTo(x, 0);
             ctx.lineTo(x, height);
             ctx.stroke();
-            // Per-series markers snap to each series' nearest sample in
-            // time — a late-starting sensor shows its honest position,
-            // and the readout's "—" marks when it has nothing there.
-            for (var h = 0; h < series.length; ++h) {
-                if (!series[h].visible) {
-                    continue;
-                }
-                var index = root._nearestIndex(series[h].points, root._hoverSnap);
-                if (index < 0) {
-                    continue;
-                }
-                ctx.fillStyle = root._strokeColor(series[h].color, 1);
+            // Per-series markers, snapped to each series' nearest sample
+            // in time — a late-starting sensor shows its honest position,
+            // and the readout's "—" marks when it has nothing there. The
+            // search already ran when the readout was published; this
+            // paint only maps the samples it kept.
+            var marks = root._hoverMarks;
+            for (var h = 0; h < marks.length; ++h) {
+                ctx.fillStyle = root._strokeColor(marks[h].color, 1);
                 ctx.beginPath();
-                ctx.arc(root._xFor(series[h].points[index][0]), root._yFor(series[h].points[index][1]), 2.5, 0, 2 * Math.PI);
+                ctx.arc(root._xFor(marks[h].elapsed), root._yFor(marks[h].temperature), 2.5, 0, 2 * Math.PI);
                 ctx.fill();
             }
         }

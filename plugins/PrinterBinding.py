@@ -1,32 +1,85 @@
-"""Active printer/configuration ownership, independent of following and UI features."""
+"""Active printer/configuration ownership, independent of following and UI features.
+
+4.5.0: the settings live in the persistence facade's document; the
+legacy preference chain (the flat keys, the Moonraker Connection
+import) still runs first; the one-shot migration into the facade's
+files runs from Cura's initializationFinished — never construction
+(Cura re-reads the preference file after plugins load, drops every
+preference write until it has started, and thus resurrects a
+construction-time clean, the panel's B1). The latch is explicit:
+`_ready` is False until mark_ready observes that signal, so `start()`
+only connects, and a machine that appears before readiness is applied
+there and migrated once readiness lands. The console's preference-flush
+debounce is gone: the transcript writes its own per-machine shard
+(ConsoleController), so the binding no longer flushes cura.cfg for it.
+The removal hook wipes a removed machine's credentials via the facade —
+the explicit removed id, never the active identity (E1's wrong-target
+trap: removeMachine activates a replacement first)."""
 from __future__ import annotations
 
 import time
 from dataclasses import replace
+
 from PyQt6.QtCore import QObject, QUrl, pyqtSignal
 from UM.Logger import Logger
 
 from .CuraAdapter import active_machine_identity
-from .PrinterConfig import PrinterConfigStore, normalise_url
+from .PersistenceMigration import MigrationOutcome, _record, read_source, run_migration
+from .PrinterConfig import PrinterConfig, PrinterConfigStore, normalise_url
+
+# The host-identifying fields the removal wipe clears (the
+# ruling): the harmless rest survives for a same-named re-add.
+_REMOVAL_WIPE_FIELDS = ("url", "api_key", "camera_url", "frontend_url", "upload_path")
+# The one-shot re-runs while the failure is retryable: a failed
+# backup, a failed write or a failed verify all leave cura.cfg intact
+# and the next launch replays. A terminal failure (or success) is the
+# persisted record's word.
+_RETRYABLE_REASONS = {"backup-failed", "write-failed", "verify-failed"}
 
 
 class PrinterBinding(QObject):
-    # Fires only on BINDING-initiated preference flushes (camera change,
-    # the console debounce). Cura's own exit flush never emits it — the
-    # name is narrower than it sounds.
-    preferencesFlushed = pyqtSignal()
     changed = pyqtSignal()
 
-    def __init__(self, application, client, parent=None):
+    def __init__(self, application, client, persistence, cura_cfg_path, old_state_path, parent=None):
         super().__init__(parent)
         self._application = application
         self._client = client
+        self._persistence = persistence
+        self._cura_cfg_path = cura_cfg_path
+        self._old_state_path = old_state_path
+        # The legacy chain's owner until the 5.0.0 teardown: the flat
+        # keys, the rename marker and the Moonraker Connection import
+        # still live in preferences.
         self._store = PrinterConfigStore(application.getPreferences(), lambda: active_machine_identity(application))
         self._machine_id, self._machine_name = self._store.identity()
         self._closed = False
+        # The config cache (H2 of the 2026-09-19 performance review):
+        # the heartbeat's camera observer reads config() on every data
+        # landing, and each read parsed settings.json. The cache is
+        # keyed by machine id, filled only for resolved machines, and
+        # refreshed by the two mutation paths: apply() and the
+        # migration's landing.
+        self._config_cache = None
+        # The boot-complete latch (B1): every destructive step — the
+        # legacy chain's blob push, the one-shot's clean — waits for
+        # Cura's readiness signal, because Cura reads the preference
+        # file for the last time after plugins load and drops every
+        # preference write until it has started. Two hosts have nothing
+        # to wait for and are ready from construction: one with no
+        # readiness signal at all, and one that has already started
+        # (a plugin re-enabled after the boot — Cura sets `started`
+        # just before it emits, so a late construction must not wait
+        # for a signal that will never come again).
+        self._ready = getattr(application, "initializationFinished", None) is None or bool(
+            getattr(application, "started", False)
+        )
         signal = getattr(application, "globalContainerStackChanged", None)
         self._machine_signal = signal
-        if signal is not None: signal.connect(self._machine_changed)
+        if signal is not None:
+            signal.connect(self._machine_changed)
+        self._registry = application.getContainerRegistry() if hasattr(application, "getContainerRegistry") else None
+        if self._registry is not None and hasattr(self._registry, "containerRemoved"):
+            self._registry.containerRemoved.connect(self._container_removed)
 
     @property
     def config(self):
@@ -34,81 +87,240 @@ class PrinterBinding(QObject):
         # constructs before Cura's active machine exists (identity
         # "unknown"), and every cached read saw the unknown machine's
         # EMPTY record — the console's restored transcript never loaded
-        # (the "console starts completely empty" report).
-        return self._store.get()
+        # (the "console starts completely empty" report). The
+        # per-machine cache (H2) holds the RESOLVED machine's config
+        # between its two mutation paths; "unknown" always reads live
+        # so the first resolution never freezes the empty record.
+        machine_id, _ = self.identity
+        cache = self._config_cache
+        if machine_id != "unknown" and cache is not None and cache[0] == machine_id:
+            return cache[1]
+        if self._persistence is not None:
+            entry = self._persistence.get_machine(machine_id)
+            if entry is not None:
+                config = PrinterConfig.from_dict(entry)
+                if machine_id != "unknown":
+                    self._config_cache = (machine_id, config)
+                return config
+        # Pre-migration fallback: the preference blob is still the
+        # source until the one-shot lands.
+        config = self._store.get(machine_id)
+        if machine_id != "unknown":
+            self._config_cache = (machine_id, config)
+        return config
+
     @property
-    def identity(self): return self._machine_id, self._machine_name
+    def identity(self):
+        return self._machine_id, self._machine_name
+
     @property
-    def configured(self): return self._machine_id != "unknown" and self.usable(normalise_url(self.config.url))
+    def configured(self):
+        return self._machine_id != "unknown" and self.usable(normalise_url(self.config.url))
 
     @staticmethod
     def usable(url):
         parsed = QUrl(url)
         return parsed.isValid() and parsed.scheme() in {"http", "https"} and bool(parsed.host())
 
-    def _migrate(self):
-        for migrate in (self._store.migrate_legacy_to_current_machine, self._store.migrate_moonraker_connection):
-            try: migrate()
-            except Exception as error: Logger.log("w", "Moonraker settings migration failed: %s", error)
+    def _carry_bed_mesh_preferences(self, preferences) -> bool:
+        """The bed-mesh keys' move (the no-trace ruling): the values
+        carry into the settings document's global section once, then
+        the clean resets the preferences. Idempotent — the keys'
+        presence in the global section is the guard, so a later run
+        can never overwrite the user's live values with defaults.
+        Returns False when a REQUIRED carry could not be persisted:
+        the caller must neither clean the preference source nor
+        proceed into a migration that would (the 4.5.0
+        transactional fix)."""
+        global_section = self._persistence.settings_document().get("global") or {}
+        if "bedMeshVisible" in global_section and "bedMeshExaggeration" in global_section:
+            return True
+        patch = {}
+        if "bedMeshVisible" not in global_section:
+            patch["bedMeshVisible"] = bool(preferences.getValue("moonrakerprintfollower/bed_mesh_visible"))
+        if "bedMeshExaggeration" not in global_section:
+            try:
+                patch["bedMeshExaggeration"] = float(preferences.getValue("moonrakerprintfollower/bed_mesh_exaggeration"))
+            except (TypeError, ValueError):
+                patch["bedMeshExaggeration"] = 20.0
+        if patch:
+            return bool(self._persistence.set_global(patch))
+        return True
 
-    def _flush_preferences(self):
-        """Force preference-backed selections to disk when Cura exposes the hook."""
-        save = getattr(self._application, "savePreferences", None)
-        if not callable(save): return
-        try: save()
-        except Exception as error:
-            Logger.log("w", "Moonraker camera preference flush failed: %s", error)
+    def _migrate(self):
+        record = self._persistence.migration_record() if self._persistence is not None else None
+        if record is None:
+            # The pre-migration window only: the legacy chain runs
+            # while the blob is still the source. Once the one-shot's
+            # record exists the legacy migrations must NOT re-run —
+            # the clean reset their flags, and a re-run would
+            # resurrect the blob into cura.cfg. (The preference mirror
+            # that once let the chain fabricate records on clean
+            # installs is retired, so this window is genuinely legacy
+            # only.)
+            for migrate in (self._store.migrate_legacy_to_current_machine, self._store.migrate_moonraker_connection):
+                try:
+                    migrate()
+                except Exception as error:
+                    Logger.log("w", "Moonraker settings migration failed: %s", error)
+        self.run_persistence_migration()
+
+    def run_persistence_migration(self):
+        """The v2 activation and the one-shot (B1): called from
+        Cura's initializationFinished (wired by the runtime) and from
+        the machine-switch path. A clean install activates the v2
+        document directly — no migration record, because nothing was
+        migrated (the ruling). The one-shot runs only while
+        the legacy blob still holds records; an absent or empty blob
+        is nothing to do, and the existing document is never replaced
+        on that path."""
+        preferences = self._application.getPreferences()
+        document = self._persistence.settings_document()
+        if not document:
+            # The clean-install activation: the v2 skeleton, no record.
+            # The check then FALLS THROUGH — a legacy install whose
+            # machine appears after boot still needs its one-shot, and
+            # an empty blob returns below without a record (the
+            # first-install ruling). The write's own verdict is logged:
+            # a failed activation is retried by the next boot (there is
+            # no record to read), and it must not go unrecorded here —
+            # but it is NOT a migration failure, so no notice claims
+            # settings were lost when there was nothing to move.
+            if not self._persistence.write_settings_document({
+                "configVersion": 2,
+                "global": {},
+                "machines": {},
+            }):
+                Logger.log("w", "Moonraker could not activate its settings document.")
+        record = self._persistence.migration_record()
+        if record is not None:
+            status = record.get("status")
+            if status == "ok":
+                # The post-conditions are idempotent: an install that
+                # migrated on an earlier snapshot still sheds the old
+                # file and the cura.cfg flags (the legacy chain is
+                # record-guarded, so nothing resurrects the blob).
+                # The carry gates the clean: a failed carry keeps the
+                # legacy bed-mesh source intact for the next boot's
+                # retry (the 4.5.0 transactional fix).
+                from .PersistenceMigration import _clean_preferences, _remove_old_state_file
+                if not self._carry_bed_mesh_preferences(preferences):
+                    Logger.log("w", "Moonraker could not carry the bed-mesh preferences; the post-migration cleanup is held back.")
+                    return
+                _remove_old_state_file(self._old_state_path)
+                _clean_preferences(preferences.setValue)
+                return
+            if status == "failed" and not (
+                record.get("backupWritten") is False
+                or record.get("reason") in _RETRYABLE_REASONS
+            ):
+                return
+        blob = preferences.getValue(PrinterConfigStore.PREF_KEY)
+        source_state, _ = read_source(blob)
+        if source_state in ("absent", "empty"):
+            # Nothing to migrate: the existing v2 document is the
+            # source of truth. The record's absence must never re-arm
+            # a rewrite (the first-install lost-config report).
             return
-        # The console colours its sent lines by SAVED state (the
-        # author's ruling), so the flush must be observable.
-        self._last_console_flush = time.monotonic()
-        self.preferencesFlushed.emit()
+        if not self._store._truthy(preferences.getValue(PrinterConfigStore.MIGRATED_KEY)) and not self._store._truthy(
+            preferences.getValue(PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY)
+        ):
+            # The legacy chain has not finished pushing the records;
+            # the one-shot must wait (they would re-write the blob
+            # after the clean). EITHER chain finishing releases the
+            # gate: a pure Moonraker Connection upgrade has no flat
+            # follower values, so the follower's own flag never flips
+            # (the 4.5.0 one-boot fix).
+            return
+        if not self._carry_bed_mesh_preferences(preferences):
+            # The migration's clean would destroy the legacy bed-mesh
+            # values after this point: hold back and retry next boot
+            # (the 4.5.0 transactional fix). The failure still owns
+            # its surface — the session-scoped write-failed outcome,
+            # with no persisted record (the absence is what makes the
+            # next boot replay).
+            outcome = MigrationOutcome(status="failed", reason="write-failed")
+            Logger.log("w", "Moonraker persistence migration failed: %s", outcome.reason)
+            self._persistence.remember_migration_outcome(_record(outcome, time.strftime("%Y-%m-%d-%H-%M-%S")))
+            return
+        timestamp = time.strftime("%Y-%m-%d-%H-%M-%S")
+        outcome = run_migration(
+            blob,
+            self._cura_cfg_path,
+            settings_path=self._persistence.settings_path,
+            state_dir=self._persistence.state_dir,
+            old_state_path=self._old_state_path,
+            settings_write=self._persistence.write_settings_document,
+            settings_record_write=self._persistence.set_migration_record,
+            state_global_write=self._persistence.write_state_global_document,
+            state_machine_write=self._persistence.write_machine_state_document,
+            state_global_merge=self._persistence.merge_state_global_document,
+            state_machine_merge=self._persistence.merge_machine_state_document,
+            set_pref=preferences.setValue,
+            timestamp=timestamp,
+        )
+        if outcome.status == "failed":
+            # Every failure owns a surface (the toast and the banner
+            # both read the record), and the storage that would hold it
+            # may be exactly what failed — so the boot's own copy rides
+            # in the facade, whose record read prefers the document and
+            # falls back to this. The absence of a persisted record is
+            # what makes the next boot replay the attempt.
+            Logger.log("w", "Moonraker persistence migration failed: %s", outcome.reason)
+            self._persistence.remember_migration_outcome(_record(outcome, timestamp))
+        elif not outcome.record_persisted:
+            # The migration happened but its verdict never landed: the
+            # next boot replays against an empty source (a no-op).
+            Logger.log("w", "The Moonraker migration record could not be saved.")
+        if outcome.status == "ok" and outcome.reason == "migrated":
+            # The clean's preference resets reach cura.cfg only at the
+            # next preference flush, and Cura's own exit flush is not
+            # guaranteed (the 4.3.0 live report: a save followed by a
+            # quick quit lost the write). The one-shot flushes its own
+            # clean — the no-trace contract lands WITH the migration,
+            # not at some later save. Guarded: hosts without the hook
+            # keep the in-memory clean and Cura's own flush.
+            save = getattr(self._application, "savePreferences", None)
+            if callable(save):
+                try:
+                    save()
+                except Exception as error:
+                    Logger.log("w", "Moonraker migration preference flush failed: %s", error)
 
     def start(self):
-        self._migrate()
+        """The construction-time entry: configuration reads and the
+        connection are allowed here, the destructive half is not. A
+        machine that appears before readiness is applied by
+        _machine_changed and migrated by mark_ready."""
+        if self._ready:
+            self._migrate()
         self._apply()
 
-    # Console persists write Cura's in-memory preferences, but Cura
-    # only flushes its preference FILE on a clean exit — a quit that
-    # skips the flush silently lost the session's transcript (the
-    # author's "testing" line vanished between restarts). Flush
-    # ourselves, debounced on quiescence with a hard cap: a chatty
-    # Klipper re-arms the 2 s timer on every response batch, which once
-    # starved the flush indefinitely — the blue "unsaved" lines never
-    # settled and a crash lost everything the debounce exists to
-    # protect (the engineering panel's starvation).
-    _console_flush = None
-    _console_flush_max_wait_s = 10.0
-    _last_console_flush = None
-
-    def _arm_console_flush(self):
-        now = time.monotonic()
-        if self._last_console_flush is not None \
-                and now - self._last_console_flush >= self._console_flush_max_wait_s:
-            self._flush_preferences()
+    def mark_ready(self):
+        """Cura's readiness (initializationFinished) observed. The
+        deferred destructive half runs now, against the identity the
+        boot resolved. Idempotent: a repeated notification changes
+        nothing (there is one boot)."""
+        if self._ready:
             return
-        if self._console_flush is None:
-            from PyQt6.QtCore import QTimer
-            self._console_flush = QTimer(self)
-            self._console_flush.setSingleShot(True)
-            self._console_flush.setInterval(2000)
-            self._console_flush.timeout.connect(self._flush_preferences)
-        self._console_flush.start()
+        self._ready = True
+        self._migrate()
+        # The migration moved the settings into the new document: any
+        # cached config predates it and must re-read once.
+        self._config_cache = None
+        self._apply()
 
     def apply(self, config):
-        if self._closed: return
+        """Persist and apply one machine's settings. Returns whether
+        the settings reached the store: a refused save must not be
+        reported as success by the caller."""
+        if self._closed:
+            return False
         previous = self.config
         self._client.set_trace_http(config.trace_http)
         endpoint_changed = (normalise_url(previous.url), previous.api_key) != (normalise_url(config.url), config.api_key)
         camera_changed = previous.camera_selected != config.camera_selected
         camera_only = camera_changed and replace(previous, camera_selected=config.camera_selected) == config
-        # Console transcript persists arrive every second while the
-        # printer chats; they are storage state, not connection state,
-        # and must never reconfigure/restart the client (they did -
-        # one configure per response batch).
-        console_only = replace(previous, console_transcript=config.console_transcript,
-                               console_store_time=config.console_store_time,
-                               console_history=config.console_history) == config
 
         if endpoint_changed:
             # Tear the poller down before persistence/rebind without
@@ -116,25 +328,31 @@ class PrinterBinding(QObject):
             # invalidation wave on the old identity.
             self._client.stop(reset_session=False)
 
-        # Camera selection is UI state, not connection state. Persist it directly
-        # against the active machine and flush Cura's preference file immediately;
-        # do not reconfigure/restart the Moonraker client just because a dropdown
-        # changed.
-        self._store.set(config)  # live identity (see config())
-        if not console_only:
-            # Every settings save flushes Cura's preference file
-            # synchronously: quitting right after saving used to lose
-            # the save, because Cura's own exit flush never got the
-            # chance (the live report: several seconds of lag before
-            # the settings reached the disk). Console transcript
-            # persists stay on their own throttled flush.
-            self._flush_preferences()
-        if camera_only or console_only:
-            if console_only:
-                self._arm_console_flush()
+        # The facade's typed settings write (the file is the source of
+        # truth now — SaveFile's fsync makes the save durable, so the
+        # synchronous preference flush retires with the transcript).
+        # The verdict travels back to the caller: a refused save must
+        # never be reported as a completed one.
+        machine_id, _ = self.identity
+        saved = self._persistence.set_machine_config(machine_id, config)
+        if saved and machine_id != "unknown":
+            # The settings save is the config's mutation path: the
+            # cache takes the READ-BACK record immediately (apply must
+            # be visible to the next reader without a file parse) —
+            # the typed round-trip fills the field defaults the
+            # heartbeat must see, exactly as an uncached read would.
+            entry = self._persistence.get_machine(machine_id)
+            self._config_cache = (machine_id, PrinterConfig.from_dict(entry) if entry is not None else config)
+        if not saved:
+            Logger.log("w", "Moonraker settings for %s could not be saved.", machine_id)
+
+        # Camera selection is UI state, not connection state: persisted
+        # above, but never a reconfigure/restart of the client.
+        if camera_only:
             self.changed.emit()
-            return
+            return saved
         self._apply()
+        return saved
 
     def _machine_changed(self, *_args):
         machine_id, name = self._store.identity()
@@ -147,10 +365,62 @@ class PrinterBinding(QObject):
         # the generation bump is what stale-callback guards rely on.
         self._client.stop()
         self._machine_id, self._machine_name = machine_id, name
-        self._migrate()
+        # The queue the latch implies: a machine that appears before
+        # readiness is applied now (reads and the connection are
+        # allowed) and its migration runs from mark_ready, against the
+        # identity this update just resolved.
+        if self._ready:
+            self._migrate()
         self._apply()
 
+    def _container_removed(self, container, *args):
+        """Cura removed a container: the machine-stack removal is the
+        last emission of removeMachine, and the rename path emits here
+        too — the filter is the metadata type plus a registry check
+        (E8/B2). Cura itself can remove machines without the user (the
+        quality-changes name collision), so the wipe records why."""
+        try:
+            metadata = container.getMetaData() if hasattr(container, "getMetaData") else {}
+            if str(metadata.get("type") or "") != "machine":
+                return
+            machine_id = str(container.getId() or "")
+        except Exception:
+            return
+        if self._persistence is None or self._persistence.get_machine(machine_id) is None:
+            return
+        if self._registry is not None and self._registry.findContainerStacksMetadata(id=machine_id):
+            return  # still known: the rename emission, not a removal
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, lambda: self._wipe_removed_machine(machine_id))
+
+    def _wipe_removed_machine(self, machine_id):
+        # The explicit REMOVED id, never the active identity (E1):
+        # removeMachine activates a replacement first, so any
+        # active-identity default blanks the wrong printer.
+        # The check re-runs at EXECUTION time: the timer defers the
+        # wipe, and a same-id machine re-added in that window is a live
+        # printer whose credentials must survive (B2's re-check).
+        if self._closed:
+            # The teardown gate (the 4.5.0 review): a removal already
+            # deferred past close() must never interpret a shutdown or
+            # plugin-disable as a user machine deletion.
+            return
+        if self._registry is not None and self._registry.findContainerStacksMetadata(id=machine_id):
+            return
+        if machine_id == self._machine_id:
+            self._client.stop()
+        patch = {field: ("http://" if field == "url" else "") for field in _REMOVAL_WIPE_FIELDS}
+        patch["removed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        if self._persistence.set_machine(machine_id, patch):
+            Logger.log("i", "Moonraker machine %s removed — its credentials were wiped.", machine_id)
+        else:
+            Logger.log("w", "Moonraker machine %s removed but its credential wipe could not be saved — the credentials remain on disk.", machine_id)
+
     def _apply(self):
+        from .CameraTiming import begin
+        # The cold-camera trace rides the SAME preference as the HTTP
+        # trace (the diagnostics toggle), never forced on.
+        begin(bool(getattr(self.config, "trace_http", False)))
         config = self.config
         url = normalise_url(config.url)
         # The product default (websocket) lives in PrinterConfig and is
@@ -161,16 +431,28 @@ class PrinterBinding(QObject):
             aux_interval_ms=config.aux_interval_ms,
             console_interval_ms=config.console_interval_ms,
         )
-        if self.configured: self._client.start()
-        else: self._client.stop()
+        if self.configured:
+            self._client.start()
+        else:
+            self._client.stop()
         self.changed.emit()
 
     def close(self):
-        if self._closed: return
+        if self._closed:
+            return
         self._closed = True
         if self._machine_signal is not None:
-            try: self._machine_signal.disconnect(self._machine_changed)
-            except Exception: pass
+            try:
+                self._machine_signal.disconnect(self._machine_changed)
+            except Exception:
+                pass
+        # The destructive removal hook disconnects too (the 4.5.0
+        # review): after close, a containerRemoved emission is ignored
+        # here, and an already-deferred wipe checks _closed and is
+        # ignored there.
+        if self._registry is not None and hasattr(self._registry, "containerRemoved"):
+            try:
+                self._registry.containerRemoved.disconnect(self._container_removed)
+            except Exception:
+                pass
         self._client.stop()
-
-

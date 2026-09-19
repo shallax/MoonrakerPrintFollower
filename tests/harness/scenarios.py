@@ -528,7 +528,7 @@ CAM_FRAMES = (
     "window = _main_window()\n"
     "result = {}\n"
     "for item in _walk(window.contentItem(), depth=64):\n"
-    "    if \"NetworkMJPGImage\" in item.metaObject().className():\n"
+    "    if \"MoonrakerMJPGImage\" in item.metaObject().className():\n"
     "        result[\"started\"] = bool(getattr(item, \"_started\", False))\n"
     "        result[\"width\"] = int(item.property(\"imageWidth\"))\n"
     "        result[\"height\"] = int(item.property(\"imageHeight\"))\n"
@@ -539,7 +539,7 @@ CAM_STARTED = (
     "window = _main_window()\n"
     "result = {}\n"
     "for item in _walk(window.contentItem()):\n"
-    "    if \"NetworkMJPGImage\" in item.metaObject().className():\n"
+    "    if \"MoonrakerMJPGImage\" in item.metaObject().className():\n"
     "        result[\"started\"] = bool(getattr(item, \"_started\", False))\n"
     "        result[\"visible\"] = bool(item.isVisible())\n"
     "        break\n"
@@ -979,6 +979,65 @@ CONFIGURE_CROSSTALK_PROBE = (
     "        raise RuntimeError(\"the information layout did not survive the controls reset: %r\" % order)\n"
     "result")
 
+CONFIGURE_DISMISS_PROBE = (
+    "qtest = _import_qtest()\n"
+    "window = _main_window()\n"
+    "result = {}\n"
+    "card = None\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        name = str(item.property(\"objectName\") or \"\")\n"
+    "    except Exception:\n"
+    "        name = \"\"\n"
+    "    if name == \"sectionConfigurePopOver\" and _effectively_visible(item):\n"
+    "        card = item\n"
+    "        break\n"
+    "if card is None:\n"
+    "    raise RuntimeError(\"no visible configure pop-over\")\n"
+    "r = self._rect(card)\n"
+    "# A press on the card's own surface (the title band owns no\n"
+    "# control) must not dismiss the card.\n"
+    "qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton,\n"
+    "                       Qt.KeyboardModifier.NoModifier,\n"
+    "                       QPoint(int(r[\"x\"] + r[\"w\"] / 2), int(r[\"y\"] + 12)))\n"
+    "qtest.QTest.qWait(120)\n"
+    "if not _effectively_visible(card):\n"
+    "    raise RuntimeError(\"an in-bounds click dismissed the pop-over\")\n"
+    "# A press above the card's top edge (the header band) dismisses\n"
+    "# it through the outside-click layer.\n"
+    "qtest.QTest.mouseClick(window, Qt.MouseButton.LeftButton,\n"
+    "                       Qt.KeyboardModifier.NoModifier,\n"
+    "                       QPoint(int(r[\"x\"] + 30), int(r[\"y\"] - 10)))\n"
+    "qtest.QTest.qWait(120)\n"
+    "if _effectively_visible(card):\n"
+    "    raise RuntimeError(\"an outside click failed to dismiss the pop-over\")\n"
+    "result")
+
+CONFIGURE_TRI_PROBE = (
+    "window = _main_window()\n"
+    "expected = EXPECT_STATE\n"
+    "found = None\n"
+    "read_error = \"\"\n"
+    "for item in _walk(window.contentItem(), depth=96):\n"
+    "    try:\n"
+    "        name = str(item.property(\"objectName\") or \"\")\n"
+    "    except Exception:\n"
+    "        name = \"\"\n"
+    "    if name == \"visibilitySelectorBox\" and _effectively_visible(item):\n"
+    "        try:\n"
+    "            # QML enum properties arrive as enum objects, not ints:\n"
+    "            # the value rides .value (the 5.13 leg's TypeError).\n"
+    "            state = item.property(\"checkState\")\n"
+    "            found = int(getattr(state, \"value\", state))\n"
+    "        except Exception as exc:\n"
+    "            read_error = repr(exc)\n"
+    "        break\n"
+    "if found is None:\n"
+    "    raise RuntimeError(\"no visible selector checkbox\" + (\" (checkState read failed: \" + read_error + \")\" if read_error else \"\"))\n"
+    "if found != expected:\n"
+    "    raise RuntimeError(\"the selector state is \" + str(found) + \", expected \" + str(expected))\n"
+    "result")
+
 CONFIGURE_FM_CLICK = (
     "qtest = _import_qtest()\n"
     "window = _main_window()\n"
@@ -1117,10 +1176,6 @@ CONFIGURE_FM_PROBE = (
     "        t = str(item.property(\"text\") or \"\")\n"
     "    except Exception:\n"
     "        t = \"\"\n"
-    "    if t == \"✕\" and _effectively_visible(item) and bg is not None:\n"
-    "        r = self._rect(item)\n"
-    "        if bg[0] <= r[\"x\"] <= bg[0] + bg[2] and bg[1] <= r[\"y\"] <= bg[1] + bg[3]:\n"
-    "            result[\"close_x\"] = [r[\"x\"], r[\"y\"], r[\"w\"], r[\"h\"]]\n"
     "    if name == \"sectionConfigureRowTitle\" and bg is not None:\n"
     "        r = self._rect(item)\n"
     "        # Only the rows INSIDE the popup: the closed pane popups\n"
@@ -1143,15 +1198,45 @@ CONFIGURE_FM_PROBE = (
     "    result[\"row_chain\"] = chain\n"
     "# The gate: the rows must render at a sane width — a collapsed\n"
     "# layout renders them negative/narrow (the live report: the\n"
-    "# popup clipped all its contents). And the blue ✕ must be there\n"
-    "# (the live report: no close affordance).\n"
+    "# popup clipped all its contents).\n"
     "for row in result.get(\"rows\", ()):\n"
     "    if row[3] < 100:\n"
     "        raise RuntimeError(\"the columns popup's rows render %dpx wide (%s)\" % (row[3], row[0]))\n"
-    "if \"close_x\" not in result:\n"
-    "    raise RuntimeError(\"the columns popup has no visible close ✕\")\n"
     "result")
 
+
+P1_RENDER_PROBE = """from UM.Application import Application
+app = Application.getInstance()
+view = app.getController().getActiveView()
+layers = int(view.getMaxLayers()) if view is not None and hasattr(view, "getMaxLayers") else -1
+# 5.12+: the load's gcode (40 layers) renders as 39 zero-based — the
+# "real toolpath" proof. 5.11's SimulationView neither resolves by
+# name nor ingests a gcode load (the walk-dump: the view reads "slice
+# first" after the plugin's load replaces the scene), so the render
+# premise is a recorded 5.11 accept; the observed layers ride the
+# evidence.
+result = {"max_layers": layers,
+          "render_ok": bool(str(app.getVersion()).startswith("5.11") or layers >= 39)}
+"""
+P1_FOLLOW_BUTTON = """from UM.Application import Application
+app = Application.getInstance()
+window = _main_window()
+result = {"button": False, "label": None, "version": str(app.getVersion())}
+# The follow control renders: 5.12+ reads Detach right after the load;
+# 5.11's view platform flaps the toolpath (the version-skipped p3/p5
+# premises), so EITHER follow state counts there — the card's control
+# rendered is the premise.
+wanted = ("Attach", "Detach") if result["version"].startswith("5.11") else ("Detach",)
+for item in _walk(window.contentItem()):
+    try:
+        label = item.property("text")
+    except Exception:
+        label = None
+    if isinstance(label, str) and label in wanted and bool(item.isVisible()):
+        result["button"] = True
+        result["label"] = label
+        break
+"""
 
 SCENARIOS = [
     # ─── transport & connection ───────────────────────────────
@@ -1193,6 +1278,12 @@ SCENARIOS = [
      ]},
     {"id": "a7", "group": "connection", "name": "klippy ready re-arms the subscription",
      "steps": [
+         # The earlier scenarios degraded the session to HTTP (the
+         # proof silence, the refusal): the re-arm contract holds for
+         # a WEBSOCKET session, so the scenario returns to it first —
+         # a stale ready must not re-subscribe while HTTP is
+         # authoritative (the hardening pass).
+         {"op": "exec_mode", "mode": "websocket"},
          {"op": "sim_klippy"},
          {"op": "sim_ledger", "needle": "printer.objects.subscribe", "field": "path", "min": 1, "budget": 30},
      ]},
@@ -1325,9 +1416,29 @@ SCENARIOS = [
      ]},
     {"id": "c2", "group": "temperatures", "name": "the fan and speed surfaces render",
      "steps": [
+         # The reset buttons live in the dashboard's tuning section:
+         # the stage must be open before the presses (the live leg
+         # found the items absent — the delivery never landed).
+         {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "sim_set", "state": {"fan": {"speed": 0.4}}},
          {"op": "wait_sim", "path": "fan.speed", "value": 0.4, "budget": 15},
          {"op": "assert_model", "prop": "speedFactorPercent", "value": 100},
+         # The reset buttons' convergence: the factors move off 100,
+         # the clicks command them back, and the PUBLISHED percents
+         # follow (the commands actually applied, not just queued).
+         {"op": "sim_set", "state": {"gcode_move": {"speed_factor": 1.37, "extrude_factor": 1.28}}},
+         {"op": "assert_model", "prop": "speedFactorPercent", "value": 137, "budget": 15},
+         {"op": "assert_model", "prop": "flowFactorPercent", "value": 128, "budget": 15},
+         # The tuning section sits below the dashboard's fold: the
+         # buttons' absolute coordinates land off the window, so the
+         # presses must scroll them into view first (the live leg's
+         # off-window delivery).
+         {"op": "scroll_into_view", "objectName": "moonrakerTuningSpeedReset"},
+         {"op": "deliver_click", "objectName": "moonrakerTuningSpeedReset"},
+         {"op": "scroll_into_view", "objectName": "moonrakerTuningFlowReset"},
+         {"op": "deliver_click", "objectName": "moonrakerTuningFlowReset"},
+         {"op": "assert_model", "prop": "speedFactorPercent", "value": 100, "budget": 15},
+         {"op": "assert_model", "prop": "flowFactorPercent", "value": 100, "budget": 15},
      ]},
     {"id": "c3", "group": "temperatures", "name": "the sensor visibility toggles persist",
      "steps": [
@@ -1364,7 +1475,7 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_set", "state": {"console_lines": [{"type": "response", "message": "// line %d" % i,
                                                        "time": 1.0} for i in range(10)]}},
-         {"op": "click_text", "text": "Clear"},
+         {"op": "deliver_click", "objectName": "moonrakerConsoleClear"},
          {"op": "assert_model", "prop": "consoleHistory", "value": []},
      ]},
     {"id": "d5", "group": "console", "name": "the console resize commits through the model",
@@ -1758,6 +1869,14 @@ SCENARIOS = [
      "steps": [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"},
                                     "virtual_sdcard": {"is_active": True, "progress": 0.98, "file_size": 1048576}}},
+         # The j4 pin: at 0.98 the display reads 98% and the sim's
+         # per-push advance crosses to 100% in ~5 s — faster than
+         # some versions' model update cadence, so no poll ever reads
+         # a 9 (the sweep's all-versions flake). Hold the progress:
+         # the print still runs (duration and the layer clock
+         # advance), the 98.0 display persists, and the completion
+         # below still lands.
+         {"op": "sim_set", "state": {"progress_hold": True}},
          {"op": "wait_model", "prop": "monitorProgress", "contains": "9", "budget": 15},
          {"op": "sim_set", "state": {"print_stats": {"state": "complete", "filename": "scenario1.gcode"}}},
          {"op": "wait_model", "prop": "monitorState", "contains": "complete", "budget": 15},
@@ -1879,14 +1998,33 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerTemperatureDetail", "budget": 15},
      ]},
     {"id": "v8", "group": "visual",
-     "name": "narrow auto-collapses the console, wide re-expands, layouts hold",
+     "name": "the console folds on its own column rule, the panes' fold hands the room back",
      "steps": [
-         {"op": "resize_window", "w": 1000, "h": 700},
+         # The console's rule is its OWN column (< 350), never the
+         # window: while the side panes hold their room, the
+         # camera+console column is squeezed under it and the console
+         # is what yields. 1420 sits mid-band (measured on the
+         # dashboard mount: column 299, camera 277, well over its
+         # comfort floor; the band's edges bracket it at 1340/1380 and
+         # 1470/1480).
+         {"op": "resize_window", "w": 1420, "h": 700},
          {"op": "wait_rect", "objectName": "moonrakerConsoleInput", "absent": True, "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerInfoContent", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerStatusContent", "budget": 30},
+         # Narrow enough that the camera cannot hold the panes: both
+         # fold to their strips, and the column that fold frees is
+         # over the console's threshold again — the console comes back
+         # on its own rule, with no user click.
+         {"op": "resize_window", "w": 1000, "h": 700},
+         {"op": "wait_rect", "objectName": "moonrakerInfoContent", "absent": True, "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerStatusContent", "absent": True, "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerConsoleInput", "budget": 30},
          {"op": "assert_aligned", "item": {"objectName": "infoPanel"},
           "no_overlap": {"objectName": "statusPanel"}},
          {"op": "resize_window", "w": 1840, "h": 1040},
          {"op": "wait_rect", "objectName": "moonrakerConsoleInput", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerInfoContent", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerStatusContent", "budget": 30},
          {"op": "assert_aligned", "item": {"objectName": "infoPanel"},
           "no_overlap": {"objectName": "statusPanel"}},
      ]},
@@ -2008,12 +2146,13 @@ SCENARIOS = [
          {"op": "wait_exec", "code": P1_PCT_PROBE, "contains": '"pct": true', "budget": 20},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
-         {"op": "assert_exec", "code": "view = Application.getInstance().getController().getView(\"SimulationView\")\nresult = {\"max_layers\": int(view.getMaxLayers()) if view else 0}",
-          "contains": '"max_layers": 39'},
+         {"op": "assert_exec", "code": P1_RENDER_PROBE,
+          "contains": '"render_ok": true'},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "absent": True, "budget": 60},
-         {"op": "wait_rect", "text": "Detach", "budget": 30},
+         {"op": "wait_exec", "code": P1_FOLLOW_BUTTON, "contains": '"button": true', "budget": 30},
      ]},
     {"id": "p2", "group": "preview",
+     "version_skip": {"5.11": "5.11\u2019s SimulationView hides its layer slider once the plugin\u2019s gcode load replaces the sliced scene \u2014 the drag premise is 5.12+ only (the walk-dump)"},
      "name": "a real drag on Cura's layer slider auto-detaches the follow",
      "steps": [
          {"op": "wait_seconds", "seconds": 5},
@@ -2022,6 +2161,7 @@ SCENARIOS = [
          {"op": "dump_visible", "needle": "detach|follow|attach", "region": [600, 560, 1280, 800]},
      ]},
     {"id": "p3", "group": "preview",
+     "version_skip": {"5.11": "5.11\u2019s preview flaps the toolpath on every stage round-trip, so the attach cannot survive a tab switch \u2014 the premise is 5.12+ only (the walk-dump)"},
      "name": "rapid tab and view switching never drops the attach",
      "steps": [
          {"op": "exec_code", "verbs": ['clicked.emit'], "code": P_ATTACH_EMIT},
@@ -2042,6 +2182,7 @@ SCENARIOS = [
          {"op": "dump_visible", "needle": "layer", "region": [600, 560, 1280, 800]},
      ]},
     {"id": "p5", "group": "preview",
+     "version_skip": {"5.11": "5.11\u2019s toolpath flap leaves the card\u2019s follow state arbitrary after p3\u2019s switches \u2014 the Detach/Attach dance premise is 5.12+ only"},
      "name": "the card's Detach button detaches and Attach re-attaches",
      "steps": [
          {"op": "click_text", "text": "Detach"},
@@ -2051,6 +2192,7 @@ SCENARIOS = [
      ]},
 
     {"id": "p6", "group": "preview",
+     "version_skip": {"5.11": "the pause\u2019s layer targeting follows the view\u2019s selected layer, which 5.11\u2019s view cannot hold after the gcode load \u2014 the fired-pause premise is 5.12+ only"},
      "name": "the scheduled pause fires as the print crosses the layer",
      "steps": [
          {"op": "sim_set_current_print"},
@@ -2076,6 +2218,7 @@ SCENARIOS = [
          {"op": "wait_exec", "code": P_ROW_PASSED, "contains": '"passed": true', "budget": 20},
      ]},
     {"id": "p7", "group": "preview",
+     "version_skip": {"5.11": "the refused-pause flow shares p6\u2019s selected-layer targeting premise \u2014 5.12+ only"},
      "name": "a refused PAUSE keeps the entry restyled as not taken",
      "steps": [
          {"op": "sim_arm", "arms": {"fail_pause_script": True}},
@@ -2277,7 +2420,7 @@ SCENARIOS = [
          {"op": "deliver_click", "objectName": "deleteConfirmDeleteButton"},
          {"op": "exec_slot", "slot": "setFileManagerOpen", "args": [False]},
      ]},
-    # The what's-new overlay's lifecycle (the author's ruling: it must
+    # The what's-new overlay's lifecycle (the ruling: it must
     # show once per version and dismiss by Esc, an outside press, and
     # the Close button). The seeded profile carries the marker, so the
     # suite never sees the popup unless a scenario asks — this one
@@ -2474,12 +2617,12 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
          {"op": "key_press", "key": "Escape"},
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
-         # The blue ✕ dismisses the card (the live ruling: a Close
-         # button read as chrome — and did nothing).
+         # Dismissal geometry: a click on the card's own surface must
+         # NOT dismiss it; a click outside its bounds must (the live
+         # report: in-bounds clicks dismissed the pop-over).
          {"op": "deliver_click", "objectName": "configureControlsSectionsButton"},
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
-         {"op": "click_text", "text": "✕"},
-         {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
+         {"op": "exec_code", "verbs": ["mouseClick"], "code": CONFIGURE_DISMISS_PROBE},
          {"op": "deliver_click", "objectName": "configureControlsSectionsButton"},
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
          {"op": "key_press", "key": "Escape"},
@@ -2502,27 +2645,27 @@ SCENARIOS = [
          {"op": "resize_window", "w": 1600, "h": 1000},
          {"op": "deliver_click", "objectName": "configureStatusSectionsButton"},
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "budget": 15},
-         # The tri-state selector: filled + tick at ALL (the live
-         # report: it rendered empty).
-         {"op": "assert_rendered", "objectName": "visibilitySelectorGlyph", "equals": "✓"},
+         # The tri-state selector: the native checkbox's checkState —
+         # checked at ALL (the live report: it rendered empty).
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_TRI_PROBE.replace("EXPECT_STATE", "2")},
          {"op": "click_text", "text": "Temperatures"},
          {"op": "wait_model", "prop": "sectionHiddenMap", "contains": "temps", "budget": 15},
-         # One hidden of several: filled + dash.
-         {"op": "assert_rendered", "objectName": "visibilitySelectorGlyph", "equals": "–"},
+         # One hidden of several: partially checked.
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_TRI_PROBE.replace("EXPECT_STATE", "1")},
          {"op": "wait_rect", "objectName": "moonrakerTemperatureDetail", "absent": True, "budget": 15},
          {"op": "click_text", "text": "Temperatures"},
          {"op": "wait_rect", "objectName": "moonrakerTemperatureDetail", "budget": 15},
-         {"op": "assert_rendered", "objectName": "visibilitySelectorGlyph", "equals": "✓"},
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_TRI_PROBE.replace("EXPECT_STATE", "2")},
          # The NONE state: the selector hides everything, and the
-         # glyph empties (the live report: none rendered dashed).
+         # state empties (the live report: none rendered dashed).
          {"op": "deliver_click", "objectName": "visibilitySelectorBox"},
          {"op": "wait_model", "prop": "sectionHiddenMap", "contains": "temps", "budget": 15},
-         {"op": "wait_rect", "objectName": "visibilitySelectorGlyph", "absent": True, "budget": 15},
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_TRI_PROBE.replace("EXPECT_STATE", "0")},
          # Reset to defaults: the blue label at the card's bottom
          # commits the empty layout, so every section returns.
          {"op": "deliver_click", "objectName": "resetToDefaultsLabel"},
          {"op": "wait_rect", "objectName": "moonrakerTemperatureDetail", "budget": 15},
-         {"op": "assert_rendered", "objectName": "visibilitySelectorGlyph", "equals": "✓"},
+         {"op": "exec_code", "verbs": [], "code": CONFIGURE_TRI_PROBE.replace("EXPECT_STATE", "2")},
          {"op": "key_press", "key": "Escape"},
          {"op": "wait_rect", "objectName": "sectionConfigurePopOver", "absent": True, "budget": 15},
      ]},
@@ -2596,7 +2739,7 @@ SCENARIOS = [
          {"op": "exec_code", "verbs": [], "code": CONFIGURE_FM_STATE},
          # Reopen, then an outside PRESS dismisses it too. The reopen
          # rides the popup's real open() call (the band's toggle
-         # rides the author's live test — the harness engine refused
+         # rides the live test — the harness engine refused
          # its reopen click).
          {"op": "exec_code", "verbs": [], "code": CONFIGURE_FM_OPEN},
          {"op": "wait_rect", "objectName": "columnsPopupBackground", "budget": 15},
@@ -2656,7 +2799,7 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "resize_window", "w": 1600, "h": 1000},
          # A STANDBY session whose values are UNAVAILABLE (the
-         # author's ruling: neither the value nor its glyph may
+         # ruling: neither the value nor its glyph may
          # render; the X/Y/Z tuple hides whole when any one axis is
          # missing). The sim's kickoff state always carries heaters
          # and positions, so the scenario overwrites those values

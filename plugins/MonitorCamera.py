@@ -7,6 +7,7 @@ from PyQt6.QtNetwork import QHostAddress
 from UM.Logger import Logger
 
 from .CameraBridge import CameraBridge
+from .MoonrakerProtocol import same_origin
 
 
 class MonitorCamera(QObject):
@@ -154,6 +155,7 @@ class MonitorCamera(QObject):
             # loader never fetches — the leak-battery's camera-off
             # condition, without touching the printer.
             self._url = ""
+            self._retire_bridge()
         if self._url != self._last_url_logged:
             # The first-load failures were invisible in the logs: the
             # stream decision (direct vs bridged vs none) logs here so
@@ -164,6 +166,8 @@ class MonitorCamera(QObject):
                 shown = f"{parsed.scheme()}://{parsed.host()}" + (f":{parsed.port()}" if parsed.port() > 0 else "") + parsed.path()
                 kind = "bridged" if self._camera_bridge is not None and parsed.host() in ("127.0.0.1", "localhost") else "direct"
                 Logger.log("i", "Moonraker camera stream: %s (%s)", shown, kind)
+                from .CameraTiming import mark
+                mark("T5-path", "camera transport: %s" % kind)
             else:
                 Logger.log("i", "Moonraker camera stream: none")
         try: rotation = int(camera.get("rotation", config.camera_rotation) or 0)
@@ -183,13 +187,29 @@ class MonitorCamera(QObject):
         parsed = QUrl(url)
         return parsed.scheme().lower() in ("http", "https") and not QHostAddress(parsed.host()).isLoopback()
 
+    def _retire_bridge(self):
+        """Stop the bridge but keep the cached object for reuse: a
+        deposed camera must hold no live listener and no retained
+        credential (the 2026-09-19 review's D)."""
+        if self._camera_bridge is not None:
+            self._camera_bridge.stop()
+
     def _bridge_url(self, config, url):
         # A camera behind the header-auth proxy cannot render through
         # Cura's loader (NetworkMJPGImage sends no headers): republish
         # it on the keyless loopback bridge (the 4.0.0
         # ruling). The key travels with the bridge's own upstream
-        # fetch; the loader sees a plain local URL.
+        # fetch; the loader sees a plain local URL. The key NEVER
+        # rides to a foreign origin (the 2026-09-19 review's C): an
+        # absolute stream on another host is served direct and
+        # keyless — and every non-bridged outcome retires the bridge
+        # (D), so a deposed or disabled camera leaves no listener
+        # behind.
         if not url or not config.api_key or not self._remote_stream(url):
+            self._retire_bridge()
+            return url
+        if not same_origin(config.url, url):
+            self._retire_bridge()
             return url
         if self._camera_bridge is None:
             self._camera_bridge = CameraBridge(self)

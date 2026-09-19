@@ -447,11 +447,62 @@ class HarnessServer(QObject):
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "quit":
+            # The ack has to reach the caller: closeApplication()
+            # tears the process (and this socket) down inside the
+            # call, so a reply written after it never arrives and a
+            # requested close reads as a lost request. The close is
+            # queued for the next event-loop turn instead — this
+            # handler returns, the ack is written and flushed, and
+            # only then does Cura close itself.
             try:
-                Application.getInstance().closeApplication()
-                return {"id": request_id, "ok": True}
+                application = Application.getInstance()
+                QTimer.singleShot(int(request.get("delay_ms", 400)),
+                                  application.closeApplication)
+                return {"id": request_id, "ok": True, "closing": True}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "plugin_settings":
+            # The plugin's settings document as it is on disk, resolved
+            # through Cura's own storage rule. The bytes are the file's,
+            # never the plugin's view of them — the first-install leg
+            # asks what survived a boot, not what the plugin remembers.
+            try:
+                from UM.Resources import Resources
+                root = Resources.getStoragePath(Resources.Preferences, "MoonrakerPrintFollower")
+                path = os.path.join(str(root), "settings.json")
+                try:
+                    with open(path, "r", encoding="utf-8") as handle:
+                        decoded = json.load(handle)
+                    document = decoded if isinstance(decoded, dict) else None
+                except FileNotFoundError:
+                    document = None
+                return {"id": request_id, "ok": True, "path": path,
+                        "exists": os.path.exists(path), "document": document}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": repr(exc)}
+        if cmd == "plugin_save_config":
+            # The settings dialog's own save verb for the active machine
+            # (the action's validation and the plugin's real persistence
+            # path), driven with the caller's overrides. A refused save
+            # is an error — a silent no-op would leave the next boot with
+            # nothing to defend.
+            try:
+                from dataclasses import asdict
+                action = Application.getInstance().getMachineActionManager().getMachineAction(
+                    "MoonrakerPrintFollowerConfigureAction")
+                if action is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "the settings machine action is not registered"}
+                current = action._config()
+                params = asdict(current)
+                params["feed_mode"] = getattr(current.feed_mode, "value", str(current.feed_mode))
+                params.update(dict(request.get("params") or {}))
+                if not action.saveConfig(params):
+                    return {"id": request_id, "ok": False,
+                            "error": "the settings save was refused"}
+                return {"id": request_id, "ok": True, "saved": True}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": repr(exc)}
         if cmd == "header_tree":
             import collections
             window = _main_window()
@@ -1473,6 +1524,52 @@ Row {
                 return {"id": request_id, "ok": ok, "active": active, "created": True}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "switch_machine":
+            # The multi-machine leg's verb: activate a machine stack by
+            # its exact NAME (the seeded records' stable key — machine
+            # ids carry container prefixes per Cura version). The
+            # driver reports the before/after so a no-op switch is
+            # visible, never silently green.
+            try:
+                from cura.Settings.CuraContainerRegistry import CuraContainerRegistry
+                manager = Application.getInstance().getMachineManager()
+                before = manager.activeMachine.getName() if manager.activeMachine else None
+                target = str(request.get("name") or "")
+                stacks = CuraContainerRegistry.getInstance().findContainerStacks()
+                machine_id = None
+                for stack in stacks:
+                    if str(stack.getMetaDataEntry("type") or "") != "machine":
+                        continue
+                    if stack.getName() == target:
+                        machine_id = stack.getId()
+                        break
+                if machine_id is None:
+                    return {"id": request_id, "ok": False,
+                            "error": "no machine named %r" % target, "before": before}
+                manager.setActiveMachine(machine_id)
+                after = manager.activeMachine.getName() if manager.activeMachine else None
+                return {"id": request_id, "ok": bool(after == target),
+                        "before": before, "after": after}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "read_json_file":
+            # The migration leg's verb: read a JSON file RELATIVE to
+            # Cura's configuration folder (absolute paths are refused —
+            # the driver is a test instrument, never an arbitrary file
+            # reader). The parsed document rides the reply so the leg
+            # asserts the migrated state files directly.
+            try:
+                from UM.Resources import Resources
+                name = str(request.get("name") or "")
+                if not name or name.startswith("/") or ".." in name:
+                    return {"id": request_id, "ok": False, "error": "refused path %r" % name}
+                base = Resources.getConfigStoragePath()
+                path = os.path.join(base, name)
+                with open(path, encoding="utf-8") as handle:
+                    document = json.load(handle)
+                return {"id": request_id, "ok": True, "document": document}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "welcome":
             # The boot gate's probe: is the welcome dialog still up in
             # the main window? Its visible check is one-shot at startup
@@ -1535,6 +1632,40 @@ Row {
                         continue
                     # The message card is the ancestor of the label
                     # carrying the text; hide the card itself.
+                    parent = item
+                    for _ in range(8):
+                        candidate = parent.parentItem()
+                        if candidate is None:
+                            break
+                        parent = candidate
+                        if "Message" in parent.metaObject().className():
+                            parent.setVisible(False)
+                            dismissed.append(parent.metaObject().className())
+                            break
+                return {"id": request_id, "ok": True, "dismissed": dismissed}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "hide_update_toast":
+            # Cura's version-update toast ("... 5.13.0 is available!")
+            # is sticky, and on 5.11/5.12's MessageStack metrics it
+            # lands over the console's Send/Clear buttons — its
+            # TextArea then grabs the presses (the sweep's d1-07 and
+            # d3-01 finds). The gate and the suite prelude hide it
+            # conditionally, never waiting for it: the update check
+            # may not have completed, and a flow that never sees it
+            # stays unaffected.
+            try:
+                dismissed = []
+                window = _main_window()
+                if window is None:
+                    return {"id": request_id, "ok": False, "error": "no main window"}
+                for item in _walk(window.contentItem(), depth=48):
+                    try:
+                        text = item.property("text")
+                    except Exception:
+                        continue
+                    if not isinstance(text, str) or "is available" not in text:
+                        continue
                     parent = item
                     for _ in range(8):
                         candidate = parent.parentItem()

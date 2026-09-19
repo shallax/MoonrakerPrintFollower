@@ -1,6 +1,7 @@
 """Pure domain tests for the Monitor's temperature history buffers."""
 from __future__ import annotations
 
+import random
 import unittest
 
 from plugins.MonitorFormatting import chart_temperature_objects
@@ -10,8 +11,25 @@ from plugins.MonitorTemperatureHistory import (
     MAX_SAMPLES,
     WINDOW_SECONDS,
     TemperatureHistory,
+    _series_bounds,
     chart_payload,
 )
+
+
+def reference_bounds(points, targets):
+    """The render domain the chart scanned for itself before the payload
+    carried it: every sample, plus every setpoint above zero."""
+    bounds = {}
+    for index, key in ((1, "temp"), (0, "elapsed")):
+        values = [point[index] for point in points]
+        if values:
+            bounds[key + "Min"] = min(values)
+            bounds[key + "Max"] = max(values)
+    lit = [point[1] for segment in targets for point in segment if point[1] > 0]
+    if lit:
+        bounds["targetMin"] = min(lit)
+        bounds["targetMax"] = max(lit)
+    return bounds
 
 
 class ChartableObjectTests(unittest.TestCase):
@@ -123,6 +141,19 @@ class TemperatureHistoryTests(unittest.TestCase):
         self.assertEqual(len(history.series("extruder")), MAX_SAMPLES)
         self.assertEqual(history.series("extruder")[0].temperature, 50.0)
 
+    def test_a_backwards_clock_step_starts_a_new_window(self):
+        # A suspend/wake can hand back a smaller monotonic reading. The
+        # window restarts (the samples kept belong to the old timebase),
+        # so a series is never a mix of two clocks — the chart's
+        # nearest-sample search reads elapsed as ascending.
+        history = TemperatureHistory()
+        self.observe(history, 0, {"heater_bed": (60, None, None)})
+        self.observe(history, 10, {"heater_bed": (61, None, None)})
+        self.observe(history, -10, {"heater_bed": (62, None, None)})
+        self.assertEqual(history.points("heater_bed"), [[0.0, 62.0]])
+        self.observe(history, -7.5, {"heater_bed": (63, None, None)})
+        self.assertEqual(history.points("heater_bed"), [[0.0, 62.0], [2.5, 63.0]])
+
     def test_reset_clears_series_and_time_origin_and_bumps_revision(self):
         history = TemperatureHistory()
         self.observe(history, 0, {"heater_bed": (60, None, None)})
@@ -167,6 +198,135 @@ class TemperatureHistoryTests(unittest.TestCase):
         self.assertEqual(MAX_SAMPLES, 1800)
 
 
+class TargetCompressionTests(unittest.TestCase):
+    """Setpoint tracks are published without the samples that sit inside
+    a constant run: the chart draws the same step shape — the dropped
+    samples lay on the line between their neighbours — with a fraction
+    of the points to map on every paint."""
+
+    def observe(self, history, elapsed, target):
+        history.observe({"extruder": {"temperature": 200.0, "target": target}}, 1000.0 + elapsed)
+
+    def test_a_holding_setpoint_keeps_only_the_run_ends(self):
+        history = TemperatureHistory()
+        for tick in range(20):
+            self.observe(history, tick, 210.0)
+        self.assertEqual(history.target_segments("extruder"), [[[0.0, 210.0], [19.0, 210.0]]])
+
+    def test_a_target_change_keeps_both_sides_of_the_step(self):
+        history = TemperatureHistory()
+        for tick in range(6):
+            self.observe(history, tick, 210.0)
+        for tick in range(6, 12):
+            self.observe(history, tick, 240.0)
+        self.assertEqual(history.target_segments("extruder"),
+                         [[[0.0, 210.0], [5.0, 210.0], [6.0, 240.0], [11.0, 240.0]]])
+        # A change that returns to the old value keeps all three runs.
+        for tick in range(12, 15):
+            self.observe(history, tick, 210.0)
+        self.assertEqual(history.target_segments("extruder"),
+                         [[[0.0, 210.0], [5.0, 210.0], [6.0, 240.0], [11.0, 240.0],
+                           [12.0, 210.0], [14.0, 210.0]]])
+
+    def test_every_dropped_sample_lay_on_the_drawn_line(self):
+        # The rendering-equivalence proof, over a deliberately noisy
+        # track: dropping a sample may never move the polyline.
+        history = TemperatureHistory()
+        rng = random.Random(20260919)
+        raw = [rng.choice([200.0, 200.0, 200.0, 215.0, 230.0]) for _ in range(600)]
+        for index, value in enumerate(raw):
+            self.observe(history, index * 2.5, value)
+        segments = history.target_segments("extruder")
+        self.assertEqual(len(segments), 1)
+        kept = {round(point[0] / 2.5) for point in segments[0]}
+        self.assertIn(0, kept)
+        self.assertIn(len(raw) - 1, kept)
+        self.assertEqual({point[1] for point in segments[0]}, set(raw))
+        for index in range(1, len(raw) - 1):
+            if index in kept:
+                continue
+            # Dropped: its value equals both neighbours', so the drawn
+            # line passes exactly through where it was.
+            self.assertEqual(raw[index], raw[index - 1])
+            self.assertEqual(raw[index], raw[index + 1])
+
+    def test_a_sample_off_gap_splits_segments_and_compresses_each(self):
+        history = TemperatureHistory()
+        for tick in range(5):
+            self.observe(history, tick, 210.0)
+        for tick in range(5, 10):  # target reported off: no samples at all
+            self.observe(history, tick, None)
+        for tick in range(10, 15):
+            self.observe(history, tick, 210.0)
+        self.assertEqual(history.target_segments("extruder"),
+                         [[[0.0, 210.0], [4.0, 210.0]], [[10.0, 210.0], [14.0, 210.0]]])
+
+    def test_a_lone_setpoint_is_still_dropped(self):
+        # The >= 2 samples rule predates the compression and still holds:
+        # a one-sample blip draws nothing.
+        history = TemperatureHistory()
+        self.observe(history, 0, None)
+        self.observe(history, 10, 210.0)
+        self.observe(history, 20, None)
+        self.assertEqual(history.target_segments("extruder"), [])
+
+    def test_heater_power_keeps_every_sample(self):
+        # Power is left uncompressed on purpose: it moves sample to
+        # sample while a heater holds, so run compression would buy
+        # nothing and the drawn area must stay literally the feed.
+        history = TemperatureHistory()
+        for tick in range(12):
+            history.observe({"heater_bed": {"temperature": 60.0, "power": 0.5}}, 1000.0 + tick)
+        self.assertEqual(len(history.power_segments("heater_bed")[0]), 12)
+
+
+class ChartBoundsTests(unittest.TestCase):
+    """The payload carries each series' render domain; the chart scans
+    it instead of walking the samples it draws."""
+
+    def history(self):
+        history = TemperatureHistory()
+        for tick in range(30):
+            history.observe({
+                "extruder": {"temperature": 200.0 + tick, "target": 210.0 if tick < 20 else 240.0},
+                "heater_bed": {"temperature": 60.0 - tick * 0.5, "target": 0.0},
+                "temperature_sensor chamber": {"temperature": 25.0},
+            }, 1000.0 + tick * 2.5)
+        return history
+
+    def test_bounds_match_the_scan_the_chart_used_to_run(self):
+        payload = chart_payload(self.history(), {})
+        for series in payload["series"]:
+            self.assertEqual(series["bounds"], reference_bounds(series["points"], series["targets"]),
+                             series["name"])
+
+    def test_bounds_carry_the_setpoint_change_that_compression_dropped(self):
+        # The domain still spans both setpoints even though the samples
+        # between them are gone from the payload.
+        series = {entry["name"]: entry for entry in chart_payload(self.history(), {})["series"]}
+        self.assertEqual(series["extruder"]["bounds"]["targetMin"], 210.0)
+        self.assertEqual(series["extruder"]["bounds"]["targetMax"], 240.0)
+        self.assertEqual(series["extruder"]["bounds"]["tempMin"], 200.0)
+        self.assertEqual(series["extruder"]["bounds"]["tempMax"], 229.0)
+        self.assertEqual(series["extruder"]["bounds"]["elapsedMin"], 0.0)
+        self.assertEqual(series["extruder"]["bounds"]["elapsedMax"], 72.5)
+
+    def test_a_heater_off_target_never_joins_the_domain(self):
+        # target > 0 means lit: a zero setpoint is an off marker, and the
+        # chart keeps its domain off it (it decides whether to use the
+        # setpoint extremes at all).
+        series = {entry["name"]: entry for entry in chart_payload(self.history(), {})["series"]}
+        self.assertNotIn("targetMin", series["heater_bed"]["bounds"])
+        self.assertEqual(series["heater_bed"]["bounds"]["tempMax"], 60.0)
+
+    def test_a_series_with_no_targets_has_no_setpoint_extremes(self):
+        series = {entry["name"]: entry for entry in chart_payload(self.history(), {})["series"]}
+        self.assertNotIn("targetMin", series["temperature_sensor chamber"]["bounds"])
+
+    def test_an_empty_series_reports_no_domain(self):
+        self.assertEqual(_series_bounds([], []), {})
+
+
 class ChartPayloadTests(unittest.TestCase):
     def test_primary_flag_and_palette_and_labels(self):
         history = TemperatureHistory()
@@ -185,7 +345,7 @@ class ChartPayloadTests(unittest.TestCase):
         self.assertEqual(len(payload["palette"]), 10)
         self.assertTrue(payload["filling"])
         # A temperature_host and a temperature_sensor with the same
-        # suffix (the author's raspberry_pi pair) render distinct
+        # suffix (a raspberry_pi pair) render distinct
         # labels — the host reading carries "(host)".
         pair = TemperatureHistory()
         pair.observe({"temperature_host raspberry_pi": {"temperature": 50.0},

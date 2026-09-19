@@ -25,7 +25,11 @@ Cura.MachineAction {
     property bool canSave: validPollInterval && validAuxInterval && validConsoleInterval && validZTolerance && validRetryInterval && validTranslation && (!connectionRequested || validUrl)
     // A refused save must be visible: the dialog accepted nothing and
     // said nothing, so the change seemed to revert (the live report).
+    // Two refusal causes share the slot with distinct copy: the
+    // validation refusal names the fields, the disk refusal names the
+    // write — "fix the fields" is a lie for a full disk.
     property bool saveRefused: false
+    property string saveRefusalText: ""
 
     function followMode() {
         if (completedMode.checked)
@@ -40,6 +44,7 @@ Cura.MachineAction {
     function save(closeDialog) {
         if (!base.canSave) {
             saveRefused = true;
+            saveRefusalText = "Settings were not saved — fix the highlighted fields and save again.";
             return;
         }
         var saved = manager.saveConfig({
@@ -78,6 +83,7 @@ Cura.MachineAction {
                 "filename_translate_remove": translateRemoveField.text
             });
         saveRefused = !saved;
+        saveRefusalText = saved ? "" : "Settings were not saved — the file could not be written. Check the disk and try again.";
         if (saved && closeDialog)
             actionDialog.close();
     }
@@ -92,6 +98,8 @@ Cura.MachineAction {
         target: actionDialog
         function onAccepted() {
             base.save(false);
+            if (base.saveRefused)
+                actionDialog.show();  // accepted fires AFTER the close: reopen so the refusal is visible
         }
         function onRejected() {
             base.cancel(false);
@@ -117,14 +125,64 @@ Cura.MachineAction {
         anchors.left: parent.left
         anchors.leftMargin: UM.Theme.getSize("default_margin").width
         visible: saveRefused
-        text: "Settings were not saved — fix the highlighted fields and save again."
+        text: saveRefusalText
         color: UM.Theme.getColor("error")
+    }
+
+    // The migration-failure notice (the UX ruling): visible on all
+    // four tabs, dismissed ONLY by its Dismiss button — closing the
+    // dialog, Escape or switching tabs must not dismiss it. The page
+    // is no-reflow exempt, so the banner wraps and the tab bar
+    // re-anchors to it.
+    Item {
+        id: migrationNotice
+        objectName: "migrationNotice"
+        anchors.top: saveRefusedLabel.visible ? saveRefusedLabel.bottom : machineLabel.bottom
+        anchors.topMargin: UM.Theme.getSize("default_margin").height / 2
+        anchors.left: parent.left
+        anchors.leftMargin: UM.Theme.getSize("default_margin").width
+        anchors.right: parent.right
+        anchors.rightMargin: UM.Theme.getSize("default_margin").width
+        visible: manager.migrationBannerVisible
+        implicitHeight: noticeColumn.implicitHeight
+        ColumnLayout {
+            id: noticeColumn
+            anchors.fill: parent
+            spacing: UM.Theme.getSize("default_margin").height / 2
+            UM.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: UM.Theme.getColor("error")
+                text: manager.migrationBannerText
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: UM.Theme.getSize("default_margin").width / 2
+                Item {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                }
+                Cura.SecondaryButton {
+                    id: migrationShowBackupButton
+                    objectName: "migrationShowBackupButton"
+                    visible: manager.migrationBackupAvailable
+                    text: "Show backup folder"
+                    onClicked: manager.openMigrationBackupFolder()
+                }
+                Cura.SecondaryButton {
+                    id: migrationDismissButton
+                    objectName: "migrationDismissButton"
+                    text: "Dismiss"
+                    onClicked: manager.dismissMigrationBanner()
+                }
+            }
+        }
     }
 
     UM.TabRow {
         id: tabBar
         z: 5
-        anchors.top: saveRefusedLabel.visible ? saveRefusedLabel.bottom : machineLabel.bottom
+        anchors.top: migrationNotice.visible ? migrationNotice.bottom : (saveRefusedLabel.visible ? saveRefusedLabel.bottom : machineLabel.bottom)
         anchors.topMargin: UM.Theme.getSize("default_margin").height
         width: parent.width
 
@@ -266,7 +324,7 @@ Cura.MachineAction {
                                 from: 0
                                 to: 13
                                 stepSize: 1
-                                // The click behaviours (the author's live
+                                // The click behaviours (a live
                                 // report): a press that lands within the
                                 // handle's extent of the current value is a
                                 // no-op — a click on the grab handle must
@@ -833,10 +891,14 @@ Cura.MachineAction {
                             id: memoryDiagnosticsBox
                             text: "Log memory diagnostics (diagnostics)"
                             checked: manager.settingsMemoryDiagnosticsLog
+                            // The trace rides the parent (the ruling):
+                            // unchecking the parent unchecks the trace.
+                            onCheckedChanged: if (!checked)
+                                memoryDiagnosticsTraceBox.checked = false
                         }
                         UM.CheckBox {
                             id: memoryDiagnosticsTraceBox
-                            text: "Log Python allocation traces (diagnostics — heavy, stalls Cura briefly)"
+                            text: "Log Python allocation traces (diagnostics — Cura becomes almost unusable while this runs; the first trace starts about a minute after enabling)"
                             checked: manager.settingsMemoryDiagnosticsTrace
                             // The trace only runs inside the main
                             // diagnostics sampler — grey it out while
@@ -848,6 +910,27 @@ Cura.MachineAction {
                             id: cameraDisabledBox
                             text: "Disable webcam stream (diagnostics)"
                             checked: manager.settingsCameraDisabled
+                        }
+                        // The permanent migration-failure row (the UX
+                        // ruling): the rollback recipe survives the
+                        // banner's dismissal here, never deleted.
+                        RowLayout {
+                            id: migrationDiagnosticsRow
+                            objectName: "migrationDiagnosticsRow"
+                            Layout.fillWidth: true
+                            spacing: UM.Theme.getSize("default_margin").width / 2
+                            visible: manager.migrationDiagnosticsVisible
+                            UM.Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                color: UM.Theme.getColor("text_inactive")
+                                text: manager.migrationDiagnosticsText
+                            }
+                            Cura.SecondaryButton {
+                                visible: manager.migrationBackupAvailable
+                                text: "Show backup folder"
+                                onClicked: manager.openMigrationBackupFolder()
+                            }
                         }
                         UM.Label {
                             width: parent.width

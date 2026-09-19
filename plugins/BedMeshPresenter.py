@@ -14,14 +14,26 @@ class BedMeshPresenter(QObject):
     DEFAULT_EXAGGERATION = 20.0
     MAX_EXAGGERATION = 1000.0
 
-    def __init__(self, application, cura, presentation, parent=None):
+    def __init__(self, application, cura, presentation, parent=None, persistence=None):
         super().__init__(parent)
+        # The 4.5.0 re-point: the visibility and exaggeration live in
+        # the settings document's global section now (the no-trace
+        # ruling) — the preferences are the pre-migration
+        # fallback only.
+        self._persistence = persistence
         self._application, self._cura, self._presentation = application, cura, presentation
         self._preferences = application.getPreferences()
         self._preferences.addPreference(self.PREF_KEY, True)
         value = self._preferences.getValue(self.PREF_KEY)
         self._visible = value if isinstance(value, bool) else str(value).lower() not in {"0", "false", "no", "off"}
-        # The "scale z-max" slider (the author's request): the Z
+        # The settings document wins when the keys exist (the
+        # post-migration world); the preferences carry the
+        # pre-migration values.
+        if self._persistence is not None:
+            global_section = self._persistence.settings_document().get("global") or {}
+            if "bedMeshVisible" in global_section:
+                self._visible = bool(global_section["bedMeshVisible"])
+        # The "scale z-max" slider (a request): the Z
         # exaggeration of the Preview surface, 0 (flat) to 100.
         self._preferences.addPreference(self.EXAGGERATION_PREF_KEY, self.DEFAULT_EXAGGERATION)
         try:
@@ -29,6 +41,14 @@ class BedMeshPresenter(QObject):
                 float(self._preferences.getValue(self.EXAGGERATION_PREF_KEY))))
         except (TypeError, ValueError):
             self._exaggeration = self.DEFAULT_EXAGGERATION
+        if self._persistence is not None:
+            global_section = self._persistence.settings_document().get("global") or {}
+            if "bedMeshExaggeration" in global_section:
+                try:
+                    self._exaggeration = max(0.0, min(self.MAX_EXAGGERATION,
+                        float(global_section["bedMeshExaggeration"])))
+                except (TypeError, ValueError):
+                    self._exaggeration = self.DEFAULT_EXAGGERATION
         self._snapshot = {}
         self._fingerprint = None
         self._node = None
@@ -65,12 +85,18 @@ class BedMeshPresenter(QObject):
 
     def set_visible(self, visible):
         self._visible = bool(visible)
-        self._preferences.setValue(self.PREF_KEY, self._visible)
+        if self._persistence is not None:
+            # The settings document is the home now — writing the
+            # preference would re-create the cura.cfg section (the
+            # no-trace ruling).
+            self._persistence.set_global({"bedMeshVisible": self._visible})
+        else:
+            self._preferences.setValue(self.PREF_KEY, self._visible)
         self._render()
         self.changed.emit()
 
     def set_thresholds(self, low, high):
-        # The heightmap range filter (the author's request): the
+        # The heightmap range filter (a request): the
         # window the MONITOR model owns, mirrored here for the Preview
         # card and the scene node. A new mesh re-clamps a touched
         # window into the new range (see _clamp_thresholds).
@@ -87,13 +113,16 @@ class BedMeshPresenter(QObject):
         self.changed.emit()
 
     def set_exaggeration(self, scale):
-        # The "scale z-max" slider (the author's request): 0 flattens
+        # The "scale z-max" slider (a request): 0 flattens
         # the surface, 1000 is the ceiling; the default 20 is the
         # historical fixed value.
         value = max(0.0, min(self.MAX_EXAGGERATION, float(scale)))
         if value == self._exaggeration: return
         self._exaggeration = value
-        self._preferences.setValue(self.EXAGGERATION_PREF_KEY, value)
+        if self._persistence is not None:
+            self._persistence.set_global({"bedMeshExaggeration": value})
+        else:
+            self._preferences.setValue(self.EXAGGERATION_PREF_KEY, value)
         self._render(rebuild=True)
         self.changed.emit()
 

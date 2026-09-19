@@ -9,7 +9,7 @@ import Cura 1.1 as Cura
 // Cura's brand blue, and the blue-ringed handle Cura's own sliders
 // use. All slider properties (from/to/stepSize/live/value…) pass
 // straight through.
-// The control owns EVERY interaction path (the author's ruling):
+// The control owns EVERY interaction path (a ruling):
 // groove clicks and drags, the overlay's handle drags, and keyboard
 // nudges all funnel through the same two semantic signals —
 // valueTuning fires on every user-driven change (the live preview),
@@ -51,7 +51,7 @@ Slider {
     // already false). A track CLICK's single move happens DURING the
     // press and the release fires no further onMoved — the commit
     // must come from the press-release edge or a click moves the
-    // handle and never submits (the author's live report, 2026-09-15).
+    // handle and never submits (a live report, 2026-09-15).
     property bool movedWhilePressed: false
     onMoved: {
         valueTuning(selectedValue());
@@ -108,7 +108,7 @@ Slider {
     }
 
     // The keyboard path: one step per press, committed like a release
-    // (the author's live report): the debounce holds the value until
+    // (a live report): the debounce holds the value until
     // the nudges are quiet, and tuningActive stays true for the whole
     // pending so the host surfaces freeze model-driven rewrites —
     // without the hold, the commit's publish rebuilt the fan/LED

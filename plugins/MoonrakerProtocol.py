@@ -55,7 +55,7 @@ def moonraker_error_text(payload: Dict[str, Any]) -> str:
     surfaced a bare 400, hiding "Extrude below minimum temp — see
     the 'min_extrude_temp' config option")."""
     message = str(payload.get("message") or "").strip()
-    # The author's live report: "Extrude refused: <the whole
+    # A live report: "Extrude refused: <the whole
     # exception>" — some Moonraker builds put the full multi-line
     # exception in `message`. Only a short single-line message is
     # usable; anything bigger falls through to the traceback tail.

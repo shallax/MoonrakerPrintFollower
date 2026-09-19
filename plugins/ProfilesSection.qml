@@ -40,9 +40,16 @@ ColumnLayout {
         Cura.SecondaryButton {
             Layout.fillWidth: true
             text: "Cooldown"
-            tooltip: "Turn every heater off: all targets to 0 °C."
             enabled: root.printerModel != null && root.printerModel.canApplyTemperaturePreset
             onClicked: root.printerModel.heatersOff()
+            UM.ToolTip {
+                visible: parent.hovered
+                targetPoint: Qt.point(parent.width / 2, 0)
+                x: 0
+                y: parent.height + UM.Theme.getSize("default_margin").height
+                width: UM.Theme.getSize("tooltip").width
+                text: "Turn every heater off: all targets to 0 °C."
+            }
         }
         UM.Label {
             text: "A profile is marked Active only when all of its enabled heater targets match the printer. G-code-only profiles are never assumed active."
@@ -69,13 +76,18 @@ ColumnLayout {
                 elide: Text.ElideRight
                 color: UM.Theme.getColor("text")
                 Layout.fillWidth: true
-                UM.TooltipArea {
-                    anchors.fill: parent
+                HoverHandler {
+                    id: tooltipHover1
+                }
+                UM.ToolTip {
+                    visible: tooltipHover1.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
                     // Short value in the row, full
-                    // sentence in the tooltip (the
-                    // author's ruling).
+                    // sentence in the tooltip (the ruling).
                     text: root.printerModel != null ? (root.printerModel.sectionReasonDetail !== "" ? root.printerModel.sectionReasonDetail : (root.printerModel.printActive ? "Temperature profiles are disabled during a print, matching Mainsail." : "")) : ""
-                    acceptedButtons: Qt.NoButton
                 }
             }
         }

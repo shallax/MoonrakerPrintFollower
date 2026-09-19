@@ -40,6 +40,8 @@ from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtQml import QQmlComponent, QQmlEngine
 from PyQt6.QtQuick import QQuickWindow  # noqa: F401  (type-registers the QML Window wrapper)
 
+import capture_contrast
+
 THEME_ASSETS = os.path.join(ROOT, "tests", "theme_assets")
 QML_STUBS = os.path.join(ROOT, "tests", "qml_stubs")
 
@@ -145,9 +147,14 @@ def main():
     install_capture_warning_filter()
 
     from theme_support import ThemeBackend
-    backend = ThemeBackend(os.path.join(THEME_ASSETS, "cura-light"))
+    # `or`, not a get() default: an empty CAPTURE_THEME is a value, and
+    # it used to select the whole theme-assets parent as the theme.
+    theme = os.environ.get("CAPTURE_THEME") or "cura-light"
+    backend = ThemeBackend(os.path.join(THEME_ASSETS, theme))
     from theme_support import materialise_theme_assets as _shared_materialise, verify_capture_tree
-    overlay = _shared_materialise(os.path.join(ROOT, "dist", ".capture-theme"), backend)
+    # CAPTURE_THEME_TREE: parallel capture legs need their own overlay.
+    overlay = _shared_materialise(
+        os.environ.get("CAPTURE_THEME_TREE") or os.path.join(ROOT, "dist", ".capture-theme"), backend)
     # The shared materialiser already wrote the full Theme.qml (palette,
     # sizes, fonts and the icon map) into the overlay.
 
@@ -182,6 +189,11 @@ def main():
     for _ in range(8):
         app.processEvents()
 
+    # The window's own ground is the host window's, and Qt's default is
+    # white: unpainted margins around the themed card would be white in
+    # the dark theme. Paint Cura's page ground, as production does.
+    dialog.setProperty("color", backend.getColor("main_background"))
+
     # Pin the render to the deterministic target size.
     dialog.setProperty("minimumWidth", TARGET_WIDTH)
     dialog.setProperty("minimumHeight", TARGET_HEIGHT)
@@ -203,6 +215,10 @@ def main():
         raise RuntimeError("grabWindow produced a null image")
     if diversity < 20:
         raise RuntimeError(f"capture looks blank ({diversity} sampled colors)")
+    # Contrast census: the pinned screenshots catch drift, not
+    # unreadability, so every text element in this frame is read
+    # against the ground its pixels actually show. Read-only.
+    capture_contrast.audit(dialog.contentItem(), image, "06-upload-dialog.png")
 
     # Tear the scene down in dependency order while the context-property
     # wrappers (manager) are still referenced: at exit the wrappers free

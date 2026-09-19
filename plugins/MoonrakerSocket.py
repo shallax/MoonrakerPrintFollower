@@ -75,6 +75,10 @@ class MoonrakerSocket(QObject):
         self._last_auth_reply_at = 0.0
         self._key = ""
         self._upgraded = False
+        # The explicit lifecycle (the camera-delay fix): a socket that
+        # is CONNECTING must never be restarted by a refresh, and a
+        # terminal failure must always leave this state reconnectable.
+        self._connecting = False
         self._keepalive_interval_ms = max(10, int(keepalive_interval_ms))
         self._keepalive_deadline_ms = max(10, int(keepalive_deadline_ms))
         self._keepalive_timer = QTimer(self)
@@ -89,9 +93,25 @@ class MoonrakerSocket(QObject):
     def last_auth_reply_at(self) -> float:
         return self._last_auth_reply_at
 
+    def _enter_failed(self, reason: str) -> None:
+        """One terminal failure, one emit: the lifecycle flags leave
+        the connecting/upgraded states so the client's retry ladder
+        can start a replacement — a stale connecting state would
+        wedge every future refresh (the camera-delay fix)."""
+        self._connecting = False
+        self._upgraded = False
+        self.failed.emit(reason)
+
     @property
     def is_upgraded(self) -> bool:
         return self._upgraded
+
+    @property
+    def is_connecting(self) -> bool:
+        """True from start() until the upgrade completes or the
+        attempt fails terminally — the window in which a restart
+        would abort an in-flight handshake."""
+        return self._connecting
 
     @property
     def subscribed_names(self) -> List[str]:
@@ -124,7 +144,7 @@ class MoonrakerSocket(QObject):
         def on_error(error: QAbstractSocket.SocketError) -> None:
             if stale():
                 return
-            self.failed.emit(socket.errorString() or f"socket error {int(error)}")
+            self._enter_failed(socket.errorString() or f"socket error {int(error)}")
 
         def on_ssl_errors(errors: list) -> None:
             # Never ignoreSslErrors: wss must fail exactly as https does
@@ -132,7 +152,7 @@ class MoonrakerSocket(QObject):
             if stale():
                 return
             text = "; ".join(str(error.errorString()) for error in errors) or "TLS verification failed"
-            self.failed.emit(text)
+            self._enter_failed(text)
 
         def on_data() -> None:
             if stale() or self._socket is not socket:
@@ -147,28 +167,59 @@ class MoonrakerSocket(QObject):
         socket.readyRead.connect(on_data)
         if isinstance(socket, QSslSocket):
             # TLS: the upgrade request may only be written once the
-            # encrypted channel exists (a plaintext write would hit a
-            # TLS port and die as a remote close — the live proxy run).
+            # encrypted channel exists — the live proxy run died as a
+            # remote close when the request preceded the negotiation.
             socket.sslErrors.connect(on_ssl_errors)
             socket.encrypted.connect(on_ready)
             socket.connectToHostEncrypted(parsed.host(), parsed.port(443))
         else:
             socket.connected.connect(on_ready)
             socket.connectToHost(parsed.host(), parsed.port(80))
+        self._connecting = True
 
-    def stop(self) -> None:
+    def stop(self, *, close_frame: bool = True) -> None:
+        """Tear the session down.
+
+        The graceful RFC 6455 close is only valid once the WebSocket
+        upgrade has completed: before that the channel is still
+        negotiating — TCP-connected-but-TLS-pending included, the
+        socket state never distinguishes them. Issuing protocol-level
+        WebSocket teardown while the underlying socket was still
+        negotiating/handshaking drove an unsafe native teardown path
+        (the machine-changed stop landed inside the TLS handshake and
+        a Cura reader thread faulted); the precise byte-level
+        mechanism remains a hypothesis, and the code no longer
+        depends on that theory. abort() is the state-safe hard
+        teardown for everything short of an upgraded channel, and the
+        generation guard already makes the old socket's events
+        harmless.
+        """
         self._generation += 1
         self._keepalive_timer.stop()
         socket = self._socket
         self._socket = None
         if socket is not None:
             try:
-                if socket.state() != QAbstractSocket.SocketState.UnconnectedState:
+                if not self._upgraded:
+                    socket.abort()
+                elif close_frame:
                     socket.write(encode_close_frame(1000))
                     socket.flush()
                     socket.disconnectFromHost()
+                else:
+                    # The peer-close path has already sent its one
+                    # response frame: finish the graceful teardown
+                    # without a second close on the wire.
+                    socket.flush()
+                    socket.disconnectFromHost()
             except Exception:
-                pass
+                # A graceful teardown that failed midway is still a
+                # teardown: fall back to the hard path before the
+                # object goes away.
+                try:
+                    socket.abort()
+                except Exception:
+                    pass
             try:
                 socket.deleteLater()
             except Exception:
@@ -185,6 +236,7 @@ class MoonrakerSocket(QObject):
         self._last_auth_reply_at = 0.0
         self._key = ""
         self._upgraded = False
+        self._connecting = False
 
     def request(self, method: str, params: Dict[str, Any], callback: Callable[[Dict[str, Any]], None]) -> int:
         """One JSON-RPC over the socket, exact-id correlated (S8).
@@ -262,7 +314,7 @@ class MoonrakerSocket(QObject):
         with the caller-bound header cap enforced here (S7)."""
         if b"\r\n\r\n" not in self._buffer:
             if len(self._buffer) > MAX_HANDSHAKE_HEADER_BYTES:
-                self.failed.emit("handshake response exceeds the header cap")
+                self._enter_failed("handshake response exceeds the header cap")
                 self.stop()
             return
         head, rest = self._buffer.split(b"\r\n\r\n", 1)
@@ -270,10 +322,11 @@ class MoonrakerSocket(QObject):
         if not ok:
             if "HTTP/1.1 401" in reason or "HTTP/1.0 401" in reason:
                 reason = "the API key was rejected (HTTP 401)"
-            self.failed.emit(reason)
+            self._enter_failed(reason)
             self.stop()
             return
         self._upgraded = True
+        self._connecting = False
         self._buffer = rest
         self._keepalive_timer.start()
         self.upgraded.emit()
@@ -284,7 +337,7 @@ class MoonrakerSocket(QObject):
         try:
             events, remainder, self._frame_state = parse_frames(self._buffer, self._frame_state)
         except FramingError as exc:
-            self.failed.emit(str(exc))
+            self._enter_failed(str(exc))
             self.stop()
             return
         self._buffer = remainder
@@ -293,11 +346,13 @@ class MoonrakerSocket(QObject):
             if kind == "ping":
                 self._write_control(encode_pong(event[1]))
             elif kind == "close":
+                # One response frame, then teardown — stop() must not
+                # add a second close on top of this one.
                 self._write_control(encode_close_frame(1000))
-                self.stop()
+                self.stop(close_frame=False)
                 return
             elif kind == "error":
-                self.failed.emit(event[1])
+                self._enter_failed(event[1])
                 self.stop()
                 return
             elif kind == "message":
@@ -307,11 +362,11 @@ class MoonrakerSocket(QObject):
         try:
             message = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            self.failed.emit("undecodable JSON-RPC frame")
+            self._enter_failed("undecodable JSON-RPC frame")
             self.stop()
             return
         if not isinstance(message, dict):
-            self.failed.emit("non-object JSON-RPC frame")
+            self._enter_failed("non-object JSON-RPC frame")
             self.stop()
             return
         if "id" in message and "method" not in message:
@@ -366,7 +421,7 @@ class MoonrakerSocket(QObject):
         if self._socket is None:
             return
         if self._last_auth_reply_at and time.monotonic() - self._last_auth_reply_at > self._keepalive_deadline_ms / 1000.0:
-            self.failed.emit("keepalive reply deadline exceeded")
+            self._enter_failed("keepalive reply deadline exceeded")
             self.stop()
             return
         self.request("server.info", {}, lambda reply: None)

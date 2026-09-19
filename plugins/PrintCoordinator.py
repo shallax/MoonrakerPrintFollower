@@ -3,16 +3,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import datetime, timedelta
 import time
 
 from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
 
+from .LoadStateTracker import LoadStateTracker
 from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, parse_bed_mesh, preview_eta_text, result
+from .NextPausePipeline import NextPausePipeline
 from .PreviewFormatting import (
     pause_can_toggle,
-    pause_items,
     pause_summary,
     pause_unavailable,
     status_icon,
@@ -42,14 +42,16 @@ class PrintCoordinator(QObject):
         self._presentation, self._bed_mesh = presentation, bed_mesh
         self._jobs = RemoteJobService({"printing", "paused"})
         self._layers = LayerResolver()
+        # The two extracted owners: the load request's lifecycle (its
+        # pending flags, the lease handoff, the busy term) and the
+        # next-pause pipeline (the anchor, the merged rows, the target).
+        self._loads = LoadStateTracker(files=files, index=index, cura=cura)
+        self._next_pause = NextPausePipeline(preview=preview, pauses=pauses, index=index)
         self._snapshot = PrintSnapshot()
         self._status = {}
         self._detail = "Not connected"
         self._gate_logged = None
         self._preview_block = None
-        self._load_job = None
-        self._load_requested = False
-        self._load_requested_at = 0.0
         # Moonraker's file metadata (the slicer header parsed server-side):
         # layer height and slicer estimate for prints the user never
         # loaded. Fetched once per job, retried every 30 s until success.
@@ -70,25 +72,7 @@ class PrintCoordinator(QObject):
         self._header_total_mm = None
         self._header_total_path = ""
         self._layer_trace_at = 0.0
-        self._monitor_requested = False
-        self._monitor_requested_at = 0.0
-        self._next_pause_layer = None
-        self._next_pause_eta = ""
-        self._next_pause_fraction = None
-        self._next_pause_baked = False
-        # The pause bar's zero point in TIME (the live ruling): the
-        # elapsed print time when the print LAST PAUSED — any pause,
-        # scheduled or manual — or the print's start while it never
-        # has (None).
-        self._pause_anchor_elapsed = None
-        self._pause_anchor_job = None
-        self._prev_print_state = None
         self._user_detached = False
-        self._refresh_items = None
-        # The last resolved layer index (the live report): right
-        # after a pause the resolver can drop to None — the last
-        # known index carries the target selection.
-        self._last_index = None
         self._publish_at = 0.0
         self._processing = self._closed = False
         self._had_toolpath = False
@@ -124,72 +108,6 @@ class PrintCoordinator(QObject):
         presentation.pauseAtLayerRequested.connect(self.toggle_pause)
         presentation.removePauseRequested.connect(self.remove_pause)
         presentation.clearPausesRequested.connect(pauses.clear)
-
-    def _update_pause_anchor(self, job, state, elapsed):
-        """The pause bar's zero point (the live ruling): the elapsed
-        print time when the print LAST PAUSED — any pause, scheduled
-        or manual — or the print's start while it never has. A job
-        change clears it. Returns the anchor in seconds."""
-        if job != self._pause_anchor_job:
-            self._pause_anchor_elapsed = None
-            self._pause_anchor_job = job
-            # The last known index rides the same boundary (the
-            # panel's catch): a new print's resolver reading None
-            # must not inherit the previous print's layer.
-            self._last_index = None
-        if state == "paused" and self._prev_print_state != "paused":
-            self._pause_anchor_elapsed = elapsed
-        self._prev_print_state = state
-        return self._pause_anchor_elapsed
-
-    def _compute_next_pause(self, physical, elapsed=0.0, items=None):
-        """The NEXT scheduled pause (baked or manual, the live
-        ruling): its human layer, its composed ETA, and the print's
-        progress toward that pause as a fraction. The fraction is
-        TIME-BASED (the live ruling — a layer-based bar credited the
-        in-progress layer and read half the span early), spanning
-        the DEADLINES: zero at the previous pause's deadline (the
-        print's start for the first one), full at the next one, and
-        the speed-corrected remaining keeps it on the ETA's own
-        scale. Without the index's timing the fraction reads None
-        (no ETA, no bar — the ruling). None/""/None/False while
-        no pause lies ahead."""
-        baked = set(self._index.view.pause_layers) if self._index.view is not None else set()
-        if items is None:
-            items = pause_items(
-                set(self._pauses.layers), self._pauses.states, baked,
-                lambda layer: self._preview.remaining(layer, self._index.view, end=True),
-                self._preview.format_duration,
-                current=physical.index,
-                clock=lambda remaining: (datetime.now().astimezone() + timedelta(seconds=remaining)).strftime("%H:%M"),
-            )
-        # A row BEHIND the current layer is never the target — the
-        # baked rows' passed flag alone left a fired manual row
-        # reading as the target forever (the live report, the stuck
-        # 00:00:00 ETA). A resolver that drops to None right after a
-        # pause reads the last known index (the live report).
-        current = physical.index if physical.index is not None else self._last_index
-        view = self._index.view
-        anchor = self._pause_anchor_elapsed or 0.0
-        for item in items:
-            if current is not None and (item["layer"] - 1) < current:
-                continue
-            pause_zero = item["layer"] - 1
-            remaining = self._preview.remaining(pause_zero, view, end=True) if view is not None else None
-            # No ETA, no bar (the live ruling): the None fraction
-            # rides the -1.0 sentinel and the fill renders absent.
-            if remaining is None:
-                return item["layer"], item["eta"], None, item.get("state") == "baked"
-            # The clamp floors the numerator FIRST (the panel's
-            # catch): a stale elapsed before the anchor with an
-            # exhausted remaining must read 0, never the full bar
-            # the old short-circuit gave it.
-            numerator = (elapsed or 0.0) - anchor
-            span = numerator + remaining
-            fraction = (1.0 if numerator >= 0 and span <= 0
-                        else max(0.0, min(1.0, numerator / span)) if span > 0 else 0.0)
-            return item["layer"], item["eta"], fraction, item.get("state") == "baked"
-        return None, "", None, False
 
     def receive_preview_block(self, block) -> None:
         """The seam's sink (4.3.0): the Monitor's per-poll value
@@ -231,14 +149,9 @@ class PrintCoordinator(QObject):
                 # — the pending flag must not survive the boundary or
                 # the lane wedges shut for every later print.
                 self._mr_meta_pending = False
-            if self._load_requested:
-                if not active:
-                    self._load_requested = False
-                    self._detail = "No active Moonraker print to load"
-                else:
-                    self._load_job = job
-                    self._load_requested = False
-                    self._files.request_file(retry=True)
+            detail = self._loads.resolve(job, active)
+            if detail is not None:
+                self._detail = detail
         finally:
             self._processing = False
         self.refresh()
@@ -247,21 +160,13 @@ class PrintCoordinator(QObject):
         if self._closed or self._processing: return
         self._processing = True
         try:
-            # A load request against a standby printer never resolves
-            # through observe() — no status frame arrives to clear the
-            # flag (the stuck "Resolving…" report). The snapshot's own
-            # print state settles it here: a known-idle printer clears
-            # once the refresh the request kicked off has had a moment
-            # to land; the 5 s bound catches a stale snapshot.
+            # The request flags age out against the snapshot's own
+            # print state — a standby printer never sends the frame
+            # that would settle them (the stuck "Resolving…" report).
             now = time.monotonic()
-            if self._load_requested and now - self._load_requested_at > (2.0 if not self._snapshot.active else 5.0):
-                self._load_requested = False
-                if not self._snapshot.active:
-                    self._detail = "No active Moonraker print to load"
-            if self._monitor_requested and now - self._monitor_requested_at > (2.0 if not self._snapshot.active else 5.0):
-                self._monitor_requested = False
-                if not self._snapshot.active:
-                    self._detail = "No active Moonraker print to load"
+            detail = self._loads.settle(now, self._snapshot.active)
+            if detail is not None:
+                self._detail = detail
             config = self._binding.config
             # The toolpath's arrival (the plugin's load rendered, or a
             # slice) is the moment Cura's controls must come up: the
@@ -319,8 +224,7 @@ class PrintCoordinator(QObject):
             status_stats = (self._status.get("print_stats") or {}) if isinstance(self._status, dict) else {}
             metadata = self._files.metadata or self._mr_metadata_for(str(status_stats.get("filename") or ""), job)
             physical = self._layers.resolve(self._status, config, view, metadata, self._cura.heights)
-            if physical.index is not None:
-                self._last_index = physical.index
+            self._next_pause.track(physical.index)
             try:
                 estimate = float(metadata.get("estimated_time") or 0)
             except (TypeError, ValueError):
@@ -334,65 +238,35 @@ class PrintCoordinator(QObject):
                     position = None
                 if start is not None and end is not None and end > start and position is not None:
                     layer_progress = max(0.0, min(1.0, (position - start) / (end - start)))
-            # Terminal conditions for the monitor-only download: the
-            # index landed, the build failed, OR the download failed.
-            # Without the download-failure branch the flag wedges True
-            # forever (the download's retry ladder only re-fires when a
-            # consumer re-requests, and the one consumer in monitor-only
-            # mode is gated behind has_toolpath — panel finding P1-1).
-            if self._monitor_requested and (view is not None
-                                            or self._index.phase == "error"
-                                            or self._files.phase == "error"):
-                self._monitor_requested = False
-            load_active = (self._load_requested or self._load_job is not None
-                           or self._monitor_requested
-                           or self._files.phase in ("resolving", "downloading")
-                           or self._index.phase == "indexing"
-                           or self._cura.loading)
+            # The monitor-only download's terminal conditions (panel P1-1).
+            self._loads.retire_monitor(view is not None)
+            load_active = self._loads.active
             filament_total = self._header_total_mm
             if filament_total is None:
                 try:
                     filament_total = float(metadata.get("filament_total"))
                 except (TypeError, ValueError):
                     filament_total = None
-            # The bar's zero point in TIME (the live ruling): the
-            # elapsed print time when the print LAST PAUSED — any
-            # pause, scheduled or manual — or the print's start
-            # while it never has. A job change clears it.
             try:
                 elapsed = float((status_stats.get("print_duration") or 0) or 0.0)
             except (TypeError, ValueError):
                 elapsed = 0.0
-            self._update_pause_anchor(job, status_stats.get("state"), elapsed)
+            self._next_pause.update_anchor(job, status_stats.get("state"), elapsed)
             # The merged rows built ONCE per refresh (the perf
-            # panel's catch): the compute and the publish share them,
-            # guarded by their inputs so a publish without a refresh
-            # (the pause toggles) can never serve stale rows.
-            baked = set(self._index.view.pause_layers) if self._index.view is not None else set()
-            items = pause_items(
-                set(self._pauses.layers), self._pauses.states, baked,
-                lambda layer: self._preview.remaining(layer, self._index.view, end=True),
-                self._preview.format_duration,
-                current=physical.index,
-                clock=lambda remaining: (datetime.now().astimezone() + timedelta(seconds=remaining)).strftime("%H:%M"),
-            )
-            # The states join the key: a fired pause keeps its layer
-            # (the stay-listed ruling) but flips its state — a
-            # layers-only key would serve the pre-fire rows forever.
-            self._refresh_items = (set(self._pauses.layers), baked,
-                tuple(sorted(self._pauses.states.items())), items)
-            (self._next_pause_layer, self._next_pause_eta,
-             self._next_pause_fraction, self._next_pause_baked) = self._compute_next_pause(physical, elapsed, items)
+            # panel's catch): the compute and the publish share them.
+            items = self._next_pause.rebuild(physical.index)
+            (next_pause_layer, next_pause_eta,
+             next_pause_fraction, next_pause_baked) = self._next_pause.compute(physical, elapsed, items)
             self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
                 estimate if estimate > 0 else None, self._files.metadata_complete,
                 layer_progress=layer_progress, index_ready=view is not None,
                 download_fraction=self._files.download_fraction,
                 indexing=self._index.phase == "indexing",
                 index_fraction=self._index.progress if self._index.phase == "indexing" else None,
-                next_pause_layer=self._next_pause_layer,
-                next_pause_eta=self._next_pause_eta,
-                next_pause_fraction=self._next_pause_fraction,
-                next_pause_baked=self._next_pause_baked,
+                next_pause_layer=next_pause_layer,
+                next_pause_eta=next_pause_eta,
+                next_pause_fraction=next_pause_fraction,
+                next_pause_baked=next_pause_baked,
                 load_active=load_active,
                 filament_total=filament_total if filament_total and filament_total > 0 else None)
             if self._snapshot.active and filename:
@@ -431,14 +305,9 @@ class PrintCoordinator(QObject):
                     if config.path_follow and config.enabled:
                         self._index.request()
                 self._pauses.observe(physical.index)
-            if self._load_job is not None:
-                if self._load_job != job:
-                    self._load_job = None
-                    self._detail = "Print changed before it could be loaded"
-                elif self._files.path and not self._cura.loading:
-                    lease = self._files.lease()
-                    self._load_job = None
-                    if lease is not None: self._cura.load(lease)
+            detail = self._loads.advance(job)
+            if detail is not None:
+                self._detail = detail
             if self._client.connected:
                 # The retention window's anchor is the LIVE layer,
                 # updated every poll even when already hydrated — the
@@ -580,12 +449,7 @@ class PrintCoordinator(QObject):
     def reset_binding(self):
         self._processing = True
         try:
-            self._load_job = None
-            self._load_requested = False
-            # A monitor-only download in flight when the binding changes
-            # (machine switch, job change) must not leak its busy flag
-            # into the next session — panel finding P1-1.
-            self._monitor_requested = False
+            self._loads.reset()
             self._mr_meta = {}
             self._mr_meta_key = ("", "")
             self._mr_meta_asked = ("", "")
@@ -600,13 +464,9 @@ class PrintCoordinator(QObject):
             self._layers.reset()
             self._snapshot = PrintSnapshot()
             # The session boundary owns the pause bar's whole state
-            # (the panel's catch): the anchor, the edge latch, the
-            # deliberate-detach latch and the last known index must
-            # never survive into a new session.
-            self._pause_anchor_elapsed = None
-            self._pause_anchor_job = None
-            self._prev_print_state = None
-            self._last_index = None
+            # (the panel's catch); the deliberate-detach latch must
+            # never survive into a new session either.
+            self._next_pause.reset()
             self._user_detached = False
             self._index.bind(None)
             self._files.bind(None)
@@ -680,7 +540,7 @@ class PrintCoordinator(QObject):
         self._client.force_refresh()
 
     def _load_failed(self, error):
-        self._load_job = None
+        self._loads.abandon()
         self._detail = "Could not load current print: " + error
         self._publish()
 
@@ -701,8 +561,7 @@ class PrintCoordinator(QObject):
         if not self._binding.configured:
             self._message("Set a Moonraker URL before improving the monitor estimate")
             return
-        self._monitor_requested = True
-        self._monitor_requested_at = time.monotonic()
+        self._loads.request_monitor()
         self._index.request()
         self._message("Downloading and indexing the print for the monitor…")
         self._client.force_refresh()
@@ -712,8 +571,7 @@ class PrintCoordinator(QObject):
         if not self._binding.configured:
             self._message("Set a Moonraker URL before loading the current print")
             return
-        self._load_requested = True
-        self._load_requested_at = time.monotonic()
+        self._loads.request_load()
         self._message("Resolving current print…")
         self._client.force_refresh()
         QTimer.singleShot(2600, self.refresh)
@@ -739,7 +597,7 @@ class PrintCoordinator(QObject):
         # The backstop for the gating above: a baked pause at the layer
         # makes a manual schedule impossible, however the request
         # arrived.
-        baked = set(self._index.view.pause_layers) if self._index.view is not None else set()
+        baked = self._next_pause.baked_layers()
         if layer in baked:
             return
         self._pauses.toggle(layer, self._snapshot.layer.index, total)
@@ -757,27 +615,15 @@ class PrintCoordinator(QObject):
         # The gcode's baked pauses join the list as read-only rows (the
         # ruling), and a baked layer blocks the manual toggle — the two
         # can never double up.
-        baked = set(self._index.view.pause_layers) if self._index.view is not None else set()
+        baked = self._next_pause.baked_layers()
         baked_block = selected is not None and selected in baked
         can_toggle = not baked_block and pause_can_toggle(snapshot.active, selected, current, total)
         unavailable = ("a pause is baked into the gcode at this layer" if baked_block
                        else pause_unavailable(snapshot.active, can_toggle, scheduled, current, selected))
-        cached = self._refresh_items
-        if (cached is not None and cached[0] == set(self._pauses.layers)
-                and cached[1] == baked
-                and cached[2] == tuple(sorted(self._pauses.states.items()))):
-            items = cached[3]
-        else:
-            items = pause_items(
-                set(self._pauses.layers), self._pauses.states, baked,
-                lambda layer: self._preview.remaining(layer, self._index.view, end=True),
-                self._preview.format_duration,
-                current=current,
-                clock=lambda remaining: (datetime.now().astimezone() + timedelta(seconds=remaining)).strftime("%H:%M"),
-            )
+        items = self._next_pause.rows(current)
         compact = status_text(
             detail=self._detail,
-            load_requested=self._load_requested,
+            load_requested=self._loads.load_requested,
             loading=self._cura.loading,
             files_phase=self._files.phase,
             index_phase=self._index.phase,
@@ -817,7 +663,7 @@ class PrintCoordinator(QObject):
                           else "Resolving…" if self._files.phase == "resolving"
                           else "Indexing…" if self._index.phase == "indexing"
                           else "Rendering…" if self._cura.loading
-                          else "Resolving current print…" if self._load_requested or self._monitor_requested else ""),
+                          else "Resolving current print…" if self._loads.load_requested or self._loads.monitor_requested else ""),
             "configuredForFollowing": self._binding.configured and config.enabled,
             # The stage state rides THIS publish path: the presenter's
             # own refresh-side publish proved unreliable on the
@@ -858,7 +704,7 @@ class PrintCoordinator(QObject):
             # index keeps it disabled. The click is the monitor's
             # improveEta itself; nothing else changes.
             "improveEtaAvailable": snapshot.active and snapshot.layer_eta is None
-                and not (snapshot.load_active or self._monitor_requested),
+                and not (snapshot.load_active or self._loads.monitor_requested),
             # The Preview value block rides through to the card as-is
             # — the strip applies the staleness rule against the
             # block's aux-landing stamp. The connection truth joins

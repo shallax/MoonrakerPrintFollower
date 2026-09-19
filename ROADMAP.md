@@ -378,7 +378,7 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   unknown. The console error bell gets its feed: while the console
   is collapsed a slow 5 s store poll keeps error lines flowing (the
   poll was expanded-only, so the bell could never ring — the
-  author's own diagnosis). Jog/extrude selections persist in the
+  diagnosis). Jog/extrude selections persist in the
   plugin state file. Extrude distance/speed rows keep their
   selection highlighted via the button-face swap.
 - **Snapshot 1 live-test rulings, rounds 5–8 (2026-09-10):** ONE
@@ -408,7 +408,7 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
   deleted (one point, no scattered conditionals — the guard
   sprawl; the permissions consolidation lives in the 4.2.0 roadmap).
 - E-stop recovery (the ruling, 2026-09-10, live-proven on
-  their printer, overriding the investigation's readiness-gating
+  the printer, overriding the investigation's readiness-gating
   alternative): after the stop the host refuses commands until the
   connection is cycled — the plugin disconnects and reconnects ONCE,
   automatically (1.5 s after the stop, `MonitorCommands.
@@ -469,7 +469,7 @@ disposition in `review/DECISIONS.md`, reports in `review/3.6.0/`):**
 - Recents dismissal persists (FIFO 50 name-keyed hide-list).
 - Recents reversal (2026-09-10): the greyed-out "No
   longer listed on the printer — deleted or moved" card is GONE.
-  The author: if recents were stored locally, a recently-deleted
+  The reasoning: if recents were stored locally, a recently-deleted
   file could stay visible because the user could clean it out by
   hand — but recents are Moonraker's history (the source of truth),
   which cannot be cleaned client-side, so files the server no longer
@@ -574,7 +574,7 @@ Snapshot 1 wires the real data behind it.
 - Delete gets a confirmation for single AND bulk deletes (especially
   bulk).
 - History: fetch the 200 most recent jobs per popup session (the
-  author's ruling: snappy default, escape hatch complete); a count at
+  ruling: snappy default, escape hatch complete); a count at
   the window edge says so in its tooltip, and a "Load all history"
   action fetches EVERYTHING remaining in one go (paging the list
   until exhausted) and recomputes every count — one click resolves
@@ -626,7 +626,7 @@ watchdog's transition-is-success form, the directory delete route,
 the clipped row viewport, the disconnected gates and the popup's own
 note surface).
 
-## 4.0.0 — Websocket transport (2026-09-11)
+## 4.0.0 — Websocket transport — SHIPPED (2026-09-14)
 
 **RELEASE GATE (resolved):** the 2026-09-11 still-broken list (the
 failure state persisting until a manual reconnect, the preview card
@@ -636,10 +636,10 @@ suite with screenshots, and the full gate (smoke + all suite groups on
 5.13.0, smoke on 5.12.0) ran green on 2026-09-13. The record and the
 harness design are in the 4.1.0 section and `TESTING.md`.
 
-3.6.0 ends the v3 line. The author's ruling (2026-09-11): the
+3.6.0 ends the v3 line. The 2026-09-11 ruling: the
 per-request HTTP polling is unacceptable in production — prints audibly
-dwell while the plugin is connected (live-proven on their Voron). The
-author's correction (2026-09-11): the diagnosis is the CUMULATIVE
+dwell while the plugin is connected (live-proven on a Voron). The
+2026-09-11 correction: the diagnosis is the CUMULATIVE
 per-request polling load — the console poll was NOT singled out as the
 cause; the console stays HTTP by ruling, and the measurement arms
 record the console state as a covariate, not a suspect. 4.0.0 moves the transport to Moonraker's websocket subscription
@@ -673,7 +673,7 @@ on this.
   confirmation latency and the jog readout do not coarsen.
 - The setting is per-printer (the `PrinterConfig` record pattern, like
   the chart config): a fleet can mix modes per machine.
-- Design intent for the panel (recommendation, not yet an author
+- Design intent for the panel (recommendation, not yet a
   ruling): in websocket mode the socket's health is the liveness
   signal; a reconnect re-identifies, re-subscribes and re-syncs with
   one full HTTP objects query (no replay). The 3.5.1 disconnected UX
@@ -713,7 +713,7 @@ real bundled runtime. **Ruling:** 4.0.0 builds the websocket client by
 hand on `PyQt6.QtNetwork` (QTcpSocket/QSslSocket) — no new Qt module,
 no new dependency, works on every Cura in the 5.0–5.13 line. Remaining
 certainty gates: a TLS (wss) check and the live-Moonraker test on the
-author's printer during the snapshot loop.
+printer during the snapshot loop.
 
 **Live-printer verification (2026-09-11, the Voron):** the
 hand-rolled RFC 6455 client, running INSIDE the real Cura 5.13.0
@@ -741,7 +741,7 @@ live proxied-https test rides the snapshot loop.
   the day-one design.
 - Mode switch on a live connection: REBIND — exactly like a URL/key
   change today (session reset, connection cycle). No new behaviour
-  class to spec. The author's ruling (2026-09-11): the consequent
+  class to spec. The 2026-09-11 ruling: the consequent
   upload abort is ACCEPTED and DOCUMENTED — flipping the toggle
   mid-upload cancels it, stated in ARCHITECTURE §3 and the toggle's
   helper line; no silent behaviour.
@@ -767,16 +767,16 @@ walk):**
   steady-state silence watchdog (silent-while-connected falls back to
   HTTP without a session reset, with a visible reason). The websocket
   default stands on this detection.
-- Camera through the auth-enforcing proxy RULED (2026-09-11, the
-  author): Cura's `NetworkMJPGImage` cannot send the API-key header, so
+- Camera through the auth-enforcing proxy RULED (2026-09-11):
+  Cura's `NetworkMJPGImage` cannot send the API-key header, so
   the camera behind a header-auth proxy cannot render — 4.0.0 gains a
   camera BRIDGE: the plugin fetches the stream with the key and
   republishes it on a keyless local endpoint for Cura's loader. (Held
   for now; the camera-URL override field points Cura's loader at the
   printer's own keyless LAN webcam port, which unblocks live testing
   without the bridge.)
-- Delivery-cadence sliders RULED IN for 4.0.0 (2026-09-11, the
-  author): the push stream arrives at the printer's cadence and the
+- Delivery-cadence sliders RULED IN for 4.0.0 (2026-09-11): the
+  push stream arrives at the printer's cadence and the
   delivery clock hands it to consumers on the client's — with sliders
   to adjust it. The core interval field is relabelled
   ("Status update interval") with a mode-aware helper line; the
@@ -789,7 +789,7 @@ walk):**
   Test-connection verdict, interval relabel, reason line, trace label)
   get the nod as they are built.
 
-## 4.0.1 — Harness fast-follow (2026-09-13)
+## 4.0.1 — Harness fast-follow — SHIPPED (2026-09-14)
 
 A fast follow after 4.0.0 ships; test-infrastructure only, plus the
 docs cleanup folded in (2026-09-14):
@@ -931,7 +931,7 @@ regressions exercise real semantics. Structural pins retarget in the
 same commits (the per-class policy in `review/DECISIONS.md`);
 ARCHITECTURE §1/4/6/9/11 move with the code they describe.
 
-## 4.1.0 — Deep harness coverage
+## 4.1.0 — Deep harness coverage — SHIPPED (2026-09-15)
 
 **Scope (2026-09-14):** the remainder of the UI-driving suite's
 mandate, now the harness itself has shipped in 4.0.0 — deeper
@@ -1054,7 +1054,7 @@ ordered by dependency:
   engineer, expert automated tester) — product/UX/security have
   little to adjudicate on scenario coverage; the pro-user persona
   feeds 4.2.0 planning only.
-- **The phase-2 rulings (2026-09-14, the author):** the architecture
+- **The phase-2 rulings (2026-09-14):** the architecture
   review's re-sequencing adopted fully (the presentation refactor
   becomes 4.3.0, the physical head moves to 4.5.0, then to 5.0.0 in
   the 2026-09-17 re-sequencing); the TESTING.md
@@ -1124,7 +1124,7 @@ budgets as hang detectors, and TESTING.md as strike-and-mark.
   all gates green with zero warnings; the measured performance
   comparison delivered (the serial-vs-parallel matrix timings and
   the F06 before/after numbers). The PR stops at ready — the
-  merge, tag and release wait for the author's snapshot test, and
+  merge, tag and release wait for the snapshot test, and
   the snapshot report names what to test.
 
 **Reconciliation (2026-09-15, the phase-6 re-review + the adversarial
@@ -1213,7 +1213,7 @@ itself:
 - the visible-interactions rule and the higher-resolution harness
   (confirmed 2026-09-14 — the 4.0.1 fast-follow did not absorb them).
 
-## 4.2.0 — State, permissions & operation boundaries
+## 4.2.0 — State, permissions & operation boundaries — SHIPPED (2026-09-15)
 
 - **The motion cluster (planned 2026-09-15, round-2 rulings
   applied):** three new readout rows join Position in the Monitor
@@ -1221,13 +1221,13 @@ itself:
   polled snapshot, value-only rows reading 0.00 at idle (Klipper
   always sends the fields; "—" only when motion_report is absent),
   same no-reflow rule as the filament rows. The shipped multiplier
-  row is renamed "Speed factor" (the author's ruling) so the new
+  row is renamed "Speed factor" (the ruling) so the new
   live row can take "Velocity" — four personas caught the
   duplicate-title collision independently. Verified against the
   live Voron mid-print (read-only queries, 2026-09-15):
   `motion_report.live_velocity` is a single scalar (20.0 mm/s
   observed) and no per-axis velocity exists, so the row is scalar
-  (the author's ruling); Klipper publishes no instantaneous
+  (the ruling); Klipper publishes no instantaneous
   acceleration at all, so the accel row is the effective
   `toolhead.max_accel` limit (5000.0 observed). Row titles:
   Velocity (the value is an unsigned magnitude) and Accel limit
@@ -1276,7 +1276,7 @@ itself:
   is unreachable; the reachable degradation is "—" (no numeric
   fallback — guessing 1.75 would contradict the no-override
   ruling). No manual override
-  (the author's ruling): a wrong reading is a wrong printer.cfg,
+  (the ruling): a wrong reading is a wrong printer.cfg,
   and an override would hide a config error that also breaks
   Klipper's own volumetric features. The harness simulator's
   configfile fixture (`simulator.py:97`, no config key) is
@@ -1324,7 +1324,7 @@ the observation record carries everything its consumers read —
 `homed_axes`, `locked_while_printing`,
 `configfile.save_config_pending` — or the one derivation is
 unachievable. Rulings: unknown/disconnected → FAIL CLOSED
-(disabled with a reason — the author's ruling; today two shipped
+(disabled with a reason — the ruling; today two shipped
 places read unknown as idle and are masked only by the QML section
 gate: `can_toggle` and the restart guard's second clause);
 not-homed → ALLOWED for jog and print-start (the shipped
@@ -1387,7 +1387,7 @@ carries its reason (F10).
   preview's ETA/filament anchors, the riskiest area, and rides the
   same release as the print-start owner.
 
-**Round-2 panel rulings (2026-09-15, all author-confirmed):**
+**Round-2 panel rulings (2026-09-15, all confirmed):**
 
 - **Titles:** the live row is "Velocity" (Klipper's field name;
   the unit rides the value) and the shipped multiplier row is
@@ -1437,7 +1437,7 @@ carries its reason (F10).
 
 ## 4.3.0 — Monitor & file-manager presentation refactor — SHIPPED (2026-09-17)
 
-SHIPPED 2026-09-16 (branch release/v4.3.0, awaiting the author's
+SHIPPED 2026-09-16 (branch release/v4.3.0, awaiting the
 snapshot nod): the strip, the pause/resume policy rows, the
 print-start owner, the metadata adoption, the UI-state store, the
 caption states, the slider track-click fix, the harness evidence
@@ -1451,7 +1451,7 @@ three absent states and the unlabelled temps pair). The strip's
 staleness witness (a test that stops the feed) rides the
 pre-release harness run.
 
-The author's 2026-09-16 rulings folded into this release and
+The 2026-09-16 rulings folded into this release and
 shipped: the baked-gcode pauses as read-only rows (index pause pass,
 cache v5, manual gating, passed rows), the pause-list rework (five-row
 cap, whats-new-style arrows, the stable in-place ListModel, clock
@@ -1470,12 +1470,12 @@ deferrable and sit in 4.4.0.
 The render-architecture experiment closed inside this release. The
 reviewer's MoonrakerFollowPass — a plugin-owned pass substituting
 Cura's SimulationPass with de-indexed geometry — was built, put
-behind a settings debug toggle, and removed outright by the author's
+behind a settings debug toggle, and removed outright under a
 ruling after it proved never to attach in live Cura: its compositor
-assumption does not match Cura 5.13's SimulationView plugin, and the
-author's soak of the native path showed no leak signature. Live
-following rides Cura's native SimulationPass (the path the author
-profiled: current-RSS oscillates in a bounded band and ends below
+assumption does not match Cura 5.13's SimulationView plugin, and a
+soak of the native path showed no leak signature. Live
+following rides Cura's native SimulationPass (the path profiled in
+that soak: current-RSS oscillates in a bounded band and ends below
 its start; both former smoking-gun allocations release in-run), the
 4.2.0 native nozzle lifecycle repair was restored with the removal
 (the vanished-toolhead regression), and a refused settings save is
@@ -1651,8 +1651,8 @@ the decisions ledger.
   `value_property` move, so a moved declaration cannot vanish from
   the matrix.
 - **QML component extraction.** EVERY collapsible section becomes
-  its own property-driven QML component (the author's ruling,
-  2026-09-15: each section within a pane is its own file, not a
+  its own property-driven QML component (the 2026-09-15 ruling:
+  each section within a pane is its own file, not a
   huge block in the monitor QML) — the controls pane's twelve
   sections, the Information/Printer-status panes' nine, the console
   pane, the camera pane, the file table, the filter controls and
@@ -1677,7 +1677,7 @@ the decisions ledger.
   pass runs AFTER `qmlformat` (the pre-commit gate formats staged
   QML); the qmldir entry and the two banned filenames are on the
   checklist.
-- **Harness evidence visibility (bumped from 4.2.0, the author's
+- **Harness evidence visibility (bumped from 4.2.0, the
   2026-09-15 ruling).** The suite's inspections scroll their target
   into view before asserting, and the evidence captures show what
   the step actually saw — a recording that proves an inspection
@@ -1718,32 +1718,32 @@ the decisions ledger.
   target is not an acceptance criterion; the test is that a feature
   change stays within its component.
 
-## 4.4.0 — Configurable sections (settled 2026-09-18)
+## 4.4.0 — Configurable sections — SHIPPED (2026-09-18)
 
-A candidate from the author (2026-09-15): show/hide and re-order the
+A candidate request (2026-09-15): show/hide and re-order the
 Monitor's sections the way the file manager's columns work. The
 machinery it builds on shipped in 4.3.0: the 23 pinned section ids
 (the exact-set pin — any rename, re-order or visibility rule must
 respect it), the collapse map as the persistence precedent, the file
 manager's column UI as the interaction precedent, and the UI-state
 store's merge-write path as the persistence home. Planned FIRST (the
-author's 2026-09-16 ruling): the configurable sections land ahead of
+2026-09-16 ruling): the configurable sections land ahead of
 the 5.0.0 physical-head pack.
 
-Scope settled in the 2026-09-16/17 Phase 0 walk (author rulings):
+Scope settled in the 2026-09-16/17 Phase 0 walk (the rulings):
 
 - Per-pane configuration: each pane title carries the column-manager
   icon; its popup shows/hides and drag-re-orders that pane's
   sections, the drag riding a visible handle on the left of each
   row. One reusable row+popup component serves every pane's popup
   and is retrofitted as the file-manager column popup — the popup's
-  rows only, never the live columns (the author's 2026-09-17
+  rows only, never the live columns (the 2026-09-17
   ruling).
 - Pane-level visibility stays out: collapse already hides whole
   panes, and the settings pane is too far away to host the config.
 - No safety rails on hiding: the user's choice applies whenever they
   make it — every section hideable, the load-bearing trio included
-  (the author's 2026-09-17 ruling over the panel's exemption
+  (the 2026-09-17 ruling over the panel's exemption
   recommendation). One hard exemption: the emergency stop is never
   hideable (structural — it lives outside every pane).
 - Persistence: the strict explicit shape — per pane, the full id
@@ -1755,16 +1755,16 @@ Scope settled in the 2026-09-16/17 Phase 0 walk (author rulings):
   two temperatures per the mini widget's series (the same rule the
   pane uses expanded); Status = print + layer progress as a
   dual-stacked bar; Controls = position • Z offset • flow rate on
-  one rotated line (the author's 2026-09-17 rulings).
+  one rotated line (the 2026-09-17 rulings).
 - The toolhead move queue stops coalescing: every command executes
   as its own step — no adjacent same-speed merging, no
   equal-and-opposite cancelling (the retract crash: two -100 taps
-  merged into an out-of-range -200); no opt-in toggle (the author's
+  merged into an out-of-range -200); no opt-in toggle (the
   2026-09-17 rulings).
 - The file manager gains a Last-print-duration column: Moonraker's
   recorded actual duration of the file's last finished print (not
   the slicer's estimate), emdash when never printed, visible by
-  default for everyone (the author's 2026-09-17 rulings).
+  default for everyone (the 2026-09-17 rulings).
 - The remote planning round's items (the console's expanded
   lifecycle, the test-suite ResourceWarnings hoover, the duplicate
   temperature entry, the card's temp-pair arrow, the ETA/label
@@ -1776,33 +1776,61 @@ target order), engine-verified in the dev container; the factory path
 is priced out by the per-instance wiring and the host-never-names-ids
 boundary.
 
-The backlog for this release (verified against the 4.3.0 tree):
+The backlog for this release (verified against the 4.3.0 tree; the
+2026-09-18 debt-pack audit reconciles each entry against the tree):
+
+- The clickable monitor empty state (2026-09-18 idea): Cura's own
+  "In order to monitor your print from Cura, please connect the
+  printer." line cannot be reworded or clicked from a plugin — the
+  realistic slice is OUR disconnected view showing a clickable
+  "Open printer settings" line (the middle case); overlaying Cura's
+  empty-state item is the fragile tail, version-gated.
 
 - The resume button's grey-out: both surfaces already grey out; the
   real gap is the two-clock projection/timing mismatch (the strip's
-  stale imperative enablement on host re-parent).
+  stale imperative enablement on host re-parent). OPEN — the strip's
+  enable reads the preview coordinator's verdict while the monitor's
+  resume row reads the model's; the unification rides the
+  coordinator's refresh extraction.
 - The Monitor's first-paint lazy loading, decoupled from the reorder
   mechanism (a Loader body drops the pinned margins — its own item).
+  DEFERRED (its own item, out of the debt pack).
 - The pause-row interaction scenario and the baked-pause harness
   fixture (the scenario_map EXCLUSIONS entry defers it here).
+  DEFERRED to the harness gate phase.
 - The can_resume one-sided gate: a stale pause flag enables a
   toolhead-moving RESUME and locks out new prints — add the missing
-  state check (the author's 2026-09-17 ruling).
+  state check (the 2026-09-17 ruling). DONE pre-snapshot:
+  the two-sided gate denies terminal/standby states with a stale
+  pause bit, the "printing"-lag carve-out preserved and pinned.
 - The multi-start pin backfill: drive the rebind path
   (configure→start→configure→start) and assert the handler set is
-  replaced, not appended.
-- The test-suite ResourceWarnings hoover (the author's 2026-09-17 CI
+  replaced, not appended. DONE pre-snapshot: test_client_feed's
+  rebind pin asserts one klippyReady broadcast re-subscribes exactly
+  once.
+- The test-suite ResourceWarnings hoover (the 2026-09-17 CI
   note): unclosed json.load handles and kin, context-managed.
+  DONE pre-snapshot (DECISIONS' implement list), re-verified by the
+  coverage wave's suites.
 - The console's expanded lifecycle (the reviewer's 2026-09-17):
   reset the expanded state on stage exit — consoleSyncLines() keeps
-  updating a hidden document after leaving Monitor.
+  updating a hidden document after leaving Monitor. DONE
+  pre-snapshot: leaveMonitorStage collapses the console, re-entry
+  seeds from the persisted map.
 - The 4.3.0 reviewer debt: drain the relay's unread bytes before
   closing downstream (finite/snapshot camera responses), a
   regression test for the backpressure wake-up, and the diagnostics
-  double-start guard plus trace sub-option clearing.
+  double-start guard plus trace sub-option clearing. DONE in the
+  2026-09-18 debt pack: the bridge drains the finished reply's tail
+  before the close; the drain-crossing regression test exists; the
+  probe's double-start guard and trace sub-option clearing land with
+  pins.
 - The pane-sizes docs correction: remove the promise from README,
-  CHANGELOG, WhatsNew and the UiStateStore docstring (the author
-  never ruled resizable panes; console resize stays).
+  CHANGELOG, WhatsNew and the UiStateStore docstring (no ruling ever
+  covered resizable panes; console resize stays). DONE
+  pre-4.4.0: the UiStateStore docstring records the correction, and
+  README's remaining "resize" wording is the file-manager columns
+  and the console divider — both still true.
 
 The 2026-09-16 backlog items that shipped inside 4.3.0 (dropped from
 this release after verification): the duplicate temperature label,
@@ -1812,18 +1840,62 @@ chevrons, and the Windows multi-start disconnect.
 
 ## 4.5.0 — Persistence refactor (the 2026-09-17 re-sequencing)
 
-The author's 2026-09-17 ruling: the physical head moves to 5.0.0 and
+Backlog (2026-09-19, the notes ride here until a 4.6.0 branch
+exists): the camera bridge frame-skip and the 4.6.0 transcoding
+bridge are WITHDRAWN (2026-09-19) — the plugin-owned MJPEG renderer
+supersedes both: its latest-frame-wins pacing and bounded parsing
+replace the 2 MB-cap workaround, and the live decode cost measured
+12.6 ms average, so a transcoding relay is not needed.
+Also for 4.5.0: a way to stop/pause the live camera stream from
+the pane (the stream keeps consuming the remote while Monitor
+sits open; a pause control would stop the upstream fetch without
+losing the selection).
+The exclude-object list needs a design pass — bound its
+height with a scrollable area instead of expanding forever, highlight
+the active/current object in the layout, and keep excluded objects
+visible but flagged (red) with the exclude button hidden rather than
+removing the row. Rendering excluded objects differently in the
+Preview view is wanted but may not be possible. Any exclude action
+wants a guard against misclicks (a click-and-hold candidate). The
+exclude functionality itself is untested live and needs a pass before
+design work.
+
+Testing posture (2026-09-18, the ruling): no self-hosted
+Windows runners — the Windows live-test pass stays manual
+for risky startup changes, and 4.5.0 closes out that release class
+on the roadmap (the session/socket/persistence machinery is done).
+A plain windows-latest CI job for the pure suites remains a
+display-free option if the Windows Python defects ever bite again.
+
+Live state (2026-09-18): the functional build is confirmed and
+pinned at the tag v4.5.0-snapshot (the revert point for
+the remaining work); the coverage wave lifted plugins/ to 99% line
+coverage with the 95% per-project bar in the gates; the debt pack's
+open items (the refresh extraction and the resume grey-out
+unification) and the 5.7+ compatibility pack sit before the ship
+checklist (docs, version bump, make all, PR — the final build gets
+a live test).
+
+The 2026-09-17 ruling: the physical head moves to 5.0.0 and
 4.5.0 becomes the persistence refactor. The plugin's persistence was
 never designed — it grew split between cura.cfg (Uranium Preferences
 wrapping one JSON blob per printer under printer_configs_v1) and the
 state file, with flush/debounce machinery holding the two together.
-The reviewer's architecture, adopted as the direction (the author ran
-it by the reviewer and ruled it here, not earlier):
+The reviewer's architecture, adopted as the direction (run by the
+reviewer and ruled here, not earlier):
 
-- Two plugin-owned files, not one: moonrakerprintfollower_settings.json
-  (durable user configuration) and moonrakerprintfollower_state.json
-  (UI/runtime state worth restoring), keyed by Cura's machine id; the
-  cache stays in Cura's cache area as today.
+- One plugin-owned persistence folder, not two files:
+  MoonrakerPrintFollower/ holds settings.json (durable user
+  configuration — a global section plus a machines map keyed by
+  machine id), state.json (the pane chrome) and machines/<id>.json
+  per printer (the id quoted, Cura's own convention) — the
+  2026-09-18 rulings: the machine id is the natural shard key and
+  one instance drives one printer, so each machine's file has a
+  single writer by construction; the hot path needs no cross-process
+  lock on any platform, and the one folder keeps everything
+  self-contained (one entry to browse, one folder to remove). The
+  flock (Cura's SaveFile) covers the settings document and the
+  global chrome. The cache stays in Cura's cache area as today.
 - The split is write behaviour, not taste: settings change rarely and
   explicitly (connection, following, upload, camera, diagnostics);
   state changes incidentally while operating the UI and may be
@@ -1838,7 +1910,7 @@ it by the reviewer and ruled it here, not earlier):
   or JSON layouts (settings.set_printer_config(...),
   state.set_console_state(...)); the StateStore's merge-write
   semantics are the starting point.
-- Migration lands here (the author's ruling): the cura.cfg blob, the
+- Migration lands here (the ruling): the cura.cfg blob, the
   legacy flat-map and the preference keys migrate into the new files
   in 4.5.0. The teardown of the old machinery (printer_configs_v1,
   LEGACY_MAP, the flush/debounce apparatus, most of
@@ -1865,16 +1937,149 @@ the floor then drops from 5.11+ to 5.7+ once these land:
   p6 pattern), and the group then becomes a release-gate candidate.
 - The floor declaration: README/CHANGELOG/WhatsNew move from 5.11+ to
   5.7+, after the 5.11/5.12 full suites re-verify green.
-- Out of scope, recorded: 5.6's float→int modal (one coercion fix,
-  deliberately not pursued — the floor is 5.7+) and the 5.0-5.5
-  display wall (a real-GL virtual display, harness-side).
+- Out of scope, ruled (2026-09-18): 5.6 drops — the float→int modal
+  is NAMED (PreviewMotion's sub-path float → CuraAdapter.setPath →
+  5.6's int-typed SimulationViewProxy.currentPath; 5.13 declares the
+  identical property float, so 5.7+ never errors), and the only
+  "fix" is rounding the hand-off, which would cost every 5.7-5.13
+  user the sub-path smoothing to silence a log line on the oldest
+  version — pollution, not support. The 5.0-5.5 display wall stays
+  out (a real-GL virtual display, harness-side).
+- A dark-theme capture leg joins the UI tests: the panel's black-
+  glyph class slipped past the light capture theme, and Cura's dark
+  mode was found by live-testing the release — the harness's
+  capture/census runs must cover the dark theme so a wrong-coloured
+  glyph fails a gate instead of a live session.
+
+The 2026-09-18 Phase 0 walk (the rulings):
+
+- The refactor is storage-only: nothing user-visible changes unless
+  the review rounds find an improvement worth making. The plugin's
+  own files replace the cura.cfg crowding, and the format is the
+  plugin's to pick — pretty-printed, maintainable, pleasant to read
+  in an editor. The proof is anticlimactic by design: the URI, the
+  API key and the collapsed sections all survive the upgrade, and
+  the new pretty files are the only visible evidence.
+- The migration is one-shot: on the first Cura load after installing
+  4.5.0, every machine record migrates at once, whether or not that
+  printer is selected in the session. It reaches back to the 4.3.0
+  format only (the printer_configs_v1 blob plus the state file); the
+  pre-rename chain stays in place until 5.0.0's teardown so an older
+  upgrader still lands. After it runs, no trace of the old config
+  remains in cura.cfg and the new files carry a configVersion: 2
+  marker.
+- The migration is best-effort, not bulletproof: a backup of the old
+  config is taken first (the user can pick it apart or roll back to
+  an older plugin version), and a migration that looks wrong flags
+  the failure to the user and starts from a clean, blank config. The
+  backup is a whole-file copy of cura.cfg written to
+  cura.cfg.<timestamp> (the timestamp filesystem-safe — digits and
+  dashes only), and the clean proceeds only when the backup
+  verifiably exists on disk after the write.
+- Multi-printer support is test-proven, not live-tested (only one
+  printer is available): the device-switching scenarios — many machine
+  records migrating at once, a mid-session switch, a restart with a
+  different active printer, machine-rename drift, and no
+  cross-printer leakage of transcripts or settings — must be covered
+  by automated tests before the release is called done.
+- The dead pre-rename shim is deleted in 4.5.0 (the
+  2026-09-18 ruling): it never ran on any supported Cura — the
+  getValue arity trap — so no upgrader is affected; the rest of the
+  legacy chain stays until 5.0.0's teardown.
+- On machine removal, the record's connection credentials and
+  host-identifying fields (url, api_key, camera_url, frontend_url,
+  upload_path) are wiped, the machine's live session is stopped, and
+  the rest kept (the 2026-09-18 rulings): Uranium's
+  ContainerRegistry emits containerRemoved with the removed
+  container, and removeMachine removes the machine stack last, so
+  the hook filters on the machine id. The surviving record lets a
+  same-named re-add re-associate without inheriting the old host's
+  credentials; the driver gains a remove_machine verb to prove it.
+- No sqlite in 4.5.0 (the 2026-09-18 ruling after the
+  panel's measured verdict): JSON for both files, and an flock
+  around the read-modify-write closes the cross-process gap. The
+  revisit triggers — unbounded retained history, cross-machine
+  queries — are recorded, not built.
+- The build order: the persistence refactor, then the theme step
+  (the Position row and the dark-theme capture leg), then the
+  snapshot for the live migration test, then the 5.7+ pack.
+
+The 2026-09-18 scope additions:
+
+- The Status pane's Position X Y Z row still renders the combined
+  string in the plain text colour while the Toolhead's row uses the
+  axis colours (X red, Y green, Z blue). JobSection's row joins the
+  ruled pattern — one cell per axis in its colour — and loses its
+  WordWrap in the same change.
+- The status column's per-second polish-loop tick: the 4.4.0 round
+  fixed the next-pause trigger (the permanent-slot ruling), but the
+  5.13 log still warns every poll at MoonrakerMonitor.qml's
+  statusContent stack. The Position value is the stack's only live
+  value that wraps and changes length every poll, beside the
+  no-reflow rule its neighbouring block carries — the prime suspect.
+  The fix rides the Position-row change; the live log is
+  the acceptance proof.
+- The emergency-stop label's idle copy is hardcoded black
+  (MoonrakerMonitorDashboard.qml) — unreadable on dark mode's grey
+  button ground. The remainder copy follows the theme's text colour
+  so the progressive white-over-red sweep mechanism is untouched.
+- The debt pack (the 2026-09-18 pick — every sweep
+  candidate bar the index rework and the big structural items): the
+  4.3.0 reviewer debt trio (the relay drain, the backpressure
+  wake-up regression test, the diagnostics double-start guard plus
+  trace sub-option clearing), the typed-coercion helper with its
+  all-None publish test, the PrintCoordinator.refresh() extraction
+  (TECH_DEBT's own 4.5.0 nomination), the resume grey-out two-clock
+  unification, and the console's expanded-lifecycle reset on stage
+  exit.
+- The review rounds gain a UX persona (the call): the
+  settings pages may be redesigned while the settings machinery is
+  open — the persona's verdict stays advisory; the ruling is what counts.
+
+The panel walk's settled mechanics (2026-09-18, the four reports in
+review/round-2-*.md):
+
+- The state side shards per machine from the start (the
+  ruling): state/global.json carries the ten global keys (the nine
+  chrome keys plus toolhead); state/machines/<id>.json carries the
+  per-machine console state. Chart config and show_probe_points stay
+  settings-side, per-machine; the console transcript/history/
+  store-time move state-side.
+- The facade is key-scoped (set_machine(id, patch), set_global,
+  remove_machine), typed, one instance per file per process at the
+  composition root; the field-ownership table is pinned by a union
+  test. The layout is an implementation detail — the settings side
+  can shard later without touching a caller.
+- The migration runs from initializationFinished, never construction
+  (Cura re-reads preferences after plugins load — a construction-time
+  clean is resurrected), with the stack-change path as the
+  deferred-until-identity case; a stale cura/active_machine must
+  still migrate. The control flow: strict source read (absent vs
+  corrupt), the backup written, fsynced and verified by content
+  first, the new files written and verified by re-read, then the
+  clean as the last step — gated on "the source was understood",
+  never "records extracted" (an empty-but-present blob is healthy).
+  The clean is an in-memory return-to-default (setValue), never file
+  surgery, never removePreference. The outcome persists as a
+  tri-state (pending/ok/failed); the v1 import is idempotent (a Cura
+  backup restore can re-introduce the blob).
+- The removal hook filters on the metadata type machine, the id
+  being in the machines map, and registry absence; it is idempotent,
+  callLater-deferred, wipes the credentials and host-identifying
+  fields, stops the live session, evicts the device cache and
+  records removed_at — Cura itself can remove machines without the
+  user (the quality-changes name collision), and the tests cover it.
+- The migration failure surfaces twice (the UX ruling): a
+  once-per-failure Cura toast after the What's-New sequence, and a
+  persistent dismissible banner above the settings tab row with the
+  recipe demoted to a permanent Diagnostics row on dismissal.
 
 ## 5.0.0 — Physical head in the Preview (moved from 4.3.0 to 4.5.0, then to 5.0.0 by the 2026-09-17 re-sequencing)
 
 What a web dashboard cannot do: show the real machine inside the slice.
 The 4.3.0 presentation refactor lands first (the 2026-09-14
 re-sequencing), and 4.4.0's configurable sections plus 4.5.0's
-persistence refactor precede the head work (the author's 2026-09-16
+persistence refactor precede the head work (the 2026-09-16
 swap ruling, re-sequenced 2026-09-17): the marker's interactive
 controls depend on the common action policy and session ownership
 from 4.2.0, and its lifecycle boundaries are proven by the 4.0.2
@@ -1886,7 +2091,7 @@ maintenance release. If feature value demands, the marker's
 display-only slice may proceed after 4.3.0 while the presentation
 refactor finishes.
 
-- The nozzle repair's remaining private-state writes (the author's
+- The nozzle repair's remaining private-state writes (the
   2026-09-16 ruling, backlog): the 4.2.0 NativeNozzleLifecycle
   synchronises Cura's layer-switch suppression through two
   SimulationPass private fields. 5.0.0 replaces them with the
@@ -1966,7 +2171,7 @@ weaker than Mainsail's for anyone with a library.
 
 **Live-test fixes (2026-09-11, the snapshot round):**
 
-- The author's live report: dragging the preview's layer-height slider
+- A live report: dragging the preview's layer-height slider
   no longer detaches the follower (the path progress bar still does),
   and the whitespace gap between the bed-mesh and pause buttons turned
   out to be the current-layer info label, which never fills while
@@ -2101,19 +2306,19 @@ contrast; pairwise hue separation is the residual debt).
 ## Explicitly out of scope
 
 - **Gcode deformation (the vertex-style bed-mesh warp)** — permanently
-  dropped (the author's ruling, 2026-09-15): the feasibility was
+  dropped (the 2026-09-15 ruling): the feasibility was
   never proven — the plugin has no vertex-level reach into Cura's
   layer geometry, and the 4.2.0 per-layer prototype did not produce
   the look — and the value does not repay the machinery.
 - **The off-path distance readout** — dropped at planning (the
-  author's ruling, 2026-09-15): the signal is mostly normal motion
+  2026-09-15 ruling): the signal is mostly normal motion
   (travels, Z-hops and parks exceed the window by design), the
   anomaly cases are not visible through the commanded position,
   and the surviving value did not repay a five-owner plumbing
   change. A deviation callout beside the 5.0.0 physical-head
   marker is the one shape that might earn it back — with an actual
-  head rendered, the number points at something on screen (the
-  author, 2026-09-15).
+  head rendered, the number points at something on screen (noted
+  2026-09-15).
 - **Multi-instance Monitor** — Cura's paradigm is one active printer at a
   time; per-printer Monitor instances do not fit.
 - **Printer.cfg editing** — Cura machines are configured in Cura; a config

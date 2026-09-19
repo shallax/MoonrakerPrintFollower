@@ -91,7 +91,7 @@ class PrintStateTests(unittest.TestCase):
         self.assertEqual(observe(0.46, 4).index, 1)
 
     def test_first_z_increment_seeds_a_provisional_layer_immediately(self):
-        # The author attaches mid-print and cannot wait for a full
+        # An attach mid-print cannot wait for a full
         # layer (some layers are huge): the FIRST Z increment seeds a
         # layer immediately; a z-hop misread self-heals on its descent.
         config = PrinterConfig()

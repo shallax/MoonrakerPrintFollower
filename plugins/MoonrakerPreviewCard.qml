@@ -35,16 +35,26 @@ Item {
     // or inactive block reads absent everywhere.
     property bool stripValid: false
     property bool stripPaused: false
+    // The pause/resume grey-out's single authority (the debt pack's
+    // two-clock unification): the monitor model's verdicts, pushed by
+    // the presentation — the strip's enable and reasons read these,
+    // never the preview block's own copies.
+    property bool stripCanPause: false
+    property bool stripCanResume: false
+    property string stripPauseReason: ""
+    property string stripResumeReason: ""
+    property string stripPauseReasonDetail: ""
+    property string stripResumeReasonDetail: ""
     property string bedMeshRangeText: ""
     property string bedMeshMinimumText: ""
     property string bedMeshMaximumText: ""
     property real bedMeshMinimum: 0
     property real bedMeshMaximum: 0
-    // The heightmap range filter (the author's request): the window
+    // The heightmap range filter (a request): the window
     // the Monitor model owns; both surfaces show the same handles.
     property real bedMeshThresholdLow: 0
     property real bedMeshThresholdHigh: 0
-    // The "scale z-max" exaggeration (the author's request): 0
+    // The "scale z-max" exaggeration (a request): 0
     // flattens the Preview surface, 1000 is the ceiling.
     property real bedMeshExaggeration: 20
     property string selectedLayerEtaText: ""
@@ -140,7 +150,7 @@ Item {
         var incoming = base.pauseAtLayerItems || [];
         var keep = {};
         for (var i = 0; i < incoming.length; i++) {
-            keep[incoming[i].layer] = true;
+            keep[Number(incoming[i].layer || 0)] = true;
         }
         for (var r = pauseListModel.count - 1; r >= 0; r--) {
             if (!keep[pauseListModel.get(r).layerNo]) {
@@ -149,15 +159,19 @@ Item {
         }
         for (var k = 0; k < incoming.length; k++) {
             var row = incoming[k];
+            // EVERY role is normalised to a concrete value: a role whose
+            // first value is undefined is dropped from the ListModel, and
+            // the delegate's bare role lookup then throws ReferenceError
+            // (the capture leg's live catch for pauseWord).
             var payload = {
-                "layerNo": row.layer,
-                "eta": row.eta,
-                "pauseWord": row.state,
+                "layerNo": Number(row.layer || 0),
+                "eta": String(row.eta || ""),
+                "pauseWord": String(row.state || "scheduled"),
                 "passed": row.passed === true
             };
             var at = -1;
             for (var f = 0; f < pauseListModel.count; f++) {
-                if (pauseListModel.get(f).layerNo === row.layer) {
+                if (pauseListModel.get(f).layerNo === payload.layerNo) {
                     at = f;
                     break;
                 }
@@ -167,13 +181,13 @@ Item {
                 // at its sorted position among the existing rows.
                 var pos = pauseListModel.count;
                 for (var s = 0; s < pauseListModel.count; s++) {
-                    if (pauseListModel.get(s).layerNo > row.layer) {
+                    if (pauseListModel.get(s).layerNo > payload.layerNo) {
                         pos = s;
                         break;
                     }
                 }
                 pauseListModel.insert(pos, payload);
-            } else if (pauseListModel.get(at).eta !== row.eta || pauseListModel.get(at).pauseWord !== row.state || pauseListModel.get(at).passed !== payload.passed) {
+            } else if (pauseListModel.get(at).eta !== payload.eta || pauseListModel.get(at).pauseWord !== payload.pauseWord || pauseListModel.get(at).passed !== payload.passed) {
                 pauseListModel.set(at, payload);
             }
         }
@@ -196,10 +210,10 @@ Item {
         if (b.inactive === true)
             return "Not following";
         if (b.state === "paused")
-            return b.canResume ? base.previewEtaText : (b.resumeReason.length > 0 ? b.resumeReason : "—");
+            return base.stripCanResume ? base.previewEtaText : (base.stripResumeReason.length > 0 ? base.stripResumeReason : "—");
         if (b.state === "printing")
-            return b.canPause ? base.previewEtaText : (b.pauseReason.length > 0 ? b.pauseReason : "—");
-        return b.pauseReason.length > 0 ? b.pauseReason : "—";
+            return base.stripCanPause ? base.previewEtaText : (base.stripPauseReason.length > 0 ? base.stripPauseReason : "—");
+        return base.stripPauseReason.length > 0 ? base.stripPauseReason : "—";
     }
 
     function stripPauseTooltip() {
@@ -211,13 +225,13 @@ Item {
         if (b.inactive === true)
             return "The monitor is not following this printer — the strip stays quiet.";
         if (stripPaused) {
-            if (b.canResume)
+            if (base.stripCanResume)
                 return "Resume the paused print (Klipper RESUME).";
-            return b.resumeReasonDetail.length > 0 ? b.resumeReasonDetail : b.resumeReason;
+            return base.stripResumeReasonDetail.length > 0 ? base.stripResumeReasonDetail : base.stripResumeReason;
         }
-        if (b.canPause)
+        if (base.stripCanPause)
             return "Pause the current print immediately (Klipper PAUSE).";
-        return b.pauseReasonDetail.length > 0 ? b.pauseReasonDetail : b.pauseReason;
+        return base.stripPauseReasonDetail.length > 0 ? base.stripPauseReasonDetail : base.stripPauseReason;
     }
 
     function updateStrip() {
@@ -233,7 +247,7 @@ Item {
         var parts = slotText.indexOf(" · ") >= 0 ? slotText.split(" · ") : [slotText, ""];
         stripSlot.text = stripValid ? parts[0] : "—";
         stripFinish.text = stripValid ? parts[1] : "";
-        stripPauseButton.enabled = stripValid && (stripPaused ? base.previewBlock.canResume : base.previewBlock.canPause);
+        stripPauseButton.enabled = stripValid && (stripPaused ? base.stripCanResume : base.stripCanPause);
         stripPauseButton.text = stripPaused ? "Resume print" : "Pause print";
         stripPauseButton.tooltip = stripPauseTooltip();
     }
@@ -241,6 +255,16 @@ Item {
     onPreviewBlockChanged: updateStrip()
     onPreviewBlockStaleChanged: updateStrip()
     onPreviewEtaTextChanged: updateStrip()
+    // The cells read the pause/resume verdicts too (the slot's refusal
+    // word, the button's enablement and its tooltip): a verdict-only
+    // change — the block and the ETA held constant — must refresh them,
+    // or the strip keeps the outgoing verdict's copy.
+    onStripCanPauseChanged: updateStrip()
+    onStripCanResumeChanged: updateStrip()
+    onStripPauseReasonChanged: updateStrip()
+    onStripResumeReasonChanged: updateStrip()
+    onStripPauseReasonDetailChanged: updateStrip()
+    onStripResumeReasonDetailChanged: updateStrip()
 
     Component.onCompleted: {
         updateCardGate();
@@ -357,9 +381,15 @@ Item {
                                 clip: true
                             }
                         }
-                        UM.TooltipArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.NoButton
+                        HoverHandler {
+                            id: tooltipHover1
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover1.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "The current hotend temperature and its setpoint."
                         }
                     }
@@ -388,9 +418,15 @@ Item {
                                 clip: true
                             }
                         }
-                        UM.TooltipArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.NoButton
+                        HoverHandler {
+                            id: tooltipHover2
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover2.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "The current heated-bed temperature and its setpoint."
                         }
                     }
@@ -425,9 +461,15 @@ Item {
                                 clip: true
                             }
                         }
-                        UM.TooltipArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.NoButton
+                        HoverHandler {
+                            id: tooltipHover3
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover3.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "The printer's current layer."
                         }
                     }
@@ -495,9 +537,15 @@ Item {
                                 clip: true
                             }
                         }
-                        UM.TooltipArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.NoButton
+                        HoverHandler {
+                            id: tooltipHover4
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover4.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "The print's remaining time and its expected finish time."
                         }
                     }
@@ -526,9 +574,15 @@ Item {
                                 clip: true
                             }
                         }
-                        UM.TooltipArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.NoButton
+                        HoverHandler {
+                            id: tooltipHover5
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover5.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "The print's expected finish clock time."
                         }
                     }
@@ -561,9 +615,15 @@ Item {
                                 clip: true
                             }
                         }
-                        UM.TooltipArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.NoButton
+                        HoverHandler {
+                            id: tooltipHover6
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover6.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: "The printer's current Z height."
                         }
                     }
@@ -578,7 +638,7 @@ Item {
 
                 PreviewSecondaryButton {
                     id: followButton
-                    // The attach/detach control (the author's
+                    // The attach/detach control (the
                     // 2026-09-17 ruling): without a toolpath the
                     // follower has nothing to drive, so the button
                     // hides entirely and the load button takes the
@@ -587,9 +647,16 @@ Item {
                     width: Math.round((buttons.width - base.buttonSpacing) * 0.32)
                     height: UM.Theme.getSize("action_button").height
                     text: base.followingPaused ? "Attach" : "Detach"
-                    tooltip: base.followingPaused ? "Attach Cura Preview to the live Moonraker print and resume automatic synchronisation." : "Detach Cura Preview from automatic synchronisation while Moonraker status polling continues. This does not pause the printer."
                     enabled: base.followingEnabled || base.followingPaused
                     onClicked: base.pauseClicked()
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: base.followingPaused ? "Attach Cura Preview to the live Moonraker print and resume automatic synchronisation." : "Detach Cura Preview from automatic synchronisation while Moonraker status polling continues. This does not pause the printer."
+                    }
                 }
 
                 PreviewSecondaryButton {
@@ -597,10 +664,17 @@ Item {
                     width: base.hasToolpath ? buttons.width - base.buttonSpacing - followButton.width : buttons.width
                     height: UM.Theme.getSize("action_button").height
                     text: "Load current print"
-                    tooltip: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
                     // Non-clickable until the load reaches a terminal state.
                     enabled: !base.loadBusy
                     onClicked: base.loadClicked()
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Download the G-code currently printing in Moonraker and replace everything currently loaded in Cura."
+                    }
                 }
             }
 
@@ -649,8 +723,15 @@ Item {
                 height: UM.Theme.getSize("action_button").height
                 enabled: (base.pauseAtLayerScheduled || base.pauseAtLayerCanToggle) && base.followingEnabled && base.pauseAtLayerActive
                 text: base.pauseAtLayerCandidate <= 0 ? "⏸  Pause at end of selected layer" : (base.pauseAtLayerScheduled ? "Remove pause after layer " + base.pauseAtLayerCandidate : "⏸  Enable pause at end of layer " + base.pauseAtLayerCandidate)
-                tooltip: base.pauseAtLayerScheduled ? "Remove the scheduled end-of-layer PAUSE." : (base.pauseAtLayerCanToggle ? "Call the Klipper PAUSE macro once this layer has finished and Moonraker advances to the following layer." : "Scroll Cura Preview to the current or a future non-final layer to schedule an end-of-layer PAUSE.")
                 onClicked: base.pauseAtLayerRequested(base.pauseAtLayerCandidate)
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: base.pauseAtLayerScheduled ? "Remove the scheduled end-of-layer PAUSE." : (base.pauseAtLayerCanToggle ? "Call the Klipper PAUSE macro once this layer has finished and Moonraker advances to the following layer." : "Scroll Cura Preview to the current or a future non-final layer to schedule an end-of-layer PAUSE.")
+                }
             }
 
             UM.Label {
@@ -688,7 +769,7 @@ Item {
 
                 Item {
                     width: parent.width
-                    // Five visible entries at most (the author's
+                    // Five visible entries at most (the
                     // ruling): a long schedule scrolls instead of
                     // growing the card past the viewport.
                     height: Math.min(base.pauseAtLayerItems.length, 5) * (UM.Theme.getSize("action_button").height + scheduledPauseList.spacing) - scheduledPauseList.spacing
@@ -786,7 +867,7 @@ Item {
                     // blue chevrons centred over the list — an up
                     // arrow near the top while more content is above,
                     // a down arrow near the bottom while more content
-                    // is below (the author's ruling). They are
+                    // is below (the ruling). They are
                     // SIBLINGS of the ListView, overlaying it.
                     UM.Label {
                         text: "↑"
@@ -816,8 +897,15 @@ Item {
                     width: parent.width
                     height: UM.Theme.getSize("action_button").height
                     text: "Clear all pauses"
-                    tooltip: "Remove every scheduled end-of-layer PAUSE for the current print."
                     onClicked: base.clearPauseAtLayersRequested()
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Remove every scheduled end-of-layer PAUSE for the current print."
+                    }
                 }
             }
 
@@ -855,7 +943,7 @@ Item {
                         from: 0
                         to: 1000
                         stepSize: 1
-                        // The locked slider behaviours (the author's
+                        // The locked slider behaviours (the
                         // ruling): a press within the handle's extent
                         // of the current value is a no-op, and a click
                         // focuses the slider so the arrow keys nudge.
@@ -956,8 +1044,15 @@ Item {
                 height: UM.Theme.getSize("action_button").height
                 enabled: base.bedMeshAvailable
                 text: base.bedMeshVisible ? "Hide bed mesh" : "Show bed mesh"
-                tooltip: "Show the active Klipper bed mesh as a coloured 3D surface on Cura's build plate" + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
                 onClicked: base.bedMeshVisibilityRequested(!base.bedMeshVisible)
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Show the active Klipper bed mesh as a coloured 3D surface on Cura's build plate" + (base.bedMeshRangeText.length > 0 ? " (" + base.bedMeshRangeText + ")." : ".")
+                }
             }
         }
     }

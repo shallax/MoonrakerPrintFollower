@@ -42,9 +42,9 @@ class PrintStartOwner:
         """The awaited print transition (round-2 D4: success is NEVER
         the POST reply). A start that never transitions — OR that
         matches the filename but never makes PROGRESS (Klipper can
-        accept the start and freeze before the first motion — the
-        author's live report: the UI stayed "printing" on a failed
-        start) — explains itself and drops the assumed-active state."""
+        accept the start and freeze before the first motion — a live
+        report: the UI stayed "printing" on a failed start) —
+        explains itself and drops the assumed-active state."""
         attempt = self._file_manager.print_attempt
         if attempt is None:
             return

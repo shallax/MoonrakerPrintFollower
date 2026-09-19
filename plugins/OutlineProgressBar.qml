@@ -20,7 +20,7 @@ Item {
         border.color: UM.Theme.getColor("lining")
         border.width: UM.Theme.getSize("default_lining").width
         // Cura's own corner radius for progress bars, not a pill: the
-        // author pointed at Cura's "little rounded ends" as the look.
+        // look pointed at is Cura's "little rounded ends".
         // cornerSide is REQUIRED: without it the component forces
         // radius to 0 and the corners render square.
         radius: UM.Theme.getSize("progressbar_radius").width

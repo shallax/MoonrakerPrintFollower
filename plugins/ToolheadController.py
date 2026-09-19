@@ -68,6 +68,11 @@ class ToolheadController(QObject):
         self._absolute_coordinates = True
         self._mode_latch = None
         self._z_estimate = None
+        # The dispatched-but-unreflected DOWNWARD distance (the
+        # stale-poll safety, the 2026-09-19 review's B): while it is
+        # nonzero, a poll between the pre-command level and the
+        # projection is mid-flight, not truth.
+        self._z_down_pending = 0.0
         self._pause_waiting = False
         self._pause_in_flight = False
         self._draining = False
@@ -121,9 +126,30 @@ class ToolheadController(QObject):
             self._absolute_coordinates = absolute
         if not any(getattr(op, "axis", None) == "z" for op in self._pending):
             # The queue has no Z moves left: the poll's position is
-            # the truth again, and the estimate re-syncs (or clears
-            # when the printer reports nothing).
-            self._z_estimate = self._polled_z()
+            # the truth again — but only once it has actually CAUGHT
+            # UP. An op leaves the queue at dispatch, so a poll that
+            # still reads HIGHER than the projection is mid-flight
+            # while downward distance is unreflected; adopting it
+            # would re-arm the estimate and let repeated stale polls
+            # accept downward distance beyond the real headroom (the
+            # 2026-09-19 review's B). A poll ABOVE the pre-command
+            # level is a genuine upward move (external G-code, a
+            # home) and adopts. No position data clears the estimate,
+            # as before (the no-data clamp fails closed anyway).
+            polled = self._polled_z()
+            if self._z_estimate is None or polled is None:
+                self._z_estimate = polled
+                self._z_down_pending = 0.0
+            elif polled <= self._z_estimate + 1e-9:
+                # The head reached the projection: adopt the truth.
+                self._z_estimate = polled
+                self._z_down_pending = 0.0
+            elif polled > self._z_estimate + self._z_down_pending + 1e-9:
+                # Higher than the level our downward move started
+                # from: the head genuinely moved up.
+                self._z_estimate = polled
+                self._z_down_pending = 0.0
+            # else: mid-flight — the projection stays conservative.
         # The policy projection (4.2.0, A4): jogEnabled stays the
         # published property, now fed by the permissions table's
         # can_jog — the same state mapping as before (the shipped
@@ -135,7 +161,7 @@ class ToolheadController(QObject):
         observation = getattr(self._data, "observation", None)
         jog_verdict = can_jog(observation) if observation is not None \
             else Verdict("disabled", R_UNKNOWN)
-        self._values = {
+        new_values = {
             "jogEnabled": jog_verdict.mode == "allowed",
             "jogDistance": self._jog_distance,
             "extrudeDistance": self._extrude_distance,
@@ -144,7 +170,14 @@ class ToolheadController(QObject):
             "positionMode": position_mode_text(self._absolute_coordinates),
             "jogStatus": self._status,
         }
-        self.changed.emit()
+        # The Z projection, the mode latch and the clamp state update
+        # above regardless; the OUTWARD signal fires only when the
+        # projection visibly changed — an unchanged heartbeat must
+        # not rebuild the whole model (the publish storm's
+        # suppression, the 2026-09-19 performance review).
+        if new_values != self._values:
+            self._values = new_values
+            self.changed.emit()
 
     def set_distance(self, distance):
         # The free-text field is a magnitude; the buttons carry direction,
@@ -328,7 +361,14 @@ class ToolheadController(QObject):
         if getattr(op, "axis", None) == "z":
             base = self._z_estimate if self._z_estimate is not None else self._polled_z()
             if base is not None:
-                self._z_estimate = base + getattr(op, "distance", 0.0)
+                distance = getattr(op, "distance", 0.0)
+                self._z_estimate = base + distance
+                if distance < 0:
+                    # A downward command's reflection is now owed;
+                    # an upward command supersedes any owed one.
+                    self._z_down_pending += abs(distance)
+                else:
+                    self._z_down_pending = 0.0
         if self._pending:
             self._guard_cooldown.stop()
             self._guard_latched = True
@@ -468,6 +508,7 @@ class ToolheadController(QObject):
         self._guard_cooldown.stop()
         self._guard_latched = False
         self._set_guard(False)
+        self._z_down_pending = 0.0
         self._set_status("")
         self.observe()
 
