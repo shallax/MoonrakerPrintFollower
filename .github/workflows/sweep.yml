@@ -1,9 +1,12 @@
-# The 5.7-5.13 UI version sweep: EVERY release unit — the smoke set,
-# every suite group and the first-install leg — on every supported
-# Cura version, as an ON-DEMAND matrix — each version/unit pair is
-# its own job, so the whole sweep lands in the time of its slowest
-# unit instead of the serial local grind (TESTING.md §5's version
-# sweep). Trigger it manually from the Actions tab, or:
+# The 5.7-5.13 UI version sweep: every release unit — one smoke, all
+# fourteen suite groups and the first-install leg (16 units, no
+# primary/secondary smoke split: each version gets the plain smoke
+# once) — on every supported Cura version, as an ON-DEMAND matrix:
+# one job per version/unit pair (7 x 16 = 112 jobs), so the whole
+# sweep lands in the time of its slowest unit instead of the serial
+# local grind (TESTING.md §5's version sweep). The per-unit budget
+# mirrors the canonical release gate. Trigger it manually from the
+# Actions tab, or:
 #   gh workflow run "UI Version Sweep" --ref release/v4.5.0
 name: UI Version Sweep
 
@@ -26,22 +29,22 @@ jobs:
           - "5.12.0"
           - "5.13.0"
         unit:
-          - {name: smoke, mode: suite, group: smoke}
-          - {name: configure, mode: suite, group: configure}
-          - {name: connection, mode: suite, group: connection}
-          - {name: console, mode: suite, group: console}
-          - {name: files, mode: suite, group: files}
-          - {name: motion, mode: suite, group: motion}
-          - {name: preview, mode: suite, group: preview}
-          - {name: printing, mode: suite, group: printing}
-          - {name: probe, mode: suite, group: probe}
-          - {name: settings, mode: suite, group: settings}
-          - {name: status, mode: suite, group: status}
-          - {name: stress, mode: suite, group: stress}
-          - {name: temperatures, mode: suite, group: temperatures}
-          - {name: visual, mode: suite, group: visual}
-          - {name: webcams, mode: suite, group: webcams}
-          - {name: firstinstall, mode: firstinstall, group: ""}
+          - {name: smoke, mode: suite, group: smoke, budget: 20}
+          - {name: configure, mode: suite, group: configure, budget: 15}
+          - {name: connection, mode: suite, group: connection, budget: 15}
+          - {name: console, mode: suite, group: console, budget: 15}
+          - {name: files, mode: suite, group: files, budget: 15}
+          - {name: motion, mode: suite, group: motion, budget: 15}
+          - {name: preview, mode: suite, group: preview, budget: 15}
+          - {name: printing, mode: suite, group: printing, budget: 15}
+          - {name: probe, mode: suite, group: probe, budget: 15}
+          - {name: settings, mode: suite, group: settings, budget: 15}
+          - {name: status, mode: suite, group: status, budget: 15}
+          - {name: stress, mode: suite, group: stress, budget: 15}
+          - {name: temperatures, mode: suite, group: temperatures, budget: 15}
+          - {name: visual, mode: suite, group: visual, budget: 15}
+          - {name: webcams, mode: suite, group: webcams, budget: 15}
+          - {name: firstinstall, mode: firstinstall, group: "", budget: 10}
     env:
       HARNESS_CONTAINER: mpf-cura-sweep-${{ matrix.version }}-${{ matrix.unit.name }}
     steps:
@@ -83,7 +86,7 @@ jobs:
       - name: Run the unit
         run: |
           mkdir -p /tmp/mpf
-          timeout 15m env \
+          timeout "${{ matrix.unit.budget }}m" env \
               CURA_VERSION="${{ matrix.version }}" \
               MODE="${{ matrix.unit.mode }}" SCENARIO_GROUP="${{ matrix.unit.group }}" \
               RUN_DIR_NAME="/tmp/mpf/ui-artifacts/sweep/${{ github.run_id }}/${{ matrix.version }}-${{ matrix.unit.name }}" \

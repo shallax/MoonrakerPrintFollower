@@ -70,15 +70,16 @@ def workflow_units():
 
 def sweep_units():
     """The UI Version Sweep's per-version unit list: name -> {mode,
-    group}. Every release unit must run on every supported Cura
-    version, so this set is the canonical units with the version-smoke
-    named plain `smoke` (one smoke per version, no primary/secondary
-    split)."""
+    group, budget}. Every release unit must run on every supported
+    Cura version, so this set is the canonical units with the
+    version-smoke named plain `smoke` (one smoke per version, no
+    primary/secondary split) — sixteen units per version."""
     units = {}
-    for match in re.finditer(r"- \{name: (\S+), mode: (\S+), group: (\S+)\}",
-                             SWEEP):
-        name, mode, group = match.group(1), match.group(2), match.group(3)
-        units[name] = {"mode": mode, "group": group}
+    for match in re.finditer(
+            r"- \{name: (\S+), mode: (\S+), group: (\S+), budget: (\d+)\}",
+            SWEEP):
+        name, mode, group, budget = match.groups()
+        units[name] = {"mode": mode, "group": group, "budget": int(budget)}
     return units
 
 
@@ -157,15 +158,27 @@ class ReleaseMatrixParityTests(unittest.TestCase):
                          "a release unit is missing from the UI Version Sweep")
         # Every sweep unit's mode/group mapping matches the canonical
         # local gate mapping (the version smoke behaves like the
-        # primary smoke's suite unit; groups carry their bare names).
+        # primary smoke's suite unit; groups carry their bare names),
+        # and its BUDGET matches the canonical release gate's budget
+        # (smoke 20, every group 15, firstinstall 10).
         expected = dict(local_units())
         expected["smoke"] = {"mode": "suite", "group": "smoke"}
+        canonical_budgets = {
+            name: int(declared["budget"]) for name, declared in workflow_units().items()
+        }
         for name, declared in units.items():
             canonical = expected[name] if name in ("smoke", "firstinstall") \
                 else expected["group-" + name]
             self.assertEqual(declared["mode"], canonical["mode"], name)
             if declared["mode"] == "suite":
                 self.assertEqual(declared["group"], canonical["group"], name)
+            if name == "smoke":
+                workflow_name = "smoke-primary"
+            elif name == "firstinstall":
+                workflow_name = "firstinstall"
+            else:
+                workflow_name = "group-" + name
+            self.assertEqual(declared["budget"], canonical_budgets[workflow_name], name)
 
     def test_the_sweep_covers_the_supported_version_range(self):
         versions = tuple(re.findall(r'- "(\d+\.\d+\.\d+)"', SWEEP))
