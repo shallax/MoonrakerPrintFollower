@@ -44,7 +44,7 @@ RowLayout {
                 color: UM.Theme.getColor("text")
                 // The hourglass flips and rests at each 180-degree stop
                 // while the sand drains, then flips again.
-                SequentialAnimation on rotation  {
+                SequentialAnimation on rotation {
                     running: root.busy
                     loops: Animation.Infinite
                     NumberAnimation {
@@ -74,7 +74,7 @@ RowLayout {
             Layout.preferredHeight: 8 * screenScaleFactor
             clip: true
             property real sweepPhase: 0
-            NumberAnimation on sweepPhase  {
+            NumberAnimation on sweepPhase {
                 running: root.busy && root.progress < 0
                 from: 0
                 to: 1

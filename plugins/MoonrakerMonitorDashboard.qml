@@ -96,9 +96,9 @@ Component {
             var rows = [];
             for (var j = 0; j < order.length; j++) {
                 rows.push({
-                        "id": order[j],
-                        "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
-                    });
+                    "id": order[j],
+                    "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
+                });
             }
             root.controlsConfigureRows = rows;
             root.controlsConfigureHidden = layout ? layout.hidden : [];

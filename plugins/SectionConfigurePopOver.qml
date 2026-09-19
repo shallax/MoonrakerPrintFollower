@@ -32,8 +32,8 @@ MonitorPopOver {
 
     function orderIds() {
         return rows.map(function (row) {
-                return row.id;
-            });
+            return row.id;
+        });
     }
     function commitToggle(id) {
         var next = hidden.slice();
@@ -59,8 +59,8 @@ MonitorPopOver {
     function toggleAll() {
         if (hidden.length === 0) {
             layoutCommitted(orderIds(), rows.map(function (row) {
-                        return row.id;
-                    }));
+                return row.id;
+            }));
         } else {
             layoutCommitted(orderIds(), []);
         }
@@ -86,22 +86,22 @@ MonitorPopOver {
             if (i === dragIndex) {
                 if (i === slotAt) {
                     list.push({
-                            "slot": true
-                        });
+                        "slot": true
+                    });
                 }
                 continue;
             }
             if (i === slotAt) {
                 list.push({
-                        "slot": true
-                    });
+                    "slot": true
+                });
             }
             list.push(rows[i]);
         }
         if (dragTarget === rows.length - 1) {
             list.push({
-                    "slot": true
-                });
+                "slot": true
+            });
         }
         return list;
     }

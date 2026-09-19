@@ -74,9 +74,9 @@ Component {
             }
             _cameraApplyPending = true;
             Qt.callLater(function () {
-                    _cameraApplyPending = false;
-                    updateCameraImage();
-                });
+                _cameraApplyPending = false;
+                updateCameraImage();
+            });
         }
 
         Component.onCompleted: {
@@ -132,9 +132,9 @@ Component {
             var rows = [];
             for (var j = 0; j < order.length; j++) {
                 rows.push({
-                        "id": order[j],
-                        "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
-                    });
+                    "id": order[j],
+                    "title": byId[order[j]] !== undefined ? byId[order[j]] : order[j]
+                });
             }
             if (paneId === "information") {
                 root.infoConfigureRows = rows;
@@ -1377,8 +1377,7 @@ Component {
                                                 }
                                             }
                                         }
-                                    } catch (e) {
-                                    }
+                                    } catch (e) {}
                                     return "monospace";
                                 }
                                 // The transcript arrives oldest-first; the pane

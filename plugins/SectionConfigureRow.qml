@@ -112,8 +112,8 @@ Item {
                 onClicked: {
                     rowRoot.toggleRequested();
                     rowCheck.checked = Qt.binding(function () {
-                            return rowRoot.rowVisible;
-                        });
+                        return rowRoot.rowVisible;
+                    });
                 }
             }
         }
