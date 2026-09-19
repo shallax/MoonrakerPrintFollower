@@ -3021,6 +3021,7 @@ class MonitorQtTests(unittest.TestCase):
         model = self.monitor()
         self.assertTrue(model.sendConsoleCommand("M104 S200"))
         model._console._transcript = []  # the early, empty construction
+        model._console._loaded_identity = None  # the latch dies with it
         model.setConsoleExpanded(True)
         self.qt.events()  # the publish coalescer flushes on the next turn
         lines = model.consoleLines.value()
@@ -3682,6 +3683,34 @@ class MonitorQtTests(unittest.TestCase):
         self.assertGreaterEqual(len(publishes), 1, "the landing still publishes")
         self.assertLessEqual(len(publishes), 1,
                              "one core landing fans out into %d publishes" % len(publishes))
+
+    def test_warm_heartbeats_make_no_persistence_reads(self):
+        # H (the 2026-09-19 performance review): after hydration, the
+        # monitor heartbeat must not parse settings.json or the
+        # machine shard — the migration record is cached, the binding
+        # serves its cached config, and an empty-but-loaded console
+        # must not re-read its shard forever.
+        from unittest.mock import patch
+        model = self.monitor()
+        self.qt.events(1)
+        # Hydrate the console (an empty transcript is authoritative
+        # once loaded) before the counting window.
+        model.setConsoleExpanded(True)
+        self.qt.events(1)
+        state_store = self.qt.load("PluginPersistence").StateStore
+        reads = []
+        original = state_store.read
+        def counting_read(self):
+            reads.append(1)
+            return original(self)
+        with patch.object(state_store, "read", counting_read):
+            for _ in range(20):
+                self.deliver_state("standby")
+                self.qt.events(1)
+            for i in range(5):
+                model._data._merge_aux({"extruder": {"temperature": 200.0 + i, "target": 210.0}})
+                self.qt.events(1)
+        self.assertEqual(reads, [], "warm heartbeats must not read the persistence files")
 
     def test_one_auxiliary_landing_produces_at_most_one_publish(self):
         # G: an auxiliary landing additionally fires auxiliaryChanged

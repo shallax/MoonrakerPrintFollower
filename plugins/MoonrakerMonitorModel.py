@@ -396,6 +396,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._qv_cache = {}
         self._improving_eta = False
         self._improve_started_snapshot = None
+        self._migration_record_cache = None
+        self._migration_record_read = False
         self._values = {}
         state = _read_state(self._store)
         self._whats_new_seen = state["whatsNewSeen"]
@@ -700,6 +702,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def setMonitoringActive(self, active):
         self._data.set_owner_active(active)
+        # The post-migration ready point: the record may have landed
+        # since construction (the early publishes read it while the
+        # migration was still pending) — the cache re-reads once here
+        # and then holds, even a None (the heartbeat never parses the
+        # settings file; H1).
+        self._migration_record_read = False
+        self._migration_record_cache = None
         if active:
             # The stage-entry hook (the 4.5.0 live find): the Monitor
             # shell exists by the time Cura activates the stage, and
@@ -1965,15 +1974,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _migration_record(self):
         """The settings document's migration record via the facade;
-        None in the harness's config-only double."""
+        None in the harness's config-only double. Cached: the record
+        lands once during hydration and only the dismiss slot mutates
+        it — the heartbeat must not re-read the settings file (H1 of
+        the 2026-09-19 performance review)."""
+        if self._migration_record_read:
+            return self._migration_record_cache
+        self._migration_record_read = True
         if hasattr(self._store, "migration_record"):
-            return self._store.migration_record()
-        return None
+            self._migration_record_cache = self._store.migration_record()
+        return self._migration_record_cache
 
     @pyqtSlot()
     def dismissMigrationBanner(self):
         if hasattr(self._store, "set_migration_record"):
             self._store.set_migration_record({"bannerDismissed": True})
+            # The cache mirrors the store's merge: the diagnostics row
+            # still needs the status/backup fields under the flag.
+            self._migration_record_cache = {**(self._migration_record_cache or {}),
+                                            "bannerDismissed": True}
             self._publish()
 
     @pyqtSlot()

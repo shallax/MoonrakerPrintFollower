@@ -53,6 +53,13 @@ class PrinterBinding(QObject):
         self._store = PrinterConfigStore(application.getPreferences(), lambda: active_machine_identity(application))
         self._machine_id, self._machine_name = self._store.identity()
         self._closed = False
+        # The config cache (H2 of the 2026-09-19 performance review):
+        # the heartbeat's camera observer reads config() on every data
+        # landing, and each read parsed settings.json. The cache is
+        # keyed by machine id, filled only for resolved machines, and
+        # refreshed by the two mutation paths: apply() and the
+        # migration's landing.
+        self._config_cache = None
         # The boot-complete latch (B1): every destructive step — the
         # legacy chain's blob push, the one-shot's clean — waits for
         # Cura's readiness signal, because Cura reads the preference
@@ -80,15 +87,27 @@ class PrinterBinding(QObject):
         # constructs before Cura's active machine exists (identity
         # "unknown"), and every cached read saw the unknown machine's
         # EMPTY record — the console's restored transcript never loaded
-        # (the "console starts completely empty" report).
+        # (the "console starts completely empty" report). The
+        # per-machine cache (H2) holds the RESOLVED machine's config
+        # between its two mutation paths; "unknown" always reads live
+        # so the first resolution never freezes the empty record.
         machine_id, _ = self.identity
+        cache = self._config_cache
+        if machine_id != "unknown" and cache is not None and cache[0] == machine_id:
+            return cache[1]
         if self._persistence is not None:
             entry = self._persistence.get_machine(machine_id)
             if entry is not None:
-                return PrinterConfig.from_dict(entry)
+                config = PrinterConfig.from_dict(entry)
+                if machine_id != "unknown":
+                    self._config_cache = (machine_id, config)
+                return config
         # Pre-migration fallback: the preference blob is still the
         # source until the one-shot lands.
-        return self._store.get(machine_id)
+        config = self._store.get(machine_id)
+        if machine_id != "unknown":
+            self._config_cache = (machine_id, config)
+        return config
 
     @property
     def identity(self):
@@ -272,6 +291,9 @@ class PrinterBinding(QObject):
             return
         self._ready = True
         self._migrate()
+        # The migration moved the settings into the new document: any
+        # cached config predates it and must re-read once.
+        self._config_cache = None
         self._apply()
 
     def apply(self, config):
@@ -299,6 +321,14 @@ class PrinterBinding(QObject):
         # never be reported as a completed one.
         machine_id, _ = self.identity
         saved = self._persistence.set_machine_config(machine_id, config)
+        if saved and machine_id != "unknown":
+            # The settings save is the config's mutation path: the
+            # cache takes the READ-BACK record immediately (apply must
+            # be visible to the next reader without a file parse) —
+            # the typed round-trip fills the field defaults the
+            # heartbeat must see, exactly as an uncached read would.
+            entry = self._persistence.get_machine(machine_id)
+            self._config_cache = (machine_id, PrinterConfig.from_dict(entry) if entry is not None else config)
         if not saved:
             Logger.log("w", "Moonraker settings for %s could not be saved.", machine_id)
 

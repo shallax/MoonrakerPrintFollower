@@ -107,6 +107,10 @@ class ConsoleController(QObject):
         # console constructs before Cura's active machine exists, so it
         # resolves on the first successful load.
         self._transcript_identity = None
+        # The loaded-once latch (H3): a genuinely empty transcript is
+        # authoritative — the shard must not be re-read every
+        # heartbeat for a machine that already loaded.
+        self._loaded_identity = None
         commands.emergencyStopped.connect(self._emergency_stopped)
         # Every connection transition writes a "#" note into the feed
         # (the request: the console says when it lost or
@@ -303,10 +307,16 @@ class ConsoleController(QObject):
                 identity = None  # Cura's machine isn't resolved yet: retry later
             else:
                 identity = str(identity[0])
+        if identity is not None and self._loaded_identity == identity:
+            # Already loaded for this machine — an EMPTY transcript is
+            # authoritative and must not re-read the shard on every
+            # heartbeat (H3 of the 2026-09-19 performance review).
+            return
         if self._transcript and (identity is None or self._transcript_identity is None
                                  or identity == self._transcript_identity):
             return  # live session, same machine, or identity untracked (harness)
         self._load_transcript(identity)
+        self._loaded_identity = identity
 
     def _resolved_identity(self):
         """The machine id the transcript belongs to, or None while

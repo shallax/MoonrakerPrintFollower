@@ -319,6 +319,10 @@ class StoreWiringTests(MonitorModelCase):
         self.model = self.build(persistence=self.persistence())
         self.model._store.set_migration_record({
             "status": "failed", "backupWritten": True, "backupName": "cura-rollback.cfg"})
+        # The production landing precedes the ready point; the model's
+        # record cache re-reads there (setMonitoringActive is the
+        # post-migration hook).
+        self.model.setMonitoringActive(True)
         self.model._publish()
         self.assertTrue(self.model.migrationBannerVisible)
         self.assertIn("cura-rollback.cfg", self.model.migrationBannerText)
