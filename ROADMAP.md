@@ -22,6 +22,83 @@ critic and the architecture review (see the 4.1.0 section).
   per-test pass/fail history becomes visible in Codecov instead of
   only in the job logs. Landed on the 4.6.0 branch.
 
+- **Exclude objects — the plate at a glance (Phase-0 walk, 2026-09-19/20).**
+  The exclude-object surface is rebuilt around one shared 2D plate
+  canvas with two faces, and the design pass starts from live-printer
+  evidence captured first (the direction's ordering held). Read-only
+  captures from a live 50-copy plate on the Voron established: the
+  slicer's EXCLUDE_OBJECT_DEFINE lines carry CENTER/POLYGON for every
+  object (49/49), the DEFINE block's order is spatial while the name
+  numbering counts 1–50 (name order is meaningless mid-print —
+  position is the only honest identity), the live Moonraker exposes
+  no exclude endpoint (the gcode-plus-status path the plugin already
+  uses is the only route), current_object is always set mid-print
+  with ~9–10 s turnover per object, and print_stats carries no layer
+  on this setup (the plugin's own index is the layer anchor). The
+  interactive exclude/undo exercise is deferred to a short
+  sacrificial print — the 30-hour live plate is never mutated.
+
+  The rulings (walked and accepted):
+
+  - The Objects section becomes a pure readout — names, the current
+    object highlighted, excluded objects flagged red, excluded past
+    the grace window flagged grey — and moves as a unit to the
+    Printer controls pane with the Exclude current button at its top
+    (it is not purely informational, so it does not stay in the
+    status pane). No per-row buttons, no click-and-hold machinery.
+  - Exclude current: a generic label (object names can be long),
+    direct action with no confirmation — the blast radius is bounded
+    to the current object, sent as EXCLUDE_OBJECT CURRENT=1.
+  - The plate map lives in the Information pane (mini widget plus
+    click-to-enlarge popover, the bed-mesh pattern): object outlines
+    from the DEFINE polygons, current highlighted, excluded red,
+    blocked grey, the live toolhead dot, and the complete current
+    layer drawn under the outlines (no progress split). The degraded
+    mode without polygon data is centre dots with a usable hit
+    radius. Triple-click toggles exclude/restore in both directions —
+    the gesture is the confirmation; no dialogs anywhere (the shipped
+    exclude dialog dies and its pins move with it). Single click
+    selects an object for its info readout. The popover carries the
+    gesture hint and a colour key (red excluded, theme foreground
+    included, green current, grey blocked), and the blocked state
+    explains itself in words. The contrast census runs when the
+    palette lands, in both themes.
+  - Restore carries a windowed grace: clean before the toolhead
+    reaches the object's region on the current layer; within N layers
+    of the first skip the object resumes with a small gap; beyond N
+    the restore is blocked with a reason. The grace is a
+    settings-pane knob (rarely tuned): 0 = immediate restrict,
+    N = windowed, never = unrestricted; the panel rules the default
+    (the 3-layer candidate).
+  - The progress face (the second popover, OctoApp-style): the
+    previous layer ghosted, the current layer as a grey base with the
+    printed portion coloured in at poll cadence, the next layer
+    ghosted — flat polylines, feature-type colours from a per-motion
+    type byte in the index hydration plus a MoonrakerTheme colour
+    table (Cura-like, both themes), travel lines faint or off
+    (panel), popover legend toggles for previous/next/base (the
+    chart-legend precedent, persisted per printer), alpha so the
+    stack reads through. Updates ride the poll cadence — not
+    frame-smooth. The index's [live−1, live+1] retention window
+    already covers the three layers; the type byte is the only index
+    extension.
+  - One shared plate-canvas component serves both faces; the
+    architecture persona adjudicates the boundary (base plus two
+    faces versus a mode flag). Snapshot 0 mocks both faces with
+    synthetic data before any wiring.
+  - Preview name tags (billboarded object names over the Preview
+    view) are a probe-gated stretch: a 2D overlay projecting object
+    positions through the preview camera; the open question is
+    camera-matrix exposure. Deferred with evidence if unreachable;
+    the findings feed 5.0.0's physical-head work.
+  - No list reordering, ever — the stable readout plus the map's
+    polygons carry the identity; rows that move under the pointer are
+    the jog-reflow hazard class.
+
+  Open for the panel: the grace default, the map's palette and hint
+  copy, travel-line defaults, the popover layout, the shared-component
+  boundary, and the settings placement.
+
 ## Direction
 
 The 3.2.0 debt payoff made structural change cheap again. The next stretch has one
