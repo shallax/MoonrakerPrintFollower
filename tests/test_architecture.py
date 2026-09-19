@@ -149,7 +149,7 @@ class SourceContractTests(unittest.TestCase):
                 "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService", "WhatsNew"},
             "GCodeIndex": {"MoonrakerProtocol"},
             "GCodeIndexService": {"GCodeIndex"},
-            "MonitorCamera": {"CameraBridge", "CameraTiming"},
+            "MonitorCamera": {"CameraBridge", "CameraTiming", "MoonrakerProtocol"},
             "MonitorCommands": {"MonitorPermissions"},
             "MonitorControls": {"MonitorFormatting", "MonitorPermissions"},
             "MonitorData": {"CameraTiming", "ConsolePolicy", "MonitorFormatting", "MonitorPermissions", "MoonrakerSession"},

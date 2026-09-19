@@ -2693,6 +2693,56 @@ if QT_AVAILABLE:
             self.assertEqual(MonitorCamera.identity_aliases({"uid": "u", "name": "n"}, 1),
                              {"u", "n", "camera-1"})
 
+        def test_a_foreign_stream_url_is_served_direct_without_the_key(self):
+            # C (the 2026-09-19 review): the Moonraker key may only
+            # ride requests to the printer's own origin — a webcam on
+            # another host is served direct and keyless, and no
+            # bridge is ever created for it.
+            self.config = PrinterConfig(url="http://printer.local:7125", api_key="SECRET")
+            self.camera = MonitorCamera(self.data, lambda: self.config, self.applied.append)
+            self._snapshot({"uid": "u1", "name": "Box",
+                            "stream_url": "http://camera-box:8080/stream"})
+            self.camera.observe()
+            self.camera._restore_after_population(self.camera._camera_signature)
+            self.assertEqual(self.camera.url, "http://camera-box:8080/stream")
+            self.assertIsNone(self.camera._camera_bridge)
+
+        def test_a_same_origin_stream_keeps_the_bridged_key_carry(self):
+            self.config = PrinterConfig(url="http://printer.local:7125", api_key="SECRET")
+            self.camera = MonitorCamera(self.data, lambda: self.config, self.applied.append)
+            self._snapshot({"uid": "u1", "name": "Front", "stream_url": "/webcam?action=stream"})
+            self.camera.observe()
+            self.camera._restore_after_population(self.camera._camera_signature)
+            self.assertTrue(self.camera.url.startswith("http://127.0.0.1:"))
+            self.assertEqual(self.camera._camera_bridge._upstream_base, "http://printer.local:7125")
+            self.assertEqual(self.camera._camera_bridge._api_key, "SECRET")
+
+        def test_a_deposed_camera_retires_its_bridge_and_reconfigures_again(self):
+            # D: A -> B leaves no listener and no key behind; B -> A
+            # configures the cached bridge again normally.
+            self.config = PrinterConfig(url="http://printer.local:7125", api_key="SECRET")
+            self.camera = MonitorCamera(self.data, lambda: self.config, self.applied.append)
+            self._snapshot({"uid": "u1", "name": "Front", "stream_url": "/webcam?action=stream"})
+            self.camera.observe()
+            self.camera._restore_after_population(self.camera._camera_signature)
+            self.assertGreater(self.camera._camera_bridge.port, 0)
+            # The switch: the same machine loses its key (B).
+            self.config = PrinterConfig(url="http://printer.local:7125")
+            self.camera._key = None
+            self.camera.observe()
+            self.camera._restore_after_population(self.camera._camera_signature)
+            self.assertEqual(self.camera.url, "http://printer.local:7125/webcam?action=stream")
+            self.assertEqual(self.camera._camera_bridge.port, 0)
+            self.assertEqual(self.camera._camera_bridge._upstream_base, "")
+            self.assertEqual(self.camera._camera_bridge._api_key, "")
+            # Back to A: the cached bridge listens again with the key.
+            self.config = PrinterConfig(url="http://printer.local:7125", api_key="SECRET")
+            self.camera._key = None
+            self.camera.observe()
+            self.camera._restore_after_population(self.camera._camera_signature)
+            self.assertGreater(self.camera._camera_bridge.port, 0)
+            self.assertEqual(self.camera._camera_bridge._api_key, "SECRET")
+
         def test_the_signature_ignores_unrelated_poll_churn(self):
             first = MonitorCamera.camera_signature([{"uid": "u", "name": "Cam"}])
             second = MonitorCamera.camera_signature([{"uid": "u", "name": "Cam", "extra": 1}])
