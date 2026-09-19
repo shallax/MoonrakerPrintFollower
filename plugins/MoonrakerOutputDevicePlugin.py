@@ -36,10 +36,13 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
         follower.presentation.printPauseRequested.connect(self._route_pause_request)
 
         changed = getattr(application, "globalContainerStackChanged", None)
+        self._stack_signal = changed
+        self._running = False
         if changed is not None:
             changed.connect(self.refresh)
 
     def start(self) -> None:
+        self._running = True
         self.refresh()
 
     def _current_monitor(self) -> Optional[Any]:
@@ -109,6 +112,7 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                     Logger.logException("e", "Moonraker output deactivation failed: %s", error)
 
     def stop(self) -> None:
+        self._running = False
         for device in self._devices.values():
             self._deactivate_device(device)
         if self._current is not None:
@@ -206,6 +210,10 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
             Logger.log("w", "Moonraker Print Follower: Monitor refresh failed: %s", exc)
 
     def refresh(self, *_args: Any) -> None:
+        if not self._running:
+            # Stopped (the 2026-09-19 review's E): a stack change
+            # after stop() must not reinstall a device.
+            return
         try:
             stack = self._application.getGlobalContainerStack()
             if stack is None:

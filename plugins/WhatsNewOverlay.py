@@ -20,6 +20,7 @@ class WhatsNewOverlay:
     def __init__(self):
         self._overlay = None
         self._attempts = 0
+        self._closed = False
         # The once-per-version offer: both the main window and the
         # monitor model exist only after Cura finishes booting, so
         # the check retries with a bound (a fresh session that never
@@ -28,6 +29,15 @@ class WhatsNewOverlay:
         QTimer.singleShot(1500, self._offer)
 
     def close(self):
+        # Deinitialization (the 2026-09-19 review's F1): every queued
+        # callback must bail, no retry may be scheduled, and a live
+        # popup is destroyed — never merely un-referenced.
+        self._closed = True
+        if self._overlay is not None:
+            try:
+                self._overlay.deleteLater()
+            except Exception:
+                pass
         self._overlay = None
 
     def _find_main_window(self):
@@ -61,6 +71,8 @@ class WhatsNewOverlay:
         # loop, and an unhandled raise in a timer callback takes the
         # whole application down (the capture environment's stubbed
         # Cura proved it — the offer fired into a stub application).
+        if self._closed:
+            return
         try:
             self._attempts += 1
             window = self._find_main_window()
@@ -93,6 +105,8 @@ class WhatsNewOverlay:
                        traceback.format_exc(limit=4))
 
     def _show(self):
+        if self._closed:
+            return
         window = self._find_main_window()
         model = self._find_monitor()
         if window is None or model is None:

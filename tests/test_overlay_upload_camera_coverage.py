@@ -193,6 +193,32 @@ class WhatsNewOverlayTests(unittest.TestCase):
         overlay.timers = timers
         return overlay
 
+    def test_close_neuters_queued_offers_and_destroys_a_live_popup(self):
+        # F1 (the 2026-09-19 review): close() must make every queued
+        # callback inert — no window lookup, no retry — and destroy a
+        # live popup rather than merely dropping the reference.
+        overlay = self._overlay()
+        self.assertEqual(len(overlay.timers.calls), 1)  # the boot offer
+        overlay.close()
+        self._install_windows([])
+        self._install_devices([])
+        overlay._offer()
+        self.assertEqual(overlay._attempts, 0, "the closed offer bails before any work")
+        self.assertEqual(len(overlay.timers.calls), 1, "no retry is scheduled")
+
+        class FakePopup:
+            def __init__(self):
+                self.deleted = False
+
+            def deleteLater(self):
+                self.deleted = True
+
+        popup = FakePopup()
+        overlay._overlay = popup
+        overlay.close()
+        self.assertTrue(popup.deleted)
+        self.assertIsNone(overlay._overlay)
+
     def _install_windows(self, windows):
         _enter(self, patch.object(
             self.module, "QGuiApplication", SimpleNamespace(allWindows=lambda: list(windows))))
@@ -443,9 +469,16 @@ class WhatsNewOverlayTests(unittest.TestCase):
         overlay.close()
         self.assertIsNone(overlay._overlay)
 
+        # F1's contract (the 2026-09-19 review): a closed overlay is
+        # dead — a late _show mounts nothing, and no retry fires.
         overlay._show()
+        self.assertEqual(len(instances), 1)
+        self.assertIsNone(overlay._overlay)
+        # A later session mounts a FRESH overlay instance instead.
+        fresh = self._overlay()
+        fresh._show()
         self.assertEqual(len(instances), 2)
-        self.assertIs(overlay._overlay, instances[1].created)
+        self.assertIs(fresh._overlay, instances[1].created)
 
     def test_the_overlay_refuses_to_mount_without_an_engine(self):
         self._quiet_qt_messages()

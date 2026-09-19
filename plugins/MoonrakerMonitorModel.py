@@ -638,9 +638,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         previous = self._camera_app_state
         self._camera_app_state = state
         if state == Qt.ApplicationState.ApplicationActive and previous not in (None, Qt.ApplicationState.ApplicationActive):
-            # Woke up: reload the camera source once. No veil — the
-            # stream may come back instantly, and a stuck veil would
-            # read as a failure the user must recover.
+            # Woke up: reload the camera source once — for the ACTIVE
+            # monitor only; a deposed cached monitor must not publish
+            # (the 2026-09-19 review's F3). No veil — the stream may
+            # come back instantly, and a stuck veil would read as a
+            # failure the user must recover.
+            if not getattr(self._data, "active", False):
+                return
             self._camera_refresh_nonce += 1
             self._publish()
 

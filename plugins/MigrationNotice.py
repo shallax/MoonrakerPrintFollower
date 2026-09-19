@@ -21,6 +21,7 @@ class MigrationNotice(QObject):
         self._raise_toast = raise_toast  # callable(record) -> None
         self._escape = None
         self._model_signal = None
+        self._closed = False
 
     def announce(self):
         """Boot-ready time (B1's initializationFinished): the
@@ -47,11 +48,36 @@ class MigrationNotice(QObject):
     def attach_model(self, model):
         """The overlay's owner (the Monitor model) arrives after the
         notice: take its dismiss signal, then re-announce so the
-        deferred path can use it."""
+        deferred path can use it. A swap disconnects the PREVIOUS
+        model first (the 2026-09-19 review's F2) — a cached monitor's
+        stale dismiss must never fire the toast for the new owner."""
+        if self._model_signal is not None:
+            try:
+                self._model_signal.disconnect(self._raise_once)
+            except (TypeError, AttributeError):
+                pass
         self._model_signal = getattr(model, "whatsNewDismissed", None)
         self.announce()
 
+    def close(self):
+        """Deinitialization: stop the escape timer, drop the model
+        signal, and make every queued emission inert."""
+        self._closed = True
+        if self._escape is not None:
+            try:
+                self._escape.stop()
+            except Exception:
+                pass
+        if self._model_signal is not None:
+            try:
+                self._model_signal.disconnect(self._raise_once)
+            except (TypeError, AttributeError):
+                pass
+        self._model_signal = None
+
     def _raise_once(self, *args):
+        if self._closed:
+            return
         record = self._persistence.migration_record()
         if not record or record.get("status") != "failed" or record.get("toastShown"):
             return

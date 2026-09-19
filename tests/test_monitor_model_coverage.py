@@ -382,6 +382,18 @@ class PublishBranchTests(MonitorModelCase):
         self.model._on_app_state_changed(Qt.ApplicationState.ApplicationActive)
         self.assertEqual(self.model.cameraRefreshNonce, before + 1)
 
+    def test_a_deposed_monitor_ignores_the_wake(self):
+        # F3 (the 2026-09-19 review): every cached monitor hooks the
+        # global wake, but only the ACTIVE one may reload its camera.
+        from PyQt6.QtCore import Qt
+        self.model = self.build()
+        self.model._camera_app_state = Qt.ApplicationState.ApplicationInactive
+        self.model.setMonitoringActive(False)
+        before = self.model.cameraRefreshNonce
+        self.model._on_app_state_changed(Qt.ApplicationState.ApplicationActive)
+        self.assertEqual(self.model.cameraRefreshNonce, before,
+                         "a deposed monitor must not publish on wake")
+
     def test_a_recovered_stream_without_a_failure_keeps_the_nonce(self):
         self.model = self.build()
         before = self.model.cameraRefreshNonce

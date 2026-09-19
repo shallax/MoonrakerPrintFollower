@@ -21,6 +21,17 @@ class _FakeSignal:
     def connect(self, handler):
         self._handlers.append(handler)
 
+    def disconnect(self, handler=None):
+        if handler is None:
+            self._handlers.clear()
+        else:
+            # Bound-method equivalence, like a real pyqtSignal: each
+            # access creates a fresh bound object, so identity
+            # comparison would never match.
+            target = getattr(handler, "__func__", handler)
+            self._handlers = [h for h in self._handlers
+                              if getattr(h, "__func__", h) is not target]
+
     def emit(self):
         for handler in list(self._handlers):
             handler()
@@ -48,6 +59,36 @@ class FakePersistence:
 class MigrationNoticeTests(unittest.TestCase):
     def setUp(self):
         self.raised = []
+
+    def test_attach_model_disconnects_the_previous_dismiss_signal(self):
+        # F2: a cached monitor's stale dismiss must never fire the
+        # toast for the new owner — the swap disconnects the old
+        # model first.
+        model_a = FakeModel()
+        model_b = FakeModel()
+        notice = MigrationNotice(FakePersistence({"status": "failed"}),
+                                 whats_new_gate=lambda: True,
+                                 raise_toast=lambda rec: self.raised.append(dict(rec)))
+        notice.attach_model(model_a)
+        notice.attach_model(model_b)
+        self.assertEqual(self.raised, [])
+        model_a.whatsNewDismissed.emit()
+        self.assertEqual(self.raised, [], "the stale model's dismiss must be inert")
+        model_b.whatsNewDismissed.emit()
+        self.assertEqual(len(self.raised), 1)
+        self.assertEqual(self.raised[0]["status"], "failed")
+
+    def test_close_stops_the_escape_timer_and_neuters_emissions(self):
+        model = FakeModel()
+        notice = MigrationNotice(FakePersistence({"status": "failed"}),
+                                 whats_new_gate=lambda: True,
+                                 raise_toast=lambda rec: self.raised.append(dict(rec)))
+        notice.attach_model(model)
+        notice.close()
+        model.whatsNewDismissed.emit()
+        self.assertEqual(self.raised, [], "a closed notice must not raise")
+        self.assertIsNone(notice._model_signal)
+        self.assertTrue(notice._escape is None or not notice._escape.isActive())
 
     def _notice(self, record, gate=None, model=None):
         persistence = FakePersistence(record)

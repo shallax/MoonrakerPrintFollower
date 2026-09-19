@@ -228,6 +228,7 @@ class OutputDeviceTestCase(unittest.TestCase):
 
     def plugin(self, app, follower):
         plugin = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(app, follower)
+        plugin.start()  # the production lifecycle arms the running gate
         self.addCleanup(plugin.stop)
         return plugin
 
@@ -265,6 +266,28 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         self.assertIsNone(plugin._current)
         self.assertEqual(plugin._devices, {})
 
+    def test_stop_gates_the_stack_handler_and_restart_recovers(self):
+        # E (the 2026-09-19 review): stop must really stop — a stack
+        # change after stop reinstalls nothing; start again registers
+        # exactly once.
+        app = self.qt.Application()
+        follower = self.follower(self.client(), self.printer_config())
+        plugin = self.plugin(app, follower)
+        plugin.start()
+        self.assertIsNotNone(plugin._current)
+        plugin.stop()
+        self.assertIsNone(plugin._current)
+        plugin.refresh()  # the stack handler firing after stop
+        self.assertIsNone(plugin._current, "a post-stop refresh must not reinstall")
+        # The cached devices stay CACHED but inactive (F3's
+        # distinction: inactive and destroyed are different states).
+        for device in plugin._devices.values():
+            monitor = getattr(device, "activePrinter", None)
+            self.assertIsNotNone(monitor)
+            self.assertFalse(monitor._data._active)
+        plugin.start()
+        self.assertIsNotNone(plugin._current, "restart registers again")
+
     def test_refresh_installs_one_real_monitor_per_machine(self):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
@@ -295,6 +318,7 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
         plugin = self.plugin(app, follower)
+        plugin.start()  # the production lifecycle arms the running gate
         plugin.refresh()
         monitor = plugin._current.activePrinter
         follower.bed_mesh.snapshot = {"minimum": 0.0, "maximum": 10.0}
@@ -317,6 +341,7 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
         plugin = self.plugin(app, follower)
+        plugin.start()  # the production lifecycle arms the running gate
         plugin.refresh()
         monitor = plugin._current.activePrinter
         pushes = []
@@ -355,6 +380,7 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
         plugin = self.plugin(app, follower)
+        plugin.start()  # the production lifecycle arms the running gate
         plugin.refresh()
         device = plugin._current
         manager = plugin.getOutputDeviceManager()
@@ -369,6 +395,7 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
         plugin = self.plugin(app, follower)
+        plugin.start()  # the production lifecycle arms the running gate
         plugin.refresh()
         plugin.getOutputDeviceManager().removeOutputDevice.side_effect = RuntimeError("unknown device")
 
@@ -380,6 +407,7 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
         plugin = self.plugin(app, follower)
+        plugin.start()  # the production lifecycle arms the running gate
         plugin.refresh()
         device = plugin._current
         manager = plugin.getOutputDeviceManager()
@@ -402,6 +430,7 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
         plugin = self.plugin(app, follower)
+        plugin.start()  # the production lifecycle arms the running gate
         plugin.refresh()
         device = plugin._current
         manager = plugin.getOutputDeviceManager()
@@ -416,6 +445,7 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
         plugin = self.plugin(app, follower)
+        plugin.start()  # the production lifecycle arms the running gate
         plugin.refresh()
         first = plugin._current
         monitor = first.activePrinter
@@ -438,6 +468,7 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
         plugin = self.plugin(app, follower)
+        plugin.start()  # the production lifecycle arms the running gate
         plugin.refresh()
         outgoing = plugin._current
         manager = plugin.getOutputDeviceManager()
@@ -455,8 +486,10 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
     def test_a_broken_binding_never_escapes_refresh(self):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
-        plugin = self.plugin(app, follower)
         follower.current_printer_config = Mock(side_effect=RuntimeError("no binding"))
+        plugin = self.module.MoonrakerOutputDevicePlugin(app, follower)
+        self.addCleanup(plugin.stop)
+        plugin.start()  # armed; the broken binding makes the refresh fail
 
         plugin.refresh()
 
@@ -512,6 +545,7 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
         plugin = self.plugin(app, follower)
+        plugin.start()  # the production lifecycle arms the running gate
         plugin.refresh()
         device = plugin._current
         monitor = device.activePrinter
@@ -530,6 +564,7 @@ class OutputDevicePluginTests(OutputDeviceTestCase):
         app = self.qt.Application()
         follower = self.follower(self.client(), self.printer_config())
         plugin = self.plugin(app, follower)
+        plugin.start()  # the production lifecycle arms the running gate
         plugin.refresh()
         device = plugin._current
         device.activePrinter.refreshAll = Mock(side_effect=RuntimeError("no data"))

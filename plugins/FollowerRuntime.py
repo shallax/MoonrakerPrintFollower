@@ -194,6 +194,7 @@ class FollowerRuntime:
     def close(self):
         if self._closed: return
         self._closed = True
+        self.notice.close()
         self.binding.close()
         self.coordinator.close()
         self.pauses.close()
