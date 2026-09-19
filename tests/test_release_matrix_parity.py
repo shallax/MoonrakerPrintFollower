@@ -92,12 +92,13 @@ def workflow_matrix_names():
 
 
 def local_units():
-    """The local script's logical units: name -> {mode, group}.
-    The script names the secondary smoke plain `smoke`; its logical
-    name resolves through the version slot."""
+    """The local script's logical units: name -> {mode, group,
+    budget}. The script names the secondary smoke plain `smoke`; its
+    logical name resolves through the version slot."""
     units = {}
     for match in re.finditer(r"(\d+) (\$PRIMARY|\$SECONDARY) (\S+) (\S+)(?: (\S+))?",
                              LOCAL):
+        budget = int(match.group(1))
         version, name, mode = match.group(2), match.group(3), match.group(4)
         if "$g" in match.group(0):
             continue  # the group loop's template line, not a unit
@@ -108,12 +109,16 @@ def local_units():
             key += "-secondary"
         elif name == "smoke":
             key += "-primary"
-        units[key] = {"mode": mode, "group": group}
+        units[key] = {"mode": mode, "group": group, "budget": budget}
     groups = re.search(r"for g in ([a-z ]+); do", LOCAL)
     if not groups:
         raise AssertionError("harness_release.sh's group loop was not found")
+    loop = re.search(r"(\d+) \$PRIMARY group-\$g suite \$g", LOCAL)
+    if not loop:
+        raise AssertionError("harness_release.sh's group-loop budget was not found")
     for group in groups.group(1).split():
-        units["group-" + group] = {"mode": "suite", "group": group}
+        units["group-" + group] = {"mode": "suite", "group": group,
+                                   "budget": int(loop.group(1))}
     return units
 
 
@@ -141,6 +146,27 @@ class ReleaseMatrixParityTests(unittest.TestCase):
                 # workflow (their group slot is a no-op).
                 self.assertEqual(declared.get("group"), expected["group"], name)
 
+    def test_budgets_do_not_drift_between_the_local_gate_and_the_workflow(self):
+        # The invariant's third leg: the budgets the LOCAL gate
+        # actually runs with must match the release workflow's
+        # declared budgets — the sweep mirrors the workflow, so a
+        # drift here would make the sweep faithfully mirror a wrong
+        # number.
+        for name, expected in local_units().items():
+            declared = workflow_units()[name]
+            self.assertEqual(int(declared.get("budget")), expected["budget"], name)
+
+    def test_the_canonical_budgets_are_the_release_gate_values(self):
+        # smoke 20 (both version roles), every group 15,
+        # firstinstall 10 — the values the local gate was built with.
+        for name, unit in local_units().items():
+            if name in ("smoke-primary", "smoke-secondary"):
+                self.assertEqual(unit["budget"], 20, name)
+            elif name == "firstinstall":
+                self.assertEqual(unit["budget"], 10, name)
+            else:
+                self.assertEqual(unit["budget"], 15, name)
+
     def test_the_smokes_cover_both_pinned_versions(self):
         declared = workflow_units()
         self.assertEqual(declared["smoke-primary"]["cura"], "5.13.0")
@@ -157,15 +183,13 @@ class ReleaseMatrixParityTests(unittest.TestCase):
         self.assertEqual(set(units), set(EXPECTED_SWEEP_UNITS),
                          "a release unit is missing from the UI Version Sweep")
         # Every sweep unit's mode/group mapping matches the canonical
-        # local gate mapping (the version smoke behaves like the
+        # LOCAL gate mapping (the version smoke behaves like the
         # primary smoke's suite unit; groups carry their bare names),
-        # and its BUDGET matches the canonical release gate's budget
-        # (smoke 20, every group 15, firstinstall 10).
+        # and its BUDGET matches the canonical local gate's budget —
+        # with the local-vs-workflow budget check above, all three
+        # declarations agree.
         expected = dict(local_units())
         expected["smoke"] = {"mode": "suite", "group": "smoke"}
-        canonical_budgets = {
-            name: int(declared["budget"]) for name, declared in workflow_units().items()
-        }
         for name, declared in units.items():
             canonical = expected[name] if name in ("smoke", "firstinstall") \
                 else expected["group-" + name]
@@ -173,12 +197,12 @@ class ReleaseMatrixParityTests(unittest.TestCase):
             if declared["mode"] == "suite":
                 self.assertEqual(declared["group"], canonical["group"], name)
             if name == "smoke":
-                workflow_name = "smoke-primary"
+                canonical_name = "smoke-primary"
             elif name == "firstinstall":
-                workflow_name = "firstinstall"
+                canonical_name = "firstinstall"
             else:
-                workflow_name = "group-" + name
-            self.assertEqual(declared["budget"], canonical_budgets[workflow_name], name)
+                canonical_name = "group-" + name
+            self.assertEqual(declared["budget"], expected[canonical_name]["budget"], name)
 
     def test_the_sweep_covers_the_supported_version_range(self):
         versions = tuple(re.findall(r'- "(\d+\.\d+\.\d+)"', SWEEP))
