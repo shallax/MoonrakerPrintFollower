@@ -2305,6 +2305,63 @@ class MonitorQtTests(unittest.TestCase):
         z_scripts = [r for r in self.scripts() if "G1 Z" in str(r.options.get("body"))]
         self.assertGreaterEqual(len(z_scripts), 1)
 
+    def test_stale_polls_cannot_raise_the_z_projection_between_dispatched_moves(self):
+        # B (the 2026-09-19 review): an op leaves the queue at
+        # dispatch, so a stale poll between the dispatch and the
+        # physical move's reflection re-synced the projection upward
+        # and every following tap was accepted against the old
+        # position again — repeated stale polls could walk the
+        # accepted downward distance past the 0.40 mm of real
+        # headroom.
+        model = self.monitor()
+        self.deliver_state("standby")  # live_position z = 0.4
+        model.setJogDistance(0.1)
+        for _ in range(4):
+            model.jog("z", -1)
+            self.qt.events(1)
+            # The stale poll: the head has not moved yet, the report
+            # still reads 0.40.
+            self.deliver_state("standby")
+            self.qt.events(1)
+        # Four accepted moves cover exactly the 0.40 headroom; the
+        # fifth must be forbidden — the projection floors at zero
+        # instead of re-arming against each stale poll.
+        model.jog("z", -1)
+        self.qt.events(1)
+        self.assertAlmostEqual(model._toolhead._z_estimate, 0.0)
+        self.assertIn("rejected", model._toolhead._status)
+
+    def test_z_projection_follows_fresh_telemetry_and_upward_motion(self):
+        # B's catch-up half: once the poll reports the commanded
+        # level (or below), the projection adopts the truth again —
+        # and an upward jog followed by a downward one tracks both
+        # ways instead of freezing at a stale floor.
+        model = self.monitor()
+        self.deliver_state("standby")  # z = 0.4
+        model.setJogDistance(0.1)
+        model.jog("z", -1)  # projection 0.3
+        self.qt.events(1)
+        def deliver_z(z):
+            import time
+            status = {"print_stats": {"state": "standby"},
+                      "gcode_move": {"gcode_position": [0, 0, z, 0]},
+                      "motion_report": {"live_position": [0, 0, z, 0]}}
+            self.follower.client._handle_http_status({"result": {"status": status}}, None,
+                                                     self.follower.client._generation, time.monotonic())
+        deliver_z(0.3)  # the head arrived: the poll adopts
+        self.qt.events(1)
+        self.assertAlmostEqual(model._toolhead._z_estimate, 0.3)
+        model.jog("z", 1)  # upward: projection 0.4
+        self.qt.events(1)
+        deliver_z(0.4)
+        self.qt.events(1)
+        self.assertAlmostEqual(model._toolhead._z_estimate, 0.4)
+        model.jog("z", -1)  # downward again: projection 0.3
+        self.qt.events(1)
+        deliver_z(0.3)
+        self.qt.events(1)
+        self.assertAlmostEqual(model._toolhead._z_estimate, 0.3)
+
     def test_emergency_stop_clears_pending_jog_queue(self):
         model = self.monitor()
         self.deliver_state("printing")
