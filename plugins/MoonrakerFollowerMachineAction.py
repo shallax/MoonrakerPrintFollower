@@ -323,7 +323,13 @@ class MoonrakerFollowerMachineAction(MachineAction):
 
     @pyqtSlot(str, result=bool)
     def validUrl(self, value: str) -> bool:
-        return self._url_is_usable(normalise_url(value))
+        # A malformed bracketed host makes urlsplit raise — a live
+        # slot exception aborts Cura, so the validator refuses
+        # instead (the 2026-09-19 coverage round's find).
+        try:
+            return self._url_is_usable(normalise_url(value))
+        except ValueError:
+            return False
 
     @pyqtSlot(str, str, result=bool)
     def insecureKeyWarning(self, url: str, key: str) -> bool:
@@ -333,7 +339,10 @@ class MoonrakerFollowerMachineAction(MachineAction):
         but the Connection tab must say so (panel security P2-1)."""
         if not str(key or "").strip():
             return False
-        text = normalise_url(url)
+        try:
+            text = normalise_url(url)
+        except ValueError:
+            return False  # a malformed host reads as no warning, never a crash
         parsed = QUrl(text)
         if not (parsed.isValid() and parsed.scheme().lower() == "http"):
             return False

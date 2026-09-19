@@ -307,7 +307,7 @@ Item {
         handle.write("\n".join(lines) + "\n")
 
     # Module resolution is per-module, not per-type: splice the stub Cura
-    # types the real tree does not declare (NetworkMJPGImage, CheckBox,
+    # types the real tree does not declare (MoonrakerMJPGImage, CheckBox,
     # TabRowButton, ...) into the materialised Cura module.
     cura_dir = os.path.join(target_dir, "Cura")
     real_qmldir = os.path.join(cura_dir, "qmldir")

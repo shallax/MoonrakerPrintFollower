@@ -1120,12 +1120,17 @@ class MonitorTemperatureHistoryCoverageTests(unittest.TestCase):
         self.assertEqual(samples[0].elapsed, 0.0)
 
     def test_a_backwards_clock_re_anchors_instead_of_trimming(self):
+        # A backwards monotonic clock restarts the window: the old
+        # timebase's samples leave and the new reading anchors the
+        # fresh window (the chart's nearest-sample search needs one
+        # ordered timebase).
         history = TemperatureHistory()
         history.observe({"heater_bed": {"temperature": 60.0}}, 100.0)
         history.observe({"heater_bed": {"temperature": 61.0}}, 50.0)
         samples = history.series("heater_bed")
-        self.assertEqual(len(samples), 2)
+        self.assertEqual(len(samples), 1)
         self.assertEqual(samples[-1].elapsed, 0.0)
+        self.assertEqual(samples[-1].temperature, 61.0)
 
     def test_a_vanished_sensor_is_pruned_from_the_legend(self):
         history = TemperatureHistory(window_seconds=1.0)

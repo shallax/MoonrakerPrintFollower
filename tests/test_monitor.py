@@ -244,37 +244,176 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("function refreshMap()", MESH_SECTION_QML)
         self.assertIn("meshSection.refreshMap()", MONITOR_QML)
 
-    def test_no_oscillation_thresholds_keep_the_release_above_the_squeeze(self):
-        # The auto-collapse latch (MoonrakerMonitor.qml:205-239): the
-        # release point must sit ABOVE the squeeze point with a dead
-        # zone — the record there describes the latch that never
-        # re-armed when the release sat below the squeeze. The
-        # literals are extracted tolerantly (regexes, never the
-        # expression text, which qmlformat owns). The squeeze reads
-        # the CameraPane's exported viewport width — the qualifier is
-        # matched tolerantly, but both sides must be the SAME
-        # expression and the threshold stays pinned.
-        comfort = re.search(
-            r'infoComfortWidth: \(([0-9]+) \+ ([0-9]+) \+ ([0-9]+)\) \* screenScaleFactor \+ 4 \* UM\.Theme\.getSize\("default_margin"\)\.width',
-            MONITOR_QML,
-        )
-        self.assertIsNotNone(comfort, "the comfort-width expression changed shape")
+    def test_the_narrow_window_rule_hinges_on_the_camera_pane(self):
+        # The frozen contract (INSTRUCTIONS.md, "Standing UI rules"): the
+        # narrow-window rule reads the WEBCAM pane's own width — never the
+        # stage's — and refuses an expansion the camera could not survive.
+        # Whitespace is flattened before matching: qmlformat owns the
+        # wrapping, the pins own the arithmetic.
+        flat = re.sub(r"\s+", " ", MONITOR_QML)
+        self.assertIn("The narrow-window collapse/lock contract — see INSTRUCTIONS.md", flat)
+        self.assertIn("readonly property real cameraViewportWidth: cameraPane.viewportWidth", flat)
         squeeze = re.search(
             r'webcamSqueezed: ([A-Za-z0-9_.]+) > 0 && \1 < ([0-9]+) \* screenScaleFactor',
-            MONITOR_QML,
+            flat,
         )
         self.assertIsNotNone(squeeze, "the squeeze threshold changed shape")
-        release_margin = re.search(
-            r'root\.width >= infoComfortWidth \+ ([0-9]+) \* screenScaleFactor',
-            MONITOR_QML,
+        self.assertEqual((squeeze.group(1), int(squeeze.group(2))),
+                         ("root.cameraViewportWidth", 220),
+                         "the squeeze must read the camera at its comfort minimum")
+        # The expansion costs: each pane's expanded width less the
+        # collapsed strip it replaces — the same strip on both panes.
+        costs = re.findall(
+            r'readonly property real (info|status)ExpandCost: \(([0-9]+) - ([0-9]+)\) \* screenScaleFactor',
+            flat,
         )
-        self.assertIsNotNone(release_margin, "the release threshold changed shape")
-        comfort_sum = sum(int(g) for g in comfort.groups())
-        self.assertGreater(
-            comfort_sum + int(release_margin.group(1)),
-            int(squeeze.group(2)),
-            "the release point must stay above the squeeze point or the latch never re-arms",
+        self.assertEqual([(name, int(wide) - int(strip)) for name, wide, strip in costs],
+                         [("info", 226), ("status", 366)],
+                         "an expansion cost changed")
+        self.assertEqual(len({strip for _, _, strip in costs}), 1,
+                         "the two panes must share the collapsed strip's width")
+        # The forward check: the pane's own cost against the comfort
+        # minimum, on the camera as it stands.
+        for pane, cost in (("info", "infoExpandCost"), ("status", "statusExpandCost")):
+            forward = re.search(
+                r'readonly property bool %sExpandBlocked: root\.cameraViewportWidth - root\.%s '
+                r'< ([0-9]+) \* screenScaleFactor' % (pane, cost),
+                flat,
+            )
+            self.assertIsNotNone(forward, "the %s forward check changed shape" % pane)
+            self.assertEqual(int(forward.group(1)), 220,
+                             "the %s forward check left the comfort minimum" % pane)
+        # The open-width measures: the camera seen with the pane's own
+        # auto fold credited back out, so no decision depends on how many
+        # layout passes the fold needed — and the release is the forward
+        # check read backwards.
+        for pane, flag in (("info", "infoAutoCollapsed"), ("status", "statusAutoCollapsed")):
+            measure = re.search(
+                r'readonly property real %sOpenWidth: root\.cameraViewportWidth - \(root\.%s && '
+                r'!root\.%sPersistedCollapsed \? root\.%sExpandCost : 0\)' % (pane, flag, pane, pane),
+                flat,
+            )
+            self.assertIsNotNone(measure, "the %s open-width measure changed shape" % pane)
+        # The fold-landed gate: the pane's own width is where the fold
+        # LANDS, and where the camera is pinned at its floor it is the
+        # only signal there is.
+        self.assertIn(
+            "readonly property bool infoFoldLanded: infoPanel.width < 200 * screenScaleFactor", flat)
+        # The LIFO guard and the cascade gate: the information pane folds
+        # under comfort and reclaims its room LAST — while the status
+        # pane's fold stands it holds, because reopening it would spend
+        # the room that fold is holding; the status pane folds only once
+        # the information pane's fold has landed. The old
+        # simultaneous-release form (both flags dropped in the same
+        # evaluation) is pinned out: it landed the pair back on both
+        # folded wherever one pane alone would have fit.
+        self.assertIn(
+            "root.infoAutoCollapsed = infoOpen < comfort || statusWasFolded;",
+            flat,
         )
+        self.assertNotIn("statusWasFolded && statusOpen < comfort", flat,
+                         "the information pane releases with the status pane's fold again")
+        self.assertIn(
+            "root.statusAutoCollapsed = statusOpen < comfort && root.infoFoldLanded "
+            "&& (infoWasCollapsed || statusWasFolded);", flat)
+        # One evaluation, driven by the camera and by each pane's own
+        # width, and every measure is read before either flag moves: the
+        # cascade's order is the flags as they stand, never a value this
+        # evaluation is about to write.
+        self.assertIn("onCameraViewportWidthChanged: root.applyNarrowWindowRules()", flat)
+        self.assertEqual(flat.count("onWidthChanged: root.applyNarrowWindowRules()"), 3,
+                         "the rule must run on the stage and on both panes' own widths")
+        self.assertLess(flat.index("var statusOpen = root.statusOpenWidth"),
+                        flat.index("root.infoAutoCollapsed = infoOpen"),
+                        "the measures must be read before either flag moves")
+        self.assertLess(flat.index("root.infoAutoCollapsed = infoOpen"),
+                        flat.index("root.statusAutoCollapsed = statusOpen"),
+                        "the cascade must fold the information pane first")
+        # The retired latch: the stage-width constants and the single
+        # camera measure they shared are gone, and so is the squeeze-edge
+        # handler the camera-hinged rule replaced.
+        for retired in ("infoComfortWidth", "statusComfortWidth", "cameraOpenWidth",
+                        "onWebcamSqueezedChanged"):
+            self.assertNotIn(retired, flat, "%s outlived the camera-hinged rule" % retired)
+
+    def test_the_costs_ride_the_panes_own_layout_widths(self):
+        # The costs are derived, not free-standing: each is a pane's
+        # expanded width less its collapsed strip, and the pane layout
+        # carries both numbers. A width changed on either side has to be
+        # reflected in the cost in the same pass, or the camera
+        # arithmetic drifts from the layout it is deciding about — and
+        # the status pane's cost must stay the larger one, or the fold
+        # order (and with it the reclaim-last guard) is inverted.
+        flat = re.sub(r"\s+", " ", MONITOR_QML)
+        expanded = {}
+        for pane in ("info", "status"):
+            layout = re.search(
+                r'objectName: "%sPanel".*?Layout\.preferredWidth: \(root\.%sCollapsed \? '
+                r'%sCollapseButton\.width \+ 2 \* UM\.Theme\.getSize\("thin_margin"\)\.width : '
+                r'([0-9]+) \* screenScaleFactor\).*?Layout\.minimumWidth: \(root\.%sCollapsed \? '
+                r'%sCollapseButton\.width \+ 2 \* UM\.Theme\.getSize\("thin_margin"\)\.width : '
+                r'([0-9]+) \* screenScaleFactor\)' % (pane, pane, pane, pane, pane),
+                flat,
+            )
+            self.assertIsNotNone(layout, "the %s pane's layout widths changed shape" % pane)
+            cost = re.search(
+                r'readonly property real %sExpandCost: \(([0-9]+) - ([0-9]+)\) \* screenScaleFactor'
+                % pane, flat)
+            self.assertIsNotNone(cost, "the %s expansion cost changed shape" % pane)
+            self.assertEqual((int(cost.group(1)), int(cost.group(2))),
+                             (int(layout.group(1)), 44),
+                             "the %s cost stopped riding the pane's own widths" % pane)
+            self.assertLess(int(layout.group(2)), int(layout.group(1)),
+                            "the %s pane's minimum must stay under its expanded width" % pane)
+            expanded[pane] = int(layout.group(1))
+        self.assertGreater(expanded["status"], expanded["info"],
+                           "the status pane must fold after the information pane")
+
+    def test_every_expand_path_refuses_while_the_camera_has_no_room(self):
+        # The narrow-window lock: a collapsed pane refuses on the fold's
+        # own reasons (the auto collapse, a camera already under its
+        # comfort) and on the forward check — all three named in the
+        # expression — and every expand path carries the guard with the
+        # tooltip that explains the refusal (the console's too-narrow
+        # precedent).
+        flat = re.sub(r"\s+", " ", MONITOR_QML)
+        for lock, pane in (("infoExpandLocked", "info"), ("statusExpandLocked", "status")):
+            lock_line = re.search(
+                r'readonly property bool %s: root\.%sCollapsed && \(root\.%sAutoCollapsed \|\| '
+                r'root\.webcamSqueezed \|\| root\.%sExpandBlocked\)' % (lock, pane, pane, pane),
+                flat,
+            )
+            self.assertIsNotNone(lock_line, "the %s lock changed shape" % pane)
+            self.assertGreaterEqual(flat.count("if (root.%s) {" % lock), 2,
+                                    "the %s pane needs the guard on its strip and its toggle" % pane)
+        self.assertIn("The window is too narrow — widen it to show the information.", flat)
+        self.assertIn("The window is too narrow — widen it to show the printer status.", flat)
+        # The dashboard's controls pane follows the same rule through the
+        # loaded monitor document's camera: its own cost and forward
+        # check, the same guard on both expand paths, and the same
+        # widen-first message. It carries no auto fold of its own, so the
+        # user's collapse is the only state the lock ever meets.
+        dash = re.sub(r"\s+", " ", DASHBOARD_QML)
+        self.assertIn("readonly property real cameraViewportWidth: baseMonitorLoader.item !== null ? "
+                      "baseMonitorLoader.item.cameraViewportWidth : 0", dash)
+        self.assertIn("property bool controlsCollapsed: root.printer != null ? "
+                      "root.printer.controlsCollapsed : false", dash)
+        controls_cost = re.search(
+            r'readonly property real controlsExpandCost: \(([0-9]+) - ([0-9]+)\) \* screenScaleFactor',
+            dash,
+        )
+        self.assertIsNotNone(controls_cost, "the controls expansion cost changed shape")
+        self.assertEqual(int(controls_cost.group(1)) - int(controls_cost.group(2)), 342,
+                         "the controls expansion cost changed")
+        self.assertIn("readonly property bool controlsExpandBlocked: root.cameraViewportWidth > 0 && "
+                      "root.cameraViewportWidth - root.controlsExpandCost < 220 * screenScaleFactor", dash)
+        self.assertIn("readonly property bool webcamSqueezed: root.cameraViewportWidth > 0 && "
+                      "root.cameraViewportWidth < 220 * screenScaleFactor", dash)
+        self.assertIn("readonly property bool controlsExpandLocked: root.controlsCollapsed && "
+                      "(root.webcamSqueezed || root.controlsExpandBlocked)", dash)
+        self.assertGreaterEqual(dash.count("if (root.controlsExpandLocked) {"), 2,
+                                "the controls pane needs the guard on its strip and its toggle")
+        self.assertIn("The window is too narrow — widen it to show the printer controls.", dash)
 
     def test_controls_live_in_the_collapsible_column_and_the_left_is_read_only(self):
         # The left panel carries no printer commands: only the camera list,
@@ -795,6 +934,26 @@ class MonitorModelContractTests(unittest.TestCase):
         # undefined at QML creation and the .length read would throw).
         self.assertIn('value_property(str, "monitorLayerSource", monitorChanged, "")', MONITOR_MODEL)
 
+    def test_the_chart_paints_each_point_without_re_reading_its_geometry(self):
+        # The chart is open while a print runs, and every payload landing
+        # repaints it: the data layers map each sample with the geometry
+        # resolved once per paint (a scale and offset per axis) rather
+        # than calling root._xFor/root._yFor per coordinate, which
+        # re-reads six QML properties each time.
+        self.assertIn("var plotWidth = width - gutter;", TEMP_CHART_QML)
+        self.assertIn("points[j][0] * mapScaleX + mapOffsetX", TEMP_CHART_QML)
+        self.assertIn("targetSeg[u][1] * mapScaleY + mapOffsetY", TEMP_CHART_QML)
+        self.assertIn("powerSeg[q][1] * plotBottom", TEMP_CHART_QML)
+        # The hover search runs once per mouse move, not again in every
+        # overlay repaint: the markers it published are what the overlay
+        # draws. One call site plus the definition.
+        self.assertEqual(TEMP_CHART_QML.count("_nearestIndex("), 2)
+        self.assertIn("var marks = root._hoverMarks;", TEMP_CHART_QML)
+        self.assertIn("_hoverMarks = marks;", TEMP_CHART_QML)
+        # The render domain comes off the payload, with the scan kept for
+        # a payload that predates it.
+        self.assertIn("if (series.bounds !== undefined) {", TEMP_CHART_QML)
+
     def test_every_value_property_rides_its_signal_group(self):
         # The panel's catch: a key declared with a notify signal but
         # absent from that signal's group can never notify — the
@@ -1203,13 +1362,13 @@ class MonitorModelContractTests(unittest.TestCase):
     def test_camera_identity_and_selection_are_typed_and_sized(self):
         self.assertIn("def identity(camera", TYPED)
         self.assertIn("camera_selected", TYPED)
-        # The camera bar's final shape (the ruling): the
-        # label sits permanently ABOVE the dropdown, centred, no
-        # colon — one label, no conditional layouts, nothing to
-        # overlap the pane at any width. The bar lives in CameraPane.
+        # The camera bar's final shape (the 2026-09-19 live-run
+        # ruling): the controls ride LEVEL with the pane title with
+        # no separate "Camera" label — the selector carries the name.
+        # The bar lives in CameraPane.
         self.assertIn("Layout.preferredWidth: 180 * screenScaleFactor", CAMERA_PANE_QML)
         self.assertIn("Layout.minimumWidth: 60 * screenScaleFactor", CAMERA_PANE_QML)
-        self.assertEqual(CAMERA_PANE_QML.count('text: "Camera"'), 1)
+        self.assertEqual(CAMERA_PANE_QML.count('text: "Camera"'), 0)
 
     def test_camera_qml_uses_the_activated_signal_index_not_bound_current_index(self):
         self.assertIn("onActivated: function (index)", CAMERA_PANE_QML)
@@ -2543,6 +2702,13 @@ class MonitorQtTests(unittest.TestCase):
         # (the panel ruling: "Pause: paused" resurfacing after a newer
         # action reads as fresh printer activity).
         self.qt.events(model._commands.RECEIPT_MS + 500)
+        # Under the parallel coverage wave's load the receipt's timer
+        # can lag the simulated window: poll within a budget instead
+        # of asserting once (the assert_model pattern).
+        budget = 5000
+        while model.actionStatus != "" and budget > 0:
+            self.qt.events(100)
+            budget -= 100
         self.assertEqual(model.actionStatus, "")
 
     def test_console_sends_never_touch_the_action_status(self):

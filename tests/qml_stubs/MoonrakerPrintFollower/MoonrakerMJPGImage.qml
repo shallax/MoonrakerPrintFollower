@@ -10,6 +10,12 @@ Item {
     // monitor's fit-to-viewport bindings lay out a visible stream area.
     property real imageWidth: 640
     property real imageHeight: 480
+    // The stream chip's bandwidth readout (CameraPane binds it):
+    // the stub declares it so the production binding resolves.
+    property real recentBytesPerSec: 0
+    // The renderer's trace gate (CameraPane binds it): the stub
+    // declares it so the production binding resolves.
+    property bool traceEnabled: false
     // The ownership counters: the camera start/stop lifecycle tests
     // count every call and every source assignment — Cura's real
     // start() is destructive, so the count IS the contract.

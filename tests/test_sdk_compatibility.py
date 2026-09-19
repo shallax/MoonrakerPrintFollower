@@ -132,10 +132,11 @@ class SdkCompatibilityTests(unittest.TestCase):
         for qml in (CONFIG_QML, MONITOR_QML, UPLOAD_QML):
             self.assertIn("import QtQuick.Controls 2.15", qml)
 
-    def test_monitor_uses_cura_network_mjpeg_component(self):
+    def test_monitor_uses_the_plugin_mjpeg_renderer(self):
         # The image lives in the camera card (CameraPane.qml): the
         # negative guards follow it there, or they pass vacuously.
-        self.assertIn("Cura.NetworkMJPGImage", CAMERA_PANE_QML)
+        self.assertIn("MoonrakerMJPGImage", CAMERA_PANE_QML)
+        self.assertNotIn("Cura.NetworkMJPGImage", CAMERA_PANE_QML)
         self.assertNotIn("WebEngine", CAMERA_PANE_QML)
         self.assertNotIn("VideoOutput", CAMERA_PANE_QML)
 

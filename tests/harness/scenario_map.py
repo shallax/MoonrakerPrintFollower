@@ -309,6 +309,18 @@ EXCLUSIONS = {
         "date": "2026-09-19",
         "recheck": "the cold-camera timing scenario lands",
     },
+    "MoonrakerMJPGImage.start": {
+        "reason": "the renderer's stream start, driven by the pane's applyCamera; the harness scenarios exercise the pane, never the raw verb",
+        "evidence": "the camera ownership tests' start/stop counter assertions",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
+    "MoonrakerMJPGImage.stop": {
+        "reason": "the renderer's stream stop, driven by the pane's applyCamera; the harness scenarios exercise the pane, never the raw verb",
+        "evidence": "the camera ownership tests' start/stop counter assertions",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
     "cameraImage": {
         "reason": "the stream viewport item, named for the ownership tests' counter reads; never a scenario target",
         "evidence": "the camera ownership tests' start/stop counter assertions",
@@ -454,6 +466,21 @@ EXCLUSIONS = {
         "evidence": "test_qml_real_engine's StatusColumnGeometryTests measures the sections against it",
         "date": "2026-09-18",
         "recheck": "a scenario scrolls or presses inside the status pane",
+    },
+    # The controls pane's two geometry address points (the constant
+    # gutter fix): the flickable and the column it holds are measured,
+    # never pressed — a scenario would only be reading their rects.
+    "moonrakerControlsFlick": {
+        "reason": "geometry address point of the controls pane; no scenario presses it",
+        "evidence": "test_qml_real_engine's PaneGutterTests measures the column against it",
+        "date": "2026-09-19",
+        "recheck": "a scenario scrolls or presses inside the controls pane",
+    },
+    "moonrakerControlsContent": {
+        "reason": "geometry address point of the controls column; no scenario presses it",
+        "evidence": "test_qml_real_engine's PaneGutterTests measures the gutter against it",
+        "date": "2026-09-19",
+        "recheck": "a scenario scrolls or presses inside the controls pane",
     },
     # The job section's stacked-track pause fill: the strip's own
     # fill took the mapped statusNextPauseFill name (the shared
@@ -671,6 +698,24 @@ EXCLUSIONS = {
         "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
         "date": "2026-09-15",
         "recheck": "the deferred popup round lands",
+    },
+    "cameraStreamChipText": {
+        "reason": "the stream chip's label: display-only text over the live camera feed (the capture census exempts camera-overlay text by name)",
+        "evidence": "the chip visibility contract test; the census exemption in capture_contrast.CAMERA_OVERLAY_TEXT",
+        "date": "2026-09-19",
+        "recheck": "the chip's text gains an interactive surface",
+    },
+    "cameraLiveBadgeText": {
+        "reason": "the Live badge's label: display-only text over the live camera feed (the capture census exempts camera-overlay text by name)",
+        "evidence": "the camera pane's badge renders in the capture scenes; the census exemption in capture_contrast.CAMERA_OVERLAY_TEXT",
+        "date": "2026-09-19",
+        "recheck": "the badge's text gains an interactive surface",
+    },
+    "cameraStreamChip": {
+        "reason": "the camera stream chip (decoded resolution + recent bandwidth): display-only, driven by the renderer's published statistics",
+        "evidence": "test_qml_real_engine's chip visibility/text contract; the captures' non-live camera hides it",
+        "date": "2026-09-19",
+        "recheck": "the chip gains an interactive surface",
     },
     "moonrakerEmergencyButton": {
         "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",

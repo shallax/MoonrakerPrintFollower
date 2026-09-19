@@ -115,6 +115,61 @@ class MigrationNoticeTests(unittest.TestCase):
         notice.announce()
         self.assertEqual(self.raised, [])
 
+    def test_an_already_shown_failure_raises_nothing(self):
+        # The latch short-circuits BEFORE the toast: a failed record
+        # whose toast already landed is inert.
+        record = self._failed()
+        record["toastShown"] = True
+        notice, _ = self._notice(record)
+        notice.announce()
+        self.assertEqual(self.raised, [])
+
+    def test_a_raise_after_close_is_inert(self):
+        # The neutered path: a queued emission arriving after close
+        # returns before touching the record or the toast.
+        notice, _ = self._notice(self._failed())
+        notice.close()
+        notice._raise_once()
+        self.assertEqual(self.raised, [])
+
+    def test_attach_survives_a_broken_previous_signal(self):
+        # A previous model's dismiss signal whose disconnect raises
+        # must not block the swap (the except keeps attach alive).
+        class RaisingSignal:
+            def disconnect(self, *args):
+                raise TypeError("gone")
+
+            def connect(self, *args):
+                pass
+
+        notice, _ = self._notice(self._failed())
+        notice._model_signal = RaisingSignal()
+        notice.attach_model(FakeModel())
+        self.assertIsNotNone(notice._model_signal)
+
+    def test_close_survives_a_broken_signal_disconnect(self):
+        # The teardown's disconnect except: a raising signal must not
+        # escape close().
+        class RaisingSignal:
+            def disconnect(self, *args):
+                raise TypeError("gone")
+
+        notice, _ = self._notice(self._failed())
+        notice._model_signal = RaisingSignal()
+        notice.close()
+        self.assertIsNone(notice._model_signal)
+
+    def test_close_survives_an_escape_stop_failure(self):
+        # A stop() that raises must not escape close(): the except
+        # branch keeps the teardown alive.
+        notice, _ = self._notice(self._failed())
+        notice.announce()
+        def broken_stop():
+            raise RuntimeError("stop failed")
+        notice._escape.stop = broken_stop
+        notice.close()
+        self.assertTrue(notice._closed)
+
     def test_failure_raises_once_and_latches(self):
         notice, persistence = self._notice(self._failed(), gate=lambda: False)
         notice.announce()

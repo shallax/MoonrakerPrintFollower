@@ -724,15 +724,18 @@ class MonitorData(QObject):
                 return
         self._webcams_pending = True
         self._webcams_pending_since = time.monotonic()
-        from .CameraTiming import mark
-        mark("T3", "webcam list requested")
+        from .CameraTiming import mark_once
+        # Once per trace: the T0-T9 chain answers the COLD start, and
+        # the periodic discovery poll would otherwise re-mark every
+        # 30 s for the session's lifetime.
+        mark_once("T3", "webcam list requested")
         def landed(payload, error):
             # Cleared FIRST: a dropped callback (the generation guard
             # in request()) must never wedge the gate shut. The
             # deactivate path resets it too, for the same reason.
             self._webcams_pending = False
             if not error and isinstance(result(payload), Mapping):
-                mark("T4", "webcam list landed")
+                mark_once("T4", "webcam list landed")
                 self._update(webcams=tuple(item for item in result(payload).get("webcams", ()) if isinstance(item, dict) and item.get("enabled", True)))
         if not self.request("webcams", "GET", "server/webcams/list", landed,
                 replace=True, category="discovery",

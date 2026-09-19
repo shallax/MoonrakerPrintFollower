@@ -426,6 +426,28 @@ class PublishBranchTests(MonitorModelCase):
         self.assertEqual(self.model.cameraRefreshNonce, before)
         self.assertTrue(self.model.monitorState)
 
+    def test_a_query_only_url_transition_does_not_reload(self):
+        # The 2026-09-19 live-run ruling: a poll may report the same
+        # stream with a rotated nonce in its query — a healthy stream
+        # must not be reloaded for it. A genuine path transition
+        # still bumps the nonce.
+        from PyQt6.QtTest import QSignalSpy
+        self.model = self.build()
+        self.model._camera = SimpleNamespace(url="", values={})
+        self.model._publish()  # no camera yet
+        self.model._camera.url = "http://cam/stream?nonce=1"
+        self.model._publish()
+        before = self.model.cameraRefreshNonce
+        nonce_spy = QSignalSpy(self.model.cameraRefreshChanged)
+        self.model._camera.url = "http://cam/stream?nonce=2"
+        self.model._publish()
+        self.assertEqual(len(nonce_spy), 0)
+        self.assertEqual(self.model.cameraRefreshNonce, before)
+        self.model._camera.url = "http://cam/other"
+        self.model._publish()
+        self.assertEqual(len(nonce_spy), 1)
+        self.assertEqual(self.model.cameraRefreshNonce, before + 1)
+
     def test_the_all_page_reports_its_own_totals(self):
         self.model = self.build()
         self.open_files([])

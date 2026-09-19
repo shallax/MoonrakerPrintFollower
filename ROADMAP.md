@@ -1841,14 +1841,11 @@ chevrons, and the Windows multi-start disconnect.
 ## 4.5.0 — Persistence refactor (the 2026-09-17 re-sequencing)
 
 Backlog (2026-09-19, the notes ride here until a 4.6.0 branch
-exists): the camera bridge frame-skip is a 4.5.0 item — the bridge
-parses JPEG boundaries and never forwards a frame over Cura's 2 MB
-decoder cap, so a high-rate stream stops triggering Cura's
-buffer-overflow restart loop without touching the upstream camera
-configuration. The measured live stream runs ~11 MB/s with motion
-frames over the cap (the trace evidence: per-relay byte counts).
-Also for 4.6.0: a true transcoding bridge (Qt QImage decode-scale-
-re-encode on a worker thread) is the larger sibling.
+exists): the camera bridge frame-skip and the 4.6.0 transcoding
+bridge are WITHDRAWN (2026-09-19) — the plugin-owned MJPEG renderer
+supersedes both: its latest-frame-wins pacing and bounded parsing
+replace the 2 MB-cap workaround, and the live decode cost measured
+12.6 ms average, so a transcoding relay is not needed.
 Also for 4.5.0: a way to stop/pause the live camera stream from
 the pane (the stream keeps consuming the remote while Monitor
 sits open; a pause control would stop the upstream fetch without

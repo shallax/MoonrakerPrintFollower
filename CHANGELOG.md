@@ -6,7 +6,9 @@ Moonraker Print Follower is licensed under the GNU General Public License versio
 
 Version 4.5.0 is the persistence release: the plugin's settings leave
 Cura's preference file for one MoonrakerPrintFollower folder beside
-it, migrated automatically on the first start after the upgrade.
+it, migrated automatically on the first start after the upgrade. The
+release also swaps the webcam stream onto a plugin-owned renderer and
+lands the performance pass across the Monitor page.
 
 - **The persistence folder.** `MoonrakerPrintFollower/` holds
   `settings.json` (the connection, following, upload, camera and
@@ -26,6 +28,15 @@ it, migrated automatically on the first start after the upgrade.
   connecting websocket (the startup aborted its own handshake), the
   first camera discovery applies the stream exactly once instead of
   twice, and the discovery retries coalesce.
+- **The camera stream's own engine.** The webcam renders through a
+  plugin-owned MJPEG renderer instead of Cura's built-in loader: a
+  healthy stream stays connected indefinitely (the old loader
+  restarted the stream whenever its buffer crossed 2 MB — about once
+  a second on a 1080p camera), frames pace to a 30 fps ceiling with
+  the newest frame winning, and memory stays bounded. A camera
+  re-publish that changed only its URL's query no longer restarts
+  the stream, and the camera timing trace no longer re-marks the
+  periodic webcam poll.
 - **The performance pass.** One monitor publish per heartbeat instead
   of three or four; no preference-file or state-file reads on the
   heartbeat (the config, the migration record and the console
@@ -40,7 +51,8 @@ it, migrated automatically on the first start after the upgrade.
 - **The Cura floor.** Cura 5.7 / SDK 8.7 through Cura 5.13 / SDK
   8.12 is now the supported range — every minor in between verified
   end to end by the version sweep — with 5.11's preview limitations
-  documented in the README.
+  documented in the README, and the console's input row and Send
+  button fixed on 5.11 and 5.12.
 - **Fixes:** the console's notes no longer persist across restarts
   (they are session-transient by design), the status column's live
   values never wrap (the per-second polish-loop warning), an empty

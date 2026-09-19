@@ -476,41 +476,89 @@ Component {
         // the stage-exit branch from under it (the harness probe's
         // finding). This document only answers openPopOver, which
         // the dashboard's ladder writes through baseMonitorLoader.
-        // The ruling (2026-09-10): when the stage is too
-        // narrow for the Webcam pane at its minimum, the Information
-        // pane auto-collapses to make room. The trigger is computed
-        // from FIXED constants — the expanded Info width, the webcam
-        // pane's label-free minimum and the status pane's minimum —
-        // NEVER from the post-collapse layout, so collapsing
-        // Information cannot move the goal post and no
-        // hysteresis oscillation can form. Re-expansion waits for
-        // the required width PLUS a margin, so the boundary cannot
-        // jitter either.
-        property real infoComfortWidth: (240 + 220 + 410) * screenScaleFactor + 4 * UM.Theme.getSize("default_margin").width
+        // The narrow-window collapse/lock contract — see INSTRUCTIONS.md
+        // "Standing UI rules"; changes here require explicit
+        // double-confirmation.
+        // The ruling (the narrow-window rule, re-based on the camera):
+        // every decision below reads the WEBCAM pane's own width, never
+        // the stage's. The camera is what the panes' expansions take
+        // their room from, and its width already carries whatever the
+        // panes around it gave up (the controls pane's yield widens the
+        // camera with no stage change at all). An expansion is blocked
+        // while it would take the camera under its comfort minimum;
+        // folding is what gives that room back.
+        // One evaluation serves the fold and the release, and it is
+        // driven by the camera rather than the window: a stage that
+        // lands under the squeeze without ever crossing it (a jump)
+        // still folds, because the rules run where the camera's width
+        // settles.
+        readonly property real cameraViewportWidth: cameraPane.viewportWidth
+        property bool webcamSqueezed: root.cameraViewportWidth > 0 && root.cameraViewportWidth < 220 * screenScaleFactor
+        // The expansion cost: the pane's expanded width less the
+        // collapsed strip it replaces — what opening it takes off the
+        // camera.
+        readonly property real infoExpandCost: (270 - 44) * screenScaleFactor
+        readonly property real statusExpandCost: (410 - 44) * screenScaleFactor
+        // The forward check: an expansion is refused while the camera
+        // could not stay at its comfort minimum through it.
+        readonly property bool infoExpandBlocked: root.cameraViewportWidth - root.infoExpandCost < 220 * screenScaleFactor
+        readonly property bool statusExpandBlocked: root.cameraViewportWidth - root.statusExpandCost < 220 * screenScaleFactor
         property bool infoPersistedCollapsed: root.printer != null ? root.printer.infoCollapsed : false
-        // The ruling: fold the Information pane before the
-        // WEBCAM pane starts being crushed. Empirically probed in the
-        // harness (probe3): the camera column squeezes below its
-        // 220 px comfort width at a stage width of ~900 px — the old
-        // release threshold (734 px) sat BELOW the squeeze boundary,
-        // so every shrink released the latch the instant it fired
-        // (and the latch only fires on transitions, so it never
-        // re-armed below that). The comfort width — info 240 +
-        // camera 220 + status 410 + margins — plus a 40 px margin
-        // puts the release ABOVE the squeeze boundary: the latch
-        // holds, and the dead zone between the two prevents
-        // flapping. Both thresholds come from the same fixed
-        // constant, never from the post-collapse layout.
-        property bool webcamSqueezed: cameraPane.viewportWidth > 0 && cameraPane.viewportWidth < 220 * screenScaleFactor
+        property bool statusPersistedCollapsed: root.printer != null ? root.printer.statusCollapsed : false
         property bool infoAutoCollapsed: false
-        onWebcamSqueezedChanged: {
-            if (webcamSqueezed && !root.infoPersistedCollapsed) {
-                root.infoAutoCollapsed = true;
+        property bool statusAutoCollapsed: false
+        // The camera seen with a pane's OWN fold released: the room that
+        // fold holds is credited back out, so the figure is the same
+        // before and after the layout takes the fold's room and no
+        // decision depends on how many passes the layout needed. It is
+        // also the forward check read backwards — the fold releases
+        // exactly when the lock would stop refusing the expansion.
+        readonly property real infoOpenWidth: root.cameraViewportWidth - (root.infoAutoCollapsed && !root.infoPersistedCollapsed ? root.infoExpandCost : 0)
+        readonly property real statusOpenWidth: root.cameraViewportWidth - (root.statusAutoCollapsed && !root.statusPersistedCollapsed ? root.statusExpandCost : 0)
+        // The camera can only be trusted once the layout has taken the
+        // fold the flags just made: in the pass that writes a flag the
+        // camera still reads the pre-fold width, and folding the next
+        // pane against it would fold one the first fold just made room
+        // for (the probe's transient, and the click-twice report behind
+        // it). The pane's own width is the layout's statement that its
+        // fold has landed — and where the camera is pinned at its floor
+        // it is the only signal there is, a fold there moving the panes
+        // and not the camera. The room measure itself stays the camera.
+        readonly property bool infoFoldLanded: infoPanel.width < 200 * screenScaleFactor
+        onCameraViewportWidthChanged: root.applyNarrowWindowRules()
+        onWidthChanged: root.applyNarrowWindowRules()
+        function applyNarrowWindowRules() {
+            // The un-laid-out document reads zero: no camera, no rule.
+            if (!(root.cameraViewportWidth > 0)) {
+                return;
             }
-        }
-        onWidthChanged: {
-            if (root.width >= infoComfortWidth + 40 * screenScaleFactor) {
-                root.infoAutoCollapsed = false;
+            // Read every measure before either flag moves: the cascade's
+            // order is decided by the flags as they stand, never by a
+            // value this evaluation is about to write.
+            var infoOpen = root.infoOpenWidth;
+            var statusOpen = root.statusOpenWidth;
+            var infoWasCollapsed = root.infoCollapsed;
+            var statusWasFolded = root.statusAutoCollapsed;
+            var comfort = 220 * screenScaleFactor;
+            if (!root.infoPersistedCollapsed) {
+                // The information pane folds while the camera cannot
+                // hold it, and reclaims its room LAST: while the status
+                // pane's fold stands, reopening it would spend the very
+                // room that fold is holding and the pair would land the
+                // camera under its comfort (the release churn). Once
+                // the status pane is back it measures its own room
+                // again. A collapse the user made themselves is never
+                // the fold's to take or to drop.
+                root.infoAutoCollapsed = infoOpen < comfort || statusWasFolded;
+            }
+            if (!root.statusPersistedCollapsed) {
+                // The cascade: the status pane folds once the
+                // information pane's room is spent and the camera is
+                // STILL under comfort, and unfolds again the moment the
+                // camera can absorb it — the very check the lock
+                // publishes, so the refusal and the release cannot
+                // disagree.
+                root.statusAutoCollapsed = statusOpen < comfort && root.infoFoldLanded && (infoWasCollapsed || statusWasFolded);
             }
         }
         onInfoAutoCollapsedChanged: {
@@ -519,7 +567,15 @@ Component {
             }
         }
         property bool infoCollapsed: root.infoPersistedCollapsed || root.infoAutoCollapsed
-        property bool statusCollapsed: root.printer != null ? root.printer.statusCollapsed : false
+        // The narrow-window lock: an expansion that would crush the
+        // camera is refused on every path — the fold's own reasons (the
+        // auto collapse, a camera already under its comfort) and the
+        // forward check — and the refusal says so (the console's
+        // too-narrow precedent). Hiding a pane stays available; only
+        // the expand direction waits for the camera's room.
+        readonly property bool infoExpandLocked: root.infoCollapsed && (root.infoAutoCollapsed || root.webcamSqueezed || root.infoExpandBlocked)
+        property bool statusCollapsed: root.statusPersistedCollapsed || root.statusAutoCollapsed
+        readonly property bool statusExpandLocked: root.statusCollapsed && (root.statusAutoCollapsed || root.webcamSqueezed || root.statusExpandBlocked)
         property string connectionDotColour: root.printer != null && root.printer.monitorConnected ? MoonrakerTheme.successGreen : MoonrakerTheme.errorRed
 
         ColorDialog {
@@ -583,6 +639,11 @@ Component {
                 // PANE clips, so no child can ever spill past its
                 // bounds (the live report: every readout overflowed).
                 clip: true
+                // The pane's own width is where its fold LANDS — the one
+                // signal left where the camera is pinned at its floor
+                // (see the rule): the stage's width alone would stall
+                // the cascade one pane short.
+                onWidthChanged: root.applyNarrowWindowRules()
                 onHeightChanged: root.updateInfoReadoutFits()
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
@@ -609,6 +670,15 @@ Component {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
+                        // Auto-collapsed-by-width is not a clickable
+                        // expand: only a wider window restores the
+                        // pane (the header button's guard, and the
+                        // console's strip precedent). Unguarded, this
+                        // click discarded the user's own collapse and
+                        // the pane sprang open on the next widen.
+                        if (root.infoExpandLocked) {
+                            return;
+                        }
                         if (root.printer != null) {
                             root.printer.setInfoCollapsed(false);
                         }
@@ -649,7 +719,7 @@ Component {
                             // clickable toggle: only a wider window
                             // restores the pane (the console's
                             // too-narrow precedent).
-                            if (root.infoAutoCollapsed) {
+                            if (root.infoExpandLocked) {
                                 return;
                             }
                             // The NEW state is computed locally: the
@@ -673,7 +743,7 @@ Component {
                             x: 0
                             y: parent.height + UM.Theme.getSize("default_margin").height
                             width: UM.Theme.getSize("tooltip").width
-                            text: root.infoAutoCollapsed ? "The window is too narrow — widen it to show the information." : (root.infoCollapsed ? "Show the information." : "Hide the information.")
+                            text: root.infoExpandLocked ? "The window is too narrow — widen it to show the information." : (root.infoCollapsed ? "Show the information." : "Hide the information.")
                         }
                     }
                     // The configure trigger: the column configurer's
@@ -1827,6 +1897,11 @@ Component {
                 // bounds (the live report).
                 clip: true
                 onHeightChanged: root.updateStatusReadoutFits()
+                // The pane's own width is where its fold LANDS — the one
+                // signal left where the camera is pinned at its floor
+                // (see the rule): the stage's width alone would stall
+                // the cascade one pane short.
+                onWidthChanged: root.applyNarrowWindowRules()
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
                 Layout.preferredWidth: (root.statusCollapsed ? statusCollapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 410 * screenScaleFactor)
@@ -1848,6 +1923,13 @@ Component {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
+                        // Auto-collapsed-by-width is not a clickable
+                        // expand: only a wider window restores the
+                        // pane (the information pane's strip and the
+                        // console's strip carry the same guard).
+                        if (root.statusExpandLocked) {
+                            return;
+                        }
                         if (root.printer != null) {
                             root.printer.setStatusCollapsed(false);
                         }
@@ -1977,6 +2059,13 @@ Component {
                         // collapses right.
                         iconSource: root.statusCollapsed ? UM.Theme.getIcon("ChevronSingleLeft") : UM.Theme.getIcon("ChevronSingleRight")
                         onClicked: {
+                            // Auto-collapsed-by-width is not a
+                            // clickable toggle: only a wider window
+                            // restores the pane (the information
+                            // pane's toggle carries the same guard).
+                            if (root.statusExpandLocked) {
+                                return;
+                            }
                             if (root.printer != null) {
                                 root.printer.setStatusCollapsed(!root.statusCollapsed);
                             }
@@ -1987,7 +2076,7 @@ Component {
                             x: 0
                             y: parent.height + UM.Theme.getSize("default_margin").height
                             width: UM.Theme.getSize("tooltip").width
-                            text: root.statusCollapsed ? "Show the printer status." : "Hide the printer status."
+                            text: root.statusExpandLocked ? "The window is too narrow — widen it to show the printer status." : (root.statusCollapsed ? "Show the printer status." : "Hide the printer status.")
                         }
                     }
                 }
@@ -2002,7 +2091,11 @@ Component {
                     anchors.bottom: parent.bottom
                     anchors.topMargin: UM.Theme.getSize("default_margin").height
                     anchors.leftMargin: UM.Theme.getSize("default_margin").width
-                    anchors.rightMargin: UM.Theme.getSize("default_margin").width
+                    // No right inset: the content's own 14px gutter is
+                    // the only dead band right of the sections — the
+                    // same ruling the information pane above carries,
+                    // and the inset that used to double the pane's
+                    // right gap against the scroll bar.
                     anchors.bottomMargin: UM.Theme.getSize("default_margin").height
                     clip: true
                     contentWidth: width
@@ -2199,7 +2292,10 @@ Component {
                             visible: root.etaAvailable
                             opacity: fitHidden ? 0 : 1
                             text: root.printer != null ? root.printer.monitorEta : "—"
-                            width: 64 * screenScaleFactor
+                            // The longest ETA form must clear the slot
+                            // or the value wraps — the same live-report
+                            // width the finish clock's slot carries.
+                            width: 84 * screenScaleFactor
                             font: UM.Theme.getFont("default")
                             color: UM.Theme.getColor("text")
                             elide: Text.ElideRight
@@ -2230,7 +2326,12 @@ Component {
                             visible: root.finishAvailable
                             opacity: fitHidden ? 0 : 1
                             text: root.printer != null ? root.printer.monitorFinish : "—"
-                            width: 56 * screenScaleFactor
+                            // The finish reads day-first on a print
+                            // crossing midnight, and that form is the
+                            // widest the strip holds: the slot must
+                            // clear it or the value wraps (the live
+                            // report).
+                            width: 84 * screenScaleFactor
                             font: UM.Theme.getFont("default")
                             color: UM.Theme.getColor("text")
                             elide: Text.ElideRight

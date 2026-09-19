@@ -696,7 +696,7 @@ STREAM_START = """
 window = _main_window()
 result = {}
 for item in _walk(window.contentItem()):
-    if "NetworkMJPGImage" in item.metaObject().className():
+    if "MoonrakerMJPGImage" in item.metaObject().className():
         try:
             item.start()
             result["started"] = True

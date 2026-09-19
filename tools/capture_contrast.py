@@ -335,6 +335,9 @@ def census(root, image, *, min_contrast=MIN_CONTRAST,
             round(ground[index] + translucency / 255.0 * (colour[index] - ground[index]))
             for index in range(3))
         ratio = contrast_ratio(rendered, ground)
+        if _name(item) in CAMERA_OVERLAY_TEXT:
+            print("  exempt (camera overlay): %s %s" % (_name(item), " ".join(text.split())[:40]))
+            continue
         if ratio < (min_inactive_contrast if disabled else min_contrast):
             offenders.append({
                 "objectName": _name(item),
@@ -353,6 +356,13 @@ def census(root, image, *, min_contrast=MIN_CONTRAST,
 # alive, so most skipped items are simply not on screen: listing all of
 # them buries the skips that do matter under ~150 lines per scene.
 ROUTINE_SKIPS = ("invisible",)
+
+# Text that rides the LIVE camera feed (the stream chip, the Live
+# badge): the ground the census samples beside the glyph is the
+# feed's arbitrary content — a white print bed would fail any pair —
+# so the pill's own fill is what carries the contrast. Exempt items
+# are still censused, counted and printed — never a silent pass.
+CAMERA_OVERLAY_TEXT = frozenset({"cameraStreamChipText", "cameraLiveBadgeText"})
 
 
 def _report_skips(skipped):

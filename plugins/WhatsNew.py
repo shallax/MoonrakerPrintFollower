@@ -43,6 +43,12 @@ WHATS_NEW: Tuple[dict, ...] = (
             "The webcam now appears in milliseconds when you open "
             "the Monitor — the startup no longer restarts its own "
             "connection or applies the stream twice.",
+            "The webcam stream now plays through the plugin's own "
+            "engine: a healthy stream stays connected for as long "
+            "as it runs instead of restarting every few seconds on "
+            "large frames, playback paces smoothly with the newest "
+            "frame winning, and re-announcing the same camera no "
+            "longer interrupts it.",
             "The Monitor page publishes once per heartbeat, reads "
             "nothing from disk while it runs, and batches the "
             "console's writes — the page stays responsive on a "

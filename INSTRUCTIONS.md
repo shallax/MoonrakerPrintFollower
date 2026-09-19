@@ -209,6 +209,15 @@ pins in the same commit as any change to a control.
   with `opacity`, never `visible`. Capability-static gates (a feature
   the machine simply lacks, changing only on a printer switch) keep
   `visible:` — they are whitelisted in the structural test.
+- **The narrow-window collapse/lock machinery is frozen** (the
+  2026-09-19 ruling): the squeeze fold, the camera-hinged expansion
+  locks, the per-pane costs and the release behavior are a locked
+  contract. ANY change to this logic — refactors, reviews, panel
+  suggestions included — must be explicitly called out and
+  double-confirmed before landing, even when the change appears to be
+  requested. The contract is enforced by the real-engine tests
+  (CollapseOnShrinkTests, ReExpansionGuardTests); a change that does
+  not trip them is a coverage gap, fixed in the same pass.
 - **Disconnected disables everything** (the ruling): while
   the printer is disconnected every Monitor control disables — the
   emergency stop included — via section-level

@@ -45,6 +45,10 @@ QtObject {
 
     // ── the camera pane ─────────────────────────────────────────
     readonly property color cameraVeil: "#c0202428"
+    // The translucent pill is deliberate: it lets the live frame
+    // read through its edges. The census exempts camera-overlay
+    // text — its ground is the feed's arbitrary content, and the
+    // pill's own fill carries the pair's contrast.
     readonly property color cameraLivePill: "#99000000"
     readonly property color cameraLiveText: "#ffffff"
 

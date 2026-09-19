@@ -8,6 +8,18 @@ def register(app):
     from .MoonrakerPrintFollower import MoonrakerPrintFollower
     from .MoonrakerFollowerMachineAction import MoonrakerFollowerMachineAction
     from .MoonrakerOutputDevicePlugin import MoonrakerOutputDevicePlugin
+    # The plugin-owned MJPEG renderer (CameraPane's stream view): the
+    # QML type registration so the pane can drop Cura's
+    # NetworkMJPGImage. The capture and engine harnesses resolve the
+    # same module through tests/qml_stubs instead. Guarded: the
+    # host's stdlib suite exercises register() without PyQt6, while
+    # Cura always ships it.
+    try:
+        from PyQt6.QtQml import qmlRegisterType
+        from .MoonrakerMJPGImage import MoonrakerMJPGImage
+        qmlRegisterType(MoonrakerMJPGImage, "MoonrakerPrintFollower", 1, 0, "MoonrakerMJPGImage")
+    except ImportError:
+        pass
 
     follower = MoonrakerPrintFollower(app)
     # The leak-hunt instrument ships OFF: the settings' diagnostics

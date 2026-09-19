@@ -150,6 +150,7 @@ class SourceContractTests(unittest.TestCase):
             "GCodeIndex": {"MoonrakerProtocol"},
             "GCodeIndexService": {"GCodeIndex"},
             "MonitorCamera": {"CameraBridge", "CameraTiming", "MoonrakerProtocol"},
+            "MoonrakerMJPGImage": set(),
             "MonitorCommands": {"MonitorPermissions"},
             "MonitorControls": {"MonitorFormatting", "MonitorPermissions"},
             "MonitorData": {"CameraTiming", "ConsolePolicy", "MonitorFormatting", "MonitorPermissions", "MoonrakerSession"},
@@ -268,9 +269,10 @@ class SourceContractTests(unittest.TestCase):
             self.assertIsNone(re.search(r'(?:getattr|setattr)\([^,]*follower,\s*[\"\']_', source), path.name)
 
     def test_only_shared_transport_constructs_network_managers(self):
-        # CameraBridge is the one sanctioned second owner: the camera
-        # republisher's upstream fetches are its own relay lane, not
-        # a request path of the shared transport.
+        # CameraBridge and the MJPEG renderer are the sanctioned
+        # camera-side owners: the republisher's upstream fetches and
+        # the pane's stream view are their own lanes, not request
+        # paths of the shared transport.
         owners = []
         for path in PLUGINS.glob("*.py"):
             source = path.read_text(encoding="utf-8")
@@ -278,7 +280,7 @@ class SourceContractTests(unittest.TestCase):
             self.assertNotIn("QWebSocket", source, path.name)
             self.assertNotIn("_pref_str(", source, path.name)
             self.assertNotIn("_pref_bool(", source, path.name)
-        self.assertEqual(sorted(owners), ["CameraBridge.py", "MoonrakerTransport.py"])
+        self.assertEqual(sorted(owners), ["CameraBridge.py", "MoonrakerMJPGImage.py", "MoonrakerTransport.py"])
 
     def test_network_replies_connect_into_bound_handlers_not_bare_closures(self):
         # A live crash report: a SIGSEGV in PyQtSlot::call
@@ -391,6 +393,7 @@ class SourceContractTests(unittest.TestCase):
             "QHttpMultiPart": "QtNetwork",
             "QHttpPart": "QtNetwork",
             "QQuickItem": "QtQuick",
+            "QQuickPaintedItem": "QtQuick",
             "QQuickWindow": "QtQuick",
             "QMessageBox": "QtWidgets",
             "QAbstractAnimation": "QtCore",
@@ -400,6 +403,7 @@ class SourceContractTests(unittest.TestCase):
             "QQmlComponent": "QtQml",
             "QQmlEngine": "QtQml",
             "qmlEngine": "QtQml",
+            "qmlRegisterType": "QtQml",
         }
         import ast
         for path in PLUGINS.glob("*.py"):

@@ -1082,20 +1082,32 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         first_attach = False
         try:
             url = self._camera.url
-            if url and url != self._camera_last_url:
-                # Any camera-URL transition deserves a fresh load: the
-                # first attach's initial request dies silently in the
-                # loader (the report — the manual refresh
-                # worked because it changed the URL).
-                first_attach = not self._camera_last_url
-                self._camera_last_url = url
-                self._camera_refresh_nonce += 1
-                # The bump rides THIS publish's values (the camera-
-                # delay fix): published one cycle late it drove a
-                # SECOND stream application after the URL's — the
-                # QML coalescer collapses the same-cycle pair into
-                # one.
-                values["cameraRefreshNonce"] = self._camera_refresh_nonce
+            if url:
+                last_url = self._camera_last_url
+                # A query-only transition is the upstream's own noise
+                # (a rotated nonce in the reported stream URL): the
+                # live stream keeps working, so no reload and no nonce
+                # bump — the pane's guard ignores the query too. An
+                # origin, port or path transition still reloads.
+                def _stripped(u):
+                    cut = u.find("?")
+                    return u[:cut] if cut >= 0 else u
+                changed = _stripped(url) != _stripped(last_url or "")
+                if url != last_url:
+                    self._camera_last_url = url
+                if changed:
+                    # Any camera-URL transition deserves a fresh load:
+                    # the first attach's initial request dies silently
+                    # in the loader (the report — the manual refresh
+                    # worked because it changed the URL).
+                    first_attach = not last_url
+                    self._camera_refresh_nonce += 1
+                    # The bump rides THIS publish's values (the camera-
+                    # delay fix): published one cycle late it drove a
+                    # SECOND stream application after the URL's — the
+                    # QML coalescer collapses the same-cycle pair into
+                    # one.
+                    values["cameraRefreshNonce"] = self._camera_refresh_nonce
             self.setCameraUrl(QUrl(url))
         except AttributeError:
             pass

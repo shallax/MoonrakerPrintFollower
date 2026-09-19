@@ -21,6 +21,19 @@ Component {
         }
         property var printer: OutputDevice != null ? OutputDevice.activePrinter : null
         property bool controlsCollapsed: root.printer != null ? root.printer.controlsCollapsed : false
+        // The narrow-window lock reaches this pane too (the rule is
+        // universal): a controls expansion is refused while it would
+        // take the WEBCAM's viewport under its comfort minimum. The
+        // camera's own width is the model's — the loaded monitor holds
+        // it, and it already carries whatever the panes inside the
+        // monitor gave up — so the two documents cannot disagree about
+        // the room. The cost is this pane's expanded width less the
+        // collapsed strip opening it replaces.
+        readonly property real cameraViewportWidth: baseMonitorLoader.item !== null ? baseMonitorLoader.item.cameraViewportWidth : 0
+        readonly property real controlsExpandCost: (386 - 44) * screenScaleFactor
+        readonly property bool webcamSqueezed: root.cameraViewportWidth > 0 && root.cameraViewportWidth < 220 * screenScaleFactor
+        readonly property bool controlsExpandBlocked: root.cameraViewportWidth > 0 && root.cameraViewportWidth - root.controlsExpandCost < 220 * screenScaleFactor
+        readonly property bool controlsExpandLocked: root.controlsCollapsed && (root.webcamSqueezed || root.controlsExpandBlocked)
         // The availability gates (the live ruling): a value that is
         // unavailable must not render — neither the value nor its
         // glyph. The X/Y/Z tuple hides WHOLE when any one axis is
@@ -621,11 +634,11 @@ Component {
                 onHeightChanged: root.updateControlsReadoutFits()
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
-                Layout.preferredWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 390 * screenScaleFactor)
+                Layout.preferredWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 386 * screenScaleFactor)
                 Layout.minimumWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 340 * screenScaleFactor)
                 // Shrink-only: max == preferred keeps the wide layout
                 // unchanged, but narrow stages may compress the pane.
-                Layout.maximumWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 390 * screenScaleFactor)
+                Layout.maximumWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 386 * screenScaleFactor)
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.margins: UM.Theme.getSize("default_margin").width
@@ -642,6 +655,12 @@ Component {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
+                        // Auto-collapsed-by-width is not a clickable
+                        // expand: only a wider stage restores the pane
+                        // (the monitor panes' guard, the same rule).
+                        if (root.controlsExpandLocked) {
+                            return;
+                        }
                         if (root.printer != null) {
                             root.printer.setControlsCollapsed(false);
                         }
@@ -759,6 +778,12 @@ Component {
                         // collapse buttons uniform).
                         iconSource: root.controlsCollapsed ? UM.Theme.getIcon("ChevronSingleLeft") : UM.Theme.getIcon("ChevronSingleRight")
                         onClicked: {
+                            // The same guard as the strip: while the
+                            // camera cannot spare the room, the expand
+                            // direction waits (the tooltip says so).
+                            if (root.controlsExpandLocked) {
+                                return;
+                            }
                             if (root.printer != null) {
                                 root.printer.setControlsCollapsed(!root.controlsCollapsed);
                             }
@@ -769,13 +794,14 @@ Component {
                             x: 0
                             y: parent.height + UM.Theme.getSize("default_margin").height
                             width: UM.Theme.getSize("tooltip").width
-                            text: root.controlsCollapsed ? "Show the printer controls." : "Hide the printer controls."
+                            text: root.controlsExpandLocked ? "The window is too narrow — widen it to show the printer controls." : (root.controlsCollapsed ? "Show the printer controls." : "Hide the printer controls.")
                         }
                     }
                 }
 
                 Flickable {
                     id: controlFlick
+                    objectName: "moonrakerControlsFlick"
                     visible: !root.controlsCollapsed
                     anchors.top: controlHeader.bottom
                     anchors.left: parent.left
@@ -783,7 +809,12 @@ Component {
                     anchors.bottom: parent.bottom
                     anchors.topMargin: UM.Theme.getSize("default_margin").height
                     anchors.leftMargin: UM.Theme.getSize("default_margin").width
-                    anchors.rightMargin: UM.Theme.getSize("default_margin").width
+                    // No right inset: the content's own 14px gutter is
+                    // the only dead band right of the sections, exactly
+                    // as the monitor's information and status panes rule
+                    // it. A right margin here plus the gutter widened
+                    // this pane's right gap against its scroll bar while
+                    // the other panes butted up.
                     anchors.bottomMargin: UM.Theme.getSize("default_margin").height
                     clip: true
                     contentWidth: width
@@ -796,23 +827,23 @@ Component {
 
                     ColumnLayout {
                         id: controlContent
+                        objectName: "moonrakerControlsContent"
                         // The stored order applies HERE — before the
                         // first frame paints (the monitor's 4.5.0 find;
                         // without it the controls pane waited for an
                         // interaction and snapped visibly).
                         Component.onCompleted: root.applyControlsOrder()
-                        // The attached scrollbar overlays the content, so
-                        // the column spans the full width while the bar is
-                        // hidden (a constant reservation left a dead band
-                        // on the right — the pane's right gap read three
-                        // margins wide against the left pane's one, the
-                        // harness's margin-symmetry pin). While the bar
-                        // IS visible, the column yields its width so the
-                        // rows' right edges stay clear of it (the
-                        // clipping report). Narrower content
-                        // only grows taller, so the visibility never
-                        // oscillates.
-                        width: controlScrollbar.visible ? controlFlick.width - controlScrollbar.width - UM.Theme.getSize("default_margin").width : controlFlick.width
+                        // The constant gutter, exactly as the monitor's
+                        // information and status panes rule it: the
+                        // column keeps 14px clear of the flickable's
+                        // right edge and the attached scrollbar overlays
+                        // that gutter. Yielding a bar's width plus a
+                        // margin instead left this pane's rows an extra
+                        // gap short of the bar while the other panes
+                        // butted up, and a width that followed the bar's
+                        // visibility could oscillate with the bar's own
+                        // show/hide.
+                        width: controlFlick.width - 14
                         // Spacing lives on the children, not the layout: a
                         // collapsed section's hidden content must contribute
                         // nothing, so stacked headers sit flush like Cura's.
