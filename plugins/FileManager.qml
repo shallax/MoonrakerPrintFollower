@@ -230,7 +230,7 @@ Item {
                         source: Qt.resolvedUrl("Hourglass.svg")
                         color: UM.Theme.getColor("text_inactive")
                         // The spin: a static glyph reads as dead.
-                        RotationAnimation on rotation  {
+                        RotationAnimation on rotation {
                             from: 0
                             to: 360
                             duration: 2000
@@ -1124,12 +1124,12 @@ Item {
         var rows = [];
         for (var i = 0; i < options.length; ++i) {
             rows.push({
-                    "key": options[i][0],
-                    "label": options[i][1],
-                    "count": options[i][2],
-                    "category": category,
-                    "radio": category === "modified" || category === "print_time"
-                });
+                "key": options[i][0],
+                "label": options[i][1],
+                "count": options[i][2],
+                "category": category,
+                "radio": category === "modified" || category === "print_time"
+            });
         }
         return rows;
     }
@@ -1331,8 +1331,8 @@ Item {
                 onClicked: {
                     root.setFilterValue(modelData.category, modelData.key);
                     optionRadio.checked = Qt.binding(function () {
-                            return root.filterValues(modelData.category).indexOf(modelData.key) >= 0;
-                        });
+                        return root.filterValues(modelData.category).indexOf(modelData.key) >= 0;
+                    });
                 }
             }
             UM.CheckBox {
@@ -1345,8 +1345,8 @@ Item {
                 onClicked: {
                     root.toggleFilter(modelData.category, modelData.key);
                     optionCheck.checked = Qt.binding(function () {
-                            return root.filterValues(modelData.category).indexOf(modelData.key) >= 0;
-                        });
+                        return root.filterValues(modelData.category).indexOf(modelData.key) >= 0;
+                    });
                 }
             }
             UM.Label {
@@ -1462,8 +1462,7 @@ Item {
                     contentHeight: recentsRow.height
                     boundsBehavior: Flickable.StopAtBounds
                     flickableDirection: Flickable.HorizontalFlick
-                    ScrollBar.horizontal: ScrollBar {
-                    }
+                    ScrollBar.horizontal: ScrollBar {}
                     Row {
                         id: recentsRow
                         height: parent.height
@@ -1521,7 +1520,7 @@ Item {
                                         source: Qt.resolvedUrl("Hourglass.svg")
                                         color: UM.Theme.getColor("text_inactive")
                                         // The spin: a static glyph reads as dead.
-                                        RotationAnimation on rotation  {
+                                        RotationAnimation on rotation {
                                             from: 0
                                             to: 360
                                             duration: 2000
@@ -2047,8 +2046,7 @@ Item {
                 contentHeight: 28 * screenScaleFactor
                 boundsBehavior: Flickable.StopAtBounds
                 flickableDirection: Flickable.HorizontalFlick
-                ScrollBar.horizontal: ScrollBar {
-                }
+                ScrollBar.horizontal: ScrollBar {}
                 Row {
                     id: chipsRow
                     spacing: UM.Theme.getSize("narrow_margin").width
@@ -2253,8 +2251,8 @@ Item {
                                         root.printerModel.toggleFilePageSelection();
                                     }
                                     pageSelectCheck.checkState = Qt.binding(function () {
-                                            return root.pageSelectionState() === "all" ? Qt.Checked : (root.pageSelectionState() === "some" ? Qt.PartiallyChecked : Qt.Unchecked);
-                                        });
+                                        return root.pageSelectionState() === "all" ? Qt.Checked : (root.pageSelectionState() === "some" ? Qt.PartiallyChecked : Qt.Unchecked);
+                                    });
                                 }
                             }
                             // A "/" separator keeps the select-all
@@ -2344,22 +2342,22 @@ Item {
                                         if (i === dragIndex) {
                                             if (i === slotAt) {
                                                 list.push({
-                                                        "slot": true
-                                                    });
+                                                    "slot": true
+                                                });
                                             }
                                             continue;
                                         }
                                         if (i === slotAt) {
                                             list.push({
-                                                    "slot": true
-                                                });
+                                                "slot": true
+                                            });
                                         }
                                         list.push(order[i]);
                                     }
                                     if (dragTarget === order.length - 1) {
                                         list.push({
-                                                "slot": true
-                                            });
+                                            "slot": true
+                                        });
                                     }
                                     return list;
                                 }
@@ -2857,8 +2855,8 @@ Item {
                                         onClicked: {
                                             root.toggleRow(modelData);
                                             rowCheck.checked = Qt.binding(function () {
-                                                    return root.rowChecked(modelData);
-                                                });
+                                                return root.rowChecked(modelData);
+                                            });
                                         }
                                     }
                                     // Wired mock selection: a
@@ -2913,7 +2911,7 @@ Item {
                                             source: Qt.resolvedUrl("Hourglass.svg")
                                             color: UM.Theme.getColor("text_inactive")
                                             // The spin: a static glyph reads as dead.
-                                            RotationAnimation on rotation  {
+                                            RotationAnimation on rotation {
                                                 from: 0
                                                 to: 360
                                                 duration: 2000
@@ -3191,8 +3189,7 @@ Item {
                             }
                         }
                     }
-                    ScrollBar.vertical: ScrollBar {
-                    }
+                    ScrollBar.vertical: ScrollBar {}
                 }
 
                 Flickable {
@@ -3210,8 +3207,7 @@ Item {
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
                     flickableDirection: Flickable.HorizontalFlick
-                    ScrollBar.horizontal: ScrollBar {
-                    }
+                    ScrollBar.horizontal: ScrollBar {}
                 }
 
                 // Scroll affordances, the design: small
@@ -3447,8 +3443,8 @@ Item {
                                                 root.printerModel.setFilePageSize(modelData);
                                             }
                                             sizeRadio.checked = Qt.binding(function () {
-                                                    return root.printerModel != null && String(root.printerModel.fileManagerPageSize) === String(modelData);
-                                                });
+                                                return root.printerModel != null && String(root.printerModel.fileManagerPageSize) === String(modelData);
+                                            });
                                         }
                                     }
                                     UM.Label {

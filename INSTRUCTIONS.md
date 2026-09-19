@@ -21,7 +21,7 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   written so the formatter cannot break them (pin semantics, not
   whitespace).
 - The pinned, disposable dev container (`Dockerfile`) carries the whole
-  toolchain — Ubuntu 24.04, git, Qt 6.4.2's qmlformat, Python 3.12,
+  toolchain — Ubuntu 26.04, git, Qt 6.10.2's qmlformat, Python 3.14,
   PyQt6 6.11.0, ruff 0.16.6 — and nothing else; the repository is
   bind-mounted at `/work`. The image is rebuilt from the Dockerfile
   (docker layer caching makes unchanged rebuilds instant), so deleting

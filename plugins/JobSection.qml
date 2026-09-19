@@ -362,7 +362,7 @@ ColumnLayout {
                         // The hourglass flips and rests at
                         // each 180-degree stop while the
                         // sand drains, then flips again.
-                        SequentialAnimation on rotation  {
+                        SequentialAnimation on rotation {
                             running: root.printerModel != null && root.printerModel.improvingEta
                             loops: Animation.Infinite
                             NumberAnimation {
@@ -435,7 +435,7 @@ ColumnLayout {
                     // current width — no captured
                     // endpoints, no restart tricks.
                     property real sweepPhase: 0
-                    NumberAnimation on sweepPhase  {
+                    NumberAnimation on sweepPhase {
                         running: root.printerModel != null && root.printerModel.improvingEta && root.printerModel.improveEtaProgress < 0
                         from: 0
                         to: 1

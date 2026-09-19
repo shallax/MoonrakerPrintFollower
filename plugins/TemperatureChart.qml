@@ -287,9 +287,9 @@ Item {
             var gy = g * job.plotBottom / job.lines;
             var value = root._maxTemp - (root._maxTemp - root._minTemp) * g / job.lines;
             job.grid.push({
-                    "y": gy,
-                    "text": value.toFixed(0) + "°C"
-                });
+                "y": gy,
+                "text": value.toFixed(0) + "°C"
+            });
         }
         // Time-axis ticks, likewise resolved to x/text/side.
         job.ticks = [];
@@ -300,10 +300,10 @@ Item {
                 var clock = root._clockTextMinutes(telapsed);
                 if (clock !== "") {
                     job.ticks.push({
-                            "x": root._xFor(telapsed),
-                            "text": clock,
-                            "side": tick === 0 ? "left" : (tick === ticks ? "right" : "center")
-                        });
+                        "x": root._xFor(telapsed),
+                        "text": clock,
+                        "side": tick === 0 ? "left" : (tick === ticks ? "right" : "center")
+                    });
                 }
             }
         }
@@ -321,15 +321,15 @@ Item {
                 }
             }
             job.series.push({
-                    "color": series[s].color,
-                    "actual": root._strokeColor(series[s].color, 1),
-                    "power": root._strokeColor(series[s].color, 0.22),
-                    "target": root._strokeColor(series[s].color, 0.10),
-                    "targetEdge": root._strokeColor(series[s].color, 0.4),
-                    "points": series[s].points,
-                    "targets": series[s].targets,
-                    "powers": powers
-                });
+                "color": series[s].color,
+                "actual": root._strokeColor(series[s].color, 1),
+                "power": root._strokeColor(series[s].color, 0.22),
+                "target": root._strokeColor(series[s].color, 0.10),
+                "targetEdge": root._strokeColor(series[s].color, 0.4),
+                "points": series[s].points,
+                "targets": series[s].targets,
+                "powers": powers
+            });
         }
         dataCanvas.paintJob = job;
     }
@@ -369,10 +369,10 @@ Item {
                 // found once per move, not again in every repaint.
                 if (index >= 0) {
                     marks.push({
-                            "elapsed": series[i].points[index][0],
-                            "temperature": series[i].points[index][1],
-                            "color": series[i].color
-                        });
+                        "elapsed": series[i].points[index][0],
+                        "temperature": series[i].points[index][1],
+                        "color": series[i].color
+                    });
                 }
             }
             hoverValues = values;
