@@ -3,8 +3,8 @@
 # job, so the whole sweep lands in the time of its slowest unit
 # instead of the serial local grind (TESTING.md §5's version sweep).
 # Trigger it manually from the Actions tab, or:
-#   gh workflow run "UI test sweep" --ref release/v4.5.0
-name: UI test sweep
+#   gh workflow run "UI Version Sweep" --ref release/v4.5.0
+name: UI Version Sweep
 
 on:
   workflow_dispatch:
