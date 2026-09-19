@@ -32,6 +32,8 @@ def begin(enabled: bool) -> None:
     _enabled = bool(enabled)
     _origin = time.monotonic()
     _once_marked.clear()
+    if _enabled and Logger is not None:
+        Logger.log("i", "camera timing trace armed")
 
 
 def enabled() -> bool:
