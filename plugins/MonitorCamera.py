@@ -164,6 +164,8 @@ class MonitorCamera(QObject):
                 shown = f"{parsed.scheme()}://{parsed.host()}" + (f":{parsed.port()}" if parsed.port() > 0 else "") + parsed.path()
                 kind = "bridged" if self._camera_bridge is not None and parsed.host() in ("127.0.0.1", "localhost") else "direct"
                 Logger.log("i", "Moonraker camera stream: %s (%s)", shown, kind)
+                from .CameraTiming import mark
+                mark("T5-path", "camera transport: %s" % kind)
             else:
                 Logger.log("i", "Moonraker camera stream: none")
         try: rotation = int(camera.get("rotation", config.camera_rotation) or 0)

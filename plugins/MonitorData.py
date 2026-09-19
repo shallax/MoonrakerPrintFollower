@@ -368,6 +368,8 @@ class MonitorData(QObject):
     def _activate_runtime(self):
         if self._active: return
         self._active = True
+        from .CameraTiming import mark
+        mark("T0", "monitor active")
         self._intervals()
         for timer in self._timers.values(): timer.start()
         self.observe(self._client.status)
@@ -411,6 +413,8 @@ class MonitorData(QObject):
             # when the upgrade has settled on every observed boot.
             if self._client.effective_feed_mode == "websocket":
                 if category == RequestCategory.DISCOVERY:
+                    from .CameraTiming import mark
+                    mark("T3-defer", "camera discovery deferred: websocket RPC not ready")
                     self.later(1000, self.refresh_discovery)
                 return True
         return self._client.transport.send_json("monitor", channel, method, path, finished,
@@ -673,8 +677,11 @@ class MonitorData(QObject):
         # erase last-known cameras — a transient blip would blank the
         # camera column ("no camera") during a printer reboot. The list
         # clears only on invalidation/disconnect.
+        from .CameraTiming import mark
+        mark("T3", "webcam list requested")
         self.request("webcams", "GET", "server/webcams/list",
-            lambda p, e: self._update(webcams=tuple(item for item in result(p).get("webcams", ()) if isinstance(item, dict) and item.get("enabled", True)))
+            lambda p, e: (mark("T4", "webcam list landed"),
+                          self._update(webcams=tuple(item for item in result(p).get("webcams", ()) if isinstance(item, dict) and item.get("enabled", True))))
             if not e and isinstance(result(p), Mapping) else None,
             replace=True, category="discovery",
             rpc=("server.webcams.list", {}))

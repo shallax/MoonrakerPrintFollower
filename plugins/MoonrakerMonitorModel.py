@@ -328,6 +328,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("sectionLayoutChanged", ("sectionLayout", "sectionHiddenMap")),
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
+        ("traceCameraTimingChanged", ("traceCameraTiming",)),
         ("cameraRecoveringChanged", ("cameraRecovering",)),
         ("connectionDetailChanged", ("connectionDetail",)),
         ("fileManagerChanged", ("fileManagerRows", "fileManagerRecents", "fileManagerDirectory", "fileManagerDirectories", "fileManagerDiskText", "fileManagerNote",
@@ -1011,6 +1012,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values["migrationDiagnosticsVisible"] = bool(failed and record.get("bannerDismissed"))
         values["migrationDiagnosticsText"] = _migration_diagnostics_text(record) if failed else ""
         self._values = values
+        first_attach = False
         try:
             url = self._camera.url
             if url and url != self._camera_last_url:
@@ -1018,6 +1020,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 # first attach's initial request dies silently in the
                 # loader (the report — the manual refresh
                 # worked because it changed the URL).
+                first_attach = not self._camera_last_url
                 self._camera_last_url = url
                 self._camera_refresh_nonce += 1
                 # The bump rides THIS publish's values (the camera-
@@ -1027,7 +1030,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 # one.
                 values["cameraRefreshNonce"] = self._camera_refresh_nonce
             self.setCameraUrl(QUrl(url))
-        except AttributeError: pass
+        except AttributeError:
+            pass
+        from .CameraTiming import enabled as camera_timing_enabled, mark as camera_timing_mark
+        values["traceCameraTiming"] = camera_timing_enabled()
+        if first_attach:
+            # T5: the FINAL url QML consumes, sanitised to
+            # scheme/host/port/path (never query credentials).
+            sanitised = QUrl(str(url))
+            sanitised.setQuery("")
+            camera_timing_mark("T5", "camera URL published: %s" % sanitised.toString())
 
         # Qt notify signals are part of control ownership. Broadcasting every
         # signal for every poll was re-evaluating bound ComboBox/Slider values
@@ -1704,6 +1716,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     statusCollapsed = value_property(bool, "statusCollapsed", statusPaneChanged, False)
     consoleHeight = value_property(int, "consoleHeight", consoleHeightChanged, 0)
     cameraRefreshNonce = value_property(int, "cameraRefreshNonce", cameraRefreshChanged, 0)
+    # The T0-T9 cold-camera timing chain's QML side: the host mirrors
+    # the trace gate, and the pane's first decoded frame lands here so
+    # T9 shares the SAME monotonic origin as every Python stage.
+    traceCameraTimingChanged = pyqtSignal()
+    traceCameraTiming = value_property(bool, "traceCameraTiming", traceCameraTimingChanged, False)
+
+    @pyqtSlot()
+    def cameraFirstFrameRendered(self):
+        from .CameraTiming import mark_once
+        mark_once("T9", "first decoded frame")
     cameraRecovering = value_property(bool, "cameraRecovering", cameraRecoveringChanged, False)
     connectionDetail = value_property(str, "connectionDetail", connectionDetailChanged, "")
     sectionExpandedMap = value_property(QVariant, "sectionExpandedMap", sectionsChanged, {})

@@ -895,6 +895,7 @@ Component {
 
                     CameraPane {
                         id: cameraPane
+                        traceCameraTiming: printer != null && printer.traceCameraTiming
                         Layout.fillWidth: true
                         // The webcam card ALWAYS fills: the layout
                         // allocates the console's capped preferred

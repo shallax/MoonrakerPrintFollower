@@ -43,6 +43,9 @@ class CameraBridge(QObject):
         self._nam.setRedirectPolicy(QNetworkRequest.RedirectPolicy.SameOriginRedirectPolicy)
         self._upstream_base = ""
         self._api_key = ""
+        # The T8 latch: the first real upstream response bytes, once
+        # per bridge lifetime.
+        self._first_upstream_bytes = False
         # One entry per local connection: (upstream reply, request
         # header buffer, response-head-sent flag).
         self._relays: Dict[QTcpSocket, Tuple[Optional[QNetworkReply], bytearray, bool]] = {}
@@ -105,6 +108,8 @@ class CameraBridge(QObject):
         self._relays.clear()
 
     def _accept(self) -> None:
+        from .CameraTiming import mark
+        mark("T6", "local camera client connected")
         while self._server.hasPendingConnections():
             socket = self._server.nextPendingConnection()
             if socket is None:
@@ -149,6 +154,8 @@ class CameraBridge(QObject):
         # Cap the buffered upstream read: if the local client stalls,
         # this fills and Qt applies TCP backpressure to the camera
         # instead of growing memory without bound.
+        from .CameraTiming import mark
+        mark("T7", "upstream request issued")
         reply = self._nam.get(request)
         reply.setReadBufferSize(256 * 1024)
         _old_reply, buffer, _sent = self._relays[socket]
@@ -173,6 +180,14 @@ class CameraBridge(QObject):
         return fallback
 
     def _on_upstream_ready(self, socket: QTcpSocket, reply: QNetworkReply) -> None:
+        try:
+            first_bytes = int(reply.bytesAvailable()) > 0
+        except (AttributeError, TypeError):
+            first_bytes = False
+        if not self._first_upstream_bytes and first_bytes:
+            from .CameraTiming import mark
+            self._first_upstream_bytes = True
+            mark("T8", "first upstream bytes")
         relay = self._relays.get(socket)
         if relay is None or relay[0] is not reply:
             return

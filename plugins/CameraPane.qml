@@ -43,10 +43,10 @@ Cura.RoundedRectangle {
     // at the end, only when a real URL should run.
     property bool _cameraApplyInProgress: false
     // The T0-T9 timing chain's T9 gate (the reviewer's cold-start
-    // diagnostics): the host mirrors the client's trace flag, and
-    // stamps the chain's origin.
+    // diagnostics): the host mirrors the client's trace flag; the
+    // first decoded frame lands on the model's slot so T9 shares the
+    // SAME monotonic origin as every Python stage.
     property bool traceCameraTiming: false
-    property real cameraTraceOrigin: 0
 
     function applyCamera(url, visible) {
         var text = url != null ? url.toString() : "";
@@ -171,9 +171,10 @@ Cura.RoundedRectangle {
                 onImageWidthChanged: {
                     // T9: the first decoded non-zero frame (the
                     // reviewer's cold-start diagnostics — the last
-                    // hop of the T0-T9 chain).
-                    if (root.traceCameraTiming && imageWidth > 0) {
-                        console.log("camera first frame at +" + ((Date.now() - root.cameraTraceOrigin) / 1000.0).toFixed(2) + " s");
+                    // hop of the T0-T9 chain). The model marks it
+                    // against the shared monotonic origin, once.
+                    if (root.traceCameraTiming && imageWidth > 0 && root.printerModel != null) {
+                        root.printerModel.cameraFirstFrameRendered();
                     }
                 }
             }

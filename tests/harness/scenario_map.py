@@ -282,6 +282,21 @@ PREFIX_RULES = [
 # fields are validated by test_coverage.py. An entry whose re-check
 # trigger fires must be re-probed, not carried forward silently.
 EXCLUSIONS = {
+    # The T0-T9 cold-camera timing chain (the reviewer's diagnostics):
+    # the QML-invoked first-frame slot and the trace-gate key are
+    # instrumentation, never scenario verbs.
+    "MoonrakerMonitorModel.cameraFirstFrameRendered": {
+        "reason": "the timing chain's T9 hook, invoked by the pane on the first decoded frame",
+        "evidence": "test_camera_timing's mark/mark_once contract; the harness legs' trace logs",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
+    "traceCameraTiming": {
+        "reason": "the trace gate mirrored to QML; diagnostics-only",
+        "evidence": "test_camera_timing's begin/enabled contract",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
     # The migration-failure surfaces: the settings-dialog scenario is
     # deferred (no harness scenario drives the dialog yet), so the
     # banner's end-to-end proof rides the unit tests — the notice's
