@@ -279,6 +279,7 @@ def run_migration(
             if not _recover_empty_documents(
                 settings_write, state_global_write, old_state_path, outcome, timestamp,
                 existing=_read_settings_document(settings_path),
+                state_global_merge=state_global_merge,
             ):
                 outcome.reason = "write-failed"  # nothing landed: no record to read back
             else:
@@ -333,6 +334,7 @@ def run_migration(
 
 def _recover_empty_documents(
     settings_write, state_global_write, old_state_path, outcome, timestamp, existing=None,
+    state_global_merge=None,
 ) -> bool:
     """The CORRUPT-blob recovery path (never first-install
     activation): new files, configVersion 2, the
@@ -341,13 +343,18 @@ def _recover_empty_documents(
     live: no old-config trace remains). Reports whether both writes
     landed: a half-written activation is a failure the caller must
     replay, and the ok record lives inside the settings write, so a
-    failed write must not be followed by an unearned success."""
+    failed write must not be followed by an unearned success. The
+    global-state write prefers the MERGE writer when supplied — a
+    retry after a failed settings write must fill gaps, never roll
+    back the live v2 state the session wrote in between (the
+    hardening pass)."""
     existing = existing or {}
     existing_machines = existing.get("machines")
     machines = dict(existing_machines) if isinstance(existing_machines, dict) else {}
     global_section = _global_section_of(existing)
     global_section["migration"] = _record(outcome, timestamp)
-    if not state_global_write({**_read_old_chrome(old_state_path), "configVersion": 2}):
+    write_global = state_global_merge or state_global_write
+    if not write_global({**_read_old_chrome(old_state_path), "configVersion": 2}):
         return False
     if not settings_write({
         "configVersion": 2,

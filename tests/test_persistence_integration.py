@@ -404,6 +404,63 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertEqual(shard["liveOnlyKey"], "keep")
         self.assertNotIn("consoleHistory", shard)
 
+    def test_a_corrupt_recovery_retry_keeps_the_live_v2_global_state(self):
+        # The hardening pass's last hole, at the production seam: the
+        # corrupt-source recovery writes its global state through the
+        # SAME merge semantics as the records path — a retry after a
+        # failed recovery write must fill gaps, never roll back the
+        # live v2 state the session wrote in between.
+        key = PrinterConfigStore.PREF_KEY
+        self.prefs.addPreference(key, "{}")
+        self.prefs.setValue(key, "not json {{{")
+        self.prefs.setValue(PrinterConfigStore.MIGRATED_KEY, True)
+        old_state_path = os.path.join(self.dir.name, "old_sections.json")
+        _pretty_save(old_state_path, json.dumps({"legacyOnly": "legacy", "conflict": "old"}))
+        binding = PrinterBinding(self.app, self.client, self.persistence,
+                                 cura_cfg_path=self.cura_cfg, old_state_path=old_state_path)
+
+        # Attempt 1: the global-state recovery lands, the settings
+        # recovery write fails — the corrupt source stays intact for
+        # the retry, and state.json exists.
+        original_settings_write = self.persistence.write_settings_document
+        self.persistence.write_settings_document = lambda document: False
+        try:
+            binding.run_persistence_migration()
+        finally:
+            self.persistence.write_settings_document = original_settings_write
+        self.assertEqual(self.prefs.getValue(key), "not json {{{")  # no clean
+        self.assertTrue(os.path.exists(os.path.join(self.dir.name, "state", "global.json")))
+        # The failure is surfaced session-scoped (nothing persisted):
+        # the retry stays required.
+        record = self.persistence.migration_record()
+        self.assertEqual((record["status"], record["reason"]), ("failed", "write-failed"))
+        self.assertNotIn("migration", self.persistence.settings_document().get("global", {}))
+
+        # Between attempts the live 4.5 session writes its own state
+        # through the production chrome API.
+        self.assertTrue(self.persistence.merge_state_global({
+            "whatsNewSeen": "current",
+            "currentOnly": "keep",
+            "conflict": "newer",
+        }))
+
+        # Attempt 2: the recovery settings write succeeds and the
+        # retry runs from the same corrupt source.
+        binding.run_persistence_migration()
+        global_doc = self.persistence.state_global_document()
+        self.assertEqual(global_doc["whatsNewSeen"], "current")
+        self.assertEqual(global_doc["currentOnly"], "keep")
+        self.assertEqual(global_doc["conflict"], "newer")
+        self.assertEqual(global_doc["legacyOnly"], "legacy")  # the gap filled
+        self.assertEqual(global_doc["configVersion"], 2)
+        # The terminal corrupt-blob record landed, the backup remains,
+        # and ONLY NOW the corrupt preferences were cleaned.
+        record = self.persistence.migration_record()
+        self.assertEqual((record["status"], record["reason"]), ("failed", "corrupt-blob"))
+        self.assertTrue(record["backupWritten"])
+        self.assertTrue(os.path.exists(os.path.join(self.dir.name, record["backupName"])))
+        self.assertEqual(self.prefs.getValue(key), "{}")
+
     def test_a_deleted_folder_reconfigure_survives_the_next_boot(self):
         # The Windows lost-config sequence: the folder was deleted by
         # hand (no settings, no record). Boot A activates the v2
