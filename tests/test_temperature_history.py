@@ -199,9 +199,21 @@ class TemperatureHistoryTests(unittest.TestCase):
                                   "heater_generic chamber": (40, None, None)})
         self.assertEqual(history.names(), ["extruder", "heater_bed", "heater_generic chamber"])
 
-    def test_default_window_matches_the_auxiliary_cadence(self):
+    def test_default_window_matches_the_chart_cadence(self):
         self.assertEqual(WINDOW_SECONDS, 1800)
-        self.assertEqual(MAX_SAMPLES, 1800)
+        self.assertEqual(MAX_SAMPLES, 1801)
+
+    def test_the_window_holds_the_full_span_at_the_fixed_chart_cadence(self):
+        # Seeds the whole advertised window at the fixed 1 s chart
+        # cadence (the full-30-minute gap the slider-coupled sampling
+        # exposed: at fast slider settings the count cap trimmed the
+        # window to minutes — the live report).
+        history = TemperatureHistory()
+        ticks = int(WINDOW_SECONDS / 1.0) + 100
+        for tick in range(ticks):
+            self.observe(history, tick * 1.0, {"extruder": (200.0 + (tick % 50) * 0.1, None, None)})
+        points = history.points("extruder")
+        self.assertEqual(points[-1][0] - points[0][0], WINDOW_SECONDS)
 
 
 class TargetCompressionTests(unittest.TestCase):

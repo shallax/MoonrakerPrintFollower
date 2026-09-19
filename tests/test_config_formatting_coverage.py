@@ -47,7 +47,7 @@ from plugins.MonitorPermissions import (Observation, R_ALREADY_PAUSED, R_ALREADY
                                         can_restart, can_resume, can_set_absolute,
                                         can_start_print, can_z_offset, jog_caption,
                                         section_reason)
-from plugins.MonitorTemperatureHistory import (PALETTE, TemperatureHistory, _segments,
+from plugins.MonitorTemperatureHistory import (MAX_SAMPLES, PALETTE, TemperatureHistory, _segments,
                                                chart_payload, series_metadata)
 from plugins.PauseScheduleService import PauseScheduleService, due_end_of_layer_pauses
 from plugins.PersistenceMigration import (MigrationOutcome, _clean_preferences, _read_old_chrome,
@@ -1142,9 +1142,9 @@ class MonitorTemperatureHistoryCoverageTests(unittest.TestCase):
 
     def test_the_window_and_the_sample_cap_both_bound_the_memory(self):
         history = TemperatureHistory(window_seconds=1_000_000.0)
-        for step in range(1900):
+        for step in range(MAX_SAMPLES + 100):
             history.observe({"heater_bed": {"temperature": 60.0}}, step * 0.5)
-        self.assertEqual(len(history.series("heater_bed")), 1800)
+        self.assertEqual(len(history.series("heater_bed")), MAX_SAMPLES)
 
     def test_filling_reports_a_window_that_is_still_collecting(self):
         history = TemperatureHistory()

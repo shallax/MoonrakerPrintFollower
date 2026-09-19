@@ -937,3 +937,38 @@ class ActionTailTests(MonitorModelCase):
         self.assertEqual(self.model._toolhead._absolute_coordinates, False)
         self.model.setPositionMode(True)
         self.assertEqual(self.model._toolhead._absolute_coordinates, True)
+
+
+class ChartCadenceTests(MonitorModelCase):
+    """The chart feeds from its own 1 s clock, decoupled from the
+    auxiliary delivery slider (the live report: a fast slider setting
+    fed the history at push rate and the count cap trimmed the
+    advertised 30-minute window to minutes)."""
+
+    def test_a_tick_feeds_one_sample_on_the_fixed_clock(self):
+        self.model = self.build()
+        self.assertEqual(self.model._chart_timer.interval(), 1000)
+        self.connect()
+        self.observe(auxiliary={"extruder": {"temperature": 200.0}})
+        before = len(self.model._history.series("extruder"))
+        self.model._on_chart_tick()
+        self.assertEqual(len(self.model._history.series("extruder")), before + 1)
+
+    def test_auxiliary_arrivals_no_longer_feed_the_history(self):
+        self.model = self.build()
+        self.connect()
+        self.observe(auxiliary={"extruder": {"temperature": 200.0}})
+        count = len(self.model._history.series("extruder"))
+        self.observe(auxiliary={"extruder": {"temperature": 205.0}})
+        self.observe(auxiliary={"extruder": {"temperature": 210.0}})
+        self.assertEqual(len(self.model._history.series("extruder")), count)
+
+    def test_a_tick_never_bridges_a_disconnected_snapshot(self):
+        self.model = self.build()
+        self.connect()
+        self.observe(auxiliary={"extruder": {"temperature": 200.0}})
+        self.model._on_chart_tick()
+        self.client.stop(reset_session=False)
+        count = len(self.model._history.series("extruder"))
+        self.model._on_chart_tick()
+        self.assertEqual(len(self.model._history.series("extruder")), count)
