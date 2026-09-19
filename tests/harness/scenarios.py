@@ -1998,14 +1998,33 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerTemperatureDetail", "budget": 15},
      ]},
     {"id": "v8", "group": "visual",
-     "name": "narrow auto-collapses the console, wide re-expands, layouts hold",
+     "name": "the console folds on its own column rule, the panes' fold hands the room back",
      "steps": [
-         {"op": "resize_window", "w": 1000, "h": 700},
+         # The console's rule is its OWN column (< 350), never the
+         # window: while the side panes hold their room, the
+         # camera+console column is squeezed under it and the console
+         # is what yields. 1420 sits mid-band (measured on the
+         # dashboard mount: column 299, camera 277, well over its
+         # comfort floor; the band's edges bracket it at 1340/1380 and
+         # 1470/1480).
+         {"op": "resize_window", "w": 1420, "h": 700},
          {"op": "wait_rect", "objectName": "moonrakerConsoleInput", "absent": True, "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerInfoContent", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerStatusContent", "budget": 30},
+         # Narrow enough that the camera cannot hold the panes: both
+         # fold to their strips, and the column that fold frees is
+         # over the console's threshold again — the console comes back
+         # on its own rule, with no user click.
+         {"op": "resize_window", "w": 1000, "h": 700},
+         {"op": "wait_rect", "objectName": "moonrakerInfoContent", "absent": True, "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerStatusContent", "absent": True, "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerConsoleInput", "budget": 30},
          {"op": "assert_aligned", "item": {"objectName": "infoPanel"},
           "no_overlap": {"objectName": "statusPanel"}},
          {"op": "resize_window", "w": 1840, "h": 1040},
          {"op": "wait_rect", "objectName": "moonrakerConsoleInput", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerInfoContent", "budget": 30},
+         {"op": "wait_rect", "objectName": "moonrakerStatusContent", "budget": 30},
          {"op": "assert_aligned", "item": {"objectName": "infoPanel"},
           "no_overlap": {"objectName": "statusPanel"}},
      ]},
