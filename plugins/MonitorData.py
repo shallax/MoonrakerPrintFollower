@@ -60,6 +60,13 @@ class MonitorData(QObject):
         self._owner_active = False
         self._generation = 0
         self._connection_detail = ""
+        # The discovery coalescers (the 2026-09-19 cold-start trace):
+        # one in-flight webcam RPC at a time, and one deferred
+        # re-discovery timer per boot window — the boot fan-out used
+        # to issue the identical request once per caller.
+        self._webcams_pending = False
+        self._webcams_pending_since = 0.0
+        self._discovery_defer_pending = False
         # The observation record (4.2.0): assembled here, with the
         # two closed push-ins for the facts the data owner does not
         # hold — controlsLocked (the model's chrome) and the command
@@ -343,6 +350,13 @@ class MonitorData(QObject):
         if not self._active: return
         self._active = False
         self._generation += 1
+        # An in-flight reply's callback now dies on the generation
+        # guard, so both coalescer gates reopen here — a wedged gate
+        # would permanently silence webcam discovery on the next
+        # session.
+        self._webcams_pending = False
+        self._webcams_pending_since = 0.0
+        self._discovery_defer_pending = False
         # A fresh session generation has never observed a
         # connection: the tri-state reads 'unknown' again.
         self._connection_observed = False
@@ -413,9 +427,29 @@ class MonitorData(QObject):
             # when the upgrade has settled on every observed boot.
             if self._client.effective_feed_mode == "websocket":
                 if category == RequestCategory.DISCOVERY:
-                    from .CameraTiming import mark
-                    mark("T3-defer", "camera discovery deferred: websocket RPC not ready")
-                    self.later(1000, self.refresh_discovery)
+                    # One pending re-arm timer per boot window: the
+                    # fan-out used to stack one singleShot per dropped
+                    # request, re-firing the whole discovery chain N
+                    # times at +1 s. The mark rides the guard so the
+                    # trace shows ONE defer per window, not one per
+                    # caller.
+                    if not self._discovery_defer_pending:
+                        from .CameraTiming import mark
+                        mark("T3-defer", "camera discovery deferred: websocket RPC not ready")
+                        self._discovery_defer_pending = True
+                        def rearm():
+                            self._discovery_defer_pending = False
+                            # The deferred webcam request was never
+                            # dispatched (this very branch skipped the
+                            # wire), so its latch must reopen — the
+                            # re-fired chain re-issues it now that the
+                            # RPC lane has settled (the 2026-09-19
+                            # cold-start trace: the gate otherwise
+                            # stayed shut and the camera column read
+                            # "no camera" until a manual refresh).
+                            self._webcams_pending = False
+                            self.refresh_discovery()
+                        self.later(1000, rearm)
                 return True
         return self._client.transport.send_json("monitor", channel, method, path, finished,
             body=body, replace=replace, category=category, timeout_ms=timeout_ms)
@@ -677,13 +711,32 @@ class MonitorData(QObject):
         # erase last-known cameras — a transient blip would blank the
         # camera column ("no camera") during a printer reboot. The list
         # clears only on invalidation/disconnect.
+        # In-flight coalescing (the 2026-09-19 cold-start trace): the
+        # boot fan-out called this once per caller, issuing the
+        # identical RPC many times a cycle. One request at a time;
+        # every caller observes the same landed answer through the
+        # snapshot (the reply lands in _update -> data.changed). The
+        # 10 s valve keeps a DROPPED reply (a session-generation
+        # guard can swallow the callback) from wedging the gate shut:
+        # discovery must never go silent for longer than a poll.
+        if self._webcams_pending:
+            if time.monotonic() - self._webcams_pending_since < 10.0:
+                return
+        self._webcams_pending = True
+        self._webcams_pending_since = time.monotonic()
         from .CameraTiming import mark
         mark("T3", "webcam list requested")
-        self.request("webcams", "GET", "server/webcams/list",
-            lambda p, e: (mark("T4", "webcam list landed"),
-                          self._update(webcams=tuple(item for item in result(p).get("webcams", ()) if isinstance(item, dict) and item.get("enabled", True))))
-            if not e and isinstance(result(p), Mapping) else None,
-            replace=True, category="discovery",
-            rpc=("server.webcams.list", {}))
+        def landed(payload, error):
+            # Cleared FIRST: a dropped callback (the generation guard
+            # in request()) must never wedge the gate shut. The
+            # deactivate path resets it too, for the same reason.
+            self._webcams_pending = False
+            if not error and isinstance(result(payload), Mapping):
+                mark("T4", "webcam list landed")
+                self._update(webcams=tuple(item for item in result(payload).get("webcams", ()) if isinstance(item, dict) and item.get("enabled", True)))
+        if not self.request("webcams", "GET", "server/webcams/list", landed,
+                replace=True, category="discovery",
+                rpc=("server.webcams.list", {})):
+            self._webcams_pending = False
 
 

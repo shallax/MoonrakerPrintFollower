@@ -71,7 +71,13 @@ Component {
         }
 
         Component.onCompleted: {
-            updateCameraImage();
+            // The coalescer, not a direct application: completion
+            // races the queued URL/nonce notifications, and a direct
+            // call here was one of the two start-owners the
+            // duplicate-start find named. The callLater deferral also
+            // guarantees the reconciliation runs after the printer
+            // binding and the pane have settled.
+            scheduleCameraApply();
         }
 
         Connections {
@@ -448,8 +454,9 @@ Component {
             consoleSection.consoleSyncLines();
             // The camera's configured flag is maintained imperatively
             // (root bindings here freeze); a printer attach is one of
-            // its triggers.
-            updateCameraImage();
+            // its triggers — through the SAME coalescer as every
+            // other camera trigger (the duplicate-start find).
+            scheduleCameraApply();
         }
         focus: true
         // The Esc ladder lives in the DASHBOARD document now: that

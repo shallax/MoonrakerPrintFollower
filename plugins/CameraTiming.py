@@ -11,6 +11,7 @@ side, stamped by the pane itself). Nothing here logs credentials.
 """
 from __future__ import annotations
 
+import os
 import time
 
 try:
@@ -18,9 +19,40 @@ try:
 except ImportError:  # the stdlib-only host suite has no Uranium
     Logger = None
 
+try:
+    from UM.Resources import Resources
+except ImportError:
+    Resources = None
+
 _origin: float = 0.0
 _enabled: bool = False
 _once_marked: set = set()
+_actor_seq: int = 0
+
+
+def next_actor_id() -> int:
+    """One process-wide sequence for every diagnostic label: camera
+    pane instances and bridge requests both take ids from it, so two
+    'pane 1' labels from different machine models can never collide
+    in a trace."""
+    global _actor_seq
+    _actor_seq += 1
+    return _actor_seq
+
+
+def _append(stage: str, note: str) -> None:
+    """The dedicated sink: Cura's log file has too many owners to
+    argue with (the 2026-09-19 live find — the chain never reached
+    the user's log), so every stage ALSO lands in a plugin-owned
+    file beside cura.cfg."""
+    if Resources is None:
+        return
+    try:
+        path = os.path.join(Resources.getConfigStoragePath(), "moonraker-camera-timing.log")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("camera timing %s +%.3fs %s\n" % (stage, time.monotonic() - _origin, note))
+    except Exception:
+        pass
 
 
 def begin(enabled: bool) -> None:
@@ -32,8 +64,10 @@ def begin(enabled: bool) -> None:
     _enabled = bool(enabled)
     _origin = time.monotonic()
     _once_marked.clear()
-    if _enabled and Logger is not None:
-        Logger.log("i", "camera timing trace armed")
+    if _enabled:
+        _append("T0-arm", "trace armed")
+        if Logger is not None:
+            Logger.log("i", "camera timing trace armed")
 
 
 def enabled() -> bool:
@@ -41,9 +75,11 @@ def enabled() -> bool:
 
 
 def mark(stage: str, note: str = "") -> None:
-    if not _enabled or not _origin or Logger is None:
+    if not _enabled or not _origin:
         return
-    Logger.log("i", "camera timing %s +%.3fs %s", stage, time.monotonic() - _origin, note)
+    _append(stage, note)
+    if Logger is not None:
+        Logger.log("i", "camera timing %s +%.3fs %s", stage, time.monotonic() - _origin, note)
 
 
 def mark_once(stage: str, note: str = "") -> None:

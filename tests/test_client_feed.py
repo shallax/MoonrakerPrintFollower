@@ -499,11 +499,13 @@ if QT_AVAILABLE:
             self.assertTrue(self.data.later_calls)
             delay_ms, callback = self.data.later_calls[-1]
             self.assertEqual(delay_ms, 1000)
-            # The retry is the bound refresh_discovery (the probe
-            # overrides the method to count calls, so pin the bound
-            # self and the override's own function).
-            self.assertIs(callback.__self__, self.data)
-            self.assertIs(callback.__func__, self.ProbeData.refresh_discovery)
+            # The retry is the single deferred re-arm: invoking it
+            # re-fires the chain (the probe's override counts
+            # refresh_discovery calls). The defer re-arm cycle itself
+            # is pinned in test_preview_family_coverage.
+            discovery_before = self.data.discovery_calls
+            callback()
+            self.assertEqual(self.data.discovery_calls, discovery_before + 1)
             # With the RPC lane live the request rides it: no retry is
             # scheduled and nothing falls through to the wire.
             self.client.rpc_ok = True

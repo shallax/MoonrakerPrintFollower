@@ -282,8 +282,6 @@ class PrinterBinding(QObject):
             return False
         previous = self.config
         self._client.set_trace_http(config.trace_http)
-        from .CameraTiming import begin
-        begin(bool(config.trace_http))
         endpoint_changed = (normalise_url(previous.url), previous.api_key) != (normalise_url(config.url), config.api_key)
         camera_changed = previous.camera_selected != config.camera_selected
         camera_only = camera_changed and replace(previous, camera_selected=config.camera_selected) == config
@@ -375,6 +373,10 @@ class PrinterBinding(QObject):
             Logger.log("w", "Moonraker machine %s removed but its credential wipe could not be saved — the credentials remain on disk.", machine_id)
 
     def _apply(self):
+        from .CameraTiming import begin
+        # The cold-camera trace rides the SAME preference as the HTTP
+        # trace (the diagnostics toggle), never forced on.
+        begin(bool(getattr(self.config, "trace_http", False)))
         config = self.config
         url = normalise_url(config.url)
         # The product default (websocket) lives in PrinterConfig and is

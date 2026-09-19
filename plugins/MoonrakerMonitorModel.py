@@ -581,6 +581,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._publish()
 
     def _on_stream_failed(self) -> None:
+        from .CameraTiming import mark
+        mark("T6-watchdog", "camera render stalled")
         import time
         now = time.monotonic()
         # The FIRST failure retries immediately: a camera's first
@@ -1726,6 +1728,22 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def cameraFirstFrameRendered(self):
         from .CameraTiming import mark_once
         mark_once("T9", "first decoded frame")
+
+    @pyqtSlot(result=int)
+    def cameraPaneInstanceId(self):
+        # The pane's process-wide diagnostic id: every pane instance
+        # (one per machine model) draws from the SAME sequence, so
+        # pane-side trace lines can never collide across models.
+        from .CameraTiming import next_actor_id
+        return next_actor_id()
+
+    @pyqtSlot(int, str)
+    def cameraPaneTrace(self, pane_id, event):
+        # The QML side of the cold-start trace: applyCamera calls,
+        # visibility start/stops and watchdog firings, labelled with
+        # the pane's id and sanitised by the pane itself.
+        from .CameraTiming import mark
+        mark("T6-qml", "pane %d: %s" % (int(pane_id), str(event)))
     cameraRecovering = value_property(bool, "cameraRecovering", cameraRecoveringChanged, False)
     connectionDetail = value_property(str, "connectionDetail", connectionDetailChanged, "")
     sectionExpandedMap = value_property(QVariant, "sectionExpandedMap", sectionsChanged, {})

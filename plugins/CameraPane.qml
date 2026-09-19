@@ -42,21 +42,80 @@ Cura.RoundedRectangle {
     // the assignment is in progress — and exactly one start() runs,
     // at the end, only when a real URL should run.
     property bool _cameraApplyInProgress: false
+    // The applied-state latches (the duplicate-start find):
+    // Cura's NetworkMJPGImage.start() is DESTRUCTIVE — it stops the
+    // live reply first — so applying the same desired state twice
+    // killed a healthy stream. With the latches, a redundant
+    // application is a no-op: no stop, no source re-assignment, no
+    // start, no second HTTP connection.
+    property string _appliedUrl: ""
+    property bool _appliedVisible: false
     // The T0-T9 timing chain's T9 gate (the reviewer's cold-start
     // diagnostics): the host mirrors the client's trace flag; the
     // first decoded frame lands on the model's slot so T9 shares the
     // SAME monotonic origin as every Python stage.
     property bool traceCameraTiming: false
 
+    // The pane's process-wide diagnostic id (the cold-start trace):
+    // every apply/start/stop line carries it, so two pane instances
+    // (two machine models) can never be confused in the log.
+    property int paneId: -1
+
+    Component.onCompleted: {
+        // The trace-gated console.log stamps every pane creation even
+        // when the model has not resolved (the model-slot trace is
+        // silent for a null model, which hid the second pane's birth
+        // in the 0221 trace).
+        if (root.traceCameraTiming) {
+            console.log("Moonraker camera pane created (model attached: " + (root.printerModel != null) + ")");
+        }
+        if (root.printerModel != null) {
+            paneId = root.printerModel.cameraPaneInstanceId();
+            root.printerModel.cameraPaneTrace(paneId, "pane created");
+        }
+    }
+
+    onPrinterModelChanged: {
+        // A pane whose model lands AFTER construction (the first view
+        // instance creates before the printer binding resolves) still
+        // needs its diagnostic id — pane -1 in the cold-start trace.
+        if (paneId < 0 && root.printerModel != null) {
+            paneId = root.printerModel.cameraPaneInstanceId();
+            root.printerModel.cameraPaneTrace(paneId, "pane created (late model)");
+        }
+    }
+
     function applyCamera(url, visible) {
         var text = url != null ? url.toString() : "";
         var shouldRun = visible && text.length > 0;
+        // The trace strips the query: the nonce is noise and a
+        // credential must never ride the diagnostic.
+        var shown = text.indexOf("?") >= 0 ? text.slice(0, text.indexOf("?")) : text;
+        // The trace-gated console.log stamps the apply even when the
+        // model has not resolved (the silent apply in the 0221 trace).
+        if (root.traceCameraTiming) {
+            console.log("Moonraker camera pane " + paneId + ": applyCamera visible=" + visible + " url=" + shown + " (image was visible=" + cameraImage.visible + ")");
+        }
+        if (root.printerModel != null) {
+            root.printerModel.cameraPaneTrace(paneId, "applyCamera visible=" + visible + " url=" + shown + " (image was visible=" + cameraImage.visible + ")");
+        }
+        if (text === _appliedUrl && visible === _appliedVisible) {
+            if (root.printerModel != null) {
+                root.printerModel.cameraPaneTrace(paneId, "applyCamera no-op: state unchanged");
+            }
+            return;
+        }
         _cameraApplyInProgress = true;
         cameraImage.stop();
         cameraImage.source = url;
         cameraImage.visible = visible;
         _cameraApplyInProgress = false;
+        _appliedUrl = text;
+        _appliedVisible = visible;
         if (shouldRun) {
+            if (root.printerModel != null) {
+                root.printerModel.cameraPaneTrace(paneId, "applyCamera starting the stream");
+            }
             cameraImage.start();
         }
     }
@@ -122,9 +181,13 @@ Cura.RoundedRectangle {
 
             Cura.NetworkMJPGImage {
                 id: cameraImage
+                objectName: "cameraImage"
                 // visible and source arrive through the
                 // host's applyCamera() — no bindings
-                // here to go stale.
+                // here to go stale. The false default keeps the
+                // image's real state in line with the applied-state
+                // latches from the first application.
+                visible: false
                 rotation: root.printerModel != null ? root.printerModel.cameraRotation : 0
                 anchors.centerIn: parent
 
@@ -152,14 +215,22 @@ Cura.RoundedRectangle {
                 }
 
                 onVisibleChanged: {
-                    // The stage hide/show lifecycle ONLY: applyCamera
-                    // owns every start/stop during an application, and
-                    // the in-progress guard keeps this handler out of
-                    // its way.
+                    // The stage hide/show lifecycle reconciles
+                    // THROUGH the applied-state latch: an external
+                    // visibility change becomes the new desired state
+                    // and the same stop/start decision runs — never a
+                    // second start path racing applyCamera (the
+                    // duplicate-start find). The in-progress guard
+                    // keeps this handler out of applyCamera's own
+                    // application.
                     if (_cameraApplyInProgress) {
                         return;
                     }
+                    _appliedVisible = visible;
                     if (source !== "") {
+                        if (root.printerModel != null) {
+                            root.printerModel.cameraPaneTrace(root.paneId, "visibility lifecycle " + (visible ? "start" : "stop"));
+                        }
                         if (visible) {
                             start();
                         } else {
@@ -199,6 +270,7 @@ Cura.RoundedRectangle {
                     if (cameraImage.imageWidth > 0)
                         return;
                     if (root.printerModel != null) {
+                        root.printerModel.cameraPaneTrace(root.paneId, "stall watchdog fired (imageWidth=" + cameraImage.imageWidth + ")");
                         root.printerModel.cameraRenderStalled();
                     }
                 }

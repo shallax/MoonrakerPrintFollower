@@ -781,6 +781,114 @@ class QtRuntimeTests(unittest.TestCase):
         self.assertEqual(bridge._server.findChildren(QTcpSocket), [])
         self.assertEqual(bridge._relays, {})
 
+    def test_cancelled_consumer_aborts_the_upstream_before_first_bytes(self):
+        # E (the 2026-09-19 review): a local client that disconnects
+        # before the first upstream bytes MUST abort its upstream —
+        # this is the exact mechanism the double-start produced
+        # (T7 with no T8). The server side sees the abort as a closed
+        # connection.
+        from PyQt6.QtNetwork import QTcpSocket
+        closed = threading.Event()
+
+        class Handler(PipeSafeHandler):
+            def do_GET(self):
+                try:
+                    while self.rfile.read(4096):
+                        pass
+                except Exception:
+                    pass
+                closed.set()
+
+            def log_message(self, *_args): pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        bridge = self.qt.load("CameraBridge").CameraBridge()
+        self.assertTrue(bridge.configure("http://127.0.0.1:" + str(server.server_port), "test-key"))
+        self.addCleanup(bridge.stop)
+        socket = QTcpSocket()
+        self.addCleanup(socket.abort)
+        socket.connectToHost("127.0.0.1", bridge.port)
+        socket.write(b"GET /webcam/?action=stream HTTP/1.1\r\nHost: local\r\n\r\n")
+        for _ in range(200):
+            self.qt.events(10)
+            if any(relay[0] is not None for relay in bridge._relays.values()):
+                break
+        # The bridge keys its relays on the SERVER-side socket object —
+        # a different Python wrapper for the same connection.
+        self.assertTrue(any(relay[0] is not None for relay in bridge._relays.values()),
+                        "the upstream must be created before the cancel")
+        socket.abort()
+        for _ in range(200):
+            self.qt.events(10)
+            if not bridge._relays:
+                break
+        self.assertEqual(bridge._relays, {}, "the cancelled consumer's relay must release")
+        self.assertTrue(closed.wait(2.0), "the upstream must see the connection close")
+        self.assertFalse(bridge._first_upstream_bytes)
+
+    def test_recovery_signal_means_first_proven_bytes(self):
+        # F (the 2026-09-19 review): issuing a request is NOT
+        # recovery; the first real upstream bytes are, exactly once
+        # per failure transition.
+        from PyQt6.QtCore import QObject, pyqtSignal
+        from PyQt6.QtNetwork import QNetworkReply, QTcpSocket
+        bridge = self.qt.load("CameraBridge").CameraBridge()
+        self.assertTrue(bridge.configure("http://127.0.0.1:9", "test-key"))
+        self.addCleanup(bridge.stop)
+        emitted = []
+        bridge.upstreamStarted.connect(lambda: emitted.append(1))
+
+        class BytesReply(QObject):
+            readyRead = pyqtSignal()
+            finished = pyqtSignal()
+
+            def __init__(self):
+                super().__init__()
+                self._error = QNetworkReply.NetworkError.NoError
+
+            def setReadBufferSize(self, _size): pass
+            def readAll(self): return b""
+            def bytesAvailable(self): return 46314
+            def attribute(self, _name): return None
+            def header(self, _name): return None
+            def error(self): return self._error
+            def errorString(self): return "simulated"
+            def abort(self): pass
+            def deleteLater(self): pass
+
+        replies = []
+        def fake_get(_request):
+            reply = BytesReply()
+            replies.append(reply)
+            return reply
+
+        socket = QTcpSocket()
+        self.addCleanup(socket.abort)
+        socket.connectToHost("127.0.0.1", bridge.port)
+        socket.write(b"GET /webcam/?action=stream HTTP/1.1\r\nHost: local\r\n\r\n")
+        bridge._nam.get = fake_get
+        for _ in range(200):
+            self.qt.events(10)
+            relay = bridge._relays.get(socket)
+            if relay is not None and relay[0] is not None:
+                break
+        self.assertEqual(1, len(replies))
+        self.assertEqual([], emitted, "issuing the request is not recovery")
+        # The bridge keys its relays on the SERVER-side socket wrapper;
+        # the client-side Python object is a different wrapper.
+        server_socket = next(iter(bridge._relays))
+        reply = replies[0]
+        bridge._on_upstream_ready(server_socket, reply)
+        bridge._on_upstream_ready(server_socket, reply)
+        self.assertEqual([1], emitted, "first bytes mark recovery exactly once")
+        bridge._stream_healthy = False
+        bridge._on_upstream_ready(server_socket, reply)
+        self.assertEqual([1, 1], emitted, "recovery re-arms after a failure transition")
+
     def test_real_http_thumbnail_fetch_follows_metadata_path(self):
         # Live-proven: a real Moonraker answers <file>.png with 404 —
         # the thumbnail lives at the metadata's relative_path under

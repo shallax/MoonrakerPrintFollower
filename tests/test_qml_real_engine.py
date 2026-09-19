@@ -517,3 +517,79 @@ class TuningResetConvergenceTests(RealEngineTestCase):
         self.pump(30)
         self.assertEqual(slider.property("value"), 100,
                          "the slider must read the confirmed 100, not the to-clamp")
+
+
+class CameraOwnershipTests(RealEngineTestCase):
+    """The camera start/stop ownership (the 2026-09-19 cold-start
+    review): one logical desired state, one application, at most one
+    start/stop transition. Cura's NetworkMJPGImage.start() is
+    destructive — it stops the live reply first — so a duplicate
+    application must never touch the image."""
+
+    def _apply(self, pane, url, visible):
+        from PyQt6.QtCore import QMetaObject, Q_ARG, QVariant
+        QMetaObject.invokeMethod(pane, "applyCamera",
+                                 Q_ARG(QVariant, QUrl(url)), Q_ARG(QVariant, visible))
+
+    def _mount_pane(self):
+        pane = self.mount("CameraPane.qml")
+        image = self.find(pane, "cameraImage")
+        return pane, image
+
+    def _counts(self, image):
+        return (image.property("startCount"), image.property("stopCount"),
+                image.property("sourceSetCount"))
+
+    def test_first_application_starts_the_consumer_exactly_once(self):
+        # A: the initial attach applies the settled final state once —
+        # exactly one start, one stop, one source assignment. The old
+        # churn (URL publish then a later nonce publish) drove two
+        # applications of two URL strings; the coalescer now delivers
+        # ONE application of the final URL.
+        pane, image = self._mount_pane()
+        self._apply(pane, "http://127.0.0.1:59999/webcam2/", True)
+        self.pump()
+        self.assertEqual((1, 1, 1), self._counts(image))
+
+    def test_duplicate_desired_state_is_a_no_op(self):
+        # B: applying URL X + running twice — the second application
+        # must not stop, re-assign the source or start again (each
+        # would kill a healthy stream through Cura's destructive
+        # start()).
+        pane, image = self._mount_pane()
+        self._apply(pane, "http://127.0.0.1:59999/webcam2/", True)
+        self.pump()
+        first = self._counts(image)
+        self._apply(pane, "http://127.0.0.1:59999/webcam2/", True)
+        self.pump()
+        self.assertEqual(first, self._counts(image))
+
+    def test_genuine_refresh_restarts_exactly_once(self):
+        # C: the refresh nonce changes the URL — exactly one
+        # replacement start, not zero and not two.
+        pane, image = self._mount_pane()
+        self._apply(pane, "http://127.0.0.1:59999/webcam2/?mpf_reload=1", True)
+        self.pump()
+        first = self._counts(image)
+        self._apply(pane, "http://127.0.0.1:59999/webcam2/?mpf_reload=2", True)
+        self.pump()
+        self.assertEqual((first[0] + 1, first[1] + 1, first[2] + 1), self._counts(image))
+
+    def test_visibility_lifecycle_stops_and_restarts_once(self):
+        # D: hide -> one stop; show -> one start. The lifecycle
+        # handler adopts the new visible state into the applied
+        # latches, so a later identical application stays a no-op —
+        # never a second start path racing applyCamera.
+        pane, image = self._mount_pane()
+        self._apply(pane, "http://127.0.0.1:59999/webcam2/", True)
+        self.pump()
+        first = self._counts(image)
+        image.setProperty("visible", False)
+        self.pump()
+        self.assertEqual((first[0], first[1] + 1, first[2]), self._counts(image))
+        image.setProperty("visible", True)
+        self.pump()
+        self.assertEqual((first[0] + 1, first[1] + 1, first[2]), self._counts(image))
+        self._apply(pane, "http://127.0.0.1:59999/webcam2/", True)
+        self.pump()
+        self.assertEqual((first[0] + 1, first[1] + 1, first[2]), self._counts(image))

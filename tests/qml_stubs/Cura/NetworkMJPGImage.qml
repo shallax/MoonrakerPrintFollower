@@ -10,9 +10,18 @@ Item {
     // monitor's fit-to-viewport bindings lay out a visible stream area.
     property real imageWidth: 640
     property real imageHeight: 480
+    // The ownership counters: the camera start/stop lifecycle tests
+    // count every call and every source assignment — Cura's real
+    // start() is destructive, so the count IS the contract.
+    property int startCount: 0
+    property int stopCount: 0
+    property int sourceSetCount: 0
+    onSourceChanged: sourceSetCount += 1
     function start() {
+        startCount += 1;
     }
     function stop() {
+        stopCount += 1;
     }
     Rectangle {
         anchors.fill: parent

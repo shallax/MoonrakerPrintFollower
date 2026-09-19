@@ -3618,11 +3618,13 @@ class MonitorQtTests(unittest.TestCase):
         model = self.monitor()
         self.qt.events(1)
         webcams = [r for r in self.transport.requests if r.channel == "webcams"]
-        self.assertTrue(webcams)
+        self.assertEqual(1, len(webcams), "one in-flight webcam RPC at a time (the coalescer)")
         webcams[0].callback({"result": {"webcams": [{"name": "Front", "stream_url": "/webcam", "enabled": True}]}}, None)
         self.qt.events(1)
         self.assertEqual(model.webcamNames, ["Front"])
-        self.qt.events(1000)  # next poll cycle issues a fresh webcams request
+        # The landed reply reopens the gate: the next poll issues again.
+        model.refreshWebcams()
+        self.qt.events(1)
         later = [r for r in self.transport.requests if r.channel == "webcams"][1:]
         self.assertTrue(later)
         later[-1].callback(None, "boom")
@@ -4297,6 +4299,11 @@ Item {
             "visible: root.printerModel != null && (root.walkErrorText() !== \"\" || (root.printerModel.fileManagerRefreshedAt !== \"Not yet refreshed\" && root.printerModel.fileManagerEmptyKind === \"over_filtered\"))",
             "visible: root.printerModel == null || root.printerModel.fileManagerSelected > 0",
             "visible: root.printerModel == null || root.activeRows.length > 0",
+            # The camera image's static hidden default (the duplicate-
+            # start fix): visible arrives ONLY through applyCamera, so
+            # the false default is the owned state, not a disappearing
+            # control.
+            "visible: false",
         }
         for path in sorted(PLUGINS.glob("*.qml")):
             if path.name in exempt_files:

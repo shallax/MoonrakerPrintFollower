@@ -1955,7 +1955,19 @@ class MonitorRequestTests(MonitorDataTests):
                                           category=RequestCategory.DISCOVERY,
                                           rpc=("printer.objects.list", {})))
         self.assertEqual(before, len(self.client.transport.sent), "the wire is skipped")
-        self.assertEqual((1000, self.data.refresh_discovery), self.data.later.call_args[0])
+        # One deferred re-arm timer per boot window; the re-arm
+        # re-fires the chain, which defers AGAIN while the lane is
+        # down — one more timer, never the wire.
+        self.assertEqual(1000, self.data.later.call_args[0][0])
+        self.data.later.call_args[0][1]()
+        self.assertEqual(before, len(self.client.transport.sent), "still no wire")
+        self.assertEqual(2, self.data.later.call_count, "the re-arm re-arms the defer once")
+        # With the lane up, the NEXT re-arm dispatches through the RPC
+        # lane — the gate reopened rather than wedging shut.
+        self.client.rpc_ok = True
+        self.data.later.call_args[0][1]()
+        self.assertGreaterEqual(len([method for method, _params, _cb in self.client.rpcs
+                                     if method == "printer.objects.list"]), 1)
 
     def test_a_boot_window_rpc_failure_without_discovery_just_waits(self):
         self.activate()
@@ -2154,11 +2166,20 @@ class MonitorAuxTests(MonitorDataTests):
 
     def test_the_discovery_chain_feeds_objects_presets_and_webcams(self):
         self.activate()
+        # The activate-time refresh_all already issued the webcam RPC;
+        # the chain's own refresh coalesces onto it (the in-flight
+        # gate — one webcam request per cycle) and feeds objects and
+        # presets itself.
         before = len(self.client.transport.sent)
         self.data.refresh_discovery()
         fresh = self.client.transport.sent[before:]
-        self.assertEqual(3, len(fresh))
-        self.assertEqual({"objects", "presets", "webcams"}, {item.channel for item in fresh})
+        self.assertEqual(2, len(fresh))
+        self.assertEqual({"objects", "presets"}, {item.channel for item in fresh})
+        self.request_to("webcams").callback({"result": {"webcams": [{"name": "cam", "enabled": True}]}}, None)
+        self.assertEqual(({"name": "cam", "enabled": True},), self.data.snapshot.webcams)
+        # The landed reply reopens the gate: a fresh call issues again.
+        self.data.refresh_webcams()
+        self.assertEqual(2, len([item for item in self.client.transport.sent if item.channel == "webcams"]))
         self.request_to("objects").callback({"result": {"objects": ["configfile", "extruder"]}}, None)
         self.assertEqual(("configfile", "extruder"), self.data.snapshot.objects)
         self.assertTrue([item for item in self.client.transport.sent

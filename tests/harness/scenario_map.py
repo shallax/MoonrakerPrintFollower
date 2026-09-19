@@ -297,6 +297,24 @@ EXCLUSIONS = {
         "date": "2026-09-19",
         "recheck": "the cold-camera timing scenario lands",
     },
+    "MoonrakerMonitorModel.cameraPaneInstanceId": {
+        "reason": "the pane's diagnostic id source; instrumentation, never a scenario verb",
+        "evidence": "the camera ownership tests' pane-id assignments; the trace logs",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
+    "MoonrakerMonitorModel.cameraPaneTrace": {
+        "reason": "the pane's trace sink for apply/start/stop lines; diagnostics-only",
+        "evidence": "the camera ownership tests' apply traces; the trace logs",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
+    "cameraImage": {
+        "reason": "the stream viewport item, named for the ownership tests' counter reads; never a scenario target",
+        "evidence": "the camera ownership tests' start/stop counter assertions",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
     # The migration-failure surfaces: the settings-dialog scenario is
     # deferred (no harness scenario drives the dialog yet), so the
     # banner's end-to-end proof rides the unit tests — the notice's
