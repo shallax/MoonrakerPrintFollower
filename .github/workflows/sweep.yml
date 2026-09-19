@@ -1,0 +1,101 @@
+# The 5.7-5.13 UI version sweep: every release unit — one smoke, all
+# fourteen suite groups and the first-install leg (16 units, no
+# primary/secondary smoke split: each version gets the plain smoke
+# once) — on every supported Cura version, as an ON-DEMAND matrix:
+# one job per version/unit pair (7 x 16 = 112 jobs), so the whole
+# sweep lands in the time of its slowest unit instead of the serial
+# local grind (TESTING.md §5's version sweep). The per-unit budget
+# mirrors the canonical release gate. Trigger it manually from the
+# Actions tab, or:
+#   gh workflow run "UI Version Sweep" --ref release/v4.5.0
+name: UI Version Sweep
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - "5.7.0"
+          - "5.8.0"
+          - "5.9.0"
+          - "5.10.0"
+          - "5.11.0"
+          - "5.12.0"
+          - "5.13.0"
+        unit:
+          - {name: smoke, mode: suite, group: smoke, budget: 20}
+          - {name: configure, mode: suite, group: configure, budget: 15}
+          - {name: connection, mode: suite, group: connection, budget: 15}
+          - {name: console, mode: suite, group: console, budget: 15}
+          - {name: files, mode: suite, group: files, budget: 15}
+          - {name: motion, mode: suite, group: motion, budget: 15}
+          - {name: preview, mode: suite, group: preview, budget: 15}
+          - {name: printing, mode: suite, group: printing, budget: 15}
+          - {name: probe, mode: suite, group: probe, budget: 15}
+          - {name: settings, mode: suite, group: settings, budget: 15}
+          - {name: status, mode: suite, group: status, budget: 15}
+          - {name: stress, mode: suite, group: stress, budget: 15}
+          - {name: temperatures, mode: suite, group: temperatures, budget: 15}
+          - {name: visual, mode: suite, group: visual, budget: 15}
+          - {name: webcams, mode: suite, group: webcams, budget: 15}
+          - {name: firstinstall, mode: firstinstall, group: "", budget: 10}
+    env:
+      HARNESS_CONTAINER: mpf-cura-sweep-${{ matrix.version }}-${{ matrix.unit.name }}
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Build the plugin package
+        run: make package >/dev/null
+
+      - name: Restore the pinned Cura tree
+        id: cura-cache
+        uses: actions/cache@v6
+        with:
+          path: /tmp/mpf/cura_versions
+          key: mpf-cura-${{ matrix.version }}
+
+      - name: Fetch the pinned Cura
+        run: python3 tools/fetch_cura.py "${{ matrix.version }}"
+
+      - name: Pull the harness image and start the container
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin 2>/dev/null || true
+          if docker pull ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }} >/dev/null 2>&1; then
+            docker tag ghcr.io/${{ github.repository_owner }}/mpf-cura-harness:sha-${{ github.sha }} mpf-cura-harness
+          else
+            docker build -q -t mpf-cura-harness tools/harness
+          fi
+          docker rm -f "$HARNESS_CONTAINER" >/dev/null 2>&1 || true
+          docker run -d --init --name "$HARNESS_CONTAINER" --cap-add=SYS_PTRACE \
+              -v /tmp/mpf:/tmp/mpf mpf-cura-harness sleep infinity
+
+      # One attempt per unit (the gate ruling): a retried unit would
+      # hide flakiness. The gallery is the proof.
+      - name: Run the unit
+        run: |
+          mkdir -p /tmp/mpf
+          timeout "${{ matrix.unit.budget }}m" env \
+              CURA_VERSION="${{ matrix.version }}" \
+              MODE="${{ matrix.unit.mode }}" SCENARIO_GROUP="${{ matrix.unit.group }}" \
+              RUN_DIR_NAME="/tmp/mpf/ui-artifacts/sweep/${{ github.run_id }}/${{ matrix.version }}-${{ matrix.unit.name }}" \
+              ./tools/ui_test.sh
+
+      - name: Upload the failed unit's gallery
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sweep-${{ matrix.version }}-${{ matrix.unit.name }}
+          path: /tmp/mpf/ui-artifacts/sweep/${{ github.run_id }}/${{ matrix.version }}-${{ matrix.unit.name }}
+          if-no-files-found: warn

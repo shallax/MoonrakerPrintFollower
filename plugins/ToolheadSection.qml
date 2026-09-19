@@ -159,8 +159,7 @@ ColumnLayout {
                         // The click itself must obey the
                         // SAME gate as the styling: while
                         // the controls are locked the word
-                        // reads, it must not act (the
-                        // author's catch).
+                        // reads, it must not act (a catch).
                         if (root.printerModel != null && root.printerModel.jogEnabled) {
                             root.printerModel.setPositionMode(root.printerModel.positionMode !== "Absolute");
                         }
@@ -222,12 +221,19 @@ ColumnLayout {
 
                     text: "↑ Y"
 
-                    tooltip: "Move the toolhead towards the Y maximum."
                     objectName: "moonrakerJogYPlus"
 
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
 
                     onClicked: root.printerModel.jog("y", 1)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Move the toolhead towards the Y maximum."
+                    }
                 }
                 Item {
                     Layout.fillWidth: true
@@ -238,12 +244,19 @@ ColumnLayout {
 
                     text: "← X"
 
-                    tooltip: "Move the toolhead towards the X minimum."
                     objectName: "moonrakerJogXMinus"
 
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
 
                     onClicked: root.printerModel.jog("x", -1)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Move the toolhead towards the X minimum."
+                    }
                 }
                 // The compass centre is deliberately
                 // empty (the old Home-all button used
@@ -257,12 +270,19 @@ ColumnLayout {
 
                     text: "→ X"
 
-                    tooltip: "Move the toolhead towards the X maximum."
                     objectName: "moonrakerJogXPlus"
 
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
 
                     onClicked: root.printerModel.jog("x", 1)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Move the toolhead towards the X maximum."
+                    }
                 }
                 Item {
                     Layout.fillWidth: true
@@ -273,12 +293,19 @@ ColumnLayout {
 
                     text: "↓ Y"
 
-                    tooltip: "Move the toolhead towards the Y minimum."
                     objectName: "moonrakerJogYMinus"
 
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
 
                     onClicked: root.printerModel.jog("y", -1)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Move the toolhead towards the Y minimum."
+                    }
                 }
                 Item {
                     Layout.fillWidth: true
@@ -290,23 +317,37 @@ ColumnLayout {
 
                     text: "↑ Z"
 
-                    tooltip: "Move the toolhead up."
                     objectName: "moonrakerJogZPlus"
 
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
 
                     onClicked: root.printerModel.jog("z", 1)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Move the toolhead up."
+                    }
                 }
                 PreviewSecondaryButton {
 
                     text: "↓ Z"
 
-                    tooltip: "Move the toolhead down."
                     objectName: "moonrakerJogZMinus"
 
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
 
                     onClicked: root.printerModel.jog("z", -1)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Move the toolhead down."
+                    }
                 }
             }
         }
@@ -318,25 +359,46 @@ ColumnLayout {
                 Layout.fillWidth: true
                 text: "Home X"
                 objectName: "moonrakerHomeX"
-                tooltip: "Home the X axis."
                 enabled: root.printerModel != null && root.printerModel.jogEnabled
                 onClicked: root.printerModel.home("x")
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Home the X axis."
+                }
             }
             Cura.SecondaryButton {
                 Layout.fillWidth: true
                 text: "Home Y"
                 objectName: "moonrakerHomeY"
-                tooltip: "Home the Y axis."
                 enabled: root.printerModel != null && root.printerModel.jogEnabled
                 onClicked: root.printerModel.home("y")
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Home the Y axis."
+                }
             }
             Cura.SecondaryButton {
                 Layout.fillWidth: true
                 text: "Home Z"
                 objectName: "moonrakerHomeZ"
-                tooltip: "Home the Z axis."
                 enabled: root.printerModel != null && root.printerModel.jogEnabled
                 onClicked: root.printerModel.home("z")
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Home the Z axis."
+                }
             }
         }
 
@@ -346,21 +408,42 @@ ColumnLayout {
             Cura.SecondaryButton {
                 Layout.fillWidth: true
                 text: "Centre toolhead"
-                tooltip: "Move X and Y to the build plate centre, 5 cm above the plate."
                 enabled: root.printerModel != null && root.printerModel.jogEnabled
                 onClicked: root.printerModel.centerToolhead()
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Move X and Y to the build plate centre, 5 cm above the plate."
+                }
             }
             Cura.SecondaryButton {
                 text: "Z to 0"
-                tooltip: "Move Z down to 0, the bed level after homing."
                 enabled: root.printerModel != null && root.printerModel.jogEnabled
                 onClicked: root.printerModel.zToZero()
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Move Z down to 0, the bed level after homing."
+                }
             }
             Cura.SecondaryButton {
                 text: "Motors off"
-                tooltip: "Disable the stepper motors so the toolhead can be moved by hand."
                 enabled: root.printerModel != null && root.printerModel.jogEnabled
                 onClicked: root.printerModel.motorsOff()
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Disable the stepper motors so the toolhead can be moved by hand."
+                }
             }
         }
 
@@ -374,9 +457,9 @@ ColumnLayout {
             spacing: UM.Theme.getSize("thin_margin").width
             // The selected distance keeps its
             // highlight: the primary face shows
-            // while it IS the selection (the
-            // author's live report — the boxes
-            // never stayed highlighted).
+            // while it IS the selection (a live
+            // report — the boxes never stayed
+            // highlighted).
             Item {
                 Layout.fillWidth: true
                 implicitHeight: extrudeDistance5Primary.implicitHeight
@@ -385,24 +468,38 @@ ColumnLayout {
                     anchors.fill: parent
                     visible: root.printerModel != null && root.printerModel.extrudeDistance === 5
                     text: "5"
-                    tooltip: "Extrude distance: 5 mm."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeDistance(5)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrude distance: 5 mm."
+                    }
                 }
                 Cura.SecondaryButton {
                     anchors.fill: parent
                     visible: root.printerModel == null || root.printerModel.extrudeDistance !== 5
                     text: "5"
-                    tooltip: "Extrude distance: 5 mm."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeDistance(5)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrude distance: 5 mm."
+                    }
                 }
             }
             // The selected distance keeps its
             // highlight: the primary face shows
-            // while it IS the selection (the
-            // author's live report — the boxes
-            // never stayed highlighted).
+            // while it IS the selection (a live
+            // report — the boxes never stayed
+            // highlighted).
             Item {
                 Layout.fillWidth: true
                 implicitHeight: extrudeDistance10Primary.implicitHeight
@@ -411,24 +508,38 @@ ColumnLayout {
                     anchors.fill: parent
                     visible: root.printerModel != null && root.printerModel.extrudeDistance === 10
                     text: "10"
-                    tooltip: "Extrude distance: 10 mm."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeDistance(10)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrude distance: 10 mm."
+                    }
                 }
                 Cura.SecondaryButton {
                     anchors.fill: parent
                     visible: root.printerModel == null || root.printerModel.extrudeDistance !== 10
                     text: "10"
-                    tooltip: "Extrude distance: 10 mm."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeDistance(10)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrude distance: 10 mm."
+                    }
                 }
             }
             // The selected distance keeps its
             // highlight: the primary face shows
-            // while it IS the selection (the
-            // author's live report — the boxes
-            // never stayed highlighted).
+            // while it IS the selection (a live
+            // report — the boxes never stayed
+            // highlighted).
             Item {
                 Layout.fillWidth: true
                 implicitHeight: extrudeDistance25Primary.implicitHeight
@@ -437,24 +548,38 @@ ColumnLayout {
                     anchors.fill: parent
                     visible: root.printerModel != null && root.printerModel.extrudeDistance === 25
                     text: "25"
-                    tooltip: "Extrude distance: 25 mm."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeDistance(25)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrude distance: 25 mm."
+                    }
                 }
                 Cura.SecondaryButton {
                     anchors.fill: parent
                     visible: root.printerModel == null || root.printerModel.extrudeDistance !== 25
                     text: "25"
-                    tooltip: "Extrude distance: 25 mm."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeDistance(25)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrude distance: 25 mm."
+                    }
                 }
             }
             // The selected distance keeps its
             // highlight: the primary face shows
-            // while it IS the selection (the
-            // author's live report — the boxes
-            // never stayed highlighted).
+            // while it IS the selection (a live
+            // report — the boxes never stayed
+            // highlighted).
             Item {
                 Layout.fillWidth: true
                 implicitHeight: extrudeDistance75Primary.implicitHeight
@@ -463,24 +588,38 @@ ColumnLayout {
                     anchors.fill: parent
                     visible: root.printerModel != null && root.printerModel.extrudeDistance === 75
                     text: "75"
-                    tooltip: "Extrude distance: 75 mm."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeDistance(75)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrude distance: 75 mm."
+                    }
                 }
                 Cura.SecondaryButton {
                     anchors.fill: parent
                     visible: root.printerModel == null || root.printerModel.extrudeDistance !== 75
                     text: "75"
-                    tooltip: "Extrude distance: 75 mm."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeDistance(75)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrude distance: 75 mm."
+                    }
                 }
             }
             // The selected distance keeps its
             // highlight: the primary face shows
-            // while it IS the selection (the
-            // author's live report — the boxes
-            // never stayed highlighted).
+            // while it IS the selection (a live
+            // report — the boxes never stayed
+            // highlighted).
             Item {
                 Layout.fillWidth: true
                 implicitHeight: extrudeDistance100Primary.implicitHeight
@@ -489,17 +628,31 @@ ColumnLayout {
                     anchors.fill: parent
                     visible: root.printerModel != null && root.printerModel.extrudeDistance === 100
                     text: "100"
-                    tooltip: "Extrude distance: 100 mm."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeDistance(100)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrude distance: 100 mm."
+                    }
                 }
                 Cura.SecondaryButton {
                     anchors.fill: parent
                     visible: root.printerModel == null || root.printerModel.extrudeDistance !== 100
                     text: "100"
-                    tooltip: "Extrude distance: 100 mm."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeDistance(100)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrude distance: 100 mm."
+                    }
                 }
             }
             UM.Label {
@@ -518,16 +671,30 @@ ColumnLayout {
             Cura.SecondaryButton {
                 Layout.fillWidth: true
                 text: "Extrude"
-                tooltip: "Extrude the configured distance at the configured speed."
                 enabled: root.printerModel != null && root.printerModel.jogEnabled
                 onClicked: root.printerModel.extrude(1)
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Extrude the configured distance at the configured speed."
+                }
             }
             Cura.SecondaryButton {
                 Layout.fillWidth: true
                 text: "Retract"
-                tooltip: "Retract the configured distance at the configured speed."
                 enabled: root.printerModel != null && root.printerModel.jogEnabled
                 onClicked: root.printerModel.extrude(-1)
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Retract the configured distance at the configured speed."
+                }
             }
         }
 
@@ -549,17 +716,31 @@ ColumnLayout {
                     anchors.fill: parent
                     visible: root.printerModel != null && root.printerModel.extrudeSpeed === 60
                     text: "1"
-                    tooltip: "Extrusion speed: 1 mm/s."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeSpeed(60)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrusion speed: 1 mm/s."
+                    }
                 }
                 Cura.SecondaryButton {
                     anchors.fill: parent
                     visible: root.printerModel == null || root.printerModel.extrudeSpeed !== 60
                     text: "1"
-                    tooltip: "Extrusion speed: 1 mm/s."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeSpeed(60)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrusion speed: 1 mm/s."
+                    }
                 }
             }
             // Same highlight pattern as the
@@ -573,17 +754,31 @@ ColumnLayout {
                     anchors.fill: parent
                     visible: root.printerModel != null && root.printerModel.extrudeSpeed === 120
                     text: "2"
-                    tooltip: "Extrusion speed: 2 mm/s."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeSpeed(120)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrusion speed: 2 mm/s."
+                    }
                 }
                 Cura.SecondaryButton {
                     anchors.fill: parent
                     visible: root.printerModel == null || root.printerModel.extrudeSpeed !== 120
                     text: "2"
-                    tooltip: "Extrusion speed: 2 mm/s."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeSpeed(120)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrusion speed: 2 mm/s."
+                    }
                 }
             }
             // Same highlight pattern as the
@@ -597,17 +792,31 @@ ColumnLayout {
                     anchors.fill: parent
                     visible: root.printerModel != null && root.printerModel.extrudeSpeed === 300
                     text: "5"
-                    tooltip: "Extrusion speed: 5 mm/s."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeSpeed(300)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrusion speed: 5 mm/s."
+                    }
                 }
                 Cura.SecondaryButton {
                     anchors.fill: parent
                     visible: root.printerModel == null || root.printerModel.extrudeSpeed !== 300
                     text: "5"
-                    tooltip: "Extrusion speed: 5 mm/s."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeSpeed(300)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrusion speed: 5 mm/s."
+                    }
                 }
             }
             // Same highlight pattern as the
@@ -621,17 +830,31 @@ ColumnLayout {
                     anchors.fill: parent
                     visible: root.printerModel != null && root.printerModel.extrudeSpeed === 1500
                     text: "25"
-                    tooltip: "Extrusion speed: 25 mm/s."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeSpeed(1500)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrusion speed: 25 mm/s."
+                    }
                 }
                 Cura.SecondaryButton {
                     anchors.fill: parent
                     visible: root.printerModel == null || root.printerModel.extrudeSpeed !== 1500
                     text: "25"
-                    tooltip: "Extrusion speed: 25 mm/s."
                     enabled: root.printerModel != null && root.printerModel.jogEnabled
                     onClicked: root.printerModel.setExtrudeSpeed(1500)
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Extrusion speed: 25 mm/s."
+                    }
                 }
             }
             UM.Label {
@@ -720,13 +943,18 @@ ColumnLayout {
                 Layout.fillWidth: true
                 elide: Text.ElideRight
                 wrapMode: Text.NoWrap
-                UM.TooltipArea {
-                    anchors.fill: parent
+                HoverHandler {
+                    id: tooltipHover1
+                }
+                UM.ToolTip {
+                    visible: tooltipHover1.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
                     // Short value in the row, full
-                    // sentence in the tooltip (the
-                    // author's ruling).
+                    // sentence in the tooltip (the ruling).
                     text: root.printerModel != null ? root.printerModel.jogReasonDetail : ""
-                    acceptedButtons: Qt.NoButton
                 }
             }
 
@@ -735,10 +963,9 @@ ColumnLayout {
                 // space at all times and fades in
                 // only when it has something to say
                 // — an idle "Jog —" is noise (the
-                // author's live report), but hiding
-                // the row would be a reflow (the
-                // author's rule), so opacity, never
-                // visibility.
+                // live report), but hiding the row
+                // would be a reflow (a rule), so
+                // opacity, never visibility.
                 opacity: root.printerModel != null && root.printerModel.jogStatus.length > 0 ? 1 : 0
                 text: "Jog"
                 color: UM.Theme.getColor("text_inactive")

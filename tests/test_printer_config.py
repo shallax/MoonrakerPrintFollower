@@ -105,6 +105,60 @@ class PrinterConfigTests(unittest.TestCase):
         active[:] = ["machine-a", "Machine A"]
         self.assertEqual(store.get().url, "http://legacy.example.invalid:7125")
 
+    def test_a_clean_install_writes_no_legacy_blob(self):
+        # The first-install ruling's second-boot arm: a fabricated
+        # default blob here became the NEXT boot's migration source —
+        # a "settings carried over" notice on an install that never
+        # had legacy data. A clean install does not complete a
+        # migration; it discovers there is no migration to perform.
+        prefs = FakePreferences()
+        active = ["machine-a", "Machine A"]
+        store = PrinterConfigStore(prefs, lambda: tuple(active))
+        # The no-source path is a pure no-op: no record, no flag —
+        # a fresh install must not persist a fake migration marker.
+        self.assertFalse(store.migrate_legacy_to_current_machine())
+        self.assertFalse(store._truthy(prefs.values.get(PrinterConfigStore.MIGRATED_KEY)))
+        # The blob stays the seeded empty "{}" — no fabricated record.
+        self.assertEqual(prefs.values.get(PrinterConfigStore.PREF_KEY), "{}")
+
+    def test_an_empty_moonraker_connection_source_sets_no_marker(self):
+        # Checking is not importing: a fresh install has no old
+        # Moonraker Connection data, and the check must not persist a
+        # fake migration marker (the reviewer's first-install
+        # invariant).
+        prefs = FakePreferences()
+        store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
+        self.assertEqual(store.migrate_moonraker_connection(), 0)
+        self.assertFalse(store._truthy(
+            prefs.values.get(PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY)))
+
+    def test_a_real_moonraker_connection_import_sets_its_marker(self):
+        prefs = FakePreferences()
+        prefs.values[PrinterConfigStore.MOONRAKER_CONNECTION_PREF_KEY] = json.dumps({
+            "machine-a": {"url": "http://old-a.example.invalid:7125/"},
+        })
+        store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
+        self.assertEqual(store.migrate_moonraker_connection(), 1)
+        self.assertTrue(store._truthy(
+            prefs.values[PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY]))
+
+    def test_the_legacy_comparison_is_semantic_not_raw(self):
+        # The reviewer's boundary cases: raw representation
+        # differences must not resurrect the false-positive path —
+        # semantically-equal stored forms read as no migration.
+        prefs = FakePreferences()
+        store = PrinterConfigStore(prefs, lambda: ("machine-a", "Printer A"))
+        # A numeric stored as its string form, a boolean as its
+        # string form — both semantically equal to the defaults.
+        prefs.values[PrinterConfigStore.LEGACY_MAP["poll_interval_ms"]] = "750"
+        prefs.values[PrinterConfigStore.LEGACY_MAP["enabled"]] = "True"
+        self.assertFalse(store.migrate_legacy_to_current_machine())
+        self.assertEqual(prefs.values.get(PrinterConfigStore.PREF_KEY), "{}")
+        # A genuinely different boolean DOES migrate.
+        prefs.values[PrinterConfigStore.LEGACY_MAP["path_follow"]] = False
+        self.assertTrue(store.migrate_legacy_to_current_machine())
+        self.assertFalse(store.get().path_follow)
+
     def test_legacy_migration_defers_when_cura_machine_is_unknown(self):
         prefs = FakePreferences()
         prefs.values[PrinterConfigStore.LEGACY_MAP["url"]] = "http://legacy.example.invalid:7125"
@@ -259,14 +313,14 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertEqual(store.get().camera_selected, "")
 
     def test_diagnostics_settings_save_and_list_in_a_tab(self):
-        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Diagnostics"', config)
         self.assertIn('"trace_layer": layerTraceBox.checked', config)
         self.assertIn('"trace_http": httpTraceBox.checked', config)
         self.assertIn('"memory_diagnostics_log": memoryDiagnosticsBox.checked', config)
         self.assertIn('"memory_diagnostics_trace": memoryDiagnosticsTraceBox.checked', config)
         self.assertIn('"camera_disabled": cameraDisabledBox.checked', config)
-        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
         self.assertIn('"trace_layer": bool(raw.get("trace_layer", False))', action)
         self.assertIn('"trace_http": bool(raw.get("trace_http", False))', action)
         self.assertIn('"memory_diagnostics_log": bool(raw.get("memory_diagnostics_log", False))', action)
@@ -274,22 +328,22 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertIn('"camera_disabled": bool(raw.get("camera_disabled", False))', action)
 
     def test_settings_tab_lists_diagnostic_traces(self):
-        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Log layer resolution (diagnostics)"', config)
         self.assertIn('text: "Log HTTP requests (diagnostics)"', config)
 
     def test_settings_tab_lists_upload(self):
-        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Upload"', config)
         self.assertIn('text: "Upload format"', config)
 
     def test_diagnostics_tab_carries_the_cache_clear(self):
-        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text()
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Clear cached downloads and indexes"', config)
         self.assertIn("manager.clearCache()", config)
         self.assertIn("manager.cacheStatus", config)
         self.assertIn('text: "Log layer resolution (diagnostics)"', config)
-        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
         self.assertIn("def clearCache(self)", action)
         self.assertIn('shutil.rmtree(self._cache_root(), ignore_errors=True)', action)
         self.assertIn('"MoonrakerPrintFollower"', action)
@@ -382,7 +436,7 @@ class PrinterConfigTests(unittest.TestCase):
         # a str — "unable to convert a Python 'str' object to a C++
         # 'bool' instance" on opening the settings dialogue. Each QML
         # getter must own its decorator with the right type.
-        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text()
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
         self.assertIn("@pyqtProperty(str, notify=settingsChanged)\n    def settingsTransportMode", action)
         self.assertIn("@pyqtProperty(str, notify=settingsChanged)\n    def transportStatus", action)
         self.assertIn("@pyqtProperty(bool, notify=settingsChanged)\n    def settingsTraceHttp", action)

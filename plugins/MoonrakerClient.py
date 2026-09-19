@@ -26,7 +26,7 @@ class MoonrakerClient(QObject):
     RETRY_DELAYS_MS = (1000, 2000, 5000, 10000, 30000)
     # The never-connected retry ceiling: a session that has never
     # received a status retries at this cadence instead of walking
-    # the failure ladder (the author's ruling — the first connection
+    # the failure ladder (the ruling — the first connection
     # is eager). A LAN endpoint answers in one attempt; a down
     # endpoint takes four attempts a second, which is harmless.
     FIRST_CONNECT_RETRY_MS = 250
@@ -174,12 +174,14 @@ class MoonrakerClient(QObject):
             self.force_refresh()
 
     def _start_socket(self) -> None:
+        from .CameraTiming import mark
+        mark("T1", "socket start")
         socket = self._session.socket
         generation = self._generation
         self._socket_started_at = time.monotonic()
         # One connection per handler, however many starts a session
         # sees: the old code connected a FRESH closure every cycle and
-        # never disconnected — the author's Windows log showed three
+        # never disconnected — a Windows log showed three
         # "upgraded" lines per single upgrade at boot and five after
         # the file load, one per accumulated layer. Disconnect the
         # previous cycle's handlers before connecting this one's.
@@ -211,8 +213,15 @@ class MoonrakerClient(QObject):
                 return
             # A structured subscribe refusal is a terminal capability
             # failure, not a link failure: degrade the feed to HTTP
-            # WITHOUT a session reset (the automatic-fallback ruling).
+            # WITHOUT a session reset (the automatic-fallback ruling),
+            # and retire the socket side the same way the silent-proof
+            # fallback does — an otherwise-unused socket must not stay
+            # alive (its keepalive and server.info calls would keep
+            # running while HTTP is authoritative).
             self._effective_feed_mode = "http"
+            self._proof_timer.stop()
+            self._socket_started_at = None
+            self._session.socket.stop()
             self.connectionChanged.emit(
                 False,
                 "This Moonraker refused the status subscription; using HTTP polling",
@@ -224,6 +233,10 @@ class MoonrakerClient(QObject):
             # restart (F1): the ready broadcast is the re-subscribe
             # trigger, and the previous print is definitively over (F11).
             if generation != self._generation:
+                return
+            if self._effective_feed_mode != "websocket":
+                # The feed degraded to HTTP: the stale socket's ready
+                # broadcast must not re-subscribe (the hardening pass).
                 return
             self._session.state.assume_print_stopped = False
             self._subscribe()
@@ -239,6 +252,8 @@ class MoonrakerClient(QObject):
         socket.klippyReady.connect(on_klippy_ready)
         socket.klippyLost.connect(on_klippy_lost)
         def on_upgraded():
+            from .CameraTiming import mark
+            mark("T2", "socket upgraded")
             if self._socket_started_at is not None:
                 if Logger is not None:
                     Logger.log("i", "Moonraker websocket upgraded after %.0f ms",
@@ -412,15 +427,21 @@ class MoonrakerClient(QObject):
     def _drain_socket_feed(self, force: bool) -> None:
         """The delivery clock's websocket tick: drain the core accumulator
         on the SAME timer and policy as the HTTP poll (A11). Reconnects
-        while the socket is down, respecting the retry ladder."""
+        while the socket is down, respecting the retry ladder — but a
+        socket that is still CONNECTING is left alone: a restart here
+        aborts an in-flight handshake and re-enters it from zero (the
+        camera-delay find — startup refreshed its own socket into
+        repeated handshakes while the discovery lane waited)."""
         socket = self._session.socket
-        if not socket.is_upgraded:
-            if force or time.monotonic() >= self._retry_not_before:
-                self._start_socket()
+        if socket.is_upgraded:
+            patch, stamp = socket.drain_core()
+            if patch:
+                self.admit_status(patch, origin="fragment", stamp=stamp, generation=self._generation)
             return
-        patch, stamp = socket.drain_core()
-        if patch:
-            self.admit_status(patch, origin="fragment", stamp=stamp, generation=self._generation)
+        if socket.is_connecting:
+            return
+        if force or time.monotonic() >= self._retry_not_before:
+            self._start_socket()
 
     def _queue_refresh(self, generation: int) -> None:
         def refresh() -> None:
@@ -549,7 +570,7 @@ class MoonrakerClient(QObject):
         self.statusReceived.emit(merged)
         if connected_now:
             # The connect transition re-broadcasts the accumulated
-            # snapshot to every listener (the author's ruling): the
+            # snapshot to every listener (the ruling): the
             # sync may have landed while a listener was not yet
             # attached, and the fresh broadcast guarantees the UI
             # populates instantly with everything known. It emits the
@@ -571,7 +592,7 @@ class MoonrakerClient(QObject):
             urgent=self._session.pause_guard or self._session.toolhead_guard,
         )
         # The idle floor must not gate the FIRST connection (the
-        # author's live report — five seconds of dead UI before the
+        # live report — five seconds of dead UI before the
         # printer showed as connected): until a status has ever
         # landed, the tick runs at the configured cadence so a failed
         # first attempt retries promptly. The floors and the failure
@@ -610,7 +631,7 @@ class MoonrakerClient(QObject):
             urgent=self._session.pause_guard or self._session.toolhead_guard,
         )
         retry_interval = max(adaptive, delay)
-        # The first connection is eager (the author's live report —
+        # The first connection is eager (a live report —
         # five seconds of dead UI before the printer showed as
         # connected, then 2-3 s): each fast startup failure walked the
         # ladder and the 5 s rung then gated a session that had never

@@ -43,7 +43,7 @@ Item {
         // The fainter look, pre-mixed toward the theme background and
         // painted at FULL opacity: partial-alpha fills that overlap by
         // one pixel double-painted their shared edges into a visible
-        // grid (the author's report), while an opaque overlap is
+        // grid (a report), while an opaque overlap is
         // invisible.
         return Qt.rgba(colour.r * alpha + background.r * (1 - alpha), colour.g * alpha + background.g * (1 - alpha), colour.b * alpha + background.b * (1 - alpha), 1.0);
     }
@@ -170,7 +170,7 @@ Item {
     }
 
     function inRange(value) {
-        // The heightmap range filter (the author's request): cells
+        // The heightmap range filter (a request): cells
         // outside the shared window render grey, so peaks and
         // troughs stand out while the rest reads as context.
         return root.printer == null || (value >= root.printer.bedMeshThresholdLow && value <= root.printer.bedMeshThresholdHigh);
@@ -216,7 +216,7 @@ Item {
             screenRow = Math.floor((root.printer.bedMeshYMax - printerY) / meshCellH);
             if (column < 0 || column >= columns || screenRow < 0 || screenRow >= rows) {
                 // Outside the probed bounds but (possibly) inside the
-                // bed: the CLAMPED hover (the author's request) — the
+                // bed: the CLAMPED hover (a request) — the
                 // pointer reads the value Klipper would apply there,
                 // the crosshair turns orange, and the readout marks
                 // the value as clamped.
@@ -258,11 +258,16 @@ Item {
 
     // The tooltip sits under the mouse area so it can never steal the
     // click; it only shows when the call site supplies text.
-    UM.TooltipArea {
-        anchors.fill: parent
-        visible: root.tooltipText.length > 0
+    HoverHandler {
+        id: tooltipHover1
+    }
+    UM.ToolTip {
+        visible: tooltipHover1.hovered
+        targetPoint: Qt.point(parent.width / 2, 0)
+        x: 0
+        y: parent.height + UM.Theme.getSize("default_margin").height
+        width: UM.Theme.getSize("tooltip").width
         text: root.tooltipText
-        acceptedButtons: Qt.NoButton
     }
 
     Canvas {
@@ -282,7 +287,7 @@ Item {
                 return;
             }
             // The bed-space view applies to BOTH surfaces (the
-            // author's ruling): the Information pane's mini map and
+            // ruling): the Information pane's mini map and
             // the expanded detail — the Preview's overlay already
             // draws the same extension and ribbon.
             var bed = root.bedBounds();
@@ -293,7 +298,7 @@ Item {
             var meshSpanX = xMax - xMin;
             var meshSpanY = yMax - yMin;
             if (bed !== null && meshSpanX > 0 && meshSpanY > 0) {
-                // The bed-space view (4.2.0, the author's accuracy
+                // The bed-space view (4.2.0, an accuracy
                 // ruling): the probed cells at their true positions,
                 // then ONE extra cell per side to the bed edges —
                 // the corners included — sampled with Klipper's own

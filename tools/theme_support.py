@@ -28,10 +28,14 @@ class ThemeBackend(QObject):
         self._sizes: dict = {}
         self._fonts: dict = {}
         self._icons: dict = {}
+        self._color_refs: dict = {}
+        self._theme_dirs: list = []
         self._em = int(QFontMetrics(QGuiApplication.font()).ascent()) or 14
         self._system_font_size = QGuiApplication.font().pointSizeF() or 10.0
         self._load(os.path.join(theme_dir, "theme.json"))
-        self._load_icons(os.path.join(theme_dir, "icons"))
+        for directory in self._theme_dirs:
+            self._load_icons(os.path.join(directory, "icons"))
+        self._resolve_refs()
 
     def _load(self, path: str) -> None:
         with open(path, encoding="utf-8") as handle:
@@ -40,14 +44,19 @@ class ThemeBackend(QObject):
         if inherited:
             parent = os.path.normpath(os.path.join(os.path.dirname(path), "..", inherited))
             self._load(os.path.join(parent, "theme.json"))
-        # Base colours first, then the named colour table (string values
-        # reference a base colour by name, exactly like Uranium).
+        # The chain is parent-first (the recursion appends the parent
+        # before this theme), so the child's own values win.
+        self._theme_dirs.append(os.path.dirname(path))
+        # Base colours first, then the named colour table. String values
+        # are DEFERRED references: a child may point at a name that only
+        # the merged chain provides (a parent colour, or a later sibling
+        # entry) — eager per-file resolution leaves those black. The
+        # chain resolves them once loading is complete.
         for name, rgba in (data.get("base_colors") or {}).items():
             self._colors[name] = QColor(*rgba)
         for name, value in (data.get("colors") or {}).items():
             if isinstance(value, str):
-                referenced = self._colors.get(value)
-                self._colors[name] = QColor(referenced) if referenced else QColor()
+                self._color_refs[name] = value
             else:
                 self._colors[name] = QColor(*value)
         # Sizes are grid units scaled by the font em.
@@ -64,7 +73,24 @@ class ThemeBackend(QObject):
             qfont.setPointSizeF(int(font.get("size", 1) * self._system_font_size))
             self._fonts[name] = qfont
 
+    def _resolve(self, name: str, seen: set) -> QColor:
+        if name in seen or name not in self._color_refs:
+            return None
+        seen.add(name)
+        referenced = self._color_refs[name]
+        if referenced in self._colors:
+            return self._colors[referenced]
+        return self._resolve(referenced, seen)
+
+    def _resolve_refs(self) -> None:
+        for name in list(self._color_refs):
+            resolved = self._resolve(name, set())
+            self._colors[name] = resolved if resolved is not None else QColor()
+
     def _load_icons(self, icons_dir: str) -> None:
+        # A theme that inherits its parent's palette also inherits its
+        # icons (cura-dark has no icons dir of its own): the chain is
+        # walked parent-first, so a child's own icons override.
         default = os.path.join(icons_dir, "default")
         if not os.path.isdir(default):
             return
@@ -281,7 +307,7 @@ Item {
         handle.write("\n".join(lines) + "\n")
 
     # Module resolution is per-module, not per-type: splice the stub Cura
-    # types the real tree does not declare (NetworkMJPGImage, CheckBox,
+    # types the real tree does not declare (MoonrakerMJPGImage, CheckBox,
     # TabRowButton, ...) into the materialised Cura module.
     cura_dir = os.path.join(target_dir, "Cura")
     real_qmldir = os.path.join(cura_dir, "qmldir")

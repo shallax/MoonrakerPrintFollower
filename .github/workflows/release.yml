@@ -137,10 +137,13 @@ jobs:
           - group-visual
           - group-preview
           - group-probe
+          - group-configure
+          - group-stress
           - smoke-secondary
+          - firstinstall
     env:
       HARNESS_CONTAINER: mpf-cura-gate-${{ matrix.unit }}
-      UNITS: '{"group-connection": {"budget": 15, "cura": "5.13.0", "group": "connection"}, "group-console": {"budget": 15, "cura": "5.13.0", "group": "console"}, "group-files": {"budget": 15, "cura": "5.13.0", "group": "files"}, "group-motion": {"budget": 15, "cura": "5.13.0", "group": "motion"}, "group-preview": {"budget": 15, "cura": "5.13.0", "group": "preview"}, "group-printing": {"budget": 15, "cura": "5.13.0", "group": "printing"}, "group-probe": {"budget": 15, "cura": "5.13.0", "group": "probe"}, "group-settings": {"budget": 15, "cura": "5.13.0", "group": "settings"}, "group-status": {"budget": 15, "cura": "5.13.0", "group": "status"}, "group-temperatures": {"budget": 15, "cura": "5.13.0", "group": "temperatures"}, "group-visual": {"budget": 15, "cura": "5.13.0", "group": "visual"}, "group-webcams": {"budget": 15, "cura": "5.13.0", "group": "webcams"}, "smoke-primary": {"budget": 20, "cura": "5.13.0", "group": "smoke"}, "smoke-secondary": {"budget": 20, "cura": "5.12.0", "group": "smoke"}}'
+      UNITS: '{"group-connection": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "connection"}, "group-console": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "console"}, "group-files": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "files"}, "group-motion": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "motion"}, "group-preview": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "preview"}, "group-printing": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "printing"}, "group-probe": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "probe"}, "group-settings": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "settings"}, "group-status": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "status"}, "group-configure": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "configure"}, "group-stress": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "stress"}, "group-temperatures": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "temperatures"}, "group-visual": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "visual"}, "group-webcams": {"mode": "suite", "budget": 15, "cura": "5.13.0", "group": "webcams"}, "smoke-primary": {"mode": "suite", "budget": 20, "cura": "5.13.0", "group": "smoke"}, "smoke-secondary": {"mode": "suite", "budget": 20, "cura": "5.12.0", "group": "smoke"}, "firstinstall": {"mode": "firstinstall", "budget": 10, "cura": "5.13.0"}}'
     steps:
       - name: Check out the source
         uses: actions/checkout@v7
@@ -187,7 +190,7 @@ jobs:
           mkdir -p /tmp/mpf
           timeout "${{ fromJSON(env.UNITS)[matrix.unit].budget }}m" env \
               CURA_VERSION="${{ fromJSON(env.UNITS)[matrix.unit].cura }}" \
-              MODE=suite SCENARIO_GROUP="${{ fromJSON(env.UNITS)[matrix.unit].group }}" \
+              MODE="${{ fromJSON(env.UNITS)[matrix.unit].mode }}" SCENARIO_GROUP="${{ fromJSON(env.UNITS)[matrix.unit].group }}" \
               RUN_DIR_NAME="/tmp/mpf/ui-artifacts/runs/${{ github.run_id }}/${{ matrix.unit }}" \
               ./tools/ui_test.sh
 

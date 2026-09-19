@@ -399,7 +399,7 @@ class LeakProbe:
         # NOTHING heavy here: the probe must not touch tracemalloc or
         # the QML engine during plugin load — the allocator tax and
         # the engine walk mid-initialization stalled Cura's startup
-        # after "Loading plugins" (the author's report). Everything
+        # after "Loading plugins" (a report). Everything
         # defers to the first enabled tick, a minute into the session.
         self._enabled = False
         self._usage_failure_logged = False
@@ -418,13 +418,10 @@ class LeakProbe:
         self._log_path = self._pick_log_path()
         # One registration line per launch with the toggle ON: the pid
         # and install path name the instance, and the raw toggle value
-        # proves what the preference read saw — the Windows run logged
+        # proves what the config read saw — the Windows run logged
         # nothing at all and the silence could not say why.
         try:
-            from UM.Application import Application
-            from .PrinterConfig import PrinterConfigStore
-            raw = Application.getInstance().getPreferences().getValue(
-                PrinterConfigStore.LEGACY_MAP["memory_diagnostics_log"])
+            raw = bool(getattr(self.runtime.binding.config, "memory_diagnostics_log", False))
         except Exception as exc:
             raw = f"read-err {exc!r}"
         self._log(f"registered toggle={raw!r} pid={os.getpid()} "
@@ -451,28 +448,20 @@ class LeakProbe:
                 return str(candidate)
 
     def _enabled_now(self) -> bool:
-        # The settings' diagnostics toggle — read live each minute,
-        # so the instrument turns on and off without a restart. The
-        # key comes from PrinterConfig's map, the preference store's
-        # single owner.
+        # The settings' diagnostics toggle — read live each minute
+        # from the facade's config, the same source the settings page
+        # saves (the legacy preference mirror is retired).
         try:
-            from UM.Application import Application
-            from .PrinterConfig import PrinterConfigStore
-            return bool(Application.getInstance().getPreferences().getValue(
-                PrinterConfigStore.LEGACY_MAP["memory_diagnostics_log"]))
+            return bool(getattr(self.runtime.binding.config, "memory_diagnostics_log", False))
         except Exception:
             return False
 
-    @staticmethod
-    def _trace_enabled_now() -> bool:
+    def _trace_enabled_now(self) -> bool:
         # The separate trace toggle: the snapshot stall is real, so the
         # Python-allocation axis is opt-in on top of the main
         # diagnostics toggle, read live like the main toggle.
         try:
-            from UM.Application import Application
-            from .PrinterConfig import PrinterConfigStore
-            return bool(Application.getInstance().getPreferences().getValue(
-                PrinterConfigStore.LEGACY_MAP["memory_diagnostics_trace"]))
+            return bool(getattr(self.runtime.binding.config, "memory_diagnostics_trace", False))
         except Exception:
             return False
 
@@ -522,7 +511,7 @@ class LeakProbe:
                 # off ruling).
                 self._log_path = self._pick_log_path()
             # The pid and the install path name the instance: the
-            # author's log showed three starts — multiple installed
+            # log showed three starts — multiple installed
             # copies each register their own probe.
             self._log("start pid=%s path=%s platform=%s" % (
                 os.getpid(), os.path.dirname(os.path.dirname(os.path.abspath(__file__))), sys.platform))
@@ -569,12 +558,16 @@ class LeakProbe:
         except Exception as exc:
             self._log(f"camera-err {exc!r}")
         self._ticks += 1
-        if self._trace_enabled_now() and self._ticks % _SLOW_TICKS == 0:
-            for line in self._top_traces():
-                self._log(line)
+        if self._trace_enabled_now():
+            if self._ticks % _SLOW_TICKS == 0:
+                for line in self._top_traces():
+                    self._log(line)
         elif self._trace_snapshot is not None:
             # The trace toggle went off: drop the allocator tax and the
-            # window so re-enabling starts a fresh one.
+            # window so re-enabling starts a fresh one. (Found live:
+            # the old elif wiped the window on EVERY
+            # ordinary tick, so every slow tick re-armed from scratch
+            # and the compare branch never ran.)
             try:
                 tracemalloc.stop()
             except Exception:
@@ -615,8 +608,13 @@ _ACTIVE = None
 def start_leak_probe(runtime, parent=None):
     """The single entry. The module global pins the instance: the
     parented timer alone was not enough — the first build's probe was
-    collected before its first timed tick and logged nothing."""
+    collected before its first timed tick and logged nothing. The
+    double-start guard returns the live probe — a second registration
+    must not stack a second timer and abandon the first (the
+    reviewer's catch)."""
     global _ACTIVE
+    if _ACTIVE is not None:
+        return _ACTIVE
     _ACTIVE = LeakProbe(runtime, parent)
     return _ACTIVE
 
@@ -637,7 +635,10 @@ def stop_leak_probe():
     except Exception:
         pass
     probe.runtime = None
-    if probe._enabled and probe._trace_snapshot is not None:
+    # The trace sub-option clears whenever the allocator is running —
+    # a stop before the first trace tick used to leave tracemalloc on
+    # (the snapshot guard missed the armed-but-unsampled state).
+    if getattr(tracemalloc, "is_tracing", lambda: False)():
         try:
             tracemalloc.stop()
         except Exception:

@@ -15,12 +15,21 @@ an attribution the store cannot support.
 The transcript persists per printer (sensor/command vocabulary differs
 between machines), bounded by ConsolePolicy; lines restored from a
 previous session render greyed in the pane.
+
+4.5.0: the transcript lives in the persistence facade's per-machine
+state shard — every persist is an immediate durable write to that
+printer's small file, and the old preference-flush debounce retires
+(the shard write is ~0.5 ms, the whole cura.cfg flush was not). The
+2 s settle timer keeps the saved-state colouring's UX (the verdict
+flips too fast to read otherwise — the ruling); durability no longer
+rides it. The config record remains only as the pre-migration
+fallback on load.
 """
 from __future__ import annotations
 
 from dataclasses import replace
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from .ConsolePolicy import MAX_HISTORY, MAX_LINE, MAX_PENDING, MAX_TRANSCRIPT, normalise_line
 from collections.abc import Mapping
@@ -32,18 +41,39 @@ def _transcript_from_history(lines) -> list:
             for line in lines][-MAX_TRANSCRIPT:]
 
 
-def _trim_transcript(entries: list) -> list:
-    return entries[-MAX_TRANSCRIPT:]
-
-
 class ConsoleController(QObject):
     changed = pyqtSignal()
 
-    def __init__(self, data, commands, config, apply_config, identity=None, parent=None):
+    def __init__(self, data, commands, config, apply_config, identity=None, parent=None, persistence=None):
         super().__init__(parent)
         self._data, self._commands = data, commands
         self._config, self._apply_config = config, apply_config
         self._identity = identity
+        # The state-shard owner (the facade); None in the harness's
+        # config-only double, where the config fallback carries the
+        # transcript as before.
+        self._persistence = persistence
+        self._saved_timer = QTimer(self)
+        self._saved_timer.setSingleShot(True)
+        self._saved_timer.setInterval(2000)
+        self._saved_timer.timeout.connect(self.mark_saved)
+        # The response-churn debounce (the 2026-09-19 review's J):
+        # server batches coalesce into one shard write per window —
+        # each batch used to fsync on the GUI thread immediately.
+        # User sends stay immediate; the identity at arm time is
+        # only informational (the flush persists the CURRENT
+        # transcript, and an invalidation retires the dirty window
+        # outright so A's lines can never land in B's shard).
+        self._persist_timer = QTimer(self)
+        self._persist_timer.setSingleShot(True)
+        self._persist_timer.setInterval(400)
+        self._persist_timer.timeout.connect(self._flush_debounced)
+        # The entries a SUCCESSFUL shard write actually stored, held by
+        # reference so no line sent during the settle can inherit a
+        # recycled identity: only they may settle to "on disk", so a
+        # write that fails after a success can never colour its
+        # unwritten lines.
+        self._persisted = []
         stored = getattr(self._config(), "console_transcript", None)
         if isinstance(stored, (list, tuple)):
             # EVERY loaded line predates this session: restored stays
@@ -63,7 +93,7 @@ class ConsoleController(QObject):
             # stores MAX_TRANSCRIPT entries plus up to
             # MAX_PERSIST_COMMANDS newest commands at the FRONT, and a
             # plain MAX_TRANSCRIPT trim here cut exactly those (the
-            # author's "my requests are missing from the restore").
+            # "my requests are missing from the restore" report).
         else:
             # Legacy migration: the typed-only history becomes the
             # transcript; everything in it predates this session.
@@ -88,6 +118,16 @@ class ConsoleController(QObject):
         # console constructs before Cura's active machine exists, so it
         # resolves on the first successful load.
         self._transcript_identity = None
+        # The loaded-once latch (H3): a genuinely empty transcript is
+        # authoritative — the shard must not be re-read every
+        # heartbeat for a machine that already loaded.
+        self._loaded_identity = None
+        # The projection cache (the 2026-09-19 review's I): values()
+        # rebuilds only when a transcript mutation bumped the
+        # revision — the model consumed a fresh [dict(entry) ...]
+        # projection on every heartbeat before.
+        self._projection_revision = 0
+        self._projection_cache = None
         commands.emergencyStopped.connect(self._emergency_stopped)
         # Every connection transition writes a "#" note into the feed
         # (the request: the console says when it lost or
@@ -98,9 +138,20 @@ class ConsoleController(QObject):
         # per-printer, so it swaps to the incoming machine's record.
         data.invalidated.connect(self._session_invalidated)
 
+    def _emit_changed(self):
+        # Every transcript mutation bumps the projection revision;
+        # values() rebuilds only when it differs from the cached
+        # build (the publish coalescer's unchanged heartbeats pay
+        # nothing here).
+        self._projection_revision += 1
+        self.changed.emit()
+
     @property
     def values(self):
-        return {
+        cache = self._projection_cache
+        if cache is not None and cache[0] == self._projection_revision:
+            return cache[1]
+        payload = {
             "consoleHistory": [entry["text"] for entry in self._transcript if entry["kind"] == "command"],
             "consoleLines": [dict(entry) for entry in self._transcript],
             "consoleDropped": self._dropped,
@@ -110,6 +161,8 @@ class ConsoleController(QObject):
             "consoleRevisions": self._revisions,
             "consolePending": len(self._in_flight),
         }
+        self._projection_cache = (self._projection_revision, payload)
+        return payload
 
     def _connection_note(self, state) -> None:
         # Only genuine TRANSITIONS write a note: a flapping link re-emits
@@ -136,7 +189,7 @@ class ConsoleController(QObject):
         Session-transient: notes never persist."""
         self._append_entries([{"kind": "note", "text": str(text),
                                "error": False, "success": False, "restored": False}])
-        self.changed.emit()
+        self._emit_changed()
 
     def _append_entries(self, additions) -> None:
         """Append transcript entries, trimming to the session ring cap.
@@ -154,6 +207,10 @@ class ConsoleController(QObject):
                     if entry["kind"] == "command"][-self.MAX_PERSIST_COMMANDS:]
             self._transcript = keep + self._transcript
             self._dropped += len(dropped_head) - len(keep)
+        # The helper is a transcript mutation: the projection revision
+        # bumps even when the caller's own emit does not run (the ring
+        # tests drive it directly).
+        self._projection_revision += 1
 
     def send(self, text) -> bool:
         """Accept a console line; True only when it actually entered the
@@ -203,7 +260,7 @@ class ConsoleController(QObject):
                 self._persist()
             if token in self._in_flight:
                 self._in_flight.discard(token)
-            self.changed.emit()
+            self._emit_changed()
         # The console posts its own request instead of riding the shared
         # one-shot lane: the lane's card ticker is off-limits for console
         # traffic (the panel UX ruling), and the lane's completion signal
@@ -220,14 +277,14 @@ class ConsoleController(QObject):
         # feed's "!!" lines are their own red signal — no status banner
         # anywhere outside the feed.
         self._persist()
-        self.changed.emit()
+        self._emit_changed()
         return True
 
     def append_responses(self, entries) -> None:
         """Klipper's gcode-store output, newest last. Entries are already
         formatted ({text, error}) and deduplicated by MonitorData (its
         seen-set and the expand seed own the backfill skip — the
-        author's "stale responses without requests" report); the
+        "stale responses without requests" report); the
         transcript keeps the last MAX_TRANSCRIPT lines of the combined
         feed."""
         if not entries:
@@ -246,20 +303,22 @@ class ConsoleController(QObject):
         self._append_entries(fresh)
         # A live "!!" line is its own red signal in the feed — no
         # banner, no status line outside it (the ruling).
-        self._persist()
-        self.changed.emit()
+        self._debounced_persist()
+        self._emit_changed()
 
     def clear(self) -> None:
         if not self._transcript:
             return
         self._transcript = []
-        # Clear must clear the PERSISTED record too — both the new
-        # transcript and the legacy typed history, so nothing survives
-        # a restart (the ruling). The store stamp stays: the
-        # cleared pane must not refill from the server's buffer.
-        config = self._config()
-        self._apply_config(replace(config, console_transcript=[], console_history=[]))
-        self.changed.emit()
+        # Clear must clear the PERSISTED record too, so nothing
+        # survives a restart (the ruling). The store stamp stays:
+        # the cleared pane must not refill from the server's buffer.
+        machine_id = self._resolved_identity()
+        if machine_id is not None and self._persistence is not None:
+            self._persistence.set_machine_state(machine_id, {
+                "consoleTranscript": [],
+            })
+        self._emit_changed()
 
     def reload_if_empty(self) -> None:
         """Keep the transcript aligned with the ACTIVE machine's record.
@@ -282,13 +341,51 @@ class ConsoleController(QObject):
                 identity = None  # Cura's machine isn't resolved yet: retry later
             else:
                 identity = str(identity[0])
+        if identity is not None and self._loaded_identity == identity:
+            # Already loaded for this machine — an EMPTY transcript is
+            # authoritative and must not re-read the shard on every
+            # heartbeat (H3 of the 2026-09-19 performance review).
+            return
         if self._transcript and (identity is None or self._transcript_identity is None
                                  or identity == self._transcript_identity):
             return  # live session, same machine, or identity untracked (harness)
         self._load_transcript(identity)
+        self._loaded_identity = identity
+
+    def _resolved_identity(self):
+        """The machine id the transcript belongs to, or None while
+        Cura's machine is unresolved — persists skip until then (an
+        "unknown" shard would orphan the lines, the old blob's
+        unknown-record report)."""
+        if self._identity is not None:
+            identity = self._identity()
+            if identity and str(identity[0] or "") not in ("", "unknown"):
+                return str(identity[0])
+        return self._transcript_identity
+
+    def _shard_transcript(self, identity):
+        """The shard's transcript list when the shard exists (an empty
+        list is a genuine Clear and is authoritative), or None when the
+        shard is absent — the pre-migration session, where the config
+        record still carries the transcript."""
+        if self._persistence is None or not identity:
+            return None
+        shard = self._persistence.get_machine_state(identity)
+        if not isinstance(shard, dict):
+            return None
+        stored = shard.get("consoleTranscript")
+        return list(stored) if isinstance(stored, list) else []
 
     def _load_transcript(self, identity) -> None:
-        stored = getattr(self._config(), "console_transcript", None)
+        stored = self._shard_transcript(identity) if self._persistence is not None else None
+        store_time = 0.0
+        if stored is not None:
+            shard = self._persistence.get_machine_state(identity) or {}
+            store_time = float(shard.get("consoleStoreTime") or 0.0)
+        else:
+            # The pre-migration fallback: the 4.4.0-era config record.
+            stored = getattr(self._config(), "console_transcript", None)
+            store_time = float(getattr(self._config(), "console_store_time", 0.0) or 0.0)
         if isinstance(stored, (list, tuple)) and stored:
             transcript = [dict(entry) for entry in [{
                 "kind": str(entry.get("kind") or "command"),
@@ -306,32 +403,38 @@ class ConsoleController(QObject):
         self._transcript = transcript
         self._transcript_identity = identity
         self._dropped = 0
-        self._store_time = float(getattr(self._config(), "console_store_time", 0.0) or 0.0)
+        self._store_time = store_time
         self._revisions += 1
-        self.changed.emit()
+        self._emit_changed()
 
     def mark_saved(self) -> None:
-        """The preference file flushed: the sent lines are on disk, so
-        their blue pending colour can settle (the ruling — the
-        API verdict flips too fast to read). Only entries inside the
-        persisted window may claim "on disk": lines beyond it were never
-        written and die with the session (the engineering panel's
-        over-promise)."""
-        window = {id(entry) for entry in self._persist_window()}
+        """The shard write landed (the 2 s settle after each persist):
+        the sent lines are on disk, so their blue pending colour can
+        settle (the ruling — the API verdict flips too fast to read).
+        Only entries a SUCCESSFUL write actually stored may claim "on
+        disk": lines beyond the persisted window were never written and
+        die with the session (the engineering panel's over-promise), and
+        neither were the lines of a write that failed after one that
+        succeeded (the review's success-then-failure catch)."""
+        persisted, self._persisted = self._persisted, []
         changed_any = False
         for entry in self._transcript:
             if (entry["kind"] == "command" and not entry["restored"] and not entry.get("saved")
-                    and id(entry) in window):
+                    and any(entry is kept for kept in persisted)):
                 entry["saved"] = True
                 changed_any = True
         if changed_any:
             self._revisions += 1
-            self.changed.emit()
+            self._emit_changed()
 
     def _session_invalidated(self) -> None:
+        # A machine switch retires the dirty debounce window: the
+        # pending responses die with the session instead of risking
+        # a write under the incoming machine's identity.
+        self._persist_timer.stop()
         if self._in_flight:
             self._in_flight.clear()
-            self.changed.emit()
+            self._emit_changed()
         self.reload_if_empty()
 
     def _emergency_stopped(self) -> None:
@@ -339,7 +442,7 @@ class ConsoleController(QObject):
             self._in_flight.clear()
             self._note("Pending console commands dropped by the emergency stop.")
 
-    # The author's ruling: persist the last ~50 lines per printer —
+    # The ruling: persist the last ~50 lines per printer —
     # BOTH our requests and its responses. A chatty Klipper fills the
     # 50-line window with responses and the typed requests age out of
     # it entirely, so the newest commands are pulled back in (bounded).
@@ -348,9 +451,11 @@ class ConsoleController(QObject):
     def _persist_window(self) -> list:
         """The entries the persisted record will hold: the last
         MAX_TRANSCRIPT lines plus the newest commands pinned at the
-        front. mark_saved and _persist share this so the "on disk"
-        colour never claims a line the record dropped."""
-        entries = self._transcript
+        front — minus the plugin's notes, which are session-transient
+        by design (the docstring's contract, now true: a note never
+        survives a restart). mark_saved and _persist share this so
+        the "on disk" colour never claims a line the record dropped."""
+        entries = [entry for entry in self._transcript if entry["kind"] != "note"]
         transcript = list(entries[-MAX_TRANSCRIPT:])
         have = sum(1 for entry in transcript if entry["kind"] == "command")
         if have < self.MAX_PERSIST_COMMANDS:
@@ -362,20 +467,73 @@ class ConsoleController(QObject):
                     have += 1
         return transcript
 
+    def _debounced_persist(self) -> None:
+        if not self._persist_timer.isActive():
+            self._persist_timer.start()
+
+    def _flush_debounced(self) -> None:
+        self._persist_timer.stop()
+        self._persist()
+
     def _persist(self) -> None:
-        config = self._config()
+        # Any immediate persist (a user send, a clear) supersedes the
+        # pending debounce: the fresh write already covers the
+        # transcript, and a late second write would only re-fsync the
+        # same content.
+        self._persist_timer.stop()
+        machine_id = self._resolved_identity()
+        if machine_id is None or self._persistence is None:
+            # The identity is unresolved or the harness runs the
+            # config-only double: keep the legacy config path in the
+            # latter case, skip in the former (the reload re-loads from
+            # the shard once the identity arrives).
+            if self._persistence is None:
+                self._persist_legacy()
+            return
         # The stored record is the canonical schema (kind/text/error/
         # success): session-transient keys (restored, saved) must not
         # enter it — they made the equality guard compare unequal
         # forever, so every persist rewrote the full multi-machine
         # preference map (the architecture panel's dead guard).
+        window = self._persist_window()
         transcript = [{"kind": entry["kind"], "text": entry["text"],
                        "error": entry["error"], "success": entry["success"]}
-                      for entry in self._persist_window()]
+                      for entry in window]
         # Only the last 50 lines persist (the ruling); the
         # session keeps up to MAX_HISTORY in the pane. The store stamp
         # persists with them so the next session's expand skip is
         # seeded with everything already seen.
+        ok = self._persistence.set_machine_state(machine_id, {
+            "consoleTranscript": transcript,
+            "consoleStoreTime": self._store_time,
+        })
+        if ok:
+            # Durability is the write itself; the settle only gives the
+            # verdict colour a beat before the blue settles. The claim
+            # names exactly the entries THIS write stored: an earlier
+            # success's entries stay claimed (the window may have moved
+            # on since), and entries whose line left the transcript drop
+            # out.
+            self._persisted = [entry for entry in self._persisted
+                               if any(entry is live for live in self._transcript)]
+            for entry in window:
+                if not any(entry is kept for kept in self._persisted):
+                    self._persisted.append(entry)
+            # A pending settle is never restarted: a chatty feed would
+            # otherwise push the colour flip out forever (the review's
+            # bounded-settling requirement).
+            if not self._saved_timer.isActive():
+                self._saved_timer.start()
+        else:
+            self._note("The console transcript could not be saved — recent lines may not survive a restart.")
+
+    def _persist_legacy(self) -> None:
+        # The harness's config-only double path (no facade): the
+        # 4.4.0-era config write.
+        config = self._config()
+        transcript = [{"kind": entry["kind"], "text": entry["text"],
+                       "error": entry["error"], "success": entry["success"]}
+                      for entry in self._persist_window()]
         if getattr(config, "console_transcript", None) != transcript \
                 or getattr(config, "console_store_time", 0.0) != self._store_time:
             self._apply_config(replace(config, console_transcript=transcript,

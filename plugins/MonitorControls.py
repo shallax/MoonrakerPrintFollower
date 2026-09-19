@@ -21,19 +21,20 @@ class MonitorControls(QObject):
         self._mesh, self._config = bed_mesh, config
         self._remembered_colors = {}
         # The brightness slider holds the USER'S GAIN, unlinked from
-        # the channel peak (the author's ruling): a channel nudge
+        # the channel peak (the ruling): a channel nudge
         # must not move the brightness value, or the extra field
         # change triggers a second publish and rebuild that kills the
         # slider's focus.
         self._remembered_gain = {}
         # The channel sliders hold the USER'S set percentages (the
-        # author's gain ruling): seeded once from the first-seen
+        # gain ruling): seeded once from the first-seen
         # colour, then only the user's own nudges change them — the
         # gain acts on the SEND, never on the displayed values.
         self._remembered_channels = {}
         self._macro_cache = {}
         self._config_identity = None
         self._values = {}
+        self._values_copy = None
         self._macros, self._presets = [], []
         data.changed.connect(self.observe)
         data.invalidated.connect(self.reset)
@@ -43,7 +44,14 @@ class MonitorControls(QObject):
         self.observe()
 
     @property
-    def values(self): return deepcopy(self._values)
+    def values(self):
+        # Copy-on-change (the 2026-09-19 review's I): the served
+        # projection is a stable deep copy rebuilt only when the next
+        # observation changes the outward values — the model consumed
+        # a fresh deep copy on every heartbeat before.
+        if self._values_copy is None:
+            self._values_copy = deepcopy(self._values)
+        return self._values_copy
 
     def reset(self):
         self._remembered_colors.clear()
@@ -97,7 +105,7 @@ class MonitorControls(QObject):
                 if name not in self._remembered_gain and brightness > 0.001:
                     self._remembered_gain[name] = brightness
                 gain = self._remembered_gain.get(name, 0.0)
-                # ABSOLUTE channels (the author's live report): the
+                # ABSOLUTE channels (a live report): the
                 # chroma normalisation made every nudge re-scale all
                 # four sliders — a +1 nudge of a zeroed channel jumped
                 # it to 100 and dragged the others with it. The
@@ -134,14 +142,14 @@ class MonitorControls(QObject):
         setup = self._allowed(can_restart)
         objects = {name.lower() for name in snapshot.objects}
         profiles = mesh_profiles(aux.get("bed_mesh"))
-        self._values = {
+        new_values = {
             "macroNames": list(self._macros), "hasQuadGantryLevel": "quad_gantry_level" in objects,
             "hasBedMesh": "bed_mesh" in objects, "canRunSetup": setup,
             "temperaturePresetNames": [item["name"] for item in self._presets],
             "temperaturePresetItems": [{"index": i, "name": item["name"], "active": self.preset_active(item, aux)} for i, item in enumerate(self._presets)],
             "canApplyTemperaturePreset": setup and bool(self._presets),
-            "speedFactorPercent": self._display("speed-factor", round(number(move.get("speed_factor"), 1) * 100)),
-            "flowFactorPercent": self._display("flow-factor", round(number(move.get("extrude_factor"), 1) * 100)),
+            "speedFactorPercent": self._display("speed-factor", int(round(number(move.get("speed_factor")) * 100))),
+            "flowFactorPercent": self._display("flow-factor", int(round(number(move.get("extrude_factor")) * 100))),
             "zOffset": number(origin[2]) if len(origin) > 2 else 0,
             "zOffsetText": f"{number(origin[2]) if len(origin) > 2 else 0:+.3f} mm",
             "fanControlItems": fans, "ledItems": leds, "pwmOutputItems": pwm,
@@ -155,7 +163,15 @@ class MonitorControls(QObject):
             "saveConfigSummary": "Unsaved: " + ", ".join(sorted(changes)) if changes else ("Unsaved Klipper configuration changes" if bool(configfile.get("save_config_pending")) else ""),
             "canSaveConfig": setup and bool(configfile.get("save_config_pending")), "bedMeshProfileNames": profiles,
         }
-        self.changed.emit()
+        # Emit only when the OUTWARD projection changed (the publish
+        # storm's suppression): the model listens to this signal for
+        # every heartbeat, and an unchanged projection must not
+        # rebuild the whole model (the 2026-09-19 performance
+        # review). The remembered tuning state still updates above.
+        if new_values != self._values:
+            self._values = new_values
+            self._values_copy = None
+            self.changed.emit()
 
     @staticmethod
     def preset_active(item, auxiliary):
@@ -278,7 +294,7 @@ class MonitorControls(QObject):
         suffix = name.split(" ", 1)[-1]
         if kind == "fan":
             # Fail closed for the firmware-regulated fans (the
-            # author's live report): no path may issue SET_FAN_SPEED
+            # live report): no path may issue SET_FAN_SPEED
             # at a controller_fan/temperature_fan.
             if not fan_writable(name):
                 return
@@ -334,7 +350,7 @@ class MonitorControls(QObject):
         # Every device the printer reports renders — the configured
         # auto-power-on list only drives the print-start power sequence
         # (UploadController), it never narrows the Monitor display (the
-        # author's ruling: a configured 24v,Bed pair silently hid DFU).
+        # ruling: a configured 24v,Bed pair silently hid DFU).
         raw = self._data.snapshot.power
         # The per-device ruling (4.2.0, A3/F4): can_toggle is the
         # policy's per-device verdict — the shipped row field, now

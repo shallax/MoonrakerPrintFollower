@@ -54,10 +54,16 @@ ColumnLayout {
                 Layout.fillWidth: true
                 elide: Text.ElideRight
                 wrapMode: Text.NoWrap
-                UM.TooltipArea {
-                    anchors.fill: parent
+                HoverHandler {
+                    id: tooltipHover1
+                }
+                UM.ToolTip {
+                    visible: tooltipHover1.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
                     text: parent.text
-                    acceptedButtons: Qt.NoButton
                 }
             }
         }
@@ -86,13 +92,18 @@ ColumnLayout {
                 Layout.fillWidth: true
                 elide: Text.ElideRight
                 wrapMode: Text.NoWrap
-                UM.TooltipArea {
-                    anchors.fill: parent
+                HoverHandler {
+                    id: tooltipHover2
+                }
+                UM.ToolTip {
+                    visible: tooltipHover2.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
                     // Short value in the row, full
-                    // sentence in the tooltip (the
-                    // author's ruling).
+                    // sentence in the tooltip (the ruling).
                     text: root.printerModel != null ? (root.printerModel.sectionReasonDetail !== "" ? root.printerModel.sectionReasonDetail : (root.printerModel.printActive ? "SAVE_CONFIG is disabled during a print." : root.printerModel.canSaveConfig ? "Saving configuration restarts Klipper." : "")) : ""
-                    acceptedButtons: Qt.NoButton
                 }
             }
         }

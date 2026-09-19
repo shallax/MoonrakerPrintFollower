@@ -21,6 +21,19 @@ Component {
         }
         property var printer: OutputDevice != null ? OutputDevice.activePrinter : null
         property bool controlsCollapsed: root.printer != null ? root.printer.controlsCollapsed : false
+        // The narrow-window lock reaches this pane too (the rule is
+        // universal): a controls expansion is refused while it would
+        // take the WEBCAM's viewport under its comfort minimum. The
+        // camera's own width is the model's — the loaded monitor holds
+        // it, and it already carries whatever the panes inside the
+        // monitor gave up — so the two documents cannot disagree about
+        // the room. The cost is this pane's expanded width less the
+        // collapsed strip opening it replaces.
+        readonly property real cameraViewportWidth: baseMonitorLoader.item !== null ? baseMonitorLoader.item.cameraViewportWidth : 0
+        readonly property real controlsExpandCost: (386 - 44) * screenScaleFactor
+        readonly property bool webcamSqueezed: root.cameraViewportWidth > 0 && root.cameraViewportWidth < 220 * screenScaleFactor
+        readonly property bool controlsExpandBlocked: root.cameraViewportWidth > 0 && root.cameraViewportWidth - root.controlsExpandCost < 220 * screenScaleFactor
+        readonly property bool controlsExpandLocked: root.controlsCollapsed && (root.webcamSqueezed || root.controlsExpandBlocked)
         // The availability gates (the live ruling): a value that is
         // unavailable must not render — neither the value nor its
         // glyph. The X/Y/Z tuple hides WHOLE when any one axis is
@@ -183,12 +196,24 @@ Component {
                 if (attached.indexOf(items[p]) === -1)
                     items[p].parent = controlContent;
             }
+            // The monitor's recipe (the 4.5.0 live find): the reparent
+            // alone leaves the layout stale until an interaction — a
+            // zero-size child added and removed in the same block
+            // schedules the rebuild invisibly.
+            var nudge = Qt.createQmlObject("import QtQuick 2.15; Item {}", controlContent, "orderNudge");
+            nudge.parent = null;
+            nudge.destroy();
         }
 
         onPrinterChanged: {
             refreshAvailabilityGates();
             if (root.printer != null) {
                 root.printer.setFileManagerOpen(false);
+                // The hydration publish can fire before the dashboard
+                // (an async Loader) attaches — the arrival hook is the
+                // boot-time apply the signal path can miss (the 4.5.0
+                // live find: the controls pane snapped on interaction).
+                root.applyControlsOrder();
             }
             // A machine switch must not carry the old printer's
             // frozen lists or focus target into the new session —
@@ -285,18 +310,24 @@ Component {
         // The configure pop-up overlays the pane, not the layout (the
         // pop-over precedent: layout children cannot overlap). The
         // scrim sits below the card and closes it on any outside
-        // click. Its z sits above the pane content but below the
-        // card's own 999, mirroring the monitor's outside-click
-        // layer.
+        // click, with a bounds check so an in-bounds click on the
+        // card's own surface never dismisses it (the live report).
+        // Its z sits above the pane content but below the card's own
+        // 999, mirroring the monitor's outside-click layer.
         MouseArea {
             visible: root.configurePaneOpen !== ""
             anchors.fill: parent
             z: 995
-            onClicked: root.configurePaneOpen = ""
+            onClicked: {
+                if (controlsConfigurePopOver.visible && mouse.x >= controlsConfigurePopOver.x && mouse.x <= controlsConfigurePopOver.x + controlsConfigurePopOver.width && mouse.y >= controlsConfigurePopOver.y && mouse.y <= controlsConfigurePopOver.y + controlsConfigurePopOver.height) {
+                    return;
+                }
+                root.configurePaneOpen = "";
+            }
         }
 
         property bool tuningSliderPressed: false
-        // The freeze lists (the author's live report): while a tuning
+        // The freeze lists (a live report): while a tuning
         // slider is mid-gesture — a drag or a pending keyboard nudge —
         // the fan/LED/PWM repeaters must not rebuild, or the rebuild
         // replaces the focused delegate and the interaction dies.
@@ -306,7 +337,7 @@ Component {
         // The slider that was being tuned when the freeze lifted: the
         // live lists rebuild the repeaters then, so the delegate's
         // focus dies with the rebuild — the dashboard re-grants it
-        // once the new delegate exists (the author's live report).
+        // once the new delegate exists (a live report).
         property string tuningSliderObject: ""
         property string tuningSliderKind: ""
         // Slider sections report interaction through this sink — the
@@ -357,7 +388,7 @@ Component {
         // The refocus RETRIES until the walk lands: the repeater
         // rebuild that follows the submit is asynchronous against the
         // unfreeze edge, and a one-shot walk could focus a delegate
-        // that dies a moment later (the author's live report — fan
+        // that dies a moment later (a live report — fan
         // and LED sliders lost focus on the apply, the singletons
         // never rebuild).
         Timer {
@@ -443,7 +474,7 @@ Component {
                 id: emergencyButton
                 objectName: "moonrakerEmergencyButton"
                 property int clicks: root.printer != null ? root.printer.emergencyStopClicks : 0
-                // The author's ruling (2026-09-10): while DISCONNECTED
+                // The ruling (2026-09-10): while DISCONNECTED
                 // no Monitor-page control is enabled — the emergency
                 // stop included. It dims and refuses input instead of
                 // pretending it could fire. The INHERITED Item
@@ -509,7 +540,12 @@ Component {
                             verticalAlignment: Text.AlignVCenter
                             text: (root.printer != null && root.printer.emergencyHoldProgress > 0) ? "EMERGENCY STOP — keep holding" : (emergencyButton.clicks === 0 ? "EMERGENCY STOP — click twice, then hold" : (emergencyButton.clicks === 1 ? "EMERGENCY STOP — one more click, then hold" : "EMERGENCY STOP — press and hold to fire"))
                             font: UM.Theme.getFont("medium_bold")
-                            color: "black"
+                            // The remainder copy follows the theme's
+                            // text colour (the 4.5.0 dark-mode
+                            // ruling): hardcoded black was unreadable
+                            // on dark mode's grey button ground. The
+                            // white-over-red sweep copy stays white.
+                            color: UM.Theme.getColor("text")
                         }
                     }
                     MouseArea {
@@ -598,11 +634,11 @@ Component {
                 onHeightChanged: root.updateControlsReadoutFits()
                 // Collapsed, the pane shrinks to the toggle button and its
                 // margins; the vertical title below explains the strip.
-                Layout.preferredWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 390 * screenScaleFactor)
+                Layout.preferredWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 386 * screenScaleFactor)
                 Layout.minimumWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 340 * screenScaleFactor)
                 // Shrink-only: max == preferred keeps the wide layout
                 // unchanged, but narrow stages may compress the pane.
-                Layout.maximumWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 390 * screenScaleFactor)
+                Layout.maximumWidth: (root.controlsCollapsed ? collapseButton.width + 2 * UM.Theme.getSize("thin_margin").width : 386 * screenScaleFactor)
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.margins: UM.Theme.getSize("default_margin").width
@@ -619,6 +655,12 @@ Component {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
+                        // Auto-collapsed-by-width is not a clickable
+                        // expand: only a wider stage restores the pane
+                        // (the monitor panes' guard, the same rule).
+                        if (root.controlsExpandLocked) {
+                            return;
+                        }
                         if (root.printer != null) {
                             root.printer.setControlsCollapsed(false);
                         }
@@ -663,15 +705,21 @@ Component {
                             }
                         }
 
-                        UM.TooltipArea {
-                            anchors.fill: parent
+                        HoverHandler {
+                            id: tooltipHover1
+                        }
+                        UM.ToolTip {
+                            visible: tooltipHover1.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
                             text: root.printer != null && root.printer.controlsLocked ? "Unlock all controls." : "Lock all controls."
-                            acceptedButtons: Qt.NoButton
                         }
                     }
                     // The configure trigger: the same glyph as the
                     // column configurer, one pane per header (the
-                    // author's ruling).
+                    // ruling).
                     Cura.SecondaryButton {
                         id: configureSectionsButton
                         objectName: "configureControlsSectionsButton"
@@ -682,7 +730,6 @@ Component {
                         height: width
                         implicitHeight: width
                         text: "⇄"
-                        tooltip: "Configure the printer-control sections."
                         onClicked: {
                             root.buildControlsConfigureRows();
                             // ONE popover at a time: the monitor's
@@ -705,6 +752,14 @@ Component {
                             controlsConfigurePopOver.y = edge.y + configureSectionsButton.height + UM.Theme.getSize("thin_margin").height;
                             root.configurePaneOpen = "controls";
                         }
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: "Configure the printer-control sections."
+                        }
                     }
                     Cura.SecondaryButton {
                         id: collapseButton
@@ -713,7 +768,7 @@ Component {
                         // Square at the OLD button width: the theme adds
                         // its padding around the 32px content, so the
                         // height tracks the rendered width (the
-                        // author's ruling).
+                        // ruling).
                         width: 28 * screenScaleFactor
                         iconSize: 12 * screenScaleFactor
                         height: width
@@ -722,17 +777,31 @@ Component {
                         // pane toggles (the ruling: all pane
                         // collapse buttons uniform).
                         iconSource: root.controlsCollapsed ? UM.Theme.getIcon("ChevronSingleLeft") : UM.Theme.getIcon("ChevronSingleRight")
-                        tooltip: root.controlsCollapsed ? "Show the printer controls." : "Hide the printer controls."
                         onClicked: {
+                            // The same guard as the strip: while the
+                            // camera cannot spare the room, the expand
+                            // direction waits (the tooltip says so).
+                            if (root.controlsExpandLocked) {
+                                return;
+                            }
                             if (root.printer != null) {
                                 root.printer.setControlsCollapsed(!root.controlsCollapsed);
                             }
+                        }
+                        UM.ToolTip {
+                            visible: parent.hovered
+                            targetPoint: Qt.point(parent.width / 2, 0)
+                            x: 0
+                            y: parent.height + UM.Theme.getSize("default_margin").height
+                            width: UM.Theme.getSize("tooltip").width
+                            text: root.controlsExpandLocked ? "The window is too narrow — widen it to show the printer controls." : (root.controlsCollapsed ? "Show the printer controls." : "Hide the printer controls.")
                         }
                     }
                 }
 
                 Flickable {
                     id: controlFlick
+                    objectName: "moonrakerControlsFlick"
                     visible: !root.controlsCollapsed
                     anchors.top: controlHeader.bottom
                     anchors.left: parent.left
@@ -740,7 +809,12 @@ Component {
                     anchors.bottom: parent.bottom
                     anchors.topMargin: UM.Theme.getSize("default_margin").height
                     anchors.leftMargin: UM.Theme.getSize("default_margin").width
-                    anchors.rightMargin: UM.Theme.getSize("default_margin").width
+                    // No right inset: the content's own 14px gutter is
+                    // the only dead band right of the sections, exactly
+                    // as the monitor's information and status panes rule
+                    // it. A right margin here plus the gutter widened
+                    // this pane's right gap against its scroll bar while
+                    // the other panes butted up.
                     anchors.bottomMargin: UM.Theme.getSize("default_margin").height
                     clip: true
                     contentWidth: width
@@ -753,18 +827,23 @@ Component {
 
                     ColumnLayout {
                         id: controlContent
-                        // The attached scrollbar overlays the content, so
-                        // the column spans the full width while the bar is
-                        // hidden (a constant reservation left a dead band
-                        // on the right — the pane's right gap read three
-                        // margins wide against the left pane's one, the
-                        // harness's margin-symmetry pin). While the bar
-                        // IS visible, the column yields its width so the
-                        // rows' right edges stay clear of it (the
-                        // author's clipping report). Narrower content
-                        // only grows taller, so the visibility never
-                        // oscillates.
-                        width: controlScrollbar.visible ? controlFlick.width - controlScrollbar.width - UM.Theme.getSize("default_margin").width : controlFlick.width
+                        objectName: "moonrakerControlsContent"
+                        // The stored order applies HERE — before the
+                        // first frame paints (the monitor's 4.5.0 find;
+                        // without it the controls pane waited for an
+                        // interaction and snapped visibly).
+                        Component.onCompleted: root.applyControlsOrder()
+                        // The constant gutter, exactly as the monitor's
+                        // information and status panes rule it: the
+                        // column keeps 14px clear of the flickable's
+                        // right edge and the attached scrollbar overlays
+                        // that gutter. Yielding a bar's width plus a
+                        // margin instead left this pane's rows an extra
+                        // gap short of the bar while the other panes
+                        // butted up, and a width that followed the bar's
+                        // visibility could oscillate with the bar's own
+                        // show/hide.
+                        width: controlFlick.width - 14
                         // Spacing lives on the children, not the layout: a
                         // collapsed section's hidden content must contribute
                         // nothing, so stacked headers sit flush like Cura's.
@@ -900,7 +979,7 @@ Component {
                         anchors.centerIn: parent
                     }
                 }
-                // The collapsed readout (the author's 2026-09-17
+                // The collapsed readout (the 2026-09-17
                 // ruling): position, Z offset and flow rate fill the
                 // empty space BELOW the title — regular text, not the
                 // title's face. ONE line of FIXED-WIDTH fields, each
@@ -1052,7 +1131,6 @@ Component {
             // bindings: an anchor to a header row's inner items
             // drops silently and the card lands at the top-left (the
             // live report).
-            onClosed: root.configurePaneOpen = ""
             onLayoutCommitted: function (order, hidden) {
                 if (root.printer != null) {
                     root.printer.setSectionLayout("controls", order, hidden);

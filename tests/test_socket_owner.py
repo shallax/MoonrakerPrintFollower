@@ -103,7 +103,7 @@ class SocketOwnerTests(unittest.TestCase):
         # The subscribe response carries the full state ONCE; Moonraker
         # then pushes only changes. Objects that never change must still
         # reach the Monitor: the sync seeds the aux accumulator so the
-        # next drain publishes them (the author's live report).
+        # next drain publishes them (the live report).
         # The aux names arrive on the RE-SUBSCRIBE (the wanted set is
         # only known after discovery) — not on start — so the seeding
         # must use the subscribe call's aux subset.

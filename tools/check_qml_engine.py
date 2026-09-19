@@ -42,6 +42,28 @@ class UploadManager(SettingsManager):
 
     uploadPathsChanged = pyqtSignal()
 
+    # The migration-failure surfaces (4.5.0): the dialog's banner and
+    # the permanent diagnostics row read these off the manager.
+    @pyqtProperty(bool, notify=uploadPathsChanged)
+    def migrationBannerVisible(self):
+        return False
+
+    @pyqtProperty(str, notify=uploadPathsChanged)
+    def migrationBannerText(self):
+        return ""
+
+    @pyqtProperty(bool, notify=uploadPathsChanged)
+    def migrationBackupAvailable(self):
+        return False
+
+    @pyqtProperty(bool, notify=uploadPathsChanged)
+    def migrationDiagnosticsVisible(self):
+        return False
+
+    @pyqtProperty(str, notify=uploadPathsChanged)
+    def migrationDiagnosticsText(self):
+        return ""
+
     @pyqtProperty("QVariantList", notify=uploadPathsChanged)
     def uploadPathOptions(self):
         return ["<root>"]

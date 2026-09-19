@@ -7,6 +7,10 @@ Item {
 
     property string text: ""
     property string tooltip: ""
+    // The instance-level tooltips read parent.hovered (the Cura
+    // placement pattern); the root is an Item, so the native
+    // button's hover state surfaces here.
+    property alias hovered: nativeButton.hovered
 
     signal clicked
 
@@ -21,13 +25,20 @@ Item {
         id: nativeButton
         anchors.fill: parent
         text: root.text
-        tooltip: root.tooltip
         enabled: root.enabled
         fixedWidthMode: true
         textColor: "transparent"
         textHoverColor: "transparent"
         textDisabledColor: "transparent"
         onClicked: root.clicked()
+        UM.ToolTip {
+            visible: parent.hovered
+            targetPoint: Qt.point(parent.width / 2, 0)
+            x: 0
+            y: parent.height + UM.Theme.getSize("default_margin").height
+            width: UM.Theme.getSize("tooltip").width
+            text: root.tooltip
+        }
     }
 
     UM.Label {

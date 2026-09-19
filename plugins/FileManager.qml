@@ -9,7 +9,7 @@ import "theme"
 // The file-manager popup (3.6.0): the real QML surface over the
 // published model slice — no synthetic rows ship (the
 // ruling). The popup is exempt from the no-reflow rule by the
-// author's ruling ("Reflowing the file manager is fine, there's
+// ruling ("Reflowing the file manager is fine, there's
 // nothing critical on that"); every state-gated visibility
 // expression lands in the test's line-level allow list citing that
 // ruling.
@@ -46,7 +46,7 @@ Item {
     visible: open
     focus: true
     // Opening the popup triggers the fetch (refetch on open — the
-    // author's ruling): the walk and the history window ride the
+    // ruling): the walk and the history window ride the
     // model's own lane. Nothing else flips this; the button in the
     // dashboard only sets `open`.
     onOpenChanged: {
@@ -106,7 +106,7 @@ Item {
     onVisibleChanged: {
         if (visible) {
             // Esc only reached us while a descendant held focus (the
-            // author's Snapshot 0 reports) — give focus to a real
+            // Snapshot 0 reports) — give focus to a real
             // target on every open. The search field is the natural
             // first stop; in narrow mode (no search field) the focus
             // anchor below carries it.
@@ -145,7 +145,7 @@ Item {
 
     // A FocusScope that always exists and always accepts focus, so
     // Esc has a home even when the search field does not exist (the
-    // author's Snapshot 0 report: narrow windows have no search bar,
+    // Snapshot 0 report: narrow windows have no search bar,
     // and then Esc had nothing to bubble from).
     FocusScope {
         id: focusAnchor
@@ -523,7 +523,7 @@ Item {
                     color: UM.Theme.getColor("setting_category")
                     // The focus cue: the well's outline flips to the
                     // Cura blue while the field holds focus (the
-                    // author's live report — tabbing gave no cue).
+                    // live report — tabbing gave no cue).
                     border.color: renameField.activeFocus ? UM.Theme.getColor("primary") : UM.Theme.getColor("lining")
                     border.width: renameField.activeFocus ? 2 * screenScaleFactor : UM.Theme.getSize("default_lining").width
                     radius: UM.Theme.getSize("default_radius").width
@@ -751,7 +751,7 @@ Item {
 
     // The local-file picker for uploads (Snapshot 3): gcode files
     // only — sliced prints upload from the Preview view (the
-    // author's ruling).
+    // ruling).
     FileDialog {
         id: filePicker
         title: "Upload a gcode file to the printer"
@@ -1010,7 +1010,7 @@ Item {
 
     function cellColour(row, column) {
         // A ticked row is all Cura blue with white text (the
-        // author's live ruling).
+        // live ruling).
         if (root.rowChecked(row)) {
             return "white";
         }
@@ -1148,7 +1148,7 @@ Item {
     }
     function setFilterValue(category, key) {
         // Radio semantics for the single-value categories (the
-        // author's live ruling: OR-checkboxes make no sense for
+        // live ruling: OR-checkboxes make no sense for
         // windows and bounds). The ENGINE's autoExclusive only
         // unchecks the siblings visually — toggleFilter would still
         // accumulate both values (probe-proven: Modified held 7d
@@ -1318,35 +1318,40 @@ Item {
                 radius: UM.Theme.getSize("default_radius").width
                 color: rowMouse.containsMouse ? UM.Theme.getColor("setting_category") : "transparent"
             }
-            Item {
+            // The selection marker: the native themed checkbox for
+            // multi-select categories, the native Cura.RadioButton
+            // for radios (the Uranium-controls-first ruling).
+            Cura.RadioButton {
+                id: optionRadio
+                visible: modelData.radio
                 anchors.left: parent.left
                 anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
                 anchors.verticalCenter: parent.verticalCenter
-                width: 14 * screenScaleFactor
-                height: 14 * screenScaleFactor
-                // The UNCHECKED outline shows from the start (the
-                // author's live report: the glyphs only appeared
-                // once an option was clicked) — a circle for
-                // radios, a square for checkboxes.
-                Rectangle {
-                    visible: root.filterValues(modelData.category).indexOf(modelData.key) < 0
-                    anchors.fill: parent
-                    radius: modelData.radio ? 7 * screenScaleFactor : 2 * screenScaleFactor
-                    color: "transparent"
-                    border.color: UM.Theme.getColor("lining")
-                    border.width: UM.Theme.getSize("default_lining").width
+                checked: root.filterValues(modelData.category).indexOf(modelData.key) >= 0
+                onClicked: {
+                    root.setFilterValue(modelData.category, modelData.key);
+                    optionRadio.checked = Qt.binding(function () {
+                            return root.filterValues(modelData.category).indexOf(modelData.key) >= 0;
+                        });
                 }
-                UM.Label {
-                    visible: root.filterValues(modelData.category).indexOf(modelData.key) >= 0
-                    anchors.centerIn: parent
-                    text: modelData.radio ? "◉" : "✓"
-                    color: UM.Theme.getColor("primary")
-                    font: UM.Theme.getFont("default")
+            }
+            UM.CheckBox {
+                id: optionCheck
+                visible: !modelData.radio
+                anchors.left: parent.left
+                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
+                anchors.verticalCenter: parent.verticalCenter
+                checked: root.filterValues(modelData.category).indexOf(modelData.key) >= 0
+                onClicked: {
+                    root.toggleFilter(modelData.category, modelData.key);
+                    optionCheck.checked = Qt.binding(function () {
+                            return root.filterValues(modelData.category).indexOf(modelData.key) >= 0;
+                        });
                 }
             }
             UM.Label {
                 anchors.left: parent.left
-                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + 18 * screenScaleFactor
+                anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + 22 * screenScaleFactor
                 anchors.right: parent.right
                 anchors.rightMargin: 60 * screenScaleFactor
                 anchors.verticalCenter: parent.verticalCenter
@@ -1472,9 +1477,15 @@ Item {
                                 border.width: UM.Theme.getSize("default_lining").width
                                 radius: UM.Theme.getSize("default_radius").width
                                 color: UM.Theme.getColor("main_background")
-                                UM.TooltipArea {
-                                    anchors.fill: parent
-                                    acceptedButtons: Qt.NoButton
+                                HoverHandler {
+                                    id: tooltipHover1
+                                }
+                                UM.ToolTip {
+                                    visible: tooltipHover1.hovered
+                                    targetPoint: Qt.point(parent.width / 2, 0)
+                                    x: 0
+                                    y: parent.height + UM.Theme.getSize("default_margin").height
+                                    width: UM.Theme.getSize("tooltip").width
                                     text: modelData.name
                                 }
                                 Rectangle {
@@ -1487,8 +1498,8 @@ Item {
                                     border.color: UM.Theme.getColor("lining")
                                     border.width: UM.Theme.getSize("default_lining").width
                                     color: root.thumbState(modelData.relpath) === "ready" ? UM.Theme.getColor("setting_category") : "transparent"
-                                    // The strip's own thumbnail (the
-                                    // author's live request): the same
+                                    // The strip's own thumbnail (a
+                                    // live request): the same
                                     // fetch/cache as the grid cells, with
                                     // the same fallbacks.
                                     Image {
@@ -1526,9 +1537,9 @@ Item {
                                     }
                                 }
                                 MouseArea {
-                                    // The recents strip prints too (the
-                                    // author's live request): a click opens
-                                    // the confirmation, the same gate as the
+                                    // The recents strip prints too (a
+                                    // live request): a click opens the
+                                    // confirmation, the same gate as the
                                     // rows. Gone files never render here:
                                     // recents are Moonraker's history, and
                                     // unlike a local store there is no way
@@ -1560,7 +1571,7 @@ Item {
                                     elide: Text.ElideMiddle
                                     // Elide, never wrap: a wrapped name
                                     // pushes the date out of the card (the
-                                    // author's live report).
+                                    // live report).
                                     wrapMode: Text.NoWrap
                                     font: UM.Theme.getFont("default")
                                 }
@@ -1699,9 +1710,15 @@ Item {
                             root.printerModel.refreshFileManager();
                         }
                     }
-                    UM.TooltipArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.NoButton
+                    HoverHandler {
+                        id: tooltipHover2
+                    }
+                    UM.ToolTip {
+                        visible: tooltipHover2.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
                         text: "Refresh"
                     }
                 }
@@ -1750,8 +1767,8 @@ Item {
                     }
                 }
                 // The clear button: a circled × on the right of the
-                // field, shown only while a search is active (the
-                // author's live request).
+                // field, shown only while a search is active (a
+                // live request).
                 Rectangle {
                     id: searchClear
                     visible: searchField.text.length > 0
@@ -2109,7 +2126,7 @@ Item {
                                     }
                                     if (mouse.button === Qt.RightButton) {
                                         // The folder context menu (the
-                                        // author's live request).
+                                        // live request).
                                         dirActionsMenu.dirPath = root.printerModel.fileManagerDirectory.concat(modelData).join("/");
                                         dirActionsMenu.popup();
                                         return;
@@ -2149,7 +2166,7 @@ Item {
             // so the row carries only the count and the verb. The
             // verb is red, never primary-blue: blue reads as "the
             // suggested next step" for a destructive action (the
-            // author's live ruling). In the real build the verb and
+            // live ruling). In the real build the verb and
             // the count appear only while a selection exists.
 
             // Narrow mode: the file area gives way to the recents
@@ -2208,7 +2225,7 @@ Item {
                     anchors.right: parent.right
                     height: root.rowHeight
                     // The WHOLE header rides the strip (the
-                    // author's model: the list scrolls as one,
+                    // model: the list scrolls as one,
                     // headers and rows together) and clips at the
                     // grid edge.
                     clip: true
@@ -2220,36 +2237,24 @@ Item {
                             Layout.preferredWidth: root.checkboxWidth
                             Layout.fillHeight: true
                             color: "transparent"
-                            Rectangle {
+                            // The page-level three states: the native
+                            // themed checkbox's tri-state — empty, a
+                            // filled square for a partial page, a
+                            // tick for a full one. A click fills a
+                            // partial page or drops a full one.
+                            UM.CheckBox {
+                                id: pageSelectCheck
                                 anchors.left: parent.left
                                 anchors.leftMargin: 3 * screenScaleFactor
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: 16 * screenScaleFactor
-                                height: 16 * screenScaleFactor
-                                radius: 2 * screenScaleFactor
-                                border.color: UM.Theme.getColor("lining")
-                                border.width: UM.Theme.getSize("default_lining").width
-                                color: root.pageSelectionState() === "some" ? UM.Theme.getColor("primary") : "transparent"
-                                // The page-level three states (the
-                                // author's ruling): empty, a dash
-                                // for a partial page, a tick for a
-                                // full one. A click fills a partial
-                                // page or drops a full one.
-                                UM.Label {
-                                    visible: root.pageSelectionState() !== "none"
-                                    anchors.centerIn: parent
-                                    text: root.pageSelectionState() === "all" ? "✓" : "–"
-                                    color: root.pageSelectionState() === "some" ? "white" : UM.Theme.getColor("primary")
-                                    font: UM.Theme.getFont("small")
-                                }
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (root.printerModel != null) {
-                                            root.printerModel.toggleFilePageSelection();
-                                        }
+                                checkState: root.pageSelectionState() === "all" ? Qt.Checked : (root.pageSelectionState() === "some" ? Qt.PartiallyChecked : Qt.Unchecked)
+                                onClicked: {
+                                    if (root.printerModel != null) {
+                                        root.printerModel.toggleFilePageSelection();
                                     }
+                                    pageSelectCheck.checkState = Qt.binding(function () {
+                                            return root.pageSelectionState() === "all" ? Qt.Checked : (root.pageSelectionState() === "some" ? Qt.PartiallyChecked : Qt.Unchecked);
+                                        });
                                 }
                             }
                             // A "/" separator keeps the select-all
@@ -2279,9 +2284,15 @@ Item {
                                 font: UM.Theme.getFont("medium_bold")
                                 color: UM.Theme.getColor("primary")
                             }
-                            UM.TooltipArea {
-                                anchors.fill: parent
-                                acceptedButtons: Qt.NoButton
+                            HoverHandler {
+                                id: tooltipHover3
+                            }
+                            UM.ToolTip {
+                                visible: tooltipHover3.hovered
+                                targetPoint: Qt.point(parent.width / 2, 0)
+                                x: 0
+                                y: parent.height + UM.Theme.getSize("default_margin").height
+                                width: UM.Theme.getSize("tooltip").width
                                 text: "Columns: reorder and resize"
                             }
                             // The Columns menu (Snapshot 3): the cell
@@ -2427,9 +2438,7 @@ Item {
                                     // content hugged the left edge).
                                     leftPadding: UM.Theme.getSize("narrow_margin").width
                                     rightPadding: UM.Theme.getSize("narrow_margin").width
-                                    // The selector row with the same
-                                    // blue ✕ the pane popups wear (the
-                                    // live report: no close affordance).
+                                    // The selector row.
                                     Row {
                                         width: parent.width - parent.leftPadding - parent.rightPadding
                                         spacing: UM.Theme.getSize("narrow_margin").width
@@ -2439,29 +2448,6 @@ Item {
                                             total: root.columnOrderList().length
                                             visibleCount: root.visibleColumnCount()
                                             onToggled: root.toggleAllColumns()
-                                        }
-                                        Item {
-                                            // One thin margin of inset, so
-                                            // the ✕ never rides the
-                                            // popup's edge (the live
-                                            // report: it sat outside).
-                                            width: Math.max(0, parent.width - columnsSelector.implicitWidth - columnsCloseX.implicitWidth - UM.Theme.getSize("thin_margin").width)
-                                            height: 32 * screenScaleFactor
-                                        }
-                                        UM.Label {
-                                            id: columnsCloseX
-                                            text: "✕"
-                                            color: UM.Theme.getColor("primary")
-                                            // Large enough to read as a
-                                            // control (the live report:
-                                            // too small).
-                                            font: UM.Theme.getFont("large_bold")
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: columnsPopup.close()
-                                            }
                                         }
                                     }
                                     // A plain host item holds the rows
@@ -2757,7 +2743,7 @@ Item {
                                         // The reserved sort slot shows the
                                         // arrow ONLY on the sorted column
                                         // and nothing elsewhere (the
-                                        // author's live ruling: no "—"
+                                        // live ruling: no "—"
                                         // placeholder). It hugs the
                                         // title — at the column edge it
                                         // read as belonging to the NEXT
@@ -2772,7 +2758,7 @@ Item {
                                     // A click on the header sorts that
                                     // column (clicking the current one
                                     // flips its direction — the
-                                    // author's ruling).
+                                    // ruling).
                                     MouseArea {
                                         anchors.fill: parent
                                         cursorShape: Qt.PointingHandCursor
@@ -2860,33 +2846,25 @@ Item {
                                     Layout.preferredWidth: root.checkboxWidth - 3 * screenScaleFactor
                                     Layout.fillHeight: true
                                     color: "transparent"
-                                    Rectangle {
+                                    // The row's selection checkbox:
+                                    // the native themed control (the
+                                    // Uranium-controls-first ruling),
+                                    // centred in the checkbox column.
+                                    UM.CheckBox {
+                                        id: rowCheck
                                         anchors.centerIn: parent
-                                        width: 16 * screenScaleFactor
-                                        height: 16 * screenScaleFactor
-                                        radius: 2 * screenScaleFactor
-                                        // On a selected row the box
-                                        // flips WHITE with a blue
-                                        // tick — a blue box on a
-                                        // blue row was invisible
-                                        // (the live
-                                        // report).
-                                        border.color: root.rowChecked(modelData) ? "white" : UM.Theme.getColor("lining")
-                                        border.width: UM.Theme.getSize("default_lining").width
-                                        color: root.rowChecked(modelData) ? "white" : "transparent"
-                                        UM.Label {
-                                            visible: root.rowChecked(modelData)
-                                            anchors.centerIn: parent
-                                            text: "✓"
-                                            color: UM.Theme.getColor("primary")
-                                            font: UM.Theme.getFont("small")
+                                        checked: root.rowChecked(modelData)
+                                        onClicked: {
+                                            root.toggleRow(modelData);
+                                            rowCheck.checked = Qt.binding(function () {
+                                                    return root.rowChecked(modelData);
+                                                });
                                         }
                                     }
                                     // Wired mock selection: a
                                     // click toggles the row's
-                                    // selected state (the
-                                    // author's request — this
-                                    // is the ONLY wired
+                                    // selected state (a request —
+                                    // this is the ONLY wired
                                     // behaviour in the mock).
                                     MouseArea {
                                         anchors.fill: parent
@@ -2954,9 +2932,15 @@ Item {
                                 Item {
                                     Layout.preferredWidth: root.nameWidth
                                     Layout.fillHeight: true
-                                    UM.TooltipArea {
-                                        anchors.fill: parent
-                                        acceptedButtons: Qt.NoButton
+                                    HoverHandler {
+                                        id: tooltipHover4
+                                    }
+                                    UM.ToolTip {
+                                        visible: tooltipHover4.hovered
+                                        targetPoint: Qt.point(parent.width / 2, 0)
+                                        x: 0
+                                        y: parent.height + UM.Theme.getSize("default_margin").height
+                                        width: UM.Theme.getSize("tooltip").width
                                         text: modelData.name
                                     }
                                     Column {
@@ -2977,7 +2961,7 @@ Item {
                                             color: root.rowChecked(modelData) ? "white" : UM.Theme.getColor("text")
                                         }
                                         // The folder breadcrumb (the
-                                        // author's live request):
+                                        // live request):
                                         // while a search is active,
                                         // same-named files in
                                         // different folders must be
@@ -2999,7 +2983,7 @@ Item {
                                             // the accent bar plus a
                                             // small printer glyph,
                                             // not a text label (the
-                                            // author's live report:
+                                            // live report:
                                             // icons, not words).
                                             UM.ColorImage {
                                                 visible: modelData.printing === true
@@ -3024,7 +3008,7 @@ Item {
                                             // a complete row changes
                                             // nothing — both
                                             // live-proven; the
-                                            // author's reports).
+                                            // reports).
                                             enabled: root.printerModel != null && root.isGcodeName(modelData.relpath) && root.rowNeedsMetadata(modelData)
                                             text: "Scan metadata"
                                             onTriggered: {
@@ -3039,7 +3023,7 @@ Item {
                                             // stands down while one is up and
                                             // while a job is active or the
                                             // printer is disconnected (the
-                                            // author's rulings).
+                                            // rulings).
                                             enabled: root.printerModel != null && root.printerModel.filePrintConfirm === "" && root.printStartAllowed() && root.isGcodeName(modelData.relpath)
                                             text: "Print"
                                             onTriggered: {
@@ -3085,7 +3069,7 @@ Item {
                                 }
                             }
                             // Row-level pointer surface (the
-                            // author's live requests):
+                            // live requests):
                             // double-click opens the print
                             // confirmation, right-click opens
                             // the actions menu — both stand
@@ -3174,7 +3158,7 @@ Item {
                                                 // status word goes white
                                                 // and its colour survives
                                                 // as a dot beside it (the
-                                                // author's ruling — the
+                                                // ruling — the
                                                 // colour coding matters
                                                 // most while curating a
                                                 // bulk delete).
@@ -3399,7 +3383,7 @@ Item {
                     color: UM.Theme.getColor("text_inactive")
                     // No data means no page chrome at all — no
                     // "Showing 0 of 0", no "Page 1 of 0" (the
-                    // author's live report). The mock keeps its
+                    // live report). The mock keeps its
                     // pinned faces.
                     visible: root.printerModel == null || root.activeRows.length > 0
                 }
@@ -3426,7 +3410,7 @@ Item {
                     objectName: "pageSizePopup"
                     property bool wasOpenAtPress: false
                     // Below the OPENER, right-aligned with it (the
-                    // author's live report: the row-bottom-left
+                    // live report: the row-bottom-left
                     // position opened over the upload button).
                     x: pageSizeButton.x + pageSizeButton.width - width
                     y: pageSizeButton.y + pageSizeButton.height
@@ -3452,31 +3436,24 @@ Item {
                                         radius: UM.Theme.getSize("default_radius").width
                                         color: sizeMouse.containsMouse ? UM.Theme.getColor("setting_category") : "transparent"
                                     }
-                                    Item {
+                                    Cura.RadioButton {
+                                        id: sizeRadio
                                         anchors.left: parent.left
                                         anchors.leftMargin: UM.Theme.getSize("narrow_margin").width
                                         anchors.verticalCenter: parent.verticalCenter
-                                        width: 14 * screenScaleFactor
-                                        height: 14 * screenScaleFactor
-                                        Rectangle {
-                                            visible: root.printerModel == null || String(root.printerModel.fileManagerPageSize) !== String(modelData)
-                                            anchors.fill: parent
-                                            radius: 7 * screenScaleFactor
-                                            color: "transparent"
-                                            border.color: UM.Theme.getColor("lining")
-                                            border.width: UM.Theme.getSize("default_lining").width
-                                        }
-                                        UM.Label {
-                                            visible: root.printerModel != null && String(root.printerModel.fileManagerPageSize) === String(modelData)
-                                            anchors.centerIn: parent
-                                            text: "◉"
-                                            color: UM.Theme.getColor("primary")
-                                            font: UM.Theme.getFont("default")
+                                        checked: root.printerModel != null && String(root.printerModel.fileManagerPageSize) === String(modelData)
+                                        onClicked: {
+                                            if (root.printerModel != null) {
+                                                root.printerModel.setFilePageSize(modelData);
+                                            }
+                                            sizeRadio.checked = Qt.binding(function () {
+                                                    return root.printerModel != null && String(root.printerModel.fileManagerPageSize) === String(modelData);
+                                                });
                                         }
                                     }
                                     UM.Label {
                                         anchors.left: parent.left
-                                        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + 18 * screenScaleFactor
+                                        anchors.leftMargin: UM.Theme.getSize("narrow_margin").width + 22 * screenScaleFactor
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: modelData === "all" ? "All" : modelData + " / page"
                                         font: UM.Theme.getFont("default")

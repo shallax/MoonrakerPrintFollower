@@ -77,7 +77,7 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(tuple(index.pauses), (0, 1, 2))
 
     def test_the_simulators_generated_gcode_bakes_the_pause_at_layer_20(self):
-        # The harness's x10 premise (the author's request): the sim's
+        # The harness's x10 premise (by request): the sim's
         # generated gcode carries ONE baked PAUSE, and the index must
         # find it at layer 20 — otherwise every index scenario
         # silently loses the baked-pause path.

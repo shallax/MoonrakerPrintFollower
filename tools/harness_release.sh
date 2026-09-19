@@ -159,10 +159,15 @@ run_unit() {  # run_unit <budget> <version> <name> <mode> [group] [slot]
 # one boot) runs on both versions; the full suite groups run on the
 # primary as the deep regression.
 UNITS="20 $PRIMARY smoke suite smoke"
-for g in connection status temperatures console webcams files motion printing settings visual preview probe; do
+for g in connection status temperatures console webcams files motion printing settings visual preview probe configure stress; do
     UNITS="$UNITS
 15 $PRIMARY group-$g suite $g"
 done
+# The first-install leg (TESTING.md §3): one clean profile booted
+# twice — the journey the pre-migrated fixture cannot cover, and the
+# reason a config-losing first install once shipped green.
+UNITS="$UNITS
+10 $PRIMARY firstinstall firstinstall"
 UNITS="$UNITS
 20 $SECONDARY smoke suite smoke"
 

@@ -34,8 +34,13 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
   committed screenshots, i.e. what CI checks), `make lint` (structure,
   qmlformat, ruff, shellcheck, hadolint only), `make run_tests`
   (stdlib suite on the host, the real-Qt suite in the container),
-  `make generate_screenshots`, `make package`, `make install_hooks`,
-  `make docker_exec ARGS="…"`, `make clean`. The targets are thin
+  `make generate_screenshots`, `make package`, `make format`
+  (qmlformat in the container), `make coverage` (plugins/ report,
+  the gcov gate), `make snapshot_package` (build + verify + copy to
+  /tmp/mpf.curapackage, ready to SCP), `make snapshot_quick`
+  (the fast iteration path: lint + tests + package, no captures),
+  `make install_hooks`, `make docker_exec ARGS="…"`, `make clean`.
+  The targets are thin
   wrappers over the `tools/*.sh` scripts, which remain the single
   source of truth.
 - The Makefile is the single entry point for procedures another
@@ -113,7 +118,7 @@ in `ARCHITECTURE.md`; release history lives in `CHANGELOG.md`.
 
 ## Repo hygiene — the standing rule on addresses
 
-No real machine addresses go into the git repo (the author's rule,
+No real machine addresses go into the git repo (the rule,
 2026-09-11). Fictional placeholders (``voron-0.2.local`` in the capture
 fixtures) and unreachable LAN-internal names are tolerable; public
 hostnames, proxy endpoints and any host an outsider could reach are
@@ -121,7 +126,7 @@ not. API keys never enter any tracked file (the gitleaks gate and the
 literal-key pin enforce it). Real deployment details belong in the
 git-ignored ``review/`` log, not in the roadmap, docs or code. If an
 address slips in despite the rule, it is written OUT OF HISTORY, not
-merely fixed forward (the author's amendment, 2026-09-11).
+merely fixed forward (the 2026-09-11 amendment).
 
 ## Release workflow
 
@@ -133,9 +138,9 @@ Klipper/Moonraker/Cura domain expert, read-only, findings funnel back
 through the maintainer; a 3D-printer enthusiast/pro-user persona joins
 from 3.6.0 on, feeding next-release feature planning rather than
 gate-calls) → decisions logged in `review/DECISIONS.md` (git-ignored) →
-round-3 verification → the snapshot loop (the author live-tests
-`/tmp/mpf.curapackage`; commits and pushes hold until they're happy) →
-ship via PR.
+round-3 verification → the snapshot loop (live testing of
+`/tmp/mpf.curapackage`; commits and pushes hold until it is
+confirmed good) → ship via PR.
 
 ## Version bump checklist
 
@@ -204,7 +209,16 @@ pins in the same commit as any change to a control.
   with `opacity`, never `visible`. Capability-static gates (a feature
   the machine simply lacks, changing only on a printer switch) keep
   `visible:` — they are whitelisted in the structural test.
-- **Disconnected disables everything** (the author's ruling): while
+- **The narrow-window collapse/lock machinery is frozen** (the
+  2026-09-19 ruling): the squeeze fold, the camera-hinged expansion
+  locks, the per-pane costs and the release behavior are a locked
+  contract. ANY change to this logic — refactors, reviews, panel
+  suggestions included — must be explicitly called out and
+  double-confirmed before landing, even when the change appears to be
+  requested. The contract is enforced by the real-engine tests
+  (CollapseOnShrinkTests, ReExpansionGuardTests); a change that does
+  not trip them is a coverage gap, fixed in the same pass.
+- **Disconnected disables everything** (the ruling): while
   the printer is disconnected every Monitor control disables — the
   emergency stop included — via section-level
   `enabled: root.printer == null || (!root.printer.controlsLocked &&
@@ -431,7 +445,7 @@ they cannot recur silently.
 - **Pop-over anchoring is a single consistent offset.** Both pop-overs
   open at `x: cameraArea.x + margin, y: margin` — clear of the
   Information-pane openers, so a second click dismisses without moving
-  the mouse (the author's chosen position).
+  the mouse (the chosen position).
 - **Cursor-following tooltips live OUTSIDE the clipped card.** The
   chart's hover values are a floating, root-scoped `Item` (z above the
   pop-overs) positioned from the chart's cursor point mapped with
@@ -501,14 +515,14 @@ they cannot recur silently.
   capture harness seeds `virtual_sdcard.progress` so the bars show a
   fill, and asserts accent-blue pixels inside every visible bar and
   slider — a fill that stops rendering fails the screenshot job.
-- **The no-reflow rule (the author's ruling, 2026-09-10):** a control
+- **The no-reflow rule (the 2026-09-10 ruling):** a control
   never disappears — every state lives in `enabled`, never `visible`
   ("no controls disappear, ever. It's only disablement/enablement").
   Nothing reflows unless the user asked for it (section collapse,
   resize): state-dependent status lines occupy permanent single-line
   slots whose TEXT changes, and reserved space uses opacity, never
-  visibility. **Reasoning:** the jog-reflow hazard (the author's live
-  report, 2026-09-09) — while hammering a toolhead move, the
+  visibility. **Reasoning:** the jog-reflow hazard (the live report,
+  2026-09-09) — while hammering a toolhead move, the
   pause/cancel buttons (and other state-gated controls and labels)
   vanished and reappeared as printer state changed, so the nudge
   button UNDER THE POINTER could move mid-click. Incredibly dangerous
@@ -518,8 +532,32 @@ they cannot recur silently.
   bindings; the explicit carve-outs (data-driven section gates —
   fans/LEDs/macros/power sections on machines without them, the
   scheduled-pause list, the temp-chart first-data swap) are listed in
-  the test and in `review/DECISIONS.md` round 6 for the author's
-  review.
+  the test and in `review/DECISIONS.md` round 6 for review.
+- **The tooltip rule (the 2026-09-18 ruling):** EVERY tooltip follows
+  Cura's placement pattern — a `UM.ToolTip` child of the annotated
+  control, positioned BELOW it with the arrow at the control's
+  top-centre (`targetPoint: Qt.point(parent.width / 2, 0)`, `x: 0`,
+  `y: parent.height + <margin>`), shown on the control's own hover
+  (`visible: parent.hovered` for Button-family controls; a
+  `HoverHandler` for surfaces without `hovered`, one unique id per
+  tooltip per scope). Never the native `tooltip:` property, never a
+  `UM.TooltipArea` over a control — a popup that can cover its
+  control swallows the click when the pointer crosses it (the live
+  find: a reset button's tooltip ate presses, and the native-property
+  popups pointed at the wrong control entirely). `test_monitor`'s
+  tooltip-discipline pin fails the leg if either form returns.
+  Passive readouts get the same pattern, not an exemption.
+- **The Uranium-controls-first rule (the 2026-09-18 ruling):** where
+  possible, use Cura's native controls — `UM.CheckBox`, `UM.ToolTip`,
+  `Cura.ComboBox`, `Cura.RadioButton` and the rest — over raw Qt
+  Quick Controls or bespoke drawn ones. The native controls carry the
+  theme (light and dark) for free; a bespoke control forks that
+  theming and drifts (the live report: the popover rows' drawn
+  checkbox, the tri-state selector, the file-manager select-all and
+  row checkboxes, the filter markers and the page-size radios all
+  drifted from the native set). Bespoke drawing stays only where no
+  native control fits (e.g. the drag handles; the multi-select filter
+  rows, which `Cura.ComboBox` cannot express).
 
 ### Verifying QML geometry
 
@@ -542,7 +580,7 @@ Comments state WHY, briefly:
   the explanation belongs in `ARCHITECTURE.md` (the design) or here
   (the lesson), not inline.
 - No play-by-play of what the code plainly does, no restating the
-  design doc, no quoting people (the author's ruling: comments speak
+  design doc, no quoting people (the ruling: comments speak
   in their own voice).
 - The design notes live in `ARCHITECTURE.md` and `ROADMAP.md`; inline
   comments carry only the local why. New code matches its file's
@@ -570,11 +608,9 @@ not needed in ordinary operation.
 
 Local (also run by the pre-commit hook):
 
-    python -m compileall -q plugins tools tests
-    python tools/check_qml.py plugins
-    ruff check plugins tools tests
-    sh tools/check_qml_format.sh plugins/*.qml   # qt6-declarative-dev-tools; 6.4 has no --check
-    python -m unittest discover -s tests -p "test_*.py"
+    make lint        # compileall, check_qml(.py + engine), qmlformat, ruff,
+                     # shellcheck, hadolint, gitleaks — one container pass
+    make run_tests   # every suite once, verdict + failures extracted from that single pass
 
 CI runs the same checks (the `lint` job) plus the full suite including the
 real-Qt tests (PyQt6 6.11.0). The release workflow on tag push additionally
@@ -589,15 +625,17 @@ transcription drift):
 - Multi-printer interaction and large files.
 - Chart continuity across preheat / print / pause / target-change.
 - Power-area plausibility (heater power bands on the chart).
-- Persistence across a Cura restart AND a printer switch.
+- Persistence across a Cura restart AND a printer switch (the
+  clean-install restart half is automated now — `MODE=firstinstall`,
+  TESTING.md §3).
 - Multi-hotend / chamber mini-widget selection.
 - A dense 25x25 bed mesh crosshair.
 - The bed-mesh pop-over open with its probe-points toggle (the one
   pop-over path the capture harness does not exercise).
 - Escape-dismiss hand-test on the pop-overs.
 - Multi-hour Canvas/CPU sanity while printing.
-- One old + one current Cura (the README claims Cura 5.0-5.13 /
-  SDK 8.0-8.12).
+- One old + one current Cura (the README claims Cura 5.7-5.13 /
+  SDK 8.7-8.12).
 Once the workflow's tag-built artifacts exist, unpack the curapackage and
 grep the shipped QML/Python for the verification markers — no `BISECT`,
 no `visible: false` console gate, `GET` (not POST) on the endstop query,

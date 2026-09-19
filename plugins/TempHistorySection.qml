@@ -41,8 +41,11 @@ ColumnLayout {
             Layout.preferredHeight: 90 * screenScaleFactor
             compact: true
             tooltipText: "Click for the full temperature history (last 30 minutes)."
+            // The mini payload IS the compact chart's surface: bounded
+            // render points for the selected series, no targets, no
+            // power — its size stops growing once the window matures.
             chart: {
-                var payload = root.printerModel != null ? root.printerModel.temperatureChart : null;
+                var payload = root.printerModel != null ? root.printerModel.temperatureChartMini : null;
                 if (payload == null) {
                     return {
                         "series": [],
@@ -53,14 +56,7 @@ ColumnLayout {
                         "wallOrigin": 0
                     };
                 }
-                return {
-                    "series": root.miniSeries,
-                    "showTargets": false,
-                    "showPower": false,
-                    "palette": payload.palette,
-                    "filling": payload.filling,
-                    "wallOrigin": payload.wallOrigin
-                };
+                return payload;
             }
             visible: root.miniHasSeries
             onClicked: {
@@ -88,13 +84,11 @@ ColumnLayout {
                     }
                     UM.Label {
                         text: {
-                            var payload = root.printerModel != null ? root.printerModel.temperatureChart.series : [];
-                            var value = "—";
-                            for (var i = 0; i < payload.length; ++i) {
-                                if (payload[i].name === modelData.name && payload[i].points.length > 0) {
-                                    value = payload[i].points[payload[i].points.length - 1][1].toFixed(1) + "°C";
-                                }
-                            }
+                            // The live value rides the latest
+                            // projection — one scalar per sensor,
+                            // never a search through the chart payload.
+                            var latest = root.printerModel != null ? root.printerModel.temperatureChartLatest : null;
+                            var value = latest != null && latest[modelData.name] !== undefined ? Number(latest[modelData.name]).toFixed(1) + "°C" : "—";
                             return modelData.label + " " + value;
                         }
                         elide: Text.ElideRight
@@ -110,13 +104,13 @@ ColumnLayout {
         UM.Label {
             Layout.fillWidth: true
             visible: root.printerModel != null && !root.miniHasSeries
-            text: root.printerModel != null && root.printerModel.temperatureChart.series.length > 0 ? "All sensors hidden — click to re-enable one in the chart." : "No hotend or bed temperature data yet"
-            color: root.printerModel != null && !root.miniHasSeries && root.printerModel.temperatureChart.series.length > 0 ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
+            text: root.printerModel != null && root.printerModel.temperatureChartLegend.series.length > 0 ? "All sensors hidden — click to re-enable one in the chart." : "No hotend or bed temperature data yet"
+            color: root.printerModel != null && !root.miniHasSeries && root.printerModel.temperatureChartLegend.series.length > 0 ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
             wrapMode: Text.WordWrap
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                enabled: root.printerModel != null && !root.miniHasSeries && root.printerModel.temperatureChart.series.length > 0
+                enabled: root.printerModel != null && !root.miniHasSeries && root.printerModel.temperatureChartLegend.series.length > 0
                 onClicked: {
                     if (root.printerModel != null)
                         root.popOverToggleRequested("chart");

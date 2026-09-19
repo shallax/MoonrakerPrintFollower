@@ -13,6 +13,16 @@ ColumnLayout {
     spacing: 0
     property var printerModel: null
     property var interactionSink: null
+    // The factor sliders sync from the model IMPERATIVELY: their own
+    // drag writes would destroy a value binding, freezing the handle
+    // at the last interaction (the live 200-reset find). The arrival
+    // path covers a model that attaches after the section completes.
+    onPrinterModelChanged: {
+        if (root.printerModel != null) {
+            speedSlider.value = root.printerModel.speedFactorPercent !== undefined ? root.printerModel.speedFactorPercent : 100;
+            flowSlider.value = root.printerModel.flowFactorPercent !== undefined ? root.printerModel.flowFactorPercent : 100;
+        }
+    }
 
     CollapsibleSectionHeader {
         Layout.fillWidth: true
@@ -48,32 +58,86 @@ ColumnLayout {
                 UM.Label {
                     // The fixed width keeps the row from
                     // reflowing as the percentage changes
-                    // (the author's live report).
+                    // (a live report).
                     width: 52 * screenScaleFactor
                     horizontalAlignment: Text.AlignRight
                     text: speedSlider.selectedValue() + "%"
                 }
             }
-            OutlineSlider {
-                id: speedSlider
+            RowLayout {
                 Layout.fillWidth: true
-                from: 10
-                to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.speedFactorPercent * 2) : 200)
-                stepSize: 1
-                live: false
-                value: root.printerModel != null ? root.printerModel.speedFactorPercent : 100
-                enabled: root.printerModel != null
-                onValueTuning: {
-                    if (root.printerModel != null)
-                        root.printerModel.previewSpeedFactor(value);
+                spacing: UM.Theme.getSize("thin_margin").width
+                OutlineSlider {
+                    id: speedSlider
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    from: 10
+                    to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.speedFactorPercent * 2) : 200)
+                    stepSize: 1
+                    live: false
+                    value: 100
+                    enabled: root.printerModel != null
+                    // The model's percent syncs IMPERATIVELY, never by
+                    // binding: the slider's own drag writes control.value
+                    // and would destroy a binding, freezing the handle at
+                    // the last interaction forever (the live 200-reset
+                    // find — the command applied, the UI could not
+                    // follow). The change handler only fires when the
+                    // percent CHANGES, so a mid-drag poll never snaps.
+                    Component.onCompleted: {
+                        if (root.printerModel != null)
+                            speedSlider.value = root.printerModel.speedFactorPercent;
+                    }
+                    Connections {
+                        target: root.printerModel
+                        function onSpeedFactorPercentChanged() {
+                            if (root.printerModel != null)
+                                speedSlider.value = root.printerModel.speedFactorPercent;
+                        }
+                    }
+                    onValueTuning: {
+                        if (root.printerModel != null)
+                            root.printerModel.previewSpeedFactor(value);
+                    }
+                    onValueCommitted: {
+                        if (root.printerModel != null)
+                            root.printerModel.setSpeedFactor(value);
+                    }
+                    onInteractingChanged: {
+                        if (root.interactionSink != null)
+                            root.interactionSink(interacting, "", "");
+                    }
                 }
-                onValueCommitted: {
-                    if (root.printerModel != null)
-                        root.printerModel.setSpeedFactor(value);
-                }
-                onInteractingChanged: {
-                    if (root.interactionSink != null)
-                        root.interactionSink(interacting, "", "");
+                // The reset rides the same command path as the slider's
+                // release: M220 S100, the value converging on the next
+                // poll (the camera refresh button's glyph and styling).
+                UM.SimpleButton {
+                    objectName: "moonrakerTuningSpeedReset"
+                    width: UM.Theme.getSize("small_button_icon").width
+                    height: UM.Theme.getSize("small_button_icon").height
+                    // The cell must survive the row: the fillWidth
+                    // slider otherwise squeezes it to zero and the
+                    // press lands on the slider's track under the
+                    // glyph, committing the track position (the live
+                    // 200-reset find).
+                    Layout.minimumWidth: UM.Theme.getSize("small_button_icon").width
+                    Layout.alignment: Qt.AlignVCenter
+                    enabled: root.printerModel != null
+                    color: UM.Theme.getColor("text_inactive")
+                    hoverColor: UM.Theme.getColor("text")
+                    iconSource: UM.Theme.getIcon("ArrowDoubleCircleRight")
+                    onClicked: {
+                        if (root.printerModel != null)
+                            root.printerModel.setSpeedFactor(100);
+                    }
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Reset the speed factor to 100%."
+                    }
                 }
             }
         }
@@ -93,26 +157,70 @@ ColumnLayout {
                     text: flowSlider.selectedValue() + "%"
                 }
             }
-            OutlineSlider {
-                id: flowSlider
+            RowLayout {
                 Layout.fillWidth: true
-                from: 50
-                to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.flowFactorPercent * 2) : 200)
-                stepSize: 1
-                live: false
-                value: root.printerModel != null ? root.printerModel.flowFactorPercent : 100
-                enabled: root.printerModel != null
-                onValueTuning: {
-                    if (root.printerModel != null)
-                        root.printerModel.previewFlowFactor(value);
+                spacing: UM.Theme.getSize("thin_margin").width
+                OutlineSlider {
+                    id: flowSlider
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    from: 50
+                    to: Math.max(200, root.printerModel != null ? Math.ceil(root.printerModel.flowFactorPercent * 2) : 200)
+                    stepSize: 1
+                    live: false
+                    value: 100
+                    enabled: root.printerModel != null
+                    Component.onCompleted: {
+                        if (root.printerModel != null)
+                            flowSlider.value = root.printerModel.flowFactorPercent;
+                    }
+                    Connections {
+                        target: root.printerModel
+                        function onFlowFactorPercentChanged() {
+                            if (root.printerModel != null)
+                                flowSlider.value = root.printerModel.flowFactorPercent;
+                        }
+                    }
+                    onValueTuning: {
+                        if (root.printerModel != null)
+                            root.printerModel.previewFlowFactor(value);
+                    }
+                    onValueCommitted: {
+                        if (root.printerModel != null)
+                            root.printerModel.setFlowFactor(value);
+                    }
+                    onInteractingChanged: {
+                        if (root.interactionSink != null)
+                            root.interactionSink(interacting, "", "");
+                    }
                 }
-                onValueCommitted: {
-                    if (root.printerModel != null)
-                        root.printerModel.setFlowFactor(value);
-                }
-                onInteractingChanged: {
-                    if (root.interactionSink != null)
-                        root.interactionSink(interacting, "", "");
+                UM.SimpleButton {
+                    objectName: "moonrakerTuningFlowReset"
+                    width: UM.Theme.getSize("small_button_icon").width
+                    height: UM.Theme.getSize("small_button_icon").height
+                    // The cell must survive the row: the fillWidth
+                    // slider otherwise squeezes it to zero and the
+                    // press lands on the slider's track under the
+                    // glyph, committing the track position (the live
+                    // 200-reset find).
+                    Layout.minimumWidth: UM.Theme.getSize("small_button_icon").width
+                    Layout.alignment: Qt.AlignVCenter
+                    enabled: root.printerModel != null
+                    color: UM.Theme.getColor("text_inactive")
+                    hoverColor: UM.Theme.getColor("text")
+                    iconSource: UM.Theme.getIcon("ArrowDoubleCircleRight")
+                    onClicked: {
+                        if (root.printerModel != null)
+                            root.printerModel.setFlowFactor(100);
+                    }
+                    UM.ToolTip {
+                        visible: parent.hovered
+                        targetPoint: Qt.point(parent.width / 2, 0)
+                        x: 0
+                        y: parent.height + UM.Theme.getSize("default_margin").height
+                        width: UM.Theme.getSize("tooltip").width
+                        text: "Reset the extrusion multiplier to 100%."
+                    }
                 }
             }
         }
@@ -146,8 +254,8 @@ ColumnLayout {
                 // implicit width as a base, and the
                 // layout shares the leftover in
                 // proportion — "↑ 0.005" and "↑ 0.05"
-                // came out different widths (the
-                // author's report). A bound preferred
+                // came out different widths (a
+                // report). A bound preferred
                 // width — (row - 3 gaps) / 4 — makes
                 // every button the same width without
                 // depending on layout distribution.
@@ -161,9 +269,16 @@ ColumnLayout {
                             Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4
                             height: UM.Theme.getSize("action_button").height
                             text: "↑ " + modelData.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
-                            tooltip: "Moves the nozzle up, away from the bed."
                             enabled: root.printerModel != null && !root.printerModel.actionBusy && root.printerModel.sectionReason === ""
                             onClicked: root.printerModel.adjustZOffset(modelData)
+                            UM.ToolTip {
+                                visible: parent.hovered
+                                targetPoint: Qt.point(parent.width / 2, 0)
+                                x: 0
+                                y: parent.height + UM.Theme.getSize("default_margin").height
+                                width: UM.Theme.getSize("tooltip").width
+                                text: "Moves the nozzle up, away from the bed."
+                            }
                         }
                     }
                 }
@@ -177,9 +292,16 @@ ColumnLayout {
                             Layout.preferredWidth: (zOffsetGrid.width - 3 * zOffsetGrid.buttonSpacing) / 4
                             height: UM.Theme.getSize("action_button").height
                             text: "↓ " + Math.abs(modelData).toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
-                            tooltip: "Moves the nozzle down, closer to the bed."
                             enabled: root.printerModel != null && !root.printerModel.actionBusy && root.printerModel.sectionReason === ""
                             onClicked: root.printerModel.adjustZOffset(modelData)
+                            UM.ToolTip {
+                                visible: parent.hovered
+                                targetPoint: Qt.point(parent.width / 2, 0)
+                                x: 0
+                                y: parent.height + UM.Theme.getSize("default_margin").height
+                                width: UM.Theme.getSize("tooltip").width
+                                text: "Moves the nozzle down, closer to the bed."
+                            }
                         }
                     }
                 }

@@ -65,7 +65,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # The floor is the CURRENT census (2026-09-18, the panel's
         # re-census — the old 93 let 46 real steps convert to probes
         # before the pin fired): 139.
-        text = (ROOT / "tests/harness/scenarios.py").read_text()
+        text = (ROOT / "tests/harness/scenarios.py").read_text(encoding="utf-8")
         real = len(re.findall(
             r'"op": "(deliver_click|click_stage|click_text|key_press)"', text))
         self.assertGreaterEqual(real, 139)
@@ -101,7 +101,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # real-input op (the driver clicks by objectName/text only,
         # and the probe clicks BY GEOMETRY on the track), so the
         # witness is the inline QTest click.
-        text = (ROOT / "tests/harness/scenarios.py").read_text()
+        text = (ROOT / "tests/harness/scenarios.py").read_text(encoding="utf-8")
         direct = len(re.findall(
             r'"op": "(exec_slot|exec_file_slot|emit_click|confirm_box|exec_mode'
             r'|exec_validator|exec_console|exec_extrude|exec_test_connection|exec_code)"', text))
@@ -127,7 +127,7 @@ class ClassificationRatchetTests(unittest.TestCase):
         # geometry proof no verb expresses (the live report: the
         # fields must never overlap).
         # And the availability gate (x8): the collapse and restore
-        # slots — the author's live-untestable ruling rides the
+        # slots — the live-untestable ruling rides the
         # slots exactly as the other readout scenarios do.
         # And the cross-talk gate (x9): the info drag rides the x6
         # probe again, and the crosstalk probe runs twice — after
@@ -144,7 +144,19 @@ class ClassificationRatchetTests(unittest.TestCase):
         # clock's first tick (the click's target must resolve from
         # the mapped layer, never the file-position fallback that
         # lands inside the baked pause — the 2026-09-18 flake).
-        self.assertLessEqual(direct, 144)
+        # One more deliberate raise (4.5.0, DECISIONS): the popover
+        # rounds' six exec_codes — the dismissal probe's geometry
+        # clicks (no real-input op clicks by coordinates, the s8
+        # precedent) and the selector's five tri-state reads (the
+        # bespoke glyph used to assert by text; the native checkbox
+        # carries its state in checkState, which no declarative op
+        # reads yet).
+        # And one more (4.5.0, the hardening pass): a7's exec_mode —
+        # the klippy-ready scenario must return to websocket mode
+        # before the re-arm contract holds, and the only real-input
+        # path to a transport mode is the same exec_mode a2/a3/a10
+        # use (there is no clickable transport-mode control).
+        self.assertLessEqual(direct, 151)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —

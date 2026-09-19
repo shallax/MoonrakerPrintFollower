@@ -1,9 +1,9 @@
-"""The cross-platform gate (the author's directive: the plugin MUST
+"""The cross-platform gate (the directive: the plugin MUST
 run on Windows, macOS and Linux). The O_NOFOLLOW lesson — one
 POSIX-only constant silently broke every state write on Windows —
 becomes a permanent source sweep: each banned token must carry its
-platform guard in the same file, so a future author cannot
-reintroduce the class."""
+platform guard in the same file, so the class cannot be
+reintroduced."""
 
 import unittest
 from pathlib import Path

@@ -2,6 +2,82 @@
 
 Moonraker Print Follower is licensed under the GNU General Public License version 3 only (`GPL-3.0-only`).
 
+## 4.5.0
+
+Version 4.5.0 is the persistence release: the plugin's settings leave
+Cura's preference file for one MoonrakerPrintFollower folder beside
+it, migrated automatically on the first start after the upgrade. The
+release also swaps the webcam stream onto a plugin-owned renderer and
+lands the performance pass across the Monitor page.
+
+- **The persistence folder.** `MoonrakerPrintFollower/` holds
+  `settings.json` (the connection, following, upload, camera and
+  diagnostics configuration per printer), `state.json` (the pane
+  layout and UI chrome) and one small `machines/` file per printer
+  (the console transcript and history). Everything is pretty-printed
+  and sorted, pleasant to read in an editor, and a failed migration
+  flags itself: the dialog carries a notice with a rollback recipe
+  and Cura's configuration is backed up to `cura.cfg.<timestamp>`
+  before anything is removed.
+- **The Status pane's Position row** reads in the axis colours,
+  matching the collapsed readout and the Toolhead section.
+- **Dark mode:** the emergency-stop label's idle text follows the
+  theme, readable on the button's dark ground.
+- **The camera cold start.** The webcam stream now comes up in
+  milliseconds on the Monitor page: a refresh no longer restarts a
+  connecting websocket (the startup aborted its own handshake), the
+  first camera discovery applies the stream exactly once instead of
+  twice, and the discovery retries coalesce.
+- **The camera stream's own engine.** The webcam renders through a
+  plugin-owned MJPEG renderer instead of Cura's built-in loader: a
+  healthy stream stays connected indefinitely (the old loader
+  restarted the stream whenever its buffer crossed 2 MB — about once
+  a second on a 1080p camera), frames pace to a 30 fps ceiling with
+  the newest frame winning, and memory stays bounded. A small chip
+  overlays the live image with the stream's resolution and recent
+  bandwidth, and the camera selector now sits above the image on the
+  title row. A camera re-publish that changed only its URL's query
+  no longer restarts the stream, and the camera timing trace no
+  longer re-marks the periodic webcam poll.
+- **The webcam keeps its room.** As the Monitor window narrows, the
+  Information, Printer status and Printer controls panes fold
+  themselves so the webcam pane never shrinks below its readable
+  minimum — and expand themselves again when the window widens. The
+  webcam pane itself never collapses.
+- **The temperature chart scales.** The mini chart's payload is now a
+  bounded reduction — a fixed budget of render points per series that
+  keeps every spike — instead of the whole accumulated window; the
+  full pop-over chart stays dormant until it is opened (and returns
+  to dormancy when closed); the legends read live values from a tiny
+  per-sensor projection instead of searching the payload; and the
+  chart paints off Cura's main thread, with the hover cursor and
+  markers rebuilt as lightweight scene-graph items that never
+  repaint the chart. A full 30 minutes of history no longer weighs
+  on the Monitor page.
+- **The performance pass.** One monitor publish per heartbeat instead
+  of three or four; no preference-file or state-file reads on the
+  heartbeat (the config, the migration record and the console
+  transcript hydrate once and cache); and the console's server
+  chatter debounces into one write.
+- **A straighter Z floor.** Stale telemetry can no longer re-arm the
+  safety projection between a jog's dispatch and its reflection —
+  the promised 0.00 floor stays promised.
+- **The camera key stays home.** The Moonraker API key never rides to
+  a foreign webcam origin, and a deposed camera retires its bridge.
+- **The Cura floor.** Cura 5.7 / SDK 8.7 through Cura 5.13 / SDK
+  8.12 is now the supported range — every minor in between verified
+  end to end by the version sweep — with 5.11's preview limitations
+  documented in the README, and the console's input row and Send
+  button fixed on 5.11 and 5.12.
+- **Fixes:** the console's notes no longer persist across restarts
+  (they are session-transient by design), the status column's live
+  values never wrap (the per-second polish-loop warning), the
+  collapsed status strip's ETA readout no longer wraps, an empty
+  Moonraker history no longer permanently refuses a file's metadata,
+  the emergency label's colour answers the theme gate, and the
+  chart's power-axis labels moved inside the plot's edge (their last
+  glyph clipped at the pop-up's margin).
+
 ## 4.4.0
 
 Version 4.4.0 is the configurable-sections release: every pane's
@@ -149,7 +225,7 @@ behind it.
   Cura's own nozzle visible, so the live indicator stays reliable.
 - **The memory work, closed out.** The camera bridge's socket and
   reply objects are deleted on completion, the G-code hydration
-  cache evicts beyond its bound, and the author's soak of the
+  cache evicts beyond its bound, and a soak of the
   native follow path shows a bounded, oscillating current-RSS band
   that ends below its start. The experimental follow render pass
   (an alternative to Cura's own SimulationPass) was removed after
@@ -261,7 +337,7 @@ comes from one policy table that says why.
   hourglass's rotation resets through the idle state, so the
   download glyph never inherits the frozen angle.
 - **Bumped.** The gcode deformation (vertex-style) defers to 4.3.0
-  with a Snapshot-0 mock first, per the author's ruling.
+  with a Snapshot-0 mock first, per the ruling.
 
 ## 4.1.0
 
@@ -429,7 +505,7 @@ subscription, with HTTP kept as a selectable, automatic-fallback mode.
   and devices switched on mid-print now appear without a reconnect.
 - **Settings polish**: a wrong API key on Test connection reads "the
   API key was rejected (HTTP 401)".
-- **The 4.0.1 scope folded in (the author's ruling, 2026-09-11)**:
+- **The 4.0.1 scope folded in (the 2026-09-11 ruling)**:
   scroll-to-prompt (a successful console send returns the view to the
   prompt), the verified-pause-only list (an entry leaves only when
   the printer is observed paused; missed pauses stay listed in the
@@ -583,7 +659,7 @@ readouts and a better remaining-time estimate.
   was never loaded, and the layer-height readout uses the same source.
   The ETA readout shows the active basis (colour and tooltip), and a
   small download glyph beside the estimate runs the download-and-index
-  flow WITHOUT loading the preview (the author's optimisation: the
+  flow WITHOUT loading the preview (an optimisation: the
   render is only paid when the print is loaded in the Preview, which
   then reuses the already-downloaded file).
 - One shared pop-over shell for the Information pane's glanceable

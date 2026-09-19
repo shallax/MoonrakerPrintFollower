@@ -21,7 +21,7 @@ RowLayout {
     // metrics, not a layout feedback): the busy flip repaints the
     // content without changing the layout's size. A visible-toggle
     // changing the row's implicit height fed a polish loop on the
-    // author's Windows run.
+    // Windows run.
     height: Math.max(16 * screenScaleFactor, phaseLabel.implicitHeight)
 
     // The busy gate lives on an INNER row: bindings on the ROOT

@@ -53,7 +53,7 @@ WORKDIR /work
 # qmlformat 6.4 (Ubuntu 24.04) predates --check: format to stdout and
 # diff against the file instead. The binary installs outside PATH
 # (/usr/lib/qt6/bin); the symlink keeps plain `qmlformat` invocations
-# working for editors and quick iteration (the author's request).
+# working for editors and quick iteration (by request).
 COPY tools/check_qml_format.sh /usr/local/bin/check_qml_format
 RUN chmod +x /usr/local/bin/check_qml_format \
     && ln -s /usr/lib/qt6/bin/qmlformat /usr/local/bin/qmlformat

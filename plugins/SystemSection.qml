@@ -38,17 +38,31 @@ ColumnLayout {
                 // The policy gate (4.2.0): the
                 // reason rides the tooltip when
                 // the button is denied.
-                tooltip: "Restart Klipper's firmware process (FIRMWARE_RESTART)." + (root.printerModel != null && !root.printerModel.canRestart && root.printerModel.restartReasonDetail !== "" ? " " + root.printerModel.restartReasonDetail : "")
                 enabled: root.printerModel != null && root.printerModel.canRestart
                 onClicked: root.printerModel.firmwareRestart()
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Restart Klipper's firmware process (FIRMWARE_RESTART)." + (root.printerModel != null && !root.printerModel.canRestart && root.printerModel.restartReasonDetail !== "" ? " " + root.printerModel.restartReasonDetail : "")
+                }
             }
             Cura.SecondaryButton {
                 Layout.fillWidth: true
                 text: "Host restart"
                 objectName: "moonrakerHostRestart"
-                tooltip: "Reboot the host Moonraker runs on (machine/reboot)." + (root.printerModel != null && !root.printerModel.canRestart && root.printerModel.restartReasonDetail !== "" ? " " + root.printerModel.restartReasonDetail : "")
                 enabled: root.printerModel != null && root.printerModel.canRestart
                 onClicked: root.printerModel.hostRestart()
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Reboot the host Moonraker runs on (machine/reboot)." + (root.printerModel != null && !root.printerModel.canRestart && root.printerModel.restartReasonDetail !== "" ? " " + root.printerModel.restartReasonDetail : "")
+                }
             }
         }
         RowLayout {
@@ -57,14 +71,21 @@ ColumnLayout {
             Cura.SecondaryButton {
                 // On its own row: three long labels
                 // in one row crushed each other and
-                // the text left its bounds (the
-                // author's live report).
+                // the text left its bounds (a live
+                // report).
                 Layout.fillWidth: true
                 text: "Klipper restart"
                 objectName: "moonrakerKlipperRestart"
-                tooltip: "Restart Klipper entirely (printer/restart): reloads the config and reconnects the MCU." + (root.printerModel != null && !root.printerModel.canRestart && root.printerModel.restartReasonDetail !== "" ? " " + root.printerModel.restartReasonDetail : "")
                 enabled: root.printerModel != null && root.printerModel.canRestart
                 onClicked: root.printerModel.klipperRestart()
+                UM.ToolTip {
+                    visible: parent.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
+                    text: "Restart Klipper entirely (printer/restart): reloads the config and reconnects the MCU." + (root.printerModel != null && !root.printerModel.canRestart && root.printerModel.restartReasonDetail !== "" ? " " + root.printerModel.restartReasonDetail : "")
+                }
             }
         }
         GridLayout {
@@ -89,13 +110,18 @@ ColumnLayout {
                 elide: Text.ElideRight
                 color: UM.Theme.getColor("text")
                 Layout.fillWidth: true
-                UM.TooltipArea {
-                    anchors.fill: parent
+                HoverHandler {
+                    id: tooltipHover1
+                }
+                UM.ToolTip {
+                    visible: tooltipHover1.hovered
+                    targetPoint: Qt.point(parent.width / 2, 0)
+                    x: 0
+                    y: parent.height + UM.Theme.getSize("default_margin").height
+                    width: UM.Theme.getSize("tooltip").width
                     // Short value in the row, full
-                    // sentence in the tooltip (the
-                    // author's ruling).
+                    // sentence in the tooltip (the ruling).
                     text: root.printerModel != null ? root.printerModel.restartReasonDetail : ""
-                    acceptedButtons: Qt.NoButton
                 }
             }
         }

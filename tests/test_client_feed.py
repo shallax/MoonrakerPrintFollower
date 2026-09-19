@@ -28,12 +28,21 @@ if QT_AVAILABLE:
             self.rpcs = []
             self.stops = 0
             self.is_upgraded = False
+            # The lifecycle double (the camera-delay fix): hold_upgrade
+            # models the in-flight handshake window the drain rule
+            # must never restart.
+            self.is_connecting = False
+            self.hold_upgrade = False
             self.core_patch = None
             self.core_stamp = 0.0
             self.aux_patch = None
 
         def start(self, url, api_key, core_names, aux_names):
             self.starts.append((url, api_key, set(core_names), set(aux_names)))
+            self.is_connecting = True
+            if self.hold_upgrade:
+                return
+            self.is_connecting = False
             self.is_upgraded = True
             self.upgraded.emit()
 
@@ -45,6 +54,7 @@ if QT_AVAILABLE:
         def stop(self):
             self.stops += 1
             self.is_upgraded = False
+            self.is_connecting = False
 
         def drain_core(self):
             patch, stamp = self.core_patch, self.core_stamp
@@ -91,7 +101,7 @@ class ClientFeedTests(unittest.TestCase):
         })
 
     def test_idle_floor_does_not_gate_the_first_connection(self):
-        # The author's live report: ~5 s of dead UI before the printer
+        # A live report: ~5 s of dead UI before the printer
         # showed as connected — the idle floor (5000 ms) governed the
         # tick from startup, so a failed first attempt retried five
         # seconds later. Until the first status has ever landed, the
@@ -105,7 +115,7 @@ class ClientFeedTests(unittest.TestCase):
         self.assertEqual(self.client._poll_timer.interval(), 5000)
 
     def test_failure_ladder_does_not_gate_a_never_connected_session(self):
-        # The author's live report: ~5 s of dead UI before the first
+        # A live report: ~5 s of dead UI before the first
         # data — each fast startup failure walks the ladder (1 s, 2 s,
         # 5 s) and the 5 s rung then gates a session that has never
         # connected. Until the printer has ever answered, the retry
@@ -122,7 +132,7 @@ class ClientFeedTests(unittest.TestCase):
         self.assertGreater(self.client._retry_delay_ms, 750)
 
     def test_connect_transition_republishes_the_accumulated_snapshot(self):
-        # The author's ruling: the connect transition re-broadcasts
+        # The ruling: the connect transition re-broadcasts
         # the accumulated snapshot so every listener populates
         # instantly — even one that attached after the sync landed.
         self.client.configure("http://p", "k", 750, feed_mode="websocket")
@@ -200,10 +210,87 @@ class ClientFeedTests(unittest.TestCase):
         generation = self.session.generation
         notes = []
         self.client.connectionChanged.connect(lambda connected, reason: notes.append((connected, reason)))
+        stops_before = self.socket.stops
         self.socket.subscribeRefused.emit({"code": -32602, "message": "Unknown"})
         self.assertEqual(self.client.effective_feed_mode, "http")
         self.assertEqual(self.session.generation, generation)
         self.assertTrue(any("refused" in reason for _, reason in notes), notes)
+        # The hardening pass: the retired socket side stops with the
+        # fallback — the configured preference stays websocket, the
+        # proof timer stands down, the RPC lane closes, and HTTP
+        # polling resumes.
+        self.assertEqual(self.client.configured_feed_mode, "websocket")
+        self.assertFalse(self.client._proof_timer.isActive())
+        self.assertFalse(self.client.rpc_available())
+        self.assertEqual(self.socket.stops, stops_before + 1)
+        self.assertTrue(self.transport.requests)  # the HTTP refresh started
+
+    def test_a_refresh_never_restarts_a_connecting_socket(self):
+        # The camera-delay fix: the startup sequence's repeated
+        # refreshes used to abort the in-flight handshake and start
+        # from zero each time, starving the websocket-bootstrapped
+        # discovery lane.
+        self.socket.hold_upgrade = True
+        # A proof window far beyond the test's pumps: the silent-proof
+        # fallback is a legitimate restart path, and this test pins
+        # the REFRESH paths only.
+        self.client = MoonrakerClient(session=self.session, proof_timeout_ms=100000)
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.assertEqual(len(self.socket.starts), 1)
+        self.assertTrue(self.socket.is_connecting)
+        self.client.force_refresh()
+        self.pump(0.1)
+        self.client.force_refresh()
+        self.pump(0.1)
+        self.client._drain_socket_feed(force=False)  # the poll tick
+        self.assertEqual(len(self.socket.starts), 1,
+                         "a refresh must never restart a connecting socket")
+        # The upgrade completes: the subscription flows once.
+        self.socket.is_connecting = False
+        self.socket.is_upgraded = True
+        self.socket.upgraded.emit()
+        self.assertTrue(self.socket.subscriptions)
+
+    def test_a_dead_socket_still_reconnects_after_a_failure(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.assertEqual(len(self.socket.starts), 1)
+        # The socket dies terminally: the lifecycle clears (the real
+        # socket's _enter_failed — mirrored on the double), and the
+        # next permitted refresh starts exactly one replacement.
+        self.socket.failed.emit("peer reset")
+        self.socket.is_upgraded = False
+        self.socket.is_connecting = False
+        self.pump(0.1)
+        self.client._drain_socket_feed(force=True)
+        self.assertEqual(len(self.socket.starts), 2)
+
+    def test_the_monitor_startup_sequence_restarts_nothing_pre_upgrade(self):
+        # The actual startup composition: the client's socket is
+        # already handshaking when the monitor arms its lanes.
+        self.socket.hold_upgrade = True
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        from plugins.MonitorData import MonitorData
+        data = MonitorData(self.client, None)
+        for timer in data._timers.values():
+            timer.stop()
+        data._console_watch.stop()
+        data._watchdog.stop()
+        data.set_owner_active(True)
+        data.refresh_all()
+        self.pump(0.2)
+        self.assertEqual(len(self.socket.starts), 1,
+                         "the monitor's startup lanes must not restart the handshaking socket")
+
+    def test_a_stale_klippy_ready_after_the_refusal_does_not_resubscribe(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.socket.subscribeRefused.emit({"code": -32602, "message": "Unknown"})
+        subscriptions = len(self.socket.subscriptions)
+        self.socket.klippyReady.emit()
+        self.assertEqual(len(self.socket.subscriptions), subscriptions)
 
     def test_unauthorized_refusal_is_a_key_rejection_failure(self):
         self.client.configure("http://p", "k", 750, feed_mode="websocket")
@@ -383,7 +470,7 @@ if QT_AVAILABLE:
             self.app = QCoreApplication.instance() or QCoreApplication([])
             self.client = self.FakeDataClient()
             self.data = self.ProbeData(self.client)
-            self.data.set_active(True)
+            self.data.set_owner_active(True)
             # set_active fires the lanes once (the boot pass); the
             # asserts below drive the ticks manually, so silence the
             # timers.
@@ -412,11 +499,13 @@ if QT_AVAILABLE:
             self.assertTrue(self.data.later_calls)
             delay_ms, callback = self.data.later_calls[-1]
             self.assertEqual(delay_ms, 1000)
-            # The retry is the bound refresh_discovery (the probe
-            # overrides the method to count calls, so pin the bound
-            # self and the override's own function).
-            self.assertIs(callback.__self__, self.data)
-            self.assertIs(callback.__func__, self.ProbeData.refresh_discovery)
+            # The retry is the single deferred re-arm: invoking it
+            # re-fires the chain (the probe's override counts
+            # refresh_discovery calls). The defer re-arm cycle itself
+            # is pinned in test_preview_family_coverage.
+            discovery_before = self.data.discovery_calls
+            callback()
+            self.assertEqual(self.data.discovery_calls, discovery_before + 1)
             # With the RPC lane live the request rides it: no retry is
             # scheduled and nothing falls through to the wire.
             self.client.rpc_ok = True

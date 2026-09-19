@@ -8,8 +8,22 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Author:** shallax
 - **Maintainer:** moonrakerprintfollower@maintain.contact
 - **Project:** https://github.com/shallax/MoonrakerPrintFollower
-- **Release:** 4.4.0
-- **Target:** Cura 5.11–5.13 / SDK 8.11–8.12
+- **Release:** 4.5.0
+- **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
+
+## What changed in 4.5.0
+- The webcam comes up in milliseconds on the Monitor page — the startup's two races (a refresh restarting its own websocket, and the first discovery applying the stream twice) are fixed.
+- The webcam stream renders through the plugin's own MJPEG engine — a healthy stream stays connected indefinitely instead of restarting on large frames, with paced, newest-frame-wins playback and bounded memory.
+- The performance pass: one publish per heartbeat, no disk reads on the heartbeat, debounced console writes, and a temperature chart that builds only what the open view renders.
+- The camera's API key never rides to a foreign webcam origin, and stale telemetry can no longer re-arm the Z-floor safety projection.
+- The Cura floor is now 5.7 / SDK 8.7, verified end to end on every minor through 5.13.
+
+Version 4.5.0 is the persistence release: the plugin's settings move
+into one MoonrakerPrintFollower folder beside Cura's configuration,
+migrated automatically on the first start with a backup taken first.
+Nothing else changes for a healthy upgrade — the Status pane's
+Position row now reads in the axis colours and the emergency-stop
+label is readable in dark mode.
 
 ## What changed in 4.4.0
 
@@ -388,17 +402,21 @@ The generic Cura output controller remains conservative and does not advertise u
 
 On startup, Moonraker Print Follower looks for the standalone plugin's existing per-printer preference data under `moonraker/instances` and imports compatible settings once.
 
-Existing Moonraker Print Follower URL/API-key values take precedence when already configured. Upload-specific settings such as format/path, start-print behaviour, power devices, retry interval, frontend URL and filename translation are imported from Moonraker Connection. Its legacy camera URL, rotation and mirror settings are also imported as a fallback for Moonraker installations that do not expose webcam configuration through the webcam API. The old preference data is left untouched so rollback remains possible.
+Existing Moonraker Print Follower URL/API-key values take precedence when already configured. Upload-specific settings such as format/path, start-print behaviour, power devices, retry interval, frontend URL and filename translation are imported from Moonraker Connection. Its legacy camera URL, rotation and mirror settings are also imported as a fallback for Moonraker installations that do not expose webcam configuration through the webcam API.
+
+The 4.5 settings migration moves the old preference data into the plugin's new per-machine settings files and, after verifying the move, removes the old preferences. Rollback and recovery are provided by a timestamped copy of Cura's configuration file (`cura.cfg.<timestamp>`) taken before anything is removed.
+
+If a retryable migration step fails, the old preferences are left in place and the migration is retried on the next start. If the legacy data is corrupt, the plugin preserves the original `cura.cfg` backup, records the recovery failure in the new settings document, and removes the unusable legacy preferences only after that recovery state has been written successfully.
 
 After verifying the integrated plugin with your printers, the separate Moonraker Connection plugin can be removed.
 
 ## Cura / SDK compatibility
 
-The plugin targets **Cura 5.11 / SDK 8.11** through **Cura 5.13 / SDK 8.12**. The package declares SDK 8.11 as its minimum package SDK, and `plugin.json` records exactly SDK 8.11 and 8.12 — a deliberate product boundary; the 5.11 floor is not an API dependency.
+The plugin targets **Cura 5.7 / SDK 8.7** through **Cura 5.13 / SDK 8.12**. The package declares SDK 8.7 as its minimum package SDK, and `plugin.json` records the SDKs 8.7 through 8.12 — a deliberate product boundary; the 5.7 floor is not an API dependency.
 
-The implementation stays on APIs present across Cura 5.11–5.13: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls, and Cura's native nozzle interface. Optional conveniences are capability-checked where required.
+The implementation stays on APIs present across Cura 5.7–5.13: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls, and Cura's native nozzle interface. Optional conveniences are capability-checked where required.
 
-Cura 4.x / SDK 7.x is not supported, and Cura 5.0–5.10 are no longer advertised.
+Cura 4.x / SDK 7.x is not supported, and neither is Cura 5.6 or older. On Cura 5.11 alone the preview integration is limited by 5.11's SimulationView: the live print does not render as view layers and the layer slider hides after a plugin load (the follower's card, state and pause scheduling still work).
 
 Actual rendering, output-device presentation, webcam streaming and printer interaction should still be smoke-tested on representative Cura releases before publishing a compatibility claim.
 

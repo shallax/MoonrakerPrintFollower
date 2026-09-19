@@ -26,6 +26,47 @@ from typing import List, Tuple
 # One entry per release, latest first.
 WHATS_NEW: Tuple[dict, ...] = (
     {
+        "version": "4.5.0",
+        "headline": "Version 4.5.0 moves the plugin's settings into its own "
+            "folder, so your configuration and console history carry over "
+            "cleanly and Cura's configuration file stays its own.",
+        "items": (
+            "All of the plugin's saved data now lives in one "
+            "MoonrakerPrintFollower folder beside Cura's settings — "
+            "your printers, cameras and panel layout move across "
+            "automatically on the first start, with a backup taken "
+            "first.",
+            "The Status pane's Position row reads in the axis colours, "
+            "matching the collapsed readout and the Toolhead.",
+            "Dark mode: the emergency-stop label is readable on the "
+            "button's dark ground.",
+            "The webcam now appears in milliseconds when you open "
+            "the Monitor — the startup no longer restarts its own "
+            "connection or applies the stream twice.",
+            "The webcam stream now plays through the plugin's own "
+            "engine: a healthy stream stays connected for as long "
+            "as it runs instead of restarting every few seconds on "
+            "large frames, playback paces smoothly with the newest "
+            "frame winning, and re-announcing the same camera no "
+            "longer interrupts it.",
+            "As the Monitor window narrows, the Information, Printer "
+            "status and Printer controls panes fold away on their own "
+            "so the webcam keeps its room — widen the window and "
+            "they come back. The webcam never collapses.",
+            "The temperature chart stays light: a full 30 minutes of "
+            "history no longer weighs on the Monitor page, the "
+            "pop-over chart paints in the background, and hovering "
+            "the chart no longer redraws it.",
+            "The Monitor page publishes once per heartbeat, reads "
+            "nothing from disk while it runs, and batches the "
+            "console's writes — the page stays responsive on a "
+            "chatty printer.",
+            "Cura 5.7 or newer (SDK 8.7+) is now the floor — every "
+            "version in between verifies end to end, with 5.11's "
+            "preview limitation documented in the README.",
+        ),
+    },
+    {
         "version": "4.4.0",
         "headline": "Version 4.4.0 is the configurable-sections release: every "
             "Monitor pane orders and hides its own sections, the collapsed "

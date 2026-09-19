@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from collections import deque
 from dataclasses import dataclass
+from itertools import islice
 from typing import Dict, List, Mapping, Optional
 
 from .MonitorFormatting import chart_label, chart_temperature_objects, number
@@ -23,6 +24,13 @@ from .MonitorFormatting import chart_label, chart_temperature_objects, number
 # only binds at faster cadences (headroom for bursts).
 WINDOW_SECONDS = 1800
 MAX_SAMPLES = 1800
+
+# The mini sparkline's render budget: the compact chart is at most
+# ~250 px wide at the plugin's smallest supported scale, so 240 kept
+# points is one per pixel — a fuller reduction could not be seen. The
+# reduction keeps each bucket's minimum AND maximum, so no spike is
+# erased, and the raw 30-minute window it draws from is never touched.
+MINI_RENDER_BUDGET = 240
 
 # A feed gap longer than this starts a new window.
 GAP_RESET_SECONDS = 30.0
@@ -97,7 +105,12 @@ class TemperatureHistory:
         elapsed = float(now) - self._start
         if elapsed < 0:
             # The monotonic clock can step backwards (system suspend):
-            # re-anchor instead of letting the trim eat everything.
+            # re-anchor instead of letting the trim eat everything. The
+            # samples already kept belong to the old timebase, so the
+            # window restarts — the same session break a long gap is —
+            # and every series stays ordered by elapsed, which the
+            # chart's nearest-sample search relies on.
+            self.reset()
             self._start = float(now)
             elapsed = 0.0
         if elapsed - self._latest_elapsed > GAP_RESET_SECONDS:
@@ -153,12 +166,35 @@ class TemperatureHistory:
         """[[elapsed, temperature], ...] for the QML chart."""
         return [[sample.elapsed, sample.temperature] for sample in self._series.get(str(name), ())]
 
+    def points_and_bounds(self, name: str):
+        """[[elapsed, temperature], ...] and the temperature/elapsed
+        render domain, built in ONE pass over the window — the payload
+        needs both, and the split form walked the same samples twice."""
+        samples = self._series.get(str(name))
+        points: List[List[float]] = []
+        if not samples:
+            return points, {}
+        temp_min = temp_max = samples[0].temperature
+        for sample in samples:
+            points.append([sample.elapsed, sample.temperature])
+            if sample.temperature < temp_min:
+                temp_min = sample.temperature
+            elif sample.temperature > temp_max:
+                temp_max = sample.temperature
+        # Elapsed ascends: the ends ARE the domain's ends.
+        return points, {"tempMin": temp_min, "tempMax": temp_max,
+                        "elapsedMin": samples[0].elapsed, "elapsedMax": samples[-1].elapsed}
+
     def target_segments(self, name: str) -> List[List[List[float]]]:
         """Segments of [[elapsed, target], ...]; None-target gaps split
         the polyline so the chart draws literal breaks instead of
-        bridging an off period."""
-        return _segments([sample.elapsed, sample.target]
-                         for sample in self._series.get(str(name), ()) if sample.target is not None)
+        bridging an off period. Constant runs are compressed to their
+        first and last sample: a setpoint holds for minutes at a time,
+        and the drawn band, its fill and the values the chart's render
+        domain scans are all unchanged by dropping the samples between."""
+        return [_compress_steps(segment) for segment in _segments(
+            [sample.elapsed, sample.target]
+            for sample in self._series.get(str(name), ()) if sample.target is not None)]
 
     def power_segments(self, name: str) -> List[List[List[float]]]:
         """Segments of [[elapsed, power], ...]; None-power gaps split."""
@@ -171,6 +207,22 @@ class TemperatureHistory:
         self._latest_elapsed = 0.0
         self._wall_origin = None
         self._revision += 1  # a reset changes the payload: force rebuilds
+
+
+def _compress_steps(segment: List[List[float]]) -> List[List[float]]:
+    """Keep only the samples a step-shaped track needs: the first and
+    last sample of every run of equal values. The plot joins the kept
+    samples with straight lines, and the dropped ones all sat on the
+    horizontal line between their neighbours, so the drawn shape — and
+    the set of values drawn — is bit-for-bit what the full track drew.
+    """
+    compressed: List[List[float]] = []
+    for index, point in enumerate(segment):
+        if not compressed or compressed[-1][1] != point[1]:
+            compressed.append(point)
+        elif index + 1 == len(segment) or segment[index + 1][1] != point[1]:
+            compressed.append(point)
+    return compressed
 
 
 def _segments(track) -> List[List[List[float]]]:
@@ -193,32 +245,213 @@ def _segments(track) -> List[List[List[float]]]:
     return segments
 
 
-def chart_payload(history: "TemperatureHistory", config: Mapping) -> dict:
-    """The QML-facing chart model: one entry per series with its points,
-    gap-split target/power segments, the primary flag for the mini
-    widget, plus the display toggles and palette. Colours fall back to
-    the palette by sorted-name index, so the defaults are stable across
-    restarts."""
+def _target_bounds(segments) -> dict:
+    """The lit-setpoint extremes over already-compressed segments — one
+    walk, no per-sample lists. Setpoints at or below zero are heater-off
+    markers, not data, so they stay out."""
+    target_min = target_max = None
+    for segment in segments:
+        for point in segment:
+            if point[1] > 0:
+                if target_min is None or point[1] < target_min:
+                    target_min = point[1]
+                if target_max is None or point[1] > target_max:
+                    target_max = point[1]
+    if target_min is None:
+        return {}
+    return {"targetMin": target_min, "targetMax": target_max}
+
+
+def mini_names(names: List[str], visible: Mapping) -> List[str]:
+    """The preview's series selection: visible primaries first, topped
+    up to two with visible others; without any primary, the first two
+    visible others. The one policy — the mini payload's points and the
+    legend's mini row list both resolve from it."""
+    visible_names = [name for name in names if bool(visible.get(name, True))]
+    primaries = [name for name in visible_names if _is_primary(name)]
+    others = [name for name in visible_names if not _is_primary(name)]
+    if primaries:
+        return primaries + others[:max(0, 2 - len(primaries))]
+    return others[:2]
+
+
+def series_metadata(history: "TemperatureHistory", config: Mapping) -> List[dict]:
+    """Identity, label, colour and visibility for EVERY series — the
+    legend's source. The data payloads omit hidden series; this never
+    does, so a hidden sensor can always be re-enabled."""
     config = config if isinstance(config, Mapping) else {}
     visible = config.get("visible") if isinstance(config.get("visible"), Mapping) else {}
     colors = config.get("colors") if isinstance(config.get("colors"), Mapping) else {}
+    return [{"name": name, "label": chart_label(name),
+             "color": str(colors.get(name) or PALETTE[index % len(PALETTE)]),
+             "visible": bool(visible.get(name, True)),
+             "primary": _is_primary(name)}
+            for index, name in enumerate(history.names())]
+
+
+def latest_values(history: "TemperatureHistory") -> Dict[str, float]:
+    """Each series' current temperature — one scalar per name, so a
+    label never searches a full payload to read its live value."""
+    return {name: points[-1].temperature
+            for name, points in history._series.items() if points}
+
+
+def _emit_bucket(points, bucket_min, bucket_max) -> None:
+    """Append one bucket's two extremes in elapsed order; a bucket whose
+    minimum and maximum are the same sample contributes once."""
+    if bucket_min is None:
+        return
+    if bucket_min is bucket_max:
+        points.append([bucket_min.elapsed, bucket_min.temperature])
+    elif bucket_min.elapsed <= bucket_max.elapsed:
+        points.append([bucket_min.elapsed, bucket_min.temperature])
+        points.append([bucket_max.elapsed, bucket_max.temperature])
+    else:
+        points.append([bucket_max.elapsed, bucket_max.temperature])
+        points.append([bucket_min.elapsed, bucket_min.temperature])
+
+
+def _mini_points(samples) -> tuple:
+    """One series' bounded render representation for the sparkline, in a
+    single pass over the raw window — no intermediate full-history
+    arrays. Beyond the budget, the interior samples collapse into index
+    buckets and each bucket keeps its temperature minimum AND maximum,
+    so a narrow spike always survives as its extremes; the first and
+    last samples are kept outright. The bounds come from the same
+    pass: every sample is scanned, so the reduction's domain is the
+    raw window's domain."""
+    if not samples:
+        return [], {}
+    first = samples[0]
+    last = samples[-1]
+    if len(samples) <= MINI_RENDER_BUDGET:
+        points = [[sample.elapsed, sample.temperature] for sample in samples]
+        temp_min = temp_max = first.temperature
+        for sample in samples:
+            if sample.temperature < temp_min:
+                temp_min = sample.temperature
+            elif sample.temperature > temp_max:
+                temp_max = sample.temperature
+        return points, {"tempMin": temp_min, "tempMax": temp_max,
+                        "elapsedMin": first.elapsed, "elapsedMax": last.elapsed}
+    points = [[first.elapsed, first.temperature]]
+    temp_min = temp_max = first.temperature
+    bucket_count = (MINI_RENDER_BUDGET - 2) // 2
+    step = (len(samples) - 2) / bucket_count
+    bucket_min = bucket_max = None
+    current = -1
+    # islice, not a slice: a slice would materialise the whole interior
+    # as a throwaway list, and the point of the reduction is to never
+    # allocate at history size.
+    for index, sample in enumerate(islice(samples, 1, len(samples) - 1)):
+        if sample.temperature < temp_min:
+            temp_min = sample.temperature
+        elif sample.temperature > temp_max:
+            temp_max = sample.temperature
+        bucket = int(index // step)
+        if bucket != current:
+            _emit_bucket(points, bucket_min, bucket_max)
+            current = bucket
+            bucket_min = bucket_max = sample
+        else:
+            if sample.temperature < bucket_min.temperature:
+                bucket_min = sample
+            elif sample.temperature > bucket_max.temperature:
+                bucket_max = sample
+    _emit_bucket(points, bucket_min, bucket_max)
+    if last.temperature < temp_min:
+        temp_min = last.temperature
+    elif last.temperature > temp_max:
+        temp_max = last.temperature
+    points.append([last.elapsed, last.temperature])
+    return points, {"tempMin": temp_min, "tempMax": temp_max,
+                    "elapsedMin": first.elapsed, "elapsedMax": last.elapsed}
+
+
+def mini_chart_payload(history: "TemperatureHistory", config: Mapping) -> dict:
+    """The compact-preview payload (temperatureChartMini): ONLY the
+    selected mini series ride along, each as its bounded render
+    reduction — never targets or power, which the compact chart does
+    not draw. The payload's SIZE therefore stops growing once the
+    window outgrows the render budget (the build stays one
+    allocation-light scan over the raw window per feed), and hidden
+    sensors contribute nothing."""
+    config = config if isinstance(config, Mapping) else {}
+    visible = config.get("visible") if isinstance(config.get("visible"), Mapping) else {}
+    colors = config.get("colors") if isinstance(config.get("colors"), Mapping) else {}
+    selected = set(mini_names(history.names(), visible))
     series = []
     for index, name in enumerate(history.names()):
+        if name not in selected:
+            continue
+        points, bounds = _mini_points(history._series.get(name))
         series.append({
             "name": name,
             "label": chart_label(name),
             "color": str(colors.get(name) or PALETTE[index % len(PALETTE)]),
-            "visible": bool(visible.get(name, True)),
+            "visible": True,
             "primary": _is_primary(name),
-            "points": history.points(name),
-            "targets": history.target_segments(name),
-            "powers": history.power_segments(name),
+            "points": points,
+            "bounds": bounds,
         })
     return {
         "series": series,
-        "showTargets": bool(config.get("showTargets", True)),
-        "showPower": bool(config.get("showPower", True)),
+        "showTargets": False,
+        "showPower": False,
         "palette": list(PALETTE),
         "filling": history.filling,
         "wallOrigin": history.wall_origin,
     }
+
+
+def chart_payload(history: "TemperatureHistory", config: Mapping) -> dict:
+    """The full pop-over payload (temperatureChartFull): every visible
+    series' complete window, with target and power segments built ONLY
+    while their toggles are on. Hidden series stay out entirely — their
+    metadata lives in series_metadata, and re-enabling one rebuilds
+    this payload through the model's config-keyed cache."""
+    config = config if isinstance(config, Mapping) else {}
+    visible = config.get("visible") if isinstance(config.get("visible"), Mapping) else {}
+    colors = config.get("colors") if isinstance(config.get("colors"), Mapping) else {}
+    show_targets = bool(config.get("showTargets", True))
+    show_power = bool(config.get("showPower", True))
+    series = []
+    for index, name in enumerate(history.names()):
+        if not bool(visible.get(name, True)):
+            continue
+        points, bounds = history.points_and_bounds(name)
+        targets = history.target_segments(name) if show_targets else []
+        if targets:
+            bounds.update(_target_bounds(targets))
+        series.append({
+            "name": name,
+            "label": chart_label(name),
+            "color": str(colors.get(name) or PALETTE[index % len(PALETTE)]),
+            "visible": True,
+            "primary": _is_primary(name),
+            "points": points,
+            "targets": targets,
+            "powers": history.power_segments(name) if show_power else [],
+            "bounds": bounds,
+        })
+    return {
+        "series": series,
+        "showTargets": show_targets,
+        "showPower": show_power,
+        "palette": list(PALETTE),
+        "filling": history.filling,
+        "wallOrigin": history.wall_origin,
+    }
+
+
+# The closed pop-over's full payload: one shared object, so the model
+# republishes the same identity every feed and the QML property never
+# re-converts while no full chart exists to draw the data.
+DORMANT_CHART = {
+    "series": [],
+    "showTargets": True,
+    "showPower": True,
+    "palette": list(PALETTE),
+    "filling": False,
+    "wallOrigin": None,
+}

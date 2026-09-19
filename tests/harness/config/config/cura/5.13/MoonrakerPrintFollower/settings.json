@@ -1,0 +1,57 @@
+{
+  "configVersion": 2,
+  "global": {
+    "activeMachineId": null,
+    "migration": {
+      "attemptedAt": "2026-09-18-00-00-00",
+      "backupName": null,
+      "backupWritten": false,
+      "bannerDismissed": false,
+      "reason": "nothing-to-do",
+      "records": 0,
+      "status": "ok",
+      "toastShown": false
+    }
+  },
+  "machines": {
+    "FDM Printer Base Description": {
+      "api_key": "",
+      "auto_preview": false,
+      "aux_interval_ms": 2500,
+      "camera_mirror": false,
+      "camera_rotation": 0,
+      "camera_selected": "",
+      "camera_url": "",
+      "console_interval_ms": 1000,
+      "enabled": true,
+      "eta_learn": false,
+      "feed_mode": "websocket",
+      "filename_translate_input": "",
+      "filename_translate_output": "",
+      "filename_translate_remove": "",
+      "follow_mode": "exact",
+      "frontend_url": "",
+      "moonraker_layer_is_one_based": true,
+      "output_format": "gcode",
+      "path_follow": true,
+      "path_smoothing": true,
+      "poll_interval_ms": 750,
+      "power_devices": "",
+      "ready_retry_interval_s": 0.5,
+      "show_probe_points": false,
+      "show_toolhead_indicator": true,
+      "temperature_chart": {},
+      "trace_http": false,
+      "trace_layer": false,
+      "upload_autohide_message": false,
+      "upload_dialog": true,
+      "upload_path": "",
+      "upload_paths": [],
+      "upload_remember_state": false,
+      "upload_start_print": false,
+      "url": "http://127.0.0.1:7125",
+      "z_fallback": true,
+      "z_tolerance": 0.04
+    }
+  }
+}

@@ -24,7 +24,7 @@ help:
 	@echo "verify_captures        two capture runs in the pinned container must be"
 	@echo "                       byte-identical (catches leaked live inputs)"
 	@echo "snapshot_package       build + verify, then copy the curapackage to"
-	@echo "                       /tmp/mpf.curapackage for the author to SCP"
+	@echo "                       /tmp/mpf.curapackage, ready to SCP"
 	@echo "snapshot_quick         the FAST iteration path: lint + run_tests + a"
 	@echo "                       verified package, no captures or determinism"
 	@echo "package                build and verify the Cura package and Marketplace ZIP"
@@ -69,25 +69,27 @@ verify_captures:
 	./tools/verify_capture_determinism.sh
 
 package:
-	python3 tools/build_curapackage.py
-	python3 tools/build_marketplace_source.py
+	# The two artifacts are independent: build them side by side
+	# (the 2026-09-18 parallelism ruling), then verify both.
+	python3 tools/build_curapackage.py & python3 tools/build_marketplace_source.py & wait
 	python3 tools/verify_curapackage.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])').curapackage"
 	python3 tools/verify_marketplace_source.py "dist/MoonrakerPrintFollower-v$$(python3 -c 'import json; print(json.load(open("package.json"))["package_version"])')-source.zip"
 
-# The author SCPs the built package to the Cura machine after every
-# push: a verified curapackage at a fixed path, rebuilt from the
-# current checkout (make package above builds and verifies both
-# artifacts first).
+# The built package is SCP'd to the Cura machine after every push: a
+# verified curapackage at a fixed path, rebuilt from the current
+# checkout (make package above builds and verifies both artifacts
+# first).
 snapshot_package: package
 	cp dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
 
-# The FAST iteration path for the snapshot loop (the author's ruling,
-# 2026-09-10, amended the same day): lint + the full test suite + a
+# The FAST iteration path for the snapshot loop (the 2026-09-10
+# ruling, amended the same day): lint + the full test suite + a
 # verified package, WITHOUT captures and capture determinism — the
 # snapshot iterations carry logic, so the suites run, and only the
 # screenshot machinery is skipped. make all remains mandatory before
 # any commit or push.
-snapshot_quick: lint run_tests
+snapshot_quick:
+	$(MAKE) -j2 lint run_tests
 	$(MAKE) package
 	cp dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
 	@echo "wrote /tmp/mpf.curapackage"
@@ -96,8 +98,7 @@ format:
 	./tools/docker_dev.sh /usr/lib/qt6/bin/qmlformat -i plugins/*.qml plugins/theme/*.qml
 
 coverage:
-	./tools/docker_dev.sh sh -c "coverage run -m unittest discover -s tests -p 'test_*.py' \
-	    && coverage report --include='plugins/*' --fail-under=80"
+	COVERAGE=1 JOBS=$(JOBS) ./tools/run_tests.sh
 
 install_hooks:
 	./tools/install_hooks.sh

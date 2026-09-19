@@ -22,7 +22,7 @@ class WhatsNewContentTests(unittest.TestCase):
     def test_shipped_release_notes_are_frozen(self):
         # Once a release's notes are written, they are FROZEN — a
         # later release adds its own entry, never edits the older
-        # ones (the author's ruling). The pin covers every entry
+        # ones (the ruling). The pin covers every entry
         # except the head (the release in development); shipping a
         # new release moves the old head into the frozen set and
         # recomputes this pin in the same pass (the version bump
@@ -38,13 +38,13 @@ class WhatsNewContentTests(unittest.TestCase):
         digest = hashlib.sha256(payload).hexdigest()
         self.assertEqual(
             digest,
-            "99121f865ce71117c4bca76baae2721f593ce44571b45da6779a924b98fa5cda",
+            "7abc63f51ee61b73d04f0ed0bbb9c688208bb5a8a9e8b032761f1f9f565500c0",
             "the historical what's-new content changed — shipped release "
             "notes are frozen; only a new head entry may be added, and "
             "this pin recomputed for the release")
 
     def test_the_content_reads_like_release_notes(self):
-        # The author's ruling: the popup's content is hand-curated and
+        # The ruling: the popup's content is hand-curated and
         # user-facing — the maintainer-level detail stays in
         # CHANGELOG.md. No markdown survives into the rendered text.
         for entry in WHATS_NEW:
@@ -102,9 +102,12 @@ class WhatsNewSeedTests(unittest.TestCase):
         # The suite's seeded profile carries the marker so its runs
         # never see the popup unless a scenario (z16) clears it —
         # this pin keeps the seed on the shipped version.
+        # The 4.5.0 fixture: the marker lives in the state document
+        # under the plugin's one persistence folder now, not the
+        # pre-4.5.0 sections file.
         seed = json.loads(
             (ROOT / "tests/harness/config/config/cura/5.13"
-             / "moonrakerprintfollower_sections.json").read_text(encoding="utf-8"))
+             / "MoonrakerPrintFollower" / "state.json").read_text(encoding="utf-8"))
         self.assertEqual(seed["whatsNewSeen"], latest_version())
         self.assertFalse(should_show(seed["whatsNewSeen"]))
 

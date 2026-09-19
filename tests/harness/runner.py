@@ -146,13 +146,16 @@ def wait_stage(wanted, timeout_ms=20000):
     return rpc({"id": 1, "cmd": "wait_stage", "stage": wanted, "timeout_ms": timeout_ms}, timeout=timeout_ms / 1000.0 + 5)
 
 
-def ensure_ready():
+def ensure_ready(require_aux=True):
     """The boot gate: on a fresh seeded profile Cura's one-shot
     welcome check can run before the saved machine is restored, and
     the dialog's grey-out then eats every click. Seed the machine
     (the Add-printer wizard's own code path) and hide the welcome
     overlay until the gate is clear. Orchestration only — no
-    plugin-surface claims."""
+    plugin-surface claims. The first-install leg passes
+    require_aux=False: a clean install has no printer to connect to,
+    so the discovery chain cannot come alive — that absence is the
+    state under test, not a bad boot."""
     for _ in range(10):
         reply = rpc({"id": 1, "cmd": "welcome"})
         if reply.get("ok") and not reply.get("up"):
@@ -163,6 +166,9 @@ def ensure_ready():
         # boot, never waited for — a flow that loads no gcode never
         # spends time on it.
         rpc({"id": 1, "cmd": "hide_gcode_warning"})
+        # The version-update toast (5.11/5.12's MessageStack puts it
+        # over the console's buttons): same conditional dismissal.
+        rpc({"id": 1, "cmd": "hide_update_toast"})
         time.sleep(2)
     # Cura's first-boot window size is nondeterministic, and a narrow
     # window collapses the header's stage buttons into the overflow
@@ -195,6 +201,8 @@ def ensure_ready():
         rpc({"id": 1, "cmd": "seed_machine"})
         exec_rpc(REFRESH_EMIT)
         time.sleep(10)
+    if not require_aux:
+        return _pin_ok
     # The aux gate: the discovery chain (object list -> aux
     # subscription -> temperatures/webcams) can stay dead on a boot
     # that has the model — the flake policy declares that boot bad
@@ -480,7 +488,7 @@ def exec_rpc(code, timeout=60.0, raise_on_error=False):
     if reply.get("truncated"):
         # A truncated probe result reads as "{}" after parsing — the
         # silent-data-loss trap the z-group calibration hit twice. Fail
-        # loudly so the probe author sees it, never a false absence.
+        # loudly so the failure is visible, never a false absence.
         if raise_on_error:
             raise RuntimeError("driver exec result truncated at 4000 chars")
         return {"_truncated": True}
@@ -688,7 +696,7 @@ STREAM_START = """
 window = _main_window()
 result = {}
 for item in _walk(window.contentItem()):
-    if "NetworkMJPGImage" in item.metaObject().className():
+    if "MoonrakerMJPGImage" in item.metaObject().className():
         try:
             item.start()
             result["started"] = True
@@ -1977,6 +1985,497 @@ def scenario1(expect_fail=False):
     return _verdict(steps)
 
 
+# ---- The first-install leg (modes firstinstall1 / firstinstall2) ----
+#
+# One machine, one xdg tree, two boots: ui_test.sh's firstinstall mode
+# seeds the tree CLEAN for boot 1 (no plugin config folder, no cura.cfg
+# section) and hands the same tree back for boot 2 untouched. Boot 1
+# proves the activation semantics a never-run install gets and then
+# configures the printer through the plugin's own save path; boot 2
+# proves the second boot keeps that config (the lost-config report).
+FIRST_INSTALL_URL = "http://127.0.0.1:7125"
+# The record's witness: an inert settings field carrying a value only
+# this leg writes, so a record rebuilt from the legacy defaults can
+# never read as the one boot 1 saved.
+FIRST_INSTALL_MARKER = "harness-firstinstall"
+# Boot 1's document, written where both boots can read it (the mode's
+# unit dir — a container path, handed in by ui_test.sh).
+BOOT1_DOCUMENT = os.environ.get("HARNESS_BOOT1_DOC", "/tmp/mpf/boot1-document.json")
+
+
+
+
+def _recursive_diff(before, after, path=""):
+    """The added/removed/changed paths between two documents."""
+    diff = []
+    keys = set((before or {}).keys()) | set((after or {}).keys())
+    for key in sorted(keys):
+        p = f"{path}.{key}" if path else key
+        if key not in (before or {}):
+            diff.append({"path": p, "change": "added", "value": after.get(key)})
+        elif key not in (after or {}):
+            diff.append({"path": p, "change": "removed"})
+        elif isinstance(before[key], dict) and isinstance(after[key], dict):
+            diff.extend(_recursive_diff(before[key], after[key], p))
+        elif before[key] != after[key]:
+            diff.append({"path": p, "change": "changed",
+                         "before": before[key], "after": after[key]})
+    return diff
+
+def plugin_document():
+    """The settings document as the driver reads it OFF DISK (Cura's
+    own storage rule). None when there is no readable document — the
+    absence is a state this leg must be able to see."""
+    try:
+        reply = rpc({"id": 1, "cmd": "plugin_settings"})
+    except RuntimeError:
+        return None
+    if not reply.get("ok"):
+        return None
+    return reply
+
+
+def document_of(reply):
+    document = (reply or {}).get("document")
+    return document if isinstance(document, dict) else None
+
+
+def cura_process_alive():
+    """Cura's own process, by full command line (the bracket keeps
+    pgrep from matching its own argv — the harness's standing idiom)."""
+    try:
+        done = subprocess.run(["pgrep", "-f", "UltiMaker-Cur[a]"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return True
+    return done.returncode == 0
+
+
+def driver_port_dead():
+    """The driver's socket: a refused connection is the plugin's own
+    death certificate (the port file outlives the process)."""
+    try:
+        port = int(open(PORT_FILE, encoding="utf-8").read().strip())
+    except (OSError, ValueError):
+        return True
+    try:
+        with socket.create_connection((DRIVER_HOST, port), timeout=2):
+            return False
+    except OSError:
+        return True
+
+
+def first_install1():
+    """Boot 1 of the first-install leg: a machine that has never run
+    the plugin. The v2 document must appear with nothing migrated into
+    it, the printer's config must save through the plugin's own save
+    verb, and the app must quit cleanly — boot 2 reads whatever this
+    boot leaves on disk."""
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "firstinstall1.mp4")
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, video_path])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(boot_step(hello))
+        # The aux half of the gate is skipped by construction: a clean
+        # install has no printer to discover, so the chain it checks
+        # cannot come alive.
+        gate = ensure_ready(require_aux=False)
+        steps.append(("01-gate", "boot gate: the machine is restored, no welcome overlay",
+                      "welcome absent, window at the pinned geometry (no printer configured yet)",
+                      gate, shot("01-gate")))
+        # The activation (the ruling): nothing was migrated,
+        # so the document activates directly — the version, no machine
+        # records, and NO migration record for the second boot to
+        # re-run against live config.
+        document = wait_for(lambda: document_of(plugin_document()), 120.0)
+        global_section = (document or {}).get("global")
+        activated = (isinstance(document, dict)
+                     and document.get("configVersion") == 2
+                     and document.get("machines") == {}
+                     and isinstance(global_section, dict)
+                     and "migration" not in global_section)
+        steps.append(("02-activate", "the plugin activates its v2 settings document on a clean install",
+                      "configVersion 2, machines {}, no migration key in global",
+                      activated, shot("02-activate")))
+        # The configuration: the settings dialog's own save verb, so
+        # the write goes through the plugin's validation and its
+        # persistence path — never a file edited behind the app.
+        save = rpc({"id": 1, "cmd": "plugin_save_config",
+                    "params": {"url": FIRST_INSTALL_URL,
+                               "api_key": FIRST_INSTALL_MARKER,
+                               # The save validates that the translate
+                               # pair has equal lengths; the marker is
+                               # its own output so both stay inert.
+                               "filename_translate_input": FIRST_INSTALL_MARKER,
+                               "filename_translate_output": FIRST_INSTALL_MARKER}},
+                   timeout=60)
+        steps.append(("03-configure", "the printer is configured through the settings save the dialog uses",
+                      "the save was accepted", bool(save.get("ok")), shot("03-configure")))
+        # The save read back from the file, not from the plugin's
+        # memory: what boot 2 gets is what is on disk.
+        after = document_of(plugin_document())
+        machines = (after or {}).get("machines")
+        marked = {key: value for key, value in (machines or {}).items()
+                  if isinstance(value, dict)
+                  and value.get("filename_translate_input") == FIRST_INSTALL_MARKER}
+        recorded = (len(marked) == 1
+                    and list(marked.values())[0].get("url") == FIRST_INSTALL_URL)
+        steps.append(("04-recorded", "the saved config is in the settings file on disk",
+                      "exactly one machine record carries the leg's marker and the printer's url",
+                      recorded, shot("04-recorded")))
+        if after:
+            # The handoff: boot 2 diffs the live record against this.
+            with open(BOOT1_DOCUMENT, "w", encoding="utf-8") as handle:
+                json.dump(after, handle, indent=2, sort_keys=True)
+        # The clean exit: boot 2 must find a tree Cura closed itself,
+        # not one this script killed mid-write. The driver acks the
+        # request before it closes, so an ack that did not arrive is a
+        # failure, not the shutdown eating its own reply.
+        try:
+            quit_reply = rpc({"id": 1, "cmd": "quit"}, timeout=30)
+        except RuntimeError as exc:
+            quit_reply = {"ok": False, "error": repr(exc)}
+        deadline = time.time() + 150
+        while time.time() < deadline and (cura_process_alive() or not driver_port_dead()):
+            time.sleep(2)
+        exited = driver_port_dead() and not cura_process_alive()
+        if not (quit_reply.get("ok") and exited):
+            # Which half failed — the ack (did the ask land) or the
+            # exit (did the app leave) — has to reach the log: the
+            # gallery's assertion line is static text.
+            print(f"ui_test: quit reply={quit_reply!r} exited={exited}")
+        steps.append(("05-quit", "the driver asks Cura to close itself for the second boot",
+                      "closeApplication accepted and the process is gone",
+                      bool(quit_reply.get("ok")) and exited, shot("05-quit")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "First install — boot 1: the clean activation and the save"
+    write_gallery(steps, False, title, video=video_path)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return _verdict(steps)
+
+
+def first_install2():
+    """Boot 2 of the first-install leg: the same tree, booted again.
+    The document boot 1 left holds live configuration; the migration
+    machinery must not replace it with records rebuilt from the legacy
+    blob — the machine record must still be there, field for field."""
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "firstinstall2.mp4")
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, video_path])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(boot_step(hello))
+        # This boot has a printer: the saved record points at the
+        # simulator, so the full gate applies.
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: the saved machine is restored and connects",
+                      "welcome absent, window at the pinned geometry",
+                      gate, shot("01-gate")))
+        try:
+            with open(BOOT1_DOCUMENT, encoding="utf-8") as handle:
+                before = json.load(handle)
+        except (OSError, ValueError):
+            before = None
+        previous = (before or {}).get("machines") or {}
+        document = wait_for(lambda: document_of(plugin_document()), 90.0)
+        current = (document or {}).get("machines") or {}
+        survived = bool(previous) and all(
+            isinstance(current.get(key), dict)
+            and all(current[key].get(field) == value for field, value in record.items())
+            for key, record in previous.items())
+        steps.append(("02-record-survives", "the config written on the first boot is still there",
+                      "every field of the boot-1 machine record is unchanged after the second boot",
+                      survived, shot("02-record-survives")))
+        # Beyond the record: "untouched" is asserted over the WHOLE
+        # document. The migration machinery's signature is the record
+        # it writes into global, and a record rebuilt from the legacy
+        # defaults could never carry boot 1's values field for field —
+        # so an equal document proves neither happened.
+        untouched = bool(before) and document is not None and document == before
+        if not untouched:
+            # The diagnostic dump (the reviewer's demand): the exact
+            # recursive diff that names the second-boot writer.
+            diff = _recursive_diff(before, document)
+            print("FIRSTINSTALL-DIFF " + json.dumps(diff, sort_keys=True)[:4000])
+        steps.append(("03-untouched", "the second boot leaves the settings document alone",
+                      "the document is identical to the one the first boot left",
+                      untouched, shot("03-untouched")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "First install — boot 2: the config survives the second boot"
+    write_gallery(steps, False, title, video=video_path)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return _verdict(steps)
+
+
+# ---- The migration leg (modes migration1 / migration2) ----
+#
+# One xdg tree, two boots, seeded PRE-migration (ui_test.sh's
+# premigration seed: the 4.3.0-era printer_configs_v1 blob with two
+# machine records plus the old state file, no v2 files): boot 1 runs
+# the real one-shot — every machine record migrates at once, the
+# backup lands, the blob leaves cura.cfg, the transcript splits into
+# the per-machine shard, and the machine-switch verb re-routes the
+# live model; boot 2 proves the one-shot never re-runs (the document
+# and the backup set are untouched).
+MIGRATION_MACHINES = {
+    "FDM Printer Base Description": "http://127.0.0.1:7125",
+    "Second Machine": "http://127.0.0.1:7126",
+}
+
+# The post-migration cura.cfg check: after the preference save, the
+# blob must be GONE and the whole [moonrakerprintfollower] section
+# with it — the clean resets every key to its registered default and
+# Uranium's writer omits defaults (the "no trace" contract). Read
+# through the driver's own process (the exec verb), never a staged
+# file.
+MIGRATION_CFG_PROBE = """
+from UM.Resources import Resources
+import os
+path = os.path.join(Resources.getConfigStoragePath(), "cura.cfg")
+try:
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    # Uranium's writer omits default values but keeps the section
+    # HEADER — an empty [moonrakerprintfollower] shell remains. The
+    # contract is the config's removal: the blob key gone, and no
+    # legacy plugin keys left in the section.
+    section = text.split("[moonrakerprintfollower]", 1)
+    residue = section[1].split("[", 1)[0] if len(section) > 1 else ""
+    result = {"blob_gone": "printer_configs_v1" not in text,
+              "section_clean": not [line for line in residue.splitlines() if line.strip()]}
+except Exception as exc:
+    result = {"error": repr(exc)}
+"""
+
+# The live identity after the machine switch: the binding's identity
+# pair must name the switched-to machine.
+MIGRATION_ADD_MACHINE_PROBE = """
+from UM.Application import Application
+app = Application.getInstance()
+result = {}
+try:
+    manager = app.getMachineManager()
+    before = manager.activeMachine.getName() if manager.activeMachine else None
+    added = bool(manager.addMachine(str("fdmprinter")))
+    result["added"] = added
+    result["before"] = before
+    result["new_name"] = manager.activeMachine.getName() if manager.activeMachine else None
+except Exception as exc:
+    result["error"] = repr(exc)
+"""
+
+
+MIGRATION_IDENTITY_PROBE = """
+from UM.Application import Application
+app = Application.getInstance()
+result = {}
+for e in app.getExtensions():
+    if "MoonrakerPrintFollower" in type(e).__name__:
+        binding = getattr(getattr(e, "_runtime", None), "binding", None)
+        if binding is not None:
+            try:
+                result["identity"] = [str(value) for value in binding.identity]
+            except Exception as exc:
+                result["identity"] = ["ERR", repr(exc)[:80]]
+        break
+"""
+
+
+def migration1():
+    """Boot 1 of the migration leg: the pre-migration fixture runs the
+    real one-shot, and the machine switch re-routes the live model."""
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "migration1.mp4")
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, video_path])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(boot_step(hello))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: the pre-migration machine is restored",
+                      "welcome absent, window at the pinned geometry",
+                      gate, shot("01-gate")))
+        # The one-shot runs at boot (B1's initializationFinished);
+        # poll the file on disk until the ok record lands.
+        def migrated_document():
+            reply = rpc({"id": 1, "cmd": "read_json_file",
+                         "name": "MoonrakerPrintFollower/settings.json"})
+            if not reply.get("ok"):
+                return None
+            document = reply.get("document")
+            if not isinstance(document, dict):
+                return None
+            record = (document.get("global") or {}).get("migration")
+            if not isinstance(record, dict) or record.get("status") != "ok":
+                return None
+            return document
+        document = wait_for(migrated_document, 120.0)
+        machines = (document or {}).get("machines") or {}
+        record = ((document or {}).get("global") or {}).get("migration") or {}
+        migrated = (isinstance(document, dict)
+                    and document.get("configVersion") == 2
+                    and all(machines.get(name) == url
+                            or (isinstance(machines.get(name), dict)
+                                and machines[name].get("url") == url)
+                            for name, url in MIGRATION_MACHINES.items())
+                    and record.get("status") == "ok"
+                    and record.get("reason") == "migrated"
+                    and record.get("records") == len(MIGRATION_MACHINES)
+                    and record.get("backupWritten") is True
+                    and isinstance(record.get("backupName"), str))
+        steps.append(("02-migrated", "the one-shot migrated every machine record at once",
+                      "configVersion 2, both records with their urls, ok/migrated, records 2, backup written",
+                      migrated, shot("02-migrated")))
+        # The clean's preference resets reach the FILE at the next
+        # preference save — Cura's shutdown flush, which boot 2
+        # verifies. The session still owes a save so the cleaned
+        # preferences ride it: the settings save the dialog uses.
+        save = rpc({"id": 1, "cmd": "plugin_save_config", "params": {}}, timeout=60)
+        steps.append(("03-save", "the settings save carried the cleaned preferences",
+                      "the save was accepted", bool(save.get("ok")), shot("03-save")))
+
+
+        # The second machine's history landed in its own state shard.
+        shard_reply = rpc({"id": 1, "cmd": "read_json_file",
+                           "name": "MoonrakerPrintFollower/machines/Second+Machine.json"})
+        shard = shard_reply.get("document") if shard_reply.get("ok") else None
+        transcript = (shard or {}).get("consoleTranscript") or []
+        shard_ok = bool(transcript and str((transcript[0] or {}).get("text")) == "// second machine history")
+        steps.append(("05-shard", "the console history split into the second machine's state shard",
+                      "Second Machine's shard carries the history line",
+                      shard_ok, shot("05-shard")))
+        # The machine switch: the harness's Cura side carries ONE
+        # machine stack, so the switch ADDS a second one — Cura
+        # activates what it adds — and the live model must follow
+        # the new active machine (the unit suites cover the A->B->A
+        # cycles; this is the live re-route proof).
+        add = wait_for(lambda: exec_rpc(MIGRATION_ADD_MACHINE_PROBE), 60.0)
+        new_name = (add or {}).get("new_name") if isinstance(add, dict) else None
+        identity = wait_for(lambda: exec_rpc(MIGRATION_IDENTITY_PROBE), 30.0)
+        switched = (bool(add.get("added")) and isinstance(identity, dict)
+                    and bool(new_name)
+                    and (identity.get("identity") or [None, None])[1] == new_name)
+        steps.append(("06-switch", "the machine add re-routes the live model",
+                      "the binding's identity names the newly added machine",
+                      switched, shot("06-switch")))
+        if document:
+            with open(BOOT1_DOCUMENT, "w", encoding="utf-8") as handle:
+                json.dump(document, handle, indent=2, sort_keys=True)
+        try:
+            quit_reply = rpc({"id": 1, "cmd": "quit"}, timeout=30)
+        except RuntimeError as exc:
+            quit_reply = {"ok": False, "error": str(exc)}
+        steps.append(("07-clean-exit", "the app quit cleanly after the migration",
+                      "the driver acked the quit", bool(quit_reply.get("ok")), shot("07-clean-exit")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Migration — boot 1: the v1 blob migrates into the v2 files"
+    write_gallery(steps, False, title, video=video_path)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return _verdict(steps)
+
+
+def migration2():
+    """Boot 2 of the migration leg: the second boot leaves the
+    migrated tree alone — the one-shot never re-runs."""
+    os.makedirs(RUN_DIR, exist_ok=True)
+    video_path = os.path.join(RUN_DIR, "migration2.mp4")
+    video = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "x11grab", "-video_size", SIZE,
+         "-framerate", "15", "-i", DISPLAY, video_path])
+    try:
+        steps = []
+        hello = rpc({"id": 1, "cmd": "hello"})
+        steps.append(boot_step(hello))
+        gate = ensure_ready()
+        steps.append(("01-gate", "boot gate: the migrated machine is restored",
+                      "welcome absent, window at the pinned geometry",
+                      gate, shot("01-gate")))
+        # The quit's preference flush landed with boot 1's shutdown:
+        # the clean's defaults now own the file, so the blob and the
+        # whole section are gone — the no-trace contract.
+        cfg = wait_for(lambda: exec_rpc(MIGRATION_CFG_PROBE), 30.0)
+        blob_gone = (isinstance(cfg, dict)
+                     and cfg.get("blob_gone") is True
+                     and cfg.get("section_clean") is True)
+        steps.append(("02-blob-gone", "the v1 blob is gone from cura.cfg",
+                      "no printer_configs_v1 key and the section holds no keys",
+                      blob_gone, shot("02-blob-gone")))
+        try:
+            with open(BOOT1_DOCUMENT, encoding="utf-8") as handle:
+                before = json.load(handle)
+        except (OSError, ValueError):
+            before = None
+        reply = rpc({"id": 1, "cmd": "read_json_file",
+                     "name": "MoonrakerPrintFollower/settings.json"})
+        document = reply.get("document") if reply.get("ok") else None
+        untouched = bool(before) and document is not None and document == before
+        if not untouched:
+            print("MIGRATION-DIFF " + json.dumps(
+                _recursive_diff(before, document), sort_keys=True)[:4000])
+        steps.append(("03-untouched", "the second boot leaves the migrated document alone",
+                      "the document is identical to the one boot 1 left",
+                      untouched, shot("03-untouched")))
+        # The backup set: exactly the one backup boot 1 wrote — no
+        # re-run, no new copy.
+        backup_probe = """
+from UM.Resources import Resources
+import os
+base = Resources.getConfigStoragePath()
+result = {"backups": sorted(
+    name for name in os.listdir(base)
+    if name.startswith("cura.cfg."))}
+"""
+        backups = wait_for(lambda: exec_rpc(backup_probe), 30.0)
+        one_backup = isinstance(backups, dict) and len(backups.get("backups") or []) == 1
+        steps.append(("04-one-backup", "no second migration ran",
+                      "exactly one cura.cfg backup exists after the second boot",
+                      one_backup, shot("04-one-backup")))
+        try:
+            quit_reply = rpc({"id": 1, "cmd": "quit"}, timeout=30)
+        except RuntimeError as exc:
+            quit_reply = {"ok": False, "error": str(exc)}
+        steps.append(("05-clean-exit", "the app quit cleanly after the second boot",
+                      "the driver acked the quit", bool(quit_reply.get("ok")), shot("05-clean-exit")))
+    finally:
+        time.sleep(1)
+        video.terminate()
+        try:
+            video.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            video.kill()
+    title = "Migration — boot 2: the second boot leaves the migrated tree alone"
+    write_gallery(steps, False, title, video=video_path)
+    print(f"gallery: {RUN_DIR}/index.html")
+    return _verdict(steps)
+
+
 SUITE_STATE = {"sim": {}, "model": {}, "item": {}, "rect": {}, "stash": {}}
 
 # The suite's groups by name — SCENARIO_GROUP accepts either.
@@ -2043,7 +2542,7 @@ def suite_run(group_id):
         wait_stage("PrepareStage", timeout_ms=60000)
         for spec in specs:
             if spec.get("container_skip"):
-                # The engine-divergent scenarios (the author's Cura
+                # The engine-divergent scenarios (real Cura
                 # proves them live; the container's engine cannot —
                 # TECH_DEBT's two-engine item). The skip is a
                 # RECORDED marker, never a silent pass: the reason
@@ -2053,7 +2552,25 @@ def suite_run(group_id):
                               "skipped on the container engine",
                               spec["container_skip"], True, None))
                 continue
+            version_skip = spec.get("version_skip") or {}
+            version = os.environ.get("CURA_VERSION", "")
+            reason = version_skip.get(version) or next(
+                (text for prefix, text in version_skip.items()
+                 if version.startswith(prefix)), None)
+            if reason:
+                # The version-divergent scenarios (5.11's preview
+                # platform cannot hold the premise — the walk-dump
+                # evidence). The skip is a RECORDED marker with the
+                # reason in the gallery, never a silent pass.
+                steps.append((spec["id"] + "-skip",
+                              f"skipped on Cura {version or 'unknown'}",
+                              reason, True, None))
+                continue
             sim_http("/harness/reset", "POST", {})
+            # The update toast may land mid-suite (the check completes
+            # after the boot gate); re-dismiss it per scenario so a
+            # late toast never swallows the console presses.
+            rpc({"id": 1, "cmd": "hide_update_toast"})
             sim_http("/harness/scenario", "POST", {"console_lines": [{"type": "response",
                 "message": "// %s ready" % spec["id"], "time": time.time()}]})
             steps.extend(suite_scenario(spec))
@@ -2459,19 +2976,29 @@ def suite_step(step):
         return ok, f"the simulator's {step['path']} became {step.get('value')!r}", f"now {node!r}"
     if op == "assert_model":
         # The published value settles across publish cycles — read
-        # until it matches or the budget passes.
+        # until the EXPECTATION matches or the budget passes. The
+        # check returns the MATCH, never the raw value: a truthy
+        # stale value (speed 100 while the sim moved to 137) used to
+        # short-circuit the wait and read once (the re-verify's
+        # c2-05/06 race on 5.7/5.8).
         def read():
             return exec_rpc(MODEL_READ_TEMPLATE.replace("PROP_PLACEHOLDER", json.dumps(step["prop"])))
-        value = wait_for(lambda: read(), 3.0, 0.5)
+        def check():
+            value = read()
+            if step.get("contains") is not None:
+                return str(step["contains"]).lower() in str(value).lower()
+            if "value" in step:
+                return value == step.get("value")
+            # No expectation given: the property must be populated (a
+            # False or 0 still counts as present).
+            return value not in (None, "", [], {})
+        ok = bool(wait_for(check, float(step.get("budget", 15)), 0.5))
+        value = read()
         if step.get("contains") is not None:
-            return str(step["contains"]).lower() in str(value).lower(), \
-                f"the model's {step['prop']} contains {step.get('contains')!r}", f"read {value!r}"
+            return ok, f"the model's {step['prop']} contains {step.get('contains')!r}", f"read {value!r}"
         if "value" in step:
-            return value == step.get("value"), f"the model's {step['prop']} equals {step.get('value')!r}", f"read {value!r}"
-        # No expectation given: the property must be populated (a
-        # False or 0 still counts as present).
-        return value not in (None, "", [], {}), \
-            f"the model's {step['prop']} is populated", f"read {value!r}"
+            return ok, f"the model's {step['prop']} equals {step.get('value')!r}", f"read {value!r}"
+        return ok, f"the model's {step['prop']} is populated", f"read {value!r}"
     if op == "sim_drop":
         sim_http("/harness/drop_connections", "POST", {})
         return True, "the simulator dropped every websocket connection", "dropped"
@@ -2902,7 +3429,7 @@ def suite_step(step):
         # edge to below's top edge, within [min, max]. With
         # edges=bottoms: above's bottom edge to below's bottom edge
         # (the </> button must sit ON the card's bottom line — the
-        # author's live report).
+        # live report).
         def resolve(ref):
             keys = ("objectName", "text", "className", "window")
             payload = {k: ref[k] for k in keys if k in ref}
@@ -2987,7 +3514,11 @@ for e in app.getExtensions():
                 break
             time.sleep(0.5)
         try:
-            config.feed_mode = MODE_PLACEHOLDER
+            # The field is a str-valued Enum; assigning a bare string
+            # would bypass the coercion production callers always have,
+            # and the apply path reads .value (the 5.7.0 sweep's find —
+            # it failed every version, not just the floor).
+            config.feed_mode = config.feed_mode.__class__(MODE_PLACEHOLDER)
             follower.apply_printer_config(config)
             result["applied"] = True
         except Exception as exc:
@@ -3252,6 +3783,14 @@ def main():
         return scenario7()
     if mode == "scenario11":
         return scenario11()
+    if mode == "firstinstall1":
+        return first_install1()
+    if mode == "firstinstall2":
+        return first_install2()
+    if mode == "migration1":
+        return migration1()
+    if mode == "migration2":
+        return migration2()
     if mode == "scenario10":
         return scenario10()
     if mode == "scenario8":

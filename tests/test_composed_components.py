@@ -195,7 +195,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertIn("action=on", posts[0].path)
 
     def test_endstops_poll_skipped_while_printing(self):
-        # The author's live report: the 10 s endstops poll's
+        # A live report: the 10 s endstops poll's
         # query_endstops paused the toolhead 250-500 ms each time
         # mid-print; quitting Cura stopped it. The states cannot
         # change mid-print, so the poll must stand down while active.
@@ -206,7 +206,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(len(self.transport.requests), before)
 
     def test_power_display_lists_every_device_the_printer_reports(self):
-        # The author's ruling: the configured auto-power-on list narrows
+        # The ruling: the configured auto-power-on list narrows
         # the print-start sequence, never the Monitor display — a
         # configured list silently hid DFU on the real printer.
         self.follower.apply_printer_config(self.config_type(url="http://printer-a", power_devices="24v"))
@@ -274,7 +274,7 @@ class ComposedComponentTests(unittest.TestCase):
         writer = module.CuraOutputWriter(self.app)
         prepared = writer.prepare(config, "part.gcode")
         self.addCleanup(prepared.close)
-        self.assertEqual(pathlib.Path(prepared.path).read_text(), "G1 X0\n")
+        self.assertEqual(pathlib.Path(prepared.path).read_text(encoding="utf-8"), "G1 X0\n")
         upload = self.qt.load("UploadController").UploadController(self.follower.client, "A", self.follower.current_printer_identity)
         self.addCleanup(upload.abort)
         upload.begin(config, "part.gcode")
@@ -314,6 +314,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(model.emergencyStopClicks, 0)
         # A genuinely new click starts a fresh arm sequence.
         model.emergencyStopClick()
+        self.qt.events()  # the publish coalescer flushes on the next turn
         self.assertEqual(model.emergencyStopClicks, 1)
 
     def test_power_lock_blocks_mutation_during_print(self):
@@ -479,7 +480,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertFalse(self.follower.bed_mesh.snapshot)
 
     def test_file_manager_paging_with_resident_data(self):
-        # The author's live report: the page carousel stopped. This
+        # A live report: the page carousel stopped. This
         # exercises the REAL model end to end — walk, publish, page
         # slice — with 30 resident files.
         model = self.monitor()
@@ -502,7 +503,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(rows()[0]["name"], "f00.gcode")
         # No print_start_time in the metadata means the file has
         # genuinely never printed — the status says so even while
-        # the history window is only partially loaded (the author's
+        # the history window is only partially loaded (the
         # live ruling).
         self.assertEqual(rows()[0]["status"], "Never printed")
         self.assertEqual(model.fileManagerPageCount, 2)
@@ -534,7 +535,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(confirm["name"], "benchy.gcode")
         self.assertTrue(confirm["printerName"])
         # The fixture's mock carries no server state and no homing:
-        # the readiness line must say so (the author's live report —
+        # the readiness line must say so (a live report —
         # an unhomed printer failed silently).
         self.assertIn("readyText", confirm)
         self.assertFalse(confirm["homed"])
@@ -543,7 +544,7 @@ class ComposedComponentTests(unittest.TestCase):
         model.fileConfirmPrint()
         self.assertEqual(model.filePrintConfirm, "")
         # The confirm dismisses the popup immediately — never a wait
-        # on the watchdog or the transition (the author's ruling).
+        # on the watchdog or the transition (the ruling).
         self.assertFalse(model.fileManagerOpen)
         posts = [r for r in self.transport.requests if "print/start" in r.path]
         self.assertEqual(len(posts), 1)
@@ -582,7 +583,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.deliver(self.status(filename="benchy.gcode", state="printing", position=0))
         self.qt.events()
         self.assertIsNone(model._file_manager.print_attempt)
-        # The print is live: the popup steps aside (the author's
+        # The print is live: the popup steps aside (the
         # live request — the monitor view returns).
         self.assertFalse(model.fileManagerOpen)
         # The host's own error verdict surfaces with its words.
@@ -618,7 +619,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertTrue(any("Not homed" in line for line in lines))
 
     def test_file_request_print_pulls_the_rows_thumbnail(self):
-        # The confirmation's large thumbnail (the author's live
+        # The confirmation's large thumbnail (the live
         # request): the page-driven cache covers visible rows only,
         # so opening the dialog for an OFF-PAGE row (the Recents
         # case) must fetch that row's thumbnail explicitly.
@@ -787,7 +788,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertIsNone(model._file_manager.print_attempt)
 
     def test_manual_reconnect_cycles_the_client(self):
-        # The author's live request: a Reconnect that recovers a UI
+        # A live request: a Reconnect that recovers a UI
         # stuck after a printer error — the client cycle runs even
         # when disconnected (unlike the e-stop's connected-only
         # auto-recovery).
@@ -855,7 +856,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertTrue(any("only gcode files" in line for line in lines))
 
     def test_file_manager_open_flag_round_trips_through_the_model(self):
-        # The author's live report: the File-manager button stopped
+        # A live report: the File-manager button stopped
         # opening the popup once the flag moved into the model. The
         # flag must publish, read back, AND NOTIFY — the QML binding
         # re-evaluates on the signal, and a Python-only read passes
@@ -876,7 +877,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(fired, [True, True])
 
     def test_file_manager_view_mutations_republish_immediately(self):
-        # The author's live report: ticking a filter changed nothing
+        # A live report: ticking a filter changed nothing
         # and the page carousel advanced one step then stopped — the
         # slots mutated the view dataclass without re-publishing, so
         # nothing re-rendered until an unrelated signal did. Every
@@ -906,7 +907,7 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertEqual(model.fileManagerFilters, {})
 
     def test_leave_monitor_stage_chooses_preview_or_prepare(self):
-        # The author's live request: Esc on the Monitor page goes to
+        # A live request: Esc on the Monitor page goes to
         # the Preview stage when anything is sliced, Prepare
         # otherwise.
         output = self.qt.load("MoonrakerOutputDevicePlugin").MoonrakerOutputDevicePlugin(self.app, self.follower)
@@ -921,7 +922,7 @@ class ComposedComponentTests(unittest.TestCase):
 
     def test_qml_public_api_is_present_without_model_subclasses(self):
         model = self.monitor()
-        properties = "monitorState monitorConnected connectionDetail monitorFilename monitorProgress monitorLayer monitorElapsed monitorEta monitorFinish monitorSpeed monitorFlow monitorPosition monitorPositionCompact monitorVelocity monitorFlowRate monitorFlowDiameter monitorAccelLimit monitorMessage printActive printJobCaption canPausePrint canResumePrint pauseReason pauseReasonDetail resumeReason resumeReasonDetail canCancelPrint actionBusy actionStatus temperatureItems fanItems filamentSensorItems excludeObjectItems powerDevices klippyState moonrakerVersion klipperVersion hostLoad memoryAvailable cpuTemperature mcuSummary mcuItems webcamNames activeWebcamIndex cameraName cameraRotation cameraFlipHorizontal cameraFlipVertical monitorLayerHeight macroNames hasQuadGantryLevel hasBedMesh canRunSetup temperaturePresetNames temperaturePresetItems canApplyTemperaturePreset speedFactorPercent flowFactorPercent zOffset zOffsetText fanControlItems ledItems pwmOutputItems saveConfigPending saveConfigSummary canSaveConfig emergencyStopClicks bedMeshAvailable bedMeshProfile bedMeshProfileNames bedMeshRows bedMeshColumns bedMeshValues bedMeshMinimum bedMeshMaximum bedMeshRange bedMeshXMin bedMeshXMax bedMeshYMin bedMeshYMax bedMeshRangeText bedMeshPreviewVisible bedMeshThresholdLow bedMeshThresholdHigh bedMeshMachineWidth bedMeshMachineDepth bedMeshCenterIsZero jogEnabled jogDistance extrudeDistance extrudeSpeed homedAxes positionMode jogStatus jogReason jogReasonDetail canRestart restartReason restartReasonDetail sectionReason sectionReasonDetail controlsLocked controlsCollapsed infoCollapsed statusCollapsed sectionLayout sectionHiddenMap consoleHeight cameraRefreshNonce cameraRecovering emergencyHoldProgress temperatureChart temperatureChartLegend consoleHistory consolePending consoleErrorBell endstopItems endstopSummary monitorEtaBasis showProbePoints fileManagerRows fileManagerRecents fileManagerDirectory fileManagerDirectories fileManagerDiskText fileManagerRefreshedAt fileManagerShown fileManagerPage fileManagerPageIndex fileManagerPageCount fileManagerPageSize fileManagerPageSelection fileManagerEmptyKind fileManagerSelected fileManagerSortColumn fileManagerSortAscending fileManagerSearch fileManagerOpen fileManagerFilters filePrintConfirm fileDeleteConfirm fileRenameTarget fileRenameConflict fileUploadConfirm fileUploadProgress fileManagerThumbs fileManagerFilterCounts fileManagerFilterOptions fileManagerHistoryLoaded fileManagerHistoryExhausted fileManagerWalkError fileManagerNote".split()
+        properties = "monitorState monitorConnected connectionDetail monitorFilename monitorProgress monitorLayer monitorElapsed monitorEta monitorFinish monitorSpeed monitorFlow monitorPosition monitorPositionCompact monitorVelocity monitorFlowRate monitorFlowDiameter monitorAccelLimit monitorMessage printActive printJobCaption canPausePrint canResumePrint pauseReason pauseReasonDetail resumeReason resumeReasonDetail canCancelPrint actionBusy actionStatus temperatureItems fanItems filamentSensorItems excludeObjectItems powerDevices klippyState moonrakerVersion klipperVersion hostLoad memoryAvailable cpuTemperature mcuSummary mcuItems webcamNames activeWebcamIndex cameraName cameraRotation cameraFlipHorizontal cameraFlipVertical monitorLayerHeight macroNames hasQuadGantryLevel hasBedMesh canRunSetup temperaturePresetNames temperaturePresetItems canApplyTemperaturePreset speedFactorPercent flowFactorPercent zOffset zOffsetText fanControlItems ledItems pwmOutputItems saveConfigPending saveConfigSummary canSaveConfig emergencyStopClicks bedMeshAvailable bedMeshProfile bedMeshProfileNames bedMeshRows bedMeshColumns bedMeshValues bedMeshMinimum bedMeshMaximum bedMeshRange bedMeshXMin bedMeshXMax bedMeshYMin bedMeshYMax bedMeshRangeText bedMeshPreviewVisible bedMeshThresholdLow bedMeshThresholdHigh bedMeshMachineWidth bedMeshMachineDepth bedMeshCenterIsZero jogEnabled jogDistance extrudeDistance extrudeSpeed homedAxes positionMode jogStatus jogReason jogReasonDetail canRestart restartReason restartReasonDetail sectionReason sectionReasonDetail controlsLocked controlsCollapsed infoCollapsed statusCollapsed sectionLayout sectionHiddenMap consoleHeight cameraRefreshNonce cameraRecovering emergencyHoldProgress temperatureChartMini temperatureChartFull temperatureChartLatest temperatureChartLegend consoleHistory consolePending consoleErrorBell endstopItems endstopSummary monitorEtaBasis showProbePoints fileManagerRows fileManagerRecents fileManagerDirectory fileManagerDirectories fileManagerDiskText fileManagerRefreshedAt fileManagerShown fileManagerPage fileManagerPageIndex fileManagerPageCount fileManagerPageSize fileManagerPageSelection fileManagerEmptyKind fileManagerSelected fileManagerSortColumn fileManagerSortAscending fileManagerSearch fileManagerOpen fileManagerFilters filePrintConfirm fileDeleteConfirm fileRenameTarget fileRenameConflict fileUploadConfirm fileUploadProgress fileManagerThumbs fileManagerFilterCounts fileManagerFilterOptions fileManagerHistoryLoaded fileManagerHistoryExhausted fileManagerWalkError fileManagerNote".split()
         meta = model.metaObject()
         for name in properties: self.assertGreaterEqual(meta.indexOfProperty(name), 0, name)
         for name in "pausePrint resumePrint cancelPrint reconnect refreshAll refreshWebcams selectWebcam runMacro homeAll runQuadGantryLevel calibrateBedMesh applyTemperaturePreset setSpeedFactor setFlowFactor adjustZOffset clearZOffset setFanSpeed setLedBrightness setLedColor setPwmOutput saveConfig emergencyStopClick emergencyHoldStarted emergencyHoldReleased loadBedMeshProfile clearBedMesh setBedMeshPreviewVisible setBedMeshThresholds macroParameterDefinitions jog setJogDistance setExtrudeDistance setExtrudeSpeed home motorsOff centerToolhead zToZero extrude heatersOff firmwareRestart klipperRestart hostRestart setControlsLocked setControlsCollapsed setInfoCollapsed setStatusCollapsed setSectionLayout sectionLayoutFor setConsoleHeight setTemperatureSensorVisible setTemperatureSensorColor setShowTemperatureTargets setShowTemperaturePower sendConsoleCommand clearConsoleHistory improveEta setShowProbePoints openFileManager refreshFileManager fileNavigateTo setFileSearch setFileSort setFileManagerOpen setPositionMode setFilePageSize setFilePage setFileFilter clearFileFilters toggleFileSelection toggleFilePageSelection clearFileSelection fileLoadAllHistory fileScanMetadata fileRequestDelete fileRequestDeleteFile fileRequestDeleteDir fileCreateDirectory fileConfirmDelete fileCancelDelete fileRequestRename fileRequestRenameDir filePreviewRename fileConfirmRename fileCancelRename fileUpload fileConfirmUpload fileCancelUpload fileUploadDismiss fileClearWalkError fileRequestVisibleThumbnails".split():

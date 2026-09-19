@@ -2,7 +2,7 @@ import QtQuick 2.15
 import UM 1.5 as UM
 import "theme"
 
-// The heightmap range filter (the author's request): a dual-ended
+// The heightmap range filter (a request): a dual-ended
 // rainbow slider shared by the Information pop-over and the Preview
 // card legend — one window drives both surfaces, so the two stay
 // synchronised. The groove is the same five-stop blue-to-red scale
@@ -130,7 +130,7 @@ Item {
         }
     }
 
-    // The bar DESATURATES outside the window (the author's request):
+    // The bar DESATURATES outside the window (a request):
     // a translucent grey wash lets the rainbow show through washed
     // out, so the full scale stays readable while only the section
     // between the handles reads at full colour.
@@ -220,8 +220,8 @@ Item {
             } else if (dragArea.mode === 2) {
                 root._high = Math.min(root.maximum, Math.max(v, root._low + root.minWindow()));
             } else if (dragArea.mode === 3) {
-                // The centre drag moves the WHOLE window (the
-                // author's request), clamping at the scale ends.
+                // The centre drag moves the WHOLE window (a
+                // request), clamping at the scale ends.
                 var shift = 0;
                 var newLow = root._low + deltaValue;
                 var newHigh = root._high + deltaValue;

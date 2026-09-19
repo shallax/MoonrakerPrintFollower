@@ -32,6 +32,8 @@ from PyQt6.QtQml import QQmlComponent, QQmlEngine
 
 from qt_runtime_support import ScriptedSocket, ScriptedTransport, runtime
 
+import capture_contrast
+
 
 def fake_status(state="printing"):
     return {
@@ -81,6 +83,8 @@ def main():
 
     context = runtime()
     qt = context.__enter__()
+    # Collected across the scenes, re-raised once they are all captured.
+    census = capture_contrast.Report()
     try:
         # DETERMINISM: every live input the scene renders must be mocked.
         # The model's time module is patched during seeding below, but
@@ -188,10 +192,29 @@ def main():
                 tick[0] += 1.0
         model.sendConsoleCommand("M220 S90")
         model.sendConsoleCommand("M104 S210")
+        # DETERMINISM: the console's 2 s settle timer flips those two
+        # lines from the pending blue to the saved grey, so which colour
+        # a grab caught depended on how long the setup happened to take
+        # — the same leg rendered both states on different runs (and the
+        # pinned gallery shows the pending blue). Freeze it the way the
+        # plugin clocks above are frozen: stop the timer, clear the
+        # settle's worklist, and pin the entries pending.
+        console = model._console
+        console._saved_timer.stop()
+        console._persisted = []
+        for entry in console._transcript:
+            if entry["kind"] == "command":
+                entry["saved"] = False
+        console.changed.emit()
 
         from theme_support import ThemeBackend, materialise_theme_assets, verify_capture_tree
-        theme_backend = ThemeBackend(os.path.join(ROOT, "tests", "theme_assets", "cura-light"))
-        theme_tree = materialise_theme_assets(os.path.join(ROOT, "dist", ".capture-theme"), theme_backend)
+        # `or`, not a get() default: an empty CAPTURE_THEME is a value,
+        # and it used to select the whole theme-assets parent as the theme.
+        theme = os.environ.get("CAPTURE_THEME") or "cura-light"
+        theme_backend = ThemeBackend(os.path.join(ROOT, "tests", "theme_assets", theme))
+        # CAPTURE_THEME_TREE: parallel capture legs need their own overlay.
+        theme_tree = materialise_theme_assets(
+            os.environ.get("CAPTURE_THEME_TREE") or os.path.join(ROOT, "dist", ".capture-theme"), theme_backend)
 
         engine = QQmlEngine()
         # Module resolution is last-path-wins for the Cura/UM modules, so
@@ -212,6 +235,11 @@ def main():
 
         from PyQt6.QtQuick import QQuickItem, QQuickWindow
         window = QQuickWindow()
+        # The harness stands in for Cura's monitor stage, which paints the
+        # page ground: this view is transparent by design, so an unpainted
+        # window shows Qt's white default and the dark leg's contrast gate
+        # would measure a ground the product never has.
+        window.setColor(theme_backend.getColor("main_background"))
         window.resize(1600, 900)
         window.setTitle("capture")
         item = component.create()
@@ -245,8 +273,83 @@ def main():
         else:
             raise RuntimeError("the dashboard never rendered inside the capture shell")
 
+        # The e-stop label's contrast gate (the 4.5.0 dark-mode
+        # ruling): the idle copy must contrast with the button's
+        # ground in BOTH themes — hardcoded black on dark grey is
+        # exactly the class the dark capture leg exists to catch.
+        # Sampled as a lightness spread over the label's interior:
+        # correct text sits far from its ground in either theme.
+        emergency = [child for child in item.findChildren(QQuickItem)
+                     if child.property("objectName") == "moonrakerEmergencyButton"]
+        if emergency:
+            button = emergency[0]
+            if button.isVisible() and button.width() > 20 and button.height() > 10:
+                corner = button.mapToScene(QPointF(0, 0))
+                inset_x = max(4, int(button.width() * 0.08))
+                inset_y = max(4, int(button.height() * 0.15))
+                scene_shot = window.grabWindow()
+                lightness = set()
+                for y in range(inset_y, int(button.height()) - inset_y, 3):
+                    for x in range(inset_x, int(button.width()) - inset_x, 3):
+                        lightness.add(scene_shot.pixelColor(
+                            int(corner.x() + x), int(corner.y() + y)).lightness())
+                spread = (max(lightness) - min(lightness)) if lightness else 0
+                if spread < 76:
+                    raise RuntimeError(
+                        "the e-stop label lacks contrast with its ground (lightness spread %d) — "
+                        "a wrong-coloured glyph slipped past the capture theme" % spread)
+                print("e-stop label lightness spread:", spread)
+        else:
+            print("e-stop label contrast: the emergency button was not visible — skipped")
+
+        # The consecutive-frame contract AND its span: the capture
+        # points sit right after batches of layout mutations (pane
+        # expansions, section collapses), whose reflow, readout-fit
+        # timers and the last scheduled render-thread paint keep
+        # changing the frame after the chart itself has painted.
+        # Under load the frames arrive slowly, so a frame count alone
+        # can certify a quiet gap BETWEEN two bursts — the identical
+        # run must also span long enough for every pending one-shot
+        # (the 200 ms fit timers, the threaded paint) to have landed.
+        REQUIRED_IDENTICAL_FRAMES = 3
+        SETTLE_SPAN_SECONDS = 0.5
+
+        def settled_window(timeout_ms=10000):
+            """The capture transaction: pump events, grab the whole
+            window, and require three consecutive complete frames to
+            be pixel-identical AND the identical run to span the
+            settle span before the scene counts as settled. The exact
+            image that proved the stability is RETURNED — the caller
+            saves this image and never grabs again, so the proven
+            frame and the saved frame can never diverge (the
+            settle-then-re-grab race behind the 03-sections-collapsed
+            nondeterminism)."""
+            deadline = time.monotonic() + timeout_ms / 1000
+            previous = None
+            identical = 0
+            first_identical = None
+            image = None
+            while time.monotonic() < deadline:
+                app.processEvents()
+                image = window.grabWindow()
+                if previous is not None and image == previous:
+                    if identical == 0:
+                        first_identical = time.monotonic()
+                    identical += 1
+                    if identical >= REQUIRED_IDENTICAL_FRAMES - 1 \
+                            and time.monotonic() - first_identical >= SETTLE_SPAN_SECONDS:
+                        return image
+                else:
+                    identical = 0
+                    first_identical = None
+                previous = image
+                time.sleep(0.02)
+            raise RuntimeError(
+                "the capture window never settled across %d identical frames over %.1fs"
+                % (REQUIRED_IDENTICAL_FRAMES, SETTLE_SPAN_SECONDS))
+
         def grab(name):
-            image = window.grabWindow()
+            image = settled_window()
             if image.isNull():
                 raise RuntimeError("grabWindow produced a null image for " + name)
             # Reject blank renders like the other capture scripts: the
@@ -260,6 +363,13 @@ def main():
             path = os.path.join(output_dir, name)
             image.save(path)
             print("captured", path)
+            # Contrast census: the pinned screenshots catch drift, not
+            # unreadability, so every text element in this frame is read
+            # against the ground its pixels actually show. It reads the
+            # image only, and runs AFTER the save so a census failure is a
+            # verdict on the scene, never a missing screenshot. The report
+            # holds the verdict until the last scene is captured.
+            census.audit(window.contentItem(), image, name)
 
         grab("01-dashboard-default.png")
         # The stacked progress track (the 4.4.0 bars replaced the
@@ -338,7 +448,7 @@ def main():
         for _ in range(3):
             app.processEvents()
         grab("07-chart-popover.png")
-        opened = window.grabWindow()
+        opened = settled_window()
         if opened == collapsed:
             raise RuntimeError("the chart pop-over capture is identical to the collapsed scene")
         host.setProperty("openPopOver", "")
@@ -356,8 +466,8 @@ def main():
         if not chart_items:
             raise RuntimeError("visible compact TemperatureChart not found in the scene")
         chart = chart_items[0]
+        scene = settled_window()
         top_left = chart.mapToScene(QPointF(0, 0))
-        scene = window.grabWindow()
         colours = {scene.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name()
                    for x in range(5, min(160, int(chart.width())), 7)
                    for y in range(5, int(chart.height()), 4)}
@@ -385,6 +495,7 @@ def main():
             app.processEvents()
     finally:
         context.__exit__(None, None, None)
+    census.require_clean()
 
 
 if __name__ == "__main__":

@@ -190,7 +190,7 @@ Popup {
         }
 
         // The frozen footer: a Cura-blue Close at the bottom right
-        // (the author's ruling — the X read too small and its button
+        // (a ruling — the X read too small and its button
         // bounds showed).
         Row {
             id: closeRow

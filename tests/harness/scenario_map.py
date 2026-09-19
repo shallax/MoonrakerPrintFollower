@@ -120,7 +120,6 @@ SCENARIO_MAP = {
     "statusCollapsedFlowLabel": "x8",
     "controlsCollapsedZOffsetLabel": "x8",
     "controlsCollapsedReadoutText": "x4",
-    "visibilitySelectorGlyph": "x2",
     "visibilitySelectorBox": "x2",
     "columnsPopupBackground": "x5",
     "sectionConfigureHandle": "x6",
@@ -142,6 +141,10 @@ SCENARIO_MAP = {
     "moonrakerKlipperRestart": "v18",
     "moonrakerHomeX": "g2", "moonrakerHomeY": "g2", "moonrakerHomeZ": "g2",
     "moonrakerConsoleInput": "d1", "moonrakerConsoleSend": "d1",
+    # The Clear button gained its own address (the hit-region fix): d3
+    # presses it by name instead of by its rendered text.
+    "moonrakerConsoleClear": "d3",
+    "moonrakerTuningSpeedReset": "c2", "moonrakerTuningFlowReset": "c2",
     "moonrakerM117Slot": "s6",
     "moonrakerPreviewCard": "v1",
     "moonrakerStripPauseButton": "v19",
@@ -279,6 +282,166 @@ PREFIX_RULES = [
 # fields are validated by test_coverage.py. An entry whose re-check
 # trigger fires must be re-probed, not carried forward silently.
 EXCLUSIONS = {
+    # The T0-T9 cold-camera timing chain (the reviewer's diagnostics):
+    # the QML-invoked first-frame slot and the trace-gate key are
+    # instrumentation, never scenario verbs.
+    "MoonrakerMonitorModel.cameraFirstFrameRendered": {
+        "reason": "the timing chain's T9 hook, invoked by the pane on the first decoded frame",
+        "evidence": "test_camera_timing's mark/mark_once contract; the harness legs' trace logs",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
+    "traceCameraTiming": {
+        "reason": "the trace gate mirrored to QML; diagnostics-only",
+        "evidence": "test_camera_timing's begin/enabled contract",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
+    "MoonrakerMonitorModel.cameraPaneInstanceId": {
+        "reason": "the pane's diagnostic id source; instrumentation, never a scenario verb",
+        "evidence": "the camera ownership tests' pane-id assignments; the trace logs",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
+    "MoonrakerMonitorModel.cameraPaneTrace": {
+        "reason": "the pane's trace sink for apply/start/stop lines; diagnostics-only",
+        "evidence": "the camera ownership tests' apply traces; the trace logs",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
+    "MoonrakerMJPGImage.start": {
+        "reason": "the renderer's stream start, driven by the pane's applyCamera; the harness scenarios exercise the pane, never the raw verb",
+        "evidence": "the camera ownership tests' start/stop counter assertions",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
+    "MoonrakerMJPGImage.stop": {
+        "reason": "the renderer's stream stop, driven by the pane's applyCamera; the harness scenarios exercise the pane, never the raw verb",
+        "evidence": "the camera ownership tests' start/stop counter assertions",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
+    "cameraImage": {
+        "reason": "the stream viewport item, named for the ownership tests' counter reads; never a scenario target",
+        "evidence": "the camera ownership tests' start/stop counter assertions",
+        "date": "2026-09-19",
+        "recheck": "the cold-camera timing scenario lands",
+    },
+    "MoonrakerMonitorModel.setChartOpen": {
+        "reason": "the chart pop-over's hydration gate; driven by the pane's own openPopOver state, never a scenario verb",
+        "evidence": "the chart hydration tests' open/close transitions",
+        "date": "2026-09-19",
+        "recheck": "the chart pop-over scenario lands",
+    },
+    # The migration-failure surfaces: the settings-dialog scenario is
+    # deferred (no harness scenario drives the dialog yet), so the
+    # banner's end-to-end proof rides the unit tests — the notice's
+    # state machine and the model's record values — until it lands.
+    "MoonrakerMonitorModel.dismissMigrationBanner": {
+        "reason": "the dialog's Dismiss verb; the dialog scenario is deferred",
+        "evidence": "test_migration_notice's latch tests; the model's record values in test_monitor",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "MoonrakerMonitorModel.openMigrationBackupFolder": {
+        "reason": "the backup folder open; the dialog scenario is deferred",
+        "evidence": "the QDesktopServices recipe matches Cura's own CrashHandler",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    # The settings page reads its migration surface off the ACTION (the
+    # live find: the page's bindings pointed at the wrong manager), so
+    # the action's two verbs join the model's in the deferred set.
+    "MoonrakerFollowerMachineAction.dismissMigrationBanner": {
+        "reason": "the settings page's Dismiss verb; the dialog scenario is deferred",
+        "evidence": "test_config_formatting_coverage's SettingsPageMigrationMirrorTests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "MoonrakerFollowerMachineAction.openMigrationBackupFolder": {
+        "reason": "the settings page's backup folder open; the dialog scenario is deferred",
+        "evidence": "SettingsPageMigrationMirrorTests pins the config-path handover",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationNotice": {
+        "reason": "the failure banner; the dialog scenario is deferred",
+        "evidence": "test_migration_notice; the model's record values in test_monitor",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationDismissButton": {
+        "reason": "the banner's only dismiss path; the dialog scenario is deferred",
+        "evidence": "test_migration_notice's latch tests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationShowBackupButton": {
+        "reason": "the backup folder action; the dialog scenario is deferred",
+        "evidence": "test_migration_notice; the QDesktopServices recipe",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationDiagnosticsRow": {
+        "reason": "the permanent post-dismissal row; the dialog scenario is deferred",
+        "evidence": "the model's migrationDiagnosticsVisible/Text values in test_monitor",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationBannerVisible": {
+        "reason": "the banner's visibility key; the dialog scenario is deferred",
+        "evidence": "the model's record-value unit tests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationBannerText": {
+        "reason": "the banner's copy key; the dialog scenario is deferred",
+        "evidence": "the model's record-value unit tests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationBackupAvailable": {
+        "reason": "the backup-action's gate key; the dialog scenario is deferred",
+        "evidence": "the model's record-value unit tests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationDiagnosticsVisible": {
+        "reason": "the diagnostics row's visibility key; the dialog scenario is deferred",
+        "evidence": "the model's record-value unit tests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "migrationDiagnosticsText": {
+        "reason": "the diagnostics row's copy key; the dialog scenario is deferred",
+        "evidence": "the model's record-value unit tests",
+        "date": "2026-09-18",
+        "recheck": "the settings-dialog scenario lands",
+    },
+    "jobPositionCellX": {
+        "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
+        "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
+        "date": "2026-09-18",
+        "recheck": "a scenario asserts the Status pane's axis colours",
+    },
+    "moonrakerInfoContent": {
+        "reason": "the information pane's container, addressed by the real-engine tests; the section ORDER is asserted by the configure scenarios through the headers, not by this name",
+        "evidence": "test_qml_real_engine's SectionOrderArrivalTests address it; the s-scenarios pin the rendered order end-to-end",
+        "date": "2026-09-18",
+        "recheck": "the configure scenarios adopt the objectName directly",
+    },
+    "jobPositionCellY": {
+        "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
+        "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
+        "date": "2026-09-18",
+        "recheck": "a scenario asserts the Status pane's axis colours",
+    },
+    "jobPositionCellZ": {
+        "reason": "the Position row's axis cell (the 4.5.0 colour ruling); the colour mapping is a QML pin, not a scenario surface",
+        "evidence": "test_monitor pins the cells' axis tokens and no-wrap; the Toolhead precedent",
+        "date": "2026-09-18",
+        "recheck": "a scenario asserts the Status pane's axis colours",
+    },
     # The pause list's stable ListModel: a probe-only seam (the
     # 2026-09-16 layer-0 diagnosis reads the synced rows back through
     # it); the pause-row scenario that supersedes this lands with the
@@ -288,6 +451,36 @@ EXCLUSIONS = {
         "evidence": "the container repro reads the synced rows end to end",
         "date": "2026-09-16",
         "recheck": "the baked-pause pause-row scenario lands",
+    },
+    # The status column's two geometry address points (the status-width
+    # fix): the flickable and the column it holds are measured, never
+    # pressed — a scenario would only be reading their rects.
+    "moonrakerStatusFlick": {
+        "reason": "geometry address point of the status pane; no scenario presses it",
+        "evidence": "test_qml_real_engine's StatusColumnGeometryTests measures the column against it",
+        "date": "2026-09-18",
+        "recheck": "a scenario scrolls or presses inside the status pane",
+    },
+    "moonrakerStatusContent": {
+        "reason": "geometry address point of the status column; no scenario presses it",
+        "evidence": "test_qml_real_engine's StatusColumnGeometryTests measures the sections against it",
+        "date": "2026-09-18",
+        "recheck": "a scenario scrolls or presses inside the status pane",
+    },
+    # The controls pane's two geometry address points (the constant
+    # gutter fix): the flickable and the column it holds are measured,
+    # never pressed — a scenario would only be reading their rects.
+    "moonrakerControlsFlick": {
+        "reason": "geometry address point of the controls pane; no scenario presses it",
+        "evidence": "test_qml_real_engine's PaneGutterTests measures the column against it",
+        "date": "2026-09-19",
+        "recheck": "a scenario scrolls or presses inside the controls pane",
+    },
+    "moonrakerControlsContent": {
+        "reason": "geometry address point of the controls column; no scenario presses it",
+        "evidence": "test_qml_real_engine's PaneGutterTests measures the gutter against it",
+        "date": "2026-09-19",
+        "recheck": "a scenario scrolls or presses inside the controls pane",
     },
     # The job section's stacked-track pause fill: the strip's own
     # fill took the mapped statusNextPauseFill name (the shared
@@ -505,6 +698,42 @@ EXCLUSIONS = {
         "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
         "date": "2026-09-15",
         "recheck": "the deferred popup round lands",
+    },
+    "cameraStreamChipText": {
+        "reason": "the stream chip's label: display-only text over the live camera feed (the capture census exempts camera-overlay text by name)",
+        "evidence": "the chip visibility contract test; the census exemption in capture_contrast.CAMERA_OVERLAY_TEXT",
+        "date": "2026-09-19",
+        "recheck": "the chip's text gains an interactive surface",
+    },
+    "cameraLiveBadgeText": {
+        "reason": "the Live badge's label: display-only text over the live camera feed (the capture census exempts camera-overlay text by name)",
+        "evidence": "the camera pane's badge renders in the capture scenes; the census exemption in capture_contrast.CAMERA_OVERLAY_TEXT",
+        "date": "2026-09-19",
+        "recheck": "the badge's text gains an interactive surface",
+    },
+    "cameraStreamChip": {
+        "reason": "the camera stream chip (decoded resolution + recent bandwidth): display-only, driven by the renderer's published statistics",
+        "evidence": "test_qml_real_engine's chip visibility/text contract; the captures' non-live camera hides it",
+        "date": "2026-09-19",
+        "recheck": "the chip gains an interactive surface",
+    },
+    "temperatureDataCanvas": {
+        "reason": "the temperature chart's data canvas: display-only, painted from the model's payloads; no scenario verb addresses a canvas",
+        "evidence": "test_qml_real_engine's ChartSurfaceTests (strategy, paint-job snapshot, hover); the capture census renders its pixels",
+        "date": "2026-09-19",
+        "recheck": "the canvas gains an interactive surface",
+    },
+    "temperatureHoverCursor": {
+        "reason": "the chart hover cursor line: display-only scene-graph geometry following the snapped hover second",
+        "evidence": "test_qml_real_engine's ChartSurfaceTests hover-scene-graph contract",
+        "date": "2026-09-19",
+        "recheck": "the cursor gains an interactive surface",
+    },
+    "temperatureHoverMarkers": {
+        "reason": "the chart hover markers' repeater: display-only scene-graph dots at each series' nearest sample",
+        "evidence": "test_qml_real_engine's ChartSurfaceTests hover-scene-graph contract",
+        "date": "2026-09-19",
+        "recheck": "the markers gain an interactive surface",
     },
     "moonrakerEmergencyButton": {
         "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",

@@ -19,7 +19,7 @@ def _declared_length(reply) -> int:
     header PAIRS with a case-insensitive scan — the typed lookup
     would pull the network-request class into this module against
     the architecture rule, and the raw bytes-key lookup returns
-    empty on the Cura PyQt6 (probed against the author's server).
+    empty on the Cura PyQt6 (probed against the server).
     The raw lookup stays as the fallback for replies whose pairs
     are unavailable (the late-header test's fake)."""
     try:
@@ -78,22 +78,36 @@ class _OneShotDownload:
         self._directory = None
         self._path = None
         self._op = None
+        reply = None
         try:
             self._directory = tempfile.mkdtemp(prefix="file-", dir=root)
             name = os.path.basename(self._relpath.replace("\\", "/")) or "download.gcode"
             if os.path.splitext(name)[1].lower() not in {".g", ".gcode"}:
                 name += ".gcode"
             self._path = os.path.join(self._directory, name)
-            target = service._target_factory(self._path)
             request = self._transport.request(download_endpoint(self._transport.identity[0], self._relpath), timeout_ms=30000)
             request.setRawHeader(b"Accept", b"application/octet-stream")
             request.setRawHeader(b"Accept-Encoding", b"identity")
             reply = self._transport.network.get(request)
             reply.setReadBufferSize(4 * 1024 * 1024)
+            # The target opens LAST so a raise above leaves no open
+            # handle behind (the coverage agent's live find — the
+            # orphaned fd also resisted file deletion on Windows).
+            target = service._target_factory(self._path)
             # Same as the job lane: the declared length is read lazily
             # in the drain once the response headers have arrived.
             size = 0
         except Exception as error:
+            # No file handle exists here (the target opens last), but a
+            # failure AFTER the reply was created — the target factory
+            # raising — must not leave that reply live: abort and
+            # dispose it exactly as the job lane's setup path does, or
+            # the transfer keeps running with nothing reading it.
+            if reply is not None:
+                reply.abort()
+                reply.deleteLater()
+            # The one-shot retires with its directory removed by
+            # _finish_immediately.
             self._finish_immediately(str(error))
             return
         self._op = DownloadOperation(target, reply, size, None, None)
@@ -102,6 +116,14 @@ class _OneShotDownload:
         self._op.start()
         reply.readyRead.connect(lambda r=reply, o=self._op: service._drain_one_shot(self, o, r))
         reply.finished.connect(lambda r=reply, o=self._op: self._finish_stream(o, r))
+
+    @property
+    def done(self) -> bool:
+        """The read-only completion flag (the hardening pass): a
+        synchronous constructor failure delivers its terminal BEFORE
+        `download_once` returns, so the caller must be able to see the
+        completion without reaching into the private flag."""
+        return self._done
 
     def _finish_stream(self, op, reply):
         if self._done:
@@ -271,7 +293,7 @@ class RemoteFileService(QObject):
                 self._one_shots.discard(download)
             on_ready(path, error)
         download = _OneShotDownload(self, relpath, self._root, done)
-        if download._done:
+        if download.done:
             # A constructor failure delivered its terminal before the
             # registry add — the dead download must not accumulate.
             return download
@@ -446,7 +468,7 @@ class RemoteFileService(QObject):
             # server answer gzip + CHUNKED, which carries no
             # Content-Length — the transfer's declared size stayed 0
             # and the bar swept for the whole download (the live
-            # report, the author's nginx probed). Identity also keeps
+            # report, nginx probed). Identity also keeps
             # the bytes on disk identical to the printer's file, which
             # the size-mismatch guard wants.
             request.setRawHeader(b"Accept-Encoding", b"identity")

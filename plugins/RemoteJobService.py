@@ -67,7 +67,13 @@ class RemoteJobService:
         give-up policy decides what None means."""
         try:
             jobs = ((history_payload or {}).get("result") or {}).get("jobs") or []
-            return bool(jobs) and str(jobs[0].get("job_id")) == str(job_id)
+            if not jobs:
+                # An empty history is UNATTESTABLE, not a mismatch: a
+                # False here lands in the caller's permanent-refusal
+                # branch, and a check that can never pass is silent
+                # and permanent (the contract this docstring states).
+                return None
+            return str(jobs[0].get("job_id")) == str(job_id)
         except (AttributeError, TypeError):
             return None
 

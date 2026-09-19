@@ -53,8 +53,20 @@ class MonitorData(QObject):
         super().__init__(parent)
         self._client = client
         self._active = False
+        # The ownership split (the 4.5.0 multi-printer fix): ownership
+        # is the plugin's grant for the SELECTED machine; _active is
+        # only the runtime session state. A shared-client reconnect
+        # re-arms an OWNED monitor and never a deposed one.
+        self._owner_active = False
         self._generation = 0
         self._connection_detail = ""
+        # The discovery coalescers (the 2026-09-19 cold-start trace):
+        # one in-flight webcam RPC at a time, and one deferred
+        # re-discovery timer per boot window — the boot fan-out used
+        # to issue the identical request once per caller.
+        self._webcams_pending = False
+        self._webcams_pending_since = 0.0
+        self._discovery_defer_pending = False
         # The observation record (4.2.0): assembled here, with the
         # two closed push-ins for the facts the data owner does not
         # hold — controlsLocked (the model's chrome) and the command
@@ -102,7 +114,10 @@ class MonitorData(QObject):
         client.connectionChanged.connect(self._connection_changed)
 
     def _session_invalidated(self):
-        self.set_active(False)
+        # Suspends the RUNTIME only: ownership stays with the selected
+        # machine, so the reconnect re-arms it — a revoked ownership
+        # here would die forever on the next transport handover.
+        self._deactivate_runtime()
 
     def _connection_changed(self, *args):
         connected = bool(args[0]) if args else self.connected
@@ -119,12 +134,16 @@ class MonitorData(QObject):
         # reconnect) left the model alive but discovery-dead forever
         # (webcams empty, temperatures gone; the harness's suite
         # handover scenario caught it). The re-arm is a no-op when
-        # already active.
-        if connected and not self._active:
-            self.set_active(True)
-        elif connected:
+        # already active — and it is gated on OWNERSHIP: every cached
+        # monitor shares this client, so a reconnect after a machine
+        # switch must never revive a deposed monitor (the 4.5.0
+        # multi-printer fix — the shared reconnect re-activated the
+        # old machine's monitor alongside the new one's).
+        if connected and self._owner_active and not self._active:
+            self._activate_runtime()
+        elif connected and self._active:
             # The first data must not wait for the lane timers' next
-            # ticks (the author's live report — aux stayed unpopulated
+            # ticks (a live report — aux stayed unpopulated
             # long after the connect): the connection transition
             # itself fires every lane immediately.
             self.refresh_all()
@@ -218,24 +237,34 @@ class MonitorData(QObject):
         """The manual Reconnect (a live request, 3.6.0):
         the client cycle of the e-stop recovery, minus the
         connected-only gate — a manual reconnect exists for when the
-        UI state is STUCK, which includes being disconnected."""
+        UI state is STUCK, which includes being disconnected. It
+        re-arms the RUNTIME only, never ownership: a deposed
+        monitor's reconnect is a no-op (the 4.5.0 ownership
+        close-out — the reconnect action used to re-grant ownership,
+        letting a cached stale monitor re-claim the shared client)."""
+        if not self._owner_active:
+            return
         self._client.stop()
         self._client.start()
-        self.set_active(True)
+        if self._owner_active:
+            self._activate_runtime()
 
     def reconnect_after_emergency(self) -> None:
-        """The author's ruling (2026-09-10, live-proven on their
+        """The ruling (2026-09-10, live-proven on a
         printer): after an emergency stop the host refuses commands
         until the connection is cycled. The plugin cycles the client
-        once and re-arms the monitor — the same sequence as the
-        author's manual disconnect/reconnect that recovered it."""
+        once and re-arms the RUNTIME — the emergency path must not
+        grant ownership either."""
         if not self._active or not self._client.connected:
+            return
+        if not self._owner_active:
             return
         self._client.stop()
         self._client.start()
         # The stop invalidated the session and deactivated the
-        # monitor; the manual recovery re-arms it the same way.
-        self.set_active(True)
+        # monitor; the manual recovery re-arms the runtime.
+        if self._owner_active:
+            self._activate_runtime()
 
     def _update(self, **patch):
         from dataclasses import replace
@@ -302,38 +331,64 @@ class MonitorData(QObject):
         self._commands_busy = busy
         self._rebuild_observation()
 
-    def set_active(self, active):
-        if bool(active) == self._active: return
-        self._active = bool(active)
+    def set_owner_active(self, active):
+        """The plugin's ownership grant — the ONLY writer of
+        ownership: this monitor belongs to the selected machine (a
+        cached, deposed monitor can never re-acquire it, not even
+        through its own reconnect action). The runtime arm follows
+        immediately — the arm also builds the initial observation the
+        model's first publish reads, so it must not depend on the
+        transport state. A reconnect re-arms an OWNED monitor through
+        _connection_changed (and a deposed one never)."""
+        self._owner_active = bool(active)
         if not active:
-            self._generation += 1
-            # A fresh session generation has never observed a
-            # connection: the tri-state reads 'unknown' again.
-            self._connection_observed = False
-            for timer in self._timers.values(): timer.stop()
-            self._console_watch.stop()
-            self._client.transport.cancel_owner("monitor")
-            # The console poll state dies with the session so a re-attach
-            # is a REAL expand: the backfill seed must re-apply from the
-            # persisted stamp (the domain panel's re-seed point — the
-            # unchanged-flag early-return once left a rebound session
-            # polling without a fresh seed).
-            self._console_expanded = False
-            self._console_seed = None
-            self._console_entries = []
-            self._clear()
-            # The rebuild runs AFTER the latch reset so the record
-            # never holds a stale 'no' while the tri-state already
-            # reads 'unknown' (the adversarial round's L7).
-            self._rebuild_observation()
-            self.invalidated.emit()
-            self.changed.emit()
+            self._deactivate_runtime()
         else:
-            self._intervals()
-            for timer in self._timers.values(): timer.start()
-            self.observe(self._client.status)
-            self.refresh_all()
-            self._rebuild_observation()
+            self._activate_runtime()
+
+    def _deactivate_runtime(self):
+        if not self._active: return
+        self._active = False
+        self._generation += 1
+        # An in-flight reply's callback now dies on the generation
+        # guard, so both coalescer gates reopen here — a wedged gate
+        # would permanently silence webcam discovery on the next
+        # session.
+        self._webcams_pending = False
+        self._webcams_pending_since = 0.0
+        self._discovery_defer_pending = False
+        # A fresh session generation has never observed a
+        # connection: the tri-state reads 'unknown' again.
+        self._connection_observed = False
+        for timer in self._timers.values(): timer.stop()
+        self._console_watch.stop()
+        self._client.transport.cancel_owner("monitor")
+        # The console poll state dies with the session so a re-attach
+        # is a REAL expand: the backfill seed must re-apply from the
+        # persisted stamp (the domain panel's re-seed point — the
+        # unchanged-flag early-return once left a rebound session
+        # polling without a fresh seed).
+        self._console_expanded = False
+        self._console_seed = None
+        self._console_entries = []
+        self._clear()
+        # The rebuild runs AFTER the latch reset so the record
+        # never holds a stale 'no' while the tri-state already
+        # reads 'unknown' (the adversarial round's L7).
+        self._rebuild_observation()
+        self.invalidated.emit()
+        self.changed.emit()
+
+    def _activate_runtime(self):
+        if self._active: return
+        self._active = True
+        from .CameraTiming import mark
+        mark("T0", "monitor active")
+        self._intervals()
+        for timer in self._timers.values(): timer.start()
+        self.observe(self._client.status)
+        self.refresh_all()
+        self._rebuild_observation()
 
     def _intervals(self):
         configured = {
@@ -372,7 +427,29 @@ class MonitorData(QObject):
             # when the upgrade has settled on every observed boot.
             if self._client.effective_feed_mode == "websocket":
                 if category == RequestCategory.DISCOVERY:
-                    self.later(1000, self.refresh_discovery)
+                    # One pending re-arm timer per boot window: the
+                    # fan-out used to stack one singleShot per dropped
+                    # request, re-firing the whole discovery chain N
+                    # times at +1 s. The mark rides the guard so the
+                    # trace shows ONE defer per window, not one per
+                    # caller.
+                    if not self._discovery_defer_pending:
+                        from .CameraTiming import mark
+                        mark("T3-defer", "camera discovery deferred: websocket RPC not ready")
+                        self._discovery_defer_pending = True
+                        def rearm():
+                            self._discovery_defer_pending = False
+                            # The deferred webcam request was never
+                            # dispatched (this very branch skipped the
+                            # wire), so its latch must reopen — the
+                            # re-fired chain re-issues it now that the
+                            # RPC lane has settled (the 2026-09-19
+                            # cold-start trace: the gate otherwise
+                            # stayed shut and the camera column read
+                            # "no camera" until a manual refresh).
+                            self._webcams_pending = False
+                            self.refresh_discovery()
+                        self.later(1000, rearm)
                 return True
         return self._client.transport.send_json("monitor", channel, method, path, finished,
             body=body, replace=replace, category=category, timeout_ms=timeout_ms)
@@ -634,10 +711,35 @@ class MonitorData(QObject):
         # erase last-known cameras — a transient blip would blank the
         # camera column ("no camera") during a printer reboot. The list
         # clears only on invalidation/disconnect.
-        self.request("webcams", "GET", "server/webcams/list",
-            lambda p, e: self._update(webcams=tuple(item for item in result(p).get("webcams", ()) if isinstance(item, dict) and item.get("enabled", True)))
-            if not e and isinstance(result(p), Mapping) else None,
-            replace=True, category="discovery",
-            rpc=("server.webcams.list", {}))
+        # In-flight coalescing (the 2026-09-19 cold-start trace): the
+        # boot fan-out called this once per caller, issuing the
+        # identical RPC many times a cycle. One request at a time;
+        # every caller observes the same landed answer through the
+        # snapshot (the reply lands in _update -> data.changed). The
+        # 10 s valve keeps a DROPPED reply (a session-generation
+        # guard can swallow the callback) from wedging the gate shut:
+        # discovery must never go silent for longer than a poll.
+        if self._webcams_pending:
+            if time.monotonic() - self._webcams_pending_since < 10.0:
+                return
+        self._webcams_pending = True
+        self._webcams_pending_since = time.monotonic()
+        from .CameraTiming import mark_once
+        # Once per trace: the T0-T9 chain answers the COLD start, and
+        # the periodic discovery poll would otherwise re-mark every
+        # 30 s for the session's lifetime.
+        mark_once("T3", "webcam list requested")
+        def landed(payload, error):
+            # Cleared FIRST: a dropped callback (the generation guard
+            # in request()) must never wedge the gate shut. The
+            # deactivate path resets it too, for the same reason.
+            self._webcams_pending = False
+            if not error and isinstance(result(payload), Mapping):
+                mark_once("T4", "webcam list landed")
+                self._update(webcams=tuple(item for item in result(payload).get("webcams", ()) if isinstance(item, dict) and item.get("enabled", True)))
+        if not self.request("webcams", "GET", "server/webcams/list", landed,
+                replace=True, category="discovery",
+                rpc=("server.webcams.list", {})):
+            self._webcams_pending = False
 
 
