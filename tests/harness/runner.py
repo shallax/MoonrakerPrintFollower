@@ -2804,6 +2804,12 @@ def real_run():
 
 def suite_step(step):
     op = step["op"]
+    only = step.get("version_only")
+    if only is not None and not any(
+            os.environ.get("CURA_VERSION", "").startswith(prefix) for prefix in only):
+        # A step that exists only on some versions (s4's 5.11 stage
+        # round-trip): recorded as skipped on the others, never silent.
+        return True, "skipped: step applies to other Cura versions", "version_only", None
     if op == "click_stage":
         reply = click_stage(step["stage"])
         result = wait_stage(step["stage"], timeout_ms=20000)
