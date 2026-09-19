@@ -34,9 +34,31 @@ Cura.RoundedRectangle {
     // first-entry stream never starting — the refresh button worked
     // because its nonce bump is the one path that provably re-drives
     // the image on their machine).
+    // applyCamera is the stream's SOLE owner (the third camera-delay
+    // cause): Cura's NetworkMJPGImage.setSourceURL auto-restarts a
+    // STARTED image, so the previous onSourceChanged start raced that
+    // auto-restart into TWO stream starts per application. The image
+    // is stopped FIRST — the setter then cannot auto-restart while
+    // the assignment is in progress — and exactly one start() runs,
+    // at the end, only when a real URL should run.
+    property bool _cameraApplyInProgress: false
+    // The T0-T9 timing chain's T9 gate (the reviewer's cold-start
+    // diagnostics): the host mirrors the client's trace flag, and
+    // stamps the chain's origin.
+    property bool traceCameraTiming: false
+    property real cameraTraceOrigin: 0
+
     function applyCamera(url, visible) {
+        var text = url != null ? url.toString() : "";
+        var shouldRun = visible && text.length > 0;
+        _cameraApplyInProgress = true;
+        cameraImage.stop();
         cameraImage.source = url;
         cameraImage.visible = visible;
+        _cameraApplyInProgress = false;
+        if (shouldRun) {
+            cameraImage.start();
+        }
     }
 
     border.color: UM.Theme.getColor("lining")
@@ -130,32 +152,28 @@ Cura.RoundedRectangle {
                 }
 
                 onVisibleChanged: {
+                    // The stage hide/show lifecycle ONLY: applyCamera
+                    // owns every start/stop during an application, and
+                    // the in-progress guard keeps this handler out of
+                    // its way.
+                    if (_cameraApplyInProgress) {
+                        return;
+                    }
                     if (source !== "") {
-                        if (visible)
+                        if (visible) {
                             start();
-                        else
+                        } else {
                             stop();
+                        }
                     }
                 }
 
-                onSourceChanged: {
-                    if (visible && source !== "") {
-                        start();
-                    } else {
-                        // An emptied source must stop the consumer too:
-                        // the diagnostics kill-switch publishes a blank
-                        // URL, and without this the loader keeps its
-                        // old connection alive (relays=1 forever) and
-                        // keeps decoding — the camera path is only half
-                        // disabled. The reviewer's precondition for the
-                        // phased battery: relays must reach 0.
-                        stop();
-                    }
-                }
-
-                Component.onCompleted: {
-                    if (source !== "") {
-                        start();
+                onImageWidthChanged: {
+                    // T9: the first decoded non-zero frame (the
+                    // reviewer's cold-start diagnostics — the last
+                    // hop of the T0-T9 chain).
+                    if (root.traceCameraTiming && imageWidth > 0) {
+                        console.log("camera first frame at +" + ((Date.now() - root.cameraTraceOrigin) / 1000.0).toFixed(2) + " s");
                     }
                 }
             }
