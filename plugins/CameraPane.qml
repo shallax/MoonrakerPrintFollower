@@ -369,11 +369,6 @@ Cura.RoundedRectangle {
                     // against the shared monotonic origin, once.
                     if (root.traceCameraTiming && imageWidth > 0 && root.printerModel != null) {
                         root.printerModel.cameraFirstFrameRendered();
-                        // TEMPORARY live chip diagnostics (remove once
-                        // the live run names the false term): the
-                        // stream chip's visibility terms at the first
-                        // frame.
-                        root.printerModel.cameraPaneTrace(paneId, "chip terms: visible=" + cameraStreamChip.visible + " configured=" + root.configured + " imgVisible=" + cameraImage.visible + " imgW=" + cameraImage.imageWidth + " conn=" + root.printerModel.monitorConnected);
                     }
                 }
             }
