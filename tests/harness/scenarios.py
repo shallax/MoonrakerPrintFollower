@@ -2279,6 +2279,15 @@ SCENARIOS = [
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "absent": True, "budget": 60},
          {"op": "wait_seconds", "seconds": 5},
+         # 5.11's view rebuilds its layer data only on stage re-entry:
+         # the plugin's load lands while Preview is already open, so the
+         # rendered path and the layer slider stay hidden until the stage
+         # is left and re-entered (the z20 walk-dump). The drag premise
+         # then holds.
+         {"op": "click_stage", "stage": "PrepareStage", "version_only": ["5.11"]},
+         {"op": "wait_seconds", "seconds": 2, "version_only": ["5.11"]},
+         {"op": "click_stage", "stage": "PreviewStage", "version_only": ["5.11"]},
+         {"op": "wait_seconds", "seconds": 3, "version_only": ["5.11"]},
          {"op": "exec_code", "verbs": ['mouseMove'], "code": P_SLIDER_DRAG},
          {"op": "wait_exec", "code": P_FOLLOW_READ, "contains": '"attached": false', "budget": 20},
      ]},
