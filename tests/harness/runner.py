@@ -166,6 +166,9 @@ def ensure_ready(require_aux=True):
         # boot, never waited for — a flow that loads no gcode never
         # spends time on it.
         rpc({"id": 1, "cmd": "hide_gcode_warning"})
+        # The version-update toast (5.11/5.12's MessageStack puts it
+        # over the console's buttons): same conditional dismissal.
+        rpc({"id": 1, "cmd": "hide_update_toast"})
         time.sleep(2)
     # Cura's first-boot window size is nondeterministic, and a narrow
     # window collapses the header's stage buttons into the overflow
@@ -2299,7 +2302,25 @@ def suite_run(group_id):
                               "skipped on the container engine",
                               spec["container_skip"], True, None))
                 continue
+            version_skip = spec.get("version_skip") or {}
+            version = os.environ.get("CURA_VERSION", "")
+            reason = version_skip.get(version) or next(
+                (text for prefix, text in version_skip.items()
+                 if version.startswith(prefix)), None)
+            if reason:
+                # The version-divergent scenarios (5.11's preview
+                # platform cannot hold the premise — the walk-dump
+                # evidence). The skip is a RECORDED marker with the
+                # reason in the gallery, never a silent pass.
+                steps.append((spec["id"] + "-skip",
+                              f"skipped on Cura {version or 'unknown'}",
+                              reason, True, None))
+                continue
             sim_http("/harness/reset", "POST", {})
+            # The update toast may land mid-suite (the check completes
+            # after the boot gate); re-dismiss it per scenario so a
+            # late toast never swallows the console presses.
+            rpc({"id": 1, "cmd": "hide_update_toast"})
             sim_http("/harness/scenario", "POST", {"console_lines": [{"type": "response",
                 "message": "// %s ready" % spec["id"], "time": time.time()}]})
             steps.extend(suite_scenario(spec))

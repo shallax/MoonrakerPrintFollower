@@ -1599,6 +1599,40 @@ Row {
                 return {"id": request_id, "ok": True, "dismissed": dismissed}
             except Exception as exc:
                 return {"id": request_id, "ok": False, "error": str(exc)}
+        if cmd == "hide_update_toast":
+            # Cura's version-update toast ("... 5.13.0 is available!")
+            # is sticky, and on 5.11/5.12's MessageStack metrics it
+            # lands over the console's Send/Clear buttons — its
+            # TextArea then grabs the presses (the sweep's d1-07 and
+            # d3-01 finds). The gate and the suite prelude hide it
+            # conditionally, never waiting for it: the update check
+            # may not have completed, and a flow that never sees it
+            # stays unaffected.
+            try:
+                dismissed = []
+                window = _main_window()
+                if window is None:
+                    return {"id": request_id, "ok": False, "error": "no main window"}
+                for item in _walk(window.contentItem(), depth=48):
+                    try:
+                        text = item.property("text")
+                    except Exception:
+                        continue
+                    if not isinstance(text, str) or "is available" not in text:
+                        continue
+                    parent = item
+                    for _ in range(8):
+                        candidate = parent.parentItem()
+                        if candidate is None:
+                            break
+                        parent = candidate
+                        if "Message" in parent.metaObject().className():
+                            parent.setVisible(False)
+                            dismissed.append(parent.metaObject().className())
+                            break
+                return {"id": request_id, "ok": True, "dismissed": dismissed}
+            except Exception as exc:
+                return {"id": request_id, "ok": False, "error": str(exc)}
         if cmd == "complete_welcome":
             # Drive Cura's own welcome model to its end, exactly as the
             # wizard's final button does. Its buttons are unreachable

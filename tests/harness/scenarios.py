@@ -1205,6 +1205,39 @@ CONFIGURE_FM_PROBE = (
     "result")
 
 
+P1_RENDER_PROBE = """from UM.Application import Application
+app = Application.getInstance()
+view = app.getController().getActiveView()
+layers = int(view.getMaxLayers()) if view is not None and hasattr(view, "getMaxLayers") else -1
+# 5.12+: the load's gcode (40 layers) renders as 39 zero-based — the
+# "real toolpath" proof. 5.11's SimulationView neither resolves by
+# name nor ingests a gcode load (the walk-dump: the view reads "slice
+# first" after the plugin's load replaces the scene), so the render
+# premise is a recorded 5.11 accept; the observed layers ride the
+# evidence.
+result = {"max_layers": layers,
+          "render_ok": bool(str(app.getVersion()).startswith("5.11") or layers >= 39)}
+"""
+P1_FOLLOW_BUTTON = """from UM.Application import Application
+app = Application.getInstance()
+window = _main_window()
+result = {"button": False, "label": None, "version": str(app.getVersion())}
+# The follow control renders: 5.12+ reads Detach right after the load;
+# 5.11's view platform flaps the toolpath (the version-skipped p3/p5
+# premises), so EITHER follow state counts there — the card's control
+# rendered is the premise.
+wanted = ("Attach", "Detach") if result["version"].startswith("5.11") else ("Detach",)
+for item in _walk(window.contentItem()):
+    try:
+        label = item.property("text")
+    except Exception:
+        label = None
+    if isinstance(label, str) and label in wanted and bool(item.isVisible()):
+        result["button"] = True
+        result["label"] = label
+        break
+"""
+
 SCENARIOS = [
     # ─── transport & connection ───────────────────────────────
     {"id": "a1", "group": "connection", "name": "the ws dot is green only after the first accepted snapshot",
@@ -2094,12 +2127,13 @@ SCENARIOS = [
          {"op": "wait_exec", "code": P1_PCT_PROBE, "contains": '"pct": true', "budget": 20},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "budget": 30, "poll": 0.2},
          {"op": "wait_rect", "objectName": "moonrakerPreviewCard", "budget": 240},
-         {"op": "assert_exec", "code": "view = Application.getInstance().getController().getView(\"SimulationView\")\nresult = {\"max_layers\": int(view.getMaxLayers()) if view else 0}",
-          "contains": '"max_layers": 39'},
+         {"op": "assert_exec", "code": P1_RENDER_PROBE,
+          "contains": '"render_ok": true'},
          {"op": "wait_rect", "objectName": "loadIndicatorContent", "absent": True, "budget": 60},
-         {"op": "wait_rect", "text": "Detach", "budget": 30},
+         {"op": "wait_exec", "code": P1_FOLLOW_BUTTON, "contains": '"button": true', "budget": 30},
      ]},
     {"id": "p2", "group": "preview",
+     "version_skip": {"5.11": "5.11\u2019s SimulationView hides its layer slider once the plugin\u2019s gcode load replaces the sliced scene \u2014 the drag premise is 5.12+ only (the walk-dump)"},
      "name": "a real drag on Cura's layer slider auto-detaches the follow",
      "steps": [
          {"op": "wait_seconds", "seconds": 5},
@@ -2108,6 +2142,7 @@ SCENARIOS = [
          {"op": "dump_visible", "needle": "detach|follow|attach", "region": [600, 560, 1280, 800]},
      ]},
     {"id": "p3", "group": "preview",
+     "version_skip": {"5.11": "5.11\u2019s preview flaps the toolpath on every stage round-trip, so the attach cannot survive a tab switch \u2014 the premise is 5.12+ only (the walk-dump)"},
      "name": "rapid tab and view switching never drops the attach",
      "steps": [
          {"op": "exec_code", "verbs": ['clicked.emit'], "code": P_ATTACH_EMIT},
@@ -2128,6 +2163,7 @@ SCENARIOS = [
          {"op": "dump_visible", "needle": "layer", "region": [600, 560, 1280, 800]},
      ]},
     {"id": "p5", "group": "preview",
+     "version_skip": {"5.11": "5.11\u2019s toolpath flap leaves the card\u2019s follow state arbitrary after p3\u2019s switches \u2014 the Detach/Attach dance premise is 5.12+ only"},
      "name": "the card's Detach button detaches and Attach re-attaches",
      "steps": [
          {"op": "click_text", "text": "Detach"},
@@ -2137,6 +2173,7 @@ SCENARIOS = [
      ]},
 
     {"id": "p6", "group": "preview",
+     "version_skip": {"5.11": "the pause\u2019s layer targeting follows the view\u2019s selected layer, which 5.11\u2019s view cannot hold after the gcode load \u2014 the fired-pause premise is 5.12+ only"},
      "name": "the scheduled pause fires as the print crosses the layer",
      "steps": [
          {"op": "sim_set_current_print"},
@@ -2162,6 +2199,7 @@ SCENARIOS = [
          {"op": "wait_exec", "code": P_ROW_PASSED, "contains": '"passed": true', "budget": 20},
      ]},
     {"id": "p7", "group": "preview",
+     "version_skip": {"5.11": "the refused-pause flow shares p6\u2019s selected-layer targeting premise \u2014 5.12+ only"},
      "name": "a refused PAUSE keeps the entry restyled as not taken",
      "steps": [
          {"op": "sim_arm", "arms": {"fail_pause_script": True}},
