@@ -385,6 +385,23 @@ class PublishBranchTests(MonitorModelCase):
         self.assertFalse(self.model.cameraRecovering)
         self.assertEqual(self.model.cameraRefreshNonce, before)
 
+    def test_the_first_camera_discovery_publishes_one_url_and_one_nonce(self):
+        # The QML coalescer's contract: the first discovery changes
+        # the URL once and the nonce once — the coalescer then
+        # collapses the two signals into ONE stream application (the
+        # camera-delay fix's second cause drove two starts).
+        from PyQt6.QtTest import QSignalSpy
+        self.model = self.build()
+        self.model._camera = SimpleNamespace(url="", values={})
+        self.model._publish()  # no camera yet
+        url_spy = QSignalSpy(self.model.cameraUrlChanged)
+        nonce_spy = QSignalSpy(self.model.cameraRefreshChanged)
+        self.model._camera.url = "http://cam/stream"
+        self.model._publish()
+        self.assertEqual(len(url_spy), 1)
+        self.assertEqual(len(nonce_spy), 1)
+        self.assertGreater(self.model.cameraRefreshNonce, 0)
+
     def test_a_camera_without_a_url_does_not_break_the_publish(self):
         self.model = self.build()
         self.model._camera = SimpleNamespace(values={})

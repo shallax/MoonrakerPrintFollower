@@ -423,15 +423,21 @@ class MoonrakerClient(QObject):
     def _drain_socket_feed(self, force: bool) -> None:
         """The delivery clock's websocket tick: drain the core accumulator
         on the SAME timer and policy as the HTTP poll (A11). Reconnects
-        while the socket is down, respecting the retry ladder."""
+        while the socket is down, respecting the retry ladder — but a
+        socket that is still CONNECTING is left alone: a restart here
+        aborts an in-flight handshake and re-enters it from zero (the
+        camera-delay find — startup refreshed its own socket into
+        repeated handshakes while the discovery lane waited)."""
         socket = self._session.socket
-        if not socket.is_upgraded:
-            if force or time.monotonic() >= self._retry_not_before:
-                self._start_socket()
+        if socket.is_upgraded:
+            patch, stamp = socket.drain_core()
+            if patch:
+                self.admit_status(patch, origin="fragment", stamp=stamp, generation=self._generation)
             return
-        patch, stamp = socket.drain_core()
-        if patch:
-            self.admit_status(patch, origin="fragment", stamp=stamp, generation=self._generation)
+        if socket.is_connecting:
+            return
+        if force or time.monotonic() >= self._retry_not_before:
+            self._start_socket()
 
     def _queue_refresh(self, generation: int) -> None:
         def refresh() -> None:

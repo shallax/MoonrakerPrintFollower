@@ -38,6 +38,9 @@ if QT_AVAILABLE:
             self.rpcs = []
             self.stops = 0
             self.is_upgraded = False
+            # The lifecycle surface (the camera-delay fix): the client
+            # reads is_connecting in its drain rule.
+            self.is_connecting = False
 
         def start(self, url, api_key, core_names, aux_names):
             self.starts.append((url, api_key))

@@ -55,7 +55,6 @@ if QT_AVAILABLE:
     from plugins.SocketFraming import (
         MAX_HANDSHAKE_HEADER_BYTES,
         accept_value,
-        encode_close_frame,
     )
 
 
@@ -884,7 +883,10 @@ class SocketWriteTests(SocketCase):
         stub = _DeadSocket()
         instance._socket = stub
         instance._upgraded = True
-        instance._buffer = encode_close_frame(1000)
+        # A genuine peer close frame is UNMASKED (the server side);
+        # the client-side encoder's masked frame would be rejected as
+        # a protocol error instead of exercising this branch.
+        instance._buffer = bytes([0x88, 0x02]) + (1000).to_bytes(2, "big")
         instance._process_buffer()
         self.assertEqual(len(stub.written), 1)
         self.assertEqual(stub.written[0][0] & 0x0F, 0x8)

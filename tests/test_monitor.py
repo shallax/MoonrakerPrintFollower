@@ -1216,6 +1216,18 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("selectWebcam(index)", CAMERA_PANE_QML)
         self.assertNotIn("selectWebcam(cameraSelector.currentIndex)", CAMERA_PANE_QML)
 
+    def test_the_first_camera_apply_is_coalesced_through_one_callback(self):
+        # The camera-delay fix's second cause: a first discovery
+        # changes BOTH the url and the nonce, and each handler used to
+        # apply the camera separately — two stream starts per first
+        # entry. One callLater coalescer collapses the pair into one
+        # apply; the initial attach, an explicit refresh and a camera
+        # switch all still apply exactly once.
+        self.assertIn('property bool _cameraApplyPending: false', MONITOR_QML)
+        self.assertIn("Qt.callLater(function () {", MONITOR_QML)
+        self.assertIn("root.scheduleCameraApply();", MONITOR_QML)
+        self.assertEqual(MONITOR_QML.count("root.scheduleCameraApply();"), 2)
+
     def test_camera_render_watchdogs_are_wired(self):
         # The live reports: a stream that CONNECTED but never
         # painted a frame raises no error signal — the pane's stall

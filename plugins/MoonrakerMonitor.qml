@@ -51,6 +51,25 @@ Component {
             cameraPane.applyCamera(url, configured);
         }
 
+        // One publish cycle can change BOTH cameraUrl and
+        // cameraRefreshNonce (the first discovery does): without
+        // coalescing each change applies the camera separately and
+        // the first discovery drives TWO stream starts (the
+        // camera-delay find's second cause). One callLater per
+        // cycle: the initial attach, an explicit refresh and a
+        // camera switch all still apply exactly once.
+        property bool _cameraApplyPending: false
+        function scheduleCameraApply() {
+            if (_cameraApplyPending) {
+                return;
+            }
+            _cameraApplyPending = true;
+            Qt.callLater(function () {
+                    _cameraApplyPending = false;
+                    updateCameraImage();
+                });
+        }
+
         Component.onCompleted: {
             updateCameraImage();
         }
@@ -58,10 +77,10 @@ Component {
         Connections {
             target: root.printer
             function onCameraUrlChanged() {
-                root.updateCameraImage();
+                root.scheduleCameraApply();
             }
             function onCameraRefreshChanged() {
-                root.updateCameraImage();
+                root.scheduleCameraApply();
             }
         }
         // One open pop-over at a time ("" | "chart" | "mesh"); every

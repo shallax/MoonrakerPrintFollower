@@ -28,12 +28,21 @@ if QT_AVAILABLE:
             self.rpcs = []
             self.stops = 0
             self.is_upgraded = False
+            # The lifecycle double (the camera-delay fix): hold_upgrade
+            # models the in-flight handshake window the drain rule
+            # must never restart.
+            self.is_connecting = False
+            self.hold_upgrade = False
             self.core_patch = None
             self.core_stamp = 0.0
             self.aux_patch = None
 
         def start(self, url, api_key, core_names, aux_names):
             self.starts.append((url, api_key, set(core_names), set(aux_names)))
+            self.is_connecting = True
+            if self.hold_upgrade:
+                return
+            self.is_connecting = False
             self.is_upgraded = True
             self.upgraded.emit()
 
@@ -45,6 +54,7 @@ if QT_AVAILABLE:
         def stop(self):
             self.stops += 1
             self.is_upgraded = False
+            self.is_connecting = False
 
         def drain_core(self):
             patch, stamp = self.core_patch, self.core_stamp
@@ -214,6 +224,65 @@ class ClientFeedTests(unittest.TestCase):
         self.assertFalse(self.client.rpc_available())
         self.assertEqual(self.socket.stops, stops_before + 1)
         self.assertTrue(self.transport.requests)  # the HTTP refresh started
+
+    def test_a_refresh_never_restarts_a_connecting_socket(self):
+        # The camera-delay fix: the startup sequence's repeated
+        # refreshes used to abort the in-flight handshake and start
+        # from zero each time, starving the websocket-bootstrapped
+        # discovery lane.
+        self.socket.hold_upgrade = True
+        # A proof window far beyond the test's pumps: the silent-proof
+        # fallback is a legitimate restart path, and this test pins
+        # the REFRESH paths only.
+        self.client = MoonrakerClient(session=self.session, proof_timeout_ms=100000)
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.assertEqual(len(self.socket.starts), 1)
+        self.assertTrue(self.socket.is_connecting)
+        self.client.force_refresh()
+        self.pump(0.1)
+        self.client.force_refresh()
+        self.pump(0.1)
+        self.client._drain_socket_feed(force=False)  # the poll tick
+        self.assertEqual(len(self.socket.starts), 1,
+                         "a refresh must never restart a connecting socket")
+        # The upgrade completes: the subscription flows once.
+        self.socket.is_connecting = False
+        self.socket.is_upgraded = True
+        self.socket.upgraded.emit()
+        self.assertTrue(self.socket.subscriptions)
+
+    def test_a_dead_socket_still_reconnects_after_a_failure(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.assertEqual(len(self.socket.starts), 1)
+        # The socket dies terminally: the lifecycle clears (the real
+        # socket's _enter_failed — mirrored on the double), and the
+        # next permitted refresh starts exactly one replacement.
+        self.socket.failed.emit("peer reset")
+        self.socket.is_upgraded = False
+        self.socket.is_connecting = False
+        self.pump(0.1)
+        self.client._drain_socket_feed(force=True)
+        self.assertEqual(len(self.socket.starts), 2)
+
+    def test_the_monitor_startup_sequence_restarts_nothing_pre_upgrade(self):
+        # The actual startup composition: the client's socket is
+        # already handshaking when the monitor arms its lanes.
+        self.socket.hold_upgrade = True
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        from plugins.MonitorData import MonitorData
+        data = MonitorData(self.client, None)
+        for timer in data._timers.values():
+            timer.stop()
+        data._console_watch.stop()
+        data._watchdog.stop()
+        data.set_owner_active(True)
+        data.refresh_all()
+        self.pump(0.2)
+        self.assertEqual(len(self.socket.starts), 1,
+                         "the monitor's startup lanes must not restart the handshaking socket")
 
     def test_a_stale_klippy_ready_after_the_refusal_does_not_resubscribe(self):
         self.client.configure("http://p", "k", 750, feed_mode="websocket")

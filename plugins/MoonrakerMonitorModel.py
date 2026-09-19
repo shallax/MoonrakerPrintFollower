@@ -1020,6 +1020,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 # worked because it changed the URL).
                 self._camera_last_url = url
                 self._camera_refresh_nonce += 1
+                # The bump rides THIS publish's values (the camera-
+                # delay fix): published one cycle late it drove a
+                # SECOND stream application after the URL's — the
+                # QML coalescer collapses the same-cycle pair into
+                # one.
+                values["cameraRefreshNonce"] = self._camera_refresh_nonce
             self.setCameraUrl(QUrl(url))
         except AttributeError: pass
 
