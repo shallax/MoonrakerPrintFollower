@@ -13,6 +13,16 @@ with its regression, live-tested through the snapshot loop.
 Next: **4.1.0** — deep harness coverage, extended by the round-1
 critic and the architecture review (see the 4.1.0 section).
 
+## 4.6.0 — the next release (proposals)
+
+- **Codecov test analytics.** The CI already ships coverage; the test
+  RESULTS should follow — produce JUnit-style XML from the Python and
+  Qt suites and upload them through codecov/test-results-action@v1
+  (token `secrets.CODECOV_TOKEN`), so per-test pass/fail history
+  becomes visible in Codecov instead of only in the job logs.
+  Direction only — the binding shape is decided on the release
+  branch.
+
 ## Direction
 
 The 3.2.0 debt payoff made structural change cheap again. The next stretch has one
@@ -1850,15 +1860,26 @@ Also for 4.5.0: a way to stop/pause the live camera stream from
 the pane (the stream keeps consuming the remote while Monitor
 sits open; a pause control would stop the upstream fetch without
 losing the selection).
-The exclude-object list needs a design pass — bound its
-height with a scrollable area instead of expanding forever, highlight
-the active/current object in the layout, and keep excluded objects
-visible but flagged (red) with the exclude button hidden rather than
-removing the row. Rendering excluded objects differently in the
-Preview view is wanted but may not be possible. Any exclude action
-wants a guard against misclicks (a click-and-hold candidate). The
-exclude functionality itself is untested live and needs a pass before
-design work.
+The exclude-object list needs a design pass, per the
+2026-09-18 direction (direction, not spec — every item is a
+proposal for the pass to shape):
+
+- the section moves from Information into the **Printer controls**
+  pane;
+- excluded objects stay in the list, flagged **red** — never removed;
+- the current/active object highlights (green?) and possibly rises to
+  the top of the list;
+- consider a cycling "most recently printed" ordering, so the object
+  that just finished is easy to identify;
+- the exclude action is a click followed by a **click-and-hold**
+  confirmation (the misclick guard);
+- the list's height is bounded — about five objects visible, then
+  scrolling (arrows?) instead of expanding forever;
+- excluding by clicking an object in the Preview view is desired but
+  probably not possible — verify before promising it.
+
+The exclude functionality itself is untested live and needs a pass
+before design work.
 
 Testing posture (2026-09-18, the ruling): no self-hosted
 Windows runners — the Windows live-test pass stays manual
