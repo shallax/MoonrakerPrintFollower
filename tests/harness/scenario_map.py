@@ -315,6 +315,12 @@ EXCLUSIONS = {
         "date": "2026-09-19",
         "recheck": "the cold-camera timing scenario lands",
     },
+    "MoonrakerMonitorModel.setChartOpen": {
+        "reason": "the chart pop-over's hydration gate; driven by the pane's own openPopOver state, never a scenario verb",
+        "evidence": "the chart hydration tests' open/close transitions",
+        "date": "2026-09-19",
+        "recheck": "the chart pop-over scenario lands",
+    },
     # The migration-failure surfaces: the settings-dialog scenario is
     # deferred (no harness scenario drives the dialog yet), so the
     # banner's end-to-end proof rides the unit tests — the notice's

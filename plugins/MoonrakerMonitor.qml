@@ -27,6 +27,15 @@ Component {
         // every write.
         property bool cameraConfigured: false
 
+        onOpenPopOverChanged: {
+            // The chart pop-over's hydration gate (the 2026-09-19
+            // review's K): the model builds the full temperature
+            // payload only while the pop-over is open.
+            if (root.printer != null) {
+                root.printer.setChartOpen(openPopOver === "chart");
+            }
+        }
+
         // The camera image's visible AND source are applied
         // IMPERATIVELY: bindings on this dynamically created
         // document do not reliably re-evaluate when the model's

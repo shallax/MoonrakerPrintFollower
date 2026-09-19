@@ -193,26 +193,42 @@ def _segments(track) -> List[List[List[float]]]:
     return segments
 
 
-def chart_payload(history: "TemperatureHistory", config: Mapping) -> dict:
+def chart_payload(history: "TemperatureHistory", config: Mapping, mini: bool = False) -> dict:
     """The QML-facing chart model: one entry per series with its points,
     gap-split target/power segments, the primary flag for the mini
     widget, plus the display toggles and palette. Colours fall back to
     the palette by sorted-name index, so the defaults are stable across
-    restarts."""
+    restarts.
+
+    mini=True builds the PREVIEW payload (the 2026-09-19 review's K):
+    every series' metadata rides along for the legend, but only the
+    mini widget's series — visible primaries first, topped up to two,
+    or up to two visible others when no primary shows — carry their
+    points/segments. The full history stays in the storage either
+    way."""
     config = config if isinstance(config, Mapping) else {}
     visible = config.get("visible") if isinstance(config.get("visible"), Mapping) else {}
     colors = config.get("colors") if isinstance(config.get("colors"), Mapping) else {}
+    names = history.names()
+    mini_names = None
+    if mini:
+        visible_names = [name for name in names if bool(visible.get(name, True))]
+        primaries = [name for name in visible_names if _is_primary(name)]
+        others = [name for name in visible_names if not _is_primary(name)]
+        mini_names = set(primaries + others[:max(0, 2 - len(primaries))]) if primaries \
+            else set(others[:2])
     series = []
-    for index, name in enumerate(history.names()):
+    for index, name in enumerate(names):
+        include = mini_names is None or name in mini_names
         series.append({
             "name": name,
             "label": chart_label(name),
             "color": str(colors.get(name) or PALETTE[index % len(PALETTE)]),
             "visible": bool(visible.get(name, True)),
             "primary": _is_primary(name),
-            "points": history.points(name),
-            "targets": history.target_segments(name),
-            "powers": history.power_segments(name),
+            "points": history.points(name) if include else [],
+            "targets": history.target_segments(name) if include else [],
+            "powers": history.power_segments(name) if include else [],
         })
     return {
         "series": series,

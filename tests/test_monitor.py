@@ -2843,6 +2843,31 @@ class MonitorQtTests(unittest.TestCase):
         chart = model.temperatureChart
         return chart if isinstance(chart, dict) else chart.value()
 
+    def test_the_full_chart_payload_hydrates_only_while_the_popover_is_open(self):
+        # K (the 2026-09-19 review): closed serves the mini preview —
+        # every series' metadata rides along for the legend, but only
+        # the mini's series carry points/segments; open hydrates the
+        # full payload; closing returns to the mini shape.
+        model = self.monitor()
+        model._data._update(auxiliary={
+            "extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5},
+            "heater_bed": {"temperature": 60.0, "target": 60.0},
+            "temperature_sensor chamber": {"temperature": 40.0},
+        })
+        model._data.auxiliaryChanged.emit()
+        self.qt.events(1)
+        chart = self.chart_of(model)
+        self.assertEqual(len(chart["series"]), 3, "the legend keeps every series")
+        self.assertLessEqual(len([s for s in chart["series"] if s.get("points")]), 2,
+                             "closed: only the mini's series carry data")
+        model.setChartOpen(True)
+        full = self.chart_of(model)
+        self.assertEqual([s["name"] for s in full["series"] if s.get("points")],
+                         ["extruder", "heater_bed", "temperature_sensor chamber"])
+        model.setChartOpen(False)
+        closed_again = self.chart_of(model)
+        self.assertLessEqual(len([s for s in closed_again["series"] if s.get("points")]), 2)
+
     def test_temperature_chart_config_persists_across_model_instances(self):
         model = self.monitor()
         auxiliary = {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5},

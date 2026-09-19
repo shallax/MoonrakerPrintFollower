@@ -453,6 +453,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._history = TemperatureHistory()
         self._chart_payload = None  # rebuilt only when the history or config changes
         self._chart_payload_revision = -1
+        self._chart_open = False  # the pop-over's hydration gate (K)
         self._chart_config_key = None
         self._legend_payload = None
         self._data = MonitorData(client, self)
@@ -1940,11 +1941,15 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _chart_value(self):
         """The sample payload, rebuilt only when the history's revision
-        or the persisted config actually changed."""
-        key = json.dumps(self._chart_config, sort_keys=True)
+        or the persisted config actually changed. The pop-over's state
+        rides the cache key: CLOSED serves the mini preview payload
+        (only the mini's series carry data — the 2026-09-19 review's
+        K), OPEN hydrates the full payload."""
+        key = json.dumps(self._chart_config, sort_keys=True) + ("|open" if self._chart_open else "")
         if (self._chart_payload is None or self._chart_payload_revision != self._history.revision
                 or key != self._chart_config_key):
-            self._chart_payload = chart_payload(self._history, self._chart_config)
+            self._chart_payload = chart_payload(self._history, self._chart_config,
+                                                mini=not self._chart_open)
             self._chart_payload_revision = self._history.revision
             self._chart_config_key = key
         return self._chart_payload
@@ -1968,6 +1973,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 "palette": chart["palette"],
             }
         return self._legend_payload
+
+    @pyqtSlot(bool)
+    def setChartOpen(self, opened):
+        # The pop-over's hydration gate (the 2026-09-19 review's K):
+        # the full chart payload materialises only while the pop-over
+        # is open; the preview rides the mini payload otherwise.
+        opened = bool(opened)
+        if opened == self._chart_open:
+            return
+        self._chart_open = opened
+        self._chart_payload = None  # the key change rebuilds on publish
+        self._publish()
 
     def _apply_chart_config(self):
         """Persist the chart config into the per-printer record (the
