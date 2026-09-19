@@ -212,6 +212,17 @@ jobs:
           python -c "from PyQt6.QtCore import QCoreApplication"
           env JOBS=2 LEGS=host tools/run_tests.sh
 
+      - name: Write the JUnit report
+        if: ${{ !cancelled() }}
+        run: python tools/unittest_junit.py
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: tests.junit.xml
+
   release:
     name: Release
     runs-on: ubuntu-latest
