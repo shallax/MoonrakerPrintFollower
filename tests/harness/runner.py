@@ -2935,19 +2935,29 @@ def suite_step(step):
         return ok, f"the simulator's {step['path']} became {step.get('value')!r}", f"now {node!r}"
     if op == "assert_model":
         # The published value settles across publish cycles — read
-        # until it matches or the budget passes.
+        # until the EXPECTATION matches or the budget passes. The
+        # check returns the MATCH, never the raw value: a truthy
+        # stale value (speed 100 while the sim moved to 137) used to
+        # short-circuit the wait and read once (the re-verify's
+        # c2-05/06 race on 5.7/5.8).
         def read():
             return exec_rpc(MODEL_READ_TEMPLATE.replace("PROP_PLACEHOLDER", json.dumps(step["prop"])))
-        value = wait_for(lambda: read(), 3.0, 0.5)
+        def check():
+            value = read()
+            if step.get("contains") is not None:
+                return str(step["contains"]).lower() in str(value).lower()
+            if "value" in step:
+                return value == step.get("value")
+            # No expectation given: the property must be populated (a
+            # False or 0 still counts as present).
+            return value not in (None, "", [], {})
+        ok = bool(wait_for(check, float(step.get("budget", 15)), 0.5))
+        value = read()
         if step.get("contains") is not None:
-            return str(step["contains"]).lower() in str(value).lower(), \
-                f"the model's {step['prop']} contains {step.get('contains')!r}", f"read {value!r}"
+            return ok, f"the model's {step['prop']} contains {step.get('contains')!r}", f"read {value!r}"
         if "value" in step:
-            return value == step.get("value"), f"the model's {step['prop']} equals {step.get('value')!r}", f"read {value!r}"
-        # No expectation given: the property must be populated (a
-        # False or 0 still counts as present).
-        return value not in (None, "", [], {}), \
-            f"the model's {step['prop']} is populated", f"read {value!r}"
+            return ok, f"the model's {step['prop']} equals {step.get('value')!r}", f"read {value!r}"
+        return ok, f"the model's {step['prop']} is populated", f"read {value!r}"
     if op == "sim_drop":
         sim_http("/harness/drop_connections", "POST", {})
         return True, "the simulator dropped every websocket connection", "dropped"
