@@ -33,16 +33,32 @@ lands the performance pass across the Monitor page.
   healthy stream stays connected indefinitely (the old loader
   restarted the stream whenever its buffer crossed 2 MB — about once
   a second on a 1080p camera), frames pace to a 30 fps ceiling with
-  the newest frame winning, and memory stays bounded. A camera
-  re-publish that changed only its URL's query no longer restarts
-  the stream, and the camera timing trace no longer re-marks the
-  periodic webcam poll.
+  the newest frame winning, and memory stays bounded. A small chip
+  overlays the live image with the stream's resolution and recent
+  bandwidth, and the camera selector now sits above the image on the
+  title row. A camera re-publish that changed only its URL's query
+  no longer restarts the stream, and the camera timing trace no
+  longer re-marks the periodic webcam poll.
+- **The webcam keeps its room.** As the Monitor window narrows, the
+  Information, Printer status and Printer controls panes fold
+  themselves so the webcam pane never shrinks below its readable
+  minimum — and expand themselves again when the window widens. The
+  webcam pane itself never collapses.
+- **The temperature chart scales.** The mini chart's payload is now a
+  bounded reduction — a fixed budget of render points per series that
+  keeps every spike — instead of the whole accumulated window; the
+  full pop-over chart stays dormant until it is opened (and returns
+  to dormancy when closed); the legends read live values from a tiny
+  per-sensor projection instead of searching the payload; and the
+  chart paints off Cura's main thread, with the hover cursor and
+  markers rebuilt as lightweight scene-graph items that never
+  repaint the chart. A full 30 minutes of history no longer weighs
+  on the Monitor page.
 - **The performance pass.** One monitor publish per heartbeat instead
   of three or four; no preference-file or state-file reads on the
   heartbeat (the config, the migration record and the console
-  transcript hydrate once and cache); the console's server chatter
-  debounces into one write; and the temperature chart builds only the
-  payload the open view renders.
+  transcript hydrate once and cache); and the console's server
+  chatter debounces into one write.
 - **A straighter Z floor.** Stale telemetry can no longer re-arm the
   safety projection between a jog's dispatch and its reflection —
   the promised 0.00 floor stays promised.
@@ -55,9 +71,12 @@ lands the performance pass across the Monitor page.
   button fixed on 5.11 and 5.12.
 - **Fixes:** the console's notes no longer persist across restarts
   (they are session-transient by design), the status column's live
-  values never wrap (the per-second polish-loop warning), an empty
+  values never wrap (the per-second polish-loop warning), the
+  collapsed status strip's ETA readout no longer wraps, an empty
   Moonraker history no longer permanently refuses a file's metadata,
-  and the emergency label's colour answers the theme gate.
+  the emergency label's colour answers the theme gate, and the
+  chart's power-axis labels moved inside the plot's edge (their last
+  glyph clipped at the pop-up's margin).
 
 ## 4.4.0
 

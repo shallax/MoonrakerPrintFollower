@@ -677,10 +677,11 @@ SimulationView is the ACTIVE view (the Preview stage click).
   `harness_release.sh -j N` runs the same units in per-slot
   containers; the serial default keeps the shared-boot debris proof.
   **ADDED (2026-09-18):** the local matrix also carries the
-  first-install leg (§3) as a 10-minute unit on the primary; the
-  release WORKFLOW's matrix does not run it — its step passes
-  `MODE=suite` for every unit. The soak group stays out of the
-  release path.
+  first-install leg (§3) as a 10-minute unit on the primary, and the
+  release WORKFLOW's matrix runs it the same way — each unit takes
+  its own `mode`, so the first-install step passes `MODE=firstinstall`
+  (with no scenario group) instead of `MODE=suite`. The soak group
+  stays out of the release path.
 
 ## 6. Boundaries
 

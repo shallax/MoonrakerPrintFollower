@@ -49,6 +49,14 @@ WHATS_NEW: Tuple[dict, ...] = (
             "large frames, playback paces smoothly with the newest "
             "frame winning, and re-announcing the same camera no "
             "longer interrupts it.",
+            "As the Monitor window narrows, the Information, Printer "
+            "status and Printer controls panes fold away on their own "
+            "so the webcam keeps its room — widen the window and "
+            "they come back. The webcam never collapses.",
+            "The temperature chart stays light: a full 30 minutes of "
+            "history no longer weighs on the Monitor page, the "
+            "pop-over chart paints in the background, and hovering "
+            "the chart no longer redraws it.",
             "The Monitor page publishes once per heartbeat, reads "
             "nothing from disk while it runs, and batches the "
             "console's writes — the page stays responsive on a "

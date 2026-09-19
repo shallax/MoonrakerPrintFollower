@@ -634,8 +634,8 @@ transcription drift):
   pop-over path the capture harness does not exercise).
 - Escape-dismiss hand-test on the pop-overs.
 - Multi-hour Canvas/CPU sanity while printing.
-- One old + one current Cura (the README claims Cura 5.0-5.13 /
-  SDK 8.0-8.12).
+- One old + one current Cura (the README claims Cura 5.7-5.13 /
+  SDK 8.7-8.12).
 Once the workflow's tag-built artifacts exist, unpack the curapackage and
 grep the shipped QML/Python for the verification markers — no `BISECT`,
 no `visible: false` console gate, `GET` (not POST) on the endstop query,

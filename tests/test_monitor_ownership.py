@@ -111,6 +111,52 @@ class MonitorOwnershipTests(OutputDeviceTestCase):
         monitor_a.previewBlockChanged.emit({"remainder": 11})
         self.assertEqual(follower.blocks, [{"remainder": 11}])
 
+    def test_a_deposed_monitor_retires_its_open_chart(self):
+        # A(open chart) -> B -> A(cached reuse) must not silently
+        # resume full-history construction: the pop-over's hydration
+        # state is transient UI and retires with the ownership.
+        app, client, follower, plugin = self._install()
+        monitor_a = plugin._current.activePrinter
+
+        def chart_of(monitor):
+            chart = monitor.temperatureChartFull
+            return chart if isinstance(chart, dict) else chart.value()
+
+        # Enough history for a non-empty chart, then open it.
+        monitor_a._history.observe(
+            {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}},
+            1000.0, 1000000.0)
+        monitor_a._history.observe(
+            {"extruder": {"temperature": 200.5, "target": 210.0, "power": 0.5}},
+            1002.5, 1000002.5)
+        monitor_a.setChartOpen(True)
+        self.assertTrue(chart_of(monitor_a)["series"], "the open chart hydrates")
+
+        self._switch(app, follower, plugin, "B")
+        self.assertFalse(monitor_a._data._active)
+        self.assertFalse(monitor_a._chart_open,
+                         "ownership loss must retire the open chart")
+        self.assertEqual(chart_of(monitor_a)["series"], [],
+                         "the deposed monitor's full payload must be dormant")
+
+        monitor_a_again = self._switch(app, follower, plugin, "A")
+        self.assertIs(monitor_a_again, monitor_a)  # the cached monitor
+        self.assertEqual(chart_of(monitor_a_again)["series"], [],
+                         "the cached monitor must not rehydrate on reactivation")
+        # Further feeds keep it dormant.
+        monitor_a._history.observe(
+            {"extruder": {"temperature": 201.0, "target": 210.0, "power": 0.5}},
+            1005.0, 1000005.0)
+        monitor_a._schedule_publish()
+        self.qt.events(10)
+        self.assertEqual(chart_of(monitor_a)["series"], [],
+                         "feeds must not rebuild the full payload while no chart is open")
+        # An explicit open hydrates; closing returns to dormancy.
+        monitor_a.setChartOpen(True)
+        self.assertTrue(chart_of(monitor_a)["series"])
+        monitor_a.setChartOpen(False)
+        self.assertEqual(chart_of(monitor_a)["series"], [])
+
     def test_repeated_switches_accumulate_no_handlers(self):
         app, client, follower, plugin = self._install()
         monitor_a = plugin._current.activePrinter

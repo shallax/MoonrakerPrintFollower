@@ -13,12 +13,16 @@ measures the per-feed costs separately:
   latest projection the legends' one-scalar-per-sensor read
 
 The interesting column is not the absolute milliseconds (this box is
-not Cura's): it is that the mini payload's point count, its JSON size
-and its build time STOP GROWING once the window outgrows the render
-budget, while the raw history keeps its full resolution — the
-structural guarantee that the closed chart cannot degrade as the
-print matures. The full payload's cost is printed for comparison;
-it only exists while the pop-over is open.
+not Cura's): it is that the mini payload's point count and JSON size
+STOP GROWING once the window outgrows the render budget, while the
+raw history keeps its full resolution — the structural guarantee that
+the closed chart's payload, QVariant conversion and downstream
+rendering cannot degrade as the print matures. The mini BUILD remains
+one deliberate allocation-light scan over the raw window per feed
+(the new sample must be folded into the reduction once), so its wall
+time does grow slowly with the window length — the bounded guarantees
+above are the shipped contract. The full payload's cost is printed
+for comparison; it only exists while the pop-over is open.
 
 Run: python3 tools/benchmark_temperature_chart.py
 """

@@ -715,6 +715,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _on_invalidated(self):
         self._history.reset()
+        # The chart pop-over's hydration state is transient UI, not
+        # machine state: a cached monitor must not resume full-history
+        # construction after a machine switch while no chart is open
+        # on screen. The publish below then serves the dormant full
+        # payload deterministically (it is served whenever _chart_open
+        # is false), and a later open hydrates normally.
+        self._chart_open = False
+        self._chart_full = None
         # A printer switch must not ring for the previous machine's
         # error lines (the bell's marker counts per-session).
         self._console_errors_seen = 0
@@ -1982,8 +1990,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _chart_mini_value(self):
         """The compact preview (temperatureChartMini): a bounded
-        payload rebuilt per history revision — its cost stops growing
-        once the window outgrows the mini render budget."""
+        payload rebuilt per history revision — its SIZE stops growing
+        once the window outgrows the mini render budget (the build
+        stays one allocation-light scan over the raw window)."""
         key = (self._history.revision, self._chart_config_key())
         if self._chart_mini is None or self._chart_mini_key != key:
             self._chart_mini = mini_chart_payload(self._history, self._chart_config)

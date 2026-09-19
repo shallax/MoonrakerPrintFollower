@@ -372,9 +372,10 @@ def mini_chart_payload(history: "TemperatureHistory", config: Mapping) -> dict:
     """The compact-preview payload (temperatureChartMini): ONLY the
     selected mini series ride along, each as its bounded render
     reduction — never targets or power, which the compact chart does
-    not draw. The payload's size and build cost therefore stop growing
-    once the window outgrows the render budget, and hidden sensors
-    contribute nothing."""
+    not draw. The payload's SIZE therefore stops growing once the
+    window outgrows the render budget (the build stays one
+    allocation-light scan over the raw window per feed), and hidden
+    sensors contribute nothing."""
     config = config if isinstance(config, Mapping) else {}
     visible = config.get("visible") if isinstance(config.get("visible"), Mapping) else {}
     colors = config.get("colors") if isinstance(config.get("colors"), Mapping) else {}

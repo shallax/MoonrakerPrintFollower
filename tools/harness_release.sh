@@ -159,7 +159,7 @@ run_unit() {  # run_unit <budget> <version> <name> <mode> [group] [slot]
 # one boot) runs on both versions; the full suite groups run on the
 # primary as the deep regression.
 UNITS="20 $PRIMARY smoke suite smoke"
-for g in connection status temperatures console webcams files motion printing settings visual preview probe; do
+for g in connection status temperatures console webcams files motion printing settings visual preview probe configure stress; do
     UNITS="$UNITS
 15 $PRIMARY group-$g suite $g"
 done
