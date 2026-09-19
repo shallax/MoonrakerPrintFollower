@@ -22,15 +22,22 @@
 set -eu
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
-tmp=".determinism-check"
+# Overridable so parallel determinism runs (the CI-load stress) can
+# each keep their own evidence dir instead of racing on one tree.
+tmp="${DETERMINISM_DIR:-.determinism-check}"
 rm -rf "$tmp"
 mkdir -p "$tmp"
 # Pull fresh, and fail loudly: a silently stale image would render
-# drifted bytes that the pinned CI image never reproduces.
-docker build --pull -q -t moonraker-print-follower-dev . >/dev/null 2>&1 || {
-    echo "determinism check: the capture image failed to build — aborting rather than comparing a stale image" >&2
-    exit 1
-}
+# drifted bytes that the pinned CI image never reproduces. Parallel
+# stress runs (the CI-load experiments) pre-build once and skip the
+# concurrent builds — ten builds over a mutating context raced the
+# tar layer and died with "unexpected EOF", pure stress-harness noise.
+if [ "${SKIP_BUILD:-0}" != "1" ]; then
+    docker build --pull -q -t moonraker-print-follower-dev . >/dev/null 2>&1 || {
+        echo "determinism check: the capture image failed to build — aborting rather than comparing a stale image" >&2
+        exit 1
+    }
+fi
 # The leg script is generated (not inlined in a sh -c string) so the
 # quoting stays readable; the bind mount makes it visible in the
 # container at the same path. $tmp is expanded here, the leg internals
@@ -81,6 +88,11 @@ for generated in "$tmp/run1"/*.png; do
     if [ -e "$tmp/run2/$name" ]; then
         if ! cmp -s "$generated" "$tmp/run2/$name"; then
             echo "NON-DETERMINISTIC: $name differs between two runs in the same container" >&2
+            # The mismatch diagnostics: differing-pixel count, the
+            # changed bounding box and a visual diff beside the
+            # images — the byte comparison alone cannot name the
+            # region that raced.
+            tools/docker_dev.sh sh -c "cd /work && python3 tools/image_diff.py '$tmp/run1/$name' '$tmp/run2/$name'" >&2 || true
             stale=1
         fi
     else
@@ -104,6 +116,7 @@ for generated in "$tmp/run1-dark"/*.png; do
     if [ -e "$tmp/run2-dark/$name" ]; then
         if ! cmp -s "$generated" "$tmp/run2-dark/$name"; then
             echo "NON-DETERMINISTIC (dark): $name differs between two runs in the same container" >&2
+            tools/docker_dev.sh sh -c "cd /work && python3 tools/image_diff.py '$tmp/run1-dark/$name' '$tmp/run2-dark/$name'" >&2 || true
             stale=1
         fi
     else

@@ -302,50 +302,54 @@ def main():
         else:
             print("e-stop label contrast: the emergency button was not visible — skipped")
 
-        def chart_region(scene, chart):
-            """One visible chart's pixel signature — the sampled
-            colours of its bounding rect. The threaded canvas never
-            reports its painted-size properties in this runtime, so
-            completion is settled on the PIXELS instead."""
-            top_left = chart.mapToScene(QPointF(0, 0))
-            pixels = []
-            for y in range(4, max(5, int(chart.height())), 6):
-                for x in range(4, max(5, int(chart.width())), 6):
-                    pixels.append(scene.pixelColor(int(top_left.x() + x),
-                                                   int(top_left.y() + y)).rgba())
-            return tuple(pixels)
+        # The consecutive-frame contract AND its span: the capture
+        # points sit right after batches of layout mutations (pane
+        # expansions, section collapses), whose reflow, readout-fit
+        # timers and the last scheduled render-thread paint keep
+        # changing the frame after the chart itself has painted.
+        # Under load the frames arrive slowly, so a frame count alone
+        # can certify a quiet gap BETWEEN two bursts — the identical
+        # run must also span long enough for every pending one-shot
+        # (the 200 ms fit timers, the threaded paint) to have landed.
+        REQUIRED_IDENTICAL_FRAMES = 3
+        SETTLE_SPAN_SECONDS = 0.5
 
-        def settle_chart_canvases(timeout_ms=5000):
-            """The chart's data canvas paints on the RENDER thread:
-            after any state flip that requests a paint, wait until
-            every visible chart has landed its FINAL frame — two
-            consecutive grabs whose chart regions are identical (and
-            non-blank) mean the paint landed and nothing else is
-            pending. A grab before that catches a blank or
-            half-painted texture, which is the dark-theme
-            03-sections-collapsed determinism failure."""
+        def settled_window(timeout_ms=10000):
+            """The capture transaction: pump events, grab the whole
+            window, and require three consecutive complete frames to
+            be pixel-identical AND the identical run to span the
+            settle span before the scene counts as settled. The exact
+            image that proved the stability is RETURNED — the caller
+            saves this image and never grabs again, so the proven
+            frame and the saved frame can never diverge (the
+            settle-then-re-grab race behind the 03-sections-collapsed
+            nondeterminism)."""
             deadline = time.monotonic() + timeout_ms / 1000
             previous = None
+            identical = 0
+            first_identical = None
+            image = None
             while time.monotonic() < deadline:
-                scene = window.grabWindow()
-                charts = [child for child in item.findChildren(QQuickItem)
-                          if "TemperatureChart" in child.metaObject().className()
-                          and child.isVisible() and child.width() > 5]
-                if not charts:
-                    return  # no visible chart: nothing to settle
-                signature = tuple((index, chart_region(scene, chart))
-                                  for index, chart in enumerate(charts))
-                blank = any(len(set(region)) < 12 for _, region in signature)
-                if not blank and signature == previous:
-                    return
-                previous = signature
                 app.processEvents()
-                time.sleep(0.01)
+                image = window.grabWindow()
+                if previous is not None and image == previous:
+                    if identical == 0:
+                        first_identical = time.monotonic()
+                    identical += 1
+                    if identical >= REQUIRED_IDENTICAL_FRAMES - 1 \
+                            and time.monotonic() - first_identical >= SETTLE_SPAN_SECONDS:
+                        return image
+                else:
+                    identical = 0
+                    first_identical = None
+                previous = image
+                time.sleep(0.02)
             raise RuntimeError(
-                "the chart capture never settled: the threaded canvas paint did not land")
+                "the capture window never settled across %d identical frames over %.1fs"
+                % (REQUIRED_IDENTICAL_FRAMES, SETTLE_SPAN_SECONDS))
 
         def grab(name):
-            settle_chart_canvases()
+            image = settled_window()
             image = window.grabWindow()
             if image.isNull():
                 raise RuntimeError("grabWindow produced a null image for " + name)
@@ -445,7 +449,7 @@ def main():
         for _ in range(3):
             app.processEvents()
         grab("07-chart-popover.png")
-        opened = window.grabWindow()
+        opened = settled_window()
         if opened == collapsed:
             raise RuntimeError("the chart pop-over capture is identical to the collapsed scene")
         host.setProperty("openPopOver", "")
@@ -463,9 +467,8 @@ def main():
         if not chart_items:
             raise RuntimeError("visible compact TemperatureChart not found in the scene")
         chart = chart_items[0]
-        settle_chart_canvases()
+        scene = settled_window()
         top_left = chart.mapToScene(QPointF(0, 0))
-        scene = window.grabWindow()
         colours = {scene.pixelColor(int(top_left.x() + x), int(top_left.y() + y)).name()
                    for x in range(5, min(160, int(chart.width())), 7)
                    for y in range(5, int(chart.height()), 4)}
