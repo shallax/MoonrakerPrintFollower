@@ -302,29 +302,50 @@ def main():
         else:
             print("e-stop label contrast: the emergency button was not visible — skipped")
 
-        def settle_chart_canvases(timeout_ms=3000):
+        def chart_region(scene, chart):
+            """One visible chart's pixel signature — the sampled
+            colours of its bounding rect. The threaded canvas never
+            reports its painted-size properties in this runtime, so
+            completion is settled on the PIXELS instead."""
+            top_left = chart.mapToScene(QPointF(0, 0))
+            pixels = []
+            for y in range(4, max(5, int(chart.height())), 6):
+                for x in range(4, max(5, int(chart.width())), 6):
+                    pixels.append(scene.pixelColor(int(top_left.x() + x),
+                                                   int(top_left.y() + y)).rgba())
+            return tuple(pixels)
+
+        def settle_chart_canvases(timeout_ms=5000):
             """The chart's data canvas paints on the RENDER thread:
             after any state flip that requests a paint, wait until
-            every visible chart canvas has landed its paint (the
-            painted-size properties update on completion) — a grab
-            before that catches a blank or stale texture. A grace
-            pass afterwards drains any queued repaint, so the
-            determinism leg's two runs both catch the final frame."""
+            every visible chart has landed its FINAL frame — two
+            consecutive grabs whose chart regions are identical (and
+            non-blank) mean the paint landed and nothing else is
+            pending. A grab before that catches a blank or
+            half-painted texture, which is the dark-theme
+            03-sections-collapsed determinism failure."""
             deadline = time.monotonic() + timeout_ms / 1000
+            previous = None
             while time.monotonic() < deadline:
-                canvases = [child for child in item.findChildren(QQuickItem)
-                            if child.objectName() == "temperatureDataCanvas" and child.isVisible()]
-                if canvases and all(canvas.property("paintedHeight") or 0 > 0
-                                    for canvas in canvases):
-                    for _ in range(20):
-                        app.processEvents()
-                        time.sleep(0.01)
+                scene = window.grabWindow()
+                charts = [child for child in item.findChildren(QQuickItem)
+                          if "TemperatureChart" in child.metaObject().className()
+                          and child.isVisible() and child.width() > 5]
+                if not charts:
+                    return  # no visible chart: nothing to settle
+                signature = tuple((index, chart_region(scene, chart))
+                                  for index, chart in enumerate(charts))
+                blank = any(len(set(region)) < 12 for _, region in signature)
+                if not blank and signature == previous:
                     return
+                previous = signature
                 app.processEvents()
                 time.sleep(0.01)
-            print("settle_chart_canvases: timed out waiting for the chart paint")
+            raise RuntimeError(
+                "the chart capture never settled: the threaded canvas paint did not land")
 
         def grab(name):
+            settle_chart_canvases()
             image = window.grabWindow()
             if image.isNull():
                 raise RuntimeError("grabWindow produced a null image for " + name)
@@ -423,7 +444,6 @@ def main():
             raise RuntimeError("openPopOver setProperty returned False")
         for _ in range(3):
             app.processEvents()
-        settle_chart_canvases()
         grab("07-chart-popover.png")
         opened = window.grabWindow()
         if opened == collapsed:

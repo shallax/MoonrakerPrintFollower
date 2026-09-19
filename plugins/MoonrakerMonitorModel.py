@@ -715,14 +715,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _on_invalidated(self):
         self._history.reset()
-        # The chart pop-over's hydration state is transient UI, not
-        # machine state: a cached monitor must not resume full-history
-        # construction after a machine switch while no chart is open
-        # on screen. The publish below then serves the dormant full
-        # payload deterministically (it is served whenever _chart_open
-        # is false), and a later open hydrates normally.
-        self._chart_open = False
-        self._chart_full = None
         # A printer switch must not ring for the previous machine's
         # error lines (the bell's marker counts per-session).
         self._console_errors_seen = 0
@@ -738,6 +730,20 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._publish()
 
     def setMonitoringActive(self, active):
+        if not active:
+            # Ownership revocation retires the chart pop-over's
+            # transient hydration state: a cached monitor must not
+            # resume full-history construction after a machine switch
+            # while no chart is open on screen. It must land BEFORE
+            # the ownership call — that synchronously emits the
+            # invalidation whose publish then already serves the
+            # dormant full payload (it is served whenever _chart_open
+            # is false), and a later open hydrates normally.
+            # A SESSION invalidation on an owned monitor does not run
+            # this path: the chart stays logically open through a
+            # disconnect, and the next feed rehydrates it.
+            self._chart_open = False
+            self._chart_full = None
         self._data.set_owner_active(active)
         # The post-migration ready point: the record may have landed
         # since construction (the early publishes read it while the

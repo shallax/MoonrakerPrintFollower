@@ -157,6 +157,55 @@ class MonitorOwnershipTests(OutputDeviceTestCase):
         monitor_a.setChartOpen(False)
         self.assertEqual(chart_of(monitor_a)["series"], [])
 
+    def test_an_owned_open_chart_survives_a_session_reset(self):
+        # Owned + open chart + session reset -> reconnect: the chart
+        # must repopulate WITHOUT a second open gesture. A session
+        # invalidation clears the stale history but must not retire
+        # the pop-over's hydration state — that retires only with
+        # ownership (the deposed-monitor regression above).
+        app, client, follower, plugin = self._install()
+        monitor = plugin._current.activePrinter
+
+        def chart_of(model):
+            chart = model.temperatureChartFull
+            return chart if isinstance(chart, dict) else chart.value()
+
+        monitor._history.observe(
+            {"extruder": {"temperature": 200.0, "target": 210.0, "power": 0.5}},
+            1000.0, 1000000.0)
+        monitor._history.observe(
+            {"extruder": {"temperature": 200.5, "target": 210.0, "power": 0.5}},
+            1002.5, 1000002.5)
+        monitor.setChartOpen(True)
+        self.assertTrue(chart_of(monitor)["series"], "the open chart hydrates")
+
+        # The transport/session invalidation: ownership stays, the
+        # runtime suspends, the stale history clears.
+        client.sessionInvalidated.emit()
+        self.qt.events(10)
+        self.assertTrue(monitor._data._owner_active,
+                        "the session reset must not revoke ownership")
+        self.assertTrue(monitor._chart_open,
+                        "a session reset must not close a visibly open chart")
+        self.assertEqual(chart_of(monitor)["series"], [],
+                         "the session reset cleared the stale history")
+
+        # The reconnect re-arms the same owned monitor.
+        client.connectionChanged.emit(True, "connected over http")
+        self.qt.events(10)
+        # Fresh samples repopulate the open chart automatically — no
+        # second setChartOpen(True) anywhere in this test.
+        monitor._history.observe(
+            {"extruder": {"temperature": 202.0, "target": 210.0, "power": 0.5}},
+            1005.0, 1000005.0)
+        monitor._history.observe(
+            {"extruder": {"temperature": 202.5, "target": 210.0, "power": 0.5}},
+            1007.5, 1000007.5)
+        monitor._schedule_publish()
+        self.qt.events(10)
+        self.assertTrue(chart_of(monitor)["series"],
+                        "the reconnect feed must repopulate the open chart on its own")
+
     def test_repeated_switches_accumulate_no_handlers(self):
         app, client, follower, plugin = self._install()
         monitor_a = plugin._current.activePrinter
