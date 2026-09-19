@@ -16,6 +16,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 LOCAL = (ROOT / "tools" / "harness_release.sh").read_text(encoding="utf-8")
+SWEEP = (ROOT / ".github" / "workflows" / "sweep.yml").read_text(encoding="utf-8")
 
 # The canonical release matrix: both smokes, every scenario group in
 # the coverage map, and the first-install leg. The real-printer group
@@ -49,6 +50,15 @@ LOCAL_GROUPS = (
     "configure", "stress",
 )
 
+# The UI Version Sweep's per-version units: every release unit — the
+# smoke set (one per version, no primary/secondary split), every
+# group (named by its bare group) and the first-install leg.
+EXPECTED_SWEEP_UNITS = ("smoke",) + LOCAL_GROUPS + ("firstinstall",)
+
+EXPECTED_SWEEP_VERSIONS = (
+    "5.7.0", "5.8.0", "5.9.0", "5.10.0", "5.11.0", "5.12.0", "5.13.0",
+)
+
 
 def workflow_units():
     """The workflow's UNITS declaration: name -> {mode, group}."""
@@ -56,6 +66,20 @@ def workflow_units():
     if not match:
         raise AssertionError("release.yml's UNITS declaration was not found")
     return json.loads(match.group(1))
+
+
+def sweep_units():
+    """The UI Version Sweep's per-version unit list: name -> {mode,
+    group}. Every release unit must run on every supported Cura
+    version, so this set is the canonical units with the version-smoke
+    named plain `smoke` (one smoke per version, no primary/secondary
+    split)."""
+    units = {}
+    for match in re.finditer(r"- \{name: (\S+), mode: (\S+), group: (\S+)\}",
+                             SWEEP):
+        name, mode, group = match.group(1), match.group(2), match.group(3)
+        units[name] = {"mode": mode, "group": group}
+    return units
 
 
 def workflow_matrix_names():
@@ -126,6 +150,26 @@ class ReleaseMatrixParityTests(unittest.TestCase):
     def test_the_local_group_loop_carries_every_group(self):
         groups = re.search(r"for g in ([a-z ]+); do", LOCAL).group(1).split()
         self.assertEqual(tuple(groups), LOCAL_GROUPS)
+
+    def test_the_sweep_carries_every_unit_on_every_version(self):
+        units = sweep_units()
+        self.assertEqual(set(units), set(EXPECTED_SWEEP_UNITS),
+                         "a release unit is missing from the UI Version Sweep")
+        # Every sweep unit's mode/group mapping matches the canonical
+        # local gate mapping (the version smoke behaves like the
+        # primary smoke's suite unit; groups carry their bare names).
+        expected = dict(local_units())
+        expected["smoke"] = {"mode": "suite", "group": "smoke"}
+        for name, declared in units.items():
+            canonical = expected[name] if name in ("smoke", "firstinstall") \
+                else expected["group-" + name]
+            self.assertEqual(declared["mode"], canonical["mode"], name)
+            if declared["mode"] == "suite":
+                self.assertEqual(declared["group"], canonical["group"], name)
+
+    def test_the_sweep_covers_the_supported_version_range(self):
+        versions = tuple(re.findall(r'- "(\d+\.\d+\.\d+)"', SWEEP))
+        self.assertEqual(versions, EXPECTED_SWEEP_VERSIONS)
 
 
 if __name__ == "__main__":
