@@ -272,6 +272,20 @@ class PrinterBinding(QObject):
             # The migration happened but its verdict never landed: the
             # next boot replays against an empty source (a no-op).
             Logger.log("w", "The Moonraker migration record could not be saved.")
+        if outcome.status == "ok" and outcome.reason == "migrated":
+            # The clean's preference resets reach cura.cfg only at the
+            # next preference flush, and Cura's own exit flush is not
+            # guaranteed (the 4.3.0 live report: a save followed by a
+            # quick quit lost the write). The one-shot flushes its own
+            # clean — the no-trace contract lands WITH the migration,
+            # not at some later save. Guarded: hosts without the hook
+            # keep the in-memory clean and Cura's own flush.
+            save = getattr(self._application, "savePreferences", None)
+            if callable(save):
+                try:
+                    save()
+                except Exception as error:
+                    Logger.log("w", "Moonraker migration preference flush failed: %s", error)
 
     def start(self):
         """The construction-time entry: configuration reads and the

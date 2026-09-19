@@ -238,6 +238,37 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertTrue(record["backupWritten"])
         self.assertTrue(os.path.exists(os.path.join(self.dir.name, record["backupName"])))
 
+    def test_a_successful_one_shot_flushes_its_own_clean(self):
+        # The no-trace contract lands WITH the migration, not at
+        # Cura's exit flush — the harness's Cura never writes the
+        # preference file on quit, so a quit-dependent clean leaves
+        # the blob on disk (the migration leg's finding).
+        key = PrinterConfigStore.PREF_KEY
+        self.prefs.addPreference(key, "{}")
+        self.prefs.setValue(key, json.dumps({"A": {"url": "http://a:7125"}}))
+        self.prefs.setValue(PrinterConfigStore.MIGRATED_KEY, True)
+        flushed = []
+        self.app.savePreferences = lambda: flushed.append(1)
+        self.binding.run_persistence_migration()
+        self.assertEqual(self.prefs.getValue(key), "{}")
+        self.assertEqual(flushed, [1])
+
+    def test_a_failed_migration_never_flushes_the_preferences(self):
+        # The clean never ran, so nothing must be flushed — a flush
+        # here would only persist the pre-clean state.
+        key = PrinterConfigStore.PREF_KEY
+        self.prefs.addPreference(key, "{}")
+        self.prefs.setValue(key, json.dumps({"A": {"url": "http://a:7125"}}))
+        self.prefs.setValue(PrinterConfigStore.MIGRATED_KEY, True)
+        self.prefs.setValue("moonrakerprintfollower/bed_mesh_visible", False)
+        self.prefs.setValue("moonrakerprintfollower/bed_mesh_exaggeration", 7.5)
+        flushed = []
+        self.app.savePreferences = lambda: flushed.append(1)
+        self.persistence.set_global = lambda patch: False
+        self.binding.run_persistence_migration()
+        self.assertEqual(self.persistence.migration_record()["reason"], "write-failed")
+        self.assertEqual(flushed, [])
+
     def test_a_failed_bed_mesh_carry_holds_the_migration_back_and_retries(self):
         # The 4.5.0 transactional fix: a REQUIRED carry that fails must
         # hold the migration back — the clean that would destroy the
