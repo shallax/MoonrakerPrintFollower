@@ -16,12 +16,11 @@ critic and the architecture review (see the 4.1.0 section).
 ## 4.6.0 — the next release (proposals)
 
 - **Codecov test analytics.** The CI already ships coverage; the test
-  RESULTS should follow — produce JUnit-style XML from the Python and
-  Qt suites and upload them through codecov/test-results-action@v1
-  (token `secrets.CODECOV_TOKEN`), so per-test pass/fail history
-  becomes visible in Codecov instead of only in the job logs.
-  Direction only — the binding shape is decided on the release
-  branch.
+  RESULTS now follow: the Python legs write a JUnit report
+  (tools/unittest_junit.py) and upload it through
+  codecov/test-results-action@v1 (token `secrets.CODECOV_TOKEN`), so
+  per-test pass/fail history becomes visible in Codecov instead of
+  only in the job logs. Landed on the 4.6.0 branch.
 
 ## Direction
 
