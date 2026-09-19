@@ -1840,6 +1840,29 @@ chevrons, and the Windows multi-start disconnect.
 
 ## 4.5.0 — Persistence refactor (the 2026-09-17 re-sequencing)
 
+Backlog (2026-09-19, the notes ride here until a 4.6.0 branch
+exists): the camera bridge frame-skip is a 4.5.0 item — the bridge
+parses JPEG boundaries and never forwards a frame over Cura's 2 MB
+decoder cap, so a high-rate stream stops triggering Cura's
+buffer-overflow restart loop without touching the upstream camera
+configuration. The measured live stream runs ~11 MB/s with motion
+frames over the cap (the trace evidence: per-relay byte counts).
+Also for 4.6.0: a true transcoding bridge (Qt QImage decode-scale-
+re-encode on a worker thread) is the larger sibling.
+Also for 4.5.0: a way to stop/pause the live camera stream from
+the pane (the stream keeps consuming the remote while Monitor
+sits open; a pause control would stop the upstream fetch without
+losing the selection).
+The exclude-object list needs a design pass — bound its
+height with a scrollable area instead of expanding forever, highlight
+the active/current object in the layout, and keep excluded objects
+visible but flagged (red) with the exclude button hidden rather than
+removing the row. Rendering excluded objects differently in the
+Preview view is wanted but may not be possible. Any exclude action
+wants a guard against misclicks (a click-and-hold candidate). The
+exclude functionality itself is untested live and needs a pass before
+design work.
+
 Testing posture (2026-09-18, the ruling): no self-hosted
 Windows runners — the Windows live-test pass stays manual
 for risky startup changes, and 4.5.0 closes out that release class

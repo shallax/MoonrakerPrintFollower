@@ -148,7 +148,7 @@ class CameraBridge(QObject):
             self._relays[socket] = (None, bytearray(), False)
             self._trace_meta[socket] = {
                 "req": req_id, "peer": peer, "accepted": time.monotonic(),
-                "aborted": False, "first_ready": False,
+                "aborted": False, "first_ready": False, "relayed": 0,
             }
             mark("T6", "local camera client connected (req %d from %s, relays=%d)"
                  % (req_id, peer, len(self._relays)))
@@ -295,6 +295,8 @@ class CameraBridge(QObject):
             if chunk:
                 socket.write(chunk)
                 self._relayed_bytes += len(chunk)
+                if meta is not None:
+                    meta["relayed"] += len(chunk)
 
     def _on_socket_written(self, socket: QTcpSocket, reply: QNetworkReply) -> None:
         relay = self._relays.get(socket)
@@ -368,16 +370,18 @@ class CameraBridge(QObject):
         else:
             duration = "?"
         relay = self._relays.pop(socket, None)
+        relayed = (meta or {}).get("relayed", 0)
         if relay is not None and relay[0] is not None:
             if meta is not None:
                 meta["aborted"] = True
-            self._trace(req_id, "local disconnected after %s; reply aborted because no consumers remain" % duration)
+            self._trace(req_id, "local disconnected after %s and %d bytes; reply aborted because no consumers remain"
+                        % (duration, relayed))
             try: relay[0].abort()
             except Exception: pass
             try: relay[0].deleteLater()
             except Exception: pass
         else:
-            self._trace(req_id, "local disconnected after %s; no live upstream" % duration)
+            self._trace(req_id, "local disconnected after %s and %d bytes; no live upstream" % (duration, relayed))
         # The accepted socket is parented to the server, which never
         # destroys it — every connection must release itself (the live
         # report: 100 completed requests left 100 sockets alive).
