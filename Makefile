@@ -88,7 +88,7 @@ snapshot_package: package
 # snapshot iterations carry logic, so the suites run, and only the
 # screenshot machinery is skipped. make all remains mandatory before
 # any commit or push.
-snapshot_quick: lint run_tests
+snapshot_quick:
 	$(MAKE) -j2 lint run_tests
 	$(MAKE) package
 	cp dist/MoonrakerPrintFollower-v$(shell python3 -c "import json; print(json.load(open('package.json'))['package_version'])").curapackage /tmp/mpf.curapackage
