@@ -151,7 +151,12 @@ class ClassificationRatchetTests(unittest.TestCase):
         # bespoke glyph used to assert by text; the native checkbox
         # carries its state in checkState, which no declarative op
         # reads yet).
-        self.assertLessEqual(direct, 150)
+        # And one more (4.5.0, the hardening pass): a7's exec_mode —
+        # the klippy-ready scenario must return to websocket mode
+        # before the re-arm contract holds, and the only real-input
+        # path to a transport mode is the same exec_mode a2/a3/a10
+        # use (there is no clickable transport-mode control).
+        self.assertLessEqual(direct, 151)
 
     def test_classification_derives_from_the_mechanism(self):
         # A step's class comes from its op and the delivery record —

@@ -1245,6 +1245,12 @@ SCENARIOS = [
      ]},
     {"id": "a7", "group": "connection", "name": "klippy ready re-arms the subscription",
      "steps": [
+         # The earlier scenarios degraded the session to HTTP (the
+         # proof silence, the refusal): the re-arm contract holds for
+         # a WEBSOCKET session, so the scenario returns to it first —
+         # a stale ready must not re-subscribe while HTTP is
+         # authoritative (the hardening pass).
+         {"op": "exec_mode", "mode": "websocket"},
          {"op": "sim_klippy"},
          {"op": "sim_ledger", "needle": "printer.objects.subscribe", "field": "path", "min": 1, "budget": 30},
      ]},
