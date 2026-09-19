@@ -585,11 +585,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # of the carousel advancing one step then stopping).
         for signal in (self._controls.changed, self._toolhead.changed, self._file_manager.changed):
             signal.connect(self._publish)
-        # The history feeds once per auxiliary reply, not per publish
-        # (per-publish feeding duplicated samples and halved the window);
-        # a session invalidation restarts the window so the previous
-        # printer's curves never bleed into the next one.
+        # The auxiliary arrivals publish the pane readouts; the chart
+        # feeds from its own 1 s clock (see _on_chart_tick), so the
+        # delivery slider can never shrink or stretch the chart's
+        # advertised 30-minute window. A session invalidation restarts
+        # the window so the previous printer's curves never bleed into
+        # the next one.
         self._data.auxiliaryChanged.connect(self._on_auxiliary)
+        self._chart_timer = QTimer(self)
+        self._chart_timer.setInterval(1000)
+        self._chart_timer.timeout.connect(self._on_chart_tick)
         # The Preview value block rides the aux clock: the data's
         # emission forwards straight through to the output-device
         # edge (the seam's carrier, 4.3.0).
@@ -710,8 +715,18 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._data.set_console_expanded(expanded, stored)
 
     def _on_auxiliary(self):
-        self._history.observe(self._data.snapshot.auxiliary, time.monotonic(), time.time())
         self._schedule_publish()
+
+    def _on_chart_tick(self):
+        # The chart's fixed 1 s sampling (Mainsail's temperature store
+        # cadence): a delivery slower than 1 s simply holds the last
+        # value — a truthful step, never an interpolation. The feed
+        # pauses while the session is disconnected so a reconnect
+        # re-arms the window through the gap reset instead of bridging
+        # a frozen snapshot.
+        if self._data.connection_state == "yes":
+            self._history.observe(self._data.snapshot.auxiliary, time.monotonic(), time.time())
+            self._schedule_publish()
 
     def _on_invalidated(self):
         self._history.reset()
@@ -744,6 +759,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             # disconnect, and the next feed rehydrates it.
             self._chart_open = False
             self._chart_full = None
+        if active:
+            self._chart_timer.start()
+        else:
+            self._chart_timer.stop()
         self._data.set_owner_active(active)
         # The post-migration ready point: the record may have landed
         # since construction (the early publishes read it while the
