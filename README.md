@@ -12,6 +12,10 @@ Moonraker Print Follower is a unified Cura integration for Klipper/Moonraker. It
 - **Target:** Cura 5.7–5.13 / SDK 8.7–8.12
 
 ## What changed in 4.5.0
+- The webcam comes up in milliseconds on the Monitor page — the startup's two races (a refresh restarting its own websocket, and the first discovery applying the stream twice) are fixed.
+- The performance pass: one publish per heartbeat, no disk reads on the heartbeat, debounced console writes, and a temperature chart that builds only what the open view renders.
+- The camera's API key never rides to a foreign webcam origin, and stale telemetry can no longer re-arm the Z-floor safety projection.
+- The Cura floor is now 5.7 / SDK 8.7, verified end to end on every minor through 5.13.
 
 Version 4.5.0 is the persistence release: the plugin's settings move
 into one MoonrakerPrintFollower folder beside Cura's configuration,

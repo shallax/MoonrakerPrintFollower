@@ -40,6 +40,13 @@ WHATS_NEW: Tuple[dict, ...] = (
             "matching the collapsed readout and the Toolhead.",
             "Dark mode: the emergency-stop label is readable on the "
             "button's dark ground.",
+            "The webcam now appears in milliseconds when you open "
+            "the Monitor — the startup no longer restarts its own "
+            "connection or applies the stream twice.",
+            "The Monitor page publishes once per heartbeat, reads "
+            "nothing from disk while it runs, and batches the "
+            "console's writes — the page stays responsive on a "
+            "chatty printer.",
             "Cura 5.7 or newer (SDK 8.7+) is now the floor — every "
             "version in between verifies end to end, with 5.11's "
             "preview limitation documented in the README.",

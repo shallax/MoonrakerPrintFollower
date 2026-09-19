@@ -21,6 +21,22 @@ it, migrated automatically on the first start after the upgrade.
   matching the collapsed readout and the Toolhead section.
 - **Dark mode:** the emergency-stop label's idle text follows the
   theme, readable on the button's dark ground.
+- **The camera cold start.** The webcam stream now comes up in
+  milliseconds on the Monitor page: a refresh no longer restarts a
+  connecting websocket (the startup aborted its own handshake), the
+  first camera discovery applies the stream exactly once instead of
+  twice, and the discovery retries coalesce.
+- **The performance pass.** One monitor publish per heartbeat instead
+  of three or four; no preference-file or state-file reads on the
+  heartbeat (the config, the migration record and the console
+  transcript hydrate once and cache); the console's server chatter
+  debounces into one write; and the temperature chart builds only the
+  payload the open view renders.
+- **A straighter Z floor.** Stale telemetry can no longer re-arm the
+  safety projection between a jog's dispatch and its reflection —
+  the promised 0.00 floor stays promised.
+- **The camera key stays home.** The Moonraker API key never rides to
+  a foreign webcam origin, and a deposed camera retires its bridge.
 - **The Cura floor.** Cura 5.7 / SDK 8.7 through Cura 5.13 / SDK
   8.12 is now the supported range — every minor in between verified
   end to end by the version sweep — with 5.11's preview limitations
