@@ -416,7 +416,7 @@ The plugin targets **Cura 5.7 / SDK 8.7** through **Cura 5.13 / SDK 8.12**. The 
 
 The implementation stays on APIs present across Cura 5.7–5.13: Machine Actions, `globalContainerStackChanged`, public `readLocalFile()`, output devices, `NetworkMJPGImage`, SimulationView layer/path controls, and Cura's native nozzle interface. Optional conveniences are capability-checked where required.
 
-Cura 4.x / SDK 7.x is not supported, and neither is Cura 5.6 or older. On Cura 5.11 alone the preview integration is limited by 5.11's SimulationView: the live print does not render as view layers and the layer slider hides after a plugin load (the follower's card, state and pause scheduling still work).
+Cura 4.x / SDK 7.x is not supported, and neither is Cura 5.6 or older. On Cura 5.11 alone the preview integration is limited by a 5.11 SimulationView bug: that version rebuilds its view layers only when the Preview stage is re-entered, and the plugin's load lands while Preview is already open — so the live print does not appear in the view and the layer slider stays hidden after a load until you switch tabs and come back (the follower's card, state and pause scheduling still work throughout).
 
 Actual rendering, output-device presentation, webcam streaming and printer interaction should still be smoke-tested on representative Cura releases before publishing a compatibility claim.
 
