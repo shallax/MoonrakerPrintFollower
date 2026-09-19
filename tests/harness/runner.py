@@ -2241,9 +2241,12 @@ MIGRATION_MACHINES = {
     "Second Machine": "http://127.0.0.1:7126",
 }
 
-# The post-migration cura.cfg check: the blob must be GONE and the
-# migrated marker keys present — read through the driver's own
-# process (the exec verb), never a staged file.
+# The post-migration cura.cfg check: after the preference save, the
+# blob must be GONE and the whole [moonrakerprintfollower] section
+# with it — the clean resets every key to its registered default and
+# Uranium's writer omits defaults (the "no trace" contract). Read
+# through the driver's own process (the exec verb), never a staged
+# file.
 MIGRATION_CFG_PROBE = """
 from UM.Resources import Resources
 import os
@@ -2251,15 +2254,36 @@ path = os.path.join(Resources.getConfigStoragePath(), "cura.cfg")
 try:
     with open(path, encoding="utf-8") as handle:
         text = handle.read()
+    # Uranium's writer omits default values but keeps the section
+    # HEADER — an empty [moonrakerprintfollower] shell remains. The
+    # contract is the config's removal: the blob key gone, and no
+    # legacy plugin keys left in the section.
+    section = text.split("[moonrakerprintfollower]", 1)
+    residue = section[1].split("[", 1)[0] if len(section) > 1 else ""
     result = {"blob_gone": "printer_configs_v1" not in text,
-              "migrated_marker": "printer_configs_migrated_v1" in text,
-              "connection_marker": "moonraker_connection_migrated_v1" in text}
+              "section_clean": not [line for line in residue.splitlines() if line.strip()]}
 except Exception as exc:
     result = {"error": repr(exc)}
 """
 
 # The live identity after the machine switch: the binding's identity
 # pair must name the switched-to machine.
+MIGRATION_ADD_MACHINE_PROBE = """
+from UM.Application import Application
+app = Application.getInstance()
+result = {}
+try:
+    manager = app.getMachineManager()
+    before = manager.activeMachine.getName() if manager.activeMachine else None
+    added = bool(manager.addMachine(str("fdmprinter")))
+    result["added"] = added
+    result["before"] = before
+    result["new_name"] = manager.activeMachine.getName() if manager.activeMachine else None
+except Exception as exc:
+    result["error"] = repr(exc)
+"""
+
+
 MIGRATION_IDENTITY_PROBE = """
 from UM.Application import Application
 app = Application.getInstance()
@@ -2269,7 +2293,7 @@ for e in app.getExtensions():
         binding = getattr(getattr(e, "_runtime", None), "binding", None)
         if binding is not None:
             try:
-                result["identity"] = [str(binding._machine_id), str(binding._machine_name)]
+                result["identity"] = [str(value) for value in binding.identity]
             except Exception as exc:
                 result["identity"] = ["ERR", repr(exc)[:80]]
         break
@@ -2323,31 +2347,38 @@ def migration1():
         steps.append(("02-migrated", "the one-shot migrated every machine record at once",
                       "configVersion 2, both records with their urls, ok/migrated, records 2, backup written",
                       migrated, shot("02-migrated")))
-        # The v1 blob left cura.cfg behind the migration.
-        cfg = wait_for(lambda: exec_rpc(MIGRATION_CFG_PROBE), 30.0)
-        blob_gone = (isinstance(cfg, dict)
-                     and cfg.get("blob_gone") is True
-                     and cfg.get("migrated_marker") is True)
-        steps.append(("03-blob-gone", "the v1 blob is gone from cura.cfg",
-                      "no printer_configs_v1 key; the migrated marker is in place",
-                      blob_gone, shot("03-blob-gone")))
+        # The clean's preference resets reach the FILE at the next
+        # preference save — Cura's shutdown flush, which boot 2
+        # verifies. The session still owes a save so the cleaned
+        # preferences ride it: the settings save the dialog uses.
+        save = rpc({"id": 1, "cmd": "plugin_save_config", "params": {}}, timeout=60)
+        steps.append(("03-save", "the settings save carried the cleaned preferences",
+                      "the save was accepted", bool(save.get("ok")), shot("03-save")))
+
+
         # The second machine's history landed in its own state shard.
         shard_reply = rpc({"id": 1, "cmd": "read_json_file",
                            "name": "MoonrakerPrintFollower/machines/Second+Machine.json"})
         shard = shard_reply.get("document") if shard_reply.get("ok") else None
         transcript = (shard or {}).get("consoleTranscript") or []
         shard_ok = bool(transcript and str((transcript[0] or {}).get("text")) == "// second machine history")
-        steps.append(("04-shard", "the console history split into the second machine's state shard",
+        steps.append(("05-shard", "the console history split into the second machine's state shard",
                       "Second Machine's shard carries the history line",
-                      shard_ok, shot("04-shard")))
-        # The machine switch: the live model follows the new machine.
-        switch = rpc({"id": 1, "cmd": "switch_machine", "name": "Second Machine"})
+                      shard_ok, shot("05-shard")))
+        # The machine switch: the harness's Cura side carries ONE
+        # machine stack, so the switch ADDS a second one — Cura
+        # activates what it adds — and the live model must follow
+        # the new active machine (the unit suites cover the A->B->A
+        # cycles; this is the live re-route proof).
+        add = wait_for(lambda: exec_rpc(MIGRATION_ADD_MACHINE_PROBE), 60.0)
+        new_name = (add or {}).get("new_name") if isinstance(add, dict) else None
         identity = wait_for(lambda: exec_rpc(MIGRATION_IDENTITY_PROBE), 30.0)
-        switched = (bool(switch.get("ok")) and isinstance(identity, dict)
-                    and (identity.get("identity") or [None])[1] == "Second Machine")
-        steps.append(("05-switch", "the machine switch re-routes the live model",
-                      "the binding's identity names Second Machine",
-                      switched, shot("05-switch")))
+        switched = (bool(add.get("added")) and isinstance(identity, dict)
+                    and bool(new_name)
+                    and (identity.get("identity") or [None, None])[1] == new_name)
+        steps.append(("06-switch", "the machine add re-routes the live model",
+                      "the binding's identity names the newly added machine",
+                      switched, shot("06-switch")))
         if document:
             with open(BOOT1_DOCUMENT, "w", encoding="utf-8") as handle:
                 json.dump(document, handle, indent=2, sort_keys=True)
@@ -2355,8 +2386,8 @@ def migration1():
             quit_reply = rpc({"id": 1, "cmd": "quit"}, timeout=30)
         except RuntimeError as exc:
             quit_reply = {"ok": False, "error": str(exc)}
-        steps.append(("06-clean-exit", "the app quit cleanly after the migration",
-                      "the driver acked the quit", bool(quit_reply.get("ok")), shot("06-clean-exit")))
+        steps.append(("07-clean-exit", "the app quit cleanly after the migration",
+                      "the driver acked the quit", bool(quit_reply.get("ok")), shot("07-clean-exit")))
     finally:
         time.sleep(1)
         video.terminate()
@@ -2386,6 +2417,16 @@ def migration2():
         steps.append(("01-gate", "boot gate: the migrated machine is restored",
                       "welcome absent, window at the pinned geometry",
                       gate, shot("01-gate")))
+        # The quit's preference flush landed with boot 1's shutdown:
+        # the clean's defaults now own the file, so the blob and the
+        # whole section are gone — the no-trace contract.
+        cfg = wait_for(lambda: exec_rpc(MIGRATION_CFG_PROBE), 30.0)
+        blob_gone = (isinstance(cfg, dict)
+                     and cfg.get("blob_gone") is True
+                     and cfg.get("section_clean") is True)
+        steps.append(("02-blob-gone", "the v1 blob is gone from cura.cfg",
+                      "no printer_configs_v1 key and the section holds no keys",
+                      blob_gone, shot("02-blob-gone")))
         try:
             with open(BOOT1_DOCUMENT, encoding="utf-8") as handle:
                 before = json.load(handle)
@@ -2398,9 +2439,9 @@ def migration2():
         if not untouched:
             print("MIGRATION-DIFF " + json.dumps(
                 _recursive_diff(before, document), sort_keys=True)[:4000])
-        steps.append(("02-untouched", "the second boot leaves the migrated document alone",
+        steps.append(("03-untouched", "the second boot leaves the migrated document alone",
                       "the document is identical to the one boot 1 left",
-                      untouched, shot("02-untouched")))
+                      untouched, shot("03-untouched")))
         # The backup set: exactly the one backup boot 1 wrote — no
         # re-run, no new copy.
         backup_probe = """
@@ -2413,15 +2454,15 @@ result = {"backups": sorted(
 """
         backups = wait_for(lambda: exec_rpc(backup_probe), 30.0)
         one_backup = isinstance(backups, dict) and len(backups.get("backups") or []) == 1
-        steps.append(("03-one-backup", "no second migration ran",
+        steps.append(("04-one-backup", "no second migration ran",
                       "exactly one cura.cfg backup exists after the second boot",
-                      one_backup, shot("03-one-backup")))
+                      one_backup, shot("04-one-backup")))
         try:
             quit_reply = rpc({"id": 1, "cmd": "quit"}, timeout=30)
         except RuntimeError as exc:
             quit_reply = {"ok": False, "error": str(exc)}
-        steps.append(("04-clean-exit", "the app quit cleanly after the second boot",
-                      "the driver acked the quit", bool(quit_reply.get("ok")), shot("04-clean-exit")))
+        steps.append(("05-clean-exit", "the app quit cleanly after the second boot",
+                      "the driver acked the quit", bool(quit_reply.get("ok")), shot("05-clean-exit")))
     finally:
         time.sleep(1)
         video.terminate()

@@ -651,7 +651,16 @@ case "$MODE" in
         # The first boot's log survives the second launch (which
         # truncates cura_run.log) — the log scan covers both boots.
         cp "$WORK_DIR"/cura_run.log "$WORK_DIR"/cura_run_boot1.log 2>/dev/null || true
-        # The second boot needs the tree to itself.
+        # The first boot's shutdown must COMPLETE: the migration's
+        # no-trace contract rides Cura's OWN preference flush, and an
+        # immediate -9 kill races it (the plugin's files persist
+        # because the plugin writes them; Cura's preference file needs
+        # the graceful shutdown). Wait for Cura to close itself, then
+        # sweep any leftover with the kill.
+        for _ in $(seq 1 40); do
+            docker exec "$CONTAINER" pgrep -f "UltiMaker-Cur[a]" >/dev/null 2>&1 || break
+            sleep 1
+        done
         docker exec "$CONTAINER" bash -lc \
             'pkill -9 -f "UltiMaker-Cur[a]" 2>/dev/null; sleep 1; true'
         rm -f "$WORK_DIR"/harness_port.txt
