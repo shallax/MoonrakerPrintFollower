@@ -392,6 +392,17 @@ class PreviewPresentationTests(unittest.TestCase):
         self.assertEqual(seen, [1])
         self.assertTrue(scene.panel_card.property("configuredForFollowing"))
 
+    def test_a_late_construction_with_a_fired_boot_signal_boots_immediately(self):
+        # The signal fired before the plugin was constructed: waiting
+        # for an edge that will never come again keeps the Preview
+        # hosts unborn (the late/hot activation parity).
+        class StartedDeferredApplication(DeferredApplication):
+            started = True
+
+        scene = self.build(application=StartedDeferredApplication(window=Window(QQuickItem())))
+        self.assertEqual(scene.app.requested, [PANEL_HOST, OVERLAY_HOST])
+        self.assertEqual(scene.presentation.controls, (scene.panel_card, scene.overlay_card))
+
     def test_verdicts_published_before_the_boot_replay_onto_the_created_cards(self):
         # The monitor's first action edge can land while the cards are
         # still boot-deferred; the verdicts must not fall on the floor.

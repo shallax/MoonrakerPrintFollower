@@ -4,6 +4,7 @@ verify-by-re-read interlock, the tri-state record and the idempotent
 replay."""
 import json
 import os
+import stat
 import tempfile
 import unittest
 
@@ -444,6 +445,33 @@ class MigrationTests(unittest.TestCase):
         with open(self.cura_cfg, "w", encoding="utf-8") as handle:
             handle.write("[general]\nversion = 1\n")
         self.assertFalse(write_backup(self.cura_cfg, backup))
+
+    def test_the_backup_is_private_on_posix_even_with_a_permissive_umask(self):
+        # The backup is a full cura.cfg copy (API keys and all): the
+        # mode is forced 0600, never the process umask's default.
+        self._cfg(json.dumps({"A": {}}))
+        backup = os.path.join(self.dir.name, "cura.cfg.2026-09-18-14-30-12")
+        old_umask = os.umask(0)
+        try:
+            self.assertTrue(write_backup(self.cura_cfg, backup))
+        finally:
+            os.umask(old_umask)
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(os.stat(backup).st_mode), 0o600)
+
+    def test_a_broad_pre_existing_tmp_is_tightened_to_private(self):
+        # A stale .tmp with a broad mode must not leak its mode into
+        # the final backup: the descriptor is tightened before the
+        # write.
+        self._cfg(json.dumps({"A": {}}))
+        backup = os.path.join(self.dir.name, "cura.cfg.2026-09-18-14-30-12")
+        with open(backup + ".tmp", "wb") as handle:
+            handle.write(b"stale")
+        if os.name == "posix":
+            os.chmod(backup + ".tmp", 0o666)
+        self.assertTrue(write_backup(self.cura_cfg, backup))
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(os.stat(backup).st_mode), 0o600)
 
     def test_the_backup_accepts_a_genuine_flat_legacy_source(self):
         # The one-boot direct upgrade: the v1 blob was synthesised in

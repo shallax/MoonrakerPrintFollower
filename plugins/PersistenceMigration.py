@@ -183,22 +183,42 @@ def write_backup(source_path: str, backup_path: str) -> bool:
     """The whole-file cura.cfg copy: fsynced, then verified by content
     against the source bytes before the clean may proceed. The copy
     must carry source evidence — existence is not durability (the
-    architecture panel's C6)."""
+    architecture panel's C6). PRIVATE on POSIX: the backup is a full
+    copy of cura.cfg (API keys and all), so the mode is forced 0600
+    rather than left to the umask, and the descriptor is tightened
+    before the write in case a stale .tmp carries a broad mode."""
     try:
         with open(source_path, "rb") as handle:
             raw = handle.read()
         if not raw or not _raw_source_evidence(raw):
             return False
-        with open(backup_path + ".tmp", "wb") as handle:
-            handle.write(raw)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(backup_path + ".tmp", backup_path)
+        tmp_path = backup_path + ".tmp"
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            if os.name == "posix":
+                os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                fd = None
+                handle.write(raw)
+                handle.flush()
+                os.fsync(handle.fileno())
+        finally:
+            if fd is not None:
+                os.close(fd)
+        os.replace(tmp_path, backup_path)
+        if os.name == "posix":
+            os.chmod(backup_path, 0o600)
         with open(backup_path, "rb") as handle:
             if handle.read() != raw:
                 return False
         return True
     except OSError:
+        # Best-effort: an abandoned .tmp from a failed attempt must
+        # not linger beside the next one.
+        try:
+            os.remove(backup_path + ".tmp")
+        except OSError:
+            pass
         return False
 
 
@@ -214,6 +234,8 @@ def run_migration(
     state_machine_write: Callable[[str, Dict[str, Any]], bool],
     set_pref: Callable[[str, Any], None],
     timestamp: str,
+    state_global_merge: Optional[Callable[[Dict[str, Any]], bool]] = None,
+    state_machine_merge: Optional[Callable[[str, Dict[str, Any]], bool]] = None,
 ) -> MigrationOutcome:
     """One migration attempt, safe to re-run: everything before the
     clean is idempotently replayable and the OK record lands last —
@@ -285,6 +307,8 @@ def run_migration(
         records, settings_write, state_global_write, state_machine_write,
         old_state_path, outcome, timestamp,
         existing=_read_settings_document(settings_path),
+        state_global_merge=state_global_merge,
+        state_machine_merge=state_machine_merge,
     ):
         outcome.status = "failed"
         outcome.reason = "write-failed"
@@ -352,16 +376,22 @@ def _read_old_chrome(old_state_path: Optional[str]) -> Dict[str, Any]:
 def _write_new_files(
     records, settings_write, state_global_write, state_machine_write,
     old_state_path, outcome, timestamp, existing=None,
+    state_global_merge=None, state_machine_merge=None,
 ) -> bool:
     """The candidate writes, before anything is verified or cleaned.
     NO record is written here — not even a failed one: `outcome` and
     `timestamp` stay in the signature for the callers that pass them,
     while the record is the commit step's business alone (an ok record
     that reached disk before the verify is the fault this shape
-    fixes)."""
+    fixes). The state side prefers the MERGE writers when supplied: a
+    replayed migration fills the gaps and the live v2 state wins
+    conflicts (the hardening pass) — the plain writers remain for the
+    corrupt recovery and the pure function's direct callers."""
     chrome = _read_old_chrome(old_state_path)
-    if not state_global_write({**chrome, "configVersion": 2}):
+    global_write = state_global_merge or state_global_write
+    if not global_write({**chrome, "configVersion": 2}):
         return False
+    machine_write = state_machine_merge or state_machine_write
     machines: Dict[str, Any] = {}
     for machine_id, record in records.items():
         if not isinstance(record, dict):
@@ -369,7 +399,7 @@ def _write_new_files(
         key = str(machine_id)
         settings, state = split_record(record)
         machines[key] = settings
-        if not state_machine_write(key, state):
+        if not machine_write(key, state):
             return False
     existing = existing or {}
     existing_machines = existing.get("machines")

@@ -4,7 +4,8 @@ removeMachine activates a replacement first — the filters tolerate
 Cura's own unsolicited removals, and the legacy mirror survives on
 the settings write. Qt-guarded like the other runtime suites."""
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 try:
     from PyQt6.QtCore import QTimer
@@ -16,7 +17,6 @@ try:
         _started = runtime()
         _started.__enter__()
         try:
-            from UM.Logger import Logger
             from plugins.PrinterBinding import PrinterBinding, _REMOVAL_WIPE_FIELDS
             from plugins.PrinterConfig import PrinterConfig, PrinterConfigStore
         finally:
@@ -212,8 +212,14 @@ class RemovalHookTests(unittest.TestCase):
         self._seed("A", "http://a:7125")
         self.persistence.set_machine = lambda machine_id, patch: False
         logs = []
-        with patch.object(Logger, "log",
-                          side_effect=lambda level, msg, *args: logs.append((level, msg))):
+        # The wipe resolves Logger through its own function GLOBALS —
+        # patching that namespace is the one identity-proof way to
+        # capture the call under every runtime-stub lifecycle (the
+        # Coverage gate's failure: module-object identity differs
+        # between import-time and test-time passes).
+        fake_logger = SimpleNamespace(
+            log=Mock(side_effect=lambda level, msg, *args: logs.append((level, msg))))
+        with patch.dict(self.binding._wipe_removed_machine.__globals__, {"Logger": fake_logger}):
             self.registry.containerRemoved.emit(_FakeContainer("A", "machine"))
         self.assertFalse(any("credentials were wiped" in msg for _, msg in logs))
         self.assertTrue(any("could not be saved" in msg for _, msg in logs))

@@ -211,8 +211,15 @@ class MoonrakerClient(QObject):
                 return
             # A structured subscribe refusal is a terminal capability
             # failure, not a link failure: degrade the feed to HTTP
-            # WITHOUT a session reset (the automatic-fallback ruling).
+            # WITHOUT a session reset (the automatic-fallback ruling),
+            # and retire the socket side the same way the silent-proof
+            # fallback does — an otherwise-unused socket must not stay
+            # alive (its keepalive and server.info calls would keep
+            # running while HTTP is authoritative).
             self._effective_feed_mode = "http"
+            self._proof_timer.stop()
+            self._socket_started_at = None
+            self._session.socket.stop()
             self.connectionChanged.emit(
                 False,
                 "This Moonraker refused the status subscription; using HTTP polling",
@@ -224,6 +231,10 @@ class MoonrakerClient(QObject):
             # restart (F1): the ready broadcast is the re-subscribe
             # trigger, and the previous print is definitively over (F11).
             if generation != self._generation:
+                return
+            if self._effective_feed_mode != "websocket":
+                # The feed degraded to HTTP: the stale socket's ready
+                # broadcast must not re-subscribe (the hardening pass).
                 return
             self._session.state.assume_print_stopped = False
             self._subscribe()

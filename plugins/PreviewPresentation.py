@@ -47,7 +47,14 @@ class PreviewPresentation(QObject):
         # boot-complete edge instead; hosts that cannot signal one
         # (the test doubles) keep the immediate refresh.
         finished = getattr(application, "initializationFinished", None)
-        if finished is None:
+        # The boot-ready predicate (the PrinterBinding contract): a
+        # host with no signal, or a LATE construction whose signal
+        # fired before the plugin existed, is ready NOW — waiting for
+        # an edge that will never come again would keep the Preview
+        # hosts unborn. Ordinary startup still defers to the
+        # boot-complete edge (the Windows registration race).
+        ready_now = finished is None or bool(getattr(application, "started", False))
+        if ready_now:
             self._booted = True
             self.refresh()
         else:

@@ -200,10 +200,28 @@ class ClientFeedTests(unittest.TestCase):
         generation = self.session.generation
         notes = []
         self.client.connectionChanged.connect(lambda connected, reason: notes.append((connected, reason)))
+        stops_before = self.socket.stops
         self.socket.subscribeRefused.emit({"code": -32602, "message": "Unknown"})
         self.assertEqual(self.client.effective_feed_mode, "http")
         self.assertEqual(self.session.generation, generation)
         self.assertTrue(any("refused" in reason for _, reason in notes), notes)
+        # The hardening pass: the retired socket side stops with the
+        # fallback — the configured preference stays websocket, the
+        # proof timer stands down, the RPC lane closes, and HTTP
+        # polling resumes.
+        self.assertEqual(self.client.configured_feed_mode, "websocket")
+        self.assertFalse(self.client._proof_timer.isActive())
+        self.assertFalse(self.client.rpc_available())
+        self.assertEqual(self.socket.stops, stops_before + 1)
+        self.assertTrue(self.transport.requests)  # the HTTP refresh started
+
+    def test_a_stale_klippy_ready_after_the_refusal_does_not_resubscribe(self):
+        self.client.configure("http://p", "k", 750, feed_mode="websocket")
+        self.client.start()
+        self.socket.subscribeRefused.emit({"code": -32602, "message": "Unknown"})
+        subscriptions = len(self.socket.subscriptions)
+        self.socket.klippyReady.emit()
+        self.assertEqual(len(self.socket.subscriptions), subscriptions)
 
     def test_unauthorized_refusal_is_a_key_rejection_failure(self):
         self.client.configure("http://p", "k", 750, feed_mode="websocket")

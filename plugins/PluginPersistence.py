@@ -201,6 +201,17 @@ class PluginPersistence:
     def write_state_global_document(self, document: Dict[str, Any]) -> bool:
         return self._state_global.write(document, merge=False)
 
+    def merge_state_global_document(self, candidate: Dict[str, Any]) -> bool:
+        """The migration's gap-filling global write (the hardening
+        pass): the candidate supplies defaults, the LIVE document wins
+        conflicts — a replayed migration must never roll back state
+        the session wrote after the first attempt. The merge runs
+        under the same lock as every other write (E9)."""
+        def mutate(document):
+            return {**candidate, **(document if isinstance(document, dict) else {}), "configVersion": 2}
+
+        return self._state_global.update(mutate)
+
     def merge_state_global(self, update: Dict[str, Any], delete: tuple = ()) -> bool:
         """The chrome's top-level merge (the StateStore semantics on the
         global document): foreign keys survive, `delete` drops the named
@@ -241,3 +252,15 @@ class PluginPersistence:
 
     def write_machine_state_document(self, machine_id: str, document: Dict[str, Any]) -> bool:
         return self._shard(machine_id).write(document, merge=False)
+
+    def merge_machine_state_document(self, machine_id: str, candidate: Dict[str, Any]) -> bool:
+        """The migration's gap-filling shard write (the hardening
+        pass): the live shard wins conflicts, missing migrated values
+        fill the gaps, and the retired consoleHistory key is never
+        written. Under the shared shard lock (E9)."""
+        def mutate(document):
+            merged = {**candidate, **(document if isinstance(document, dict) else {})}
+            merged.pop("consoleHistory", None)
+            return merged
+
+        return self._shard(machine_id).update(mutate)

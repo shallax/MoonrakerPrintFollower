@@ -362,6 +362,48 @@ class MigrationTriggerTests(unittest.TestCase):
         self.assertFalse(self.binding._store._truthy(
             self.prefs.getValue(PrinterConfigStore.MOONRAKER_CONNECTION_MIGRATED_KEY)))
 
+    def test_a_replayed_migration_keeps_the_live_v2_state(self):
+        # The hardening pass reproducer, at the production seam: a
+        # retry after a partially completed migration must not roll
+        # back the live v2 state documents — existing values win, the
+        # migration fills only the gaps.
+        key = PrinterConfigStore.PREF_KEY
+        self.prefs.addPreference(key, "{}")
+        self.prefs.setValue(key, json.dumps({"A": {
+            "url": "http://a:7125",
+            "console_transcript": [{"kind": "command", "text": "legacy", "error": False, "success": False}],
+            "console_store_time": "legacy-stamp",
+        }}))
+        self.prefs.setValue(PrinterConfigStore.MIGRATED_KEY, True)
+        # The legacy chrome the first attempt had moved, and the live
+        # v2 state the session wrote after that attempt.
+        old_state_path = os.path.join(self.dir.name, "old_sections.json")
+        _pretty_save(old_state_path, json.dumps({"someLegacyKey": "legacy"}))
+        self.persistence.write_state_global_document({
+            "configVersion": 2,
+            "whatsNewSeen": "current",
+            "currentOnlyKey": "keep",
+            "someLegacyKey": "newer-value",
+        })
+        self.persistence.write_machine_state_document("A", {
+            "consoleTranscript": [{"kind": "command", "text": "newer", "error": False, "success": False}],
+            "consoleStoreTime": "newer-stamp",
+            "liveOnlyKey": "keep",
+        })
+        binding = PrinterBinding(self.app, self.client, self.persistence,
+                                 cura_cfg_path=self.cura_cfg, old_state_path=old_state_path)
+        binding.run_persistence_migration()
+
+        global_doc = self.persistence.state_global_document()
+        self.assertEqual(global_doc["whatsNewSeen"], "current")
+        self.assertEqual(global_doc["currentOnlyKey"], "keep")
+        self.assertEqual(global_doc["someLegacyKey"], "newer-value")
+        shard = self.persistence.get_machine_state("A")
+        self.assertEqual(shard["consoleStoreTime"], "newer-stamp")
+        self.assertEqual(shard["consoleTranscript"][0]["text"], "newer")
+        self.assertEqual(shard["liveOnlyKey"], "keep")
+        self.assertNotIn("consoleHistory", shard)
+
     def test_a_deleted_folder_reconfigure_survives_the_next_boot(self):
         # The Windows lost-config sequence: the folder was deleted by
         # hand (no settings, no record). Boot A activates the v2
@@ -580,6 +622,87 @@ class MigrationTriggerTests(unittest.TestCase):
                 self.assertTrue(open_mock.called)
         finally:
             sys.modules["UM.Message"].Message = RecordingMessage.__mro__[1]
+
+
+@unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")
+class LateActivationTests(unittest.TestCase):
+    """The boot-ready parity (the hardening pass): a late/hot
+    construction and a host without initializationFinished behave
+    like PrinterBinding's ready predicate — the migration notice must
+    not wait for a signal that has already fired or will never
+    exist."""
+
+    def setUp(self):
+        self._rt = runtime()
+        self.qt = self._rt.__enter__()
+        self.addCleanup(self._rt.__exit__, None, None, None)
+        base = tempfile.TemporaryDirectory()
+        self.addCleanup(base.cleanup)
+        self.base = base.name
+        self.prefs = Preferences({})
+        from UM.Resources import Resources
+        self.resources_patcher = patch.object(
+            Resources, "getStoragePath", side_effect=lambda *args, **kwargs: base.name)
+        self.config_patcher = patch.object(
+            Resources, "getConfigStoragePath", return_value=base.name)
+        self.resources_patcher.start()
+        self.config_patcher.start()
+        self.addCleanup(self.resources_patcher.stop)
+        self.addCleanup(self.config_patcher.stop)
+        from plugins.FollowerRuntime import FollowerRuntime
+        self.FollowerRuntime = FollowerRuntime
+
+    def _app(self, started, with_signal):
+        app = self.qt.Application(self.prefs)
+        app.stack = self.qt.Machine("A")
+        app.started = started
+        if with_signal:
+            class FakeSignal:
+                def __init__(self):
+                    self.handlers = []
+
+                def connect(self, handler):
+                    self.handlers.append(handler)
+
+                def emit(self, *args):
+                    for handler in list(self.handlers):
+                        handler(*args)
+
+            app.initializationFinished = FakeSignal()
+        return app
+
+    def test_normal_startup_waits_for_the_boot_edge(self):
+        app = self._app(started=False, with_signal=True)
+        from plugins.MigrationNotice import MigrationNotice
+        # The class patch must be active BEFORE the runtime connects:
+        # the signal captures the bound method at connect time, so an
+        # instance patch after construction would spy on nothing.
+        with patch.object(MigrationNotice, "announce") as announce:
+            owner = self.FollowerRuntime(app, None)
+            self.assertEqual(announce.call_count, 0)  # nothing runs early
+            # The three boot-deferred owners: the preview hosts, the
+            # binding's readiness and the migration notice.
+            self.assertEqual(len(app.initializationFinished.handlers), 3)
+            app.initializationFinished.emit()
+            self.assertEqual(announce.call_count, 1)
+        self.addCleanup(owner.close)
+
+    def test_a_late_construction_announces_immediately(self):
+        app = self._app(started=True, with_signal=True)
+        from plugins.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce") as announce:
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        self.assertEqual(app.initializationFinished.handlers, [])
+        self.assertEqual(announce.call_count, 1)
+
+    def test_a_host_without_the_boot_signal_announces_immediately(self):
+        app = self._app(started=False, with_signal=False)
+        from plugins.MigrationNotice import MigrationNotice
+        with patch.object(MigrationNotice, "announce") as announce:
+            owner = self.FollowerRuntime(app, None)
+        self.addCleanup(owner.close)
+        self.assertEqual(announce.call_count, 1)
 
 
 @unittest.skipUnless(QT_AVAILABLE, "Qt runtime required")

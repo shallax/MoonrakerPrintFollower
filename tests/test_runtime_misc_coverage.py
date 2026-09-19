@@ -766,8 +766,9 @@ if QT_AVAILABLE:
             self.loads.append(lease)
 
     class DownloadHandle:
-        def __init__(self):
+        def __init__(self, done=False):
             self.cancelled = 0
+            self.done = done
 
         def cancel(self):
             self.cancelled += 1
@@ -801,6 +802,25 @@ class FileDownloadTests(unittest.TestCase):
         download = self.download_type(self.files, self.cura, **kwargs)
         self.addCleanup(download.close)
         return download
+
+    def test_a_synchronously_failed_download_does_not_accumulate(self):
+        # The hardening pass: a constructor failure delivers its
+        # terminal before download_once returns — the dead handle must
+        # never enter _active and the failure surfaces exactly once
+        # per attempt, however many attempts fail.
+        def sync_fail(relpath, *, on_ready):
+            handle = DownloadHandle(done=True)
+            on_ready(None, "the setup failed")
+            return handle
+
+        self.files.download_once = sync_fail
+        download = self.download()
+        failures = []
+        download.failed.connect(failures.append)
+        for _ in range(5):
+            self.assertTrue(download.request("part.gcode"))
+        self.assertEqual(download._active, set())
+        self.assertEqual(len(failures), 5)
 
     def test_a_ready_download_loads_the_file_through_a_lease(self):
         failures = []

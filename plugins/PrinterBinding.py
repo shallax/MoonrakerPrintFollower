@@ -235,6 +235,8 @@ class PrinterBinding(QObject):
             settings_record_write=self._persistence.set_migration_record,
             state_global_write=self._persistence.write_state_global_document,
             state_machine_write=self._persistence.write_machine_state_document,
+            state_global_merge=self._persistence.merge_state_global_document,
+            state_machine_merge=self._persistence.merge_machine_state_document,
             set_pref=preferences.setValue,
             timestamp=timestamp,
         )

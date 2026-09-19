@@ -176,10 +176,20 @@ class FollowerRuntime:
         # binding's latch opens on the same signal (mark_ready runs the
         # migration internally), so construction below only connects.
         finished = getattr(application, "initializationFinished", None)
-        if finished is not None:
+        # The same boot-ready predicate PrinterBinding uses: a late
+        # construction (Cura already started) or a host without the
+        # signal is ready NOW — the signal has either fired or will
+        # never exist, so waiting would silently skip the migration
+        # notice. The binding's start() already handles the
+        # already-ready case itself; the notice announces AFTER it so
+        # the migration record the announcement reads has landed.
+        ready_now = finished is None or bool(getattr(application, "started", False))
+        if not ready_now:
             finished.connect(self.binding.mark_ready)
             finished.connect(self.notice.announce)
         self.binding.start()
+        if ready_now:
+            self.notice.announce()
 
     def close(self):
         if self._closed: return

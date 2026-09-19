@@ -2027,6 +2027,31 @@ class RemoteFileServiceOneShotTests(_FileServiceCase):
         self.assertEqual(self.service._one_shots, set())
         self.assertTrue(os.path.exists(path))
 
+    def test_a_synchronous_setup_failure_stays_out_of_the_registry(self):
+        # The hardening pass: a constructor failure delivers its
+        # terminal before download_once returns — the dead download
+        # must never accumulate in _one_shots, the failure surfaces
+        # exactly once per attempt, and the temp directories retire.
+        original = self.service._target_factory
+        self.service._target_factory = lambda path: (_ for _ in ()).throw(RuntimeError("target boom"))
+        try:
+            delivered = []
+            for _ in range(5):
+                # The request must succeed first so the FACTORY raise
+                # is the synchronous failure under test.
+                reply = FakeReply(pairs=[(b"Content-Length", b"8")])
+                self.transport.network.replies.append(reply)
+                download = self.service.download_once(
+                    "sub/part.gcode", on_ready=lambda path, error: delivered.append((path, error)))
+                self.assertTrue(download.done)
+        finally:
+            self.service._target_factory = original
+        self.assertEqual(self.service._one_shots, set())
+        self.assertEqual(len(delivered), 5)
+        self.assertTrue(all(error == "target boom" for _, error in delivered))
+        leftovers = [name for name in os.listdir(self.service._root) if name.startswith("file-")]
+        self.assertEqual(leftovers, [])
+
     def test_a_one_shot_cancel_delivers_its_terminal_and_retires_the_directory(self):
         download, reply, delivered = self.start_one_shot()
         directory = download._directory

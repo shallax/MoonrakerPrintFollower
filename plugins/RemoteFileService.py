@@ -117,6 +117,14 @@ class _OneShotDownload:
         reply.readyRead.connect(lambda r=reply, o=self._op: service._drain_one_shot(self, o, r))
         reply.finished.connect(lambda r=reply, o=self._op: self._finish_stream(o, r))
 
+    @property
+    def done(self) -> bool:
+        """The read-only completion flag (the hardening pass): a
+        synchronous constructor failure delivers its terminal BEFORE
+        `download_once` returns, so the caller must be able to see the
+        completion without reaching into the private flag."""
+        return self._done
+
     def _finish_stream(self, op, reply):
         if self._done:
             reply.deleteLater()
@@ -285,7 +293,7 @@ class RemoteFileService(QObject):
                 self._one_shots.discard(download)
             on_ready(path, error)
         download = _OneShotDownload(self, relpath, self._root, done)
-        if download._done:
+        if download.done:
             # A constructor failure delivered its terminal before the
             # registry add — the dead download must not accumulate.
             return download

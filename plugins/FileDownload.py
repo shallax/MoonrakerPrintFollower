@@ -55,7 +55,11 @@ class FileDownload(QObject):
             self._cura.load(FileLease(path, release))
 
         download = self._files.download_once(str(relpath), on_ready=on_ready)
-        self._active.add(download)
+        if not download.done:
+            # A synchronous constructor failure delivered its terminal
+            # before `download` existed here, so the dead download must
+            # not accumulate in the active set (the hardening pass).
+            self._active.add(download)
         return True
 
     def close(self):

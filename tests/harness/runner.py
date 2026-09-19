@@ -3233,7 +3233,11 @@ for e in app.getExtensions():
                 break
             time.sleep(0.5)
         try:
-            config.feed_mode = MODE_PLACEHOLDER
+            # The field is a str-valued Enum; assigning a bare string
+            # would bypass the coercion production callers always have,
+            # and the apply path reads .value (the 5.7.0 sweep's find —
+            # it failed every version, not just the floor).
+            config.feed_mode = config.feed_mode.__class__(MODE_PLACEHOLDER)
             follower.apply_printer_config(config)
             result["applied"] = True
         except Exception as exc:
