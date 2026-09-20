@@ -18,8 +18,9 @@ import os
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from plugins import ArcGeometry
+from plugins import ArcGeometry, GCodeIndex
 from plugins.GCodeIndex import (
     LayerMotionIndex,
     PersistentIndexCache,
@@ -74,6 +75,14 @@ def _write(gcode: str, suffix=".gcode") -> str:
     handle.write(gcode.encode("ascii"))
     handle.close()
     return handle.name
+
+
+# Cache fixtures: a file carrying a real arc, one carrying nothing but
+# G0/G1, and one that selects a modal plane without ever commanding an
+# arc (its geometry is linear, but the plane still has to survive).
+ARC_SOURCE = "M82\n;LAYER:0\n;TYPE:SKIN\nG0 X10 Y0\nG3 X0 Y10 I-10 J0 E1\n"
+PLAIN_SOURCE = "M82\n;LAYER:0\n;TYPE:SKIN\nG0 X0 Y0\nG1 X10 Y0 E1\nG1 X10 Y10 E2\n"
+PLANE_ONLY_SOURCE = "M82\nG18\n;LAYER:0\n;TYPE:SKIN\nG1 X1 Y2 Z3 E1\nG0 X10 Y0 Z0\n"
 
 
 class ArcWindowTests(unittest.TestCase):
@@ -494,6 +503,19 @@ class ArcLivePositionTests(unittest.TestCase):
         self.assertNotEqual(method, "live position")
         self.assertNotAlmostEqual(fraction, 0.75, places=3)
 
+    def test_the_end_of_a_full_circle_helix_is_a_live_position_match(self):
+        # The helix's start and its target share an XY position: the
+        # live toolhead sitting on the exact endpoint is on the path,
+        # and the seam must not measure it against the far end instead.
+        index = _index("M82\n;LAYER:0\n;TYPE:SKIN\n"
+                       "G0 X10 Y0 Z0\n"
+                       "G3 X10 Y0 Z5 I-10 J0 E1\n")
+        offsets = list(index.motion_offsets[0])
+        fraction, method = index.refined_fraction(0, offsets[1], (10.0, 0.0, 5.0))
+        self.assertEqual(method, "live position",
+                         "the exact end of the helix was read as off-model")
+        self.assertAlmostEqual(fraction, 1.0, places=6)
+
     def test_the_arcs_progress_is_monotonic_along_the_curve(self):
         index, offsets = self._semicircle()
         fractions = []
@@ -535,6 +557,13 @@ class ArcCacheTests(unittest.TestCase):
         names = os.listdir(self.directory)
         self.assertEqual(len(names), 1, "the cache wrote nothing to inspect")
         return os.path.join(self.directory, names[0])
+
+    def _built(self, gcode: str, *, compact: bool = False):
+        """The index for *gcode*, and the file it came from (still on disk
+        for a hydration pass)."""
+        path = _write(gcode)
+        self.addCleanup(os.remove, path)
+        return build_index_from_file(path, compact=compact), path
 
     @staticmethod
     def _header_of(blob: str) -> dict:
@@ -596,12 +625,94 @@ class ArcCacheTests(unittest.TestCase):
         self.assertEqual(restored.layer_start_arc_plane, [18, 18])
         self.assertEqual(restored.motion_arcs[1], original.motion_arcs[1])
 
+    def test_a_version_9_blob_is_refused_because_it_may_be_lossy(self):
+        # v9 could legally publish a cache whose arc descriptors were
+        # dropped by the entry budget, so an absent arc column proves
+        # nothing about the file it came from: every v9 blob is refused
+        # rather than read as an arc-free one.
+        blob = self._blob(ARC_SOURCE)
+        self.assertEqual(GCodeIndex._CACHE_VERSION, 10,
+                         "the cache version must move past the era that could drop arcs")
+        self._rewrite_header(blob, dict(self._header_of(blob), version=9))
+        self.assertIsNone(self.cache.load(self.identity),
+                          "a v9 blob (possibly lossy) was accepted")
+
+    def test_an_arc_bearing_index_is_never_cached_without_its_arcs(self):
+        # Arc descriptors are physical geometry, not presentation: when
+        # the entry budget cannot hold them the entry is not published,
+        # rather than published as a file that restores as chords.
+        original, _path = self._built(ARC_SOURCE)
+        with patch.object(GCodeIndex, "_MAX_CACHE_ARC_ENTRIES", 0):
+            self.cache.save(self.identity, original)
+        self.assertEqual(os.listdir(self.directory), [],
+                         "a cache without the arcs was published anyway")
+        self.assertIsNone(self.cache.load(self.identity))
+
+    def test_a_g0_g1_file_still_caches_with_no_arc_budget(self):
+        # Nothing to lose, nothing to refuse: the budget only ever
+        # refuses files that actually carry arc descriptors.
+        original, _path = self._built(PLAIN_SOURCE)
+        with patch.object(GCodeIndex, "_MAX_CACHE_ARC_ENTRIES", 0):
+            self.cache.save(self.identity, original)
+        restored = self.cache.load(self.identity)
+        self.assertIsNotNone(restored, "a file with no arcs to lose was not cached")
+        self.assertEqual(layer_polylines(restored, 0), layer_polylines(original, 0))
+
+    def test_a_plane_only_file_keeps_its_modal_plane_with_no_arc_budget(self):
+        # A file that selects G18 without commanding any arc still needs
+        # the layer-start plane the hydrator seeds from.
+        original, _path = self._built(PLANE_ONLY_SOURCE)
+        with patch.object(GCodeIndex, "_MAX_CACHE_ARC_ENTRIES", 0):
+            self.cache.save(self.identity, original)
+        restored = self.cache.load(self.identity)
+        self.assertIsNotNone(restored, "a file with no arcs to lose was not cached")
+        self.assertEqual(restored.layer_start_arc_plane,
+                         original.layer_start_arc_plane)
+
+    def test_an_over_budget_arc_column_is_refused_on_load(self):
+        self.assertTrue(self._blob(ARC_SOURCE), "no blob to load")
+        with patch.object(GCodeIndex, "_MAX_CACHE_ARC_ENTRIES", 0):
+            self.assertIsNone(self.cache.load(self.identity),
+                              "an over-budget arc column was read as arc-free")
+
+    def test_a_cached_arc_file_cannot_come_back_as_chords(self):
+        # The only two allowed states are "cached faithfully" and "not
+        # cached": what comes back is compared as drawn geometry.
+        for gcode in (ARC_SOURCE, PLANE_ONLY_SOURCE):
+            original, _path = self._built(gcode)
+            self.cache.save(self.identity, original)
+            restored = self.cache.load(self.identity)
+            self.assertIsNotNone(restored, "an arc-bearing index was cached lossily: %s" % gcode)
+            for layer in range(len(original.ranges)):
+                self.assertEqual(layer_polylines(restored, layer),
+                                 layer_polylines(original, layer), (gcode, layer))
+
+    def test_a_restored_compact_index_hydrates_to_the_full_geometry(self):
+        # The restored compact index must not merely agree on a count of
+        # descriptors: it hydrates its layers from the file and has to
+        # come out drawing what a full scan draws, arcs included.
+        gcode = ("M82\nG18\n"
+                 ";LAYER:0\nG1 X1 Y2 Z3 E1\n"
+                 ";LAYER:1\nG2 X0 Z10 I-10 K0 E2\n"
+                 ";LAYER:2\nG1 X5 Y5 Z5 E3\n")
+        compact, path = self._built(gcode, compact=True)
+        self.cache.save(self.identity, compact)
+        restored = self.cache.load(self.identity)
+        self.assertIsNotNone(restored, "a compact arc-bearing index was not cached")
+        full = build_index_from_file(path)
+        self.assertEqual(restored.layer_start_arc_plane, full.layer_start_arc_plane)
+        for layer in (1, 2):
+            self.assertTrue(hydrate_layer_from_file(restored, path, layer, keep_anchor=layer),
+                            "layer %d did not hydrate" % layer)
+            self.assertEqual(restored.motion_arcs[layer], full.motion_arcs[layer])
+            self.assertEqual(layer_polylines(restored, layer), layer_polylines(full, layer))
+
     def test_a_blob_written_before_arcs_were_indexed_is_refused(self):
         # A blob from the version before arcs draws every arc as its
         # chord. Accepting one would silently regress the geometry, so it
         # is refused and the file is read again.
-        blob = self._blob("M82\n;LAYER:0\n;TYPE:SKIN\nG0 X10 Y0\nG3 X0 Y10 I-10 J0 E1\n")
-        self.assertEqual(self._header_of(blob)["version"], 9)
+        blob = self._blob(ARC_SOURCE)
+        self.assertEqual(self._header_of(blob)["version"], 10)
         self._rewrite_header(blob, dict(self._header_of(blob), version=8))
         self.assertIsNone(self.cache.load(self.identity),
                           "a pre-arc cache blob was accepted as arc-aware")
@@ -840,6 +951,38 @@ class ArcPrintedObjectTests(unittest.TestCase):
         split = index.motion_count(0)
         self.assertEqual(split, 2)
         self.assertEqual(self.service.plate_visited(0, split, self.ROWS), frozenset())
+
+    # A layer that opens mid-travel: its first extrusion does not start
+    # until motion 2, so the two travels before it — the second of which
+    # runs straight through the polygon — deposit nothing.
+    CROSSING = ("M83\n"
+                ";LAYER:0\n;TYPE:SKIN\n"
+                "G1 X5 Y5 E1\n"
+                "G1 X5 Y50\n"
+                ";LAYER:1\n;TYPE:SKIN\n"
+                "G1 X30 Y30\n"
+                "G1 X80 Y30\n"
+                "G1 X90 Y60 E1.5\n"
+                "G1 X95 Y60 E0.5\n"
+                "G1 X40 Y30 E1\n"
+                "G1 X45 Y25 E0.5\n")
+
+    def test_a_cross_layer_travel_is_never_read_as_material(self):
+        # The cursor polls: after the first poll the walk resumes at a
+        # non-zero motion, which must not turn the opening travels of a
+        # mid-travel layer into extrusions and mark the polygon.
+        index = self._bind(self.CROSSING)
+        self.assertFalse(index.layer_start_extruding[1],
+                         "the fixture no longer opens layer 1 mid-travel")
+        self.assertEqual(index.travel_starts[1], [])
+        self.assertEqual(index.travel_ends[1], [2])
+        self.assertEqual(self.service.plate_visited(1, 1, self.ROWS), frozenset(),
+                         "the opening travel marked the polygon")
+        self.assertEqual(self.service.plate_visited(1, 4, self.ROWS), frozenset(),
+                         "the travel crossing the polygon marked it")
+        # The extrusion that does cross it still marks, from the same
+        # resuming cursor: the fix must not blind the walk.
+        self.assertEqual(self.service.plate_visited(1, 5, self.ROWS), frozenset({"Widget"}))
 
 
 if __name__ == "__main__":

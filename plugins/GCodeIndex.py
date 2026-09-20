@@ -75,15 +75,22 @@ _MAX_CACHE_HEADER_BYTES = 16 * 1024 * 1024
 _MAX_CACHE_FEATURE_ENTRIES = 500_000
 # The arc columns' serialization budget, in descriptors: the JSON header
 # itself is the bound (one descriptor is ~25 bytes and the header may not
-# exceed _MAX_CACHE_HEADER_BYTES), so past this the descriptors are
-# dropped whole and the reloaded index draws those arcs as the chords it
-# would draw if they had never been indexed. The G0/G1 path pays nothing
-# for it: the column is sparse, one entry per arc.
+# exceed _MAX_CACHE_HEADER_BYTES). It is ALL OR NOTHING: a blob past it
+# is not published, and one offered to the loader is refused, because a
+# cache missing descriptors restores an index that draws those arcs as
+# chords — geometry the file never commanded, silently, for the life of
+# the cache entry. The G0/G1 path pays nothing for the budget: the
+# column is sparse, one entry per arc, and a file without arcs keeps
+# caching with no arc budget at all.
 _MAX_CACHE_ARC_ENTRIES = 200_000
+# 10: the arc columns are all-or-nothing. 9 could publish an index whose
+# descriptors the entry budget had dropped, and a dropped column is
+# indistinguishable from a file that never had arcs, so every 9 blob is
+# refused rather than read back as an arc-free one.
 # 9: the sparse per-motion arc descriptors and the layer-start arc plane.
 # 8 restored feature columns but indexed G2/G3 by endpoint, so a 8 blob
 # would draw every arc as its chord — the version refuses it outright.
-_CACHE_VERSION = 9
+_CACHE_VERSION = 10
 _LARGE_FILE_COMPACT_THRESHOLD = 128 * 1024 * 1024
 # Hardening bounds for hostile/corrupt gcode (panel security P2-4): a
 # real gcode line is well under 1 KB, real prints stay under ~100k
@@ -1276,10 +1283,11 @@ def _arc_columns(counts: Sequence[int], arcs, start_planes) -> Optional[Dict]:
     an empty mapping, so its header carries no arc keys and pays nothing
     for the feature.
 
-    Past the entry budget the DESCRIPTORS are dropped whole, never
-    truncated — a partial list would re-chord some arcs and not others —
-    while the layer-start planes stay: they are the hydrator's seed and
-    cost nothing to keep.
+    Past the entry budget the answer is None, never a header without the
+    descriptors: the layer-start planes alone would restore an index
+    whose arcs draw as chords — geometry the file never commanded —
+    stored durably and indistinguishable from a file that has no arcs.
+    A cache is faithful or it is not written.
     """
     try:
         if not any(arcs) and all(plane == ArcGeometry.PLANE_XY for plane in start_planes):
@@ -1323,7 +1331,7 @@ def _arc_columns(counts: Sequence[int], arcs, start_planes) -> Optional[Dict]:
         clean.append(cleaned)
     planes = [int(plane) for plane in start_planes]
     if entries > _MAX_CACHE_ARC_ENTRIES:
-        return {"start_arc_plane": planes}
+        return None
     return {"arcs": clean, "start_arc_plane": planes}
 
 
@@ -1421,12 +1429,13 @@ class PersistentIndexCache:
                 # A budget-dropped (or absent) vocabulary leaves no code to
                 # name, so the names go with the runs.
                 type_names = list(feature_header.get("type_names", []))
-                # The arc columns are optional the same way: a blob whose
-                # descriptors were budget-dropped (or one that never had
-                # any) restores every motion without one, and the geometry
-                # draws those arcs as the chords they would have been
-                # before the feature existed. A present column that
-                # disagrees with the geometry is refused instead.
+                # The arc columns are optional as a whole: a file with
+                # no arcs carries no arc keys and restores every motion
+                # without one. A present column is validated against the
+                # geometry it claims, and one past the entry budget is
+                # refused outright — reading it back arc-free would draw
+                # a chord where the file commanded a curve, for as long
+                # as the entry lives.
                 arc_header = _arc_columns(
                     counts,
                     header.get("arcs", [{} for _ in counts]),

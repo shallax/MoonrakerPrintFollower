@@ -17,9 +17,12 @@ painter, the printed-object walk and the live-position match as the
 path the head took. Nothing downstream branches on the command word.
 
 ``motion_edges`` is that primitive's one implementation, and the payload
-builder and the printed-object walk both read it — the same reading
-``refined_fraction`` already uses to match the live toolhead against a
-segment, so nothing here has to guess what a motion means.
+builder and the printed-object walk both read it — a seek into a layer
+is the suffix of that same walk, so nothing here has to guess what a
+motion means. ``refined_fraction`` searches the logical endpoints
+instead (the motion index is the unit the split is counted in) and
+delegates the arcs it meets to ArcGeometry.closest, so both readings
+agree about the curve without sharing a walk.
 
 A travel span always breaks the class polylines and its motions never
 enter them; a feature-type change breaks them too, so a WALL -> SKIN ->
@@ -37,14 +40,16 @@ distance filter runs at all (the old 0.35 mm floor erased the live
 file's short skin lines and its corner runs). Above the budget each
 already-separated segment simplifies on its own with Douglas-Peucker:
 endpoints and corners kept, never a stride, never across a segment
-boundary, a travel, or a feature change.
+boundary, a travel, or a feature change — and the vertex it drops is
+measurably within the tolerance of the chord that replaces it, so the
+simplification's error is a bound rather than a hope.
 
 The architecture contract forbids the mutable index arrays crossing the
 worker boundary; only these built lists do.
 """
 from __future__ import annotations
 
-from bisect import bisect_left, bisect_right
+from bisect import bisect_left
 from math import hypot
 from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
@@ -114,6 +119,41 @@ def _layer_start_z(index: LayerMotionIndex, layer: int, zs: Sequence) -> float:
     return float(zs[0]) if len(zs) else 0.0
 
 
+def state_before_motion(index: LayerMotionIndex, layer: int, first: int) -> bool:
+    """The travel state the head held when motion *first* began.
+
+    A layer opens in the state the file was left in — every motion of
+    every earlier layer advanced it, and ``layer_start_extruding``
+    records where that left each layer. Each recorded boundary SETS the
+    state (a travel start is travelling, a travel end is extruding), so
+    the answer is the layer's seed unless a boundary falls before
+    *first*, and then the LAST such boundary wins: the same value the
+    unseeked walk holds after applying them in order. Counting the
+    boundaries on each side of the seek instead reads a layer that
+    opened mid-travel backwards, because its boundary order is the
+    mirror of a layer that opened extruding.
+
+    A boundary AT *first* is not applied here: it belongs to that
+    motion's own edge, which ``motion_edges`` applies before yielding it.
+    """
+    starts = index.travel_starts[layer] if layer < len(index.travel_starts) else ()
+    ends = index.travel_ends[layer] if layer < len(index.travel_ends) else ()
+    start_before = bisect_left(starts, first)
+    end_before = bisect_left(ends, first)
+    if start_before and end_before:
+        # A motion recorded in both lists is a contradiction the walk
+        # resolves in the travel end's favour (it checks the ends last).
+        return ends[end_before - 1] >= starts[start_before - 1]
+    if start_before:
+        return False
+    if end_before:
+        return True
+    extruding = True
+    if layer < len(index.layer_start_extruding):
+        extruding = bool(index.layer_start_extruding[layer])
+    return extruding
+
+
 def motion_edges(index: LayerMotionIndex, layer: int,
                  first: int = 0) -> Iterator[Tuple[int, float, float, float, float, int, bool]]:
     """Every motion of *layer* as its true edge, in order.
@@ -132,9 +172,11 @@ def motion_edges(index: LayerMotionIndex, layer: int,
     a straight move and a curved one.
 
     *first* starts the walk at that motion's edge without walking the
-    ones before it — the printed-object cursor's seek. The travel state
-    is seeded from the layer's own opening state at zero, and from the
-    boundary arrays otherwise.
+    ones before it — the printed-object cursor's seek. The seek is
+    equivalent to the suffix of the full walk: the state is
+    ``state_before_motion`` and the boundary cursors start at the first
+    boundary at or after *first*, so a boundary at *first* is applied to
+    that motion's own edge exactly as the unseeked walk would.
     """
     if layer < 0 or layer >= index.layer_count():
         return
@@ -159,17 +201,13 @@ def motion_edges(index: LayerMotionIndex, layer: int,
         if len(zs) != count:
             arcs = None
             zs = ()
+    start_index = bisect_left(starts, first)
+    end_index = bisect_left(ends, first)
+    extruding = state_before_motion(index, layer, first)
     if first:
-        start_index = bisect_right(starts, first - 1)
-        end_index = bisect_right(ends, first - 1)
-        extruding = start_index <= end_index
         x0 = float(xs[first - 1])
         y0 = float(ys[first - 1])
     else:
-        start_index = end_index = 0
-        extruding = True
-        if layer < len(index.layer_start_extruding):
-            extruding = bool(index.layer_start_extruding[layer])
         x0, y0 = _layer_start(index, layer, xs, ys)
     # The feature RLE advances once per motion (a fresh cursor beats
     # rescanning the runs from the top for every motion of a layer).
@@ -232,16 +270,42 @@ def motion_edges(index: LayerMotionIndex, layer: int,
         x0, y0 = x1, y1
 
 
+def _point_segment_distance_sq(px: float, py: float, x0: float, y0: float,
+                               dx: float, dy: float, span_sq: float) -> float:
+    """The squared distance from (px, py) to the FINITE segment.
+
+    The candidate the chain collapses to is the segment, not the line
+    through it: the perpendicular foot of a vertex beyond the far end
+    lands outside the segment, and measuring to it would call a vertex
+    9 mm past the end a perfect fit and delete the corner the run has
+    there. The foot is clamped into the segment, so a vertex past the
+    end measures to that end.
+    """
+    if span_sq <= 0.0:
+        return (px - x0) ** 2 + (py - y0) ** 2
+    t = ((px - x0) * dx + (py - y0) * dy) / span_sq
+    if t <= 0.0:
+        return (px - x0) ** 2 + (py - y0) ** 2
+    if t >= 1.0:
+        return (px - (x0 + dx)) ** 2 + (py - (y0 + dy)) ** 2
+    ox = px - (x0 + t * dx)
+    oy = py - (y0 + t * dy)
+    return ox * ox + oy * oy
+
+
 def _douglas_peucker(points: Sequence[Sequence[float]],
                      tolerance: float) -> List[List[float]]:
     """One vertex chain reduced to its endpoints and its corners.
 
     Douglas-Peucker over the chain's own vertices: both endpoints are
-    always kept and a vertex whose deviation exceeds *tolerance* is
-    kept too, so a straight run collapses to its two ends while a
-    corner keeps its corner and the run's ends never move. The result
-    is a subset of the input vertices, so every motion index survives
-    with the vertex it belongs to.
+    always kept and a vertex whose deviation from the FINITE candidate
+    segment exceeds *tolerance* is kept too, so a straight run collapses
+    to its two ends while a corner keeps its corner and the run's ends
+    never move. The deviation is a real bound: it is the distance to the
+    chord the vertex would be dropped onto, so no vertex is ever more
+    than *tolerance* from the polyline that comes back. The result is a
+    subset of the input vertices, so every motion index survives with
+    the vertex it belongs to.
     """
     count = len(points)
     if count <= 2:
@@ -262,12 +326,8 @@ def _douglas_peucker(points: Sequence[Sequence[float]],
         worst = -1.0
         worst_index = -1
         for index in range(first + 1, last):
-            px, py = points[index][0], points[index][1]
-            if span_sq > 0.0:
-                cross = dx * (py - y0) - dy * (px - x0)
-                distance_sq = (cross * cross) / span_sq
-            else:
-                distance_sq = (px - x0) ** 2 + (py - y0) ** 2
+            distance_sq = _point_segment_distance_sq(
+                points[index][0], points[index][1], x0, y0, dx, dy, span_sq)
             if distance_sq > worst:
                 worst = distance_sq
                 worst_index = index
@@ -296,7 +356,10 @@ def _budgeted(segments: List[List[List[float]]],
     simplifies ALONE — the separation the walk already made (travels,
     feature changes, disconnected runs) is never undone — with the
     tolerance doubling until the channel fits or the passes run out. A
-    channel that cannot fit still holds a geometry-preserving subset: a
+    channel that cannot fit still holds a geometry-preserving subset —
+    every dropped vertex lies within the tolerance of the chord that
+    replaced it, and the ceiling is the arc sagitta, so a curve is never
+    flattened past the tolerance its own subedges were drawn to. A
     simplified chord draws when its last motion is printed, so the
     printed fill lags its own chord and never runs ahead of the head.
     """
