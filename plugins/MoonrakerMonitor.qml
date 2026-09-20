@@ -806,16 +806,20 @@ Component {
                                 root.openPopOver = root.openPopOver === name ? "" : name;
                             }
                         }
-                        PlateSection {
-                            visible: root.printer == null || root.printer.sectionHiddenMap["plate"] !== true
+                        PlateProgressSection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["plateprogress"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                             onPopOverToggleRequested: function (name) {
                                 root.openPopOver = root.openPopOver === name ? "" : name;
                             }
                         }
-                        PlateProgressSection {
-                            visible: root.printer == null || root.printer.sectionHiddenMap["plateprogress"] !== true
+                        PlateSection {
+                            // Only when the current print carries the
+                            // exclude-object data (the live ruling):
+                            // the picker hides until the DEFINE lines
+                            // land, and clears with the job epoch.
+                            visible: root.printer != null && root.printer.sectionHiddenMap["plate"] !== true && root.printer.plateObjects.objects.length > 0
                             Layout.fillWidth: true
                             printerModel: root.printer
                             onPopOverToggleRequested: function (name) {

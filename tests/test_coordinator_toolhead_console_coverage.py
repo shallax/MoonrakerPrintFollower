@@ -178,6 +178,11 @@ if QT_AVAILABLE:
         def request_hydration(self, layer):
             self.hydration.append(layer)
 
+        def plate_progress(self, anchor, file_position=None):
+            # The service-side prep's shape; the coordinator tests
+            # pin the wiring, not the payload.
+            return {"layers": {}, "split": None, "method": "unavailable", "anchor": anchor}
+
         def reset_tracking(self):
             self.tracking_resets += 1
 

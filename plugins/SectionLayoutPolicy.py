@@ -20,7 +20,7 @@ PANE_SECTION_ORDER: Dict[str, Tuple[str, ...]] = {
         "profiles", "tuning", "fans", "leds", "pwm", "power",
         "system", "save",
     ),
-    "information": ("meshmap", "plate", "plateprogress", "temphistory"),
+    "information": ("plateprogress", "plate", "meshmap", "temphistory"),
     "status": (
         "job", "temps", "fansinfo", "filament",
         "systeminfo", "mcus",
