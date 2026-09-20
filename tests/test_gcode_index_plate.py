@@ -9,8 +9,8 @@ review's F2 finding: the request stood down whenever the current layer was
 already hydrated, so the layer behind the print never filled and the face
 degraded to an empty ghost.
 
-The classification is the E-axis rule, stated once in the index: a rise
-above the noise floor extrudes, anything else (flat, or falling for a
+The classification is the E-axis rule, stated once in the index: a
+positive E step extrudes, anything else (no E, flat, or falling for a
 retraction) does not, and every change of that state is a travel boundary.
 Retractions are therefore not a separate class of marker — with retraction
 disabled the same rule still finds the travel — and the boundary lists are
@@ -42,7 +42,6 @@ from plugins.GCodeIndex import (
     PersistentIndexCache,
     _CACHE_MAGIC,
     _CACHE_VERSION,
-    _E_NOISE_MM,
     _MAX_TYPE_NAMES,
     _MAX_TYPE_RUNS_PER_LAYER,
     _TYPE_NONE,
@@ -184,17 +183,34 @@ class TravelBoundaryTests(unittest.TestCase):
         self.assertEqual(index.travel_starts, [[1]])
         self.assertEqual(index.travel_ends, [[3]])
 
-    def test_e_below_the_noise_floor_does_not_extrude(self):
-        below, above = _E_NOISE_MM * 0.4, _E_NOISE_MM * 4.0
+    def test_any_positive_e_step_extrudes(self):
+        # The rule is the G-code's own: a positive step extrudes, no
+        # matter how small. The live file's fine walls step E by
+        # ~0.014 mm per move, and a 0.05 mm layer height's short
+        # segments step it by ~1e-4 — both were misread as travel by
+        # the old magnitude floors (the live reports).
         index = build_index_from_bytes(
             b"M82\n;LAYER:0\nG1 X1 E1.0\n"
-            + b"G1 X2 E%.5f\n" % (1.0 + below)
-            + b"G1 X3 E%.5f\n" % (1.0 + 2 * below)
-            + b"G1 X4 E%.5f\n" % (1.0 + 2 * below + above))
-        # Float noise and a volumetric restore must not read as extrusion:
-        # the floor holds the state flat until a real step clears it.
+            b"G1 X2 E1.00008\n"
+            b"G1 X3 E1.00016\n"
+            b"G1 X4 E1.01402\n"
+            b"G0 X5\n"
+            b"G1 X6 E1.09\n")
+        # One travel: the E-less move, and only that one.
+        self.assertEqual(index.travel_starts, [[4]])
+        self.assertEqual(index.travel_ends, [[5]])
+
+    def test_flat_and_falling_e_do_not_extrude(self):
+        # No E at all, an E that merely holds, and a retraction all
+        # read as travel: the sign, not the magnitude, decides.
+        index = build_index_from_bytes(
+            b"M82\n;LAYER:0\nG1 X1 E1.0\n"
+            b"G1 X2\n"
+            b"G1 X3 E1.0\n"
+            b"G1 X4 E0.25\n"
+            b"G1 X5 E1.2\n")
         self.assertEqual(index.travel_starts, [[1]])
-        self.assertEqual(index.travel_ends, [[3]])
+        self.assertEqual(index.travel_ends, [[4]])
 
     def test_relative_e_and_a_g92_rebase_keep_the_rule(self):
         index = build_index_from_bytes(

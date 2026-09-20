@@ -65,7 +65,7 @@ _MAX_CACHE_FEATURE_ENTRIES = 500_000
 # layer-start feature state). A reader that accepted a 5 blob would restore
 # it with those columns empty, which draws a preview with no feature
 # colours and no travel — so the version refuses it outright.
-_CACHE_VERSION = 6
+_CACHE_VERSION = 8
 _LARGE_FILE_COMPACT_THRESHOLD = 128 * 1024 * 1024
 # Hardening bounds for hostile/corrupt gcode (panel security P2-4): a
 # real gcode line is well under 1 KB, real prints stay under ~100k
@@ -87,12 +87,12 @@ _MAX_TYPE_NAME_BYTES = 64
 _MAX_TYPE_RUNS_PER_LAYER = 4096
 _TYPE_NONE = 0
 _TYPE_OTHER = 1
-# The E-axis noise floor, in millimetres. Float rounding, a G92/volumetric
-# restore and Klipper's own E math move the axis by well under this on a
-# move that deposits nothing, while a real extrusion step is an order of
-# magnitude above it. Below the floor the motion is a travel: it adds no
-# filament whether E merely held or was pulled back.
-_E_NOISE_MM = 0.05
+# The extrusion rule is the G-code's own: a move with a POSITIVE E step
+# extrudes, anything else (no E, a flat E, a falling E) deposits nothing
+# and is travel. No magnitude floor — the slicer already decided; a
+# floor misread slow extrusion as travel twice (the 0.05 floor ate the
+# live file's fine walls, the epsilon ate a 0.05 mm layer height's
+# short skin segments: the live reports).
 # The layer-format sniff window: the file head read before the scan.
 _MARKER_SNIFF_BYTES = 262144
 # How far below the monotonic floor the refinement search may start, in
@@ -416,7 +416,7 @@ class _FeatureTracker:
             value = axes["E"] if self.absolute_e else self.e + axes["E"]
             delta = value - self.e
             self.e = value
-        rolling = delta > _E_NOISE_MM
+        rolling = delta > 0.0
         if rolling != self.extruding:
             if collect:
                 (self.ends if rolling else self.starts).append(self.count)

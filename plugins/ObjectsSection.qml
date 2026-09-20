@@ -9,7 +9,7 @@ import "theme"
 // current highlight, the excluded flags and the restore verdicts in
 // words. No per-row buttons: exclusion lives on the plate map
 // (triple-click) and in the Exclude current button above the list.
-// The row order is the model's natural sort, frozen — never
+// The row order is the human lexical sort, frozen — never
 // reordering (the no-reorder rule).
 ColumnLayout {
     id: root
@@ -75,7 +75,7 @@ ColumnLayout {
                     if (rows[i].current)
                         current += 1;
                 }
-                return rows.length + " objects — " + (rows.length - excluded) + " printing, " + excluded + " excluded" + (current > 0 ? ", 1 current" : "");
+                return rows.length + " objects — " + (rows.length - excluded) + " printing, " + excluded + " excluded";
             }
             color: UM.Theme.getColor("text_inactive")
             font: UM.Theme.getFont("small")
@@ -83,11 +83,28 @@ ColumnLayout {
 
         Repeater {
             model: root.printerModel != null ? root.printerModel.excludeObjectItems : []
-            UM.Label {
+            // The current row carries the Cura-blue bar and ink — the
+            // live request: the current object must read at a glance
+            // (the map's palette ruling, mirrored here). The bar is a
+            // SIBLING behind the label: a wrapper's opacity would
+            // inherit down and hide the text (the live report).
+            Item {
                 Layout.fillWidth: true
-                text: modelData.name + (modelData.current ? "  · current" : "") + (modelData.excluded ? (modelData.restoreVerdict === "past_grace" || modelData.restoreVerdict === "in_grace" ? "  · excluded" : "  · restore closed") : "") + (modelData.excluded && modelData.restoreVerdict === "unknown" ? "  · layer unknown" : "")
-                color: modelData.excluded ? (modelData.restoreAllowed === false ? MoonrakerTheme.outOfWindowGrey : MoonrakerTheme.dangerRed) : UM.Theme.getColor("text")
-                elide: Text.ElideRight
+                height: rowLabel.implicitHeight
+                Rectangle {
+                    anchors.fill: parent
+                    visible: modelData.current
+                    color: UM.Theme.getColor("primary")
+                    opacity: 0.18
+                }
+                UM.Label {
+                    id: rowLabel
+                    anchors.fill: parent
+                    text: modelData.name + (modelData.current ? "  · current" : "") + (modelData.excluded ? (modelData.restoreVerdict === "past_grace" || modelData.restoreVerdict === "in_grace" ? "  · excluded" : "  · restore closed") : "") + (modelData.excluded && modelData.restoreVerdict === "unknown" ? "  · layer unknown" : "")
+                    color: modelData.excluded ? (modelData.restoreAllowed === false ? MoonrakerTheme.outOfWindowGrey : MoonrakerTheme.dangerRed) : modelData.current ? UM.Theme.getColor("primary") : UM.Theme.getColor("text")
+                    font: modelData.current ? UM.Theme.getFont("default_bold") : UM.Theme.getFont("default")
+                    elide: Text.ElideRight
+                }
             }
         }
         UM.Label {

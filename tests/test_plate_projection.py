@@ -51,6 +51,9 @@ class PlateValuesTests(unittest.TestCase):
                                "excluded_objects": []})
         self.assertEqual([row["name"] for row in result["objects"]],
                          ["STL", "STL_1", "STL_2", "STL_9", "STL_10", "STL_11"])
+        # The define sequence survives for the printed rule.
+        self.assertEqual([row["order"] for row in result["objects"]],
+                         [3, 0, 2, 5, 1, 4])
 
     def test_excluded_and_current_flags(self):
         status = {"objects": [{"name": "A"}, {"name": "B"}],

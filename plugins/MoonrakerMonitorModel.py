@@ -180,13 +180,15 @@ def _read_state(store=None) -> dict:
             "fileManagerColumns": normalise_columns(decoded.get("fileManagerColumns")),
             "temperatureChart": _chart_state(decoded.get("temperatureChart")),
             "toolhead": _toolhead_state(decoded.get("toolhead")),
+            "followerView": _follower_view_state(decoded.get("followerView")),
         }
     return {"sections": {}, "sectionLayout": normalise_section_layout({}), "whatsNewSeen": "",
             "controlsCollapsed": False, "controlsLocked": False,
             "infoCollapsed": False, "statusCollapsed": False, "consoleHeight": 0,
             "fileManagerColumns": normalise_columns({}),
             "temperatureChart": _chart_state({}),
-            "toolhead": _toolhead_state(None)}
+            "toolhead": _toolhead_state(None),
+            "followerView": _follower_view_state(None)}
 
 
 def _toolhead_state(stored) -> dict:
@@ -204,6 +206,30 @@ def _toolhead_state(stored) -> dict:
         "jogDistance": number("jogDistance", JOG_DISTANCE_DEFAULT),
         "extrudeDistance": number("extrudeDistance", EXTRUDE_DISTANCE_DEFAULT),
         "extrudeSpeed": number("extrudeSpeed", EXTRUDE_SPEED_DEFAULT),
+    }
+
+
+def _follower_view_state(stored) -> dict:
+    """The print follower's view settings — GLOBAL, not per printer
+    (the live ruling): the layer toggles and the stroke thickness.
+    Bools stay booleans; the scale clamps to the control's 0.5-2.0
+    range."""
+    stored = stored if isinstance(stored, dict) else {}
+    def flag(key, default):
+        value = stored.get(key, default)
+        return value if isinstance(value, bool) else default
+    def scale(value):
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return 1.0
+        return min(2.0, max(0.5, parsed))
+    return {
+        "showPrevious": flag("showPrevious", True),
+        "showNext": flag("showNext", True),
+        "showBase": flag("showBase", True),
+        "showTravels": flag("showTravels", False),
+        "lineScale": scale(stored.get("lineScale", 1.0)),
     }
 
 
@@ -296,6 +322,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     consoleHeightChanged = pyqtSignal()
     cameraRefreshChanged = pyqtSignal()
     cameraRecoveringChanged = pyqtSignal()
+    webcamStreamEnabledChanged = pyqtSignal()
+    followerViewChanged = pyqtSignal()
     connectionDetailChanged = pyqtSignal()
     fileManagerChanged = pyqtSignal()
     # Fired when the once-per-version overlay should show (the
@@ -330,7 +358,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
         ("excludeObjectsChanged", ("excludeObjectItems", "currentObjectName")),
         ("plateObjectsChanged", ("plateObjects", "plateDot", "plateHasObjects")),
-        ("plateProgressChanged", ("plateProgress",)),
+        ("plateProgressChanged", ("plateLayers", "plateSplit", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason")),
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
@@ -353,6 +381,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("sectionLayoutChanged", ("sectionLayout", "sectionHiddenMap")),
         ("showProbePointsChanged", ("showProbePoints",)),
         ("cameraRefreshChanged", ("cameraRefreshNonce",)),
+        ("webcamStreamEnabledChanged", ("webcamStreamEnabled",)),
+        ("followerViewChanged", ("followerShowPrevious", "followerShowNext", "followerShowBase", "followerShowTravels", "followerLineScale")),
         ("traceCameraTimingChanged", ("traceCameraTiming",)),
         ("cameraRecoveringChanged", ("cameraRecovering",)),
         ("connectionDetailChanged", ("connectionDetail",)),
@@ -443,6 +473,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._file_columns_state = state["fileManagerColumns"]
         self._camera_refresh_nonce = 0
         self._sections = state["sections"]
+        follower_view = state["followerView"]
+        self._follower_show_previous = follower_view["showPrevious"]
+        self._follower_show_next = follower_view["showNext"]
+        self._follower_show_base = follower_view["showBase"]
+        self._follower_show_travels = follower_view["showTravels"]
+        self._follower_line_scale = follower_view["lineScale"]
         self._section_layout = state["sectionLayout"]
         # The UI-state store (4.3.0): the sections map's persistence
         # moves to the second consumer — the model's save payload
@@ -515,6 +551,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._camera_last_refresh_at = 0.0
         self._camera_last_url = ""
         self._camera_recovering = False
+        self._webcam_stream_enabled = True
         self._camera.streamFailed.connect(self._on_stream_failed)
         self._camera.streamRecovered.connect(self._on_stream_recovered)
         # The wake recovery (a live report): a stream that
@@ -649,10 +686,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def _on_connection_state(self, state: str) -> None:
         if state != "yes":
             return
+        if not self._webcam_stream_enabled:
+            return
         self._camera_refresh_nonce += 1
         self._schedule_publish()
 
     def _on_stream_failed(self) -> None:
+        if not self._webcam_stream_enabled:
+            return
         from .CameraTiming import mark
         mark("T6-watchdog", "camera render stalled")
         import time
@@ -820,11 +861,20 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         excluded = frozenset(status.get("excluded_objects") or ())
         current = status.get("current_object")
         layer = self._layer_index(self._print_state())
+        visited = getattr(self._data.snapshot, "plate_visited", frozenset())
         rows = []
         for row in self._plate_geometry["objects"]:
             fresh = dict(row)
             fresh["excluded"] = fresh["name"] in excluded
             fresh["current"] = fresh["name"] == current
+            # Passed: the executed motions have touched the polygon
+            # this layer (the live ruling: the print order is NOT the
+            # define order on every machine — the toolhead's own
+            # visits are the truth, read back from the layer's
+            # start).
+            fresh["passed"] = (fresh["name"] in visited
+                               and not fresh["excluded"]
+                               and not fresh["current"])
             if fresh["excluded"]:
                 allowed, verdict, detail = self._verdict(fresh["name"], layer)
                 fresh["restoreAllowed"] = allowed
@@ -1110,14 +1160,23 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # published so the readout stays honest about the victim.
         values["currentObjectName"] = str(
             _exclude_status(self._data.snapshot).get("current_object") or "")
-        # The follower face's payload: the coordinator-built polylines,
-        # or the explicit unavailable state with its reason (a
-        # Mainsail-started print has no index — never a silent blank).
+        # The follower face's payload, SPLIT (the perf ruling): the
+        # static layers publish with the service's memoised identity
+        # (QML never re-wraps the polylines on a quiet poll), and the
+        # volatile split crosses as a bare number. The envelope
+        # carries the availability and the reason.
         progress = getattr(snapshot, "plate_progress", None)
-        values["plateProgress"] = (
-            {"available": True, "reason": "", **progress} if progress is not None
-            else {"available": False, "layers": {}, "split": None, "method": "unavailable", "anchor": None,
-                  "reason": "No index yet — the download button builds one without loading the preview."})
+        values["plateLayers"] = progress["layers"] if progress is not None else {}
+        values["plateSplit"] = progress["split"] if progress is not None else None
+        # -1, never None: the anchor is an int property, and a None
+        # publish crashes the QVariant-to-int conversion (the live
+        # report's TypeError).
+        values["plateProgressAnchor"] = (progress["anchor"]
+                                          if progress is not None and progress["anchor"] is not None else -1)
+        values["plateProgressAvailable"] = bool(progress is not None and progress.get("layers", {}).get("current") is not None)
+        values["plateProgressReason"] = (
+            "" if progress is not None
+            else "No index yet — the download button builds one without loading the preview.")
         # The plate's toolhead dot (physical position, the marker
         # convention): validity rides the connection — a paused
         # print's position is honest, a disconnected one is a lie if
@@ -1194,6 +1253,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values["sectionReasonDetail"] = REASON_DETAIL.get(section, "")
         values.update(self._controls.values)
         values.update(self._camera.values)
+        values["webcamStreamEnabled"] = self._webcam_stream_enabled
         values.update(self._toolhead.values)
         values.update(self._console.values)
         # The console error bell (a live request): while
@@ -1274,6 +1334,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             temperatureChartLatest=self._chart_latest_value(),
             temperatureChartLegend=self._legend_value(),
             showProbePoints=self._show_probe_points,
+            followerShowPrevious=self._follower_show_previous,
+            followerShowNext=self._follower_show_next,
+            followerShowBase=self._follower_show_base,
+            followerShowTravels=self._follower_show_travels,
+            followerLineScale=self._follower_line_scale,
             britishSpelling=_british_spelling(),
             improvingEta=(snapshot.load_active or self._improving_eta) and not snapshot.index_ready,
             # The next scheduled pause (the live ruling): the
@@ -1307,7 +1372,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._values = values
         first_attach = False
         try:
-            url = self._camera.url
+            url = self._camera.url if self._webcam_stream_enabled else ""
             if url:
                 last_url = self._camera_last_url
                 # A query-only transition is the upstream's own noise
@@ -1422,7 +1487,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     plateObjects = value_property(QVariant, "plateObjects", plateObjectsChanged, {"objects": [], "truncated": 0, "excludedCount": 0})
     plateDot = value_property(QVariant, "plateDot", plateObjectsChanged, {"x": 0.0, "y": 0.0, "valid": False})
     plateHasObjects = value_property(bool, "plateHasObjects", plateObjectsChanged, False)
-    plateProgress = value_property(QVariant, "plateProgress", plateProgressChanged, {"available": False, "layers": {}, "split": None, "method": "unavailable", "anchor": None, "reason": ""})
+    plateLayers = value_property(QVariant, "plateLayers", plateProgressChanged, {})
+    plateSplit = value_property(QVariant, "plateSplit", plateProgressChanged, None)
+    plateProgressAnchor = value_property(int, "plateProgressAnchor", plateProgressChanged, -1)
+    plateProgressAvailable = value_property(bool, "plateProgressAvailable", plateProgressChanged, False)
+    plateProgressReason = value_property(str, "plateProgressReason", plateProgressChanged, "No index yet — the download button builds one without loading the preview.")
+    followerShowPrevious = value_property(bool, "followerShowPrevious", followerViewChanged, True)
+    followerShowNext = value_property(bool, "followerShowNext", followerViewChanged, True)
+    followerShowBase = value_property(bool, "followerShowBase", followerViewChanged, True)
+    followerShowTravels = value_property(bool, "followerShowTravels", followerViewChanged, False)
+    followerLineScale = value_property(float, "followerLineScale", followerViewChanged, 1.0)
     powerDevices = value_property(QVariant, "powerDevices", powerDevicesChanged, [])
     klippyState = value_property(str, "klippyState", systemChanged, "Unknown")
     moonrakerVersion = value_property(str, "moonrakerVersion", systemChanged, "—")
@@ -2033,6 +2107,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     # T9 shares the SAME monotonic origin as every Python stage.
     traceCameraTimingChanged = pyqtSignal()
     traceCameraTiming = value_property(bool, "traceCameraTiming", traceCameraTimingChanged, False)
+    webcamStreamEnabled = value_property(bool, "webcamStreamEnabled", webcamStreamEnabledChanged, True)
 
     @pyqtSlot()
     def cameraFirstFrameRendered(self):
@@ -2066,6 +2141,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def refreshWebcams(self):
         # The nonce feeds a cache-busting query parameter so the live
         # stream itself reloads, not just the webcam list.
+        if not self._webcam_stream_enabled:
+            return
         self._camera_refresh_nonce += 1
         self._data.refresh_webcams()
         self._publish()
@@ -2326,6 +2403,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             "infoCollapsed": self._info_collapsed,
             "statusCollapsed": self._status_collapsed,
             "consoleHeight": self._console_height,
+            "followerView": {
+                "showPrevious": self._follower_show_previous,
+                "showNext": self._follower_show_next,
+                "showBase": self._follower_show_base,
+                "showTravels": self._follower_show_travels,
+                "lineScale": self._follower_line_scale,
+            },
             # The chrome-only rewrite in __init__ runs BEFORE the
             # service exists: rehydrated block then, live state after
             # (the live report: a legacy state file broke
@@ -2470,6 +2554,27 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._publish()
 
     @pyqtSlot(bool)
+    def setWebcamStreamEnabled(self, enabled):
+        """The stream toggle (the live request): OFF really stops the
+        stream — the bridge halts its upstream fetch, the published
+        URL goes blank so the loader stops pulling, and the
+        watchdog/refresh paths stand down. ON republishes the URL and
+        bumps the nonce so the pane re-applies the stream."""
+        if self._webcam_stream_enabled is bool(enabled):
+            return
+        self._webcam_stream_enabled = bool(enabled)
+        if not self._webcam_stream_enabled:
+            self._camera.suspend_stream()
+        else:
+            # The bridge's local listener died with the suspend —
+            # rebuild it before the URL republishes, or the pane
+            # pulls a dead loopback URL and freezes (the live
+            # report: only a camera re-select revived it).
+            self._camera.resume_stream()
+        self._camera_refresh_nonce += 1
+        self._publish()
+
+    @pyqtSlot(bool)
     def setShowProbePoints(self, show):
         if self._show_probe_points is bool(show):
             return
@@ -2477,6 +2582,53 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         config = self._config()
         if getattr(config, "show_probe_points", None) != self._show_probe_points:
             self._apply_config(replace(config, show_probe_points=self._show_probe_points))
+        self._publish()
+
+    # The follower view settings persist GLOBALLY (the live ruling),
+    # not per printer: they ride the panel state document, not the
+    # machine config.
+    @pyqtSlot(bool)
+    def setFollowerShowPrevious(self, show):
+        if self._follower_show_previous is bool(show):
+            return
+        self._follower_show_previous = bool(show)
+        self._save_state()
+        self._publish()
+
+    @pyqtSlot(bool)
+    def setFollowerShowNext(self, show):
+        if self._follower_show_next is bool(show):
+            return
+        self._follower_show_next = bool(show)
+        self._save_state()
+        self._publish()
+
+    @pyqtSlot(bool)
+    def setFollowerShowBase(self, show):
+        if self._follower_show_base is bool(show):
+            return
+        self._follower_show_base = bool(show)
+        self._save_state()
+        self._publish()
+
+    @pyqtSlot(bool)
+    def setFollowerShowTravels(self, show):
+        if self._follower_show_travels is bool(show):
+            return
+        self._follower_show_travels = bool(show)
+        self._save_state()
+        self._publish()
+
+    @pyqtSlot(float)
+    def setFollowerLineScale(self, scale):
+        try:
+            scale = min(2.0, max(0.5, float(scale)))
+        except (TypeError, ValueError):
+            return
+        if self._follower_line_scale == scale:
+            return
+        self._follower_line_scale = scale
+        self._save_state()
         self._publish()
     @pyqtSlot(str, bool)
     def setPowerDevice(self, name, on): self._controls.set_power(name, on)

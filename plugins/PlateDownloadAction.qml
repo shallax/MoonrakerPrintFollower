@@ -69,16 +69,6 @@ ColumnLayout {
                     }
                 }
             }
-            MouseArea {
-                anchors.fill: parent
-                enabled: root.printerModel != null && root.printerModel.monitorConnected
-                cursorShape: root.printerModel != null ? Qt.PointingHandCursor : Qt.ArrowCursor
-                onClicked: {
-                    if (root.printerModel != null) {
-                        root.printerModel.improveEta();
-                    }
-                }
-            }
         }
         UM.Label {
             Layout.fillWidth: true
@@ -86,6 +76,18 @@ ColumnLayout {
             color: UM.Theme.getColor("text_inactive")
             font: UM.Theme.getFont("small")
             wrapMode: Text.WordWrap
+        }
+        // The WHOLE row clicks (the live request): the label and the
+        // glyph are the same offer, not two targets.
+        MouseArea {
+            anchors.fill: parent
+            enabled: root.printerModel != null && root.printerModel.monitorConnected
+            cursorShape: root.printerModel != null ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: {
+                if (root.printerModel != null) {
+                    root.printerModel.improveEta();
+                }
+            }
         }
     }
 

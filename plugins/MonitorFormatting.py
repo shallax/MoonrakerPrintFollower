@@ -673,9 +673,8 @@ def peripheral_values(snapshot):
     excluded = exclude.get("excluded_objects") or ()
     objects = [{"name": str(item["name"]), "excluded": item["name"] in excluded, "current": item["name"] == exclude.get("current_object")}
         for item in exclude.get("objects", ()) if isinstance(item, Mapping) and item.get("name")]
-    # The status array arrives lexicographic (STL_1, STL_10, STL_2) —
-    # the natural sort recovers the name numbering once, at projection
-    # time; the list never reorders after (the no-reorder rule).
+    # The human lexical sort (the live ruling: the status order read
+    # as 1, 10, 11, ..., 2, 20); the list never reorders after.
     objects.sort(key=lambda row: _natural_key(row["name"]))
     system = snapshot.auxiliary.get("system_stats") or {}
     memory = number(system.get("memavail"))
@@ -796,6 +795,30 @@ def _finite_pair(value):
     return None
 
 
+def containing_object(rows, x, y):
+    """The first row whose polygon contains the bed point (ray
+    casting) — the local printed-cache's probe (the live ruling: the
+    DEFINE order is NOT the print order on every machine, so the
+    toolhead's own visits are the truth)."""
+    for row in rows:
+        polygon = row.get("polygon")
+        if polygon and _point_in_polygon(x, y, polygon):
+            return row["name"]
+    return None
+
+
+def _point_in_polygon(x, y, polygon):
+    inside = False
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        xi, yi = polygon[i][0], polygon[i][1]
+        xj, yj = polygon[j][0], polygon[j][1]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
 def _finite_polygon(value):
     """[[x, y], ...] pairs or a flat [x, y, x, y, ...] run, sanitised:
     any non-finite or absurd coordinate drops the polygon entirely — a
@@ -852,7 +875,7 @@ def plate_values(exclude_object):
     current = exclude_object.get("current_object")
     objects = []
     truncated = 0
-    for item in exclude_object.get("objects") or ():
+    for index, item in enumerate(exclude_object.get("objects") or ()):
         if not isinstance(item, Mapping) or not item.get("name"):
             continue
         if len(objects) >= MAX_PLATE_OBJECTS:
@@ -863,9 +886,16 @@ def plate_values(exclude_object):
             "name": name,
             "center": _finite_pair(item.get("center")),
             "polygon": _finite_polygon(item.get("polygon")),
+            # The DEFINE order (Klipper prints objects in it, layer by
+            # layer — the live-verified order); the passed flag derives
+            # from it in the model.
+            "order": index,
             "excluded": name in excluded,
             "current": name == current,
         })
+    # The natural name sort for the display (the live ruling: the
+    # status order read as 1, 10, 11, ..., 2, 20); the `order` field
+    # keeps the DEFINE sequence for the printed rule.
     objects.sort(key=lambda row: _natural_key(row["name"]))
     return {"objects": objects, "truncated": truncated, "excludedCount": len(excluded)}
 

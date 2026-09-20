@@ -1669,8 +1669,24 @@ if QT_AVAILABLE:
             return False
 
         @pyqtProperty("QVariant", constant=True)
-        def plateProgress(self):
-            return PlateFaceRenderTests.CORNER_PAYLOAD
+        def plateLayers(self):
+            return PlateFaceRenderTests.CORNER_PAYLOAD["layers"]
+
+        @pyqtProperty("QVariant", constant=True)
+        def plateSplit(self):
+            return PlateFaceRenderTests.CORNER_PAYLOAD["split"]
+
+        @pyqtProperty(int, constant=True)
+        def plateProgressAnchor(self):
+            return PlateFaceRenderTests.CORNER_PAYLOAD["anchor"]
+
+        @pyqtProperty(bool, constant=True)
+        def plateProgressAvailable(self):
+            return True
+
+        @pyqtProperty(str, constant=True)
+        def plateProgressReason(self):
+            return ""
 
         @pyqtProperty("QVariant", constant=True)
         def plateDot(self):
@@ -1730,7 +1746,11 @@ class PlateFaceRenderTests(RealEngineTestCase):
         return PlatePrinterDouble()
 
     def _open(self, monitor, popover):
-        monitor.setProperty("printer", self._printer())
+        # The reference is RETAINED: a Python-created QObject dies
+        # with its last Python ref (the QML var takes no ownership),
+        # and the monitor's printer dangles null — no plot, no dot.
+        self._printer = self._printer()
+        monitor.setProperty("printer", self._printer)
         monitor.setProperty("openPopOver", popover)
         self.pump(30)
 
@@ -1761,10 +1781,16 @@ class PlateFaceRenderTests(RealEngineTestCase):
                     break
         return rows
 
-    def _grab_when_inked(self, window, face, timeout=2.5):
+    def _grab_when_inked(self, window, face, top=None, timeout=2.5):
+        # With a top edge: the wait targets the plot's top band — the
+        # scene-graph dot inks instantly and must not satisfy the
+        # wait before the threaded strokes land.
         deadline = time.monotonic() + timeout
         image = window.grabWindow()
-        while time.monotonic() < deadline and not self._ink_rows(image, face, window):
+        while time.monotonic() < deadline:
+            rows = self._ink_rows(image, face, window)
+            if rows and (top is None or min(rows) <= top + 12):
+                return image
             self.app.processEvents()
             time.sleep(0.05)
             image = window.grabWindow()
@@ -1776,11 +1802,17 @@ class PlateFaceRenderTests(RealEngineTestCase):
         faces = self._popover_faces(monitor, "moonrakerPlateProgressFace")
         self.assertEqual(len(faces), 1)
         face = faces[0]
+        # No dot for this measurement: the scene-graph dot inks
+        # instantly and would satisfy the wait before the threaded
+        # paint lands — the stroke is this test's subject.
+        face.setProperty("dot", None)
         plot = face.findChild(QQuickItem, "moonrakerPlateCanvas").property("_plot")
         bed = plot.property("bed")
         top = bed.property("offsetY").toNumber()
         bottom = top + bed.property("plotHeight").toNumber()
-        rows = self._ink_rows(self._grab_when_inked(window, face), face, window)
+        rows = self._ink_rows(self._grab_when_inked(window, face, top=top), face, window)
+        if not rows or min(rows) > top + 12 or max(rows) < bottom - 12:
+            window.grabWindow().save("/tmp/mpf/follower_fail.png")
         self.assertTrue(rows, "the follower painted nothing")
         # The corner-pinned stroke runs along the plot's extreme
         # edges: any truncated or offset mapping leaves a band empty.
