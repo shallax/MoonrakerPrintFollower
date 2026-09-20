@@ -11,7 +11,6 @@ from UM.Logger import Logger
 from .LoadStateTracker import LoadStateTracker
 from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, parse_bed_mesh, preview_eta_text, result
 from .NextPausePipeline import NextPausePipeline
-from .PlateProgress import plate_progress
 from .PreviewFormatting import (
     pause_can_toggle,
     pause_summary,
@@ -207,17 +206,15 @@ class PrintCoordinator(QObject):
             # any preview load, because the two stale keys agreed with
             # each other). Compare against the print's own filename.
             view = index_view_for_print(self._index.view, filename)
-            # The plate's view: the follower must NOT depend on the
+            # The plate's source: the follower must NOT depend on the
             # preview's toolpath (the live ruling) — the monitor-only
             # index (Improve ETA) builds without a preview load, and
             # its job key is the unresolved identity that gate refuses.
             # The monitor download only ever names the ACTIVE print,
             # so an unresolved-key view is accepted for the plate.
-            plate_view = view
-            if plate_view is None and self._index.view is not None:
-                view_job = self._index.view.job_key
-                if not view_job or view_job[0] == filename:
-                    plate_view = self._index.view
+            plate_available = view is not None or (
+                self._index.view is not None
+                and (not self._index.view.job_key or self._index.view.job_key[0] == filename))
             # The downloaded file's OWN header is the authoritative
             # filament total; Moonraker's parse of it (the metadata
             # below) is the fallback. One bounded head read per
@@ -272,8 +269,13 @@ class PrintCoordinator(QObject):
             # The follower face's prepared polylines: built HERE from
             # the index (the worker-side prep rule), not in the model.
             plate_progress_payload = None
-            if plate_view is not None and hasattr(plate_view, "followed_layer"):
-                plate_progress_payload = plate_progress(plate_view, plate_view.followed_layer, position)
+            if plate_available:
+                # The payload is built INSIDE the service — the raw
+                # index's arrays never cross its boundary (the
+                # architecture contract), so the coordinator asks the
+                # service, never the view.
+                plate_progress_payload = self._index.plate_progress(
+                    self._snapshot.layer.index, position)
             self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
                 estimate if estimate > 0 else None, self._files.metadata_complete,
                 layer_progress=layer_progress, index_ready=view is not None,
@@ -341,7 +343,7 @@ class PrintCoordinator(QObject):
                 # window even when the preview is detached (the
                 # monitor-only index — the live ruling). The service
                 # dedupes and clamps; this never grows a queue.
-                if plate_view is not None and self._index.phase != "indexing" \
+                if plate_available and self._index.phase != "indexing" \
                         and isinstance(current, int):
                     for layer in (current - 1, current, current + 1):
                         if layer >= 0:

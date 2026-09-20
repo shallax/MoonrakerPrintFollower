@@ -8,6 +8,7 @@ from types import MappingProxyType
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from .GCodeIndex import LayerMotionIndex, build_index_from_file, hydrate_layer_from_file
+from .PlateProgress import plate_progress as _plate_progress
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,17 @@ class GCodeIndexService(QObject):
             return
         self._request_window(int(layer))
         self._advance()
+
+    def plate_progress(self, anchor, file_position=None):
+        """The follower's prepared payload, built HERE: the raw index's
+        arrays never cross this boundary (the architecture contract) —
+        only the built polylines do. anchor is the live layer; the
+        file position carries the printed/unprinted split."""
+        if self._view is None:
+            return {"layers": {}, "split": None, "method": "unavailable", "anchor": anchor}
+        index = self._view._index
+        with index.cache_lock:
+            return _plate_progress(index, anchor, file_position)
 
     def set_followed_layer(self, layer):
         """Anchor the retention window to the LIVE print's layer.
