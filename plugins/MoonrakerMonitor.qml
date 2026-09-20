@@ -2965,7 +2965,8 @@ Component {
                     Layout.minimumHeight: 240 * screenScaleFactor
                     printerModel: root.printer
                     plate: root.printer != null ? root.printer.plateObjects : null
-                    dot: root.printer != null ? root.printer.plateDot : null
+                    // No toolhead dot in the picker (the live ruling)
+                    // — the map reads as the CONTROL, not a follower.
                     onExcludeRequested: function (name) {
                         if (root.printer != null) {
                             root.printer.excludeObject(name);
@@ -2981,8 +2982,12 @@ Component {
                 UM.Label {
                     // The permanent single line (the mesh "hover row"
                     // idiom): counter > hover > selection > hint.
+                    // Never wraps: a two-line hint collapsed back to
+                    // one line on hover and reflowed the canvas (the
+                    // live report — the canvas must never reflow).
                     Layout.fillWidth: true
-                    text: plateFace.clickProgress >= 2 ? "Click again to " + plateFace.pendingAction + " (" + plateFace.clickProgress + " of 3)" : (plateFace.hoveredName !== "" ? plateFace.hoveredName : (plateFace.selectedName !== "" ? plateFace.selectionDetail() : "Triple-click an object to exclude it, or an excluded object to restore it."))
+                    text: plateFace.clickProgress >= 2 ? "Click again to " + plateFace.pendingAction + " (" + plateFace.clickProgress + " of 3)" : (plateFace.hoveredName !== "" ? plateFace.hoveredName : (plateFace.selectedName !== "" ? plateFace.selectionDetail() : "Triple-click to exclude, or restore an excluded object"))
+                    elide: Text.ElideRight
                     color: plateFace.hoveredName !== "" || plateFace.selectedName !== "" ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
                     horizontalAlignment: Text.AlignHCenter
                 }
