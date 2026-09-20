@@ -241,13 +241,21 @@ class PrintCoordinator(QObject):
                 estimate = float(metadata.get("estimated_time") or 0)
             except (TypeError, ValueError):
                 estimate = 0
+            # The file position is resolved ONCE, ahead of BOTH of its
+            # consumers — the layer fraction here and the plate split
+            # below. The plate's path runs with no identity-checked
+            # view at all (the monitor-only index), so a position bound
+            # inside the layer branch left that read unbound. Missing
+            # or non-numeric is None, which each consumer skips: a real
+            # 0 is a position, never an absence.
+            sdcard = self._status.get("virtual_sdcard") if isinstance(self._status, dict) else None
+            try:
+                position = int(sdcard.get("file_position")) if isinstance(sdcard, Mapping) else None
+            except (TypeError, ValueError):
+                position = None
             layer_progress = None
             if view is not None and physical.index is not None and 0 <= physical.index < len(view.ranges):
                 start, end = view.ranges[physical.index]
-                try:
-                    position = int((self._status.get("virtual_sdcard") or {}).get("file_position") or 0)
-                except (TypeError, ValueError):
-                    position = None
                 if start is not None and end is not None and end > start and position is not None:
                     layer_progress = max(0.0, min(1.0, (position - start) / (end - start)))
             # The monitor-only download's terminal conditions (panel P1-1).
@@ -282,11 +290,15 @@ class PrintCoordinator(QObject):
                 anchor = self._plate_anchor
             plate_progress_payload = None
             plate_visited = frozenset()
-            if plate_available:
+            if plate_available and physical.index is not None:
                 # The payload is built INSIDE the service — the raw
                 # index's arrays never cross its boundary (the
                 # architecture contract), so the coordinator asks the
-                # service, never the view. A frozen layer carries NO
+                # service, never the view. The plate is the PRINT's, so
+                # it needs the resolved physical layer: there is no
+                # anchor without one (the monitor-only index whose
+                # layer never resolved), and the plate APIs are never
+                # asked for a None one. A frozen layer carries NO
                 # file position: the split is a live print's boundary,
                 # and on another layer it would be another print's
                 # fill.

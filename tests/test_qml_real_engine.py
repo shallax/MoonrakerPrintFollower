@@ -32,6 +32,7 @@ if QT_AVAILABLE:
     from PyQt6.QtQuick import QQuickItem, QQuickWindow
 
     from plugins.GCodeIndex import build_index_from_bytes
+    from plugins.MonitorFormatting import _point_in_polygon, polygon_bounds
     from plugins.PlateProgress import layer_polylines
 
     class CuraApplicationDouble(QObject):
@@ -1652,11 +1653,16 @@ if QT_AVAILABLE:
 
         plateSplitChanged = pyqtSignal()
         plateDotChanged = pyqtSignal()
+        plateObjectsChanged = pyqtSignal()
         # The follower's own publish groups, mirroring the model's
         # _SIGNAL_KEYS: the anchor rides the plate group, the follow
         # state and the option ride the view group.
         plateProgressChanged = pyqtSignal()
         followerViewChanged = pyqtSignal()
+
+        # The picker's own payload: a test installs one before it mounts
+        # (the class-attribute pattern the follower half's PAYLOAD uses).
+        PLATE = None
 
         def __init__(self):
             super().__init__()
@@ -1668,11 +1674,13 @@ if QT_AVAILABLE:
             self._keep_centred = False
             self._layer_anchor = -1
             self.calls = []
-            self._plate = {"objects": [
-                {"name": "Widget", "center": [125.0, 125.0],
-                 "polygon": [[0.0, 0.0], [250.0, 0.0], [250.0, 250.0], [0.0, 250.0]],
-                 "current": False, "excluded": False, "restoreAllowed": True},
-            ]}
+            self._plate = PlatePrinterDouble.PLATE if PlatePrinterDouble.PLATE is not None else {
+                "objects": [
+                    {"name": "Widget", "center": [125.0, 125.0],
+                     "polygon": [[0.0, 0.0], [250.0, 0.0], [250.0, 250.0], [0.0, 250.0]],
+                     "current": False, "excluded": False, "restoreAllowed": True},
+                ]
+            }
 
         @pyqtProperty(float, constant=True)
         def bedMeshMachineWidth(self):
@@ -1784,9 +1792,27 @@ if QT_AVAILABLE:
             self.followerViewChanged.emit()
             self.plateProgressChanged.emit()
 
-        @pyqtProperty("QVariant", constant=True)
+        @pyqtProperty("QVariant", notify=plateObjectsChanged)
         def plateObjects(self):
             return self._plate
+
+        @pyqtSlot(str)
+        def excludeObject(self, name):
+            """The picker's destructive command: the row takes the
+            verdict and the payload republishes, as the model does."""
+            self.calls.append(("exclude", name))
+            self._set_excluded(name, True)
+
+        @pyqtSlot(str)
+        def restoreObject(self, name):
+            self.calls.append(("restore", name))
+            self._set_excluded(name, False)
+
+        def _set_excluded(self, name, excluded):
+            for row in self._plate.get("objects", []):
+                if row["name"] == name:
+                    row["excluded"] = bool(excluded)
+            self.plateObjectsChanged.emit()
 
         @pyqtProperty(bool, constant=True)
         def plateHasObjects(self):
@@ -2579,6 +2605,236 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertIsNotNone(follower_dot)
         self.assertTrue(follower_dot.property("visible"),
                         "the follower lost its toolhead dot")
+
+
+class PlateCanvasHitTests(RealEngineTestCase):
+    """The picker's hit test against real polygons: the click target is
+    the object the user sees. Containment is authoritative (the Python
+    probe's own ray cast, aimed through the canvas's own bed mapping),
+    an overlap resolves to the first row in the payload's order, and the
+    centre radius serves only the rows that carry no geometry at all —
+    the gesture is destructive, so a centre the object does not own must
+    never answer for it."""
+
+    @staticmethod
+    def _row(name, center=None, polygon=None, excluded=False):
+        """A payload row in the model's plate_values shape."""
+        return {"name": name, "center": center, "polygon": polygon,
+                "order": 0, "excluded": bool(excluded), "current": False,
+                "restoreAllowed": True}
+
+    @classmethod
+    def _payload(cls, rows):
+        return {"objects": rows, "truncated": 0, "excludedCount": 0}
+
+    @classmethod
+    def _polygon_bed(cls):
+        """Five objects on the double's 250 mm bed, every one of them
+        with real geometry — the shapes a printer reports once the
+        exclude_object payload is live."""
+        return [
+            # A bar 35 mm deep: a click near its right end stands ~107 mm
+            # from its own centre, well past the 18 mm degraded radius.
+            cls._row("Long_Bracket", [125.0, 37.5],
+                     [[10.0, 20.0], [240.0, 20.0], [240.0, 55.0], [10.0, 55.0]]),
+            # Two objects 2 mm apart, with the right-hand one's centre
+            # inside the left-hand object's degraded reach.
+            cls._row("Left_Block", [115.0, 215.0],
+                     [[40.0, 180.0], [190.0, 180.0], [190.0, 250.0], [40.0, 250.0]]),
+            cls._row("Right_Block", [202.0, 230.0],
+                     [[192.0, 220.0], [212.0, 220.0], [212.0, 240.0], [192.0, 240.0]]),
+            # An overlapping pair whose centres both stand inside the
+            # degraded radius of a shared interior point.
+            cls._row("Over_A", [90.0, 110.0],
+                     [[60.0, 80.0], [120.0, 80.0], [120.0, 140.0], [60.0, 140.0]]),
+            cls._row("Over_B", [110.0, 130.0],
+                     [[80.0, 100.0], [140.0, 100.0], [140.0, 160.0], [80.0, 160.0]]),
+        ]
+
+    def _picker(self, rows):
+        """Open the exclude popover on *rows* and hand back the window,
+        the face and the shared canvas."""
+        previous = PlatePrinterDouble.PLATE
+        PlatePrinterDouble.PLATE = self._payload(rows)
+        self.addCleanup(setattr, PlatePrinterDouble, "PLATE", previous)
+        monitor, window = self.mount_window("MoonrakerMonitor.qml", 900, 760)
+        # The reference is retained: a Python-created QObject dies with
+        # its last Python ref (the QML var takes no ownership).
+        self._printer = PlatePrinterDouble()
+        monitor.setProperty("printer", self._printer)
+        monitor.setProperty("openPopOver", "plate")
+        self.pump(30)
+        face = self.find(monitor, "moonrakerPlateExcludeFace")
+        canvas = face.findChild(QQuickItem, "moonrakerPlateCanvas")
+        self.assertIsNotNone(canvas, "the picker canvas never built")
+        self.assertIsNotNone(canvas.property("_plot"), "the bed mapping never built")
+        return window, face, canvas
+
+    @staticmethod
+    def _scene(canvas, bed_x, bed_y):
+        """The canvas's own bed-to-item transform, read from the live
+        plot: the test aims through the mapping the painter uses, never
+        through a second opinion about it."""
+        plot = canvas.property("_plot")
+        bed = plot.property("bed")
+        return (bed.property("offsetX").toNumber()
+                + (bed_x - bed.property("bedXMin").toNumber()) * plot.property("sx").toNumber(),
+                bed.property("offsetY").toNumber()
+                + (bed.property("bedYMax").toNumber() - bed_y) * plot.property("sy").toNumber())
+
+    def _hover(self, window, canvas, face, bed_x, bed_y):
+        """Put the pointer on the bed point through the real mouse path
+        and return the name the face published for the hover."""
+        from PyQt6.QtTest import QTest
+        scene_x, scene_y = self._scene(canvas, bed_x, bed_y)
+        QTest.mouseMove(window, canvas.mapToScene(QPointF(scene_x, scene_y)).toPoint())
+        self.pump(20)
+        return face.property("hoveredName")
+
+    def _click_bed(self, window, canvas, face, bed_x, bed_y):
+        from PyQt6.QtTest import QTest
+        from PyQt6.QtCore import Qt
+        scene_x, scene_y = self._scene(canvas, bed_x, bed_y)
+        QTest.mouseClick(window, Qt.MouseButton.LeftButton,
+                         pos=canvas.mapToScene(QPointF(scene_x, scene_y)).toPoint())
+        self.pump(10)
+
+    @staticmethod
+    def _containing(rows, x, y):
+        """The payload's own answer at a bed point, in payload order:
+        the Python ray cast the QML test mirrors, so a test can state
+        what the geometry says before it asserts what the canvas did."""
+        return [row["name"] for row in rows
+                if row.get("polygon") and _point_in_polygon(x, y, row["polygon"])]
+
+    def _nearest_centre(self, canvas, rows, bed_x, bed_y):
+        """The nearest centre the payload carries, with its pixel
+        distance — the answer the replaced centre rule gave."""
+        target = self._scene(canvas, bed_x, bed_y)
+        best = None
+        for row in rows:
+            if not row.get("center"):
+                continue
+            point = self._scene(canvas, row["center"][0], row["center"][1])
+            distance = (((point[0] - target[0]) ** 2 + (point[1] - target[1]) ** 2) ** 0.5)
+            if best is None or distance < best[1]:
+                best = (row["name"], distance)
+        return best
+
+    @staticmethod
+    def _radius_px(canvas):
+        """The degraded radius as the canvas measures it: bed
+        millimetres through the plot's own scale."""
+        plot = canvas.property("_plot")
+        return canvas.property("hitRadiusMm") * max(abs(plot.property("sx").toNumber()),
+                                                    abs(plot.property("sy").toNumber()))
+
+    def test_a_click_near_the_polygon_edge_selects_the_object(self):
+        rows = self._polygon_bed()
+        window, face, canvas = self._picker(rows)
+        # 8 mm inside the bar's right end, 5 mm off its bottom edge.
+        point = (232.0, 50.0)
+        self.assertEqual(self._containing(rows, *point), ["Long_Bracket"],
+                         "the fixture no longer places this click inside the bar")
+        bounds = polygon_bounds(rows[0]["polygon"])
+        self.assertLessEqual(min(point[0] - bounds[0], bounds[2] - point[0],
+                                 point[1] - bounds[1], bounds[3] - point[1]), 8.0,
+                             "the click is not near the polygon's edge")
+        name, distance = self._nearest_centre(canvas, rows, *point)
+        self.assertEqual(name, "Long_Bracket")
+        self.assertGreater(distance, self._radius_px(canvas),
+                           "the click sits inside the degraded radius after all")
+        self.assertEqual(self._hover(window, canvas, face, *point), "Long_Bracket")
+
+    def test_a_click_inside_one_of_two_close_objects_selects_that_object(self):
+        rows = self._polygon_bed()
+        window, face, canvas = self._picker(rows)
+        # 2 mm inside the left object's right edge, 4 mm off its
+        # neighbour — and 14.6 mm from the NEIGHBOUR's centre, inside the
+        # degraded radius: the rule the picker replaced answered
+        # Right_Block here, a different object from the one the user
+        # highlighted.
+        point = (188.0, 226.0)
+        self.assertEqual(self._containing(rows, *point), ["Left_Block"])
+        name, distance = self._nearest_centre(canvas, rows, *point)
+        self.assertEqual(name, "Right_Block")
+        self.assertLessEqual(distance, self._radius_px(canvas),
+                             "the fixture no longer pins the wrong-centre case")
+        self.assertEqual(self._hover(window, canvas, face, *point), "Left_Block")
+        # The neighbour answers on its own geometry, not on proximity.
+        inside = (202.0, 232.0)
+        self.assertEqual(self._containing(rows, *inside), ["Right_Block"])
+        self.assertEqual(self._hover(window, canvas, face, *inside), "Right_Block")
+
+    def test_a_click_outside_every_polygon_selects_nothing(self):
+        rows = self._polygon_bed()
+        window, face, canvas = self._picker(rows)
+        point = (150.0, 100.0)
+        self.assertEqual(self._containing(rows, *point), [],
+                         "the fixture no longer leaves this point in the open")
+        _name, distance = self._nearest_centre(canvas, rows, *point)
+        self.assertGreater(distance, self._radius_px(canvas),
+                           "the point is within the degraded radius of some centre")
+        self.assertEqual(self._hover(window, canvas, face, *point), "")
+
+    def test_a_polygon_object_is_never_matched_by_its_centre(self):
+        rows = self._polygon_bed()
+        window, face, canvas = self._picker(rows)
+        # 5 mm below the right object's bottom edge and 15 mm from its
+        # centre: inside the degraded radius, outside the geometry, with
+        # no other object in reach.
+        point = (202.0, 245.0)
+        self.assertEqual(self._containing(rows, *point), [])
+        name, distance = self._nearest_centre(canvas, rows, *point)
+        self.assertEqual(name, "Right_Block")
+        self.assertLessEqual(distance, self._radius_px(canvas),
+                             "the fixture no longer pins the near-centre case")
+        self.assertEqual(self._hover(window, canvas, face, *point), "",
+                         "a centre the object does not own answered for it")
+
+    def test_an_overlap_resolves_to_the_first_object_in_the_payload(self):
+        rows = self._polygon_bed()
+        window, face, canvas = self._picker(rows)
+        point = (95.0, 130.0)
+        self.assertEqual(self._containing(rows, *point), ["Over_A", "Over_B"],
+                         "the fixture no longer overlaps at this point")
+        # The centre rule named the second one, so the assertion below
+        # pins the documented rule and not the old answer.
+        name, distance = self._nearest_centre(canvas, rows, *point)
+        self.assertEqual(name, "Over_B")
+        self.assertLessEqual(distance, self._radius_px(canvas))
+        self.assertEqual(self._hover(window, canvas, face, *point), "Over_A")
+
+    def test_a_centre_only_object_still_hits_through_the_degraded_radius(self):
+        rows = [self._row("Sparse_Centre", [30.0, 120.0])]
+        window, face, canvas = self._picker(rows)
+        self.assertEqual(self._hover(window, canvas, face, 30.0, 122.0), "Sparse_Centre")
+        # The radius still bounds the fallback.
+        self.assertEqual(self._hover(window, canvas, face, 30.0, 150.0), "")
+
+    def test_a_triple_click_excludes_and_restores_the_object_under_the_pointer(self):
+        rows = self._polygon_bed()
+        window, face, canvas = self._picker(rows)
+        # The point where the centre rule named the neighbour: the
+        # destructive gesture must act on the object the hover
+        # highlighted, at every step of the gesture.
+        point = (188.0, 226.0)
+        self.assertEqual(self._hover(window, canvas, face, *point), "Left_Block")
+        for _ in range(3):
+            self._click_bed(window, canvas, face, *point)
+        self.pump(20)
+        self.assertEqual([call for call in self._printer.calls if call[0] == "exclude"],
+                         [("exclude", "Left_Block")])
+        self.assertEqual(face.property("selectedName"), "Left_Block")
+        self.assertEqual(self._hover(window, canvas, face, *point), "Left_Block",
+                         "the excluded object left the hit test")
+        # The verdict reached the canvas with the republished payload:
+        # the same gesture now restores the object it just excluded.
+        for _ in range(3):
+            self._click_bed(window, canvas, face, *point)
+        self.pump(20)
+        self.assertEqual([call for call in self._printer.calls if call[0] == "restore"],
+                         [("restore", "Left_Block")])
 
 
 if QT_AVAILABLE:

@@ -120,27 +120,122 @@ Item {
         };
     }
 
-    function hitTest(x, y) {
-        // Nearest CENTRE wins (the live polygons are overlapping
-        // bounding boxes — the deterministic precedence the domain
-        // round ruled). One implementation for outlines and dots.
+    // The per-payload hit index: the rows carrying usable polygons with
+    // their bed-space bounding boxes, and the rows that carry only a
+    // centre. Rebuilt when the payload is assigned, never per hit test
+    // — the picker tests the point on every hover move.
+    property var _hitIndex: null
+    property var _centreRows: null
+
+    function _rebuildHitIndex() {
+        var rows = root.plate != null ? root.plate.objects : null;
+        var polygons = [];
+        var centres = [];
+        for (var i = 0; rows != null && i < rows.length; ++i) {
+            var row = rows[i];
+            // Three vertices are the polygon's minimum; anything less
+            // is not geometry, so the row degrades to its centre.
+            if (row.polygon != null && row.polygon.length >= 3) {
+                var minX = row.polygon[0][0];
+                var maxX = minX;
+                var minY = row.polygon[0][1];
+                var maxY = minY;
+                for (var v = 1; v < row.polygon.length; ++v) {
+                    minX = Math.min(minX, row.polygon[v][0]);
+                    maxX = Math.max(maxX, row.polygon[v][0]);
+                    minY = Math.min(minY, row.polygon[v][1]);
+                    maxY = Math.max(maxY, row.polygon[v][1]);
+                }
+                polygons.push({
+                    "name": row.name,
+                    "polygon": row.polygon,
+                    "minX": minX,
+                    "maxX": maxX,
+                    "minY": minY,
+                    "maxY": maxY
+                });
+            } else if (row.center != null) {
+                centres.push({
+                    "name": row.name,
+                    "center": row.center
+                });
+            }
+        }
+        root._hitIndex = polygons;
+        root._centreRows = centres;
+    }
+
+    function _bedFromScene(x, y) {
+        // The inverse of plateToScene, once per hit test: the polygons
+        // live in bed millimetres and the click arrives in item pixels.
         var plot = root._plot;
-        if (plot == null || root.plate == null) {
+        if (plot == null) {
+            return null;
+        }
+        return {
+            "x": plot.bed.bedXMin + (x - plot.bed.offsetX) / plot.sx,
+            "y": plot.bed.bedYMax - (y - plot.bed.offsetY) / plot.sy
+        };
+    }
+
+    function _pointInPolygon(x, y, polygon) {
+        // Ray casting, in the Python probe's own form
+        // (MonitorFormatting._point_in_polygon): a point lands in the
+        // same object on both sides of the wire.
+        var inside = false;
+        var j = polygon.length - 1;
+        for (var i = 0; i < polygon.length; ++i) {
+            var xi = polygon[i][0];
+            var yi = polygon[i][1];
+            var xj = polygon[j][0];
+            var yj = polygon[j][1];
+            if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) {
+                inside = !inside;
+            }
+            j = i;
+        }
+        return inside;
+    }
+
+    function hitTest(x, y) {
+        // Containment is authoritative: the click maps to bed space once
+        // and walks the polygons box-first (the Python walk's shape —
+        // polygon_bounds then the edge test). Two overlapping polygons
+        // resolve to the FIRST row in the payload's order, the rule the
+        // printed-cache probe pins (MonitorFormatting.containing_object)
+        // — the same destructive target whichever side is asked.
+        var plot = root._plot;
+        if (plot == null || root.plate == null || !(plot.sx > 0) || !(plot.sy > 0)) {
             return "";
         }
+        if (root._hitIndex === null) {
+            _rebuildHitIndex();
+        }
+        var bed = _bedFromScene(x, y);
+        var index = root._hitIndex;
+        for (var i = 0; i < index.length; ++i) {
+            var entry = index[i];
+            if (bed.x < entry.minX || bed.x > entry.maxX || bed.y < entry.minY || bed.y > entry.maxY) {
+                continue;
+            }
+            if (_pointInPolygon(bed.x, bed.y, entry.polygon)) {
+                return entry.name;
+            }
+        }
+        // The degraded fallback, for rows that genuinely lack polygon
+        // data: the nearest centre within the radius. A row that HAS
+        // geometry is never a centre candidate here, so no nearby centre
+        // can override a containment result.
         var radiusPx = root.hitRadiusMm * Math.max(Math.abs(plot.sx), Math.abs(plot.sy));
         var best = "";
         var bestDist = Infinity;
-        for (var i = 0; i < root.plate.objects.length; ++i) {
-            var row = root.plate.objects[i];
-            if (row.center == null) {
-                continue;
-            }
-            var scene = root.plateToScene(row.center[0], row.center[1]);
+        var centres = root._centreRows;
+        for (var c = 0; c < centres.length; ++c) {
+            var scene = root.plateToScene(centres[c].center[0], centres[c].center[1]);
             var d = (scene.x - x) * (scene.x - x) + (scene.y - y) * (scene.y - y);
             if (d < bestDist) {
                 bestDist = d;
-                best = row.name;
+                best = centres[c].name;
             }
         }
         return bestDist <= radiusPx * radiusPx ? best : "";
@@ -156,10 +251,14 @@ Item {
     }
     Component.onCompleted: {
         _replot();
+        _rebuildHitIndex();
         _publishView();
         plateCanvas.requestPaint();
     }
-    onPlateChanged: plateCanvas.requestPaint()
+    onPlateChanged: {
+        _rebuildHitIndex();
+        plateCanvas.requestPaint();
+    }
     onHoveredNameChanged: plateCanvas.requestPaint()
     onViewScaleChanged: {
         _publishView();
