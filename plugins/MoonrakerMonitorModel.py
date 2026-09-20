@@ -324,7 +324,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("cameraTransformChanged", ("cameraName", "cameraRotation", "cameraFlipHorizontal", "cameraFlipVertical")),
         ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
         ("excludeObjectsChanged", ("excludeObjectItems", "currentObjectName")),
-        ("plateObjectsChanged", ("plateObjects", "plateDot")),
+        ("plateObjectsChanged", ("plateObjects", "plateDot", "plateHasObjects")),
         ("plateProgressChanged", ("plateProgress",)),
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
@@ -1085,6 +1085,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._observe_grace(snapshot)
         values["excludeObjectItems"] = self._exclude_rows()
         values["plateObjects"] = self._plate_objects_value()
+        # The QML-facing support flag: a plain bool, so no binding
+        # ever needs to reach INTO the payload (the empty-plate live
+        # report — member access on the QVariant payload is not a
+        # binding worth trusting).
+        values["plateHasObjects"] = bool(values["plateObjects"]["objects"])
         # The button's target label: the object the click would kill,
         # published so the readout stays honest about the victim.
         values["currentObjectName"] = str(
@@ -1400,6 +1405,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     currentObjectName = value_property(str, "currentObjectName", excludeObjectsChanged, "")
     plateObjects = value_property(QVariant, "plateObjects", plateObjectsChanged, {"objects": [], "truncated": 0, "excludedCount": 0})
     plateDot = value_property(QVariant, "plateDot", plateObjectsChanged, {"x": 0.0, "y": 0.0, "valid": False})
+    plateHasObjects = value_property(bool, "plateHasObjects", plateObjectsChanged, False)
     plateProgress = value_property(QVariant, "plateProgress", plateProgressChanged, {"available": False, "layers": {}, "split": None, "method": "unavailable", "anchor": None, "reason": ""})
     powerDevices = value_property(QVariant, "powerDevices", powerDevicesChanged, [])
     klippyState = value_property(str, "klippyState", systemChanged, "Unknown")

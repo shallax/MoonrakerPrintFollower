@@ -21,6 +21,7 @@ Item {
     property bool showPrevious: true
     property bool showNext: true
     property bool showBase: true
+    property bool showTravels: false  // lines AND boundary markers — one toggle (the live ruling)
 
     function classColour(name) {
         switch (name) {
@@ -49,7 +50,21 @@ Item {
     onShowPreviousChanged: layerCanvas.requestPaint()
     onShowNextChanged: layerCanvas.requestPaint()
     onShowBaseChanged: layerCanvas.requestPaint()
+    onShowTravelsChanged: layerCanvas.requestPaint()
     onDotChanged: layerCanvas.requestPaint()
+
+    // The mapping replots on ITS resize; the layer canvas must repaint
+    // with the grown plot or the first paint stays crushed at the
+    // initial size (the live report: a strip at the card's top).
+    Connections {
+        target: mapping
+        function onWidthChanged() {
+            layerCanvas.requestPaint();
+        }
+        function onHeightChanged() {
+            layerCanvas.requestPaint();
+        }
+    }
 
     // The shared base carries the bed mapping — the face's canvas
     // draws the layers through ITS transform, so the one-mapping rule
@@ -94,9 +109,14 @@ Item {
             // The printed portion, coloured in per feature class up
             // to the motion split (the H3 floor).
             _drawLayer(ctx, current, 1.0, progress.split, false);
-            // The travel boundaries: a glyph at every start and end.
-            _drawGlyphs(ctx, current.travelStarts, true);
-            _drawGlyphs(ctx, current.travelEnds, false);
+            // The travels: lines and boundary markers together, the
+            // CURRENT layer only, and only where the toolhead has
+            // already passed (the live rulings).
+            if (root.showTravels) {
+                _drawTravels(ctx, current.travels, progress.split);
+                _drawGlyphs(ctx, current.travelStarts, true, progress.split);
+                _drawGlyphs(ctx, current.travelEnds, false, progress.split);
+            }
         }
     }
 
@@ -131,8 +151,39 @@ Item {
         }
     }
 
-    function _drawGlyphs(ctx, marks, start) {
+    function _drawTravels(ctx, points, split) {
+        if (points == null || points.length < 2) {
+            return;
+        }
+        ctx.strokeStyle = MoonrakerTheme.seriesDefault;
+        ctx.globalAlpha = 0.8;
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        var started = false;
+        for (var i = 0; i < points.length; ++i) {
+            if (split >= 0 && points[i][2] > split) {
+                break;
+            }
+            var scene = mapping.plateToScene(points[i][0], points[i][1]);
+            if (scene == null) {
+                continue;
+            }
+            if (!started) {
+                ctx.moveTo(scene.x, scene.y);
+                started = true;
+            } else {
+                ctx.lineTo(scene.x, scene.y);
+            }
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1.0;
+    }
+
+    function _drawGlyphs(ctx, marks, start, split) {
         for (var i = 0; i < marks.length; ++i) {
+            if (split >= 0 && marks[i][2] > split) {
+                break;
+            }
             var scene = mapping.plateToScene(marks[i][0], marks[i][1]);
             if (scene == null) {
                 continue;
@@ -164,7 +215,9 @@ Item {
         color: MoonrakerTheme.plateDot
         border.color: UM.Theme.getColor("main_background")
         border.width: 2
-        visible: mapping._plot != null && root.dot != null && root.dot.valid === true
+        // The dot rides the LAYERS: no index, no dot (the live
+        // report — it rendered over the unavailable card).
+        visible: root.available() && mapping._plot != null && root.dot != null && root.dot.valid === true
         x: visible ? mapping.plateToScene(root.dot.x, root.dot.y).x - width / 2 : 0
         y: visible ? mapping.plateToScene(root.dot.x, root.dot.y).y - height / 2 : 0
     }

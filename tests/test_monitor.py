@@ -4666,10 +4666,16 @@ Item {
             "visible: !root.available()",
             "visible: !root.available() && !root.compact",
             "visible: !root.available() && root.compact",
-            # The picker's support gate (the live ruling): the section
-            # exists only while the print's exclude-object data is
-            # present — the capability-static class, job-scoped.
-            "visible: root.printer != null && root.printer.sectionHiddenMap[\"plate\"] !== true && root.printer.plateObjects.objects.length > 0",
+            # The picker's gate (the live ruling): during a print the
+            # section shows the plate when the data exists, the
+            # download offer otherwise; it clears with the job epoch.
+            "visible: root.printer != null && root.printer.sectionHiddenMap[\"plate\"] !== true && (root.printer.printActive || root.printer.plateHasObjects)",
+            # The picker's download offer: inside the transient card,
+            # shown while the plate is empty.
+            "visible: root.printer != null && !root.printer.plateHasObjects",
+            # The follower's dot rides the layers: no index, no dot
+            # (scene decoration inside the canvas slot).
+            "visible: root.available() && mapping._plot != null && root.dot != null && root.dot.valid === true",
             # Firmware-regulated fans swap the slider for a read-only
             # row (a live report): the model's writable
             # flag picks the face.
