@@ -2853,6 +2853,12 @@ def suite_step(step):
         reply = rpc(request)
         time.sleep(0.6)
         delivery = reply.get("delivery") or {}
+        if not reply.get("ok"):
+            # The driver refuses an aim that provably cannot land
+            # (outside the window, or clipped out by a pane) — the
+            # honest failure a silent empty-space click never gave.
+            return False, f"a real press/release on {step.get('objectName') or step.get('text')}", \
+                f"refused before the press: {reply.get('error')}", None, reply.get("geometry"), reply.get("walk")
         if step.get("expect") == "not_accepted":
             # The negative half of the proof: the target RESOLVED (a
             # real item is under the aim) but no item accepted the
@@ -3265,13 +3271,20 @@ def suite_step(step):
         reply = rpc({"id": 1, "cmd": "rect", **ref})
         now = "absent" if not reply.get("ok") else reply["rect"]
         geometry = None
+        view_note = ""
         if reply.get("ok") and isinstance(reply.get("rect"), dict):
             rect = reply["rect"]
             geometry = [rect["x"], rect["y"], rect["w"], rect["h"]]
+            # Presence in the tree is not presence on screen: an item
+            # scrolled out of its pane still reports a rect (mapToScene
+            # ignores clipping). Say so rather than let "entered the
+            # rendered tree" imply the control is reachable.
+            if rect.get("in_view") is False:
+                view_note = " · NOT in view (a press at its centre would land on empty space)"
         seen_note = ("observed earlier" if (observed or SUITE_STATE["rect"].get(("seen", key)))
                      else "never observed in this scenario")
         return (ok, f"{key} {'left the rendered tree' if step.get('absent') else 'entered the rendered tree'}",
-                f"now {now} ({seen_note})", None, geometry, reply.get("walk"))
+                f"now {now} ({seen_note}){view_note}", None, geometry, reply.get("walk"))
 
     if op == "census":
         # The data-render census: every data class present in the

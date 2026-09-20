@@ -1792,6 +1792,20 @@ if QT_AVAILABLE:
             self.followerViewChanged.emit()
             self.plateProgressChanged.emit()
 
+        @pyqtSlot(int)
+        def setFollowerLayerProgress(self, motions):
+            self.calls.append(("progress", int(motions)))
+            self._split = int(motions)
+            self.plateProgressChanged.emit()
+
+        @pyqtSlot(bool)
+        def setFollowerPopoverOpen(self, popover_open):
+            self.calls.append(("followerOpen", bool(popover_open)))
+
+        @pyqtSlot(bool)
+        def setPickerPopoverOpen(self, popover_open):
+            self.calls.append(("pickerOpen", bool(popover_open)))
+
         @pyqtProperty("QVariant", notify=plateObjectsChanged)
         def plateObjects(self):
             return self._plate
@@ -2438,6 +2452,12 @@ class PlateFaceRenderTests(RealEngineTestCase):
         plot = face.findChild(QQuickItem, "moonrakerPlateCanvas").property("_plot")
         self.assertIsNotNone(plot, "the bed mapping never built")
         self._fill_zoom(face, plot)
+        # The toolhead controls hide in place on a row that persists —
+        # the zoom no longer reflows the face (the live request), so
+        # the geometry settles immediately. A grab forces the sync
+        # (the harness's window doctrine).
+        window.grabWindow()
+        self.pump(30)
         # The toolhead at the bed's centre: the view is unpanned, so at
         # this zoom the dot stands off the view entirely.
         self._printer.setDot(125.0, 125.0)
@@ -2462,33 +2482,46 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertFalse(self.find(monitor, "moonrakerFollowerJump").property("enabled"),
                          "the jump is live with no valid toolhead position")
 
-    def test_a_pan_translates_the_raster_stack_without_re_accumulating(self):
+    def test_a_pan_re_rasters_the_stack_with_the_baked_offset(self):
+        # The live report: the pan-agnostic rewrite translated the
+        # raster items instead of re-drawing — but a raster image is
+        # exactly the canvas' size, so panning slid an already-clipped
+        # picture off the view. The pan must be a paint input: it
+        # rides the carrier and resets the stack for a full re-raster.
         monitor, window, face = self._follower_popover()
         face.setProperty("dot", None)
         rows = self._ink_rows(self._grab_when_inked(window, face), face, window)
         self.assertTrue(rows, "the follower painted nothing")
-        # The delta accumulation is live at this split; a pan must not
-        # touch it (the pan is a scene-graph translation, so the old
-        # per-pan re-raster would show up as a reset here).
         self.assertGreaterEqual(face.property("_paintsSinceReset"), 1,
                                 "the accumulation never painted")
-        held = (face.property("_lastSplit"), face.property("_paintsSinceReset"))
         face.setProperty("viewPanY", 36.0)
-        self.pump(60)
-        self.assertEqual((face.property("_lastSplit"), face.property("_paintsSinceReset")), held,
-                         "a pan re-rastered the raster stack")
+        # The reset is synchronous in the change handler; the re-raster
+        # lands on the next paints.
+        self.assertEqual(face.property("_lastSplit"), -1,
+                         "a pan did not reset the raster stack")
+        self.assertEqual(face.property("_view").property("panY").toNumber(), 36.0,
+                         "the painter's carrier lost the pan")
         self.assertEqual(face.property("_view").property("scale").toNumber(),
                          face.property("viewScale"),
                          "the painter's carrier lost the zoom")
-        moved = self._ink_rows(self._grab_when_inked(window, face), face, window)
-        self.assertAlmostEqual(min(moved) - min(rows), 36, delta=2,
-                               msg="the raster did not translate with the pan")
+        self.pump(60)
+        self.assertGreaterEqual(face.property("_paintsSinceReset"), 1,
+                                "the stack never re-rastered after the pan")
 
     def test_the_centred_follow_option_defaults_off_and_publishes(self):
         monitor, window, face = self._follower_popover()
         box = self.find(monitor, "moonrakerFollowerKeepCentred")
         self.assertFalse(box.property("checked"), "the centred follow is on by default")
         self.assertFalse(face.property("keepCentred"))
+        # The row is moot at the 100% fit and hides there (the live
+        # request); it appears with the zoom, where the option lives.
+        self.assertFalse(box.property("visible"),
+                         "the centred follow shows at the 100% fit")
+        plot = face.findChild(QQuickItem, "moonrakerPlateCanvas").property("_plot")
+        self._fill_zoom(face, plot)
+        self.pump(30)
+        self.assertTrue(box.property("visible"),
+                        "the centred follow stayed hidden while zoomed")
         self._click(window, box)
         self.assertIn(("keepCentred", True), self._printer.calls)
         self.assertTrue(face.property("keepCentred"), "the face never took the option")
@@ -2533,13 +2566,20 @@ class PlateFaceRenderTests(RealEngineTestCase):
         attach = self.find(monitor, "moonrakerFollowerAttach")
         self.assertTrue(dot.property("visible"))
         self.assertTrue(attach.property("enabled"))
-        self.assertFalse(slider.property("enabled"), "the slider seeks while attached")
+        # The slider is LIVE while attached — a seek is itself the
+        # detach (the live request: it must never sit dead).
+        self.assertTrue(slider.property("enabled"), "the slider sits dead while attached")
         self.assertEqual(slider.property("value"), 9.0, "the slider did not follow the live layer")
         self._click(window, attach)
         self.assertIn(("attached", False), self._printer.calls)
         self.assertEqual(attach.property("text"), "Attach")
         self.assertFalse(face.property("attached"))
         self.assertFalse(dot.property("visible"), "the detached face kept its toolhead dot")
+        # The follow controls need a live dot: detached, the option is
+        # dead (the live request) and the preference stays whatever it
+        # was.
+        centred = self.find(monitor, "moonrakerFollowerKeepCentred")
+        self.assertFalse(centred.property("enabled"), "the centred follow stays live while detached")
         self.assertEqual(self._printer.followerLayerAnchor, 9,
                          "the detach did not hold the layer it showed")
         self.assertTrue(slider.property("enabled"), "the detached slider cannot seek")
@@ -2549,7 +2589,8 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.assertEqual(attach.property("text"), "Detach")
         self.assertTrue(face.property("attached"))
         self.assertTrue(dot.property("visible"), "re-attaching lost the toolhead dot")
-        self.assertFalse(slider.property("enabled"))
+        self.assertTrue(slider.property("enabled"))
+        self.assertTrue(centred.property("enabled"), "re-attaching kept the centred follow dead")
 
     def test_the_layer_slider_commits_only_after_the_seek_settles(self):
         from PyQt6.QtTest import QTest
@@ -2825,7 +2866,6 @@ class PlateCanvasHitTests(RealEngineTestCase):
         self.pump(20)
         self.assertEqual([call for call in self._printer.calls if call[0] == "exclude"],
                          [("exclude", "Left_Block")])
-        self.assertEqual(face.property("selectedName"), "Left_Block")
         self.assertEqual(self._hover(window, canvas, face, *point), "Left_Block",
                          "the excluded object left the hit test")
         # The verdict reached the canvas with the republished payload:

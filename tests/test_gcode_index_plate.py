@@ -497,7 +497,8 @@ class FeatureRetentionTests(unittest.TestCase):
         self.assertEqual(index.motion_types[0], [])
         self.assertEqual(index.travel_starts[0], [])
         self.assertEqual(index.travel_ends[0], [])
-        self.assertEqual(index.motion_count(0), 0)
+        # The arrays went, but the count it recorded persists.
+        self.assertEqual(index.motion_count(0), 2)
         self.assertEqual(index.motion_types[3], [[1, 3]])
         self.assertEqual(index.travel_starts[2], [1])
 
@@ -633,6 +634,86 @@ class HydrationWindowTests(unittest.TestCase):
         # The poll's advance hands the held anchor to the new index.
         self.service._apply_manual_anchor()
         self.assertEqual(index.manual_anchor, 6)
+
+    def test_the_full_marker_draws_every_motion_of_the_frozen_layer(self):
+        # A seek lands the layer at 100% (the live request): the FULL
+        # marker resolves to the layer's own motion count, whatever
+        # layer it points at.
+        index = self._bind(layers=8)
+        index.motion_offsets = [list(range(3)) for _ in range(8)]
+        index.motion_offsets[5] = list(range(11))
+        self.service.set_manual_anchor(5)
+        self.service.set_manual_split(-1)
+        payload = self.service.plate_progress(5, file_position=None)
+        self.assertEqual(payload["split"], 11)
+
+    def test_the_manual_split_is_the_frozen_layers_boundary(self):
+        self._bind(layers=8)
+        self.service.set_manual_anchor(5)
+        self.service.set_manual_split(37)
+        # A frozen layer carries no file position; the scrub is what
+        # the payload reads for the boundary.
+        payload = self.service.plate_progress(5, file_position=None)
+        self.assertEqual(payload["split"], 37)
+        # A live poll of the print's own layer is untouched.
+        payload = self.service.plate_progress(2, file_position=42)
+        self.assertIsNone(payload["split"])
+
+    def test_rejoining_the_print_abandons_the_scrub(self):
+        self._bind(layers=8)
+        self.service.set_manual_anchor(5)
+        self.service.set_manual_split(37)
+        self.service.set_manual_anchor(None)
+        payload = self.service.plate_progress(5, file_position=None)
+        self.assertIsNone(payload["split"])
+
+    def test_the_progress_payload_carries_the_layers_motion_count(self):
+        # motionTotal is the slider's range: the layer's own edge count.
+        index = self._bind(layers=8)
+        index.motion_offsets = [list(range(10)) for _ in range(8)]
+        payload = self.service.plate_progress(3, file_position=None)
+        self.assertEqual(payload["motionTotal"], 10)
+
+    def test_the_full_cache_answers_after_the_window_evicts(self):
+        # The full prepared cache's promise: a layer the window's
+        # store no longer holds decodes from the compact form instead
+        # of re-walking its motions.
+        index = self._bind(layers=8, hydrated=(5,))
+        from plugins.PlateProgress import encode_layer, prepare_layer
+        payload = prepare_layer(index, 5)
+        self.assertIsNotNone(payload)
+        self.service._full_cache[5] = encode_layer(payload)
+        from plugins.PlateProgress import _prepared_layers
+        _prepared_layers.pop((id(index), 5), None)
+        bundle = self.service.plate_layers(5)
+        self.assertIsNotNone(bundle["current"])
+        self.assertEqual(bundle["current"]["motions"], payload["motions"])
+
+    def test_alternating_anchors_keep_both_bundles(self):
+        # The live payload and the frozen one alternate every poll
+        # while detached; one memo slot thrashed — each ask evicted
+        # the other's bundle and the identities churned per poll (the
+        # live report: the whole plugin went awful while detached).
+        self._bind(layers=8, hydrated=(3, 4, 5))
+        live = self.service.plate_layers(4)
+        frozen = self.service.plate_layers(9)
+        self.assertIsNot(frozen, live)
+        self.assertIs(self.service.plate_layers(4), live,
+                      "the live bundle rebuilt on the alternating ask")
+        self.assertIs(self.service.plate_layers(9), frozen,
+                      "the frozen bundle rebuilt on the alternating ask")
+
+    def test_the_layers_memo_rebuilds_when_the_hydration_fill_lands(self):
+        # The live report: a far seek's current stayed blank forever —
+        # the bundle was memoised while the anchor's layer was still
+        # hydrating, and the hydration state never entered the key.
+        index = self._bind(layers=8, hydrated=(4, 6))
+        self.service.set_manual_anchor(5)
+        first = self.service.plate_layers(5)
+        self.assertIsNone(first["current"])
+        index.hydrated_layers.add(5)
+        second = self.service.plate_layers(5)
+        self.assertIsNotNone(second["current"])
 
     def test_a_request_outside_the_followed_window_is_not_queued(self):
         index = self._bind()

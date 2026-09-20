@@ -674,6 +674,99 @@ def _prepare(index: LayerMotionIndex, layer: int) -> dict:
     }
 
 
+def encode_layer(payload: dict) -> bytes:
+    """The prepared payload in the full cache's compact form.
+
+    The painter's nested lists cost ~100+ bytes a point as Python
+    objects; three f32s cost 12. Every layer of the print fits in the
+    cache that way (the live request's instant-access store), and one
+    decode rebuilds the QML payload on demand.
+    """
+    from array import array
+    from struct import pack
+
+    def pack_segments(segments):
+        parts = [pack("<i", len(segments))]
+        for segment in segments:
+            flat = array("f")
+            for x, y, motion in segment:
+                flat.extend((float(x), float(y), float(motion)))
+            parts.append(pack("<i", len(segment)))
+            parts.append(flat.tobytes())
+        return b"".join(parts)
+
+    def pack_triples(triples):
+        flat = array("f")
+        for x, y, motion in triples:
+            flat.extend((float(x), float(y), float(motion)))
+        return pack("<i", len(triples)) + flat.tobytes()
+
+    classes = payload.get("classes") or {}
+    parts = [b"PPL1", pack("<i", int(payload.get("motions") or 0)),
+             pack("<i", len(classes))]
+    for name, segments in classes.items():
+        raw = name.encode("utf-8")
+        parts.append(pack("<B", len(raw)))
+        parts.append(raw)
+        parts.append(pack_segments(segments))
+    parts.append(pack_segments(payload.get("travels") or ()))
+    parts.append(pack_triples(payload.get("travelStarts") or ()))
+    parts.append(pack_triples(payload.get("travelEnds") or ()))
+    return b"".join(parts)
+
+
+def decode_layer(raw: bytes) -> dict:
+    """The compact form back into the painter's payload shape."""
+    from array import array
+    from struct import unpack_from
+
+    if not isinstance(raw, (bytes, bytearray, memoryview)) or raw[:4] != b"PPL1":
+        return {}
+    offset = 4
+
+    def read_triples():
+        nonlocal offset
+        count, = unpack_from("<i", raw, offset)
+        offset += 4
+        flat = array("f")
+        flat.frombytes(raw[offset:offset + count * 12])
+        offset += count * 12
+        return [[flat[i * 3], flat[i * 3 + 1], int(flat[i * 3 + 2])]
+                for i in range(count)]
+
+    def read_segments():
+        nonlocal offset
+        seg_count, = unpack_from("<i", raw, offset)
+        offset += 4
+        segments = []
+        for _ in range(seg_count):
+            point_count, = unpack_from("<i", raw, offset)
+            offset += 4
+            flat = array("f")
+            flat.frombytes(raw[offset:offset + point_count * 12])
+            offset += point_count * 12
+            segments.append([[flat[i * 3], flat[i * 3 + 1], int(flat[i * 3 + 2])]
+                             for i in range(point_count)])
+        return segments
+
+    motions, = unpack_from("<i", raw, offset)
+    offset += 4
+    class_count, = unpack_from("<i", raw, offset)
+    offset += 4
+    classes = {}
+    for _ in range(class_count):
+        name_len = raw[offset]
+        offset += 1
+        name = raw[offset:offset + name_len].decode("utf-8")
+        offset += name_len
+        classes[name] = read_segments()
+    travels = read_segments()
+    starts = read_triples()
+    ends = read_triples()
+    return {"classes": classes, "travels": travels, "travelStarts": starts,
+            "travelEnds": ends, "motions": motions}
+
+
 def split_index(index: LayerMotionIndex, layer: int, file_position: int) -> Optional[int]:
     """The current layer's printed/unprinted boundary as a COUNT of
     motions: edge m is printed exactly when m < split, so split == 0

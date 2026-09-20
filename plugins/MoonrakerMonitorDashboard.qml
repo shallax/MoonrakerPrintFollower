@@ -855,12 +855,6 @@ Component {
                             printerModel: root.printer
                         }
 
-                        ObjectsSection {
-                            visible: root.printer == null || root.printer.sectionHiddenMap["objects"] !== true
-                            Layout.fillWidth: true
-                            printerModel: root.printer
-                        }
-
                         PrintSection {
                             visible: root.printer == null || root.printer.sectionHiddenMap["print"] !== true
                             Layout.fillWidth: true

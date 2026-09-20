@@ -24,7 +24,7 @@ from .MoonrakerMonitorModel import _migration_banner_text, _migration_diagnostic
 from .MoonrakerProtocol import objects_list_endpoint, server_info_endpoint
 from .MoonrakerSession import RequestCategory
 from .MoonrakerTransport import MoonrakerHttpTransport
-from .PrinterConfig import RESTORE_WINDOW_DEFAULT, PrinterConfig, normalise_restore_window, normalise_url
+from .PrinterConfig import PrinterConfig, normalise_url
 
 
 class MoonrakerFollowerMachineAction(MachineAction):
@@ -248,17 +248,6 @@ class MoonrakerFollowerMachineAction(MachineAction):
     def settingsZTolerance(self) -> str:
         return f"{self._config().z_tolerance:.3f}"
 
-    @pyqtProperty(str, notify=settingsChanged)
-    def settingsRestoreWindow(self) -> str:
-        """The restore-window knob: "never", or the layer count as a
-        string (0 = the window is already closed when the skip is
-        witnessed). The pane maps it to its combo index; the string
-        shape keeps the "never" arm lossless."""
-        value = normalise_restore_window(
-            getattr(self._config(), "restore_window", RESTORE_WINDOW_DEFAULT)
-        )
-        return value if isinstance(value, str) else str(value)
-
     # ------------------------------------------------------------------
     # Integrated Moonraker output settings
     # ------------------------------------------------------------------
@@ -471,11 +460,6 @@ class MoonrakerFollowerMachineAction(MachineAction):
                 "auto_preview": bool(raw.get("auto_preview", False)),
                 "z_fallback": bool(raw.get("z_fallback", True)),
                 "z_tolerance": tolerance,
-                # Carried forward when the caller predates the knob: an
-                # absent key must not silently reset the window.
-                "restore_window": normalise_restore_window(
-                    raw.get("restore_window", getattr(current, "restore_window", RESTORE_WINDOW_DEFAULT))
-                ),
                 "path_follow": bool(raw.get("path_follow", True)),
                 "path_smoothing": bool(raw.get("path_smoothing", True)),
                 "eta_learn": bool(raw.get("eta_learn", False)),

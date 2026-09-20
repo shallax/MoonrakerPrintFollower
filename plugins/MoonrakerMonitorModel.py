@@ -32,7 +32,6 @@ def _british_spelling() -> bool:
 from .MonitorCamera import MonitorCamera
 from .MonitorCommands import MonitorCommands
 from .MonitorControls import MonitorControls, _exclude_status
-from .ExcludeGrace import ExcludeGrace
 from .MonitorData import MonitorData
 from .MonitorPermissions import REASON_DETAIL, R_PAUSED_NOTE, R_UNKNOWN, Verdict, can_jog, can_pause, can_restart, can_resume, can_start_print, jog_caption, section_reason
 from .FilesViewModel import FilesViewModel
@@ -65,7 +64,7 @@ from .MonitorFormatting import (
 )
 from dataclasses import replace
 
-from .PrinterConfig import normalise_restore_window, normalise_temperature_chart
+from .PrinterConfig import normalise_temperature_chart
 from .StateStore import StateStore
 from .MonitorTemperatureHistory import (
     DORMANT_CHART,
@@ -303,7 +302,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     consoleChanged = pyqtSignal()
     cameraTransformChanged = pyqtSignal()
     peripheralsChanged = pyqtSignal()
-    excludeObjectsChanged = pyqtSignal()
     plateObjectsChanged = pyqtSignal()
     plateProgressChanged = pyqtSignal()
     powerDevicesChanged = pyqtSignal()
@@ -359,10 +357,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("temperatureChartLegendChanged", ("temperatureChartLegend",)),
         ("cameraTransformChanged", ("cameraName", "cameraRotation", "cameraFlipHorizontal", "cameraFlipVertical")),
         ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
-        ("excludeObjectsChanged", ("excludeObjectItems", "currentObjectName")),
         ("plateObjectsChanged", ("plateObjects", "plateDot", "plateHasObjects")),
         ("plateProgressChanged", ("plateLayers", "plateSplit", "plateProgressAnchor", "plateProgressAvailable", "plateProgressReason",
-                                  "plateLayerCount")),
+                                  "plateLayerCount", "plateLayerMotionCount",
+                                  "plateLiveLayers", "plateLiveSplit", "plateLiveAnchor", "plateLiveAvailable")),
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
@@ -416,7 +414,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
                  request_load=None, request_monitor_download=None, request_file_download=None,
-                 request_plate_anchor=None,
+                 request_plate_anchor=None, request_plate_split=None,
                  download_failed=None, request_download_progress=None, cancel_file_download=None,
                  identity=None, state_store=None, persistence=None):
         super().__init__(output_controller, number_of_extruders)
@@ -424,7 +422,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             client, print_state, config, apply_config, bed_mesh
         # The follower's anchor seam (the pop-over's layer slider): the
         # model publishes the state, the coordinator owns the payload.
+        # The split seam is the progress slider's scrub, same shape.
         self._request_plate_anchor = request_plate_anchor
+        self._request_plate_split = request_plate_split
         self._identity = identity
         # The state file's owner (4.2.0, F11/A6): passed in as a
         # capability — 4.3.0's UI-state store consumes the same
@@ -501,7 +501,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # the frozen layer belongs to the file that was printing.
         self._follower_attached = True
         self._follower_layer_anchor = -1
+        self._follower_layer_split = None
         self._follower_job = None
+        # The plate surfaces' open states (the QML reports them): a
+        # closed popover freezes its payload keys.
+        self._follower_popover_open = False
+        self._picker_popover_open = False
         self._section_layout = state["sectionLayout"]
         # The UI-state store (4.3.0): the sections map's persistence
         # moves to the second consumer — the model's save payload
@@ -534,13 +539,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             _store_write(self._store, {"sections": dict(self._sections)}, delete=("temperatureChart",))
         else:
             self._chart_config = {}
-        # The plate's grace owner (4.6.0): witnessed exclusion stamps
-        # with the exact cursor rule; the job epoch clears on
-        # invalidation. _grace_seen tracks the last observed excluded
-        # set for the transition diffs.
-        self._grace = ExcludeGrace()
-        self._grace_seen = frozenset()
-        self._grace_seeded = False
         self._plate_cache_key = None
         self._plate_geometry = None
         self._plate_payload = None
@@ -803,63 +801,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def _on_auxiliary(self):
         self._schedule_publish()
 
-    def _window_settings(self):
-        """The restore-window knob from the per-printer record: an int
-        (0 = immediate restrict, 1..10 = windowed) or "never"."""
-        return normalise_restore_window(getattr(self._config(), "restore_window", 3))
-
     def _layer_index(self, snapshot):
         layer_info = getattr(snapshot, "layer", None)
         return getattr(layer_info, "index", None)
-
-    def _observe_grace(self, snapshot):
-        """The grace owner consumes the status transitions: exclusions
-        entering the set are witnessed (stamped with the index layer),
-        departures clear the stamp and confirm the in-flight latch."""
-        status = _exclude_status(self._data.snapshot)
-        excluded = frozenset(status.get("excluded_objects") or ())
-        current = status.get("current_object")
-        if not self._grace_seeded:
-            # The first observation of the epoch seeds the set WITHOUT
-            # stamps: exclusions that predate this session (a Cura
-            # restart mid-print, another client) must read unknown,
-            # never freshly-witnessed — the restart-lie. A fresh
-            # exclusion arriving after this observation is a genuine
-            # transition and gets witnessed normally.
-            self._grace_seeded = True
-            self._grace_seen = excluded
-            return
-        layer = self._layer_index(snapshot)
-        for name in excluded - self._grace_seen:
-            self._grace.note_exclusion(name, layer)
-            self._controls.confirm_exclusion(name)
-        for name in self._grace_seen - excluded:
-            self._grace.note_restored(name)
-            self._controls.confirm_restore(name)
-        self._grace.observe(current, excluded)
-        self._grace_seen = excluded
-
-    def _verdict(self, name, layer):
-        window_mode = self._window_settings()
-        return self._grace.evaluate(
-            name, window_mode=window_mode,
-            window_layers=window_mode if isinstance(window_mode, int) else 0,
-            layer=layer)
-
-    def _exclude_rows(self):
-        """The readout rows with the grace verdicts: every excluded row
-        carries its restore verdict and the policy's words."""
-        layer = self._layer_index(self._print_state())
-        rows = []
-        for row in self._peripheral_cache[1].get("excludeObjectItems") or ():
-            fresh = dict(row)
-            if fresh["excluded"]:
-                allowed, verdict, detail = self._verdict(fresh["name"], layer)
-                fresh["restoreAllowed"] = allowed
-                fresh["restoreVerdict"] = verdict
-                fresh["restoreDetail"] = detail
-            rows.append(fresh)
-        return rows
 
     def _plate_objects_value(self, visited):
         """The plate geometry: polygons memoised per job on the lane
@@ -883,7 +827,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         status = _exclude_status(self._data.snapshot)
         excluded = frozenset(status.get("excluded_objects") or ())
         current = status.get("current_object")
-        layer = self._layer_index(self._print_state())
         # The visited set comes from the PRINT snapshot (the monitor
         # snapshot never carries plate_visited — the green-printed
         # report: reading it there made passed always false).
@@ -901,11 +844,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             fresh["passed"] = (fresh["name"] in visited
                                and not fresh["excluded"]
                                and not fresh["current"])
-            if fresh["excluded"]:
-                allowed, verdict, detail = self._verdict(fresh["name"], layer)
-                fresh["restoreAllowed"] = allowed
-                fresh["restoreVerdict"] = verdict
-                fresh["restoreDetail"] = detail
             rows.append(fresh)
         payload = {"objects": rows,
                    "truncated": self._plate_geometry["truncated"],
@@ -931,9 +869,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def _on_invalidated(self):
         self._history.reset()
-        self._grace.clear()
-        self._grace_seen = frozenset()
-        self._grace_seeded = False
         self._plate_cache_key = None
         self._plate_geometry = None
         self._plate_payload = None
@@ -1178,39 +1113,87 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._peripheral_cache[0] != aux_key:
             self._peripheral_cache = (aux_key, peripheral_values(self._data.snapshot))
         values.update(self._peripheral_cache[1])
-        # The plate's verdicts and geometry (4.6.0): the grace owner
-        # consumes the status transitions here, then the readout rows
-        # and the map carry the verdicts and the policy's words.
-        self._observe_grace(snapshot)
-        values["excludeObjectItems"] = self._exclude_rows()
-        values["plateObjects"] = self._plate_objects_value(
-            getattr(snapshot, "plate_visited", frozenset()))
-        # The QML-facing support flag: a plain bool, so no binding
-        # ever needs to reach INTO the payload (the empty-plate live
-        # report — member access on the QVariant payload is not a
-        # binding worth trusting).
-        values["plateHasObjects"] = bool(values["plateObjects"]["objects"])
-        # The button's target label: the object the click would kill,
-        # published so the readout stays honest about the victim.
-        values["currentObjectName"] = str(
-            _exclude_status(self._data.snapshot).get("current_object") or "")
+        # The map's states are plain — included, current, excluded,
+        # and the passed fill (the objects the executed motions have
+        # touched on the current layer, read from the print snapshot).
+        # The picker's map gates the same way: the popover's open
+        # state or the section's expansion keeps it live, and a fully
+        # closed picker carries the last payload untouched.
+        if self._picker_popover_open or self._sections.get("plate", True) is not False:
+            values["plateObjects"] = self._plate_objects_value(
+                getattr(snapshot, "plate_visited", frozenset()))
+            # The QML-facing support flag: a plain bool, so no binding
+            # ever needs to reach INTO the payload (the empty-plate live
+            # report — member access on the QVariant payload is not a
+            # binding worth trusting).
+            values["plateHasObjects"] = bool(values["plateObjects"]["objects"])
+        else:
+            values["plateObjects"] = self._values.get("plateObjects", _EMPTY_PLATE)
+            values["plateHasObjects"] = self._values.get("plateHasObjects", False)
         # The follower face's payload, SPLIT (the perf ruling): the
         # static layers publish with the service's memoised identity
         # (QML never re-wraps the polylines on a quiet poll), and the
         # volatile split crosses as a bare number. The envelope
         # carries the availability and the reason.
+        # TWO payloads (the live request): the popover reads the
+        # frozen one while detached (the live one otherwise), and the
+        # MINI reads only the live one — the mini never detaches with
+        # the popover, and neither does the picker (its map is the
+        # plate_objects value, always the live layer's).
         progress = getattr(snapshot, "plate_progress", None)
-        values["plateLayers"] = progress["layers"] if progress is not None else {}
-        values["plateSplit"] = progress["split"] if progress is not None else None
-        # -1, never None: the anchor is an int property, and a None
-        # publish crashes the QVariant-to-int conversion (the live
-        # report's TypeError).
-        values["plateProgressAnchor"] = (progress["anchor"]
+        follower = getattr(snapshot, "plate_manual_progress", None)
+        popover = follower if follower is not None else progress
+        # The surfaces gate their payloads: a closed popover or a
+        # collapsed section never re-wraps a fresh payload, so the
+        # memo churn costs nothing while nothing renders (the live
+        # request). While gated the keys carry the last published
+        # objects; opening or expanding resumes the live values.
+        if self._follower_popover_open:
+            values["plateLayers"] = popover["layers"] if popover is not None else {}
+            values["plateSplit"] = popover["split"] if popover is not None else None
+            # The progress slider's range: the layer's own motion count (0
+            # while the payload has not landed — the slider reads dead).
+            try:
+                values["plateLayerMotionCount"] = int(popover["motionTotal"]) if popover is not None else 0
+            except (TypeError, ValueError, KeyError):
+                values["plateLayerMotionCount"] = 0
+            # -1, never None: the anchor is an int property, and a None
+            # publish crashes the QVariant-to-int conversion (the live
+            # report's TypeError).
+            values["plateProgressAnchor"] = (popover["anchor"]
+                                              if popover is not None and popover["anchor"] is not None else -1)
+            values["plateProgressAvailable"] = bool(popover is not None and popover.get("layers", {}).get("current") is not None)
+            if popover is None:
+                # No index at all: the reason stays empty — the face's
+                # download action owns that state (its idle line
+                # carries the offer). A non-empty reason is the
+                # exists-but-loading case, the plain label's own.
+                values["plateProgressReason"] = ""
+            elif not values["plateProgressAvailable"]:
+                values["plateProgressReason"] = "Loading layer…"
+            else:
+                values["plateProgressReason"] = ""
+        else:
+            values["plateLayers"] = self._values.get("plateLayers", {})
+            values["plateSplit"] = self._values.get("plateSplit")
+            values["plateLayerMotionCount"] = self._values.get("plateLayerMotionCount", 0)
+            values["plateProgressAnchor"] = self._values.get("plateProgressAnchor", -1)
+            values["plateProgressAvailable"] = self._values.get("plateProgressAvailable", False)
+            values["plateProgressReason"] = self._values.get("plateProgressReason", "")
+        # The mini's own view: the live payload, always (the live
+        # request). The section's collapse gates it — a collapsed
+        # mini never re-renders.
+        if self._sections.get("plateprogress", True) is not False:
+            values["plateLiveLayers"] = progress["layers"] if progress is not None else {}
+            values["plateLiveSplit"] = progress["split"] if progress is not None else None
+            values["plateLiveAnchor"] = (progress["anchor"]
                                           if progress is not None and progress["anchor"] is not None else -1)
-        values["plateProgressAvailable"] = bool(progress is not None and progress.get("layers", {}).get("current") is not None)
-        values["plateProgressReason"] = (
-            "" if progress is not None
-            else "No index yet — the download button builds one without loading the preview.")
+            values["plateLiveAvailable"] = bool(progress is not None and progress.get("layers", {}).get("current") is not None)
+        else:
+            values["plateLiveLayers"] = self._values.get("plateLiveLayers", {})
+            values["plateLiveSplit"] = self._values.get("plateLiveSplit")
+            values["plateLiveAnchor"] = self._values.get("plateLiveAnchor", -1)
+            values["plateLiveAvailable"] = self._values.get("plateLiveAvailable", False)
         # The layer slider's range: the index's own layer count. A
         # manual anchor outside the file is refused by the coordinator,
         # so this is the range the QML slider reads back.
@@ -1527,8 +1510,6 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     temperatureItems = value_property(QVariant, "temperatureItems", peripheralsChanged, [])
     fanItems = value_property(QVariant, "fanItems", peripheralsChanged, [])
     filamentSensorItems = value_property(QVariant, "filamentSensorItems", peripheralsChanged, [])
-    excludeObjectItems = value_property(QVariant, "excludeObjectItems", excludeObjectsChanged, [])
-    currentObjectName = value_property(str, "currentObjectName", excludeObjectsChanged, "")
     plateObjects = value_property(QVariant, "plateObjects", plateObjectsChanged, {"objects": [], "truncated": 0, "excludedCount": 0})
     plateDot = value_property(QVariant, "plateDot", plateObjectsChanged, {"x": 0.0, "y": 0.0, "valid": False})
     plateHasObjects = value_property(bool, "plateHasObjects", plateObjectsChanged, False)
@@ -1536,8 +1517,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     plateSplit = value_property(QVariant, "plateSplit", plateProgressChanged, None)
     plateProgressAnchor = value_property(int, "plateProgressAnchor", plateProgressChanged, -1)
     plateProgressAvailable = value_property(bool, "plateProgressAvailable", plateProgressChanged, False)
-    plateProgressReason = value_property(str, "plateProgressReason", plateProgressChanged, "No index yet — the download button builds one without loading the preview.")
+    plateProgressReason = value_property(str, "plateProgressReason", plateProgressChanged, "")
     plateLayerCount = value_property(int, "plateLayerCount", plateProgressChanged, 0)
+    plateLayerMotionCount = value_property(int, "plateLayerMotionCount", plateProgressChanged, 0)
+    plateLiveLayers = value_property(QVariant, "plateLiveLayers", plateProgressChanged, {})
+    plateLiveSplit = value_property(QVariant, "plateLiveSplit", plateProgressChanged, None)
+    plateLiveAnchor = value_property(int, "plateLiveAnchor", plateProgressChanged, -1)
+    plateLiveAvailable = value_property(bool, "plateLiveAvailable", plateProgressChanged, False)
     followerShowPrevious = value_property(bool, "followerShowPrevious", followerViewChanged, True)
     followerShowNext = value_property(bool, "followerShowNext", followerViewChanged, True)
     followerShowBase = value_property(bool, "followerShowBase", followerViewChanged, True)
@@ -2523,8 +2509,25 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     @pyqtSlot(str)
     def restoreObject(self, name): self._controls.restore(name)
 
-    @pyqtSlot()
-    def excludeCurrent(self): self._controls.exclude_current()
+    @pyqtSlot(bool)
+    def setFollowerPopoverOpen(self, popover_open):
+        """The popover's open state: closed freezes the follower's
+        payload keys on their last values, open resumes them (the live
+        request — a closed surface must not re-wrap per poll)."""
+        popover_open = bool(popover_open)
+        if popover_open == self._follower_popover_open:
+            return
+        self._follower_popover_open = popover_open
+        self._publish()
+
+    @pyqtSlot(bool)
+    def setPickerPopoverOpen(self, popover_open):
+        """The picker popover's open state, the same gate."""
+        popover_open = bool(popover_open)
+        if popover_open == self._picker_popover_open:
+            return
+        self._picker_popover_open = popover_open
+        self._publish()
     @pyqtSlot(str, result=bool)
     def sendConsoleCommand(self, text): return self._console.send(text)
     @pyqtSlot()
@@ -2702,6 +2705,12 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if self._request_plate_anchor is not None:
             self._request_plate_anchor(anchor)
 
+    def _plate_split_request(self, motions):
+        """The coordinator's scrub seam: a motion count the frozen
+        layer draws up to, None for the whole base."""
+        if self._request_plate_split is not None:
+            self._request_plate_split(motions)
+
     def _observe_follower_job(self, job):
         """A new print re-attaches the follower: the frozen layer
         belonged to the file that was printing."""
@@ -2711,21 +2720,28 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if not self._follower_attached:
             self._follower_attached = True
             self._follower_layer_anchor = -1
+            self._follower_layer_split = None
             self._plate_anchor_request(None)
+            self._plate_split_request(None)
 
     @pyqtSlot(bool)
     def setFollowerAttached(self, attached):
         """Attach/detach: detached freezes the anchor on the layer the
-        face is showing, attached rejoins the live print. A refused
-        detach (no layer to hold) leaves the follower attached rather
-        than publishing a state the coordinator cannot serve."""
+        face is showing — and seeds the scrub with the live split, so
+        the frozen layer keeps drawing exactly where the print stood
+        (the live report: a detach that changed nothing read as dead).
+        Attached rejoins the live print and abandons the scrub. A
+        refused detach (no layer to hold) leaves the follower attached
+        rather than publishing a state the coordinator cannot serve."""
         attached = bool(attached)
         if attached == self._follower_attached:
             return
         self._follower_attached = attached
         if attached:
             self._follower_layer_anchor = -1
+            self._follower_layer_split = None
             self._plate_anchor_request(None)
+            self._plate_split_request(None)
         else:
             frozen = self._follower_layer_anchor
             if frozen < 0:
@@ -2734,7 +2750,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 frozen = int(self._values.get("plateProgressAnchor", -1) or -1)
             if frozen >= 0:
                 self._follower_layer_anchor = frozen
+                seed = self._values.get("plateSplit")
+                if seed is not None and frozen == self._values.get("plateProgressAnchor"):
+                    # Detaching FROM the live layer: continue the fill
+                    # where it stood. A seek to another layer carries
+                    # no split — the scrub belongs to the live layer.
+                    self._follower_layer_split = int(seed)
+                else:
+                    self._follower_layer_split = None
                 self._plate_anchor_request(frozen)
+                self._plate_split_request(self._follower_layer_split)
             else:
                 # No layer to freeze (no index): a detach that would
                 # change nothing is refused rather than published as a
@@ -2747,7 +2772,9 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def setFollowerLayerAnchor(self, layer):
         """The layer slider's committed value (the debounced request):
         a manual layer IS a detach — the face cannot follow the print
-        and hold another layer at once."""
+        and hold another layer at once. A seek lands the layer at
+        100% — the scrub starts at the whole layer (the live
+        request), so the FULL marker rides the split seam."""
         try:
             layer = int(layer)
         except (TypeError, ValueError):
@@ -2756,11 +2783,39 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             return
         if self._follower_attached:
             self._follower_attached = False
-        if self._follower_layer_anchor == layer:
+        if self._follower_layer_anchor == layer and self._follower_layer_split == -1:
             self._publish()
             return
         self._follower_layer_anchor = layer
+        self._follower_layer_split = -1
         self._plate_anchor_request(layer)
+        self._plate_split_request(-1)
+        self._publish()
+
+    @pyqtSlot(int)
+    def setFollowerLayerProgress(self, motions):
+        """The progress slider's committed value (the debounced
+        request): the scrub is a within-layer seek. From the LIVE
+        layer it is itself the detach — the layer freezes where the
+        print stood and the fill rides the scrubbed boundary."""
+        try:
+            motions = int(motions)
+        except (TypeError, ValueError):
+            return
+        total = int(self._values.get("plateLayerMotionCount", 0) or 0)
+        motions = max(0, min(motions, total))
+        if self._follower_attached:
+            frozen = int(self._values.get("plateProgressAnchor", -1) or -1)
+            if frozen < 0:
+                return
+            self._follower_attached = False
+            self._follower_layer_anchor = frozen
+            self._plate_anchor_request(frozen)
+        if self._follower_layer_split == motions:
+            self._publish()
+            return
+        self._follower_layer_split = motions
+        self._plate_split_request(motions)
         self._publish()
 
     @pyqtSlot(str, bool)

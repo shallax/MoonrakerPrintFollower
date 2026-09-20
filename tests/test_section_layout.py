@@ -43,8 +43,8 @@ class SectionLayoutTableTests(unittest.TestCase):
     def test_table_partitions_the_section_id_literals(self):
         ids = [section for pane in PANE_NAMES for section in PANE_SECTION_ORDER[pane]]
         counts = _section_id_counts()
-        self.assertEqual(len(ids), 24)
-        self.assertEqual(len(set(ids)), 24, "one id sits in two panes")
+        self.assertEqual(len(ids), 23)
+        self.assertEqual(len(set(ids)), 23, "one id sits in two panes")
         self.assertEqual(set(ids), set(counts), "the table drifted from the QML literals")
         for section, count in counts.items():
             self.assertEqual(count, 1, section)
@@ -63,7 +63,7 @@ class NormaliseSectionLayoutTests(unittest.TestCase):
         stored = {"controls": {"order": ["print", "ghost", "save"], "hidden": ["ghost", "save"]}}
         normalised = normalise_section_layout(stored)
         order = normalised["controls"]["order"]
-        self.assertEqual(len(order), 14)
+        self.assertEqual(len(order), 13)
         self.assertEqual(set(order), set(PANE_SECTION_ORDER["controls"]))
         self.assertEqual(order[0], "print")
         self.assertEqual(order[1], "save")

@@ -142,9 +142,12 @@ ColumnLayout {
                 border.width: 1 * screenScaleFactor
                 border.color: UM.Theme.getColor("lining")
                 Rectangle {
-                    // Thirds with a scheduled pause, halves without,
-                    // the whole height without layer info (the live
+                    // The overall print fill owns the BOTTOM: thirds
+                    // with a scheduled pause, halves without, the
+                    // whole height without layer info (the live
                     // ruling).
+                    anchors.left: parent.left
+                    anchors.bottom: parent.bottom
                     height: parent.height * (root.printerModel != null && root.printerModel.monitorLayerProgress >= 0 ? (root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5) : 1.0)
                     // monitorProgress is a PERCENTAGE (0..100); the
                     // layer value is already 0..1.
@@ -159,11 +162,16 @@ ColumnLayout {
                     // poll and landed its invalidation inside the
                     // column's polish (the 4.5.0 live find).
                     objectName: "nextPauseFill"
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
                     height: parent.height / 3
                     width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.nextPauseFraction : 0))
                     color: MoonrakerTheme.neonOrange
                 }
                 Rectangle {
+                    // The current layer's fill owns the TOP.
+                    anchors.left: parent.left
+                    anchors.top: parent.top
                     height: parent.height * (root.printerModel != null && root.printerModel.nextPauseFraction >= 0 ? 1 / 3 : 0.5)
                     width: parent.width * Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.monitorLayerProgress : 0))
                     color: UM.Theme.getColor("primary")

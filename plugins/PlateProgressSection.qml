@@ -43,11 +43,11 @@ ColumnLayout {
                 compact: true
                 printerModel: root.printerModel
                 progress: root.printerModel != null ? ({
-                        "available": root.printerModel.plateProgressAvailable,
-                        "reason": root.printerModel.plateProgressReason,
-                        "layers": root.printerModel.plateLayers,
-                        "split": root.printerModel.plateSplit,
-                        "anchor": root.printerModel.plateProgressAnchor,
+                        "available": root.printerModel.plateLiveAvailable,
+                        "reason": "",
+                        "layers": root.printerModel.plateLiveLayers,
+                        "split": root.printerModel.plateLiveSplit,
+                        "anchor": root.printerModel.plateLiveAnchor,
                         "method": "motion index"
                     }) : null
                 dot: root.printerModel != null ? root.printerModel.plateDot : null
@@ -59,11 +59,13 @@ ColumnLayout {
                 showBase: root.printerModel != null ? root.printerModel.followerShowBase : true
                 showTravels: root.printerModel != null ? root.printerModel.followerShowTravels : false
                 lineScale: root.printerModel != null ? root.printerModel.followerLineScale : 0.7
-                // The follow state, read-only here (the mini carries no
-                // controls): the same values the pop-over reads.
-                attached: root.printerModel == null || root.printerModel.followerAttached
+                // The mini is a THUMBNAIL of the live print, always:
+                // it never detaches with the popover, and it keeps its
+                // toolhead dot whatever the popover does (the live
+                // request).
+                attached: true
                 keepCentred: root.printerModel != null ? root.printerModel.followerKeepCentred : false
-                opacity: root.printerModel != null && root.printerModel.plateProgressAvailable ? 1 : 0
+                opacity: root.printerModel != null && root.printerModel.plateLiveAvailable ? 1 : 0
                 MouseArea {
                     anchors.fill: parent
                     onClicked: root.popOverToggleRequested("plateprogress")
@@ -72,7 +74,7 @@ ColumnLayout {
 
             UM.Label {
                 anchors.centerIn: parent
-                opacity: root.printerModel == null || !root.printerModel.plateProgressAvailable ? 1 : 0
+                opacity: root.printerModel == null || !root.printerModel.plateLiveAvailable ? 1 : 0
                 text: "The follower appears once the print's index is built — open the pop-over to build it."
                 color: UM.Theme.getColor("text_inactive")
                 font: UM.Theme.getFont("small")

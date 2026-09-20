@@ -30,9 +30,14 @@ Component {
         onOpenPopOverChanged: {
             // The chart pop-over's hydration gate (the 2026-09-19
             // review's K): the model builds the full temperature
-            // payload only while the pop-over is open.
+            // payload only while the pop-over is open. The plate
+            // popovers report their own open states the same way —
+            // a closed surface freezes its payload keys (the live
+            // request).
             if (root.printer != null) {
                 root.printer.setChartOpen(openPopOver === "chart");
+                root.printer.setFollowerPopoverOpen(openPopOver === "plateprogress");
+                root.printer.setPickerPopoverOpen(openPopOver === "plate");
             }
         }
 
@@ -2981,14 +2986,16 @@ Component {
 
                 UM.Label {
                     // The permanent single line (the mesh "hover row"
-                    // idiom): counter > hover > selection > hint.
-                    // Never wraps: a two-line hint collapsed back to
-                    // one line on hover and reflowed the canvas (the
-                    // live report — the canvas must never reflow).
+                    // idiom): counter > hover (name and state) > hint.
+                    // NoWrap is the reflow lock: the theme label
+                    // defaults to wrapping, and a wrapped verdict
+                    // grew the row and reflowed the canvas above
+                    // (the live report).
                     Layout.fillWidth: true
-                    text: plateFace.clickProgress >= 2 ? "Click again to " + plateFace.pendingAction + " (" + plateFace.clickProgress + " of 3)" : (plateFace.hoveredName !== "" ? plateFace.hoveredName : (plateFace.selectedName !== "" ? plateFace.selectionDetail() : "Triple-click to exclude, or restore an excluded object"))
+                    wrapMode: Text.NoWrap
+                    text: plateFace.clickProgress >= 2 ? "Click again to " + plateFace.pendingAction + " (" + plateFace.clickProgress + " of 3)" : (plateFace.hoveredName !== "" ? plateFace.hoverDetail() : "Triple-click to exclude, or restore an excluded object")
                     elide: Text.ElideRight
-                    color: plateFace.hoveredName !== "" || plateFace.selectedName !== "" ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
+                    color: plateFace.hoveredName !== "" ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
                     horizontalAlignment: Text.AlignHCenter
                 }
 
@@ -3056,23 +3063,6 @@ Component {
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
-                    Row {
-                        spacing: 4 * screenScaleFactor
-                        Rectangle {
-                            width: 10 * screenScaleFactor
-                            height: width
-                            radius: width / 2
-                            color: "transparent"
-                            border.color: MoonrakerTheme.outOfWindowGrey
-                            border.width: 2
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        UM.Label {
-                            text: "excluded — restore closed"
-                            color: UM.Theme.getColor("text_inactive")
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
                 }
                 UM.Label {
                     // The outcome slot: the gesture receipts land here —
@@ -3111,6 +3101,10 @@ Component {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 spacing: UM.Theme.getSize("thin_margin").height
+                // The keyboard path: the layer slider takes the focus
+                // on open, so the arrows drive it immediately (the
+                // live request).
+                Component.onCompleted: layerSlider.forceActiveFocus()
 
                 PlateProgressFace {
                     id: progressFace
@@ -3132,7 +3126,12 @@ Component {
                     // rebinds and re-raster.
                     showPrevious: root.printer != null ? root.printer.followerShowPrevious : true
                     showNext: root.printer != null ? root.printer.followerShowNext : true
-                    showBase: root.printer != null ? root.printer.followerShowBase : true
+                    // The detached face draws the frozen layer per the
+                    // progress slider's position, never as a whole grey
+                    // "pending" base — so the base is the live view's
+                    // own option and hides while detached (the live
+                    // request).
+                    showBase: progressFace.attached && (root.printer != null ? root.printer.followerShowBase : true)
                     showTravels: root.printer != null ? root.printer.followerShowTravels : false
                     lineScale: root.printer != null ? root.printer.followerLineScale : 0.7
                     // The follow state and the centred-follow option
@@ -3145,30 +3144,9 @@ Component {
                 // jump is one shot onto the dot's bed position, the
                 // option keeps it there. The jump is disabled with
                 // nothing to centre on; the option is a preference and
-                // persists, so it stays live.
-                Flow {
-                    Layout.fillWidth: true
-                    spacing: UM.Theme.getSize("narrow_margin").height
-                    Cura.SecondaryButton {
-                        id: jumpButton
-                        objectName: "moonrakerFollowerJump"
-                        fixedWidthMode: true
-                        width: 132 * screenScaleFactor
-                        text: "Jump to toolhead"
-                        enabled: progressFace.dotAvailable()
-                        onClicked: progressFace.centreOnToolhead()
-                    }
-                    UM.CheckBox {
-                        objectName: "moonrakerFollowerKeepCentred"
-                        text: "Keep toolhead centred"
-                        checked: root.printer != null ? root.printer.followerKeepCentred : false
-                        onToggled: {
-                            if (root.printer != null) {
-                                root.printer.setFollowerKeepCentred(checked);
-                            }
-                        }
-                    }
-                }
+                // persists, so it stays live. At 100% the whole bed
+                // fits and both are moot — they hide in place (the
+                // live request), the preference itself is untouched.
 
                 // The checkbox's OWN text label (the live reports: a
                 // separate Label neither toggles on click nor hugs the
@@ -3199,6 +3177,7 @@ Component {
                     }
                     UM.CheckBox {
                         text: "Pending"
+                        visible: progressFace.attached
                         checked: root.printer != null ? root.printer.followerShowBase : true
                         onToggled: {
                             if (root.printer != null) {
@@ -3374,38 +3353,47 @@ Component {
                 }
 
                 // The layer selection (the 4.6.0 request): the slider
-                // seeks the anchor the face draws. Attached, it shows
-                // the live layer and is DISABLED — the face follows the
-                // print, and a seek would detach it (the chosen rule).
-                // A seek commits only once the drag quietens: every
-                // step rebuilds a layer window and rehydrates it, so a
-                // release commits at once and a drag settles first.
+                // seeks the anchor the face draws. A seek from the
+                // LIVE layer is itself the detach — the model freezes
+                // on the committed layer (the live request: the slider
+                // must never sit dead while attached). A seek commits
+                // only once the drag quietens: every step rebuilds a
+                // layer window and rehydrates it, so a release commits
+                // at once and a drag settles first.
+                // The attach/detach owns its own row, right-aligned
+                // (the live request): out of the slider row, so the
+                // two sliders below share their full length. The
+                // toolhead controls share this row — hiding them in
+                // their own row reflowed the face whenever the zoom
+                // crossed 100%; here the row persists via the attach
+                // button and they hide in place.
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: UM.Theme.getSize("thin_margin").width
-                    UM.Label {
-                        text: "Layer"
-                        color: UM.Theme.getColor("text_inactive")
-                    }
-                    OutlineSlider {
-                        id: layerSlider
-                        objectName: "moonrakerFollowerLayerSlider"
+                    Item {
                         Layout.fillWidth: true
-                        from: 0
-                        to: Math.max(0, (root.printer != null ? root.printer.plateLayerCount : 0) - 1)
-                        stepSize: 1
-                        enabled: root.printer != null && !root.printer.followerAttached && root.printer.plateLayerCount > 0
-                        onValueTuning: layerSeekTimer.restart()
-                        onValueCommitted: {
-                            layerSeekTimer.stop();
-                            commitLayerSeek();
-                        }
                     }
-                    UM.Label {
-                        objectName: "moonrakerFollowerLayerReadout"
-                        width: 64 * screenScaleFactor
-                        horizontalAlignment: Text.AlignRight
-                        text: layerReadout()
+                    Cura.SecondaryButton {
+                        id: jumpButton
+                        objectName: "moonrakerFollowerJump"
+                        visible: progressFace.viewScale > 1.0 && progressFace.attached
+                        text: "Jump to toolhead"
+                        enabled: progressFace.dotAvailable()
+                        onClicked: progressFace.centreOnToolhead()
+                    }
+                    UM.CheckBox {
+                        objectName: "moonrakerFollowerKeepCentred"
+                        visible: progressFace.viewScale > 1.0 && progressFace.attached
+                        text: "Keep toolhead centred"
+                        // The follow needs a live dot: detached there is
+                        // nothing to centre on (the preference itself
+                        // persists unchecked).
+                        enabled: progressFace.dotAvailable()
+                        checked: root.printer != null ? root.printer.followerKeepCentred : false
+                        onToggled: {
+                            if (root.printer != null) {
+                                root.printer.setFollowerKeepCentred(checked);
+                            }
+                        }
                     }
                     Cura.SecondaryButton {
                         id: attachButton
@@ -3423,31 +3411,100 @@ Component {
                         }
                     }
                 }
-
-                // The within-layer progress (the 4.6.0 request): how
-                // far through the printing layer the head is, drawn as
-                // the preview screen's slim bar. DISPLAY ONLY — the
-                // split stays the print's own.
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: UM.Theme.getSize("thin_margin").width
                     UM.Label {
+                        // The reserved label column: both slider rows
+                        // share it, so the tracks line up exactly over
+                        // each other (the live request).
+                        Layout.preferredWidth: 100 * screenScaleFactor
+                        Layout.maximumWidth: 100 * screenScaleFactor
+                        text: "Layer"
+                        color: UM.Theme.getColor("text_inactive")
+                        elide: Text.ElideRight
+                    }
+                    OutlineSlider {
+                        id: layerSlider
+                        objectName: "moonrakerFollowerLayerSlider"
+                        Layout.fillWidth: true
+                        from: 0
+                        to: Math.max(0, (root.printer != null ? root.printer.plateLayerCount : 0) - 1)
+                        stepSize: 1
+                        enabled: root.printer != null && root.printer.plateLayerCount > 0
+                        onValueTuning: layerSeekTimer.restart()
+                        onValueCommitted: {
+                            layerSeekTimer.stop();
+                            commitLayerSeek();
+                        }
+                    }
+                    UM.Label {
+                        objectName: "moonrakerFollowerLayerReadout"
+                        Layout.preferredWidth: 64 * screenScaleFactor
+                        Layout.maximumWidth: 64 * screenScaleFactor
+                        horizontalAlignment: Text.AlignRight
+                        text: layerReadout()
+                    }
+                }
+
+                // The within-layer progress (the 4.6.0 request): a
+                // SCRUBBER, not a display bar — the slider plays the
+                // frozen layer through manually (the live request).
+                // Attached it mirrors the live split; a scrub is
+                // itself the detach (the layer slider's rule).
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: UM.Theme.getSize("thin_margin").width
+                    UM.Label {
+                        // The same reserved column as the layer row:
+                        // the two tracks align exactly (the live
+                        // request).
+                        Layout.preferredWidth: 100 * screenScaleFactor
+                        Layout.maximumWidth: 100 * screenScaleFactor
                         text: "Layer progress"
                         color: UM.Theme.getColor("text_inactive")
+                        elide: Text.ElideRight
                     }
-                    OutlineProgressBar {
+                    OutlineSlider {
+                        id: layerProgressSlider
                         objectName: "moonrakerFollowerLayerProgress"
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 8 * screenScaleFactor
                         from: 0
-                        to: 1
-                        value: root.printer != null && root.printer.monitorLayerProgress >= 0 ? root.printer.monitorLayerProgress : 0
+                        to: Math.max(0, root.printer != null ? root.printer.plateLayerMotionCount : 0)
+                        // The keyboard nudge steps a PERCENT of the
+                        // layer (a single motion over tens of
+                        // thousands is invisible — the live report);
+                        // the pointer keeps the full 1-motion
+                        // granularity.
+                        stepSize: layerProgressSlider.activeFocus ? Math.max(1, Math.round((root.printer != null ? root.printer.plateLayerMotionCount : 0) / 100)) : 1
+                        enabled: root.printer != null && root.printer.plateProgressAvailable && root.printer.plateLayerMotionCount > 0
+                        // The scrub commits on every drag tick — the
+                        // fill tracks the thumb at frame rate (the
+                        // live request), and the release commits once
+                        // more for the final position.
+                        onValueTuning: commitProgressSeek()
+                        onValueCommitted: commitProgressSeek()
                     }
                     UM.Label {
                         objectName: "moonrakerFollowerLayerProgressReadout"
-                        width: 40 * screenScaleFactor
+                        // The same reserved width as the layer row's
+                        // readout: the tracks stay equal.
+                        Layout.preferredWidth: 64 * screenScaleFactor
+                        Layout.maximumWidth: 64 * screenScaleFactor
                         horizontalAlignment: Text.AlignRight
-                        text: root.printer != null && root.printer.monitorLayerProgress >= 0 ? Math.round(root.printer.monitorLayerProgress * 100) + "%" : "—"
+                        text: {
+                            // An expression, not a call: the readout
+                            // must re-bind on the split and the count
+                            // (the live report — a call froze it and
+                            // an unset count read NaN%).
+                            var total = root.printer != null ? root.printer.plateLayerMotionCount : 0;
+                            var split = root.printer != null ? root.printer.plateSplit : null;
+                            if (total <= 0 || split == null || isNaN(split) || isNaN(total)) {
+                                return "—";
+                            }
+                            var pct = Math.round(Math.max(0, split) / total * 100);
+                            return isNaN(pct) ? "—" : pct + "%";
+                        }
                     }
                 }
 
@@ -3477,6 +3534,18 @@ Component {
                     }
                     return (Math.round(index) + 1) + " / " + root.printer.plateLayerCount;
                 }
+                function syncProgressSlider() {
+                    if (layerProgressSlider.interacting) {
+                        return;
+                    }
+                    var split = root.printer != null ? root.printer.plateSplit : null;
+                    layerProgressSlider.value = split != null ? Math.max(0, split) : 0;
+                }
+                function commitProgressSeek() {
+                    if (root.printer != null) {
+                        root.printer.setFollowerLayerProgress(layerProgressSlider.selectedValue());
+                    }
+                }
                 Timer {
                     id: layerSeekTimer
                     interval: 250
@@ -3486,6 +3555,7 @@ Component {
                     target: root.printer
                     function onPlateProgressChanged() {
                         syncLayerSlider();
+                        syncProgressSlider();
                     }
                     function onFollowerViewChanged() {
                         syncLayerSlider();

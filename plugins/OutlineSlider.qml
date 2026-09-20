@@ -85,8 +85,12 @@ Slider {
             if (!control.handlePress) {
                 return;
             }
-            var steps = Math.round((mouse.x - control.leftPadding) / Math.max(1, control.availableWidth) * (control.to - control.from));
-            control.value = Math.max(control.from, Math.min(control.to, control.from + steps * control.stepSize));
+            // The drag maps the pointer straight onto the range —
+            // never through stepSize, which the keyboard owns (a
+            // keyboard-sized step here double-scaled the drag and a
+            // handle click jumped the value — the live report).
+            control.value = control.from + (mouse.x - control.leftPadding) / Math.max(1, control.availableWidth) * (control.to - control.from);
+            control.value = Math.max(control.from, Math.min(control.to, control.value));
             if (Math.abs(control.value - control.valueBeforePress) > 0.001) {
                 control.handleDragged = true;
                 control.valueTuning(control.selectedValue());

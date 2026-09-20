@@ -60,7 +60,6 @@ MESH_SECTION_QML = (PLUGINS / "MeshSection.qml").read_text(encoding="utf-8")
 TEMP_HISTORY_SECTION_QML = (PLUGINS / "TempHistorySection.qml").read_text(encoding="utf-8")
 FANS_INFO_SECTION_QML = (PLUGINS / "FansInfoSection.qml").read_text(encoding="utf-8")
 FILAMENT_SECTION_QML = (PLUGINS / "FilamentSection.qml").read_text(encoding="utf-8")
-OBJECTS_SECTION_QML = (PLUGINS / "ObjectsSection.qml").read_text(encoding="utf-8")
 TEMPS_SECTION_QML = (PLUGINS / "TempsSection.qml").read_text(encoding="utf-8")
 SYSTEM_INFO_SECTION_QML = (PLUGINS / "SystemInfoSection.qml").read_text(encoding="utf-8")
 MCUS_SECTION_QML = (PLUGINS / "McusSection.qml").read_text(encoding="utf-8")
@@ -85,7 +84,7 @@ SECTION_IDS = {
     "print", "setup", "toolhead", "macros", "profiles", "tuning",
     "fans", "leds", "pwm", "power", "system", "save",
     # Information and Printer status panes
-    "meshmap", "job", "temps", "fansinfo", "filament", "objects",
+    "meshmap", "job", "temps", "fansinfo", "filament",
     "systeminfo", "mcus", "temphistory",
     # The Monitor's own surface
     "console", "fileManager",
@@ -95,7 +94,7 @@ SECTION_IDS = {
 class MonitorModelContractTests(unittest.TestCase):
     def test_single_qt_model_exposes_dashboard_features(self):
         for token in ("monitorEta", "monitorFinish", "temperatureItems", "fanItems", "filamentSensorItems",
-            "excludeObjectItems", "powerDevices", "pausePrint", "resumePrint", "cancelPrint", "excludeObject",
+            "powerDevices", "pausePrint", "resumePrint", "cancelPrint", "excludeObject",
             "setPowerDevice", "hostLoad", "memoryAvailable", "cpuTemperature", "klipperVersion", "moonrakerVersion",
             "mcuSummary", "macroNames", "runMacro", "temperaturePresetNames", "applyTemperaturePreset",
             "homeAll", "runQuadGantryLevel", "calibrateBedMesh", "macroParameterDefinitions", "temperaturePresetItems",
@@ -215,9 +214,9 @@ class MonitorModelContractTests(unittest.TestCase):
         # so the pin is the only guard on the persistence vocabulary).
         # The section-id literals ride their components (4.3.0): the
         # extraction scans the hosts AND every extracted section file.
-        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML + FANS_INFO_SECTION_QML + FILAMENT_SECTION_QML + OBJECTS_SECTION_QML + TEMPS_SECTION_QML + SYSTEM_INFO_SECTION_QML + MCUS_SECTION_QML + JOB_SECTION_QML))
+        literals = set(re.findall(r'sectionId: "([^"]+)"', DASHBOARD_QML + MONITOR_QML + PRINT_SECTION_QML + SETUP_SECTION_QML + TOOLHEAD_SECTION_QML + MACROS_SECTION_QML + PROFILES_SECTION_QML + TUNING_SECTION_QML + FANS_SECTION_QML + LEDS_SECTION_QML + PWM_SECTION_QML + POWER_SECTION_QML + SYSTEM_SECTION_QML + SAVE_SECTION_QML + FILE_MANAGER_SECTION_QML + MESH_SECTION_QML + TEMP_HISTORY_SECTION_QML + FANS_INFO_SECTION_QML + FILAMENT_SECTION_QML + TEMPS_SECTION_QML + SYSTEM_INFO_SECTION_QML + MCUS_SECTION_QML + JOB_SECTION_QML))
         self.assertEqual(literals, SECTION_IDS - {"console"})
-        self.assertEqual(len(SECTION_IDS), 23)
+        self.assertEqual(len(SECTION_IDS), 22)
         self.assertIn('sectionExpandedMap["console"]', MONITOR_QML)
         # The extraction's header contract (the re-reviews' zero-width
         # catch, probe-verified): every section component's root is a
@@ -233,7 +232,7 @@ class MonitorModelContractTests(unittest.TestCase):
                             POWER_SECTION_QML, SYSTEM_SECTION_QML, SAVE_SECTION_QML,
                             FILE_MANAGER_SECTION_QML, MESH_SECTION_QML,
                             TEMP_HISTORY_SECTION_QML, FANS_INFO_SECTION_QML,
-                            FILAMENT_SECTION_QML, OBJECTS_SECTION_QML, TEMPS_SECTION_QML,
+                            FILAMENT_SECTION_QML, TEMPS_SECTION_QML,
                             SYSTEM_INFO_SECTION_QML, MCUS_SECTION_QML, JOB_SECTION_QML):
             self.assertIn("ColumnLayout {\n    id: root\n    spacing: 0", section_qml)
             header = section_qml[section_qml.index("CollapsibleSectionHeader {"):
@@ -250,11 +249,6 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertLess(system_at, mcus_at)
         pane_close = MONITOR_QML.index("                    }\n                }\n", system_at)
         self.assertLess(mcus_at, pane_close)
-        # The moved readout leads the controls pane's print section
-        # in the DASHBOARD (the 4.6.0 placement).
-        objects_at = DASHBOARD_QML.index("ObjectsSection {")
-        print_at = DASHBOARD_QML.index("PrintSection {")
-        self.assertLess(objects_at, print_at)
         # The mesh section's refresh rides an accessor — the monitor's
         # handler calls it through the instantiation id, never the
         # component's own id (the dangling-id fix).
@@ -523,7 +517,6 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(TEMP_HISTORY_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(FANS_INFO_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(FILAMENT_SECTION_QML.count("CollapsibleSectionHeader"), 1)
-        self.assertEqual(OBJECTS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(TEMPS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(SYSTEM_INFO_SECTION_QML.count("CollapsibleSectionHeader"), 1)
         self.assertEqual(MCUS_SECTION_QML.count("CollapsibleSectionHeader"), 1)
@@ -547,12 +540,11 @@ class MonitorModelContractTests(unittest.TestCase):
                          + TEMP_HISTORY_SECTION_QML.count("CollapsibleSectionHeader")
                          + FANS_INFO_SECTION_QML.count("CollapsibleSectionHeader")
                          + FILAMENT_SECTION_QML.count("CollapsibleSectionHeader")
-                         + OBJECTS_SECTION_QML.count("CollapsibleSectionHeader")
                          + TEMPS_SECTION_QML.count("CollapsibleSectionHeader")
                          + SYSTEM_INFO_SECTION_QML.count("CollapsibleSectionHeader")
                          + MCUS_SECTION_QML.count("CollapsibleSectionHeader")
                          + JOB_SECTION_QML.count("CollapsibleSectionHeader")
-                         + MONITOR_QML.count("CollapsibleSectionHeader"), 22)
+                         + MONITOR_QML.count("CollapsibleSectionHeader"), 21)
         self.assertEqual(DASHBOARD_QML.count('sectionIcon: "'), 0)
         self.assertEqual(PRINT_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(SETUP_SECTION_QML.count('sectionIcon: "'), 1)
@@ -571,7 +563,6 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertEqual(TEMP_HISTORY_SECTION_QML.count('sectionIcon: "'), 0)  # The plugin glyph url
         self.assertEqual(FANS_INFO_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(FILAMENT_SECTION_QML.count('sectionIcon: "'), 1)
-        self.assertEqual(OBJECTS_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(TEMPS_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(SYSTEM_INFO_SECTION_QML.count('sectionIcon: "'), 1)
         self.assertEqual(MCUS_SECTION_QML.count('sectionIcon: "'), 1)
@@ -593,12 +584,11 @@ class MonitorModelContractTests(unittest.TestCase):
                          + MESH_SECTION_QML.count('sectionIcon: "')
                          + FANS_INFO_SECTION_QML.count('sectionIcon: "')
                          + FILAMENT_SECTION_QML.count('sectionIcon: "')
-                         + OBJECTS_SECTION_QML.count('sectionIcon: "')
                          + TEMPS_SECTION_QML.count('sectionIcon: "')
                          + SYSTEM_INFO_SECTION_QML.count('sectionIcon: "')
                          + MCUS_SECTION_QML.count('sectionIcon: "')
                          + JOB_SECTION_QML.count('sectionIcon: "')
-                         + MONITOR_QML.count('sectionIcon: "'), 19)
+                         + MONITOR_QML.count('sectionIcon: "'), 18)
         # The File manager section (Snapshot 0) leads the controls pane
         # and opens the popup; it uses the plugin glyph, so the
         # sectionIcon: count is unchanged.
@@ -1280,6 +1270,13 @@ class MonitorModelContractTests(unittest.TestCase):
         # The Print-job section's bar is the stacked Rectangle (the
         # 2026-09-17 ruling) — no themed bar, the rule's intent.
         self.assertIn("THE STACKED BAR", JOB_SECTION_QML)
+        # The three fills own their stack positions: the print fill
+        # the bottom, the pause the middle, the layer the top (the
+        # live report: the fills piled at the top and the bar read
+        # broken whenever the values moved).
+        self.assertIn("anchors.bottom: parent.bottom", JOB_SECTION_QML)
+        self.assertIn("anchors.verticalCenter: parent.verticalCenter", JOB_SECTION_QML)
+        self.assertIn("anchors.top: parent.top", JOB_SECTION_QML)
         self.assertEqual(DASHBOARD_QML.count("OutlineSlider {"), 0)
         self.assertGreaterEqual(TUNING_SECTION_QML.count("OutlineSlider {"), 2)
         self.assertGreaterEqual(FANS_SECTION_QML.count("OutlineSlider {"), 1)
@@ -2907,7 +2904,8 @@ class MonitorQtTests(unittest.TestCase):
         coordinator._snapshot = replace(
             coordinator._snapshot,
             plate_progress={"layers": {"prev": None, "current": {"classes": {}}, "next": None},
-                            "split": 0, "anchor": anchor, "method": "motion index"},
+                            "split": 0, "anchor": anchor, "method": "motion index",
+                            "motionTotal": 100},
             plate_layer_count=count)
         model._publish()
 
@@ -2918,6 +2916,7 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(model.followerLayerAnchor, -1)
         self.assertEqual(model.plateLayerCount, 0)
         self._with_layers(model, anchor=7, count=12)
+        model.setFollowerPopoverOpen(True)
         self.assertEqual(model.plateProgressAnchor, 7)
         self.assertEqual(model.plateLayerCount, 12)
 
@@ -2925,21 +2924,49 @@ class MonitorQtTests(unittest.TestCase):
         model = self.monitor()
         coordinator = self.follower._runtime.coordinator
         self._with_layers(model, anchor=7, count=12)
+        model.setFollowerPopoverOpen(True)
         model.setFollowerAttached(False)
         self.assertFalse(model.followerAttached)
         self.assertEqual(model.followerLayerAnchor, 7)
         self.assertEqual(coordinator._plate_anchor, 7,
                          "the frozen layer's window was never asked for")
+        # Detaching from the live layer seeds the scrub with the split
+        # the face stood at — the frozen view never jumps (the live
+        # report: a detach that changed nothing read as dead).
+        self.assertEqual(coordinator._plate_split, 0,
+                         "the detach did not seed the scrub with the live split")
         # A manual layer IS a detach: the face cannot follow the print
-        # and hold another layer at once.
+        # and hold another layer at once. The seek abandons the scrub —
+        # the split belonged to the layer the face left.
         model.setFollowerLayerAnchor(3)
         self.assertFalse(model.followerAttached)
         self.assertEqual(model.followerLayerAnchor, 3)
         self.assertEqual(coordinator._plate_anchor, 3)
+        # A seek lands at the FULL layer (the live request).
+        self.assertEqual(coordinator._plate_split, -1)
         model.setFollowerAttached(True)
         self.assertTrue(model.followerAttached)
         self.assertEqual(model.followerLayerAnchor, -1)
         self.assertIsNone(coordinator._plate_anchor, "re-attaching never rejoined the print")
+        self.assertIsNone(coordinator._plate_split, "re-attaching kept the scrub")
+
+    def test_the_progress_scrub_is_itself_a_detach_and_clamps_to_the_layer(self):
+        model = self.monitor()
+        coordinator = self.follower._runtime.coordinator
+        self._with_layers(model, anchor=7, count=12)
+        model.setFollowerPopoverOpen(True)
+        # A scrub from the LIVE layer freezes it where it stood: the
+        # within-layer seek cannot follow the print and play at once.
+        model.setFollowerLayerProgress(41)
+        self.assertFalse(model.followerAttached)
+        self.assertEqual(model.followerLayerAnchor, 7)
+        self.assertEqual(coordinator._plate_split, 41)
+        # The request clamps to the layer's motion count (the fixture's
+        # payload carries motionTotal 100). The scrub's own refresh
+        # reaps the injected payload, so it is re-armed first.
+        self._with_layers(model, anchor=7, count=12)
+        model.setFollowerLayerProgress(9999)
+        self.assertEqual(coordinator._plate_split, 100)
 
     def test_a_detach_with_no_layer_to_hold_is_refused(self):
         model = self.monitor()
@@ -2950,10 +2977,37 @@ class MonitorQtTests(unittest.TestCase):
         self.assertEqual(model.followerLayerAnchor, -1)
         self.assertIsNone(coordinator._plate_anchor)
 
+    def test_a_closed_popover_freezes_the_follower_payload_and_reopening_resumes(self):
+        model = self.monitor()
+        self._with_layers(model, anchor=7, count=12)
+        model.setFollowerPopoverOpen(True)
+        self._with_layers(model, anchor=8, count=12)
+        self.assertEqual(model.plateProgressAnchor, 8)
+        model.setFollowerPopoverOpen(False)
+        self._with_layers(model, anchor=9, count=12)
+        self.assertEqual(model.plateProgressAnchor, 8,
+                         "the closed popover took the fresh payload")
+        model.setFollowerPopoverOpen(True)
+        self.assertEqual(model.plateProgressAnchor, 9,
+                         "reopening never resumed the live payload")
+
+    def test_a_collapsed_mini_section_freezes_the_live_payload(self):
+        model = self.monitor()
+        self._with_layers(model, anchor=7, count=12)
+        self.assertEqual(model.plateLiveAnchor, 7)
+        model.setSectionExpanded("plateprogress", False)
+        self._with_layers(model, anchor=8, count=12)
+        self.assertEqual(model.plateLiveAnchor, 7,
+                         "the collapsed section took the fresh payload")
+        model.setSectionExpanded("plateprogress", True)
+        self.assertEqual(model.plateLiveAnchor, 8,
+                         "expanding never resumed the live payload")
+
     def test_a_new_print_reattaches_the_follower(self):
         model = self.monitor()
         coordinator = self.follower._runtime.coordinator
         self._with_layers(model, anchor=7, count=12)
+        model.setFollowerPopoverOpen(True)
         model.setFollowerAttached(False)
         self.assertEqual(coordinator._plate_anchor, 7)
         # The frozen layer belonged to the file that was printing.
@@ -4856,7 +4910,6 @@ Item {
             # The Objects section's empty-state line (the
             # live request): the list arrives mid-print, an empty one
             # says so.
-            "visible: root.printerModel != null && root.printerModel.excludeObjectItems.length === 0",
             # The console grab bar hides under the auto-collapse
             # width (the live ruling — a resize handle for
             # an expansion that cannot happen is a lie).
@@ -4883,14 +4936,15 @@ Item {
             # on the capped five-row ListView.
             "visible: pauseListView.height > 0 && pauseListView.contentY > 2",
             "visible: pauseListView.height > 0 && pauseListView.contentY < pauseListView.contentHeight - pauseListView.height - 2",
-            # The objects roster's chevrons: the same idiom, on the
-            # bounded five-row section list.
-            "visible: objectListFlick.height > 0 && objectListFlick.contentY > 2",
-            "visible: objectListFlick.height > 0 && objectListFlick.contentY < objectListFlick.contentHeight - objectListFlick.height - 2",
             # The bed-mesh legend collapses when the mesh is hidden —
             # the reflow was granted (the card reflows instead
             # of keeping a faded gap).
             "visible: base.bedMeshAvailable && base.bedMeshVisible",
+            # The follower's zoom-gated toolhead row and the Pending
+            # option that only the live view carries (the 4.6.0 live
+            # requests).
+            "visible: progressFace.viewScale > 1.0 && progressFace.attached",
+            "visible: progressFace.attached",
             # The monitor's loading prompt: the printer binding not
             # resolved yet (the entry window) or connected with no
             # data landed (the 2026-09-16 request).
@@ -4964,12 +5018,12 @@ Item {
                 self.assertIn(expression, allowed,
                               f"{path.name}:{number}: state-gated visible: {expression}")
         # The hide masks: one sectionHiddenMap occurrence per section
-        # (Dashboard 14 controls — objects joined in 4.6.0; Monitor 4
+        # (Dashboard 13 controls; Monitor 4
         # information + 6 status after the move and the follower's own
         # section).
         # A new adopter trips the count — the whitelist's substring
         # blessing must not cover an unbounded family.
-        for monitor_file, expected in (("MoonrakerMonitorDashboard.qml", 14),
+        for monitor_file, expected in (("MoonrakerMonitorDashboard.qml", 13),
                                        ("MoonrakerMonitor.qml", 10)):
             self.assertEqual(
                 (PLUGINS / monitor_file).read_text(encoding="utf-8").count("sectionHiddenMap["),
@@ -4979,11 +5033,10 @@ Item {
             "enabled: root.printerModel != null && root.printerModel.canPausePrint",
             "enabled: root.printerModel != null && root.printerModel.canResumePrint",
             "enabled: root.printerModel != null && root.printerModel.canCancelPrint",
-            "enabled: root.printerModel != null && root.printerModel.monitorConnected && !root.printerModel.actionBusy && root.printerModel.printActive && root.printerModel.sectionReason === \"\" && root.printerModel.currentObjectName !== \"\"",
             "enabled: root.printer != null && root.printer.monitorConnected && root.printer.consoleLines.length > 0",
             "enabled: base.bedMeshAvailable",
         ):
-            self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML + PRINT_SECTION_QML + OBJECTS_SECTION_QML)
+            self.assertIn(enabled, MONITOR_QML + DASHBOARD_QML + PREVIEW_CONTROLS_QML + PRINT_SECTION_QML)
         # The Preview load button keeps its full width: the follow button
         # no longer vanishes to widen it. The attach-gate round made the
         # width conditional on the toolpath (the hidden follow button

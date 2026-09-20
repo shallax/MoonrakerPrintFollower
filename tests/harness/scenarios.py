@@ -1403,7 +1403,7 @@ SCENARIOS = [
     {"id": "b11", "group": "status", "name": "the exclude-object surface stays stable when absent",
      "steps": [
          {"op": "sim_set", "state": {"print_stats": {"state": "printing", "filename": "scenario1.gcode"}}},
-         {"op": "assert_model", "prop": "excludeObjectItems", "value": []},
+         {"op": "assert_model", "prop": "plateHasObjects", "value": False},
      ]},
 
     # ─── temperatures / fans / sensors ────────────────────────
@@ -1616,6 +1616,10 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         # The pad sits below the pane's fold: the press must land on
+         # screen, never on a rendered-but-clipped aim (the s7 fix's
+         # honest-refusal finding).
+         {"op": "scroll_into_view", "objectName": "moonrakerJogXPlus"},
          # Every jog button takes a real press (the map names all six;
          # one representative press overclaimed the pad).
          {"op": "deliver_click", "objectName": "moonrakerJogXPlus"},
@@ -1631,6 +1635,9 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerHomeX", "budget": 30},
+         # The home row sits below the fold: same preposition as the
+         # jog pad (the s7 fix's honest-refusal finding).
+         {"op": "scroll_into_view", "objectName": "moonrakerHomeX"},
          # All three home buttons take a real press (the map names
          # all three).
          {"op": "deliver_click", "objectName": "moonrakerHomeX"},
@@ -2317,6 +2324,12 @@ SCENARIOS = [
          {"op": "click_stage", "stage": "MonitorStage"},
          {"op": "wait_model", "prop": "monitorConnected", "value": True, "budget": 30},
          {"op": "wait_rect", "objectName": "moonrakerJogXPlus", "budget": 30},
+         # wait_rect proves presence in the rendered tree, and
+         # mapToScene reports through clipping: the controls pane is
+         # taller than its Flickable's viewport, so an unscrolled press
+         # at the pad's scene centre lands below the window — empty
+         # space. Scroll it into view first, as the fans leg does.
+         {"op": "scroll_into_view", "objectName": "moonrakerJogXPlus"},
          {"op": "deliver_click", "objectName": "moonrakerJogXPlus"},
          {"op": "sim_ledger", "needle": "gcode/script", "field": "path", "min": 1, "budget": 20},
          {"op": "exec_console", "text": "M105"},
