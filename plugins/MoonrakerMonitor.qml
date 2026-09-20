@@ -3097,39 +3097,54 @@ Component {
                     dot: root.printer != null ? root.printer.plateDot : null
                 }
 
-                RowLayout {
+                // A wrapping flow of checkbox+label pairs: one row
+                // overflowed the card (the live report).
+                Flow {
                     Layout.fillWidth: true
                     spacing: UM.Theme.getSize("thin_margin").width
-                    UM.CheckBox {
-                        checked: progressFace.showPrevious
-                        onToggled: progressFace.showPrevious = checked
+                    Row {
+                        spacing: 4 * screenScaleFactor
+                        UM.CheckBox {
+                            checked: progressFace.showPrevious
+                            onToggled: progressFace.showPrevious = checked
+                        }
+                        UM.Label {
+                            text: "Previous layer"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
                     }
-                    UM.Label {
-                        text: "Previous layer"
+                    Row {
+                        spacing: 4 * screenScaleFactor
+                        UM.CheckBox {
+                            checked: progressFace.showNext
+                            onToggled: progressFace.showNext = checked
+                        }
+                        UM.Label {
+                            text: "Next layer"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
                     }
-                    UM.CheckBox {
-                        checked: progressFace.showNext
-                        onToggled: progressFace.showNext = checked
+                    Row {
+                        spacing: 4 * screenScaleFactor
+                        UM.CheckBox {
+                            checked: progressFace.showBase
+                            onToggled: progressFace.showBase = checked
+                        }
+                        UM.Label {
+                            text: "Pending"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
                     }
-                    UM.Label {
-                        text: "Next layer"
-                    }
-                    UM.CheckBox {
-                        checked: progressFace.showBase
-                        onToggled: progressFace.showBase = checked
-                    }
-                    UM.Label {
-                        text: "Pending"
-                    }
-                    UM.CheckBox {
-                        checked: progressFace.showTravels
-                        onToggled: progressFace.showTravels = checked
-                    }
-                    UM.Label {
-                        text: "Travels"
-                    }
-                    Item {
-                        Layout.fillWidth: true
+                    Row {
+                        spacing: 4 * screenScaleFactor
+                        UM.CheckBox {
+                            checked: progressFace.showTravels
+                            onToggled: progressFace.showTravels = checked
+                        }
+                        UM.Label {
+                            text: "Travels"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
                     }
                 }
             }
