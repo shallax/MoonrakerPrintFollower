@@ -927,7 +927,7 @@ class MonitorModelContractTests(unittest.TestCase):
         # Both pop-overs open at the same offset over the camera column
         # so a second click on the opener dismisses without moving the
         # mouse (the chosen position, mesh-style).
-        self.assertEqual(MONITOR_QML.count("x: cameraArea.x + UM.Theme.getSize(\"default_margin\").width"), 3)
+        self.assertEqual(MONITOR_QML.count("x: cameraArea.x + UM.Theme.getSize(\"default_margin\").width"), 4)
         # meshDetail is component-scoped: exactly one in-scope refresh
         # (inside meshContent) may reference it, or the outer handler
         # throws and kills the pop-over auto-close.
@@ -4664,11 +4664,8 @@ Item {
             # face's own slot (the popover is a transient surface),
             # never a layout shift.
             "visible: !root.available()",
-            # The plate popover's face swap: the user's own toggle —
-            # reflow the user explicitly asked for (the no-reflow
-            # rule's own exemption), inside the transient card.
-            'visible: plateCard.face === "exclude"',
-            'visible: plateCard.face === "progress"',
+            "visible: !root.available() && !root.compact",
+            "visible: !root.available() && root.compact",
             # Firmware-regulated fans swap the slider for a read-only
             # row (a live report): the model's writable
             # flag picks the face.
@@ -4849,12 +4846,13 @@ Item {
                 self.assertIn(expression, allowed,
                               f"{path.name}:{number}: state-gated visible: {expression}")
         # The hide masks: one sectionHiddenMap occurrence per section
-        # (Dashboard 14 controls — objects joined in 4.6.0; Monitor 3
-        # information + 6 status after the move).
+        # (Dashboard 14 controls — objects joined in 4.6.0; Monitor 4
+        # information + 6 status after the move and the follower's own
+        # section).
         # A new adopter trips the count — the whitelist's substring
         # blessing must not cover an unbounded family.
         for monitor_file, expected in (("MoonrakerMonitorDashboard.qml", 14),
-                                       ("MoonrakerMonitor.qml", 9)):
+                                       ("MoonrakerMonitor.qml", 10)):
             self.assertEqual(
                 (PLUGINS / monitor_file).read_text(encoding="utf-8").count("sectionHiddenMap["),
                 expected, monitor_file)

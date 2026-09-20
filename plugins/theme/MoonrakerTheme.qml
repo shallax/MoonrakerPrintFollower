@@ -75,6 +75,9 @@ QtObject {
     // existing green fails the 3:1 floor on the light ground
     // (measured: 3.45 light / 4.78 dark).
     readonly property color plateCurrent: "#2f9e44"
+    // The toolhead dot: distinct from the "included" stroke ink and
+    // from every state colour (the chart palette's measured blue).
+    readonly property color plateDot: "#1976d2"
     // The follower's feature-class table: the chart palette's own
     // both-theme measured tokens, one fixed mapping — travel and
     // unlabelled motions stay the honest unknown grey.

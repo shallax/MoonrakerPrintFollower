@@ -1,5 +1,7 @@
 import QtQuick 2.15
+import QtQuick.Layouts 1.3
 import UM 1.5 as UM
+import Cura 1.1 as Cura
 import "theme"
 
 // The plate map's progress face (4.6.0): the OctoApp-style
@@ -10,10 +12,12 @@ import "theme"
 Item {
     id: root
     objectName: "moonrakerPlateProgressFace"
+    clip: true
 
     property var printerModel: null
     property var progress: null   // the model's plateProgress payload
     property var dot: null
+    property bool compact: false
     property bool showPrevious: true
     property bool showNext: true
     property bool showBase: true
@@ -157,7 +161,7 @@ Item {
         width: 7 * screenScaleFactor
         height: width
         radius: width / 2
-        color: UM.Theme.getColor("text")
+        color: MoonrakerTheme.plateDot
         border.color: UM.Theme.getColor("main_background")
         border.width: 2
         visible: mapping._plot != null && root.dot != null && root.dot.valid === true
@@ -165,10 +169,118 @@ Item {
         y: visible ? mapping.plateToScene(root.dot.x, root.dot.y).y - height / 2 : 0
     }
 
+    // The unavailable state (the live ruling): the reason PLUS the
+    // download action — the same glyph/hourglass and progress bar as
+    // the Print-job pane's improve row, so the follower never reads
+    // as a dead end. The mini suppresses the action (its section
+    // hosts the placeholder).
+    ColumnLayout {
+        anchors.centerIn: parent
+        width: parent.width * 0.8
+        visible: !root.available() && !root.compact
+        spacing: UM.Theme.getSize("narrow_margin").height
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: UM.Theme.getSize("narrow_margin").width
+            Item {
+                width: 16 * screenScaleFactor
+                height: 16 * screenScaleFactor
+                UM.ColorImage {
+                    id: downloadGlyph
+                    anchors.fill: parent
+                    source: root.printerModel != null && root.printerModel.improvingEta ? Qt.resolvedUrl("Hourglass.svg") : Qt.resolvedUrl("Download.svg")
+                    color: UM.Theme.getColor("text")
+                    states: [
+                        State {
+                            name: "idle"
+                            when: !(root.printerModel != null && root.printerModel.improvingEta)
+                            PropertyChanges {
+                                target: downloadGlyph
+                                rotation: 0
+                            }
+                        }
+                    ]
+                    SequentialAnimation on rotation {
+                        running: root.printerModel != null && root.printerModel.improvingEta
+                        loops: Animation.Infinite
+                        NumberAnimation {
+                            from: 0
+                            to: 180
+                            duration: 350
+                            easing.type: Easing.InOutCubic
+                        }
+                        PauseAnimation {
+                            duration: 700
+                        }
+                        NumberAnimation {
+                            from: 180
+                            to: 360
+                            duration: 350
+                            easing.type: Easing.InOutCubic
+                        }
+                        PauseAnimation {
+                            duration: 700
+                        }
+                    }
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: root.printerModel != null && root.printerModel.monitorConnected
+                    cursorShape: root.printerModel != null ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: {
+                        if (root.printerModel != null) {
+                            root.printerModel.improveEta();
+                        }
+                    }
+                }
+            }
+            UM.Label {
+                Layout.fillWidth: true
+                text: root.printerModel != null && root.printerModel.improvingEta ? "Downloading and indexing the print…" : (root.progress != null && root.progress.reason !== "" ? root.progress.reason : "No index yet — the download button builds one without loading the preview.")
+                color: UM.Theme.getColor("text_inactive")
+                font: UM.Theme.getFont("small")
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        Item {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 8 * screenScaleFactor
+            opacity: root.printerModel != null && root.printerModel.improvingEta ? 1 : 0
+            clip: true
+            property real sweepPhase: 0
+            NumberAnimation on sweepPhase {
+                running: root.printerModel != null && root.printerModel.improvingEta && root.printerModel.improveEtaProgress < 0
+                from: 0
+                to: 1
+                duration: 1100
+                loops: Animation.Infinite
+            }
+            Cura.RoundedRectangle {
+                anchors.fill: parent
+                color: "transparent"
+                border.color: UM.Theme.getColor("lining")
+                border.width: UM.Theme.getSize("default_lining").width
+                radius: UM.Theme.getSize("progressbar_radius").width
+                cornerSide: Cura.RoundedRectangle.Direction.All
+            }
+            Cura.RoundedRectangle {
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.left: parent.left
+                anchors.margins: 1 * screenScaleFactor
+                width: Math.max(0, Math.min(1, root.printerModel != null ? root.printerModel.improveEtaProgress : 0)) * (parent.width - 2 * screenScaleFactor)
+                color: UM.Theme.getColor("primary")
+                radius: Math.min(UM.Theme.getSize("progressbar_radius").width, height / 2)
+            }
+        }
+    }
+
     UM.Label {
         anchors.centerIn: parent
-        visible: !root.available()
-        text: root.progress != null && root.progress.reason !== "" ? root.progress.reason : "The follower appears while Cura previews this print."
+        visible: !root.available() && root.compact
+        text: "The follower builds its index from the print — open the pop-over."
         color: UM.Theme.getColor("text_inactive")
         font: UM.Theme.getFont("small")
         horizontalAlignment: Text.AlignHCenter

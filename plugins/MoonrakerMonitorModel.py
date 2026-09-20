@@ -1096,7 +1096,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         values["plateProgress"] = (
             {"available": True, "reason": "", **progress} if progress is not None
             else {"available": False, "layers": {}, "split": None, "method": "unavailable", "anchor": None,
-                  "reason": "Cura is not previewing this print — the follower needs the index Cura builds while following."})
+                  "reason": "No index yet — the download button builds one without loading the preview."})
         # The plate's toolhead dot (physical position, the marker
         # convention): validity rides the connection — a paused
         # print's position is honest, a disconnected one is a lie if

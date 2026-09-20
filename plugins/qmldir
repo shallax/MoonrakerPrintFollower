@@ -10,3 +10,4 @@ PlateCanvas 1.0 PlateCanvas.qml
 PlateExcludeFace 1.0 PlateExcludeFace.qml
 PlateSection 1.0 PlateSection.qml
 PlateProgressFace 1.0 PlateProgressFace.qml
+PlateProgressSection 1.0 PlateProgressSection.qml

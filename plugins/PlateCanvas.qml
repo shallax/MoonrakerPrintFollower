@@ -10,6 +10,9 @@ import "theme"
 Item {
     id: root
     objectName: "moonrakerPlateCanvas"
+    // The canvas paints past its bounds otherwise (the live report:
+    // the dot drew over the pane chrome) — the plate clips itself.
+    clip: true
 
     property var printerModel: null
     property var plate: null          // the model's plateObjects payload
@@ -215,7 +218,7 @@ Item {
         width: 7 * screenScaleFactor
         height: width
         radius: width / 2
-        color: UM.Theme.getColor("text")
+        color: MoonrakerTheme.plateDot
         border.color: UM.Theme.getColor("main_background")
         border.width: 2
         visible: root._plot != null && root.dot != null && root.dot.valid === true
