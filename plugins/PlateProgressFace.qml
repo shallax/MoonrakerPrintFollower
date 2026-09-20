@@ -237,17 +237,66 @@ Item {
     property int _anchor: -1
     property int _paintsSinceReset: 0
     property bool _progressDirty: false
+    // The raster-reuse keys (the live request): a canvas that already
+    // holds exactly this picture skips the walk. The seek's 3 s was
+    // four full dense re-walks, and a return to an already-drawn
+    // layer must not pay them again. One key per canvas, covering
+    // only that canvas' own inputs, so a toggle repaints only what
+    // it touches.
+    property string _ghostKey: ""
+    property string _pendingKey: ""
+    property string _progressKey: ""
+
+    function _viewKey() {
+        return [root.viewScale, root.viewPanX, root.viewPanY, root.lineScale, root.compact ? 1 : 0, width, height, root.toolpathWidthPx()].join("|");
+    }
+
+    function _motionsOf(layer) {
+        return layer != null && layer.motions !== undefined ? layer.motions : -1;
+    }
+
+    function _ghostKeyOf() {
+        var progress = root.progress;
+        var layers = progress != null ? progress.layers : null;
+        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.prev) : -1, layers != null ? _motionsOf(layers.next) : -1, root.showPrevious ? 1 : 0, root.showNext ? 1 : 0, _viewKey()].join("|");
+    }
+
+    function _pendingKeyOf() {
+        var progress = root.progress;
+        var layers = progress != null ? progress.layers : null;
+        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, root.showBase ? 1 : 0, _viewKey()].join("|");
+    }
+
+    function _progressKeyOf() {
+        var progress = root.progress;
+        var layers = progress != null ? progress.layers : null;
+        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, _viewKey()].join("|");
+    }
 
     function _resetStack() {
         // Everything repaints: a toggle flip, a resize, or an anchor
         // change — the ghosts and the pending base are static
         // rasterisations, the progress starts over from motion zero.
-        root._lastSplit = -1;
-        root._paintsSinceReset = 0;
-        root._progressDirty = true;
-        ghostCanvas.requestPaint();
-        pendingCanvas.requestPaint();
-        progressCanvas.requestPaint();
+        // A canvas whose key still matches keeps its image (the
+        // raster-reuse ruling above).
+        var ghostKey = _ghostKeyOf();
+        if (ghostKey !== root._ghostKey) {
+            root._ghostKey = ghostKey;
+            ghostCanvas.requestPaint();
+        }
+        var pendingKey = _pendingKeyOf();
+        if (pendingKey !== root._pendingKey) {
+            root._pendingKey = pendingKey;
+            pendingCanvas.requestPaint();
+        }
+        var progressKey = _progressKeyOf();
+        if (progressKey !== root._progressKey) {
+            root._progressKey = progressKey;
+            root._lastSplit = -1;
+            root._paintsSinceReset = 0;
+            root._progressDirty = true;
+            progressCanvas.requestPaint();
+        }
     }
 
     onProgressChanged: {
@@ -263,10 +312,39 @@ Item {
         }
         progressCanvas.requestPaint();
     }
-    onShowPreviousChanged: ghostCanvas.requestPaint()
-    onShowNextChanged: ghostCanvas.requestPaint()
-    onShowBaseChanged: pendingCanvas.requestPaint()
-    onShowTravelsChanged: _resetStack()  // the travels join the accumulated progress
+    onShowPreviousChanged: {
+        var key = _ghostKeyOf();
+        if (key !== root._ghostKey) {
+            root._ghostKey = key;
+            ghostCanvas.requestPaint();
+        }
+    }
+    onShowNextChanged: {
+        var key = _ghostKeyOf();
+        if (key !== root._ghostKey) {
+            root._ghostKey = key;
+            ghostCanvas.requestPaint();
+        }
+    }
+    onShowBaseChanged: {
+        var key = _pendingKeyOf();
+        if (key !== root._pendingKey) {
+            root._pendingKey = key;
+            pendingCanvas.requestPaint();
+        }
+    }
+    onShowTravelsChanged: {
+        // The travels join the accumulated progress: a flip repaints
+        // the progress canvas (its key carries the flag).
+        var key = _progressKeyOf();
+        if (key !== root._progressKey) {
+            root._progressKey = key;
+            root._lastSplit = -1;
+            root._paintsSinceReset = 0;
+            root._progressDirty = true;
+            progressCanvas.requestPaint();
+        }
+    }
     onLineScaleChanged: {
         _publishView();
         _resetStack();
@@ -358,12 +436,15 @@ Item {
             }
             var layers = root.progress.layers;
             // The ghost layers: full paths at low alpha — the stack
-            // reads through (the walked transparency ruling).
+            // reads through (the walked transparency ruling). The
+            // context walk is strided: a coarse chord trace reads
+            // identically at 30% alpha for a fraction of the points
+            // (the live request — the seek's full dense walks).
             if (root.showPrevious && layers.prev != null) {
-                _drawLayer(ctx, layers.prev, 0.30, -1, false, -1);
+                _drawLayer(ctx, layers.prev, 0.30, -1, false, -1, _ghostStride(layers.prev));
             }
             if (root.showNext && layers.next != null) {
-                _drawLayer(ctx, layers.next, 0.30, -1, false, -1);
+                _drawLayer(ctx, layers.next, 0.30, -1, false, -1, _ghostStride(layers.next));
             }
         }
     }
@@ -386,7 +467,7 @@ Item {
             }
             // The grey base: the whole layer, one honest colour.
             if (root.showBase) {
-                _drawLayer(ctx, current, 0.55, -1, true, -1);
+                _drawLayer(ctx, current, 0.55, -1, true, -1, 1);
             }
         }
     }
@@ -443,7 +524,7 @@ Item {
             // The printed portion, coloured in per feature class from
             // the last painted split up to the live one (the H3
             // floor).
-            _drawLayer(ctx, current, 1.0, split, false, root._lastSplit);
+            _drawLayer(ctx, current, 1.0, split, false, root._lastSplit, 1);
             // The travels: the lines only. CURRENT layer only, and
             // only where the toolhead has already passed (the live
             // rulings).
@@ -475,7 +556,18 @@ Item {
         return i < points.length && (split < 0 || points[i][2] < split);
     }
 
-    function _drawLayer(ctx, layer, alpha, split, base, from) {
+    function _ghostStride(layer) {
+        // The context ghosts' vertex stride: every stride-th vertex is
+        // stroked, so the chord trace stays within the travel channel's
+        // own budget whatever the layer's density (the live request).
+        var motions = layer != null && layer.motions !== undefined ? layer.motions : 0;
+        if (motions <= 12000) {
+            return 1;
+        }
+        return Math.min(8, Math.max(1, Math.ceil(motions / 12000)));
+    }
+
+    function _drawLayer(ctx, layer, alpha, split, base, from, stride) {
         // The transform inlined: hundreds of thousands of
         // plateToScene calls per paint were the follower's cost.
         var plot = mapping._plot;
@@ -518,9 +610,25 @@ Item {
                 // feature change, or the boundary the last poll painted.
                 // No pan term: the item's translation carries the view.
                 ctx.moveTo((offsetX + (points[i - 1][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i - 1][1]) * sy) * scale + panY);
-                while (_edgePrinted(points, i, split)) {
-                    ctx.lineTo((offsetX + (points[i][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i][1]) * sy) * scale + panY);
-                    ++i;
+                if (stride <= 1) {
+                    while (_edgePrinted(points, i, split)) {
+                        ctx.lineTo((offsetX + (points[i][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i][1]) * sy) * scale + panY);
+                        ++i;
+                    }
+                } else {
+                    // The strided walk: every stride-th vertex, and the
+                    // segment's last printed vertex always lands so the
+                    // chord reaches the boundary it belongs to.
+                    var first = i;
+                    while (_edgePrinted(points, i, split)) {
+                        if ((i - first) % stride === 0) {
+                            ctx.lineTo((offsetX + (points[i][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i][1]) * sy) * scale + panY);
+                        }
+                        ++i;
+                    }
+                    if ((i - 1 - first) % stride !== 0) {
+                        ctx.lineTo((offsetX + (points[i - 1][0] - bedXMin) * sx) * scale + panX, (offsetY + (bedYMax - points[i - 1][1]) * sy) * scale + panY);
+                    }
                 }
                 ctx.stroke();
             }
