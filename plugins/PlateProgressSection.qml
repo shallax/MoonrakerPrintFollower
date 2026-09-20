@@ -59,6 +59,10 @@ ColumnLayout {
                 showBase: root.printerModel != null ? root.printerModel.followerShowBase : true
                 showTravels: root.printerModel != null ? root.printerModel.followerShowTravels : false
                 lineScale: root.printerModel != null ? root.printerModel.followerLineScale : 0.7
+                // The follow state, read-only here (the mini carries no
+                // controls): the same values the pop-over reads.
+                attached: root.printerModel == null || root.printerModel.followerAttached
+                keepCentred: root.printerModel != null ? root.printerModel.followerKeepCentred : false
                 opacity: root.printerModel != null && root.printerModel.plateProgressAvailable ? 1 : 0
                 MouseArea {
                     anchors.fill: parent

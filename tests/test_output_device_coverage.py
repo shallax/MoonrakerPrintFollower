@@ -172,6 +172,7 @@ if QT_AVAILABLE:
         def request_file_download(self, relpath): self.loads.append(relpath)
         def download_progress(self): return None
         def cancel_file_download(self): self.loads.append("cancel")
+        def setPlateAnchor(self, anchor): self.loads.append(("anchor", anchor))
         def receive_preview_block(self, block): self.blocks.append(block)
         def has_toolpath(self): return True
 

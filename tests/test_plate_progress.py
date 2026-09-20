@@ -12,17 +12,24 @@ the eviction states).
 from __future__ import annotations
 
 from array import array
+import gc
 from math import hypot
+import time
 import unittest
 
 from plugins.GCodeIndex import LayerMotionIndex, build_index_from_bytes
 from plugins.PlateProgress import (
+    MAX_TRAVEL_POINTS,
+    _PREPARED_LIMIT,
     _budgeted,
     _douglas_peucker,
+    _prepared_layers,
+    _simplify,
     layer_polylines,
     motion_edges,
     plate_layers,
     plate_progress,
+    prepare_layer,
     split_index,
 )
 
@@ -41,6 +48,29 @@ def _xy(points):
 
 def _indices(points):
     return [int(point[2]) for point in points]
+
+
+def dropped_within(points, kept):
+    """The greatest distance from any dropped vertex to the polyline
+    the kept vertices draw — the module's own error bound, measured
+    from the outside.
+
+    The walk is linear: the kept vertices partition the chain, so a
+    dropped vertex belongs to the interval of the two consecutive kept
+    vertices that bracket it, and the FINITE distance to that chord is
+    the distance the payload promises. The bracket only moves forward.
+    """
+    worst = 0.0
+    bracket = 0
+    for point in points:
+        while bracket + 1 < len(kept) and kept[bracket + 1][2] <= point[2]:
+            bracket += 1
+        if kept[bracket][2] == point[2]:
+            continue
+        distance = _point_to_segment(point, kept[bracket], kept[bracket + 1])
+        if distance > worst:
+            worst = distance
+    return worst
 
 
 def _painted(segment, split, start=-1):
@@ -1023,6 +1053,125 @@ class SimplificationBudgetTests(unittest.TestCase):
         points = [[0.0, 0.0, 0.0], [0.001, 0.001, 1.0], [0.002, 0.0, 2.0]]
         self.assertEqual(_budgeted([list(points)], 1),
                          [[[0.0, 0.0, 0.0], [0.002, 0.0, 2.0]]])
+
+
+class SimplificationWorkBoundTests(unittest.TestCase):
+    """The channel's work counter: the recursion's quadratic case is
+    clamped, and the clamp limits refinement, never accuracy. The
+    counter is injectable so the exhaustion path is exercised without
+    paying a pathological chain's full cost."""
+
+    _SPIKES = [[float(index), 0.5 if index % 2 else 0.0, float(index)]
+               for index in range(64)]
+
+    def test_a_counter_that_covers_the_walk_changes_nothing(self):
+        # The charge is generous, so the walk is the exact recursion and
+        # the spikes all stay: the bound is a limit on cost, never a
+        # filter on the geometry.
+        spent = [10 ** 9]
+        self.assertEqual(_simplify(self._SPIKES, 0.03, spent), self._SPIKES)
+        self.assertGreaterEqual(spent[0], 0)
+
+    def test_an_exhausted_counter_completes_instead_of_lying(self):
+        # A charge that cannot cover the second scan: the walk stops
+        # refining, keeps the vertices it could not prove a chord for,
+        # and still returns the input's own vertices within the
+        # tolerance — the unrefined interval costs accuracy nothing.
+        spent = [80]
+        kept = _simplify(self._SPIKES, 0.03, spent)
+        self.assertLess(spent[0], 0)
+        self.assertEqual(kept[0], self._SPIKES[0])
+        self.assertEqual(kept[-1], self._SPIKES[-1])
+        self.assertEqual([point[2] for point in kept],
+                         sorted({point[2] for point in kept}))
+        self.assertLessEqual(dropped_within(self._SPIKES, kept), 0.03 + 1e-9)
+
+    def test_an_exhausted_counter_is_not_a_refusal_to_simplify(self):
+        # A run the walk can prove before its charge runs out still
+        # collapses: exhaustion completes what is left, it does not
+        # undo what was already decided.
+        points = [[float(index), 0.0, float(index)] for index in range(9)]
+        spent = [8]
+        self.assertEqual(_simplify(points, 0.03, spent),
+                         [[0.0, 0.0, 0.0], [8.0, 0.0, 8.0]])
+
+    def test_a_budgeted_channel_spends_one_counter_across_its_passes(self):
+        # Geometry dense enough that the tolerance starts far below the
+        # arc ceiling, so the pass escalates instead of stopping at the
+        # first miss — and each pass weighs a chain whose exact walk is
+        # quadratic. One charge per CHANNEL is what keeps the call
+        # bounded; one per pass would pay the quadratic cost up to six
+        # times over.
+        points = [[index * 0.0005, 0.05 if index % 2 else 0.0, float(index)]
+                  for index in range(20000)]
+        started = time.perf_counter()
+        kept = _budgeted([points], MAX_TRAVEL_POINTS)[0]
+        elapsed = time.perf_counter() - started
+        self.assertLess(elapsed, 5.0)
+        self.assertGreater(len(kept), 2)
+        self.assertEqual([point[2] for point in kept],
+                         sorted({point[2] for point in kept}))
+        self.assertLessEqual(dropped_within(points, kept), 0.03 + 1e-9)
+
+
+class PreparedLayerStoreTests(unittest.TestCase):
+    """The prepared-layer store: the build is a pure function of the
+    index and the layer, so a repeat must not pay for it twice — and a
+    layer whose arrays have moved on must never read a stale payload."""
+
+    def test_a_second_read_returns_the_payload_the_first_one_built(self):
+        index = make_index(motions=6)
+        self.assertIs(layer_polylines(index, 0), layer_polylines(index, 0))
+        self.assertEqual(layer_polylines(index, 0), prepare_layer(index, 0))
+
+    def test_the_store_serves_two_consumers_the_same_layer(self):
+        # The follower's window and the bundle build read the same
+        # layer object, so the walk runs once per layer however many
+        # times the anchor moves across it.
+        index = make_index(layers=3, motions=6)
+        first = layer_polylines(index, 1)
+        self.assertIs(layer_polylines(index, 1), first)
+        self.assertEqual(plate_layers(index, 1)["current"], first)
+
+    def test_an_unhydrated_or_absent_layer_reads_none_and_is_not_stored(self):
+        index = make_index(layers=2, motions=6, compact=True)
+        index.hydrated_layers = {0}
+        self.assertIsNone(layer_polylines(index, 1))
+        self.assertIsNone(prepare_layer(index, 9))
+        self.assertIsNone(layer_polylines(index, -1))
+        self.assertIsNone(prepare_layer(index, 9))
+
+    def test_a_layer_that_was_hydrated_later_does_not_read_the_empty_payload(self):
+        # A compact index fills in place: the layer's first read is an
+        # empty payload, and the arrays that arrive after it must be
+        # what the next read builds from.
+        index = make_index(layers=1, motions=0, compact=True)
+        index.hydrated_layers = {0}
+        self.assertEqual(layer_polylines(index, 0)["motions"], 0)
+        index.motion_offsets = [array("Q", [10, 20])]
+        index.motion_x = [array("f", [0.0, 4.0])]
+        index.motion_y = [array("f", [0.0, 3.0])]
+        index.motion_types = [[[2, 2]]]  # runs are [length, feature code]
+        self.assertEqual(layer_polylines(index, 0)["motions"], 2)
+        self.assertEqual(_xy(layer_polylines(index, 0)["classes"]["WALL-OUTER"][0]),
+                         [[0.0, 0.0], [4.0, 3.0]])
+
+    def test_a_collected_index_never_serves_a_new_one_its_payload(self):
+        first = make_index(motions=6)
+        payload = layer_polylines(first, 0)
+        del first
+        gc.collect()
+        second = make_index(motions=6)
+        # Whatever the allocator reuses, the new index reads as its own:
+        # a dead owner's entry is a miss, never another layer's answer.
+        self.assertEqual(layer_polylines(second, 0), payload)
+        self.assertIsNotNone(payload)
+
+    def test_the_store_does_not_grow_without_bound(self):
+        index = make_index(layers=24, motions=4)
+        for layer in range(24):
+            layer_polylines(index, layer)
+        self.assertLessEqual(len(_prepared_layers), _PREPARED_LIMIT)
 
 
 class SplitAndBundleTests(unittest.TestCase):

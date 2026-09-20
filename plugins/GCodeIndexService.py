@@ -12,6 +12,7 @@ from .MonitorFormatting import _segment_in_polygon, polygon_bounds
 from .PlateProgress import (
     motion_edges as _motion_edges,
     plate_layers as _plate_layers,
+    prepare_layer as _prepare_layer,
     split_index as _split_index,
 )
 
@@ -81,6 +82,9 @@ class GCodeIndexService(QObject):
         self._progress = None
         self._plate_layers_key = None
         self._plate_layers = {}
+        # The follower's frozen layer (the pop-over's detach): a second
+        # demand window beside the live print's own.
+        self._manual_anchor = None
         self._visited_key = None
         self._visited = set()
         self._visited_upto = -1
@@ -113,6 +117,8 @@ class GCodeIndexService(QObject):
         # print could coincidentally match the (anchor, counts) key.
         self._plate_layers_key = None
         self._plate_layers = {}
+        # The frozen layer belongs to the file that was printing.
+        self._manual_anchor = None
         self._visited_key = None
         self._visited = set()
         self._visited_upto = -1
@@ -135,6 +141,49 @@ class GCodeIndexService(QObject):
             return
         self._request_window(int(layer))
         self._advance()
+
+    def set_manual_anchor(self, layer):
+        """The follower's DETACHED anchor: the window around the layer
+        the user froze the face on, demanded BESIDE the live print's
+        own.
+
+        It rides its own demand path — the live ±1 window is what the
+        retention bound is anchored to, and re-anchoring it to a frozen
+        layer would evict the live layer the dot, the split and the
+        printed fill all read. ``None`` rejoins the live print's window.
+        """
+        self._manual_anchor = layer if isinstance(layer, int) and not isinstance(layer, bool) \
+            and layer >= 0 else None
+        self._apply_manual_anchor()
+        self._request_manual_window()
+        self._advance()
+
+    def _apply_manual_anchor(self):
+        """Hand the frozen anchor to the index's own retention bound.
+
+        A layer outside the index is no anchor at all, and the index
+        may not exist yet at the detach (the build lands later), so
+        this is applied wherever a view is in hand.
+        """
+        view = self._view
+        if view is None:
+            return
+        manual = self._manual_anchor
+        if manual is not None and manual >= len(view.ranges):
+            manual = None
+        if view._index.manual_anchor == manual:
+            return
+        with view._index.cache_lock:
+            view._index.manual_anchor = manual
+
+    def _request_manual_window(self):
+        view = self._view
+        if view is None or self._manual_anchor is None:
+            return
+        for candidate in (self._manual_anchor - 1, self._manual_anchor, self._manual_anchor + 1):
+            if 0 <= candidate < len(view.ranges) and not view.hydrated(candidate) \
+                    and candidate not in self._failed_hydrate:
+                self._hydrate.add(candidate)
 
     def plate_layers(self, anchor):
         """The follower's STATIC half: the prev/current/next bundle,
@@ -292,10 +341,18 @@ class GCodeIndexService(QObject):
                 progress=lambda fraction: setattr(self, "_progress", fraction)), lease)
             return
         index = self._view._index
+        # An index built after the detach (or rebuilt) takes the frozen
+        # anchor here, where the live window is applied each poll.
+        self._apply_manual_anchor()
+        # Two windows stand: the live print's own and the frozen
+        # follower's (the pop-over's detach) — neither may drop the
+        # other's demand.
+        manual = index.manual_anchor
         self._hydrate = {n for n in self._hydrate if n < len(self._view.ranges) and not self._view.hydrated(n)
                          and n not in self._failed_hydrate
-                         and (index.followed_layer is None
-                              or index.followed_layer - 1 <= n <= index.followed_layer + 1)}
+                         and ((index.followed_layer is None
+                               or index.followed_layer - 1 <= n <= index.followed_layer + 1)
+                              or (manual is not None and manual - 1 <= n <= manual + 1))}
         if self._hydrate:
             lease = self._files.lease()
             if lease is None:
@@ -307,7 +364,15 @@ class GCodeIndexService(QObject):
             # No anchor argument: the worker reads the index's
             # followed_layer at COMPLETION, so a worker that finishes
             # after an anchor change applies the latest policy.
-            self._submit("hydrate", lambda: hydrate_layer_from_file(index, lease.path, layer), lease)
+            # The preparation rides the same worker task (the service's
+            # state machine owns ONE busy task at a time): the dense
+            # polyline build never runs on the UI thread, and the
+            # poll-time read hits the prepared store's memo.
+            def hydrate_and_prepare():
+                result = hydrate_layer_from_file(index, lease.path, layer)
+                _prepare_layer(index, layer)
+                return result
+            self._submit("hydrate", hydrate_and_prepare, lease)
         elif self._save and strong:
             self._save = False
             index = self._view._index

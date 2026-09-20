@@ -3135,6 +3135,39 @@ Component {
                     showBase: root.printer != null ? root.printer.followerShowBase : true
                     showTravels: root.printer != null ? root.printer.followerShowTravels : false
                     lineScale: root.printer != null ? root.printer.followerLineScale : 0.7
+                    // The follow state and the centred-follow option
+                    // (default off — the cheap render path).
+                    attached: root.printer == null || root.printer.followerAttached
+                    keepCentred: root.printer != null ? root.printer.followerKeepCentred : false
+                }
+
+                // The toolhead view controls (the 4.6.0 request): the
+                // jump is one shot onto the dot's bed position, the
+                // option keeps it there. The jump is disabled with
+                // nothing to centre on; the option is a preference and
+                // persists, so it stays live.
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: UM.Theme.getSize("narrow_margin").height
+                    Cura.SecondaryButton {
+                        id: jumpButton
+                        objectName: "moonrakerFollowerJump"
+                        fixedWidthMode: true
+                        width: 132 * screenScaleFactor
+                        text: "Jump to toolhead"
+                        enabled: progressFace.dotAvailable()
+                        onClicked: progressFace.centreOnToolhead()
+                    }
+                    UM.CheckBox {
+                        objectName: "moonrakerFollowerKeepCentred"
+                        text: "Keep toolhead centred"
+                        checked: root.printer != null ? root.printer.followerKeepCentred : false
+                        onToggled: {
+                            if (root.printer != null) {
+                                root.printer.setFollowerKeepCentred(checked);
+                            }
+                        }
+                    }
                 }
 
                 // The checkbox's OWN text label (the live reports: a
@@ -3337,6 +3370,125 @@ Component {
                     }
                     Item {
                         Layout.fillWidth: true
+                    }
+                }
+
+                // The layer selection (the 4.6.0 request): the slider
+                // seeks the anchor the face draws. Attached, it shows
+                // the live layer and is DISABLED — the face follows the
+                // print, and a seek would detach it (the chosen rule).
+                // A seek commits only once the drag quietens: every
+                // step rebuilds a layer window and rehydrates it, so a
+                // release commits at once and a drag settles first.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: UM.Theme.getSize("thin_margin").width
+                    UM.Label {
+                        text: "Layer"
+                        color: UM.Theme.getColor("text_inactive")
+                    }
+                    OutlineSlider {
+                        id: layerSlider
+                        objectName: "moonrakerFollowerLayerSlider"
+                        Layout.fillWidth: true
+                        from: 0
+                        to: Math.max(0, (root.printer != null ? root.printer.plateLayerCount : 0) - 1)
+                        stepSize: 1
+                        enabled: root.printer != null && !root.printer.followerAttached && root.printer.plateLayerCount > 0
+                        onValueTuning: layerSeekTimer.restart()
+                        onValueCommitted: {
+                            layerSeekTimer.stop();
+                            commitLayerSeek();
+                        }
+                    }
+                    UM.Label {
+                        objectName: "moonrakerFollowerLayerReadout"
+                        width: 64 * screenScaleFactor
+                        horizontalAlignment: Text.AlignRight
+                        text: layerReadout()
+                    }
+                    Cura.SecondaryButton {
+                        id: attachButton
+                        objectName: "moonrakerFollowerAttach"
+                        fixedWidthMode: true
+                        width: 76 * screenScaleFactor
+                        text: root.printer != null && root.printer.followerAttached ? "Detach" : "Attach"
+                        // A detach holds the layer the face shows; an
+                        // attach needs a live index to rejoin.
+                        enabled: root.printer != null && (root.printer.followerAttached ? root.printer.plateProgressAnchor >= 0 : root.printer.plateLayerCount > 0)
+                        onClicked: {
+                            if (root.printer != null) {
+                                root.printer.setFollowerAttached(!root.printer.followerAttached);
+                            }
+                        }
+                    }
+                }
+
+                // The within-layer progress (the 4.6.0 request): how
+                // far through the printing layer the head is, drawn as
+                // the preview screen's slim bar. DISPLAY ONLY — the
+                // split stays the print's own.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: UM.Theme.getSize("thin_margin").width
+                    UM.Label {
+                        text: "Layer progress"
+                        color: UM.Theme.getColor("text_inactive")
+                    }
+                    OutlineProgressBar {
+                        objectName: "moonrakerFollowerLayerProgress"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 8 * screenScaleFactor
+                        from: 0
+                        to: 1
+                        value: root.printer != null && root.printer.monitorLayerProgress >= 0 ? root.printer.monitorLayerProgress : 0
+                    }
+                    UM.Label {
+                        objectName: "moonrakerFollowerLayerProgressReadout"
+                        width: 40 * screenScaleFactor
+                        horizontalAlignment: Text.AlignRight
+                        text: root.printer != null && root.printer.monitorLayerProgress >= 0 ? Math.round(root.printer.monitorLayerProgress * 100) + "%" : "—"
+                    }
+                }
+
+                // The slider follows the model's anchor — the live
+                // layer while attached, the frozen one after a seek —
+                // and never fights a drag in flight or a settle.
+                function syncLayerSlider() {
+                    if (layerSlider.interacting || layerSeekTimer.running) {
+                        return;
+                    }
+                    if (root.printer != null && root.printer.plateProgressAnchor >= 0) {
+                        layerSlider.value = root.printer.plateProgressAnchor;
+                    }
+                }
+                function commitLayerSeek() {
+                    if (root.printer != null) {
+                        root.printer.setFollowerLayerAnchor(layerSlider.selectedValue());
+                    }
+                }
+                function layerReadout() {
+                    if (root.printer == null || root.printer.plateLayerCount <= 0) {
+                        return "—";
+                    }
+                    var index = root.printer.followerAttached ? root.printer.plateProgressAnchor : layerSlider.selectedValue();
+                    if (index < 0) {
+                        return "—";
+                    }
+                    return (Math.round(index) + 1) + " / " + root.printer.plateLayerCount;
+                }
+                Timer {
+                    id: layerSeekTimer
+                    interval: 250
+                    onTriggered: commitLayerSeek()
+                }
+                Connections {
+                    target: root.printer
+                    function onPlateProgressChanged() {
+                        syncLayerSlider();
+                    }
+                    function onFollowerViewChanged() {
+                        syncLayerSlider();
                     }
                 }
             }

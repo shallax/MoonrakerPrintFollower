@@ -18,6 +18,17 @@ Item {
     property var progress: null   // the model's plateProgress payload
     property var dot: null
     property bool compact: false
+    // Attached: the face follows the LIVE layer — the dot moves with
+    // the print's position and the printed fill grows. Detached: the
+    // anchor is frozen on one layer by the user (the pop-over's
+    // sliders), the toolhead dot hides (its position belongs to the
+    // live layer, not the frozen one) and the payload arrives with no
+    // split, so the layer draws as its whole base.
+    property bool attached: true
+    // The centred-follow option (default OFF — the cheap render path
+    // is the default): every toolhead publish re-pans the view onto
+    // the dot, clamped so the bed always fills the view.
+    property bool keepCentred: false
     property bool showPrevious: true
     property bool showNext: true
     property bool showBase: true
@@ -45,9 +56,12 @@ Item {
     // the weight (the old halved 1 px read the same way). The
     // zoomable popover never reads this.
     property real compactStrokeBoost: 7.0
-    // The zoom/pan view (the live request): a scale and a pan in
-    // canvas pixels, applied by every raster AND the shared mapping's
-    // grid — one transform so the stack moves together.
+    // The zoom/pan view (the live request): a scale in canvas pixels
+    // burned into every raster, and a pan applied by the SCENE GRAPH
+    // — the rasters paint bed geometry at the zoom alone and the
+    // canvas items carry the pan as a translation, so a pan costs a
+    // transform and never a repaint (the centred-follow ruling: at a
+    // pan per poll, a pan-baked raster is a full re-raster per poll).
     property real viewScale: 1.0
     property real viewPanX: 0.0
     property real viewPanY: 0.0
@@ -55,12 +69,11 @@ Item {
     // contexts, which read var properties fresh but can see primitive
     // properties stale; the view/width state rides this var carrier
     // and every painter reads it (the offscreen-harness repaint
-    // findings). The scope, the dot and the grid bindings are
-    // scene-graph and keep reading the properties directly.
+    // findings). The carrier is geometry-in only — the pan is not a
+    // paint input. The scope, the dot and the grid bindings are
+    // scene-graph and read the properties directly.
     property var _view: ({
             scale: 1.0,
-            panX: 0.0,
-            panY: 0.0,
             lineScale: 0.7,
             compact: false
         })
@@ -68,8 +81,6 @@ Item {
     function _publishView() {
         root._view = {
             scale: root.viewScale,
-            panX: root.viewPanX,
-            panY: root.viewPanY,
             lineScale: root.lineScale,
             compact: root.compact
         };
@@ -117,6 +128,80 @@ Item {
 
     function available() {
         return root.progress != null && root.progress.available === true;
+    }
+
+    // The toolhead's own availability: a live dot on a plotted bed. The
+    // mini is a thumbnail with no view state, so it never centres; a
+    // detached face has no live position to centre on.
+    function dotAvailable() {
+        return root.available() && !root.compact && root.attached && mapping._plot != null && root.dot != null && root.dot.valid === true;
+    }
+
+    // The one pan rule (the centred-follow ruling): the bed always
+    // fills the view, so a pan is clamped to the interval that keeps
+    // the plot's rectangle covering the face; an axis where the bed is
+    // smaller than the face (the full-bed fit) centres there instead —
+    // the standing "no pan at full zoom" ruling.
+    function _clampPan(x, y) {
+        var plot = mapping._plot;
+        if (plot == null) {
+            return {
+                "x": 0.0,
+                "y": 0.0
+            };
+        }
+        var scale = root.viewScale;
+        var bed = plot.bed;
+        var left = bed.offsetX * scale;
+        var right = left + bed.plotWidth * scale;
+        var top = bed.offsetY * scale;
+        var bottom = top + bed.plotHeight * scale;
+        var lowX = width - right;
+        var highX = -left;
+        var lowY = height - bottom;
+        var highY = -top;
+        return {
+            "x": lowX > highX ? 0.0 : Math.min(highX, Math.max(lowX, x)),
+            "y": lowY > highY ? 0.0 : Math.min(highY, Math.max(lowY, y))
+        };
+    }
+
+    function _panOnToolhead() {
+        var scene = mapping.plateToScene(root.dot.x, root.dot.y);
+        if (scene == null) {
+            return null;
+        }
+        return _clampPan(width / 2 - scene.x * root.viewScale, height / 2 - scene.y * root.viewScale);
+    }
+
+    // The one-shot jump (the pop-over's button): the toolhead's bed
+    // position lands at the view's centre, the zoom is the user's own.
+    // False when there is nothing to centre on.
+    function centreOnToolhead() {
+        if (!dotAvailable()) {
+            return false;
+        }
+        var pan = _panOnToolhead();
+        if (pan == null) {
+            return false;
+        }
+        root.viewPanX = pan.x;
+        root.viewPanY = pan.y;
+        return true;
+    }
+
+    // The centred follow: every toolhead publish re-pans onto the dot —
+    // a scene-graph translation, never a raster (the pan-agnostic
+    // rasters make the follow cost-free per poll).
+    function _followToolhead() {
+        if (!root.keepCentred || !dotAvailable()) {
+            return;
+        }
+        var pan = _panOnToolhead();
+        if (pan != null && (pan.x !== root.viewPanX || pan.y !== root.viewPanY)) {
+            root.viewPanX = pan.x;
+            root.viewPanY = pan.y;
+        }
     }
 
     // The ONE physical stroke-width calculation, shared by the ghost,
@@ -188,14 +273,17 @@ Item {
         root._scopeDocked = true;
         scopeHideTimer.restart();
     }
-    onViewPanXChanged: {
-        _publishView();
-        _resetStack();
-    }
-    onViewPanYChanged: {
-        _publishView();
-        _resetStack();
-    }
+    // A pan is a scene-graph translation of the raster items: no
+    // repaint, no re-accumulation — the follow's per-poll budget. The
+    // pixels the rasters hold are pan-free by construction.
+    onViewPanXChanged: _publishView()
+    onViewPanYChanged: _publishView()
+    // The toolhead publish is the follow's clock: the model republishes
+    // the dot when it moves, and only then.
+    onDotChanged: root._followToolhead()
+    onKeepCentredChanged: root._followToolhead()
+    // Detaching hides the dot and, with it, the follow's subject.
+    onAttachedChanged: root._followToolhead()
     onCompactChanged: {
         // The product sets compact at construction and never flips
         // it; the repaint keeps the thumbnail honest wherever it is.
@@ -247,6 +335,13 @@ Item {
         anchors.fill: parent
         renderTarget: Canvas.Image
         renderStrategy: Canvas.Threaded
+        // The view's pan, as a transform: the rasters hold bed geometry
+        // at the zoom alone, so panning moves the whole stack without
+        // one stroke being re-drawn (the centred-follow ruling).
+        transform: Translate {
+            x: root.viewPanX
+            y: root.viewPanY
+        }
         onPaint: {
             var ctx = getContext("2d");
             ctx.reset();
@@ -271,6 +366,10 @@ Item {
         anchors.fill: parent
         renderTarget: Canvas.Image
         renderStrategy: Canvas.Threaded
+        transform: Translate {
+            x: root.viewPanX
+            y: root.viewPanY
+        }
         onPaint: {
             var ctx = getContext("2d");
             ctx.reset();
@@ -294,6 +393,10 @@ Item {
         anchors.fill: parent
         renderTarget: Canvas.Image
         renderStrategy: Canvas.Threaded
+        transform: Translate {
+            x: root.viewPanX
+            y: root.viewPanY
+        }
         onPaint: {
             var ctx = getContext("2d");
             if (!root.available() || mapping._plot == null) {
@@ -305,6 +408,14 @@ Item {
             }
             var split = root.progress.split;
             if (split == null) {
+                // No boundary to draw at — a detached (frozen) anchor,
+                // or a print without a position. The layer is its whole
+                // base and any accumulated fill goes with the split.
+                ctx.reset();
+                ctx.clearRect(0, 0, width, height);
+                root._lastSplit = -1;
+                root._paintsSinceReset = 0;
+                root._progressDirty = false;
                 return;
             }
             // A backward split (a restart), a toggle flip or an
@@ -366,8 +477,6 @@ Item {
         var offsetY = plot.bed.offsetY;
         var bedXMin = plot.bed.bedXMin;
         var bedYMax = plot.bed.bedYMax;
-        var panX = root._view.panX;
-        var panY = root._view.panY;
         var scale = root._view.scale;
         // The physical stroke: one width for every channel (the
         // ghost/pending/printed parity rule), subpixel at 100%.
@@ -397,9 +506,10 @@ Item {
                 // A fresh path per segment, opened at the first edge's
                 // OWN start vertex: the stroke never bridges a travel, a
                 // feature change, or the boundary the last poll painted.
-                ctx.moveTo(panX + (offsetX + (points[i - 1][0] - bedXMin) * sx) * scale, panY + (offsetY + (bedYMax - points[i - 1][1]) * sy) * scale);
+                // No pan term: the item's translation carries the view.
+                ctx.moveTo((offsetX + (points[i - 1][0] - bedXMin) * sx) * scale, (offsetY + (bedYMax - points[i - 1][1]) * sy) * scale);
                 while (_edgePrinted(points, i, split)) {
-                    ctx.lineTo(panX + (offsetX + (points[i][0] - bedXMin) * sx) * scale, panY + (offsetY + (bedYMax - points[i][1]) * sy) * scale);
+                    ctx.lineTo((offsetX + (points[i][0] - bedXMin) * sx) * scale, (offsetY + (bedYMax - points[i][1]) * sy) * scale);
                     ++i;
                 }
                 ctx.stroke();
@@ -431,11 +541,11 @@ Item {
             if (scene == null) {
                 continue;
             }
-            ctx.moveTo(root._view.panX + scene.x * root._view.scale, root._view.panY + scene.y * root._view.scale);
+            ctx.moveTo(scene.x * root._view.scale, scene.y * root._view.scale);
             while (_edgePrinted(points, i, split)) {
                 scene = mapping.plateToScene(points[i][0], points[i][1]);
                 if (scene != null) {
-                    ctx.lineTo(root._view.panX + scene.x * root._view.scale, root._view.panY + scene.y * root._view.scale);
+                    ctx.lineTo(scene.x * root._view.scale, scene.y * root._view.scale);
                 }
                 ++i;
             }
@@ -461,8 +571,8 @@ Item {
             if (scene == null) {
                 continue;
             }
-            var sceneX = root._view.panX + scene.x * root._view.scale;
-            var sceneY = root._view.panY + scene.y * root._view.scale;
+            var sceneX = scene.x * root._view.scale;
+            var sceneY = scene.y * root._view.scale;
             ctx.fillStyle = MoonrakerTheme.plateTravel;
             ctx.beginPath();
             if (start) {
@@ -494,8 +604,10 @@ Item {
         border.color: UM.Theme.getColor("main_background")
         border.width: 2
         // The dot rides the LAYERS: no index, no dot (the live
-        // report — it rendered over the unavailable card).
-        visible: root.available() && mapping._plot != null && root.dot != null && root.dot.valid === true
+        // report — it rendered over the unavailable card). Detached it
+        // goes too: the position belongs to the live layer, and the
+        // frozen anchor is another layer's picture (the live ruling).
+        visible: root.available() && root.attached && mapping._plot != null && root.dot != null && root.dot.valid === true
         x: visible ? root.viewPanX + mapping.plateToScene(root.dot.x, root.dot.y).x * root.viewScale - width / 2 : 0
         y: visible ? root.viewPanY + mapping.plateToScene(root.dot.x, root.dot.y).y * root.viewScale - height / 2 : 0
     }

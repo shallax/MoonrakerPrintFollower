@@ -819,7 +819,11 @@ Item {
             }
             OutlineProgressBar {
                 width: parent.width
-                height: 10 * screenScaleFactor
+                // An undeclared total has no fraction to draw: the bar
+                // yields to the byte counter and the spinner until the
+                // headers name one (a bar pinned at 0% would read as a
+                // stalled transfer).
+                height: root.downloadProgressIndeterminate() ? 0 : 10 * screenScaleFactor
                 from: 0
                 to: 100
                 value: root.downloadProgressPercent()
@@ -827,7 +831,7 @@ Item {
             RowLayout {
                 width: parent.width
                 UM.Label {
-                    text: root.downloadProgressPercent() + "%"
+                    text: root.downloadProgressIndeterminate() ? "Received" : root.downloadProgressPercent() + "%"
                     font: UM.Theme.getFont("small")
                     Layout.fillWidth: true
                 }
@@ -1354,6 +1358,15 @@ Item {
         return progress !== "" ? progress.percent : 0;
     }
 
+    function downloadProgressIndeterminate() {
+        // No declared length yet: the window stays open, the bytes
+        // received stand in for the fraction and the Cancel stays
+        // reachable. A determinate percentage replaces this the moment
+        // the total arrives.
+        var progress = root.downloadProgress();
+        return progress !== "" && progress.indeterminate === true;
+    }
+
     function humanBytes(bytes) {
         // Bytes stay bytes; anything larger steps through the binary
         // units at 1024 (the live request).
@@ -1372,8 +1385,13 @@ Item {
 
     function downloadProgressSize() {
         var progress = root.downloadProgress();
-        if (progress === "" || progress.total === undefined) {
+        if (progress === "") {
             return "";
+        }
+        if (!(progress.total > 0)) {
+            // An undeclared total leaves the bytes received as the only
+            // honest readout (the total is a 0 sentinel, never absent).
+            return root.humanBytes(progress.received);
         }
         return root.humanBytes(progress.received) + " / " + root.humanBytes(progress.total);
     }

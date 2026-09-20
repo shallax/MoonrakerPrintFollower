@@ -46,12 +46,22 @@ simplification's error is a bound rather than a hope.
 
 The architecture contract forbids the mutable index arrays crossing the
 worker boundary; only these built lists do.
+
+The preparation — the edge walk and the simplification — is a pure
+function of the index and the layer, and it is bounded twice over: the
+walk is linear in the layer's motions, and the simplification's
+quadratic worst case is clamped by _SIMPLIFY_WORK_LIMIT. Both are what
+make it safe to call from anywhere, and `prepare_layer` is the entry
+the service's own executor can own so that the UI thread's read is a
+memo hit rather than a build.
 """
 from __future__ import annotations
 
 from bisect import bisect_left
 from math import hypot
+import threading
 from typing import Dict, Iterator, List, Optional, Sequence, Tuple
+import weakref
 
 from . import ArcGeometry
 from .GCodeIndex import LayerMotionIndex
@@ -80,6 +90,32 @@ _SIMPLIFY_FLOOR_MM = 1.0e-4
 # budget: no vertex ever leaves with more error than a curve may carry.
 _SIMPLIFY_CEILING_MM = ArcGeometry.MAX_SAGITTA_MM
 _MAX_SIMPLIFY_PASSES = 6
+# The simplification's work bound: the interior vertices one CHANNEL's
+# simplification may inspect, shared by every segment and every
+# escalation pass of one call. Douglas-Peucker's worst case is
+# quadratic — a chain whose every split peels a single vertex (a
+# sawtooth of near-equal teeth, a noisy run) costs one full scan per
+# kept vertex, and a channel holds hundreds of thousands of them — so
+# the walk is charged per inspected vertex and stops refining when the
+# charge is gone. It never stops *truthfully*: an interval the bound
+# could not refine keeps its own vertices, which is zero error, so the
+# bound costs refinement and never accuracy.
+#
+# The number is a time bound, and it is calibrated as "no more than a
+# well-behaved channel of your own size costs". Measured on the largest
+# geometry the point budgets admit (200k vertices, one channel), the
+# intrinsic cost of the exact walk is 200k inspections for a straight
+# run, 1.4M for a long gentle bow and 2.7M for a dense arc; the shapes
+# that exceed this bound are exactly the ones whose every split peels a
+# vertex, and they exceed it by five orders of magnitude (a 200k
+# sawtooth ran past 120s before it was clamped). The bound therefore
+# leaves every channel that simplifies at all exactly as it was, and
+# clips the quadratic shapes to the cost of an ordinary one.
+_SIMPLIFY_WORK_LIMIT = 3000000
+# The prepared-layer store's size: the follower's window is three layers
+# and an anchor move keeps two of them, so a handful of entries covers
+# the reuse plus the worker's look-ahead.
+_PREPARED_LIMIT = 8
 
 _TYPE_NONE = 0
 _TYPE_OTHER = 1
@@ -306,18 +342,50 @@ def _douglas_peucker(points: Sequence[Sequence[float]],
     than *tolerance* from the polyline that comes back. The result is a
     subset of the input vertices, so every motion index survives with
     the vertex it belongs to.
+
+    The walk is charged against a work bound (see _simplify): a chain
+    whose shape makes the exact recursion quadratic stops refining and
+    keeps its own vertices instead, which is a subset of the input and
+    still within the same bound.
+    """
+    return _simplify(points, tolerance, [_SIMPLIFY_WORK_LIMIT])
+
+
+def _simplify(points: Sequence[Sequence[float]], tolerance: float,
+              spent: List[int]) -> List[List[float]]:
+    """The charged walk behind _douglas_peucker.
+
+    *spent* is a one-slot list — the CHANNEL's work counter, shared
+    across every segment and every escalation pass of one _budgeted
+    call — and the walk charges it one unit per interior vertex it
+    inspects. The bound exists because the recursion's worst case is
+    quadratic: a chain whose every split peels exactly one vertex (the
+    sawtooth an alternating edge produces) costs a full scan per kept
+    vertex, and 200k noisy vertices then cost 4e10 inspections, which
+    is a frozen UI rather than a drawing.
+
+    Running out of charge cannot break the guarantee, because the two
+    things the walk can do with an interval are both bound-preserving:
+    it either proves the interval's chord (every interior vertex within
+    *tolerance* of the FINITE segment, so the chord may stand for them)
+    or it keeps the interval's own vertices (zero error, and the arc's
+    ceiling still caps the tolerance the pass is running at). What the
+    bound refuses is the third option — a coarse chord no scan ever
+    verified — so an exhausted walk completes the interval it was about
+    to split and every interval still pending, and returns a subset
+    that is denser than the exact answer and never less accurate.
     """
     count = len(points)
     if count <= 2:
         return list(points)
     tolerance_sq = tolerance * tolerance
-    keep = [False] * count
-    keep[0] = keep[count - 1] = True
+    # A byte per vertex rather than an object: the kept-set of a
+    # 200k-vertex chain is a transient the clamp must not inflate.
+    keep = bytearray(count)
+    keep[0] = keep[count - 1] = 1
     stack = [(0, count - 1)]
     while stack:
         first, last = stack.pop()
-        if last <= first + 1:
-            continue
         x0, y0 = points[first][0], points[first][1]
         x1, y1 = points[last][0], points[last][1]
         dx = x1 - x0
@@ -326,14 +394,32 @@ def _douglas_peucker(points: Sequence[Sequence[float]],
         worst = -1.0
         worst_index = -1
         for index in range(first + 1, last):
+            point = points[index]
             distance_sq = _point_segment_distance_sq(
-                points[index][0], points[index][1], x0, y0, dx, dy, span_sq)
+                point[0], point[1], x0, y0, dx, dy, span_sq)
             if distance_sq > worst:
                 worst = distance_sq
                 worst_index = index
-        if worst > tolerance_sq:
-            keep[worst_index] = True
+        spent[0] -= last - first - 1
+        if worst <= tolerance_sq:
+            # A proven leaf: this chord stands for the whole interval
+            # and every vertex inside it may be dropped.
+            continue
+        if spent[0] < 0:
+            interior = last - first - 1
+            keep[first + 1:last] = b"\x01" * interior
+            for pending_first, pending_last in stack:
+                keep[pending_first + 1:pending_last] = b"\x01" * (pending_last - pending_first - 1)
+            break
+        keep[worst_index] = 1
+        # Only intervals with something left to decide are stacked: an
+        # interval of one edge has no interior vertex, so pushing it
+        # would grow the stack with work that is already decided. The
+        # sawtooth case peels one vertex per split and would otherwise
+        # leave one dead interval per split on the stack.
+        if worst_index - first > 1:
             stack.append((first, worst_index))
+        if last - worst_index > 1:
             stack.append((worst_index, last))
     return [points[index] for index in range(count) if keep[index]]
 
@@ -362,19 +448,34 @@ def _budgeted(segments: List[List[List[float]]],
     flattened past the tolerance its own subedges were drawn to. A
     simplified chord draws when its last motion is printed, so the
     printed fill lags its own chord and never runs ahead of the head.
+
+    The passes share ONE work counter, so the whole call — every
+    segment, every escalation — is bounded by _SIMPLIFY_WORK_LIMIT and
+    not by the geometry's shape. A channel that spends the counter on
+    its first pass is a channel whose first pass had to scan the whole
+    chain per vertex kept, and no later pass at a coarser tolerance
+    turns that shape into a fitting one; the counter's exhaustion ends
+    the search with the last pass's subset, which is still within the
+    ceiling.
     """
     total = sum(len(segment) for segment in segments)
     if total <= budget:
         return segments
     tolerance = min(max(_segments_path(segments) / budget, _SIMPLIFY_FLOOR_MM), _SIMPLIFY_CEILING_MM)
     simplified = segments
+    spent = [_SIMPLIFY_WORK_LIMIT]
     for _ in range(_MAX_SIMPLIFY_PASSES):
-        simplified = [_douglas_peucker(segment, tolerance) for segment in segments]
+        simplified = [_simplify(segment, tolerance, spent) for segment in segments]
         if sum(len(segment) for segment in simplified) <= budget:
             return simplified
         if tolerance >= _SIMPLIFY_CEILING_MM:
             # The tolerance is at the fidelity ceiling: further passes
             # would weigh the same geometry against the same bound.
+            break
+        if spent[0] < 0:
+            # The counter is gone: a later pass would return the same
+            # completed subset, having nothing left to prove a chord
+            # with. The search is over.
             break
         tolerance = min(tolerance * 2.0, _SIMPLIFY_CEILING_MM)
     return simplified
@@ -476,14 +577,82 @@ def _build(index: LayerMotionIndex, layer: int) -> tuple:
     return classes, travels, start_marks, end_marks
 
 
-def layer_polylines(index: LayerMotionIndex, layer: int) -> Optional[dict]:
-    """One hydrated layer's prepared geometry, or None when the layer
-    is not hydrated (an evicted layer reads as empty — the payload
-    must say so, never draw nothing as a lie)."""
+# The prepared-layer store: (index identity, layer) to the payload the
+# last build returned, with the layer's motion count as the freshness
+# stamp — a compact index hydrates in place, so the count is what tells
+# an empty layer apart from one whose arrays have arrived. The index is
+# held weakly: a live index keeps its entry valid, a collected one
+# drops it rather than let a recycled id claim another index's layer.
+_prepared_layers: Dict[Tuple[int, int], tuple] = {}
+_prepared_lock = threading.Lock()
+
+
+def _prepared_guard(index: LayerMotionIndex):
+    """The index's own lock when it has one (the service holds it while
+    it builds the bundle), so the store shares one lock with the index
+    it is keyed on rather than adding a second one beside it."""
+    return getattr(index, "cache_lock", None) or _prepared_lock
+
+
+def _prepared_get(index: LayerMotionIndex, layer: int) -> Optional[dict]:
+    with _prepared_guard(index):
+        entry = _prepared_layers.get((id(index), layer))
+    if entry is None:
+        return None
+    owner, count, payload = entry
+    if owner() is not index or count != index.motion_count(layer):
+        return None
+    return payload
+
+
+def _prepared_put(index: LayerMotionIndex, layer: int, payload: dict) -> None:
+    with _prepared_guard(index):
+        _prepared_layers[(id(index), layer)] = (
+            weakref.ref(index), index.motion_count(layer), payload)
+        while len(_prepared_layers) > _PREPARED_LIMIT:
+            # Insertion-ordered: the oldest entry goes first, which is
+            # the layer the window has moved furthest away from.
+            _prepared_layers.pop(next(iter(_prepared_layers)))
+
+
+def prepare_layer(index: LayerMotionIndex, layer: int) -> Optional[dict]:
+    """One layer's prepared geometry — the builder AND the memo.
+
+    The preparation is the heavy half of this module: a full motion-edge
+    walk plus the simplification. It is a PURE function of the index and
+    the layer — no Qt, no UI state, nothing that must run where the
+    snapshot is assembled — so the service's existing executor can own
+    it: submit this per layer of the demanded window and the UI thread's
+    own read is a memo hit. It is also what makes a warm read cheap, so
+    a repeat (a re-read within the window, an anchor move that keeps
+    two of its three layers) returns the payload the last build made.
+
+    A layer that is not hydrated, or one the index does not have, reads
+    as None — the payload must say "not loaded", never draw nothing as
+    a lie.
+    """
     if layer < 0 or layer >= index.layer_count():
         return None
     if index.compact and layer not in index.hydrated_layers:
         return None
+    cached = _prepared_get(index, layer)
+    if cached is not None:
+        return cached
+    payload = _prepare(index, layer)
+    _prepared_put(index, layer, payload)
+    return payload
+
+
+def layer_polylines(index: LayerMotionIndex, layer: int) -> Optional[dict]:
+    """One hydrated layer's prepared geometry, or None when the layer
+    is not hydrated (an evicted layer reads as empty — the payload
+    must say so, never draw nothing as a lie)."""
+    return prepare_layer(index, layer)
+
+
+def _prepare(index: LayerMotionIndex, layer: int) -> dict:
+    """The build itself: the edge walk, the per-class budgets and the
+    travel channel, for a layer whose guards have already passed."""
     xs = index.motion_x[layer] if layer < len(index.motion_x) else ()
     if not len(xs):
         return {"classes": {}, "travels": [], "travelStarts": [], "travelEnds": [], "motions": 0}

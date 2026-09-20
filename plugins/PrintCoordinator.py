@@ -73,6 +73,9 @@ class PrintCoordinator(QObject):
         self._header_total_path = ""
         self._layer_trace_at = 0.0
         self._user_detached = False
+        # The follower face's MANUAL anchor: an index while the face is
+        # detached from the live layer, None while it follows the print.
+        self._plate_anchor = None
         self._publish_at = 0.0
         self._processing = self._closed = False
         self._had_toolpath = False
@@ -268,15 +271,27 @@ class PrintCoordinator(QObject):
              next_pause_fraction, next_pause_baked) = self._next_pause.compute(physical, elapsed, items)
             # The follower face's prepared polylines: built HERE from
             # the index (the worker-side prep rule), not in the model.
+            layer_count = len(view.ranges) if view is not None else 0
+            # The face's anchor: the live layer while the follower
+            # follows the print, the manual one while the user has
+            # detached it — refused when it points outside this file
+            # (a frozen anchor outlives a print and the next one may be
+            # shorter).
+            anchor = physical.index
+            if self._plate_anchor is not None and 0 <= self._plate_anchor < layer_count:
+                anchor = self._plate_anchor
             plate_progress_payload = None
             plate_visited = frozenset()
             if plate_available:
                 # The payload is built INSIDE the service — the raw
                 # index's arrays never cross its boundary (the
                 # architecture contract), so the coordinator asks the
-                # service, never the view.
+                # service, never the view. A frozen layer carries NO
+                # file position: the split is a live print's boundary,
+                # and on another layer it would be another print's
+                # fill.
                 plate_progress_payload = self._index.plate_progress(
-                    physical.index, position)
+                    anchor, position if anchor == physical.index else None)
                 # The per-layer printed objects: the executed motions'
                 # polygon visits, read back from the layer's start.
                 # The rows go through the SAME normalisation the map
@@ -288,7 +303,7 @@ class PrintCoordinator(QObject):
                 exclude_rows = plate_values(exclude_status)["objects"]
                 visited = getattr(self._index, "plate_visited", None)
                 if visited is not None and plate_progress_payload.get("split") is not None:
-                    plate_visited = visited(physical.index,
+                    plate_visited = visited(anchor,
                                             plate_progress_payload["split"], exclude_rows)
             self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
                 estimate if estimate > 0 else None, self._files.metadata_complete,
@@ -303,6 +318,7 @@ class PrintCoordinator(QObject):
                 load_active=load_active,
                 filament_total=filament_total if filament_total and filament_total > 0 else None,
                 plate_progress=plate_progress_payload,
+                plate_layer_count=layer_count,
                 plate_visited=plate_visited)
             if self._snapshot.active and filename:
                 self._maybe_fetch_mr_metadata(filename, job)
@@ -363,6 +379,12 @@ class PrintCoordinator(QObject):
                     for layer in (current - 1, current, current + 1):
                         if layer >= 0:
                             self._index.request_hydration(layer)
+                    # The detached face's own demand, re-asked every
+                    # poll: the live window's advance is what evicts a
+                    # frozen layer's geometry, so the request has to
+                    # stand every time the print crosses a layer.
+                    if self._plate_anchor is not None:
+                        self._index.set_manual_anchor(self._plate_anchor)
             else:
                 self._preview.invalidate_view()
             self._preview.update_eta(self._snapshot, view)
@@ -619,6 +641,19 @@ class PrintCoordinator(QObject):
         self._message("Resolving current print…")
         self._client.force_refresh()
         QTimer.singleShot(2600, self.refresh)
+
+    def set_plate_anchor(self, anchor):
+        """The follower face's anchor (the pop-over's layer slider): an
+        index freezes the face on that layer, None rejoins the live
+        print. The live-follow state machine is untouched — the
+        retention window still tracks the print (the service carries the
+        frozen window beside it), so detaching never costs the live
+        layer its hydration, and the next live poll keeps resolving the
+        print's own layer."""
+        self._plate_anchor = anchor if isinstance(anchor, int) and not isinstance(anchor, bool) \
+            and anchor >= 0 else None
+        self._index.set_manual_anchor(self._plate_anchor)
+        self.refresh()
 
     def toggle_attachment(self):
         # A manual toggle is a deliberate choice: it cancels any pending

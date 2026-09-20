@@ -30,6 +30,7 @@ All geometry here is prepared payload data — the G-code walk, arc
 tessellation and feature topology are covered by the geometry suites.
 """
 import json
+import pathlib
 import unittest
 
 from qt_runtime_support import QT_AVAILABLE
@@ -47,7 +48,7 @@ except ImportError:
 # namespace — unittest collects every TestCase subclass found here,
 # and aliases would drag the parent suite into this file's discovery.
 
-FIXTURE = json.load(open(__file__.rsplit("/", 1)[0] + "/fixtures/layer290_payload.json"))
+FIXTURE = json.loads((pathlib.Path(__file__).resolve().parent / "fixtures" / "layer290_payload.json").read_text(encoding="utf-8"))
 
 
 class ZoomStrokeTests(_parent.RealEngineTestCase):

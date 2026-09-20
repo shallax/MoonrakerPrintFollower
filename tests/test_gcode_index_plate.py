@@ -494,6 +494,30 @@ class FeatureRetentionTests(unittest.TestCase):
         self.assertEqual(index.motion_types[3], [[1, 3]])
         self.assertEqual(index.travel_starts[2], [1])
 
+    def test_the_frozen_layer_holds_its_own_window_beside_the_live_print(self):
+        data = b"M82\n" + b"".join(b";LAYER:%d\nG1 X%d E1.0\n" % (n, n + 1) for n in range(6))
+        path = _write_gcode(data)
+        self.addCleanup(os.remove, path)
+        index = build_index_from_file(path, compact=True)
+        # The live print stands at layer 0; the follower is frozen on 5
+        # (the pop-over's detach). Every hydration here evicts against
+        # the live window alone — the frozen layer and its own
+        # neighbours survive on the second anchor.
+        index.manual_anchor = 5
+        for layer in (5, 4, 3, 2):
+            self.assertTrue(hydrate_layer_from_file(index, path, layer, keep_anchor=0))
+        # The frozen layer and the neighbour below it hold; the layer
+        # just hydrated sits in NEITHER window and goes straight out.
+        self.assertEqual(index.hydrated_layers, {4, 5})
+        self.assertEqual(index.motion_count(5), 1)
+        # The control: with no frozen anchor the same walk throws
+        # everything away as it goes — the detached face's layer would
+        # be evicted by the print's own advance.
+        control = build_index_from_file(path, compact=True)
+        for layer in (5, 4, 3, 2):
+            self.assertTrue(hydrate_layer_from_file(control, path, layer, keep_anchor=0))
+        self.assertEqual(control.hydrated_layers, set())
+
 
 @unittest.skipUnless(QT_AVAILABLE, "Install PyQt6 to run the index service suite")
 class HydrationWindowTests(unittest.TestCase):
@@ -566,6 +590,42 @@ class HydrationWindowTests(unittest.TestCase):
         # the layer the print has just left is exactly the ghost the face
         # wants, and it is not in the request any more.
         self.assertEqual(self.service._hydrate, {2, 3})
+
+    def test_a_manual_anchor_demands_its_window_beside_the_live_one(self):
+        index = self._bind(layers=8)
+        index.followed_layer = 1
+        self.service.set_manual_anchor(5)
+        # The frozen layer's window is asked for on its own demand path:
+        # re-anchoring the live window would evict the live layer the
+        # dot, the split and the printed fill all read.
+        self.assertEqual(self.service._hydrate, {4, 5, 6})
+        self.assertEqual(index.manual_anchor, 5)
+        self.service._hydrate.clear()
+        self.service.request_hydration(1)
+        self.assertEqual(self.service._hydrate, {0, 1, 2})
+        # Rejoining the print drops the frozen demand.
+        self.service.set_manual_anchor(None)
+        self.assertIsNone(index.manual_anchor)
+        self.assertEqual(self.service._hydrate, {0, 1, 2})
+
+    def test_a_manual_anchor_outside_the_index_is_never_asked_for(self):
+        index = self._bind(layers=8)
+        self.service.set_manual_anchor(11)
+        # A layer outside the file is no anchor: nothing is demanded and
+        # the retention bound keeps the live window alone.
+        self.assertEqual(self.service._hydrate, set())
+        self.assertIsNone(index.manual_anchor)
+
+    def test_the_frozen_anchor_reaches_an_index_built_after_the_detach(self):
+        self._bind(layers=8)
+        # The detach can land before the build, with no index to carry
+        # the anchor yet.
+        self.service._view = None
+        self.service.set_manual_anchor(6)
+        index = self._bind(layers=8)
+        # The poll's advance hands the held anchor to the new index.
+        self.service._apply_manual_anchor()
+        self.assertEqual(index.manual_anchor, 6)
 
     def test_a_request_outside_the_followed_window_is_not_queued(self):
         index = self._bind()

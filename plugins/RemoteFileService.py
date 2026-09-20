@@ -14,6 +14,13 @@ from .DownloadStream import DownloadOperation, DownloadTarget
 from .MoonrakerProtocol import download_endpoint, metadata_endpoint, parse_file_identity
 
 
+# The one-shot lane's two cancel terminals, kept apart on purpose (the
+# lifecycle finding): a user who pressed Cancel did not lose a printer,
+# and an invalidated session must still say why the file went away.
+CANCELLED_BY_USER = "The download was cancelled"
+CANCELLED_BY_SESSION = "The printer connection changed; the download was cancelled"
+
+
 def _declared_length(reply) -> int:
     """The response's Content-Length, 0 when absent. Read through the
     header PAIRS with a case-insensitive scan — the typed lookup
@@ -165,14 +172,17 @@ class _OneShotDownload:
         self._abort()
         self._deliver(None, error)
 
-    def cancel(self):
-        """The session-invalidation hook: abort and deliver the
-        terminal error. Exactly-once holds through every path,
-        constructor failure included."""
+    def cancel(self, reason=CANCELLED_BY_USER):
+        """Abort and deliver the terminal error. Exactly-once holds
+        through every path, constructor failure included. The reason is
+        the caller's to name: the user's Cancel and an invalidated
+        session are different terminals (`cancel_one_shots` passes the
+        connection-change one), and the quiet shutdown flavour differs
+        only in whether the consumer reports it."""
         if self._done:
             return
         self._abort()
-        self._deliver(None, "The printer connection changed; the download was cancelled")
+        self._deliver(None, reason)
 
     def _abort(self):
         op = self._op
@@ -305,9 +315,10 @@ class RemoteFileService(QObject):
 
     def cancel_one_shots(self):
         """The session-invalidation hook (wired by the runtime): every
-        in-flight one-shot aborts and delivers its terminal error."""
+        in-flight one-shot aborts and delivers its terminal error —
+        the connection-change terminal, never the user-cancel one."""
         for download in list(self._one_shots):
-            download.cancel()
+            download.cancel(CANCELLED_BY_SESSION)
 
     def _drain_one_shot(self, download, op, reply):
         if download._done or op.aborted:
