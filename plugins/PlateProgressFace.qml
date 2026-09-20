@@ -258,19 +258,19 @@ Item {
     function _ghostKeyOf() {
         var progress = root.progress;
         var layers = progress != null ? progress.layers : null;
-        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.prev) : -1, layers != null ? _motionsOf(layers.next) : -1, root.showPrevious ? 1 : 0, root.showNext ? 1 : 0, _viewKey()].join("|");
+        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.prev) : -1, layers != null ? _motionsOf(layers.next) : -1, root.showPrevious ? 1 : 0, root.showNext ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
     function _pendingKeyOf() {
         var progress = root.progress;
         var layers = progress != null ? progress.layers : null;
-        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, root.showBase ? 1 : 0, _viewKey()].join("|");
+        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, root.showBase ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
     function _progressKeyOf() {
         var progress = root.progress;
         var layers = progress != null ? progress.layers : null;
-        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, _viewKey()].join("|");
+        return [(progress != null ? progress.anchor : -1), layers != null ? _motionsOf(layers.current) : -1, progress != null && progress.split != null ? progress.split : -1, root.showTravels ? 1 : 0, root.available() ? 1 : 0, _viewKey()].join("|");
     }
 
     function _resetStack() {
@@ -309,6 +309,21 @@ Item {
             root._anchor = root.progress.anchor;
             _resetStack();
             return;
+        }
+        // The same anchor, new content: the loading→loaded transition
+        // flips the motions from -1 to the real count (and the
+        // availability), and the static canvases' keys catch it — the
+        // cleared raster must never read as already drawn (the live
+        // report: the pending base stayed missing on the first load).
+        var ghostKey = _ghostKeyOf();
+        if (ghostKey !== root._ghostKey) {
+            root._ghostKey = ghostKey;
+            ghostCanvas.requestPaint();
+        }
+        var pendingKey = _pendingKeyOf();
+        if (pendingKey !== root._pendingKey) {
+            root._pendingKey = pendingKey;
+            pendingCanvas.requestPaint();
         }
         progressCanvas.requestPaint();
     }
@@ -406,7 +421,13 @@ Item {
     PlateCanvas {
         id: mapping
         anchors.fill: parent
-        visible: root.available()
+        // Opacity, never visibility: hiding a Canvas discards its
+        // buffer and the show rebuilds it (the live report — the
+        // loading flash churned the grid on every seek). An opaque
+        // zero keeps the canvas alive and painted for free; the
+        // input stays gated by the availability.
+        opacity: root.available() ? 1.0 : 0.0
+        enabled: root.available()
         printerModel: root.printerModel
         plate: null
         viewScale: root.viewScale
