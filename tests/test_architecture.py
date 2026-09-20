@@ -192,7 +192,7 @@ class SourceContractTests(unittest.TestCase):
             "PreviewMotion": {"CuraAdapter", "PreviewSmoothing"},
             "PreviewPresentation": set(),
             "PreviewSmoothing": set(),
-            "PrintCoordinator": {"CuraAdapter", "LoadStateTracker", "MonitorFormatting", "NextPausePipeline", "PreviewFormatting", "PrintIdentity", "PrintState", "RemoteJobService"},
+            "PrintCoordinator": {"CuraAdapter", "LoadStateTracker", "MonitorFormatting", "MoonrakerProtocol", "NextPausePipeline", "PreviewFormatting", "PrintIdentity", "PrintState", "RemoteJobService"},
             "PrintIdentity": set(),
             "PrinterBinding": {"CameraTiming", "CuraAdapter", "PersistenceMigration", "PrinterConfig"},
             "PrinterConfig": set(),

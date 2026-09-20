@@ -1220,5 +1220,105 @@ class SplitAndBundleTests(unittest.TestCase):
         self.assertIsNone(bundle["split"])
 
 
+class RefinedSplitTests(unittest.TestCase):
+    """The followed boundary from the LIVE tool position: the paint
+    follows the nozzle, not the dispatcher.
+
+    ``refined_split`` is the Preview's own refinement (the same
+    ``refined_fraction`` search, arcs included) floored onto the layer's
+    motion grid, so the count names the motions the head has FINISHED
+    while ``file_position`` stays the coarse anchor. Klipper's parser
+    runs ahead of the nozzle by its lookahead, which is what made the
+    painted fill reach past the head.
+    """
+
+    def test_a_queued_move_does_not_paint_ahead_of_the_nozzle(self):
+        index = _index("M82\n;LAYER:0\n;TYPE:SKIN\n"
+                       "G1 X10 Y0 E1\n"
+                       "G1 X110 Y0 E2\n"
+                       "G1 X120 Y0 E3\n")
+        offsets = list(index.motion_offsets[0])
+        # The dispatcher has reached the layer's last motion, so the
+        # coarse boundary paints the 100 mm move whole...
+        self.assertEqual(split_index(index, 0, offsets[2]), 2)
+        # ...while the nozzle is only half way along it.
+        split, method = index.refined_split(0, offsets[2], (60.0, 0.0, 0.0))
+        self.assertEqual(method, "live position")
+        self.assertEqual(split, 1, "the queued move was painted before the nozzle reached it")
+
+    def test_the_midpoint_of_a_motion_counts_only_the_finished_ones(self):
+        # A synthetic row's motion m runs from x = m - 1 to x = m, so a
+        # live x names the motion under the head by construction.
+        index = make_index()
+        queued = list(index.motion_offsets[0])[19]  # the dispatcher is at the layer's end
+        self.assertEqual(index.refined_split(0, queued, (5.0, 0.0, 0.2))[0], 6)
+        # A tenth of the way into motion 6: under way, so never counted.
+        self.assertEqual(index.refined_split(0, queued, (5.1, 0.0, 0.2))[0], 6)
+        # At its endpoint the motion is finished, and it counts.
+        self.assertEqual(index.refined_split(0, queued, (6.0, 0.0, 0.2))[0], 7)
+
+    def test_an_arcs_midpoint_refines_against_the_curve(self):
+        index = _index("M82\n;LAYER:0\n;TYPE:SKIN\n"
+                       "G0 X20 Y30\n"
+                       "G3 X-20 Y30 I-20 J0 E1\n"
+                       "G0 X50 Y50\n")
+        offsets = list(index.motion_offsets[0])
+        # The dispatcher has reached the closing travel while the nozzle
+        # sits at the semicircle's apex, 20 mm off its chord: the coarse
+        # boundary would paint the whole arc.
+        self.assertEqual(split_index(index, 0, offsets[2]), 2)
+        split, method = index.refined_split(0, offsets[2], (0.0, 50.0, 0.0))
+        self.assertEqual(method, "live position")
+        self.assertEqual(split, 1, "the arc was painted while the head was on it")
+        # The chord's midpoint is 20 mm from the curve, so a chord
+        # reading refuses the match and the boundary jumps ahead.
+        self.assertIsNone(index.refined_split(0, offsets[2], (0.0, 30.0, 0.0))[0])
+
+    def test_telemetry_beside_the_path_still_refines(self):
+        index = make_index()
+        queued = list(index.motion_offsets[0])[19]
+        # 0.4 mm off the row: the nearest motion is still the head's own.
+        self.assertEqual(index.refined_split(0, queued, (5.0, 0.4, 0.2)),
+                         (6, "live position"))
+
+    def test_an_off_path_toolhead_keeps_the_callers_own_boundary(self):
+        index = make_index()
+        queued = list(index.motion_offsets[0])[19]
+        # A park, a probe, a lifted head: nothing on the layer is near,
+        # so no boundary is invented — the caller's coarse one stands.
+        split, method = index.refined_split(0, queued, (5.0, 40.0, 0.2))
+        self.assertIsNone(split)
+        self.assertEqual(method, "motion index")
+
+    def test_an_off_path_read_holds_the_boundary_it_was_given(self):
+        # With a boundary already painted, an off-path head is a HOLD:
+        # the floor comes back, never the parser's position.
+        index = make_index()
+        queued = list(index.motion_offsets[0])[19]
+        self.assertEqual(index.refined_split(0, queued, (5.0, 40.0, 0.2), minimum_split=11),
+                         (11, "held (refined unavailable)"))
+
+    def test_a_layer_the_index_cannot_measure_refines_nothing(self):
+        index = make_index()
+        queued = list(index.motion_offsets[0])[19]
+        self.assertEqual(index.refined_split(4, queued, (5.0, 0.0, 0.2)), (None, "no motions"))
+
+    def test_the_refinement_never_falls_below_the_painted_boundary(self):
+        index = make_index()
+        queued = list(index.motion_offsets[0])[19]
+        painted = 0
+        for x in (4.0, 9.0, 9.0, 6.0, 12.0, 11.0, 18.5):
+            split, _method = index.refined_split(
+                0, queued, (x, 0.0, 0.2), minimum_split=painted)
+            self.assertGreaterEqual(split, painted, "the boundary walked backwards at x=%s" % x)
+            painted = split
+        self.assertEqual(painted, 19, "the refinement did not reach the end of the layer")
+        # A read the floor had to lift is reported as such, never as a
+        # fresh match of its own.
+        self.assertEqual(
+            index.refined_split(0, queued, (6.0, 0.0, 0.2), minimum_split=12)[1],
+            "live position (monotonic)")
+
+
 if __name__ == "__main__":
     unittest.main()

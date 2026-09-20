@@ -1087,3 +1087,29 @@ class PlateGraceTests(MonitorModelCase):
         by_name = self.rows()
         self.assertEqual(by_name["PART_A"]["restoreVerdict"], "unknown")
         self.assertTrue(by_name["PART_A"]["restoreAllowed"])
+
+
+class PlateSplitPublicationTests(MonitorModelCase):
+    """The follower face's boundary: the service's refined count crosses
+    to the face as the bare number it is."""
+
+    def test_the_refined_split_publishes_as_a_number(self):
+        # The face colours to plateSplit, so the count must arrive as a
+        # number — the layers publish separately, with the service's
+        # memoised identity.
+        self.model = self.build()
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(
+            plate_progress={"layers": {"current": {"classes": {}}}, "split": 7,
+                            "method": "motion index", "anchor": 2})
+        self.model._publish()
+        self.assertEqual(self.value("plateSplit"), 7)
+        self.assertEqual(self.value("plateProgressAnchor"), 2)
+        self.assertTrue(self.value("plateProgressAvailable"))
+
+    def test_an_unbuilt_plate_publishes_no_split(self):
+        # No index is no boundary: the face ghosts rather than colouring
+        # to a count from another poll.
+        self.model = self.build()
+        self.print_state = self.qt.load("PrintState").PrintSnapshot()
+        self.model._publish()
+        self.assertIsNone(self.value("plateSplit"))

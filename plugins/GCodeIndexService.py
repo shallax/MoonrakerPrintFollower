@@ -95,6 +95,12 @@ class GCodeIndexService(QObject):
         # The follower's frozen layer (the pop-over's detach): a second
         # demand window beside the live print's own.
         self._manual_anchor = None
+        # The boundary already painted for a (file, layer) — the floor
+        # the next poll's refinement may not fall below — and the last
+        # one a LIVE position established, None while there is none.
+        self._split_floor = None
+        self._split_refined = None
+        self._split_floor_key = None
         self._visited_key = None
         self._visited = set()
         self._visited_upto = -1
@@ -130,6 +136,11 @@ class GCodeIndexService(QObject):
         self._plate_layers = {}
         # The frozen layer belongs to the file that was printing.
         self._manual_anchor = None
+        # The painted boundary belongs to that file's layer too: a new
+        # print's count is not this print's.
+        self._split_floor = None
+        self._split_refined = None
+        self._split_floor_key = None
         self._visited_key = None
         self._visited = set()
         self._visited_upto = -1
@@ -213,16 +224,56 @@ class GCodeIndexService(QObject):
                 self._plate_layers_key = (anchor, counts)
         return self._plate_layers
 
-    def plate_split(self, anchor, file_position=None):
+    def plate_split(self, anchor, file_position=None, live_position=None):
         """The follower's VOLATILE half: the printed/unprinted boundary
-        — the only per-poll cost."""
+        — the only per-poll cost.
+
+        ``file_position`` is the COARSE anchor — the parser's dispatch
+        point — and ``live_position`` refines it through the index's own
+        ``refined_split``, so the coloured fill, the toolhead dot and
+        the Preview's follower read one physical position instead of
+        two that drift by the lookahead. An unrefinable poll keeps the
+        coarse boundary: on a machine that reports no live position the
+        fill behaves exactly as it did.
+
+        The boundary is monotonic per (file, layer): whatever is
+        painted becomes the floor for the next poll, so noisy telemetry
+        can never walk the fill backwards. A poll that cannot refine
+        holds that floor rather than reading ahead to the parser — an
+        off-path head (a pause park, a Z-lift) is exactly when the
+        parser's position is most wrong. The floor resets with the
+        layer: another layer's count is another layer's boundary.
+        """
         if self._view is None or file_position is None:
             return None
         if not self._plate_layers.get("current"):
             return None
         index = self._view._index
         with index.cache_lock:
-            return _split_index(index, anchor, file_position)
+            coarse = _split_index(index, anchor, file_position)
+            if coarse is None:
+                return None
+            if (self._view.job_key, anchor) != self._split_floor_key:
+                self._split_floor_key = (self._view.job_key, anchor)
+                self._split_floor = None
+                self._split_refined = None
+            floor = self._split_floor
+            refined = None
+            if live_position is not None:
+                refined, _method = index.refined_split(anchor, file_position, live_position,
+                                                       minimum_split=floor)
+            if refined is None:
+                # The coarse anchor is the only estimate this layer has
+                # until a live position establishes one — on a machine
+                # that reports none, that is the whole story. Once a
+                # physical boundary exists, the parser's position is no
+                # improvement on it: hold.
+                split = coarse if self._split_refined is None else floor
+            else:
+                self._split_refined = refined
+                split = refined
+            self._split_floor = split if floor is None else max(floor, split)
+            return split
 
     def plate_visited(self, anchor, split, rows):
         """The per-layer printed objects: which polygons the executed
@@ -299,11 +350,11 @@ class GCodeIndexService(QObject):
                     self._visited.add(name)
                     break
 
-    def plate_progress(self, anchor, file_position=None):
+    def plate_progress(self, anchor, file_position=None, live_position=None):
         """The composed payload (the tests and the one-shot consumers):
         the memoised layers plus the volatile split."""
         layers = self.plate_layers(anchor) if self._view is not None else {}
-        split = self.plate_split(anchor, file_position)
+        split = self.plate_split(anchor, file_position, live_position)
         method = "motion index" if split is not None else "unavailable"
         return {"layers": layers, "split": split, "method": method, "anchor": anchor}
 

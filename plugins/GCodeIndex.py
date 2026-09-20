@@ -124,6 +124,13 @@ _MARKER_SNIFF_BYTES = 262144
 # motions. Generous enough to cover a parser-chunk lead and any earlier
 # floor overshoot; the monotonic clamp is applied to the result.
 FLOOR_LOOKBACK = 256
+# The fraction-to-motion-count projection's tolerance. A boundary held
+# in COUNT units round-trips through the fraction as a division and can
+# land a hair under its own integer (1/3 * 3 == 0.9999999999999999);
+# truncating that would drop a motion the boundary already counted. Far
+# below one motion's share of the layer, so it can never round a
+# half-finished motion up.
+_SPLIT_EPSILON = 1e-9
 
 
 @dataclass
@@ -347,6 +354,57 @@ class LayerMotionIndex:
 
         refined = max(0.0, min(1.0, float(best_completed) / n))
         return with_floor(refined, "live position")
+
+    def refined_split(
+        self,
+        layer: int,
+        file_position: int,
+        live_position: Optional[Sequence[float]],
+        *,
+        minimum_split: Optional[int] = None,
+        **kwargs,
+    ) -> Tuple[Optional[int], str]:
+        """The follower's printed/unprinted boundary from the live tool
+        position: ``refined_fraction``'s answer, floored onto this
+        layer's motion grid.
+
+        Edge m is printed exactly when m < the returned count, so the
+        boundary is the number of motions the NOZZLE has finished, not
+        the number the parser has dispatched — the two differ by the
+        lookahead, which is what made the painted fill run ahead of the
+        head. The search itself is ``refined_fraction``'s (one
+        algorithm: the window, the arc geometry, the off-model hold),
+        so the plate and the Preview agree about where the head is.
+
+        ``None`` means the live position could not refine — no
+        telemetry, an off-model head with nothing yet to hold, or a
+        layer the index cannot measure — and the caller keeps its own
+        coarse boundary. The refinement corrects a boundary; it never
+        invents one. ``minimum_split`` is the boundary already painted,
+        and no result ever falls below it.
+        """
+        n = self.motion_count(layer)
+        if n <= 0:
+            return None, "no motions"
+        floor_fraction = None
+        if minimum_split is not None:
+            try:
+                floor_fraction = max(0.0, min(1.0, max(0, int(minimum_split)) / n))
+            except (TypeError, ValueError):
+                floor_fraction = None
+        fraction, method = self.refined_fraction(
+            layer, file_position, live_position, minimum_fraction=floor_fraction, **kwargs
+        )
+        if not (method.startswith("live position") or method.startswith("held")):
+            # The coarse estimate (the parser's own position) or a
+            # refusal: the caller's boundary is at least as good.
+            return None, method
+        # Flooring the fraction is what keeps the fill behind the head:
+        # a motion counted as complete is one the nozzle has finished.
+        split = int(math.floor(fraction * n + _SPLIT_EPSILON))
+        if minimum_split is not None:
+            split = max(split, int(minimum_split))
+        return max(0, min(n, split)), method
 
 
 def _parse_axes(code: bytes) -> Dict[str, float]:

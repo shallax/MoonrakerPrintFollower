@@ -167,6 +167,7 @@ if QT_AVAILABLE:
             self.tracking_resets = 0
             self.plate_anchors = []
             self.plate_positions = []
+            self.plate_lives = []
 
         def bind(self, job):
             self.bound = job
@@ -180,11 +181,12 @@ if QT_AVAILABLE:
         def request_hydration(self, layer):
             self.hydration.append(layer)
 
-        def plate_progress(self, anchor, file_position=None):
+        def plate_progress(self, anchor, file_position=None, live_position=None):
             # The service-side prep's shape; the coordinator tests
             # pin the wiring, not the payload.
             self.plate_anchors.append(anchor)
             self.plate_positions.append(file_position)
+            self.plate_lives.append(live_position)
             return {"layers": {}, "split": None, "method": "unavailable", "anchor": anchor}
 
         def reset_tracking(self):
@@ -848,6 +850,39 @@ class CoordinatorCoverageTests(unittest.TestCase):
                 self.assertIsNone(parts.coordinator.snapshot.layer_progress)
                 self.assertEqual(parts.index.plate_anchors[-1], 4)
                 self.assertIsNone(parts.index.plate_positions[-1])
+
+    def test_the_plate_split_reads_the_toolheads_own_position(self):
+        # The painted boundary follows the NOZZLE, so the head's own
+        # position must reach the service beside the dispatcher's — read
+        # from the same status the Preview's follower reads it from, in
+        # the G-code's own coordinate space.
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        parts.coordinator.refresh()
+        self.assertEqual(parts.index.plate_lives[-1], (10.0, 10.0, 1.2))
+
+    def test_the_live_position_survives_a_pause(self):
+        # A pause is where the refinement matters most: the dispatcher
+        # sits where it stopped, the pause macro parks the head away
+        # from the path. The status keeps flowing, so the position keeps
+        # flowing with it and the service can hold its boundary.
+        parts = self._make()
+        parts.index.view = _view()
+        status = _status("paused")
+        status["motion_report"]["live_position"] = [140.0, 140.0, 10.0, 0.0]
+        parts.client.statusReceived.emit(status)
+        parts.coordinator.refresh()
+        self.assertEqual(parts.index.plate_lives[-1], (140.0, 140.0, 10.0))
+        self.assertEqual(parts.index.plate_positions[-1], 4500)
+
+    def test_a_missing_motion_report_hands_no_live_position(self):
+        # No telemetry is None, never a fabricated origin: the service
+        # then keeps the coarse boundary, exactly as it always did.
+        parts = self._printing(self._make(), motion_report={})
+        parts.index.view = _view()
+        parts.coordinator.refresh()
+        self.assertIsNone(parts.index.plate_lives[-1])
+        self.assertEqual(parts.index.plate_positions[-1], 4500)
 
     def test_no_plate_path_raises_across_the_position_variants(self):
         # Every combination the unbound-position defect could reach,
