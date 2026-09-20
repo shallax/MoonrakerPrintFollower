@@ -3,22 +3,23 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.3
 import UM 1.5 as UM
 import Cura 1.1 as Cura
+import "theme"
 
-// The Objects section (4.3.0 extraction): the exclude-object rows
-// out of the monitor as one property-driven component. The
-// confirmation dialog stays with the host — the section requests
-// it through a signal.
+// The Objects section (4.6.0 rework): a pure READOUT — names, the
+// current highlight, the excluded flags and the restore verdicts in
+// words. No per-row buttons: exclusion lives on the plate map
+// (triple-click) and in the Exclude current button above the list.
+// The row order is the model's natural sort, frozen — never
+// reordering (the no-reorder rule).
 ColumnLayout {
     id: root
     spacing: 0
     property var printerModel: null
-    signal excludeRequested(string name)
 
-    // NO-REFLOW RULE: the Objects list arrives
-    // seconds INTO a print (Klipper reports the
-    // slicer's EXCLUDE_OBJECT_DEFINE lines only
-    // when they execute), so the section is
-    // permanent — empty until then.
+    // NO-REFLOW RULE: the section is permanent — the objects arrive
+    // seconds INTO a print (Klipper reports the slicer's DEFINE
+    // lines only when they execute), so the rows below start empty
+    // and fill in place.
     Layout.fillWidth: true
     CollapsibleSectionHeader {
         Layout.fillWidth: true
@@ -30,44 +31,69 @@ ColumnLayout {
     ColumnLayout {
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["objects"] !== false
         Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         spacing: UM.Theme.getSize("default_margin").height / 2
 
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: UM.Theme.getSize("default_margin").width
+            Cura.SecondaryButton {
+                // The fast path: one click, no dialog (the walked
+                // ruling). The target label beside it names the
+                // object the click would kill — the victim is
+                // legible before the act.
+                objectName: "excludeCurrentButton"
+                text: "Exclude current"
+                enabled: root.printerModel != null && root.printerModel.monitorConnected && !root.printerModel.actionBusy && root.printerModel.printActive && root.printerModel.sectionReason === "" && root.printerModel.currentObjectName !== ""
+                onClicked: {
+                    if (root.printerModel != null) {
+                        root.printerModel.excludeCurrent();
+                    }
+                }
+            }
+            UM.Label {
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                color: UM.Theme.getColor("text_inactive")
+                text: root.printerModel != null && root.printerModel.currentObjectName !== "" ? root.printerModel.currentObjectName : "No object is printing right now"
+            }
+        }
+
+        UM.Label {
+            // The summary count (the product panel's counting rule):
+            // the glance-value in one PERMANENT reserved line — empty
+            // while no objects exist (the no-reflow rule).
+            text: {
+                if (root.printerModel == null)
+                    return "";
+                var rows = root.printerModel.excludeObjectItems;
+                var excluded = 0, current = 0;
+                for (var i = 0; i < rows.length; ++i) {
+                    if (rows[i].excluded)
+                        excluded += 1;
+                    if (rows[i].current)
+                        current += 1;
+                }
+                return rows.length + " objects — " + (rows.length - excluded) + " printing, " + excluded + " excluded" + (current > 0 ? ", 1 current" : "");
+            }
+            color: UM.Theme.getColor("text_inactive")
+            font: UM.Theme.getFont("small")
+        }
+
         Repeater {
             model: root.printerModel != null ? root.printerModel.excludeObjectItems : []
-            RowLayout {
+            UM.Label {
                 Layout.fillWidth: true
-                spacing: UM.Theme.getSize("default_margin").width
-                UM.Label {
-                    text: modelData.name + (modelData.current ? "  · current" : "") + (modelData.excluded ? "  · excluded" : "")
-                    color: modelData.excluded ? UM.Theme.getColor("text_inactive") : UM.Theme.getColor("text")
-                    Layout.preferredWidth: 170 * screenScaleFactor
-                    elide: Text.ElideRight
-                }
-                Cura.SecondaryButton {
-                    // NO-REFLOW RULE: the button
-                    // never disappears — it
-                    // disables when the object
-                    // cannot be excluded. The
-                    // section-level denial joins
-                    // the gate (4.2.0, the
-                    // adversarial round's H2): a
-                    // locked pane must not offer
-                    // an action the policy
-                    // refuses.
-                    enabled: root.printerModel != null && root.printerModel.monitorConnected && !root.printerModel.actionBusy && root.printerModel.printActive && root.printerModel.sectionReason === "" && !modelData.excluded
-                    text: "Exclude"
-                    onClicked: root.excludeRequested(modelData.name)
-                }
+                text: modelData.name + (modelData.current ? "  · current" : "") + (modelData.excluded ? (modelData.restoreVerdict === "past_grace" || modelData.restoreVerdict === "in_grace" ? "  · excluded" : "  · restore closed") : "") + (modelData.excluded && modelData.restoreVerdict === "unknown" ? "  · layer unknown" : "")
+                color: modelData.excluded ? (modelData.restoreAllowed === false ? MoonrakerTheme.outOfWindowGrey : MoonrakerTheme.dangerRed) : UM.Theme.getColor("text")
+                elide: Text.ElideRight
             }
         }
         UM.Label {
-            // An empty list says so instead of
-            // reading as a bug (the
-            // live request): the objects arrive
-            // when the slicer's EXCLUDE_OBJECT
-            // lines execute — seconds into a
-            // print.
+            // An empty list says so instead of reading as a bug (the
+            // live request): the objects arrive when the slicer's
+            // EXCLUDE_OBJECT lines execute — seconds into a print.
             visible: root.printerModel != null && root.printerModel.excludeObjectItems.length === 0
             text: root.printerModel != null && root.printerModel.printActive ? "No objects yet — they appear as the print defines them." : "No objects — EXCLUDE_OBJECT data arrives while printing."
             color: UM.Theme.getColor("text_inactive")

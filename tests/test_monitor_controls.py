@@ -25,7 +25,7 @@ if QT_AVAILABLE:
     from plugins import MonitorControls as controls_module
     from plugins.MonitorControls import MonitorControls
     from plugins.MonitorPermissions import (Observation, R_UNKNOWN, can_exclude, can_macro,
-                                            can_restart, can_z_offset)
+                                            can_restart, can_restore, can_z_offset)
     from plugins.MonitorTuning import MonitorTuning
 
 
@@ -736,13 +736,71 @@ class PowerAndExclusionTests(ControlsCase):
         self.controls.exclude("part")
         self.assertEqual(self.commands.calls, [("status", "Exclude refused: " + R_UNKNOWN)])
 
-    def test_exclude_skips_unknown_and_already_excluded_objects(self):
+    def test_exclude_receipts_unknown_and_already_excluded_objects(self):
+        # The no-confirm ruling: every gesture receipts, no-ops
+        # included — silence would re-trigger the gesture.
         self.data.observation = record(state="printing")
         self.data.rebuild(auxiliary={"exclude_object": {"objects": [{"name": "part"}, {"name": "gone"}],
                                                         "excluded_objects": ["gone"]}})
         self.controls.exclude("absent")
+        self.assertEqual(self.commands.calls[-1], ("status", "Exclude refused: 'absent' is not on the plate"))
         self.controls.exclude("gone")
-        self.assertEqual(self.commands.calls, [])
+        self.assertEqual(self.commands.calls[-1], ("status", "Exclude refused: 'gone' is already excluded"))
+
+    def test_restore_dispatches_the_reset_line_with_the_name(self):
+        self.data.observation = record(state="printing")
+        self.data.rebuild(core={"exclude_object": {"objects": [{"name": "PART_A"}],
+                                                   "excluded_objects": ["PART_A"]}})
+        self.controls.restore("PART_A")
+        self.assertEqual(self.commands.calls[-1],
+                         ("script", "Restore PART_A", 'EXCLUDE_OBJECT RESET=1 NAME="PART_A"', can_restore))
+
+    def test_restore_refuses_an_empty_name_without_dispatch(self):
+        self.data.observation = record(state="printing")
+        self.data.rebuild(core={"exclude_object": {"objects": [{"name": "PART_A"}],
+                                                   "excluded_objects": ["PART_A"]}})
+        self.controls.restore("")
+        self.assertEqual(self.commands.calls[-1], ("status", "Restore refused: no object named"))
+        self.assertEqual(self.scripts(), [])
+
+    def test_restore_never_emits_a_bare_reset(self):
+        # The review's blocker: a RESET=1 without NAME clears every
+        # exclusion on the plate — the line must always carry one.
+        self.data.observation = record(state="printing")
+        for name in ("PART_A", 'a\\b"c\n'):
+            self.data.rebuild(core={"exclude_object": {"objects": [{"name": "PART_A"}],
+                                                       "excluded_objects": [name]}})
+            self.controls.restore(name)
+            self.assertIn('RESET=1 NAME="', self.commands.calls[-1][2])
+
+    def test_restore_refuses_a_not_excluded_name_with_words(self):
+        self.data.observation = record(state="printing")
+        self.data.rebuild(core={"exclude_object": {"objects": [{"name": "PART_A"}],
+                                                   "excluded_objects": []}})
+        self.controls.restore("PART_A")
+        self.assertEqual(self.commands.calls[-1], ("status", "Restore refused: 'PART_A' is not excluded"))
+
+    def test_the_latch_blocks_the_same_gesture_until_the_status_confirms(self):
+        self.data.observation = record(state="printing")
+        self.data.rebuild(core={"exclude_object": {"objects": [{"name": "PART_A"}], "excluded_objects": []}})
+        self.controls.exclude("PART_A")
+        self.controls.exclude("PART_A")
+        self.assertEqual(len(self.scripts()), 1)
+        self.assertEqual(self.commands.calls[-1][0], "status")
+        self.assertIn("already in flight", self.commands.calls[-1][1])
+        self.controls.confirm_exclusion("PART_A")
+        self.controls.exclude("PART_A")
+        self.assertEqual(len(self.scripts()), 2)
+
+    def test_the_latch_never_wedges_the_rescue_direction(self):
+        self.data.observation = record(state="printing")
+        self.data.rebuild(core={"exclude_object": {"objects": [{"name": "PART_A"}, {"name": "PART_B"}],
+                                                   "excluded_objects": ["PART_B"]}})
+        self.controls.exclude("PART_A")
+        # A restore of the other object dispatches while the exclude
+        # is still in flight — the rescue path is never gated.
+        self.controls.restore("PART_B")
+        self.assertEqual(len(self.scripts()), 2)
 
 
 class FailClosedTests(ControlsCase):

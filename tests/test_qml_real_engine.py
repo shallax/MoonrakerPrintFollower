@@ -380,7 +380,9 @@ class StatusColumnGeometryTests(RealEngineTestCase):
         monitor, _window = self.mount_window("MoonrakerMonitor.qml", 900, 760)
         content = self.find(monitor, "moonrakerStatusContent")
         sections = [child for child in content.childItems() if child.isVisible() and child.width() > 0]
-        self.assertGreaterEqual(len(sections), 3)
+        # Objects moved to the controls pane (4.6.0): two sections
+        # render unconditionally here without live data.
+        self.assertGreaterEqual(len(sections), 2)
         for section in sections:
             self.assertAlmostEqual(section.width(), content.width(), delta=0.5)
 

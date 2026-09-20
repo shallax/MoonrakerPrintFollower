@@ -524,6 +524,7 @@ class MonitorFormattingCoverageTests(unittest.TestCase):
 
     def test_peripheral_values_projects_the_auxiliary_status(self):
         snapshot = SimpleNamespace(
+            core={},
             auxiliary={
                 "heater_bed": {"temperature": 60.0, "target": 60.0, "power": 0.4},
                 "temperature_host raspberry_pi": {"temperature": 45.5},
@@ -573,7 +574,7 @@ class MonitorFormattingCoverageTests(unittest.TestCase):
         self.assertEqual(values["cpuTemperature"], "45.5 °C")
 
     def test_peripheral_values_survives_an_empty_auxiliary(self):
-        snapshot = SimpleNamespace(auxiliary={}, server={}, printer={})
+        snapshot = SimpleNamespace(core={}, auxiliary={}, server={}, printer={})
         values = peripheral_values(snapshot)
         self.assertEqual(values["temperatureItems"], [])
         self.assertEqual(values["mcuSummary"], "—")
@@ -584,7 +585,8 @@ class MonitorFormattingCoverageTests(unittest.TestCase):
         self.assertEqual(values["memoryAvailable"], "—")
 
     def test_peripheral_values_reports_a_small_memory_reading_in_megabytes(self):
-        snapshot = SimpleNamespace(auxiliary={"system_stats": {"memavail": 524288}},
+        snapshot = SimpleNamespace(core={},
+                                   auxiliary={"system_stats": {"memavail": 524288}},
                                    server={}, printer={})
         self.assertEqual(peripheral_values(snapshot)["memoryAvailable"], "512 MB")
 

@@ -51,6 +51,7 @@ R_ESTOPPED = "Emergency stop issued"
 R_LOCKED = "Controls locked"
 R_PRINTING = "A print is running"
 R_NOT_PRINTING = "No print is running"
+R_NOT_PRINTING_RESTORE = "No print is running"
 R_BUSY = "A command is running"
 # The toolhead caption's non-denial states: pause-first is a MODE,
 # not a refusal — but the caption still names it (the shipped
@@ -85,6 +86,7 @@ REASON_DETAIL = {
     R_PRINTING: "A print is running — pause or finish it first.",
     R_BUSY: "A command is running — wait for it to finish.",
     R_NOT_PRINTING: "Nothing to exclude — this fires only while a print runs.",
+    R_NOT_PRINTING_RESTORE: "Nothing to restore — this fires only while a print runs.",
     R_NOTHING_TO_PAUSE: "Pause applies to a running print — nothing is printing right now.",
     R_ALREADY_PAUSED: "The print is already paused — the button reads Resume while paused.",
     R_ALREADY_PRINTING: "Resume applies to a paused print — this print is still running.",
@@ -228,6 +230,18 @@ def can_exclude(obs: Observation) -> Verdict:
     if blocked: return Verdict("disabled", blocked)
     if obs.state not in {"printing", "paused"}:
         return Verdict("disabled", R_NOT_PRINTING)
+    return Verdict("allowed", "")
+
+
+def can_restore(obs: Observation) -> Verdict:
+    """The restore twin: the same mid-print gate with its own words —
+    the exclude-flavoured reason must never ride the other direction's
+    refusals. The name-level predicates (is it excluded? is it on the
+    plate?) live with the command owner, not here."""
+    blocked = _prelude(obs)
+    if blocked: return Verdict("disabled", blocked)
+    if obs.state not in {"printing", "paused"}:
+        return Verdict("disabled", R_NOT_PRINTING_RESTORE)
     return Verdict("allowed", "")
 
 

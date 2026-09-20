@@ -666,10 +666,17 @@ def peripheral_values(snapshot):
                 "load": f"{max(0, stats['mcu_awake'] * 100):.1f}%" if "mcu_awake" in stats else "—",
                 "task": " · ".join(tasks) or "—", "frequency": f"{frequency / 1000000:.3f} MHz" if frequency else "—",
                 "memory": format_bytes(memory), "transport": " · ".join(traffic) or "—"})
-    exclude = snapshot.auxiliary.get("exclude_object") or {}
+    # The volatile fields read the CORE lane (the freshest copy — the
+    # 4.6.0 lane move); the aux copy falls back while the core lane
+    # has not landed yet.
+    exclude = snapshot.core.get("exclude_object") or snapshot.auxiliary.get("exclude_object") or {}
     excluded = exclude.get("excluded_objects") or ()
     objects = [{"name": str(item["name"]), "excluded": item["name"] in excluded, "current": item["name"] == exclude.get("current_object")}
         for item in exclude.get("objects", ()) if isinstance(item, Mapping) and item.get("name")]
+    # The status array arrives lexicographic (STL_1, STL_10, STL_2) —
+    # the natural sort recovers the name numbering once, at projection
+    # time; the list never reorders after (the no-reorder rule).
+    objects.sort(key=lambda row: _natural_key(row["name"]))
     system = snapshot.auxiliary.get("system_stats") or {}
     memory = number(system.get("memavail"))
     klippy = str((snapshot.auxiliary.get("webhooks") or {}).get("state") or snapshot.server.get("klippy_state") or "unknown")
@@ -758,4 +765,82 @@ def infer_macro_parameters(gcode):
                 if old["type"] == "string" and kind != "string": old["type"] = kind
                 if not old["hasDefault"] and item["hasDefault"]: old.update(default=item["default"], hasDefault=True, required=False)
     return list(found.values())
+
+
+# The plate map's object budget: beyond it, rows are dropped and the
+# truncation is stated rather than silently ignored.
+MAX_PLATE_OBJECTS = 256
+# A bed-coordinate sanity cap: real beds are orders of magnitude below
+# this, so anything past it is printer-controlled garbage, not a plate.
+_COORD_CAP = 1e7
+
+
+def _natural_key(name: str):
+    """casefolded with numeric runs split, so STL_2 precedes STL_10."""
+    return [int(part) if part.isdigit() else part.casefold()
+            for part in re.split(r"(\d+)", str(name))]
+
+
+def _finite_pair(value):
+    """A [x, y] pair as finite, sane floats — else None."""
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            x, y = float(value[0]), float(value[1])
+            if math.isfinite(x) and math.isfinite(y) and abs(x) < _COORD_CAP and abs(y) < _COORD_CAP:
+                return [x, y]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _finite_polygon(value):
+    """[[x, y], ...] pairs or a flat [x, y, x, y, ...] run, sanitised:
+    any non-finite or absurd coordinate drops the polygon entirely — a
+    printer-controlled value must never reach the path builder."""
+    if not isinstance(value, (list, tuple)) or not value:
+        return None
+    points = []
+    if isinstance(value[0], (list, tuple)):
+        for point in value:
+            pair = _finite_pair(point)
+            if pair is None:
+                return None
+            points.append(pair)
+    else:
+        if len(value) % 2:
+            return None
+        for index in range(0, len(value), 2):
+            pair = _finite_pair((value[index], value[index + 1]))
+            if pair is None:
+                return None
+            points.append(pair)
+    return points if len(points) >= 3 else None
+
+
+def plate_values(exclude_object):
+    """The plate map's object projection: normalised polygons in bed
+    coordinates, the natural-sort order, and the truncation count. Pure
+    and lane-agnostic — the model passes whichever lane carries the
+    exclude_object status, and merges the grace verdicts it owns."""
+    exclude_object = exclude_object if isinstance(exclude_object, Mapping) else {}
+    excluded = frozenset(exclude_object.get("excluded_objects") or ())
+    current = exclude_object.get("current_object")
+    objects = []
+    truncated = 0
+    for item in exclude_object.get("objects") or ():
+        if not isinstance(item, Mapping) or not item.get("name"):
+            continue
+        if len(objects) >= MAX_PLATE_OBJECTS:
+            truncated += 1
+            continue
+        name = str(item["name"])
+        objects.append({
+            "name": name,
+            "center": _finite_pair(item.get("center")),
+            "polygon": _finite_polygon(item.get("polygon")),
+            "excluded": name in excluded,
+            "current": name == current,
+        })
+    objects.sort(key=lambda row: _natural_key(row["name"]))
+    return {"objects": objects, "truncated": truncated, "excludedCount": len(excluded)}
 

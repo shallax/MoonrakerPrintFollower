@@ -573,22 +573,6 @@ Component {
             }
         }
 
-        Cura.MessageDialog {
-            id: excludeObjectDialog
-            property string targetName: ""
-            title: "Exclude object?"
-            text: targetName.length > 0 ? "Stop printing '" + targetName + "' for the rest of this job? This cannot be undone without restarting the print." : "Stop printing this object for the rest of this job?"
-            standardButtons: Dialog.Yes | Dialog.No
-            anchors.centerIn: Overlay.overlay
-            onAccepted: {
-                if (root.printer != null && targetName.length > 0) {
-                    root.printer.excludeObject(targetName);
-                }
-                targetName = "";
-            }
-            onRejected: targetName = ""
-        }
-
         Connections {
             target: root.printer
             function onTypedControlsChanged() {
@@ -816,6 +800,14 @@ Component {
                         MeshSection {
                             id: meshSection
                             visible: root.printer == null || root.printer.sectionHiddenMap["meshmap"] !== true
+                            Layout.fillWidth: true
+                            printerModel: root.printer
+                            onPopOverToggleRequested: function (name) {
+                                root.openPopOver = root.openPopOver === name ? "" : name;
+                            }
+                        }
+                        PlateSection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["plate"] !== true
                             Layout.fillWidth: true
                             printerModel: root.printer
                             onPopOverToggleRequested: function (name) {
@@ -2129,15 +2121,6 @@ Component {
                             visible: root.printer != null && root.printer.filamentSensorItems.length > 0 && root.printer.sectionHiddenMap["filament"] !== true
                             printerModel: root.printer
                         }
-                        ObjectsSection {
-                            visible: root.printer == null || root.printer.sectionHiddenMap["objects"] !== true
-                            Layout.fillWidth: true
-                            printerModel: root.printer
-                            onExcludeRequested: function (name) {
-                                excludeObjectDialog.targetName = name;
-                                excludeObjectDialog.open();
-                            }
-                        }
                         SystemInfoSection {
                             visible: root.printer == null || root.printer.sectionHiddenMap["systeminfo"] !== true
                             Layout.fillWidth: true
@@ -2772,6 +2755,23 @@ Component {
             }
         }
 
+        MonitorPopOver {
+            id: platePanel
+            visible: root.openPopOver === "plate" && root.printer != null
+            x: cameraArea.x + UM.Theme.getSize("default_margin").width
+            y: UM.Theme.getSize("default_margin").height
+            height: Math.min((520 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
+            contentWidth: 390 * screenScaleFactor
+            title: "Plate — " + (root.printer != null ? root.printer.monitorFilename : "")
+
+            Loader {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                active: root.openPopOver === "plate" && root.printer != null
+                sourceComponent: plateContent
+            }
+        }
+
         Component {
             id: meshContent
             ColumnLayout {
@@ -2906,6 +2906,144 @@ Component {
                     Layout.fillWidth: true
                     text: "The faded perimeter is extrapolated to Cura's bed edge; values shown are the actual Klipper mesh heights. The Preview's height exaggeration adjusts from its card."
                     color: UM.Theme.getColor("text_inactive")
+                    wrapMode: Text.WordWrap
+                }
+            }
+        }
+
+        Component {
+            id: plateContent
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: UM.Theme.getSize("thin_margin").height
+
+                PlateExcludeFace {
+                    id: plateFace
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 240 * screenScaleFactor
+                    printerModel: root.printer
+                    plate: root.printer != null ? root.printer.plateObjects : null
+                    dot: root.printer != null ? root.printer.plateDot : null
+                    onExcludeRequested: function (name) {
+                        if (root.printer != null) {
+                            root.printer.excludeObject(name);
+                        }
+                    }
+                    onRestoreRequested: function (name) {
+                        if (root.printer != null) {
+                            root.printer.restoreObject(name);
+                        }
+                    }
+                }
+
+                UM.Label {
+                    // The permanent single line (the mesh "hover row"
+                    // idiom): counter > hover > selection > hint.
+                    Layout.fillWidth: true
+                    text: plateFace.clickProgress >= 2 ? "Click again to " + plateFace.pendingAction + " (" + plateFace.clickProgress + " of 3)" : (plateFace.hoveredName !== "" ? plateFace.hoveredName : (plateFace.selectedName !== "" ? plateFace.selectionDetail() : "Triple-click an object to exclude it, or an excluded object to restore it."))
+                    color: plateFace.hoveredName !== "" || plateFace.selectedName !== "" ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: UM.Theme.getSize("narrow_margin").width
+                    Row {
+                        spacing: 4 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: width
+                            radius: width / 2
+                            color: UM.Theme.getColor("text")
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "included"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        spacing: 4 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: width
+                            radius: width / 2
+                            color: MoonrakerTheme.plateCurrent
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "current"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        spacing: 4 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: width
+                            radius: width / 2
+                            color: MoonrakerTheme.dangerRed
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "excluded"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        spacing: 4 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: width
+                            radius: width / 2
+                            color: "transparent"
+                            border.color: MoonrakerTheme.outOfWindowGrey
+                            border.width: 2
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "excluded — restore closed"
+                            color: UM.Theme.getColor("text_inactive")
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        spacing: 4 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: width
+                            radius: width / 2
+                            color: "transparent"
+                            border.color: MoonrakerTheme.plateCurrent
+                            border.width: 2
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "the object printing now"
+                            color: UM.Theme.getColor("text_inactive")
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                }
+
+                UM.Label {
+                    // The outcome slot: the gesture receipts land here —
+                    // the no-confirm ruling's confirmation (a refusal
+                    // must never be silent).
+                    Layout.fillWidth: true
+                    text: root.printer != null ? root.printer.actionStatus : ""
+                    color: UM.Theme.getColor("text")
+                    font: UM.Theme.getFont("default_italic")
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                UM.Label {
+                    Layout.fillWidth: true
+                    text: "A triple-click sends the command immediately — there is no confirmation dialog. A restore is allowed only inside the grace window."
+                    color: UM.Theme.getColor("text_inactive")
+                    font: UM.Theme.getFont("default_italic")
                     wrapMode: Text.WordWrap
                 }
             }

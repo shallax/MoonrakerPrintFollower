@@ -972,3 +972,75 @@ class ChartCadenceTests(MonitorModelCase):
         count = len(self.model._history.series("extruder"))
         self.model._on_chart_tick()
         self.assertEqual(len(self.model._history.series("extruder")), count)
+
+
+class PlateGraceTests(MonitorModelCase):
+    """The grace owner's wiring: witnessed transitions stamp the
+    exclusion, verdicts ride the published rows, and the plate geometry
+    memoises per job."""
+
+    def seed_plate(self, excluded=(), current=None):
+        self.model._data._update(core={"exclude_object": {
+            "objects": [{"name": "PART_A"}, {"name": "PART_B"}],
+            "excluded_objects": list(excluded),
+            "current_object": current,
+        }})
+
+    def rows(self):
+        self.model._publish()
+        return {row["name"]: row for row in self.model._values["excludeObjectItems"]}
+
+    def test_an_exclusion_transition_witnesses_the_stamp(self):
+        self.model = self.build()
+        self.seed_plate()
+        self.rows()
+        self.seed_plate(excluded=("PART_A",))
+        by_name = self.rows()
+        self.assertEqual(by_name["PART_A"]["restoreVerdict"], "clean")
+        self.assertTrue(by_name["PART_A"]["restoreAllowed"])
+
+    def test_a_departure_clears_the_stamp(self):
+        self.model = self.build()
+        self.seed_plate(excluded=("PART_A",))
+        self.rows()
+        self.seed_plate()
+        by_name = self.rows()
+        self.assertNotIn("restoreVerdict", by_name["PART_A"])
+
+    def test_the_cursor_marks_the_consumed_block(self):
+        self.model = self.build()
+        self.seed_plate(excluded=("PART_A",))
+        self.rows()
+        # The consumed block without an index layer reads past-grace:
+        # the stamp's layer is unmeasurable, and incomplete
+        # verification must not block (the fail-open rule).
+        self.seed_plate(excluded=("PART_A",), current="PART_A")
+        by_name = self.rows()
+        self.assertEqual(by_name["PART_A"]["restoreVerdict"], "past_grace")
+        self.assertTrue(by_name["PART_A"]["restoreAllowed"])
+
+    def test_the_plate_payload_merges_geometry_and_verdicts(self):
+        self.model = self.build()
+        self.model._data._update(auxiliary={"exclude_object": {
+            "objects": [{"name": "PART_A", "center": [10.0, 20.0],
+                         "polygon": [[5.0, 15.0], [5.0, 25.0], [15.0, 25.0], [15.0, 15.0]]}],
+            "excluded_objects": ["PART_A"],
+            "current_object": None,
+        }})
+        self.model._publish()
+        plate = self.model._values["plateObjects"]
+        self.assertEqual(plate["excludedCount"], 1)
+        row = plate["objects"][0]
+        self.assertEqual(row["center"], [10.0, 20.0])
+        self.assertTrue(row["excluded"])
+        self.assertEqual(row["restoreVerdict"], "clean")
+
+    def test_an_epoch_clear_drops_the_stamps(self):
+        self.model = self.build()
+        self.seed_plate(excluded=("PART_A",))
+        self.rows()
+        self.model._on_invalidated()
+        self.seed_plate(excluded=("PART_A",))
+        by_name = self.rows()
+        self.assertEqual(by_name["PART_A"]["restoreVerdict"], "unknown")
+        self.assertTrue(by_name["PART_A"]["restoreAllowed"])
