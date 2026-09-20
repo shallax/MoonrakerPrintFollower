@@ -194,6 +194,19 @@ class MonitorCamera(QObject):
         if self._camera_bridge is not None:
             self._camera_bridge.stop()
 
+    def suspend_stream(self):
+        """The stream-off toggle's half (the live request): the bridge
+        stops fetching upstream — the bandwidth actually saved — while
+        the cached object survives for the re-enable."""
+        self._retire_bridge()
+
+    def resume_stream(self):
+        """The re-enable's half: rebuild the bridge for the current
+        camera. Its local listener died with the suspend, and a pane
+        pulling the dead loopback URL froze the stream until a camera
+        re-select rebuilt it (the live report)."""
+        self._restore_selection(self._config(), self._data.snapshot.webcams)
+
     def _bridge_url(self, config, url):
         # A camera behind the header-auth proxy cannot render through
         # Cura's loader (NetworkMJPGImage sends no headers): republish

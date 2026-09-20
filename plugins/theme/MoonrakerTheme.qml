@@ -87,4 +87,7 @@ QtObject {
     readonly property color plateClassFill: "#1976d2"
     readonly property color plateClassSupport: "#00838f"
     readonly property color plateClassSkirt: "#00897b"
+    // The travel ink (the live ruling): purple — the grey family
+    // belongs to the grid and the pending base now.
+    readonly property color plateTravel: "#b085e8"
 }

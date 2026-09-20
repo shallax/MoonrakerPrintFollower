@@ -78,23 +78,63 @@ class LayerPolylinesTests(unittest.TestCase):
         for segment in segments:
             for point in segment:
                 self.assertNotIn(point[2], range(10, 14))
+        # The travel channel mirrors the break: one segment per span,
+        # never a concatenated polyline bridging between spans.
+        travel_segments = layer["travels"]
+        self.assertEqual(len(travel_segments), 1)
+        self.assertEqual([point[2] for point in travel_segments[0]], [10, 11, 12, 13])
+
+    def test_each_travel_span_gets_its_own_segment(self):
+        index = make_index(motions=20)
+        index.travel_starts[0] = [3, 12]
+        index.travel_ends[0] = [6, 15]
+        travel_segments = layer_polylines(index, 0)["travels"]
+        self.assertEqual(len(travel_segments), 2)
+        self.assertEqual([point[2] for point in travel_segments[0]], [3, 4, 5])
+        self.assertEqual([point[2] for point in travel_segments[1]], [12, 13, 14])
+
+    def test_a_stationary_retract_pulse_is_not_a_travel(self):
+        # The live file's skin seams: E pauses at every patch boundary
+        # while the toolhead stays put. No movement, no travel — and
+        # no glyphs (the live report: every skin seam drew a start/
+        # stop pair).
+        index = make_index(motions=20)
+        index.travel_starts[0] = [10]
+        index.travel_ends[0] = [14]
+        index.motion_x[0] = array("f", [float(m) for m in range(10)] + [10.0] * 10)
+        index.motion_y[0] = array("f", [0.0] * 20)
+        layer = layer_polylines(index, 0)
+        self.assertEqual(layer["travels"], [])
+        self.assertEqual(layer["travelStarts"], [])
+        self.assertEqual(layer["travelEnds"], [])
+        # The pulse IS a seam: the class polyline breaks there too —
+        # a stationary retract-prime is a real feature boundary, and
+        # merging across it chords the corner where the next line
+        # starts (the live report: straight lines read as slight
+        # diagonals). The pulse's motions leave the polyline.
+        segments = layer["classes"]["WALL-OUTER"]
+        self.assertEqual(len(segments), 2)
+        for segment in segments:
+            for point in segment:
+                self.assertNotIn(point[2], range(10, 14))
 
     def test_a_dense_layer_holds_the_point_budget(self):
-        # A 40 m zigzag path: the path-length threshold (never the
-        # span — a dense infill's path dwarfs it) caps the kept
-        # points near the budget, so the paint stays bounded.
-        zigzag = [0.0]
-        for step in range(1, 20000):
-            zigzag.append(0.1 if step % 2 else 0.0)
-        xs = array("f", [step * 1.0 for step in range(20000)])
-        ys = array("f", zigzag)
-        index = make_index(motions=20000)
+        # A dense straight run: the per-class path-length threshold
+        # caps the kept points near the budget, so the paint stays
+        # bounded even with the much higher fidelity budget.
+        count = 250000
+        xs = array("f", [step * 0.5 for step in range(count)])
+        ys = array("f", [0.0] * count)
+        index = make_index(motions=count)
         index.motion_x[0] = xs
         index.motion_y[0] = ys
         layer = layer_polylines(index, 0)
         segments = layer["classes"]["WALL-OUTER"]
         kept = sum(len(segment) for segment in segments)
-        self.assertLess(kept, 12500)
+        # The threshold sits above the fixture's step, so the filter
+        # keeps every other point — bounded, never the whole run.
+        self.assertLess(kept, 140000)
+        self.assertGreater(kept, 100000)
 
     def test_an_unhydrated_compact_layer_reads_none_never_empty(self):
         index = make_index(compact=True)

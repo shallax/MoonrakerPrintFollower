@@ -2472,7 +2472,7 @@ Component {
         // open (the live report: in-bounds clicks dismissed the
         // pop-over).
         function clickInsideOpenPopOver(x, y) {
-            var cards = [infoConfigurePopOver, statusConfigurePopOver, chartPanel, meshPanel];
+            var cards = [infoConfigurePopOver, statusConfigurePopOver, chartPanel, meshPanel, platePanel, plateProgressPanel];
             for (var i = 0; i < cards.length; i++) {
                 var card = cards[i];
                 if (card.visible && x >= card.x && x <= card.x + card.width && y >= card.y && y <= card.y + card.height) {
@@ -3015,20 +3015,30 @@ Component {
                             width: 10 * screenScaleFactor
                             height: width
                             radius: width / 2
-                            color: MoonrakerTheme.plateCurrent
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        Rectangle {
-                            width: 7 * screenScaleFactor
-                            height: width
-                            radius: width / 2
-                            color: "transparent"
-                            border.color: MoonrakerTheme.plateCurrent
-                            border.width: 2
+                            color: UM.Theme.getColor("primary")
                             anchors.verticalCenter: parent.verticalCenter
                         }
                         UM.Label {
                             text: "current"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        // The printed state derives from the index's
+                        // executed motions — no index, no green (the
+                        // live ruling: the legend must not promise
+                        // what the data cannot say).
+                        visible: root.printer != null && root.printer.plateProgressAvailable
+                        spacing: 4 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: width
+                            radius: width / 2
+                            color: MoonrakerTheme.plateCurrent
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "printed"
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
@@ -3074,6 +3084,16 @@ Component {
                     font: UM.Theme.getFont("default_italic")
                     horizontalAlignment: Text.AlignHCenter
                 }
+                // The index offer for the printed state (the live
+                // rulings): the picker itself carries the download
+                // control — a compact row, back in the layout after
+                // the overlay overlapped the plate.
+                PlateDownloadAction {
+                    Layout.fillWidth: true
+                    visible: root.printer != null && root.printer.plateHasObjects && !root.printer.plateProgressAvailable
+                    printerModel: root.printer
+                    idleInstruction: "Download and index the print to track the printed state."
+                }
 
                 UM.Label {
                     Layout.fillWidth: true
@@ -3098,58 +3118,225 @@ Component {
                     Layout.fillHeight: true
                     Layout.minimumHeight: 200 * screenScaleFactor
                     printerModel: root.printer
-                    progress: root.printer != null ? root.printer.plateProgress : null
+                    progress: root.printer != null ? ({
+                            "available": root.printer.plateProgressAvailable,
+                            "reason": root.printer.plateProgressReason,
+                            "layers": root.printer.plateLayers,
+                            "split": root.printer.plateSplit,
+                            "anchor": root.printer.plateProgressAnchor,
+                            "method": "motion index"
+                        }) : null
                     dot: root.printer != null ? root.printer.plateDot : null
+                    // The persisted global view settings (the live
+                    // ruling) — the face's own handlers fire on the
+                    // rebinds and re-raster.
+                    showPrevious: root.printer != null ? root.printer.followerShowPrevious : true
+                    showNext: root.printer != null ? root.printer.followerShowNext : true
+                    showBase: root.printer != null ? root.printer.followerShowBase : true
+                    showTravels: root.printer != null ? root.printer.followerShowTravels : false
+                    lineScale: root.printer != null ? root.printer.followerLineScale : 1.0
                 }
 
-                // A wrapping flow of checkbox+label pairs: one row
-                // overflowed the card (the live report).
+                // The checkbox's OWN text label (the live reports: a
+                // separate Label neither toggles on click nor hugs the
+                // indicator, and the wrapper rows warped the heights).
+                // The control's text is part of its clickable area and
+                // carries the theme's own snug indicator gap — so the
+                // rows read as pairs at the standard flow gap.
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: UM.Theme.getSize("narrow_margin").height
+                    UM.CheckBox {
+                        text: "Previous layer"
+                        checked: root.printer != null ? root.printer.followerShowPrevious : true
+                        onToggled: {
+                            if (root.printer != null) {
+                                root.printer.setFollowerShowPrevious(checked);
+                            }
+                        }
+                    }
+                    UM.CheckBox {
+                        text: "Next layer"
+                        checked: root.printer != null ? root.printer.followerShowNext : true
+                        onToggled: {
+                            if (root.printer != null) {
+                                root.printer.setFollowerShowNext(checked);
+                            }
+                        }
+                    }
+                    UM.CheckBox {
+                        text: "Pending"
+                        checked: root.printer != null ? root.printer.followerShowBase : true
+                        onToggled: {
+                            if (root.printer != null) {
+                                root.printer.setFollowerShowBase(checked);
+                            }
+                        }
+                    }
+                    UM.CheckBox {
+                        text: "Travels"
+                        checked: root.printer != null ? root.printer.followerShowTravels : false
+                        onToggled: {
+                            if (root.printer != null) {
+                                root.printer.setFollowerShowTravels(checked);
+                            }
+                        }
+                    }
+                }
+
+                // The colour key: the class palette the progress canvas
+                // paints with, plus the pending and travel styles (the
+                // live request). One wrapping flow of swatch+label
+                // pairs, the picker's legend idiom.
                 Flow {
                     Layout.fillWidth: true
                     spacing: UM.Theme.getSize("thin_margin").width
                     Row {
-                        spacing: 4 * screenScaleFactor
-                        UM.CheckBox {
-                            checked: progressFace.showPrevious
-                            onToggled: progressFace.showPrevious = checked
+                        spacing: 2 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: 2 * screenScaleFactor
+                            color: progressFace.classColour("WALL-OUTER")
+                            anchors.verticalCenter: parent.verticalCenter
                         }
                         UM.Label {
-                            text: "Previous layer"
+                            text: "Wall outer"
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
                     Row {
-                        spacing: 4 * screenScaleFactor
-                        UM.CheckBox {
-                            checked: progressFace.showNext
-                            onToggled: progressFace.showNext = checked
+                        spacing: 2 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: 2 * screenScaleFactor
+                            color: progressFace.classColour("WALL-INNER")
+                            anchors.verticalCenter: parent.verticalCenter
                         }
                         UM.Label {
-                            text: "Next layer"
+                            text: "Wall inner"
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
                     Row {
-                        spacing: 4 * screenScaleFactor
-                        UM.CheckBox {
-                            checked: progressFace.showBase
-                            onToggled: progressFace.showBase = checked
+                        spacing: 2 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: 2 * screenScaleFactor
+                            color: progressFace.classColour("SKIN")
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "Skin"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        spacing: 2 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: 2 * screenScaleFactor
+                            color: progressFace.classColour("FILL")
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "Infill"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        spacing: 2 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: 2 * screenScaleFactor
+                            color: progressFace.classColour("SUPPORT")
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "Support"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        spacing: 2 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: 2 * screenScaleFactor
+                            color: progressFace.classColour("SKIRT")
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "Skirt"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        spacing: 2 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: 1 * screenScaleFactor
+                            color: MoonrakerTheme.plateTravel
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        UM.Label {
+                            text: "Travel"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    Row {
+                        spacing: 2 * screenScaleFactor
+                        Rectangle {
+                            width: 10 * screenScaleFactor
+                            height: 2 * screenScaleFactor
+                            color: MoonrakerTheme.seriesDefault
+                            anchors.verticalCenter: parent.verticalCenter
                         }
                         UM.Label {
                             text: "Pending"
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
-                    Row {
-                        spacing: 4 * screenScaleFactor
-                        UM.CheckBox {
-                            checked: progressFace.showTravels
-                            onToggled: progressFace.showTravels = checked
+                }
+
+                // The stroke thickness control (the live request):
+                // scales every follower stroke, 0.5x to 2x.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: UM.Theme.getSize("thin_margin").width
+                    UM.Label {
+                        text: "Line thickness"
+                        color: UM.Theme.getColor("text_inactive")
+                    }
+                    Cura.SecondaryButton {
+                        id: thinnerButton
+                        fixedWidthMode: true
+                        width: 28 * screenScaleFactor
+                        text: "−"
+                        enabled: root.printer != null && root.printer.followerLineScale > 0.5
+                        onClicked: {
+                            if (root.printer != null) {
+                                root.printer.setFollowerLineScale(Math.max(0.5, root.printer.followerLineScale - 0.25));
+                            }
                         }
-                        UM.Label {
-                            text: "Travels"
-                            anchors.verticalCenter: parent.verticalCenter
+                    }
+                    UM.Label {
+                        text: (root.printer != null ? root.printer.followerLineScale : 1.0).toFixed(2) + "×"
+                        width: 34 * screenScaleFactor
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                    Cura.SecondaryButton {
+                        id: thickerButton
+                        fixedWidthMode: true
+                        width: 28 * screenScaleFactor
+                        text: "+"
+                        enabled: root.printer != null && root.printer.followerLineScale < 2.0
+                        onClicked: {
+                            if (root.printer != null) {
+                                root.printer.setFollowerLineScale(Math.min(2.0, root.printer.followerLineScale + 0.25));
+                            }
                         }
+                    }
+                    Item {
+                        Layout.fillWidth: true
                     }
                 }
             }

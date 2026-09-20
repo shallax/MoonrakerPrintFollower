@@ -16,9 +16,9 @@ from typing import Any, Dict, List, Tuple
 # pane -> ordered section ids, the QML instantiation order.
 PANE_SECTION_ORDER: Dict[str, Tuple[str, ...]] = {
     "controls": (
-        "fileManager", "objects", "print", "setup", "toolhead", "macros",
-        "profiles", "tuning", "fans", "leds", "pwm", "power",
-        "system", "save",
+        "fileManager", "print", "setup", "tuning", "toolhead",
+        "profiles", "macros", "objects",
+        "fans", "leds", "pwm", "power", "system", "save",
     ),
     "information": ("plateprogress", "plate", "meshmap", "temphistory"),
     "status": (

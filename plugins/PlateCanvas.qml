@@ -17,6 +17,12 @@ Item {
     property var printerModel: null
     property var plate: null          // the model's plateObjects payload
     property bool compact: false
+    // The zoom/pan view, owned by the follower face and applied by
+    // THIS canvas's grid (the bottom raster must move with the
+    // layers): identity elsewhere — the picker never zooms.
+    property real viewScale: 1.0
+    property real viewPanX: 0.0
+    property real viewPanY: 0.0
     property string hoveredName: ""
     property color halo: UM.Theme.getColor("main_background")
     signal objectHovered(string name)
@@ -139,6 +145,10 @@ Item {
         plateCanvas.requestPaint();
     }
     onPlateChanged: plateCanvas.requestPaint()
+    onHoveredNameChanged: plateCanvas.requestPaint()
+    onViewScaleChanged: plateCanvas.requestPaint()
+    onViewPanXChanged: plateCanvas.requestPaint()
+    onViewPanYChanged: plateCanvas.requestPaint()
 
     // The threaded image-backed canvas (the TemperatureChart
     // doctrine): the paint callback touches only the snapshot it is
@@ -152,7 +162,11 @@ Item {
             var ctx = getContext("2d");
             var plot = root._plot;
             ctx.reset();
-            if (plot == null || root.plate == null) {
+            if (plot == null) {
+                return;
+            }
+            _drawGrid(ctx, plot);
+            if (root.plate == null) {
                 return;
             }
             var plate = root.plate;
@@ -162,9 +176,19 @@ Item {
                 // ink sits on arbitrary feature ink otherwise, and no
                 // contrast value holds without it (the UX ruling).
                 var blocked = row.excluded === true && row.restoreAllowed === false;
-                var ink = row.excluded === true ? (blocked ? MoonrakerTheme.outOfWindowGrey : MoonrakerTheme.dangerRed) : row.current === true ? MoonrakerTheme.plateCurrent : UM.Theme.getColor("text");
-                var widthPx = row.current === true ? 2.5 : 1.5;
-                ctx.lineWidth = widthPx + 4;
+                // The live palette ruling: current reads as Cura's
+                // highlight blue, the passed/printed objects as the
+                // green, the pending as the plain text ink.
+                var ink = row.excluded === true ? (blocked ? MoonrakerTheme.outOfWindowGrey : MoonrakerTheme.dangerRed) : row.current === true ? UM.Theme.getColor("primary") : row.passed === true ? MoonrakerTheme.plateCurrent : UM.Theme.getColor("text");
+                // The mini halves the strokes and the halo: at its
+                // scale a 4 px halo swallows the neighbours (the
+                // live report).
+                var compactScale = root.compact ? 0.5 : 1.0;
+                // The hovered row thickens (the live request): the
+                // hover must read without stealing a state colour.
+                var hovered = row.name === root.hoveredName;
+                var widthPx = (hovered ? 3.0 : row.current === true ? 2.5 : 1.5) * compactScale;
+                ctx.lineWidth = widthPx + 4 * compactScale;
                 ctx.strokeStyle = root.halo;
                 ctx.beginPath();
                 _stroke(ctx, row, plot);
@@ -183,6 +207,75 @@ Item {
                 // current symbols read as two states).
             }
         }
+    }
+
+    function _drawGrid(ctx, plot) {
+        // The bed graphic, the stack's BOTTOM raster (the live
+        // request): thin 10 mm graduations, thick 50 mm ones and a
+        // thick border — painted first so every face's content draws
+        // over it, and static between resizes. The mini map skips the
+        // thin lines: at its size they read as noise. The view
+        // transform (the follower's zoom/pan) applies to every
+        // coordinate so the grid moves with the layers.
+        var bed = plot.bed;
+        var thin = UM.Theme.getColor("lining");
+        var thick = UM.Theme.getColor("border");
+        var left = root.viewPanX + bed.offsetX * root.viewScale;
+        var top = root.viewPanY + bed.offsetY * root.viewScale;
+        var right = left + bed.plotWidth * root.viewScale;
+        var bottom = top + bed.plotHeight * root.viewScale;
+        function gridX(bedX) {
+            return root.viewPanX + root.plateToScene(bedX, bed.bedYMin).x * root.viewScale;
+        }
+        function gridY(bedY) {
+            return root.viewPanY + root.plateToScene(bed.bedXMin, bedY).y * root.viewScale;
+        }
+        if (!root.compact) {
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = thin;
+            var gx = Math.ceil(bed.bedXMin / 10) * 10;
+            for (; gx <= bed.bedXMax; gx += 10) {
+                if (Math.round(gx) % 50 === 0) {
+                    continue;
+                }
+                var sx = gridX(gx);
+                ctx.beginPath();
+                ctx.moveTo(sx, top);
+                ctx.lineTo(sx, bottom);
+                ctx.stroke();
+            }
+            var gy = Math.ceil(bed.bedYMin / 10) * 10;
+            for (; gy <= bed.bedYMax; gy += 10) {
+                if (Math.round(gy) % 50 === 0) {
+                    continue;
+                }
+                var sy = gridY(gy);
+                ctx.beginPath();
+                ctx.moveTo(left, sy);
+                ctx.lineTo(right, sy);
+                ctx.stroke();
+            }
+        }
+        ctx.lineWidth = root.compact ? 1 : 2;
+        ctx.strokeStyle = thick;
+        var hx = Math.ceil(bed.bedXMin / 50) * 50;
+        for (; hx <= bed.bedXMax; hx += 50) {
+            var sx50 = gridX(hx);
+            ctx.beginPath();
+            ctx.moveTo(sx50, top);
+            ctx.lineTo(sx50, bottom);
+            ctx.stroke();
+        }
+        var hy = Math.ceil(bed.bedYMin / 50) * 50;
+        for (; hy <= bed.bedYMax; hy += 50) {
+            var sy50 = gridY(hy);
+            ctx.beginPath();
+            ctx.moveTo(left, sy50);
+            ctx.lineTo(right, sy50);
+            ctx.stroke();
+        }
+        // The border closes the graphic.
+        ctx.strokeRect(left, top, right - left, bottom - top);
     }
 
     function _stroke(ctx, row, plot) {

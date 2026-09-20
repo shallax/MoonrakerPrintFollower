@@ -1,7 +1,7 @@
 """Qt-independent, immutable physical-print observations shared by all consumers."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import isfinite
 from typing import Mapping, Optional, Sequence
 
@@ -60,6 +60,10 @@ class PrintSnapshot:
     # prev/current/next bundle with the printed/unprinted split, built
     # by the coordinator from the index — None without a live view.
     plate_progress: Optional[dict] = None
+    # The current layer's printed objects: the executed motions'
+    # polygon visits, read back from the layer's start (the live
+    # ruling: the DEFINE order is not the print order everywhere).
+    plate_visited: frozenset = field(default_factory=frozenset)
 
     @property
     def active(self) -> bool:

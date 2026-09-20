@@ -9,7 +9,7 @@ from PyQt6.QtCore import QObject, QTimer
 from UM.Logger import Logger
 
 from .LoadStateTracker import LoadStateTracker
-from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, parse_bed_mesh, preview_eta_text, result
+from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, parse_bed_mesh, plate_values, preview_eta_text, result
 from .NextPausePipeline import NextPausePipeline
 from .PreviewFormatting import (
     pause_can_toggle,
@@ -269,6 +269,7 @@ class PrintCoordinator(QObject):
             # The follower face's prepared polylines: built HERE from
             # the index (the worker-side prep rule), not in the model.
             plate_progress_payload = None
+            plate_visited = frozenset()
             if plate_available:
                 # The payload is built INSIDE the service — the raw
                 # index's arrays never cross its boundary (the
@@ -276,6 +277,19 @@ class PrintCoordinator(QObject):
                 # service, never the view.
                 plate_progress_payload = self._index.plate_progress(
                     self._snapshot.layer.index, position)
+                # The per-layer printed objects: the executed motions'
+                # polygon visits, read back from the layer's start.
+                # The rows go through the SAME normalisation the map
+                # uses — the raw polygon may arrive flat or paired,
+                # and the point-in-polygon test needs pairs (the
+                # green-printed report: the raw rows never matched).
+                exclude_status = (self._status.get("exclude_object") or {}) \
+                    if isinstance(self._status, dict) else {}
+                exclude_rows = plate_values(exclude_status)["objects"]
+                visited = getattr(self._index, "plate_visited", None)
+                if visited is not None and plate_progress_payload.get("split") is not None:
+                    plate_visited = visited(self._snapshot.layer.index,
+                                            plate_progress_payload["split"], exclude_rows)
             self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
                 estimate if estimate > 0 else None, self._files.metadata_complete,
                 layer_progress=layer_progress, index_ready=view is not None,
@@ -288,7 +302,8 @@ class PrintCoordinator(QObject):
                 next_pause_baked=next_pause_baked,
                 load_active=load_active,
                 filament_total=filament_total if filament_total and filament_total > 0 else None,
-                plate_progress=plate_progress_payload)
+                plate_progress=plate_progress_payload,
+                plate_visited=plate_visited)
             if self._snapshot.active and filename:
                 self._maybe_fetch_mr_metadata(filename, job)
             if config.trace_layer and time.monotonic() - self._layer_trace_at >= 5:

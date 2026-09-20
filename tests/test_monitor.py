@@ -2881,6 +2881,11 @@ class MonitorQtTests(unittest.TestCase):
                 # live report: the chosen options were not
                 # saved between sessions).
                 "toolhead": {"jogDistance": 25.0, "extrudeDistance": 5.0, "extrudeSpeed": 300.0},
+                # The follower view settings are global (the live
+                # ruling) — the defaults ride the fresh document.
+                "followerView": {"showPrevious": True, "showNext": True,
+                                 "showBase": True, "showTravels": False,
+                                 "lineScale": 1.0},
             })
             # The chart config is per-printer now: the global file must
             # not carry it, and the per-printer record defaults empty.
@@ -4666,6 +4671,22 @@ Item {
             "visible: !root.available()",
             "visible: !root.available() && !root.compact",
             "visible: !root.available() && root.compact",
+            # The mapping hides while the index is unavailable: the
+            # bed grid must not sit under the download offer's text —
+            # inside the face's own slot, never a layout shift.
+            "visible: root.available()",
+            # The objects list's current-row bar: a highlight behind
+            # the text, never a layout shift.
+            "visible: modelData.current",
+            # The picker's printed-legend row and its index offer:
+            # the printed state derives from the index, so both gate
+            # on its availability — inside the transient card.
+            "visible: root.printer != null && root.printer.plateProgressAvailable",
+            "visible: root.printer != null && root.printer.plateHasObjects && !root.printer.plateProgressAvailable",
+            # The scope's right-edge tick: the majors draw one full
+            # line, the halves and quarters an edge pair — scene-graph
+            # decoration inside the scope.
+            "visible: !major",
             # The picker's gate (the live ruling): during a print the
             # section shows the plate when the data exists, the
             # download offer otherwise; it clears with the job epoch.

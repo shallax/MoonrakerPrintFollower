@@ -222,7 +222,7 @@ Cura.RoundedRectangle {
                             Layout.minimumWidth: 60 * screenScaleFactor
                             Layout.maximumWidth: 180 * screenScaleFactor
                             Layout.fillWidth: true
-                            enabled: visible
+                            enabled: visible && (root.printerModel == null || root.printerModel.webcamStreamEnabled)
                             model: root.printerModel != null ? root.printerModel.webcamNames : []
                             currentIndex: root.printerModel != null ? root.printerModel.activeWebcamIndex : -1
                             onActivated: function (index) {
@@ -235,7 +235,7 @@ Cura.RoundedRectangle {
                         UM.SimpleButton {
                             width: UM.Theme.getSize("small_button_icon").width
                             height: UM.Theme.getSize("small_button_icon").height
-                            enabled: root.printerModel != null && root.printerModel.monitorConnected
+                            enabled: root.printerModel != null && root.printerModel.monitorConnected && root.printerModel.webcamStreamEnabled
                             color: UM.Theme.getColor("text_inactive")
                             hoverColor: UM.Theme.getColor("text")
                             iconSource: UM.Theme.getIcon("ArrowDoubleCircleRight")
@@ -255,6 +255,20 @@ Cura.RoundedRectangle {
                                 y: parent.height + UM.Theme.getSize("default_margin").height
                                 width: UM.Theme.getSize("tooltip").width
                                 text: "Refresh Moonraker's webcam list."
+                            }
+                        }
+
+                        // The stream toggle (the live request): OFF
+                        // really stops the stream — the bridge halts
+                        // its upstream fetch and the controls stand
+                        // down until it comes back on.
+                        UM.CheckBox {
+                            text: "Enable"
+                            checked: root.printerModel != null ? root.printerModel.webcamStreamEnabled : true
+                            onToggled: {
+                                if (root.printerModel != null) {
+                                    root.printerModel.setWebcamStreamEnabled(checked);
+                                }
                             }
                         }
                     }
@@ -292,8 +306,20 @@ Cura.RoundedRectangle {
 
             UM.Label {
                 anchors.centerIn: parent
-                visible: !root.configured && root.printerModel != null && root.printerModel.webcamNames.length > 0
+                // The deliberate off state must not read as a
+                // failure (the live ruling): a disabled stream shows
+                // its own neutral notice, never the reconnecting
+                // alarm.
+                visible: !root.configured && root.printerModel != null && root.printerModel.webcamNames.length > 0 && root.printerModel.webcamStreamEnabled
                 text: "Camera offline — reconnecting to Moonraker…"
+                color: UM.Theme.getColor("text_inactive")
+                font: UM.Theme.getFont("default")
+            }
+
+            UM.Label {
+                anchors.centerIn: parent
+                visible: !root.configured && root.printerModel != null && root.printerModel.webcamNames.length > 0 && !root.printerModel.webcamStreamEnabled
+                text: "Stream disabled — turn it back on in the camera controls."
                 color: UM.Theme.getColor("text_inactive")
                 font: UM.Theme.getFont("default")
             }

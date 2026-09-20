@@ -8,6 +8,7 @@ from types import MappingProxyType
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from .GCodeIndex import LayerMotionIndex, build_index_from_file, hydrate_layer_from_file
+from .MonitorFormatting import _point_in_polygon
 from .PlateProgress import plate_layers as _plate_layers, split_index as _split_index
 
 
@@ -76,6 +77,9 @@ class GCodeIndexService(QObject):
         self._progress = None
         self._plate_layers_key = None
         self._plate_layers = {}
+        self._visited_key = None
+        self._visited = set()
+        self._visited_upto = -1
         self._completed.connect(self._finish)
         files.changed.connect(self._on_files_changed)
 
@@ -105,6 +109,9 @@ class GCodeIndexService(QObject):
         # print could coincidentally match the (anchor, counts) key.
         self._plate_layers_key = None
         self._plate_layers = {}
+        self._visited_key = None
+        self._visited = set()
+        self._visited_upto = -1
         self._wanted = self._restored = self._save = False
         self._hydrate.clear()
         self._hydrating = None
@@ -125,13 +132,13 @@ class GCodeIndexService(QObject):
         self._request_window(int(layer))
         self._advance()
 
-    def plate_progress(self, anchor, file_position=None):
-        """The follower's prepared payload, built HERE: the raw index's
-        arrays never cross this boundary (the architecture contract) —
-        only the built polylines do. The layers memoise per anchor and
-        hydration fill; the split is the only per-poll cost."""
+    def plate_layers(self, anchor):
+        """The follower's STATIC half: the prev/current/next bundle,
+        memoised per anchor and hydration fill — the model republishes
+        it with a stable identity so QML never re-wraps the polylines
+        on a quiet poll (the perf panel's split)."""
         if self._view is None:
-            return {"layers": {}, "split": None, "method": "unavailable", "anchor": anchor}
+            return {}
         index = self._view._index
         with index.cache_lock:
             counts = tuple(index.motion_count(layer)
@@ -139,13 +146,58 @@ class GCodeIndexService(QObject):
             if self._plate_layers_key != (anchor, counts):
                 self._plate_layers = _plate_layers(index, anchor)
                 self._plate_layers_key = (anchor, counts)
-            split = None
-            method = "unavailable"
-            if self._plate_layers.get("current") is not None and file_position is not None:
-                split = _split_index(index, anchor, file_position)
-                method = "motion index"
-            return {"layers": self._plate_layers, "split": split,
-                    "method": method, "anchor": anchor}
+        return self._plate_layers
+
+    def plate_split(self, anchor, file_position=None):
+        """The follower's VOLATILE half: the printed/unprinted boundary
+        — the only per-poll cost."""
+        if self._view is None or file_position is None:
+            return None
+        if not self._plate_layers.get("current"):
+            return None
+        index = self._view._index
+        with index.cache_lock:
+            return _split_index(index, anchor, file_position)
+
+    def plate_visited(self, anchor, split, rows):
+        """The per-layer printed objects: which polygons the executed
+        motions have touched. Built HERE (the raw arrays never cross
+        the boundary) and READ BACK FROM THE LAYER'S START — an
+        attach part-way through a layer still marks everything the
+        toolhead already printed (the live ruling: the DEFINE order
+        is not the print order on every machine, so the visits are
+        the truth). The walk advances only the new motions per poll."""
+        if self._view is None or split is None or anchor is None:
+            return frozenset()
+        index = self._view._index
+        polygons = [(row["name"], row["polygon"]) for row in rows
+                    if row.get("polygon") and row.get("name")]
+        with index.cache_lock:
+            if self._visited_key != (anchor,):
+                self._visited_key = (anchor,)
+                self._visited = set()
+                self._visited_upto = -1
+            if split <= self._visited_upto:
+                return frozenset(self._visited)
+            xs = index.motion_x[anchor] if anchor < len(index.motion_x) else ()
+            ys = index.motion_y[anchor] if anchor < len(index.motion_y) else ()
+            end = min(split + 1, len(xs))
+            for motion in range(self._visited_upto + 1, end):
+                x, y = float(xs[motion]), float(ys[motion])
+                for name, polygon in polygons:
+                    if _point_in_polygon(x, y, polygon):
+                        self._visited.add(name)
+                        break
+            self._visited_upto = split
+            return frozenset(self._visited)
+
+    def plate_progress(self, anchor, file_position=None):
+        """The composed payload (the tests and the one-shot consumers):
+        the memoised layers plus the volatile split."""
+        layers = self.plate_layers(anchor) if self._view is not None else {}
+        split = self.plate_split(anchor, file_position)
+        method = "motion index" if split is not None else "unavailable"
+        return {"layers": layers, "split": split, "method": method, "anchor": anchor}
 
     def set_followed_layer(self, layer):
         """Anchor the retention window to the LIVE print's layer.

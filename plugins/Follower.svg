@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill-rule="evenodd">
+  <!-- Print Follower: the stacked layer bars with the toolhead dot
+       riding above them. Every shape is a CLOSED filled path:
+       UM.ColorImage injects the theme colour into the root svg
+       element, and open paths have no area to tint. -->
+  <path d="M4 15h16v3H4z"/>
+  <path d="M5 9.5h14v3H5z"/>
+  <path d="M7 4h10v3H7z"/>
+  <path d="M19.2 4a1.8 1.8 0 11-3.6 0 1.8 1.8 0 013.6 0z"/>
+</svg>

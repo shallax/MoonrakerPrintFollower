@@ -149,7 +149,7 @@ class SourceContractTests(unittest.TestCase):
                 "MigrationNotice", "MoonrakerClient", "PauseController", "PluginPersistence", "PreviewFollower", "PreviewMotion",
                 "PreviewPresentation", "PrintCoordinator", "PrinterBinding", "RemoteFileService", "WhatsNew"},
             "GCodeIndex": {"MoonrakerProtocol"},
-            "GCodeIndexService": {"GCodeIndex", "PlateProgress"},
+            "GCodeIndexService": {"GCodeIndex", "PlateProgress", "MonitorFormatting"},
             "MonitorCamera": {"CameraBridge", "CameraTiming", "MoonrakerProtocol"},
             "MoonrakerMJPGImage": set(),
             "MonitorCommands": {"MonitorPermissions"},
