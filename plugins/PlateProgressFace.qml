@@ -51,6 +51,29 @@ Item {
     property real viewScale: 1.0
     property real viewPanX: 0.0
     property real viewPanY: 0.0
+    // The raster paints run on the threaded canvases' worker
+    // contexts, which read var properties fresh but can see primitive
+    // properties stale; the view/width state rides this var carrier
+    // and every painter reads it (the offscreen-harness repaint
+    // findings). The scope, the dot and the grid bindings are
+    // scene-graph and keep reading the properties directly.
+    property var _view: ({
+            scale: 1.0,
+            panX: 0.0,
+            panY: 0.0,
+            lineScale: 0.7,
+            compact: false
+        })
+
+    function _publishView() {
+        root._view = {
+            scale: root.viewScale,
+            panX: root.viewPanX,
+            panY: root.viewPanY,
+            lineScale: root.lineScale,
+            compact: root.compact
+        };
+    }
     property real _dragX: 0.0
     property real _dragY: 0.0
     // The scope's dock state: parked out of view until a zoom change
@@ -107,7 +130,7 @@ Item {
         if (plot == null) {
             return 0;
         }
-        return root.nominalToolpathWidthMm * Math.abs(plot.sx) * Math.abs(root.viewScale) * root.lineScale * (root.compact ? root.compactStrokeBoost : 1.0);
+        return root.nominalToolpathWidthMm * Math.abs(plot.sx) * Math.abs(root._view.scale) * root._view.lineScale * (root._view.compact ? root.compactStrokeBoost : 1.0);
     }
 
     function travelWidthPx() {
@@ -152,8 +175,12 @@ Item {
     onShowNextChanged: ghostCanvas.requestPaint()
     onShowBaseChanged: pendingCanvas.requestPaint()
     onShowTravelsChanged: _resetStack()  // the travels join the accumulated progress
-    onLineScaleChanged: _resetStack()
+    onLineScaleChanged: {
+        _publishView();
+        _resetStack();
+    }
     onViewScaleChanged: {
+        _publishView();
         _resetStack();
         // The scope docks while the zoom is in use and slides away
         // once it has been idle (the live request): two seconds of
@@ -161,8 +188,21 @@ Item {
         root._scopeDocked = true;
         scopeHideTimer.restart();
     }
-    onViewPanXChanged: _resetStack()
-    onViewPanYChanged: _resetStack()
+    onViewPanXChanged: {
+        _publishView();
+        _resetStack();
+    }
+    onViewPanYChanged: {
+        _publishView();
+        _resetStack();
+    }
+    onCompactChanged: {
+        // The product sets compact at construction and never flips
+        // it; the repaint keeps the thumbnail honest wherever it is.
+        _publishView();
+        _resetStack();
+    }
+    Component.onCompleted: _publishView()
 
     // The mapping replots on ITS resize; every raster holds the old
     // transform's coordinates and repaints from scratch (the live
@@ -326,12 +366,19 @@ Item {
         var offsetY = plot.bed.offsetY;
         var bedXMin = plot.bed.bedXMin;
         var bedYMax = plot.bed.bedYMax;
-        var panX = root.viewPanX;
-        var panY = root.viewPanY;
-        var scale = root.viewScale;
+        var panX = root._view.panX;
+        var panY = root._view.panY;
+        var scale = root._view.scale;
         // The physical stroke: one width for every channel (the
         // ghost/pending/printed parity rule), subpixel at 100%.
         ctx.lineWidth = root.toolpathWidthPx();
+        // Round joins: the default miter spikes at acute corners with
+        // a length that grows with the stroke width — thick lines
+        // sprouted sharp edges at every text corner (the live report).
+        ctx.lineJoin = "round";
+        // Round caps: square ends jut half a width past each stroke
+        // end, the same thick-line artifact at travel seams.
+        ctx.lineCap = "round";
         for (var name in layer.classes) {
             var segments = layer.classes[name];
             ctx.strokeStyle = base ? MoonrakerTheme.seriesDefault : root.classColour(name);
@@ -370,6 +417,8 @@ Item {
         ctx.strokeStyle = MoonrakerTheme.plateTravel;
         ctx.globalAlpha = 0.8;
         ctx.lineWidth = root.travelWidthPx();
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
         for (var s = 0; s < segments.length; ++s) {
             var points = segments[s];
             if (points.length < 2) {
@@ -384,11 +433,11 @@ Item {
             if (scene == null) {
                 continue;
             }
-            ctx.moveTo(root.viewPanX + scene.x * root.viewScale, root.viewPanY + scene.y * root.viewScale);
+            ctx.moveTo(root._view.panX + scene.x * root._view.scale, root._view.panY + scene.y * root._view.scale);
             while (_edgePrinted(points, i, split)) {
                 scene = mapping.plateToScene(points[i][0], points[i][1]);
                 if (scene != null) {
-                    ctx.lineTo(root.viewPanX + scene.x * root.viewScale, root.viewPanY + scene.y * root.viewScale);
+                    ctx.lineTo(root._view.panX + scene.x * root._view.scale, root._view.panY + scene.y * root._view.scale);
                 }
                 ++i;
             }
@@ -414,8 +463,8 @@ Item {
             if (scene == null) {
                 continue;
             }
-            var sceneX = root.viewPanX + scene.x * root.viewScale;
-            var sceneY = root.viewPanY + scene.y * root.viewScale;
+            var sceneX = root._view.panX + scene.x * root._view.scale;
+            var sceneY = root._view.panY + scene.y * root._view.scale;
             ctx.fillStyle = MoonrakerTheme.plateTravel;
             ctx.beginPath();
             if (start) {

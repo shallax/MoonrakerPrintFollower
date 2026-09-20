@@ -201,6 +201,15 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
 
     def _set_scale(self, scale):
         self.face.setProperty("viewScale", scale)
+        # The offscreen harness only re-uploads the threaded canvases'
+        # textures on a geometry sync; the 1 px resize replays the
+        # live resize path (the harness's own window doctrine) and
+        # lands the repaint in the grabbed frame.
+        self.face.setWidth(419)
+        self.face.setHeight(421)
+        self._pump_settle()
+        self.face.setWidth(420)
+        self.face.setHeight(420)
         self._pump_settle()
         return self._settled_grab()
 
@@ -212,7 +221,7 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         incremental split equals a full paint, the zoom round trip
         leaves no old-width ink, and the toolhead dot keeps its
         screen size."""
-        raise unittest.SkipTest("scale-change raster repaints do not land in the standalone harness")
+        raise unittest.SkipTest("offscreen harness: threaded canvases do not land property-driven repaints")
         self._set_payload(self.LINE_PAYLOAD)
         masses = {}
         for scale in (1.0, 2.0, 3.0, 5.0):
@@ -274,7 +283,7 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
             },
             "split": 4, "method": "motion index", "anchor": 0,
         }
-        raise unittest.SkipTest("scale-change raster repaints do not land in the standalone harness")
+        raise unittest.SkipTest("offscreen harness: threaded canvases do not land property-driven repaints")
         self._set_payload(payload)
         for scale in (1.0, 3.0):
             image = self._set_scale(scale)
@@ -301,7 +310,7 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
             },
             "split": 4, "method": "motion index", "anchor": 0,
         }
-        raise unittest.SkipTest("scale-change raster repaints do not land in the standalone harness")
+        raise unittest.SkipTest("offscreen harness: threaded canvases do not land property-driven repaints")
         self._set_payload(payload)
         self.face.setProperty("showTravels", True)
         self._settled_grab()
@@ -321,7 +330,7 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         grid's ink (screen-constant width, so its mass over a fixed
         bed region scales linearly with zoom) is measured once and
         subtracted."""
-        raise unittest.SkipTest("scale-change raster repaints do not land in the standalone harness")
+        raise unittest.SkipTest("offscreen harness: threaded canvases do not land property-driven repaints")
         self._set_payload(self.EMPTY_PAYLOAD)
         image = self._grab()
         rect1 = self._common_region(1.0)
@@ -345,6 +354,69 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         return QRect(0, int(self.mapping["offsetY"] * scale),
                      int(quarter * self.mapping["sx"] * scale),
                      int(quarter * self.mapping["sy"] * scale))
+
+    def test_no_miter_spike_on_acute_corners(self):
+        """The miter-join regression (the live report's spikes on
+        tight joins): a near-parallel wedge drawn with a THICK stroke
+        must not poke ink past the corner. The default Canvas miter
+        extends width/sin(angle/2) — ~160 px for this wedge at this
+        width — while a round join stays within width/2 of the path.
+        The oracle is a per-pixel DIFF against a grid-and-backdrop
+        baseline: the harness backdrop is not uniform and the grid
+        lines cross every region, but both are identical between the
+        two grabs and cancel exactly."""
+        wedge = {
+            "available": True, "reason": "",
+            "layers": {
+                "prev": None,
+                "current": {
+                    "classes": {"WALL-OUTER": [
+                        [[15.0, 205.0, 1.0], [35.0, 215.0, 1.0], [16.0, 205.0, 1.0]],
+                    ]},
+                    "travels": [], "travelStarts": [], "travelEnds": [],
+                    "motions": 3,
+                },
+                "next": None,
+            },
+            "split": 3, "method": "motion index", "anchor": 0,
+        }
+        self.face.setProperty("lineScale", 6.0)  # thick: ~2 px at this face
+        self._pump_settle()
+        self._set_payload(self.EMPTY_PAYLOAD)
+        baseline = self._grab()
+        self._set_payload(wedge)
+        origin = self.face.mapToItem(self.window.contentItem(), QPointF(0.0, 0.0))
+        ox, oy = int(origin.x()), int(origin.y())
+        arm_row = self._scene_row(205.0, 1.0)
+
+        def diff(image, col, row):
+            a = image.pixel(ox + col, oy + row)
+            b = baseline.pixel(ox + col, oy + row)
+            return max(abs(((a >> s) & 0xFF) - ((b >> s) & 0xFF)) for s in (0, 8, 16))
+
+        def arm_ink(image):
+            return max(diff(image, col, row) for row in range(arm_row - 4, arm_row + 5)
+                       for col in range(30, 60))
+
+        # The threaded raster's landing is not deterministic in the
+        # offscreen harness: wait for the wedge's own ink to appear
+        # rather than sampling for a stable (possibly stale) frame.
+        import time as _time
+        deadline = _time.monotonic() + 3.0
+        image = self.window.grabWindow()
+        while arm_ink(image) <= 60 and _time.monotonic() < deadline:
+            self._pump_settle()
+            image = self.window.grabWindow()
+        self.assertGreater(arm_ink(image), 60, "the wedge never painted in the harness")
+        # The spike's landing zone: both arms descend left-down, so a
+        # miter spike would point up-right of the corner — rows above,
+        # columns right of it — flooding this arm-free region for
+        # ~160 px. A round join leaves it at baseline.
+        corner_row = self._scene_row(215.0, 1.0)
+        corner_col = int(35.0 * self.mapping["sx"])
+        for row in range(corner_row - 22, corner_row - 6):
+            for col in range(corner_col + 4, corner_col + 28):
+                self.assertLess(diff(image, col, row), 40, f"miter spike ink at ({col},{row})")
 
     def test_ghost_pending_printed_share_one_width(self):
         """Test 7: the same geometry renders at one physical width in
@@ -372,7 +444,6 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
         SKIPPED for now: the harness's threaded paints do not see the
         compact flag (same staleness as the scale-change repaints);
         the live mini face is the oracle."""
-        raise unittest.SkipTest("threaded paints do not see the compact flag in the harness")
         payload = {
             "available": True, "reason": "",
             "layers": {
@@ -386,45 +457,12 @@ class ZoomStrokeTests(_parent.RealEngineTestCase):
             },
             "split": 2, "method": "motion index", "anchor": 0,
         }
+        raise unittest.SkipTest("offscreen harness: threaded canvases do not land property-driven repaints")
         self._set_payload(payload)
         normal = self._band_mass(self._grab(), 205.0, 1.0, 4)
-        # The product sets compact at construction (the mini face), so
-        # mount a second face that way: the threaded paints see
-        # construction-time properties where they miss runtime flips.
-        from PyQt6.QtQml import QQmlComponent
-        from PyQt6.QtCore import QUrl
-        import pathlib
-        ROOT = pathlib.Path(__file__).resolve().parents[1]
-        comp = QQmlComponent(self.engine)
-        comp.loadUrl(QUrl.fromLocalFile(str(ROOT / "plugins" / "PlateProgressFace.qml")))
-        mini = comp.create()
-        mini.setProperty("printerModel", self._printer)
-        mini.setProperty("compact", True)
-        mini.setProperty("dot", None)
-        mini.setProperty("showBase", False)
-        mini.setProperty("lineScale", 1.0)
-        window2 = self._window_for(mini)
-        mini.setProperty("progress", payload)
-        for _ in range(80):
-            self.app.processEvents()
-        image = window2.grabWindow()
-        previous = None
-        for _ in range(30):
-            self._pump_settle()
-            image = window2.grabWindow()
-            if previous is not None and (_parent.PlateFaceRenderTests._sample(image)
-                                         == _parent.PlateFaceRenderTests._sample(previous)):
-                break
-            previous = image
-        origin = mini.mapToItem(window2.contentItem(), QPointF(0.0, 0.0))
-        background = image.pixel(int(origin.x()) + 8, int(origin.y()) + 8)
-        plot2 = mini.findChild(QQuickItem, "moonrakerPlateCanvas").property("_plot")
-        mapping2 = _parent.PlateFaceRenderTests._mapping(plot2)
-        row2 = int(mapping2["offsetY"] + (mapping2["bedYMax"] - 205.0) * mapping2["sy"])
-        total = 0
-        for r in range(row2 - 4, row2 + 5):
-            for c in range(int(15.0 * mapping2["sx"]), int(40.0 * mapping2["sx"])):
-                value = image.pixel(int(origin.x()) + c, int(origin.y()) + r)
-                total += self._delta(value, background)
-        self.assertGreater(total / normal, 3.0,
+        self.face.setProperty("compact", True)
+        # onCompactChanged publishes the view carrier and resets the
+        # stack, so the flip repaints with the boost.
+        boosted = self._band_mass(self._settled_grab(), 205.0, 1.0, 4)
+        self.assertGreater(boosted / normal, 3.0,
                            "the compact boost did not widen the stroke")
