@@ -301,6 +301,55 @@ class ComposedComponentTests(unittest.TestCase):
         self.assertIn(8, service._full_cache,
                       "the demanded layer never reached the full cache")
 
+    def test_a_live_poll_does_not_drop_the_manual_seeks_demand(self):
+        # The live report's minute-long first drag: the seek entered the
+        # demand queue while a pass batch was in flight, and the next
+        # live poll's window filter dropped it — the layer only arrived
+        # when the pass walked to it. The manual window must survive
+        # set_followed_layer.
+        service, files = self.parts.index, self.parts.files
+        files.bind(("part.gcode", 100, 1))
+        files._identity = self.qt.load("MoonrakerProtocol").RemoteFileIdentity(
+            "part.gcode", 100, modified=1)
+        service.bind(("part.gcode", 100, 1))
+        service._restored = True
+        service._wanted = True
+        layers = b"".join(
+            b";LAYER:%d\nG1 X1 Y1 E1\nG1 X2 Y2 E1\nG1 X3 Y3 E1\n" % layer
+            for layer in range(12))
+        target = os.path.join(files._root, "job-1", "part.gcode")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as handle:
+            handle.write(layers)
+        self.addCleanup(os.remove, target)
+        gci = self.qt.load("GCodeIndex")
+        index = gci.build_index_from_file(target, compact=True)
+        module = self.qt.load("GCodeIndexService")
+        service._view = module.IndexView(("part.gcode", 100, 1), index)
+        files._path = target
+        files._want_file = True
+        service._busy = "fullprep"  # a pass batch is in flight at the seek
+        service.set_manual_anchor(8)
+        self.assertEqual(service._hydrate, {7, 8, 9})
+        service.set_followed_layer(2)  # the live poll
+        self.assertEqual(service._hydrate, {1, 2, 3, 7, 8, 9},
+                         "the live poll dropped the manual seek's demand")
+        service._busy = ""
+        service._advance()  # the in-flight batch's finish chain
+
+        def wait_idle():
+            for _ in range(400):
+                self.qt.events(5)
+                if not service._busy and not service._hydrate:
+                    break
+
+        wait_idle()
+        bundle = service.plate_progress(8, None)["layers"]
+        self.assertIsNotNone(bundle.get("current"),
+                             "the frozen layer never became available")
+        self.assertIn(8, service._full_cache,
+                      "the demanded layer never reached the full cache")
+
     def test_service_failure_signals_are_logged(self):
         source = (pathlib.Path(__file__).resolve().parents[1] / "plugins" / "PrintCoordinator.py").read_text(encoding="utf-8")
         self.assertIn("files.failed.connect", source)

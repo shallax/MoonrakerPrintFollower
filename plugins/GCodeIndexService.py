@@ -456,8 +456,14 @@ class GCodeIndexService(QObject):
         # A moved anchor may have stranded a pending prefetch outside
         # the window; drop it before the worker picks it. The window is
         # then topped back up: an anchor move is exactly when the new
-        # previous layer's ghost becomes worth reading.
-        self._hydrate = {n for n in self._hydrate if layer - 1 <= n <= layer + 1}
+        # previous layer's ghost becomes worth reading. The FROZEN
+        # follower's window survives beside it — a live poll must never
+        # drop a seek's demand (the live report: the first forward drag
+        # waited a minute for the pass to walk to it).
+        self._hydrate = {n for n in self._hydrate
+                         if layer - 1 <= n <= layer + 1
+                         or (index.manual_anchor is not None
+                             and index.manual_anchor - 1 <= n <= index.manual_anchor + 1)}
         self._request_window(layer)
         self._advance()
 
