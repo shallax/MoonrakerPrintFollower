@@ -814,6 +814,14 @@ Component {
                                 root.openPopOver = root.openPopOver === name ? "" : name;
                             }
                         }
+                        PlateProgressSection {
+                            visible: root.printer == null || root.printer.sectionHiddenMap["plateprogress"] !== true
+                            Layout.fillWidth: true
+                            printerModel: root.printer
+                            onPopOverToggleRequested: function (name) {
+                                root.openPopOver = root.openPopOver === name ? "" : name;
+                            }
+                        }
                         TempHistorySection {
                             visible: root.printer == null || root.printer.sectionHiddenMap["temphistory"] !== true
                             Layout.fillWidth: true
@@ -2762,13 +2770,30 @@ Component {
             y: UM.Theme.getSize("default_margin").height
             height: Math.min((520 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
             contentWidth: 390 * screenScaleFactor
-            title: "Plate — " + (root.printer != null ? root.printer.monitorFilename : "")
+            title: "Exclude Object Picker"
 
             Loader {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 active: root.openPopOver === "plate" && root.printer != null
                 sourceComponent: plateContent
+            }
+        }
+
+        MonitorPopOver {
+            id: plateProgressPanel
+            visible: root.openPopOver === "plateprogress" && root.printer != null
+            x: cameraArea.x + UM.Theme.getSize("default_margin").width
+            y: UM.Theme.getSize("default_margin").height
+            height: Math.min((520 * screenScaleFactor) + UM.Theme.getSize("default_margin").height, parent.height - 2 * UM.Theme.getSize("default_margin").height)
+            contentWidth: 390 * screenScaleFactor
+            title: "Print Follower"
+
+            Loader {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                active: root.openPopOver === "plateprogress" && root.printer != null
+                sourceComponent: plateProgressContent
             }
         }
 
@@ -2914,32 +2939,12 @@ Component {
         Component {
             id: plateContent
             ColumnLayout {
-                id: plateCard
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 spacing: UM.Theme.getSize("thin_margin").height
-                property string face: "exclude"  // transient — resets on close (the re-review rule)
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Cura.RadioButton {
-                        text: "Objects"
-                        checked: plateCard.face === "exclude"
-                        onClicked: plateCard.face = "exclude"
-                    }
-                    Cura.RadioButton {
-                        text: "Progress"
-                        checked: plateCard.face === "progress"
-                        onClicked: plateCard.face = "progress"
-                    }
-                    Item {
-                        Layout.fillWidth: true
-                    }
-                }
 
                 PlateExcludeFace {
                     id: plateFace
-                    visible: plateCard.face === "exclude"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     Layout.minimumHeight: 240 * screenScaleFactor
@@ -2958,57 +2963,10 @@ Component {
                     }
                 }
 
-                ColumnLayout {
-                    visible: plateCard.face === "progress"
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    spacing: UM.Theme.getSize("thin_margin").height
-
-                    PlateProgressFace {
-                        id: progressFace
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        Layout.minimumHeight: 200 * screenScaleFactor
-                        printerModel: root.printer
-                        progress: root.printer != null ? root.printer.plateProgress : null
-                        dot: root.printer != null ? root.printer.plateDot : null
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: UM.Theme.getSize("thin_margin").width
-                        UM.CheckBox {
-                            checked: progressFace.showPrevious
-                            onToggled: progressFace.showPrevious = checked
-                        }
-                        UM.Label {
-                            text: "Previous layer"
-                        }
-                        UM.CheckBox {
-                            checked: progressFace.showNext
-                            onToggled: progressFace.showNext = checked
-                        }
-                        UM.Label {
-                            text: "Next layer"
-                        }
-                        UM.CheckBox {
-                            checked: progressFace.showBase
-                            onToggled: progressFace.showBase = checked
-                        }
-                        UM.Label {
-                            text: "Grey base"
-                        }
-                        Item {
-                            Layout.fillWidth: true
-                        }
-                    }
-                }
-
                 UM.Label {
                     // The permanent single line (the mesh "hover row"
                     // idiom): counter > hover > selection > hint.
                     Layout.fillWidth: true
-                    visible: plateCard.face === "exclude"
                     text: plateFace.clickProgress >= 2 ? "Click again to " + plateFace.pendingAction + " (" + plateFace.clickProgress + " of 3)" : (plateFace.hoveredName !== "" ? plateFace.hoveredName : (plateFace.selectedName !== "" ? plateFace.selectionDetail() : "Triple-click an object to exclude it, or an excluded object to restore it."))
                     color: plateFace.hoveredName !== "" || plateFace.selectedName !== "" ? UM.Theme.getColor("text") : UM.Theme.getColor("text_inactive")
                     horizontalAlignment: Text.AlignHCenter
@@ -3016,7 +2974,6 @@ Component {
 
                 Flow {
                     Layout.fillWidth: true
-                    visible: plateCard.face === "exclude"
                     spacing: UM.Theme.getSize("narrow_margin").width
                     Row {
                         spacing: 4 * screenScaleFactor
@@ -3039,6 +2996,15 @@ Component {
                             height: width
                             radius: width / 2
                             color: MoonrakerTheme.plateCurrent
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Rectangle {
+                            width: 7 * screenScaleFactor
+                            height: width
+                            radius: width / 2
+                            color: "transparent"
+                            border.color: MoonrakerTheme.plateCurrent
+                            border.width: 2
                             anchors.verticalCenter: parent.verticalCenter
                         }
                         UM.Label {
@@ -3077,31 +3043,12 @@ Component {
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
-                    Row {
-                        spacing: 4 * screenScaleFactor
-                        Rectangle {
-                            width: 10 * screenScaleFactor
-                            height: width
-                            radius: width / 2
-                            color: "transparent"
-                            border.color: MoonrakerTheme.plateCurrent
-                            border.width: 2
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        UM.Label {
-                            text: "the object printing now"
-                            color: UM.Theme.getColor("text_inactive")
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
                 }
-
                 UM.Label {
                     // The outcome slot: the gesture receipts land here —
                     // the no-confirm ruling's confirmation (a refusal
                     // must never be silent).
                     Layout.fillWidth: true
-                    visible: plateCard.face === "exclude"
                     text: root.printer != null ? root.printer.actionStatus : ""
                     color: UM.Theme.getColor("text")
                     font: UM.Theme.getFont("default_italic")
@@ -3110,11 +3057,58 @@ Component {
 
                 UM.Label {
                     Layout.fillWidth: true
-                    visible: plateCard.face === "exclude"
                     text: "A triple-click sends the command immediately — there is no confirmation dialog. A restore is allowed only inside the grace window."
                     color: UM.Theme.getColor("text_inactive")
                     font: UM.Theme.getFont("default_italic")
                     wrapMode: Text.WordWrap
+                }
+            }
+        }
+
+        Component {
+            id: plateProgressContent
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: UM.Theme.getSize("thin_margin").height
+
+                PlateProgressFace {
+                    id: progressFace
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 200 * screenScaleFactor
+                    printerModel: root.printer
+                    progress: root.printer != null ? root.printer.plateProgress : null
+                    dot: root.printer != null ? root.printer.plateDot : null
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: UM.Theme.getSize("thin_margin").width
+                    UM.CheckBox {
+                        checked: progressFace.showPrevious
+                        onToggled: progressFace.showPrevious = checked
+                    }
+                    UM.Label {
+                        text: "Previous layer"
+                    }
+                    UM.CheckBox {
+                        checked: progressFace.showNext
+                        onToggled: progressFace.showNext = checked
+                    }
+                    UM.Label {
+                        text: "Next layer"
+                    }
+                    UM.CheckBox {
+                        checked: progressFace.showBase
+                        onToggled: progressFace.showBase = checked
+                    }
+                    UM.Label {
+                        text: "Grey base"
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                    }
                 }
             }
         }
