@@ -151,16 +151,26 @@ def split_index(index: LayerMotionIndex, layer: int, file_position: int) -> Opti
     return int(bisect_right(offsets, int(file_position)))
 
 
-def plate_progress(index: LayerMotionIndex, anchor: Optional[int],
-                   file_position: Optional[int] = None) -> dict:
-    """The follower's prev/current/next bundle plus the split and the
-    method word (the honest degradation: a missing piece reads as
-    unavailable, never as a wrong fill)."""
+def plate_layers(index: LayerMotionIndex, anchor: Optional[int]) -> dict:
+    """The static half: the prev/current/next bundle. Immutable per
+    anchor (and per hydration fill) — the service memoises it so the
+    model's payload keeps its identity between splits."""
     if anchor is None:
-        return {"layers": {}, "split": None, "method": "unavailable", "anchor": None}
+        return {}
     layers = {}
     for slot, layer in (("prev", anchor - 1), ("current", anchor), ("next", anchor + 1)):
         layers[slot] = layer_polylines(index, layer)
+    return layers
+
+
+def plate_progress(index: LayerMotionIndex, anchor: Optional[int],
+                   file_position: Optional[int] = None) -> dict:
+    """The follower's payload: the memoised layers plus the volatile
+    split and the method word (the honest degradation: a missing piece
+    reads as unavailable, never as a wrong fill)."""
+    if anchor is None:
+        return {"layers": {}, "split": None, "method": "unavailable", "anchor": None}
+    layers = plate_layers(index, anchor)
     split = None
     method = "unavailable"
     if layers.get("current") is not None and file_position is not None:

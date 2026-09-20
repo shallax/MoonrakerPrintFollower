@@ -8,7 +8,7 @@ from types import MappingProxyType
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from .GCodeIndex import LayerMotionIndex, build_index_from_file, hydrate_layer_from_file
-from .PlateProgress import plate_progress as _plate_progress
+from .PlateProgress import plate_layers as _plate_layers, split_index as _split_index
 
 
 @dataclass(frozen=True)
@@ -74,6 +74,8 @@ class GCodeIndexService(QObject):
         # thread's progress callback and read by the coordinator's
         # tick — a plain float, atomic enough under the GIL.
         self._progress = None
+        self._plate_layers_key = None
+        self._plate_layers = {}
         self._completed.connect(self._finish)
         files.changed.connect(self._on_files_changed)
 
@@ -99,6 +101,10 @@ class GCodeIndexService(QObject):
         # cache RESTORE otherwise — the bar read the previous
         # print's final 100% through the whole restore phase.
         self._progress = None
+        # The memoised layers belong to the previous index; a new
+        # print could coincidentally match the (anchor, counts) key.
+        self._plate_layers_key = None
+        self._plate_layers = {}
         self._wanted = self._restored = self._save = False
         self._hydrate.clear()
         self._hydrating = None
@@ -122,13 +128,24 @@ class GCodeIndexService(QObject):
     def plate_progress(self, anchor, file_position=None):
         """The follower's prepared payload, built HERE: the raw index's
         arrays never cross this boundary (the architecture contract) —
-        only the built polylines do. anchor is the live layer; the
-        file position carries the printed/unprinted split."""
+        only the built polylines do. The layers memoise per anchor and
+        hydration fill; the split is the only per-poll cost."""
         if self._view is None:
             return {"layers": {}, "split": None, "method": "unavailable", "anchor": anchor}
         index = self._view._index
         with index.cache_lock:
-            return _plate_progress(index, anchor, file_position)
+            counts = tuple(index.motion_count(layer)
+                           for layer in (anchor - 1, anchor, anchor + 1))
+            if self._plate_layers_key != (anchor, counts):
+                self._plate_layers = _plate_layers(index, anchor)
+                self._plate_layers_key = (anchor, counts)
+            split = None
+            method = "unavailable"
+            if self._plate_layers.get("current") is not None and file_position is not None:
+                split = _split_index(index, anchor, file_position)
+                method = "motion index"
+            return {"layers": self._plate_layers, "split": split,
+                    "method": method, "anchor": anchor}
 
     def set_followed_layer(self, layer):
         """Anchor the retention window to the LIVE print's layer.
