@@ -11,6 +11,7 @@ from UM.Logger import Logger
 from .LoadStateTracker import LoadStateTracker
 from .MonitorFormatting import filament_total_mm_from_file, height_readout, layer_readout, parse_bed_mesh, preview_eta_text, result
 from .NextPausePipeline import NextPausePipeline
+from .PlateProgress import plate_progress
 from .PreviewFormatting import (
     pause_can_toggle,
     pause_summary,
@@ -257,6 +258,11 @@ class PrintCoordinator(QObject):
             items = self._next_pause.rebuild(physical.index)
             (next_pause_layer, next_pause_eta,
              next_pause_fraction, next_pause_baked) = self._next_pause.compute(physical, elapsed, items)
+            # The follower face's prepared polylines: built HERE from
+            # the index (the worker-side prep rule), not in the model.
+            plate_progress_payload = None
+            if view is not None and hasattr(view, "followed_layer"):
+                plate_progress_payload = plate_progress(view, view.followed_layer, position)
             self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
                 estimate if estimate > 0 else None, self._files.metadata_complete,
                 layer_progress=layer_progress, index_ready=view is not None,
@@ -268,7 +274,8 @@ class PrintCoordinator(QObject):
                 next_pause_fraction=next_pause_fraction,
                 next_pause_baked=next_pause_baked,
                 load_active=load_active,
-                filament_total=filament_total if filament_total and filament_total > 0 else None)
+                filament_total=filament_total if filament_total and filament_total > 0 else None,
+                plate_progress=plate_progress_payload)
             if self._snapshot.active and filename:
                 self._maybe_fetch_mr_metadata(filename, job)
             if config.trace_layer and time.monotonic() - self._layer_trace_at >= 5:

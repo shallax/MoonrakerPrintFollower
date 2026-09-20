@@ -22,6 +22,7 @@ ColumnLayout {
     ColumnLayout {
         visible: root.printerModel == null || root.printerModel.sectionExpandedMap["filament"] !== false
         Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
+        Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2
         Layout.fillWidth: true
         spacing: UM.Theme.getSize("default_margin").height / 2
 

@@ -271,6 +271,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     peripheralsChanged = pyqtSignal()
     excludeObjectsChanged = pyqtSignal()
     plateObjectsChanged = pyqtSignal()
+    plateProgressChanged = pyqtSignal()
     powerDevicesChanged = pyqtSignal()
     systemChanged = pyqtSignal()
     endstopsChanged = pyqtSignal()
@@ -324,6 +325,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         ("peripheralsChanged", ("temperatureItems", "fanItems", "filamentSensorItems")),
         ("excludeObjectsChanged", ("excludeObjectItems", "currentObjectName")),
         ("plateObjectsChanged", ("plateObjects", "plateDot")),
+        ("plateProgressChanged", ("plateProgress",)),
         ("powerDevicesChanged", ("powerDevices",)),
         ("systemChanged", ("klippyState", "moonrakerVersion", "klipperVersion", "hostLoad", "memoryAvailable",
                            "cpuTemperature", "mcuSummary", "mcuItems")),
@@ -1087,6 +1089,14 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # published so the readout stays honest about the victim.
         values["currentObjectName"] = str(
             _exclude_status(self._data.snapshot).get("current_object") or "")
+        # The follower face's payload: the coordinator-built polylines,
+        # or the explicit unavailable state with its reason (a
+        # Mainsail-started print has no index — never a silent blank).
+        progress = getattr(snapshot, "plate_progress", None)
+        values["plateProgress"] = (
+            {"available": True, "reason": "", **progress} if progress is not None
+            else {"available": False, "layers": {}, "split": None, "method": "unavailable", "anchor": None,
+                  "reason": "Cura is not previewing this print — the follower needs the index Cura builds while following."})
         # The plate's toolhead dot (physical position, the marker
         # convention): validity rides the connection — a paused
         # print's position is honest, a disconnected one is a lie if
@@ -1390,6 +1400,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     currentObjectName = value_property(str, "currentObjectName", excludeObjectsChanged, "")
     plateObjects = value_property(QVariant, "plateObjects", plateObjectsChanged, {"objects": [], "truncated": 0, "excludedCount": 0})
     plateDot = value_property(QVariant, "plateDot", plateObjectsChanged, {"x": 0.0, "y": 0.0, "valid": False})
+    plateProgress = value_property(QVariant, "plateProgress", plateProgressChanged, {"available": False, "layers": {}, "split": None, "method": "unavailable", "anchor": None, "reason": ""})
     powerDevices = value_property(QVariant, "powerDevices", powerDevicesChanged, [])
     klippyState = value_property(str, "klippyState", systemChanged, "Unknown")
     moonrakerVersion = value_property(str, "moonrakerVersion", systemChanged, "—")

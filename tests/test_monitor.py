@@ -105,6 +105,19 @@ class MonitorModelContractTests(unittest.TestCase):
         self.assertIn("class MoonrakerMonitorModel(PrinterOutputModel)", MONITOR_MODEL)
         self.assertNotIn("_BaseMoonrakerMonitorModel", MONITOR_MODEL)
 
+    def test_section_content_insets_pair_left_and_right(self):
+        # The 4.6.0 right inset (the author's item): every section
+        # content column with the left inset carries the SAME
+        # expression on the right — the pair pin, never one side.
+        left = 'Layout.leftMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2'
+        right = 'Layout.rightMargin: UM.Theme.getSize("narrow_margin").width + UM.Theme.getSize("section_icon").width / 2'
+        carried = []
+        for path in sorted(PLUGINS.glob("*.qml")):
+            text = path.read_text(encoding="utf-8")
+            if left in text:
+                carried.append(path.name)
+                self.assertIn(right, text, path.name)
+
     def test_toolhead_control_surface(self):
         policy = (PLUGINS / "ToolheadPolicy.py").read_text(encoding="utf-8")
         for token in ("G91", "G28", "M18", "jog_gate", "push_op", "JogOp",
@@ -4646,6 +4659,16 @@ Item {
             # the canvas's reserved slot — it can never shift layout,
             # only its own marker can appear inside the fixed map.
             "visible: root._plot != null && root.dot != null && root.dot.valid === true",
+            "visible: mapping._plot != null && root.dot != null && root.dot.valid === true",
+            # The follower's unavailable state: an overlay INSIDE the
+            # face's own slot (the popover is a transient surface),
+            # never a layout shift.
+            "visible: !root.available()",
+            # The plate popover's face swap: the user's own toggle —
+            # reflow the user explicitly asked for (the no-reflow
+            # rule's own exemption), inside the transient card.
+            'visible: plateCard.face === "exclude"',
+            'visible: plateCard.face === "progress"',
             # Firmware-regulated fans swap the slider for a read-only
             # row (a live report): the model's writable
             # flag picks the face.

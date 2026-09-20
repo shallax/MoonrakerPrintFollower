@@ -69,6 +69,21 @@ def fake_status(state="printing"):
                 [-0.01, 0.02, 0.05, 0.08, 0.11],
             ],
         },
+        # The plate's seed (4.6.0): a constant three-object plate so
+        # the capture legs render the map deterministically — the same
+        # payload in both determinism legs (the engineering F15 rule).
+        "exclude_object": {
+            "objects": [
+                {"name": "BENCHY_STL", "center": [62.0, 62.0],
+                 "polygon": [[42.0, 42.0], [42.0, 82.0], [82.0, 82.0], [82.0, 42.0]]},
+                {"name": "BENCHY_STL_1", "center": [125.0, 125.0],
+                 "polygon": [[105.0, 105.0], [105.0, 145.0], [145.0, 145.0], [145.0, 105.0]]},
+                {"name": "BENCHY_STL_2", "center": [188.0, 62.0],
+                 "polygon": [[168.0, 42.0], [168.0, 82.0], [208.0, 82.0], [208.0, 42.0]]},
+            ],
+            "excluded_objects": ["BENCHY_STL_1"],
+            "current_object": "BENCHY_STL_2",
+        },
     }
 
 

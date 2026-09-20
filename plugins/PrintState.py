@@ -56,6 +56,10 @@ class PrintSnapshot:
     # The slicer's total filament length (mm) from the file metadata:
     # the Print-job section shows "used / remaining" against it.
     filament_total: Optional[float] = None
+    # The follower face's prepared polylines (the 4.6.0 plate): the
+    # prev/current/next bundle with the printed/unprinted split, built
+    # by the coordinator from the index — None without a live view.
+    plate_progress: Optional[dict] = None
 
     @property
     def active(self) -> bool:
