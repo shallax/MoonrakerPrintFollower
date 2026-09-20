@@ -45,8 +45,10 @@ class LayerPolylinesTests(unittest.TestCase):
         layer = layer_polylines(index, 0)
         self.assertIsNotNone(layer)
         self.assertIn("WALL-OUTER", layer["classes"])
-        points = layer["classes"]["WALL-OUTER"]
+        segments = layer["classes"]["WALL-OUTER"]
         # The 0.35 mm threshold keeps every mm step (19 segments).
+        self.assertEqual(len(segments), 1)
+        points = segments[0]
         self.assertEqual(len(points), 20)
         # Each kept point carries its motion index.
         self.assertEqual(points[-1][2], 19)
@@ -57,7 +59,42 @@ class LayerPolylinesTests(unittest.TestCase):
         # a sparse polyline, never all 300.
         index.motion_x[0] = array("f", [m * 0.01 for m in range(300)])
         layer = layer_polylines(index, 0)
-        self.assertLess(len(layer["classes"]["WALL-OUTER"]), 60)
+        segments = layer["classes"]["WALL-OUTER"]
+        self.assertLess(sum(len(segment) for segment in segments), 60)
+
+    def test_a_travel_splits_the_class_polyline_into_segments(self):
+        index = make_index(motions=20)
+        # Motions 10-13 travel: the class polyline must break there
+        # and never carry the travel's motions (the live report —
+        # the stroke bridged objects with phantom lines).
+        index.travel_starts[0] = [10]
+        index.travel_ends[0] = [14]
+        layer = layer_polylines(index, 0)
+        segments = layer["classes"]["WALL-OUTER"]
+        self.assertEqual(len(segments), 2)
+        first, second = segments
+        self.assertEqual(first[-1][2], 9)
+        self.assertEqual(second[0][2], 14)
+        for segment in segments:
+            for point in segment:
+                self.assertNotIn(point[2], range(10, 14))
+
+    def test_a_dense_layer_holds_the_point_budget(self):
+        # A 40 m zigzag path: the path-length threshold (never the
+        # span — a dense infill's path dwarfs it) caps the kept
+        # points near the budget, so the paint stays bounded.
+        zigzag = [0.0]
+        for step in range(1, 20000):
+            zigzag.append(0.1 if step % 2 else 0.0)
+        xs = array("f", [step * 1.0 for step in range(20000)])
+        ys = array("f", zigzag)
+        index = make_index(motions=20000)
+        index.motion_x[0] = xs
+        index.motion_y[0] = ys
+        layer = layer_polylines(index, 0)
+        segments = layer["classes"]["WALL-OUTER"]
+        kept = sum(len(segment) for segment in segments)
+        self.assertLess(kept, 12500)
 
     def test_an_unhydrated_compact_layer_reads_none_never_empty(self):
         index = make_index(compact=True)

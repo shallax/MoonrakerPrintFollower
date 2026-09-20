@@ -115,6 +115,7 @@ SCENARIO_MAP = {
     "moonrakerPlateCanvas": "b11",
     "moonrakerPlateExcludeFace": "b11",
     "moonrakerPlateProgressFace": "b11",
+    "moonrakerPlateToolheadDot": "b11",
     "excludeCurrentButton": "b11",
     "sectionConfigurePopOver": "x1",
     "sectionConfigureRowTitle": "x1",

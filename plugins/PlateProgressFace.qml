@@ -74,7 +74,6 @@ Item {
         anchors.fill: parent
         printerModel: root.printerModel
         plate: null
-        dot: null
     }
 
     Canvas {
@@ -121,32 +120,44 @@ Item {
     }
 
     function _drawLayer(ctx, layer, alpha, split, base) {
+        // The transform inlined: hundreds of thousands of
+        // plateToScene calls per paint were the follower's cost.
+        var plot = mapping._plot;
+        var sx = plot.sx;
+        var sy = plot.sy;
+        var offsetX = plot.bed.offsetX;
+        var offsetY = plot.bed.offsetY;
+        var bedXMin = plot.bed.bedXMin;
+        var bedYMax = plot.bed.bedYMax;
         for (var name in layer.classes) {
-            var points = layer.classes[name];
-            if (points.length < 2) {
-                continue;
-            }
+            var segments = layer.classes[name];
             ctx.strokeStyle = base ? MoonrakerTheme.seriesDefault : root.classColour(name);
             ctx.globalAlpha = alpha;
             ctx.lineWidth = 1;
-            ctx.beginPath();
-            var started = false;
-            for (var i = 0; i < points.length; ++i) {
-                if (split >= 0 && points[i][2] > split) {
-                    break;
-                }
-                var scene = mapping.plateToScene(points[i][0], points[i][1]);
-                if (scene == null) {
+            for (var s = 0; s < segments.length; ++s) {
+                var points = segments[s];
+                if (points.length < 2) {
                     continue;
                 }
-                if (!started) {
-                    ctx.moveTo(scene.x, scene.y);
-                    started = true;
-                } else {
-                    ctx.lineTo(scene.x, scene.y);
+                ctx.beginPath();
+                var started = false;
+                for (var i = 0; i < points.length; ++i) {
+                    if (split >= 0 && points[i][2] > split) {
+                        break;
+                    }
+                    // The travel-broken segments: a fresh path per
+                    // segment, so the stroke never bridges a travel.
+                    var sceneX = offsetX + (points[i][0] - bedXMin) * sx;
+                    var sceneY = offsetY + (bedYMax - points[i][1]) * sy;
+                    if (!started) {
+                        ctx.moveTo(sceneX, sceneY);
+                        started = true;
+                    } else {
+                        ctx.lineTo(sceneX, sceneY);
+                    }
                 }
+                ctx.stroke();
             }
-            ctx.stroke();
             ctx.globalAlpha = 1.0;
         }
     }
@@ -204,11 +215,14 @@ Item {
         }
     }
 
-    // The toolhead dot: the same scene-graph marker as the exclude
-    // face, walking the layer path (the H3 alignment — the dot and
-    // the fill derive from the same index).
+    // The toolhead dot: scene-graph geometry (a Rectangle binding),
+    // never a canvas repaint — the 1 s position publish moves it.
+    // Walking the layer path (the H3 alignment — the dot and the
+    // fill derive from the same index). The picker's faces draw no
+    // dot (the live ruling).
     Rectangle {
         id: toolheadDot
+        objectName: "moonrakerPlateToolheadDot"
         width: 7 * screenScaleFactor
         height: width
         radius: width / 2

@@ -257,6 +257,11 @@ def value_property(kind, name, signal, default=None):
     return pyqtProperty(kind, read, notify=signal)
 
 
+# The plate's no-index payload, one stable identity: a quiet poll must
+# never re-wrap an empty plate (the identity memo's empty twin).
+_EMPTY_PLATE = {"objects": [], "truncated": 0, "excludedCount": 0}
+
+
 class MoonrakerMonitorModel(PrinterOutputModel):
     whatsNewDismissed = pyqtSignal()
     monitorChanged = pyqtSignal()
@@ -479,6 +484,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._grace_seeded = False
         self._plate_cache_key = None
         self._plate_geometry = None
+        self._plate_payload = None
         self._history = TemperatureHistory()
         # Each chart surface has its own cache, invalidated only by what
         # it actually reads: the mini and latest caches by the history
@@ -803,11 +809,13 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         if poly_source is None:
             self._plate_cache_key = None
             self._plate_geometry = None
-            return {"objects": [], "truncated": 0, "excludedCount": 0}
+            self._plate_payload = _EMPTY_PLATE
+            return self._plate_payload
         key = id(poly_source.get("objects"))
         if self._plate_cache_key != key:
             self._plate_geometry = plate_values(poly_source)
             self._plate_cache_key = key
+            self._plate_payload = None
         status = _exclude_status(self._data.snapshot)
         excluded = frozenset(status.get("excluded_objects") or ())
         current = status.get("current_object")
@@ -823,9 +831,16 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                 fresh["restoreVerdict"] = verdict
                 fresh["restoreDetail"] = detail
             rows.append(fresh)
-        return {"objects": rows,
-                "truncated": self._plate_geometry["truncated"],
-                "excludedCount": len(excluded)}
+        payload = {"objects": rows,
+                   "truncated": self._plate_geometry["truncated"],
+                   "excludedCount": len(excluded)}
+        # The identity memo: unchanged rows republish the SAME object,
+        # so QML never re-binds and the canvas never repaints on a
+        # quiet poll (the live report — the picker crawled once the
+        # index arrived because every poll re-wrapped the polygons).
+        if payload != self._plate_payload:
+            self._plate_payload = payload
+        return self._plate_payload
 
     def _on_chart_tick(self):
         # The chart's fixed 1 s sampling (Mainsail's temperature store
@@ -845,6 +860,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         self._grace_seeded = False
         self._plate_cache_key = None
         self._plate_geometry = None
+        self._plate_payload = None
         # A printer switch must not ring for the previous machine's
         # error lines (the bell's marker counts per-session).
         self._console_errors_seen = 0

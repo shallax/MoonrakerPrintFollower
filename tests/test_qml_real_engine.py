@@ -15,6 +15,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import time
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -1637,3 +1638,183 @@ class ChartSurfaceTests(RealEngineTestCase):
         self.pump(30)
         cursor = self.find(chart, "temperatureHoverCursor")
         self.assertFalse(cursor.property("visible"))
+
+
+if QT_AVAILABLE:
+    class PlatePrinterDouble(QObject):
+        """The plate surfaces' printer double. Module-level inside the
+        guard (the house pattern): a function-local QObject class's
+        meta-object fails the QML var write — the engine stores null
+        and the popover never opens."""
+
+        def __init__(self):
+            super().__init__()
+            self._dot = {"x": 125.0, "y": 125.0, "valid": True}
+            self._plate = {"objects": [
+                {"name": "Widget", "center": [125.0, 125.0],
+                 "polygon": [[0.0, 0.0], [250.0, 0.0], [250.0, 250.0], [0.0, 250.0]],
+                 "current": False, "excluded": False, "restoreAllowed": True},
+            ]}
+
+        @pyqtProperty(float, constant=True)
+        def bedMeshMachineWidth(self):
+            return 250.0
+
+        @pyqtProperty(float, constant=True)
+        def bedMeshMachineDepth(self):
+            return 250.0
+
+        @pyqtProperty(bool, constant=True)
+        def bedMeshCenterIsZero(self):
+            return False
+
+        @pyqtProperty("QVariant", constant=True)
+        def plateProgress(self):
+            return PlateFaceRenderTests.CORNER_PAYLOAD
+
+        @pyqtProperty("QVariant", constant=True)
+        def plateDot(self):
+            return self._dot
+
+        @pyqtProperty("QVariant", constant=True)
+        def plateObjects(self):
+            return self._plate
+
+        @pyqtProperty(bool, constant=True)
+        def plateHasObjects(self):
+            return True
+
+        @pyqtProperty("QVariant", constant=True)
+        def sectionHiddenMap(self):
+            return {}
+
+        @pyqtProperty("QVariant", constant=True)
+        def sectionExpandedMap(self):
+            return {}
+
+        @pyqtProperty("QVariant", constant=True)
+        def temperatureChartLegend(self):
+            return {"series": [], "showPower": True}
+
+
+class PlateFaceRenderTests(RealEngineTestCase):
+    """The plate family's painted contracts: the follower fills its
+    plot with sample geometry pinned to the bed's extreme corners (a
+    truncated or mis-signed mapping cannot hide — the live crushed
+    strip report), the picker's canvas never reflows on hover, and
+    the picker draws no toolhead dot."""
+
+    # A 250 mm bed; the layer strokes the full bed rectangle, corners
+    # included (the live instruction: corner-pinned sample geometry).
+    CORNER_PAYLOAD = {
+        "available": True, "reason": "",
+        "layers": {
+            "prev": None,
+            "current": {
+                "classes": {
+                    # The travel-broken segment shape: one segment.
+                    "WALL-OUTER": [[[0.0, 0.0, 0.0], [250.0, 0.0, 5.0],
+                                    [250.0, 250.0, 10.0], [0.0, 250.0, 15.0],
+                                    [0.0, 0.0, 20.0]]],
+                },
+                "travels": [], "travelStarts": [], "travelEnds": [],
+                "motions": 21,
+            },
+            "next": None,
+        },
+        "split": 12, "method": "motion index", "anchor": 0,
+    }
+
+    @staticmethod
+    def _printer():
+        return PlatePrinterDouble()
+
+    def _open(self, monitor, popover):
+        monitor.setProperty("printer", self._printer())
+        monitor.setProperty("openPopOver", popover)
+        self.pump(30)
+
+    @staticmethod
+    def _popover_faces(monitor, name):
+        # The follower has a compact mini in the section; the popover
+        # instance is the non-compact one.
+        return [face for face in monitor.findChildren(QQuickItem, name)
+                if not face.property("compact")]
+
+    @staticmethod
+    def _ink_rows(image, face, window):
+        """Every 2 px row that carries a pixel differing from the
+        face's background — the threaded canvas's painted ink."""
+        origin = face.mapToItem(window.contentItem(), QPointF(0.0, 0.0))
+
+        def pixel(col, row):
+            return image.pixel(int(origin.x()) + col, int(origin.y()) + row)
+
+        background = pixel(4, 4)
+        rows = []
+        for row in range(0, int(face.height()), 2):
+            for col in range(0, int(face.width()), 2):
+                value = pixel(col, row)
+                if any(abs(((value >> shift) & 0xFF) - ((background >> shift) & 0xFF)) > 20
+                       for shift in (0, 8, 16)):
+                    rows.append(row)
+                    break
+        return rows
+
+    def _grab_when_inked(self, window, face, timeout=2.5):
+        deadline = time.monotonic() + timeout
+        image = window.grabWindow()
+        while time.monotonic() < deadline and not self._ink_rows(image, face, window):
+            self.app.processEvents()
+            time.sleep(0.05)
+            image = window.grabWindow()
+        return image
+
+    def test_the_follower_fills_its_plot_edge_to_edge(self):
+        monitor, window = self.mount_window("MoonrakerMonitor.qml", 900, 760)
+        self._open(monitor, "plateprogress")
+        faces = self._popover_faces(monitor, "moonrakerPlateProgressFace")
+        self.assertEqual(len(faces), 1)
+        face = faces[0]
+        plot = face.findChild(QQuickItem, "moonrakerPlateCanvas").property("_plot")
+        bed = plot.property("bed")
+        top = bed.property("offsetY").toNumber()
+        bottom = top + bed.property("plotHeight").toNumber()
+        rows = self._ink_rows(self._grab_when_inked(window, face), face, window)
+        self.assertTrue(rows, "the follower painted nothing")
+        # The corner-pinned stroke runs along the plot's extreme
+        # edges: any truncated or offset mapping leaves a band empty.
+        self.assertLessEqual(min(rows), top + 12, "no ink at the plot's top edge")
+        self.assertGreaterEqual(max(rows), bottom - 12, "no ink at the plot's bottom edge")
+
+    def test_the_picker_canvas_never_reflows_on_hover(self):
+        monitor, window = self.mount_window("MoonrakerMonitor.qml", 900, 760)
+        self._open(monitor, "plate")
+        face = self.find(monitor, "moonrakerPlateExcludeFace")
+        height = face.height()
+        face.setProperty("hoveredName", "Window_Support_Material_0")
+        self.pump(20)
+        self.assertEqual(face.height(), height, "hovering reflowed the canvas")
+        # A very long name elides into the same single line.
+        face.setProperty("hoveredName", "Window_Support_Material_0" * 6)
+        self.pump(20)
+        self.assertEqual(face.height(), height, "a long hover name reflowed the canvas")
+        face.setProperty("hoveredName", "")
+        self.pump(20)
+        self.assertEqual(face.height(), height, "un-hovering reflowed the canvas")
+
+    def test_the_picker_draws_no_toolhead_dot(self):
+        monitor, window = self.mount_window("MoonrakerMonitor.qml", 900, 760)
+        self._open(monitor, "plate")
+        picker_dot = self.find(monitor, "moonrakerPlateExcludeFace").findChild(
+            QQuickItem, "moonrakerPlateToolheadDot")
+        self.assertIsNone(picker_dot,
+                          "the picker draws the toolhead — the map is the control")
+        monitor.setProperty("openPopOver", "plateprogress")
+        self.pump(30)
+        follower_dot = self._popover_faces(
+            monitor, "moonrakerPlateProgressFace")[0].findChild(
+            QQuickItem, "moonrakerPlateToolheadDot")
+        self.assertIsNotNone(follower_dot)
+        self.assertTrue(follower_dot.property("visible"),
+                        "the follower lost its toolhead dot")

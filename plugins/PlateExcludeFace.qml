@@ -13,7 +13,6 @@ Item {
 
     property var printerModel: null
     property var plate: null
-    property var dot: null
     property bool compact: false
     property string hoveredName: ""
     property string selectedName: ""
@@ -132,7 +131,6 @@ Item {
         anchors.fill: parent
         printerModel: root.printerModel
         plate: root.plate
-        dot: root.dot
         compact: root.compact
         hoveredName: root.hoveredName
         onObjectHovered: function (name) {

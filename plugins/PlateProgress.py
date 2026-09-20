@@ -18,9 +18,13 @@ from typing import Dict, List, Optional
 
 from .GCodeIndex import LayerMotionIndex
 
-# The per-layer point budget: a 200k-motion layer can never paint
-# 200k segments; the distance filter decimates toward this ceiling.
-MAX_POINTS_PER_LAYER = 4000
+# The per-layer point budget: a dense layer's motions can number in
+# the hundreds of thousands; the distance filter decimates toward
+# this ceiling. The threshold keys off the layer's TOTAL PATH LENGTH
+# (the span was wrong — a dense infill's path dwarfs its span, and
+# the paint lagged seconds behind the live toolhead: the live
+# report).
+MAX_POINTS_PER_LAYER = 12000
 # The bed-space minimum segment length (mm): shorter runs collapse.
 MIN_SEGMENT_MM = 0.35
 
@@ -48,32 +52,91 @@ def _code_at(index: LayerMotionIndex, layer: int, motion: int) -> int:
     return _TYPE_NONE
 
 
-def _decimate(index: LayerMotionIndex, layer: int) -> Dict[str, List[List[float]]]:
-    """One pass over the motions: per feature class, a distance-
-    filtered polyline in bed mm. The threshold adapts to the layer's
-    span so the budget holds on dense layers without truncating.
-    Each kept point carries its motion index — the printed/unprinted
-    split lands on these points, not on the raw motions."""
+def _path_threshold(index: LayerMotionIndex, layer: int) -> float:
+    """The layer's decimation threshold: the total non-travel PATH
+    length over the point budget (a dense infill's path dwarfs its
+    span — keying on the span left the threshold at the floor and
+    the paint lagged seconds behind the toolhead: the live report),
+    with the bed-space floor."""
+    xs = index.motion_x[layer] if layer < len(index.motion_x) else ()
+    ys = index.motion_y[layer] if layer < len(index.motion_y) else ()
+    count = len(xs)
+    if count == 0:
+        return MIN_SEGMENT_MM
+    starts = index.travel_starts[layer] if layer < len(index.travel_starts) else ()
+    ends = index.travel_ends[layer] if layer < len(index.travel_ends) else ()
+    total_path = 0.0
+    in_travel = not bool(index.layer_start_extruding[layer]
+                         if layer < len(index.layer_start_extruding) else True)
+    start_i = end_i = 0
+    last_x, last_y = float(xs[0]), float(ys[0])
+    for motion in range(1, count):
+        if start_i < len(starts) and motion == starts[start_i]:
+            in_travel = True
+            start_i += 1
+        if end_i < len(ends) and motion == ends[end_i]:
+            in_travel = False
+            end_i += 1
+        if in_travel:
+            continue
+        total_path += hypot(float(xs[motion]) - last_x, float(ys[motion]) - last_y)
+        last_x, last_y = float(xs[motion]), float(ys[motion])
+    return max(MIN_SEGMENT_MM, total_path / MAX_POINTS_PER_LAYER)
+
+
+def _decimate(index: LayerMotionIndex, layer: int,
+              threshold: float) -> Dict[str, List[List[List[float]]]]:
+    """One pass over the motions: per feature class, distance-
+    filtered polylines in bed mm, BROKEN INTO SEGMENTS at the travel
+    spans. The travel motions never enter the class polylines (they
+    belong to the travel channel), and a travel between two kept
+    points starts a new segment — without the break the stroke
+    bridges the gap and paints phantom lines between objects (the
+    live report). Each kept point carries its motion index — the
+    printed/unprinted split lands on these points, not on the raw
+    motions."""
     xs = index.motion_x[layer] if layer < len(index.motion_x) else ()
     ys = index.motion_y[layer] if layer < len(index.motion_y) else ()
     count = len(xs)
     if count == 0:
         return {}
-    min_x = min(xs)
-    max_x = max(xs)
-    min_y = min(ys)
-    max_y = max(ys)
-    span = hypot(max_x - min_x, max_y - min_y)
-    threshold = max(MIN_SEGMENT_MM, span / MAX_POINTS_PER_LAYER)
-    classes: Dict[str, List[List[float]]] = {}
+    starts = index.travel_starts[layer] if layer < len(index.travel_starts) else ()
+    ends = index.travel_ends[layer] if layer < len(index.travel_ends) else ()
+    classes: Dict[str, List[List[List[float]]]] = {}
     last: Dict[str, List[float]] = {}
+    travel_seen: Dict[str, bool] = {}
+    in_travel = not bool(index.layer_start_extruding[layer]
+                         if layer < len(index.layer_start_extruding) else True)
+    start_i = end_i = 0
     for motion in range(count):
+        if start_i < len(starts) and motion == starts[start_i]:
+            in_travel = True
+            start_i += 1
+        if end_i < len(ends) and motion == ends[end_i]:
+            in_travel = False
+            end_i += 1
+        if in_travel:
+            # A travel intervenes: every class with a kept point must
+            # start a fresh segment on its next kept point.
+            for name in travel_seen:
+                travel_seen[name] = True
+            continue
         name = _type_name(index, _code_at(index, layer, motion))
         point = [float(xs[motion]), float(ys[motion]), float(motion)]
         previous = last.get(name)
-        if previous is None or hypot(point[0] - previous[0], point[1] - previous[1]) >= threshold:
-            classes.setdefault(name, []).append(point)
+        if previous is None or travel_seen.get(name, False):
+            # A fresh segment: the class's first point, or the first
+            # point after a travel. The distance never breaks a
+            # segment — continuous extrusion joins, whatever the
+            # stride.
+            classes.setdefault(name, []).append([point])
+            travel_seen[name] = False
             last[name] = point
+        elif hypot(point[0] - previous[0], point[1] - previous[1]) >= threshold:
+            classes[name][-1].append(point)
+            last[name] = point
+        # Closer than the stride: decimated away, and not the
+        # distance reference for the next kept point.
     return classes
 
 
@@ -127,10 +190,9 @@ def layer_polylines(index: LayerMotionIndex, layer: int) -> Optional[dict]:
     starts = index.travel_starts[layer] if layer < len(index.travel_starts) else ()
     ends = index.travel_ends[layer] if layer < len(index.travel_ends) else ()
     ys = index.motion_y[layer]
-    span = hypot(max(xs) - min(xs), max(ys) - min(ys))
-    threshold = max(MIN_SEGMENT_MM, span / MAX_POINTS_PER_LAYER)
+    threshold = _path_threshold(index, layer)
     return {
-        "classes": _decimate(index, layer),
+        "classes": _decimate(index, layer, threshold),
         "travels": _travel_points(index, layer, threshold),
         "travelStarts": [[float(xs[m]), float(ys[m]), float(m)] for m in starts if m < len(xs)],
         "travelEnds": [[float(xs[m]), float(ys[m]), float(m)] for m in ends if m < len(xs)],
