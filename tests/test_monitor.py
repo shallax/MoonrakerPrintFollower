@@ -4801,6 +4801,10 @@ Item {
             # on the capped five-row ListView.
             "visible: pauseListView.height > 0 && pauseListView.contentY > 2",
             "visible: pauseListView.height > 0 && pauseListView.contentY < pauseListView.contentHeight - pauseListView.height - 2",
+            # The objects roster's chevrons: the same idiom, on the
+            # bounded five-row section list.
+            "visible: objectListFlick.height > 0 && objectListFlick.contentY > 2",
+            "visible: objectListFlick.height > 0 && objectListFlick.contentY < objectListFlick.contentHeight - objectListFlick.height - 2",
             # The bed-mesh legend collapses when the mesh is hidden —
             # the reflow was granted (the card reflows instead
             # of keeping a faded gap).

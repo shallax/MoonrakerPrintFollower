@@ -327,6 +327,36 @@ class PrinterConfigTests(unittest.TestCase):
         self.assertIn('"memory_diagnostics_trace": bool(raw.get("memory_diagnostics_trace", False))', action)
         self.assertIn('"camera_disabled": bool(raw.get("camera_disabled", False))', action)
 
+    def test_the_restore_window_knob_saves_through_the_pane(self):
+        # The 4.6.0 grace: one combo carries all three semantics, so its
+        # index mapping is the only place 0, a layer count and Never can
+        # disagree with the record.
+        config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
+        self.assertIn('text: "Skipped-object restore window"', config)
+        self.assertIn('objectName: "restoreWindowBox"', config)
+        self.assertIn(
+            'model: ["Never (restore always allowed)", "Immediately (0 layers)", "1 layer", '
+            '"2 layers", "3 layers", "4 layers", "5 layers", "6 layers", "7 layers", '
+            '"8 layers", "9 layers", "10 layers"]',
+            config,
+        )
+        self.assertIn("currentIndex: base.restoreWindowIndex(manager.settingsRestoreWindow)", config)
+        self.assertIn('"restore_window": base.restoreWindowValue()', config)
+        # Index 0 is Never, index 1 the zero window, 2..11 the 1..10
+        # layers: the combo and the value must stay each other's inverse.
+        self.assertIn("if (restoreWindowBox.currentIndex <= 0)", config)
+        self.assertIn("return restoreWindowBox.currentIndex - 1;", config)
+        action = (PLUGINS / "MoonrakerFollowerMachineAction.py").read_text(encoding="utf-8")
+        self.assertIn("def settingsRestoreWindow(self) -> str:", action)
+        self.assertIn('"restore_window": normalise_restore_window(', action)
+
+    def test_the_restore_window_survives_the_store_round_trip(self):
+        store = PrinterConfigStore(FakePreferences(), lambda: ("machine-a", "Printer A"))
+        for value in ("never", 0, 7):
+            with self.subTest(value=value):
+                store.set(PrinterConfig(restore_window=value))
+                self.assertEqual(store.get().restore_window, value)
+
     def test_settings_tab_lists_diagnostic_traces(self):
         config = (PLUGINS / "MoonrakerFollowerConfiguration.qml").read_text(encoding="utf-8")
         self.assertIn('text: "Log layer resolution (diagnostics)"', config)
