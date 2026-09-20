@@ -166,6 +166,8 @@ class MoonrakerOutputDevicePlugin(OutputDevicePlugin):
                 request_load=self._follower.confirmForceLoadCurrentPrint,
                 request_file_download=self._follower.request_file_download,
                 download_failed=self._follower.download_failed,
+                request_download_progress=self._follower.download_progress,
+                cancel_file_download=self._follower.cancel_file_download,
                 request_monitor_download=self._follower.confirmDownloadForMonitor,
                 persistence=self._follower.persistence,
                 identity=self._follower.current_printer_identity,

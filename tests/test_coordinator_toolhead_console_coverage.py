@@ -165,6 +165,7 @@ if QT_AVAILABLE:
             self.followed = []
             self.hydration = []
             self.tracking_resets = 0
+            self.plate_anchors = []
 
         def bind(self, job):
             self.bound = job
@@ -181,6 +182,7 @@ if QT_AVAILABLE:
         def plate_progress(self, anchor, file_position=None):
             # The service-side prep's shape; the coordinator tests
             # pin the wiring, not the payload.
+            self.plate_anchors.append(anchor)
             return {"layers": {}, "split": None, "method": "unavailable", "anchor": anchor}
 
         def reset_tracking(self):
@@ -764,6 +766,23 @@ class CoordinatorCoverageTests(unittest.TestCase):
         parts.coordinator.refresh()
         self.assertEqual(parts.preview.invalidations, before + 1)
         self.assertEqual(parts.index.followed, [])
+
+    def test_the_plate_payload_uses_the_fresh_physical_layer(self):
+        # The green-printed fix's second half: plate_progress and
+        # plate_visited read the FRESH physical layer, never the
+        # previous snapshot's — the old code kept the passed set on
+        # the outgoing layer across a transition.
+        parts = self._printing(self._make())
+        parts.index.view = _view()
+        status = _status()
+        status["print_stats"]["info"]["current_layer"] = 5
+        parts.client.statusReceived.emit(status)
+        parts.coordinator.refresh()
+        status["print_stats"]["info"]["current_layer"] = 6
+        parts.client.statusReceived.emit(status)
+        parts.coordinator.refresh()
+        self.assertEqual(parts.index.plate_anchors, [4, 4, 5, 5],
+                         "the plate payload anchored on the previous snapshot's layer")
 
     def test_a_connected_client_publishes_the_followed_layer_and_hydration(self):
         parts = self._printing(self._make())

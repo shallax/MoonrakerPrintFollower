@@ -223,6 +223,8 @@ PREFIX_RULES = [
     ("key", "fan", "c2"),
     ("key", "fileManager", "f1"),
     ("key", "fileUpload", "f2"),
+    ("key", "fileDownloadProgress", "f2"),
+    ("slot", "MoonrakerMonitorModel.fileDownloadCancel", "f2"),
     ("key", "filePrint", "f6"),
     ("key", "fileDelete", "f3"),
     ("key", "fileRename", "f5"),
@@ -672,6 +674,12 @@ EXCLUSIONS = {
         "reason": "named but never pressed or addressed — the scenario presses the confirm verb; the chrome and cancel verbs ride the deferred popup round",
         "evidence": "the confirm scenarios' presses; the popup-window addressing follow-up (DECISIONS 4.1.0)",
         "date": "2026-09-15",
+        "recheck": "the deferred popup round lands",
+    },
+    "downloadProgressCancelButton": {
+        "reason": "the download popup's chrome — the scenario addresses the cancel verb directly (fileDownloadCancel), the button rides the same flow",
+        "evidence": "the model coverage presses the cancel verb; the popup-window addressing follow-up (DECISIONS 4.1.0)",
+        "date": "2026-09-20",
         "recheck": "the deferred popup round lands",
     },
     "printTimePopup": {

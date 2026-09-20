@@ -577,6 +577,21 @@ class PrintConfirmTests(MonitorModelCase):
         self.model.fileDownload("prints/part.gcode")
         self.assertEqual(requested, ["prints/part.gcode"])
 
+    def test_download_progress_publishes_and_cancel_delegates(self):
+        progress = [None]
+        cancelled = []
+        self.model = self.build(request_download_progress=lambda: progress[0],
+                                cancel_file_download=lambda: cancelled.append(True))
+        self.assertEqual(self.value("fileDownloadProgress"), "")
+        progress[0] = {"name": "part.gcode", "percent": 42}
+        self.model._publish()
+        self.assertEqual(self.value("fileDownloadProgress"), {"name": "part.gcode", "percent": 42})
+        self.model.fileDownloadCancel()
+        self.assertEqual(cancelled, [True])
+        self.model._cancel_file_download = None
+        self.model.fileDownloadCancel()
+        self.assertEqual(cancelled, [True])
+
     def test_clearing_the_walk_error_republishes(self):
         self.model = self.build()
         self.model._file_manager._walk_error = "listing failed"
@@ -1018,6 +1033,34 @@ class PlateGraceTests(MonitorModelCase):
         by_name = self.rows()
         self.assertEqual(by_name["PART_A"]["restoreVerdict"], "past_grace")
         self.assertTrue(by_name["PART_A"]["restoreAllowed"])
+
+    def test_the_plate_payload_reads_visited_from_the_print_snapshot(self):
+        # The green-printed fix: the visited set comes from the PRINT
+        # snapshot — reading it from the monitor snapshot made passed
+        # always false (the live report: no green outlines, ever).
+        self.model = self.build()
+        self.model._data._update(auxiliary={"exclude_object": {
+            "objects": [
+                {"name": "PART_A", "center": [10.0, 20.0],
+                 "polygon": [[5.0, 15.0], [5.0, 25.0], [15.0, 25.0], [15.0, 15.0]]},
+                {"name": "PART_B", "center": [40.0, 40.0],
+                 "polygon": [[35.0, 35.0], [35.0, 45.0], [45.0, 45.0], [45.0, 35.0]]},
+            ],
+            "excluded_objects": [],
+            "current_object": "PART_B",
+        }})
+        self.print_state = self.qt.load("PrintState").PrintSnapshot(
+            plate_visited=frozenset({"PART_A"}))
+        self.model._publish()
+        rows = {row["name"]: row for row in self.model._values["plateObjects"]["objects"]}
+        self.assertTrue(rows["PART_A"]["passed"], "the visited object did not read as passed")
+        self.assertFalse(rows["PART_B"]["passed"], "the current object read as passed")
+        # The layer transition: a fresh print snapshot without the
+        # visited set clears every passed flag.
+        self.print_state = self.qt.load("PrintState").PrintSnapshot()
+        self.model._publish()
+        rows = {row["name"]: row for row in self.model._values["plateObjects"]["objects"]}
+        self.assertFalse(rows["PART_A"]["passed"], "the transition kept the stale passed flag")
 
     def test_the_plate_payload_merges_geometry_and_verdicts(self):
         self.model = self.build()

@@ -195,9 +195,9 @@ Item {
             if (root.plate == null) {
                 return;
             }
-            // Round joins/caps on the object outlines: the default
-            // miter pokes pointed corners that grow with the stroke
-            // width (the live report's red perimeter spikes).
+            // Round joins on the object outlines: the default miter
+            // pokes pointed corners that grow with the stroke width
+            // (the live report's red perimeter spikes).
             ctx.lineJoin = "round";
             ctx.lineCap = "round";
             var plate = root.plate;
@@ -329,7 +329,10 @@ Item {
 
     MouseArea {
         anchors.fill: parent
-        hoverEnabled: true
+        // The mini maps are read-only thumbnails: no hover
+        // highlighting, no exclude interaction (the live request —
+        // their clicks open the pop-over instead).
+        hoverEnabled: !root.compact
         onPositionChanged: function (mouse) {
             root.hoveredName = root.hitTest(mouse.x, mouse.y);
             root.objectHovered(root.hoveredName);

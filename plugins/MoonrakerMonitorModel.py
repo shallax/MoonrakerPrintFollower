@@ -393,6 +393,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
                                 "fileManagerSortAscending", "fileManagerSearch", "fileManagerOpen", "fileManagerFilters",
                                 "filePrintConfirm", "fileDeleteConfirm", "fileRenameTarget",
                                 "fileRenameConflict", "fileUploadConfirm", "fileUploadProgress",
+                                "fileDownloadProgress",
                                 "fileManagerColumnWidths", "fileManagerColumnOrder", "fileManagerColumnHidden",
                                 "fileManagerFilterCounts", "fileManagerFilterOptions", "fileManagerHistoryLoaded",
                                 "fileManagerHistoryExhausted", "fileManagerWalkError")),
@@ -410,7 +411,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
 
     def __init__(self, output_controller, number_of_extruders, *, client, print_state, config, apply_config, bed_mesh,
                  request_load=None, request_monitor_download=None, request_file_download=None,
-                 download_failed=None, identity=None, state_store=None, persistence=None):
+                 download_failed=None, request_download_progress=None, cancel_file_download=None,
+                 identity=None, state_store=None, persistence=None):
         super().__init__(output_controller, number_of_extruders)
         self._client, self._print_state, self._config, self._apply_config, self._mesh = \
             client, print_state, config, apply_config, bed_mesh
@@ -432,6 +434,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # stale completions, unconfirmed loads) land in the popup's
         # note line through the same channel as file refusals.
         self._request_file_download = request_file_download
+        # The save download's progress window: the model polls the
+        # follower's progress payload each publish; the Cancel button
+        # retires the in-flight stream.
+        self._request_download_progress = request_download_progress
+        self._cancel_file_download = cancel_file_download
         if download_failed is not None:
             download_failed.connect(self._on_file_manager_note)
         self._file_print_confirm = None
@@ -838,7 +845,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
             rows.append(fresh)
         return rows
 
-    def _plate_objects_value(self):
+    def _plate_objects_value(self, visited):
         """The plate geometry: polygons memoised per job on the lane
         object's identity (the freeze fix keeps it stable across
         ticks), the volatile flags and the verdicts overlaid per
@@ -861,7 +868,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         excluded = frozenset(status.get("excluded_objects") or ())
         current = status.get("current_object")
         layer = self._layer_index(self._print_state())
-        visited = getattr(self._data.snapshot, "plate_visited", frozenset())
+        # The visited set comes from the PRINT snapshot (the monitor
+        # snapshot never carries plate_visited — the green-printed
+        # report: reading it there made passed always false).
+        visited = visited or frozenset()
         rows = []
         for row in self._plate_geometry["objects"]:
             fresh = dict(row)
@@ -1125,6 +1135,10 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # loading state (the 2026-09-16 request — the empty grey page
         # on entry reads as dead, not as arriving).
         values["monitorLoading"] = bool(self._client.connected and not self._data.snapshot.auxiliary)
+        # The download progress window's payload: {name, percent} while
+        # a save download streams, "" otherwise (the popup's gate).
+        values["fileDownloadProgress"] = (self._request_download_progress() or ""
+                                          if self._request_download_progress is not None else "")
         # The M117 message lives on Klipper's display_status object,
         # not print_stats — the Print-job slot reads it from the aux
         # snapshot (the report: M117 showed nowhere).
@@ -1150,7 +1164,8 @@ class MoonrakerMonitorModel(PrinterOutputModel):
         # and the map carry the verdicts and the policy's words.
         self._observe_grace(snapshot)
         values["excludeObjectItems"] = self._exclude_rows()
-        values["plateObjects"] = self._plate_objects_value()
+        values["plateObjects"] = self._plate_objects_value(
+            getattr(snapshot, "plate_visited", frozenset()))
         # The QML-facing support flag: a plain bool, so no binding
         # ever needs to reach INTO the payload (the empty-plate live
         # report — member access on the QVariant payload is not a
@@ -1573,6 +1588,7 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     fileRenameConflict = value_property(bool, "fileRenameConflict", fileManagerChanged, False)
     fileUploadConfirm = value_property(QVariant, "fileUploadConfirm", fileManagerChanged, "")
     fileUploadProgress = value_property(QVariant, "fileUploadProgress", fileManagerChanged, "")
+    fileDownloadProgress = value_property(QVariant, "fileDownloadProgress", fileManagerChanged, "")
     fileManagerColumnWidths = value_property(QVariant, "fileManagerColumnWidths", fileManagerChanged, {})
     fileManagerColumnOrder = value_property(QVariant, "fileManagerColumnOrder", fileManagerChanged, [])
     fileManagerColumnHidden = value_property(QVariant, "fileManagerColumnHidden", fileManagerChanged, [])
@@ -1673,6 +1689,11 @@ class MoonrakerMonitorModel(PrinterOutputModel):
     def fileDownload(self, relpath):
         if self._request_file_download is not None:
             self._request_file_download(str(relpath))
+
+    @pyqtSlot()
+    def fileDownloadCancel(self):
+        if self._cancel_file_download is not None:
+            self._cancel_file_download()
 
     @pyqtSlot(bool)
     def setFileManagerOpen(self, is_open):

@@ -276,7 +276,7 @@ class PrintCoordinator(QObject):
                 # architecture contract), so the coordinator asks the
                 # service, never the view.
                 plate_progress_payload = self._index.plate_progress(
-                    self._snapshot.layer.index, position)
+                    physical.index, position)
                 # The per-layer printed objects: the executed motions'
                 # polygon visits, read back from the layer's start.
                 # The rows go through the SAME normalisation the map
@@ -288,7 +288,7 @@ class PrintCoordinator(QObject):
                 exclude_rows = plate_values(exclude_status)["objects"]
                 visited = getattr(self._index, "plate_visited", None)
                 if visited is not None and plate_progress_payload.get("split") is not None:
-                    plate_visited = visited(self._snapshot.layer.index,
+                    plate_visited = visited(physical.index,
                                             plate_progress_payload["split"], exclude_rows)
             self._snapshot = PrintSnapshot(job, self._jobs.observation, physical,
                 estimate if estimate > 0 else None, self._files.metadata_complete,
