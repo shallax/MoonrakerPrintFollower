@@ -223,6 +223,14 @@ def closest(desc: ArcDescriptor, start: Sequence[float], target: Sequence[float]
     position is clamped into the sweep, so a sample beside the arc but
     past either end measures to that end — the same answer the
     tessellated polyline would give, without tessellating.
+
+    The candidates are the angular position (when it is on the sweep)
+    and the two ends, and they are compared by their REAL 3D distance:
+    the angle alone cannot separate them on a full-circle helix, whose
+    start and target share their planar offset while the seam between
+    them is exactly the helical travel. The angular candidate is tried
+    first and ties keep it, so a planar full circle — where both ends
+    are the same point — still answers t = 0 deterministically.
     """
     frame = _frame(start, target, desc)
     centre_a, centre_b, radius, start_angle, sweep, axis_a, axis_b, _axis_h = frame
@@ -230,18 +238,24 @@ def closest(desc: ArcDescriptor, start: Sequence[float], target: Sequence[float]
         return None
     point_a = float(position[axis_a]) - centre_a
     point_b = float(position[axis_b]) - centre_b
-    travelled = 0.0
+    candidates: List[float] = []
     if point_a != 0.0 or point_b != 0.0:
         angle = atan2(point_b, point_a)
         direction = -1.0 if sweep < 0.0 else 1.0
         travelled = ((angle - start_angle) * direction) % _TAU
-    length = abs(sweep)
-    if travelled <= length:
-        t = travelled / length if length > 0.0 else 0.0
-    elif (travelled - length) <= (_TAU - travelled):
-        t = 1.0
-    else:
-        t = 0.0
-    q = point_at(desc, start, target, t)
-    return (hypot(hypot(float(position[0]) - q[0], float(position[1]) - q[1]),
-                  float(position[2]) - q[2]), t)
+        if travelled <= abs(sweep):
+            candidates.append(travelled / abs(sweep) if sweep != 0.0 else 0.0)
+    candidates.append(0.0)
+    candidates.append(1.0)
+    px = float(position[0])
+    py = float(position[1])
+    pz = float(position[2])
+    best_distance = float("inf")
+    best_t = 0.0
+    for t in candidates:
+        q = point_at(desc, start, target, t)
+        distance = hypot(hypot(px - q[0], py - q[1]), pz - q[2])
+        if distance < best_distance:
+            best_distance = distance
+            best_t = t
+    return (best_distance, best_t)

@@ -28,6 +28,23 @@ Item {
     // (the live report: the renderer's strokes swallowed the
     // diagonals the reference renderers show).
     property real lineScale: 0.7
+    // The toolpath ink's PHYSICAL width: strokes are bed-space
+    // geometry, never screen pixels. The nominal is the slicer's
+    // line at this print's scale, calibrated so ~300% keeps the
+    // previously-good screen weight (the old 0.7 px stroke there
+    // read back as ~0.16-0.23 mm of bed). At 100% a stroke is
+    // legitimately SUBPIXEL — the live report's merged Day strokes
+    // and premature solid SKIN were the screen-constant ink, not
+    // the geometry.
+    property real nominalToolpathWidthMm: 0.2
+    // Travels draw thinner than extrusion ink: a VISUAL ratio over
+    // the same physical basis, never its own pixel count.
+    property real travelVisualRatio: 0.7
+    // The mini face is a fixed-size thumbnail: honest physical
+    // strokes there are ~0.05 px and invisible, so the mini boosts
+    // the weight (the old halved 1 px read the same way). The
+    // zoomable popover never reads this.
+    property real compactStrokeBoost: 7.0
     // The zoom/pan view (the live request): a scale and a pan in
     // canvas pixels, applied by every raster AND the shared mapping's
     // grid — one transform so the stack moves together.
@@ -40,6 +57,16 @@ Item {
     // docks it, and two idle seconds park it again (the live
     // request — it starts invisible).
     property bool _scopeDocked: false
+    // The scope's graduation labels: every 25% between 100% and
+    // 2000%, log-positioned along the bar (the live request: the
+    // cap moved from 800% to 2000%).
+    readonly property var zoomGraduations: {
+        var steps = [];
+        for (var v = 1.0; v <= 20.0 + 1e-9; v += 0.25) {
+            steps.push(v);
+        }
+        return steps;
+    }
     Timer {
         id: scopeHideTimer
         interval: 2000
@@ -67,6 +94,24 @@ Item {
 
     function available() {
         return root.progress != null && root.progress.available === true;
+    }
+
+    // The ONE physical stroke-width calculation, shared by the ghost,
+    // pending, printed and travel painters: nominal bed mm through
+    // the live plot's px-per-mm and the view zoom, times the user's
+    // line scale. The plot is aspect-preserved so sx equals sy (the
+    // mapping's own contract). Screen-space annotations — the
+    // toolhead dot, the travel glyphs, the grid — never read this.
+    function toolpathWidthPx() {
+        var plot = mapping._plot;
+        if (plot == null) {
+            return 0;
+        }
+        return root.nominalToolpathWidthMm * Math.abs(plot.sx) * Math.abs(root.viewScale) * root.lineScale * (root.compact ? root.compactStrokeBoost : 1.0);
+    }
+
+    function travelWidthPx() {
+        return root.toolpathWidthPx() * root.travelVisualRatio;
     }
 
     // The raster stack's painted state: the split the progress canvas
@@ -284,13 +329,13 @@ Item {
         var panX = root.viewPanX;
         var panY = root.viewPanY;
         var scale = root.viewScale;
+        // The physical stroke: one width for every channel (the
+        // ghost/pending/printed parity rule), subpixel at 100%.
+        ctx.lineWidth = root.toolpathWidthPx();
         for (var name in layer.classes) {
             var segments = layer.classes[name];
             ctx.strokeStyle = base ? MoonrakerTheme.seriesDefault : root.classColour(name);
             ctx.globalAlpha = alpha;
-            // The mini halves the strokes: a 1 px line is ~3 mm of
-            // bed at its scale and reads as a blob (the live report).
-            ctx.lineWidth = root.lineScale * (root.compact ? 0.5 : 1.0);
             for (var s = 0; s < segments.length; ++s) {
                 var points = segments[s];
                 // Every segment is at least one EDGE — two vertices — so
@@ -324,7 +369,7 @@ Item {
         }
         ctx.strokeStyle = MoonrakerTheme.plateTravel;
         ctx.globalAlpha = 0.8;
-        ctx.lineWidth = 0.7 * root.lineScale * (root.compact ? 0.5 : 1.0);
+        ctx.lineWidth = root.travelWidthPx();
         for (var s = 0; s < segments.length; ++s) {
             var points = segments[s];
             if (points.length < 2) {
@@ -355,7 +400,9 @@ Item {
     function _drawGlyphs(ctx, marks, start, split, from) {
         // A glyph belongs to the motion that owns its boundary, and is
         // painted with the same rule as the strokes (the marks arrive in
-        // motion order, so the first unprinted one ends the sweep).
+        // motion order, so the first unprinted one ends the sweep). The
+        // triangle SIZE is a screen-space annotation, like the toolhead
+        // dot and the grid: it never scales with the toolpath ink.
         for (var i = 0; i < marks.length; ++i) {
             if (from >= 0 && marks[i][2] < from) {
                 continue;
@@ -417,7 +464,7 @@ Item {
                 return;
             }
             var factor = wheel.angleDelta.y > 0 ? 1.25 : 0.8;
-            var target = Math.min(8.0, Math.max(1.0, root.viewScale * factor));
+            var target = Math.min(20.0, Math.max(1.0, root.viewScale * factor));
             if (target === root.viewScale) {
                 return;
             }
@@ -469,9 +516,12 @@ Item {
         // the right edge; parked it slides fully out of view (the
         // live request).
         width: 30 * screenScaleFactor
-        height: Math.min(190 * screenScaleFactor, root.height * 0.45)
+        // The full canvas height minus the reserved bottom strip the
+        // Reset view label owns (the live request: the bar spans the
+        // canvas and the label keeps its own gap at the bottom).
+        height: Math.max(60 * screenScaleFactor, root.height - 30 * screenScaleFactor)
         x: root._scopeDocked ? root.width - width - UM.Theme.getSize("narrow_margin").width : root.width + 6 * screenScaleFactor
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.top: parent.top
         Behavior on x {
             NumberAnimation {
                 duration: 180
@@ -509,9 +559,9 @@ Item {
             // The graduations: every 25% between 100% and 800%,
             // log-spaced like the marker.
             Repeater {
-                model: [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0, 4.25, 4.5, 4.75, 5.0, 5.25, 5.5, 5.75, 6.0, 6.25, 6.5, 6.75, 7.0, 7.25, 7.5, 7.75, 8.0]
+                model: root.zoomGraduations
                 Item {
-                    readonly property real fraction: Math.log(modelData) / Math.log(8.0)
+                    readonly property real fraction: Math.log(modelData) / Math.log(20.0)
                     readonly property bool major: Math.round(modelData * 100) % 100 === 0
                     readonly property bool half: Math.round(modelData * 100) % 50 === 0
                     anchors.left: parent.left
@@ -543,7 +593,7 @@ Item {
                 // drag handle.
                 id: scopeMarker
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: parent.height - (Math.log(root.viewScale) / Math.log(8.0)) * parent.height - height / 2
+                y: parent.height - (Math.log(root.viewScale) / Math.log(20.0)) * parent.height - height / 2
                 width: parent.width
                 height: 3 * screenScaleFactor
                 radius: height / 2
@@ -564,7 +614,7 @@ Item {
                 }
                 function scopeApply(y) {
                     var fraction = Math.min(1.0, Math.max(0.0, (parent.height - y) / parent.height));
-                    var target = Math.pow(8.0, fraction);
+                    var target = Math.pow(20.0, fraction);
                     if (target <= 1.0) {
                         root.viewScale = 1.0;
                         root.viewPanX = 0.0;
@@ -584,7 +634,9 @@ Item {
     // scope's caption.
     UM.Label {
         id: resetViewLabel
-        visible: root.available() && !root.compact && root.viewScale > 1.0 && root._scopeDocked
+        // Not tied to the scope's park: the reset stays put while the
+        // overlay slides away (the live request).
+        visible: root.available() && !root.compact && root.viewScale > 1.0
         anchors.right: parent.right
         anchors.rightMargin: UM.Theme.getSize("narrow_margin").width
         anchors.bottom: parent.bottom

@@ -827,6 +827,136 @@ class SyntheticIndexTests(unittest.TestCase):
                           "travelEnds": [], "motions": 0})
 
 
+class SimplificationErrorTests(unittest.TestCase):
+    """The distance a kept-away vertex is measured by: the FINITE
+    candidate segment the simplified polyline would draw, never the
+    infinite line through its ends. The line metric calls a vertex that
+    doubles back on itself zero-distance from a shortcut it would
+    invent."""
+
+    def test_a_collinear_overshoot_survives_the_simplification(self):
+        # (0,0) -> (10,0) -> (1,0): the middle vertex sits ON the
+        # infinite line through the ends but 9 mm from the segment a
+        # two-point simplification would draw, so the out-and-back is
+        # geometry the tolerance must keep.
+        points = [[0.0, 0.0, 0.0], [10.0, 0.0, 1.0], [1.0, 0.0, 2.0]]
+        self.assertEqual(_douglas_peucker(points, 0.03), points)
+
+    def test_an_overshoot_is_not_budgeted_away(self):
+        # The budget cannot be met without drawing that false shortcut,
+        # so fidelity wins and the channel stays above the budget.
+        points = [[0.0, 0.0, 0.0], [10.0, 0.0, 1.0], [1.0, 0.0, 2.0]]
+        self.assertEqual(_budgeted([list(points)], 2), [points])
+
+    def test_a_collinear_run_forward_collapses_to_its_ends(self):
+        points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [2.0, 0.0, 2.0]]
+        self.assertEqual(_douglas_peucker(points, 0.03),
+                         [[0.0, 0.0, 0.0], [2.0, 0.0, 2.0]])
+
+    def test_an_exact_reversal_keeps_its_turning_point(self):
+        points = [[0.0, 0.0, 0.0], [10.0, 0.0, 1.0], [0.0, 0.0, 2.0]]
+        self.assertEqual(_douglas_peucker(points, 0.03), points)
+
+    def test_a_nearly_collinear_overshoot_keeps_its_turning_point(self):
+        # One hundredth of a millimetre off the candidate's line: the
+        # line metric deletes the overshoot, the segment metric keeps it.
+        points = [[0.0, 0.0, 0.0], [10.0, 0.01, 1.0], [1.0, 0.02, 2.0]]
+        self.assertEqual(_douglas_peucker(points, 0.03), points)
+
+    def test_a_zero_length_candidate_span_measures_from_its_point(self):
+        # The candidate's two ends coincide, so there is no direction to
+        # project onto and the distance is the plain point distance.
+        points = [[5.0, 5.0, 0.0], [9.0, 5.0, 1.0], [5.0, 5.0, 2.0]]
+        self.assertEqual(_douglas_peucker(points, 0.03), points)
+
+    def test_a_kept_vertex_is_never_further_from_the_drawn_polyline(self):
+        # The stated bound, measured: every vertex the simplification
+        # dropped sits within the tolerance of the polyline it kept.
+        points = [[step * 0.5, (step % 3) * 0.02, float(step)] for step in range(60)]
+        tolerance = 0.05
+        kept = _douglas_peucker(points, tolerance)
+        for point in points:
+            best = min(_point_to_segment(point, kept[i], kept[i + 1])
+                       for i in range(len(kept) - 1))
+            self.assertLessEqual(best, tolerance + 1e-9,
+                                 "a dropped vertex sits %s mm from the drawn polyline" % best)
+
+
+def _point_to_segment(point, first, second):
+    """The distance from *point* to the finite segment *first*->*second*."""
+    dx = second[0] - first[0]
+    dy = second[1] - first[1]
+    span_sq = dx * dx + dy * dy
+    if span_sq <= 0.0:
+        return hypot(point[0] - first[0], point[1] - first[1])
+    t = ((point[0] - first[0]) * dx + (point[1] - first[1]) * dy) / span_sq
+    t = max(0.0, min(1.0, t))
+    return hypot(point[0] - (first[0] + t * dx), point[1] - (first[1] + t * dy))
+
+
+class MotionEdgeSeekStateTests(unittest.TestCase):
+    """A seek establishes the travel/extrusion state from the LAYER's
+    own opening state plus every boundary strictly before it — a layer
+    that began mid-travel must not read its opening motions as
+    material merely because the cursor is not at zero."""
+
+    def _state(self, index, first, layer=0):
+        return [edge[6] for edge in motion_edges(index, layer, first=first)]
+
+    def test_case_a_a_layer_that_began_travelling_keeps_travelling(self):
+        index = make_index(motions=8)
+        index.layer_start_extruding[0] = False
+        index.travel_starts[0] = []
+        index.travel_ends[0] = [5]
+        self.assertEqual(self._state(index, 0)[0], False)
+        self.assertEqual(self._state(index, 2)[0], False)
+        # The boundary AT the sought motion belongs to that motion: the
+        # loop applies it before yielding motion 5.
+        self.assertEqual(self._state(index, 5)[0], True)
+        self.assertEqual(self._state(index, 6)[0], True)
+
+    def test_case_b_a_layer_that_began_extruding_reads_its_boundaries(self):
+        index = make_index(motions=8)
+        index.layer_start_extruding[0] = True
+        index.travel_starts[0] = [2]
+        index.travel_ends[0] = [5]
+        for first, expected in ((0, True), (1, True), (2, False),
+                                (4, False), (5, True), (6, True)):
+            self.assertEqual(self._state(index, first)[0], expected, first)
+
+    def test_case_c_every_seek_matches_the_suffix_of_the_full_walk(self):
+        # The invariant the incremental cursor relies on, over both
+        # opening states and several transitions.
+        for opening, starts, ends in ((True, [3, 12], [6, 15]),
+                                      (False, [0, 7], [4, 11]),
+                                      (False, [], [9]),
+                                      (True, [2], [])):
+            index = make_index(motions=20)
+            index.layer_start_extruding[0] = opening
+            index.travel_starts[0] = list(starts)
+            index.travel_ends[0] = list(ends)
+            full = list(motion_edges(index, 0))
+            for first in range(21):
+                self.assertEqual(list(motion_edges(index, 0, first=first)),
+                                 [edge for edge in full if edge[0] >= first],
+                                 (opening, starts, ends, first))
+
+    def test_a_seek_past_an_arc_matches_the_suffix_of_its_full_walk(self):
+        # An arc yields several physical subedges for ONE logical
+        # motion: the suffix is taken by logical motion, so every
+        # subedge of the arc is in it exactly once.
+        index = _index("M82\n;LAYER:0\n;TYPE:SKIN\n"
+                       "G0 X10 Y0\n"
+                       "G3 X0 Y10 I-10 J0 E1\n"
+                       "G1 X0 Y20 E2\n"
+                       "G1 X10 Y20 E0.5\n"
+                       "G1 X10 Y30 E1.5\n")
+        full = list(motion_edges(index, 0))
+        for first in range(index.motion_count(0) + 1):
+            self.assertEqual(list(motion_edges(index, 0, first=first)),
+                             [edge for edge in full if edge[0] >= first], first)
+
+
 class MotionEdgeSeekTests(unittest.TestCase):
     """The printed-object cursor's seek and the feature RLE it walks
     past. A run that lost its shape costs the layer its feature NAME,

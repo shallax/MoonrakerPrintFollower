@@ -396,6 +396,78 @@ class SubdivisionBudgetTests(unittest.TestCase):
         self.assertLessEqual(nan_target, MAX_SEGMENTS, "a NaN target asked for %s subedges" % nan_target)
 
 
+class FullCircleSeamTests(unittest.TestCase):
+    """A full turn returns to its own planar angle, so the angle alone
+    cannot say whether a sample at the seam is the start or the end. The
+    helix separates the two in the third axis, and the ends are measured
+    as candidates instead of being assumed away."""
+
+    @staticmethod
+    def _fixture(plane, clockwise=False):
+        """A radius-10 full circle in *plane*, climbing its own third
+        axis, as ``(descriptor, start, target)``."""
+        if plane == PLANE_XY:      # sweeps XY, climbs Z
+            return (_arc(plane, -10.0, 0.0, clockwise), (10.0, 0.0, 0.0), (10.0, 0.0, 5.0))
+        if plane == PLANE_XZ:      # sweeps XZ, climbs Y
+            return (_arc(plane, -10.0, 0.0, clockwise), (10.0, 0.0, 0.0), (10.0, 5.0, 0.0))
+        # PLANE_YZ sweeps YZ and climbs X.
+        return (_arc(plane, -10.0, 0.0, clockwise), (0.0, 10.0, 0.0), (5.0, 10.0, 0.0))
+
+    def test_each_plane_and_direction_measures_its_own_ends_exactly(self):
+        for plane in PLANES:
+            for clockwise in (False, True):
+                with self.subTest(plane=plane, clockwise=clockwise):
+                    desc, start, target = self._fixture(plane, clockwise)
+                    distance, t = closest(desc, start, target, target)
+                    self.assertAlmostEqual(distance, 0.0, places=6,
+                                           msg="the full turn's end measured %s mm off" % distance)
+                    self.assertEqual(t, 1.0, "the full turn's end read at %s of the sweep" % t)
+                    distance, t = closest(desc, start, target, start)
+                    self.assertAlmostEqual(distance, 0.0, places=6,
+                                           msg="the full turn's start measured %s mm off" % distance)
+                    self.assertEqual(t, 0.0, "the full turn's start read at %s of the sweep" % t)
+
+    def test_the_helix_seam_resolves_to_its_own_side(self):
+        # A sample a thousandth of the sweep from an end: the planar
+        # angle puts it on the correct side of the seam, and the helix
+        # keeps it there.
+        desc, start, target = self._fixture(PLANE_XY)
+        for fraction, near in ((0.999, lambda t: self.assertGreater(t, 0.99)),
+                               (0.001, lambda t: self.assertLess(t, 0.01))):
+            distance, t = closest(desc, start, target, point_at(desc, start, target, fraction))
+            self.assertAlmostEqual(distance, 0.0, places=6,
+                                   msg="the sample at %s of the sweep measured %s mm off"
+                                   % (fraction, distance))
+            near(t)
+
+    def test_the_full_turns_midpoint_reads_at_half_the_sweep(self):
+        for plane in PLANES:
+            desc, start, target = self._fixture(plane)
+            middle = point_at(desc, start, target, 0.5)
+            distance, t = closest(desc, start, target, middle)
+            self.assertAlmostEqual(distance, 0.0, places=6,
+                                   msg="plane %s: the mid-sweep point measured %s mm off"
+                                   % (plane, distance))
+            self.assertAlmostEqual(t, 0.5, places=4,
+                                   msg="plane %s: the mid-sweep point read at %s" % (plane, t))
+
+    def test_a_planar_full_circle_ties_deterministically_at_its_seam(self):
+        # Start and target are the same XYZ point: no sample can tell
+        # them apart, so the tie resolves the same way every time.
+        desc = _arc(PLANE_XY, -10.0, 0.0)
+        start = (10.0, 0.0, 0.0)
+        distance, t = closest(desc, start, start, start)
+        self.assertEqual(distance, 0.0)
+        self.assertEqual(t, 0.0)
+
+    def test_a_clamped_end_still_wins_when_it_is_the_closer_candidate(self):
+        # Beyond the end, off the seam: the end stays the answer.
+        desc, start, target = self._fixture(PLANE_XY)
+        distance, t = closest(desc, start, target, (10.0, 0.0, 6.0))
+        self.assertEqual(t, 1.0)
+        self.assertAlmostEqual(distance, 1.0, places=6)
+
+
 class ClosestPointTests(unittest.TestCase):
     """A position measured against the commanded sweep: how far it sits
     from the path, and where along the sweep that nearest point is."""

@@ -359,11 +359,23 @@ One indexed motion is one G-code motion, and its physical geometry is one path:
 a straight edge for G0/G1, and for G2/G3 the circular or helical path its centre
 offsets describe. `ArcGeometry.py` owns that path — the tessellation the payload and
 the printed-object walk read, and the live-position match — so no consumer branches
-on the command word and no consumer re-derives a curve. The index carries the arcs
-sparsely (a descriptor per arc motion keyed by motion index, plus the modal plane at
-each layer's start) and never pre-tessellates them. A Klipper-invalid arc (R-form,
-G91, zero centre offsets) carries no descriptor and draws as the straight edge it
-would have been, which keeps the index usable rather than failing the file.
+on the command word and no consumer re-derives a curve. `PlateProgress.motion_edges`
+is the one expansion of a layer's indexed motions into physical edges: the payload
+builders and the printed-object walk both read it, and a seek into the middle of a
+layer yields the suffix of the very same walk (the travel state is the layer's
+opening state with the boundaries before the seek applied in order). `refined_fraction`
+does not go through that expansion: it searches the index's LOGICAL endpoints around
+the parser position — the motion index is the unit the split, the payload and the
+cache are all counted in — and hands every arc it meets to `ArcGeometry.closest`, so
+the live toolhead is matched against the commanded curve rather than its chord. The
+index carries the arcs sparsely (a descriptor per arc motion keyed by motion index,
+plus the modal plane at each layer's start) and never pre-tessellates them. A
+Klipper-invalid arc (R-form, G91, zero centre offsets) carries no descriptor and
+draws as the straight edge it would have been, which keeps the index usable rather
+than failing the file. The persistent cache is faithful or it is not written: an
+index whose arc descriptors cannot fit the blob's entry budget is not published, and
+a blob offering an over-budget arc column is refused rather than trusted, because a
+cache that restores a commanded curve as a chord is geometry the file never had.
 
 ## 7. Commands and scheduled PAUSE
 

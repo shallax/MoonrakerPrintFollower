@@ -1943,6 +1943,12 @@ class PlateFaceRenderTests(RealEngineTestCase):
         self.pump(40)
         plot = face.findChild(QQuickItem, "moonrakerPlateCanvas").property("_plot")
         self.assertIsNotNone(plot, "the bed mapping never built")
+        # The physical-width model renders the default 0.7 lineScale
+        # as a subpixel stroke at this face size; the painter tests
+        # pin the same 0.7 px weight the old fixed-width painter used,
+        # so the geometry assertions measure a solid line.
+        face.setProperty("lineScale", 0.7 / (0.2 * plot.property("sx").toNumber()))
+        self.pump(20)
         return face, window, self._mapping(plot), self._settled(window)
 
     def _printed(self, split, window, face, baseline, box, span):
